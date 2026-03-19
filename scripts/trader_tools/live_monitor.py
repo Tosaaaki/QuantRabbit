@@ -36,9 +36,11 @@ from indicators.calc_core import IndicatorEngine
 OANDA_BASE = "https://api-fxtrade.oanda.com"
 ALL_PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 OUTPUT_PATH = ROOT / "logs" / "live_monitor.json"
+SUMMARY_PATH = ROOT / "logs" / "live_monitor_summary.json"
 REGISTRY_PATH = ROOT / "logs" / "trade_registry.json"
 TRADE_LOG_PATH = ROOT / "logs" / "live_trade_log.txt"
 RECENTLY_CLOSED_PATH = ROOT / "logs" / "recently_closed.json"
+PREDICTION_TRACKER_PATH = ROOT / "logs" / "prediction_tracker.json"
 
 SCALP_KEYS = [
     "rsi", "adx", "plus_di", "minus_di", "stoch_rsi", "macd_hist",
@@ -235,6 +237,28 @@ def _api_put(token: str, path: str, body: dict, timeout: int = 8):
     return json.loads(resp.read())
 
 
+def _api_post(token: str, path: str, body: dict, timeout: int = 8):
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{OANDA_BASE}{path}",
+        data=data,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    resp = urllib.request.urlopen(req, timeout=timeout)
+    return json.loads(resp.read())
+
+
+def _api_delete(token: str, path: str, timeout: int = 8):
+    req = urllib.request.Request(
+        f"{OANDA_BASE}{path}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="DELETE",
+    )
+    resp = urllib.request.urlopen(req, timeout=timeout)
+    return json.loads(resp.read())
+
+
 def _pip_size(pair: str) -> float:
     return 0.01 if "JPY" in pair else 0.0001
 
@@ -328,6 +352,7 @@ def fetch_positions(token: str, acc: str) -> tuple:
         tp_order = t.get("takeProfitOrder", {})
         trail_order = t.get("trailingStopLossOrder", {})
         sl = float(sl_order["price"]) if sl_order.get("price") else None
+        sl_order_id = sl_order.get("id")  # needed for atomic cancel+TSL
         tp = float(tp_order["price"]) if tp_order.get("price") else None
         trail_dist = float(trail_order["distance"]) if trail_order.get("distance") else None
 
@@ -362,7 +387,7 @@ def fetch_positions(token: str, acc: str) -> tuple:
         positions.append({
             "id": t["id"], "pair": pair, "units": units, "entry": entry,
             "upl": upl, "upl_pips": upl_pips,
-            "sl": sl, "tp": tp, "sl_pips": sl_pips, "trail": trail_dist,
+            "sl": sl, "sl_order_id": sl_order_id, "tp": tp, "sl_pips": sl_pips, "trail": trail_dist,
             "has_trail": trail_dist is not None,
             "is_be": sl is not None and abs(sl - entry) < pip * 0.5,
             "age_min": age_min, "opened": open_time,
@@ -968,9 +993,39 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
         if upl_pips >= trail_at and not has_trail:
             trail_distance = str(round(trail_at * pip, 5))
             try:
-                _api_put(token, f"/v3/accounts/{acc}/trades/{tid}/orders", {
-                    "trailingStopLoss": {"distance": trail_distance}
-                })
+                # OANDA v20: PUT /trades/{id}/orders to set TSL
+                # If a fixed SL exists, cancel it atomically using its order ID
+                # OANDA requires "cancelledOrderID" to cancel an existing dependent order
+                pos_sl = pos.get("sl")
+                pos_sl_order_id = pos.get("sl_order_id")
+                if pos_sl is not None and pos_sl_order_id:
+                    # Atomic: cancel SL by ID + set TSL in one request
+                    order_body = {
+                        "stopLoss": {"cancelledOrderID": pos_sl_order_id},
+                        "trailingStopLoss": {"distance": trail_distance}
+                    }
+                else:
+                    order_body = {
+                        "trailingStopLoss": {"distance": trail_distance}
+                    }
+                try:
+                    _api_put(token, f"/v3/accounts/{acc}/trades/{tid}/orders", order_body)
+                except Exception as e1:
+                    # Fallback: if atomic call fails, try 2-step (cancel SL first, then set TSL)
+                    if pos_sl is not None and "400" in str(e1):
+                        pos_sl_order_id = pos.get("sl_order_id")
+                        if pos_sl_order_id:
+                            # Step 1: cancel SL via its order ID (reliable OANDA approach)
+                            try:
+                                _api_delete(token, f"/v3/accounts/{acc}/orders/{pos_sl_order_id}")
+                            except Exception:
+                                pass  # may already be gone
+                        # Step 2: set TSL now that SL is removed
+                        _api_put(token, f"/v3/accounts/{acc}/trades/{tid}/orders", {
+                            "trailingStopLoss": {"distance": trail_distance}
+                        })
+                    else:
+                        raise e1
                 action = f"TRAIL_SET {pair} {units}u trail={trail_at}pip (UPL={upl_pips}pip) [{rules_source}]"
             except Exception as e:
                 if "404" in str(e) or "TRADE_DOESNT_EXIST" in str(e):
@@ -999,6 +1054,51 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
                 _api_put(token, f"/v3/accounts/{acc}/trades/{tid}/close", {})
                 mark_closed(tid, pair, "cut")
                 action = f"CUT {pair} {units}u (UPL={upl_pips}pip, age={age_min}min) [{rules_source}]"
+
+                # Auto-reverse: if enabled, open opposite position
+                if rules.get("auto_reverse"):
+                    try:
+                        rev_units = str(-int(units))  # flip direction
+                        rev_pip = _pip_size(pair)
+                        price_data = pricing.get(pair, {})
+                        rev_mid = price_data.get("mid", 0)
+                        # Reverse TP = original SL distance from new entry
+                        rev_tp_dist = abs(cut_at) * rev_pip
+                        # Reverse SL = same distance as original TP target
+                        rev_sl_dist = trail_at * rev_pip
+                        if int(units) > 0:  # was LONG, now SHORT
+                            rev_tp = round(rev_mid - rev_tp_dist, 5)
+                            rev_sl = round(rev_mid + rev_sl_dist, 5)
+                        else:  # was SHORT, now LONG
+                            rev_tp = round(rev_mid + rev_tp_dist, 5)
+                            rev_sl = round(rev_mid - rev_sl_dist, 5)
+
+                        rev_body = {
+                            "order": {
+                                "type": "MARKET", "instrument": pair,
+                                "units": rev_units, "timeInForce": "FOK",
+                                "stopLossOnFill": {"price": str(rev_sl)},
+                                "takeProfitOnFill": {"price": str(rev_tp)},
+                                "clientExtensions": {"tag": "scalp", "comment": "auto-reverse"}
+                            }
+                        }
+                        rev_resp = _api_post(token, f"/v3/accounts/{acc}/orders", rev_body)
+                        rev_fill = rev_resp.get("orderFillTransaction", {})
+                        rev_tid = str(rev_fill.get("tradeOpened", {}).get("tradeID", ""))
+                        if rev_tid:
+                            # Register reverse trade
+                            registry[rev_tid] = {
+                                "trade_id": rev_tid, "owner": "auto-reverse",
+                                "type": "scalp", "pair": pair, "units": int(rev_units),
+                                "rules": {"trail_at_pip": abs(cut_at), "partial_at_pip": abs(cut_at) * 1.5,
+                                          "max_hold_min": 15, "cut_at_pip": -trail_at, "cut_age_min": 5,
+                                          "auto_reverse": False}
+                            }
+                            save_registry(registry)
+                        action += f" → REVERSED {rev_units}u TP={rev_tp} SL={rev_sl}"
+                        _log_action(f"AUTO_REVERSE {pair} {rev_units}u @{rev_mid} TP={rev_tp} SL={rev_sl}")
+                    except Exception as re:
+                        action += f" → REVERSE_FAIL: {re}"
             except Exception as e:
                 if "404" in str(e) or "TRADE_DOESNT_EXIST" in str(e):
                     mark_closed(tid, pair, "gone_during_cut")
@@ -1429,6 +1529,229 @@ def build_monitor() -> dict:
     }
 
 
+def _verify_predictions(monitor: dict) -> None:
+    """Auto-verify open predictions against current prices.
+
+    Predictions are written by scalp-fast/swing-trader as:
+    {
+      "id": "pred_20260319_114500_EU",
+      "timestamp": "2026-03-19T11:45:00Z",
+      "agent": "scalp-fast",
+      "pair": "EUR_USD",
+      "direction": "SHORT",
+      "target": 1.1460,
+      "invalidation": 1.1485,
+      "entry_price": 1.14770,
+      "reason": "London selling into NY open, M5 MACD hist shrinking",
+      "score_at_entry": 8,
+      "score_agreed": false,
+      "indicators_at_entry": {"m5_adx": 25, "m1_rsi": 62, "m5_bbw": 0.0003},
+      "session": "LONDON",
+      "status": "open",
+      "result": null,
+      "resolved_at": null,
+      "pips": null
+    }
+    """
+    try:
+        with open(PREDICTION_TRACKER_PATH) as f:
+            predictions = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return
+
+    changed = False
+    prices = {}
+    for pair, data in monitor.get("pairs", {}).items():
+        p = data.get("price", {})
+        prices[pair] = {"bid": p.get("bid", 0), "ask": p.get("ask", 0), "mid": p.get("mid", 0)}
+
+    now = monitor.get("timestamp", "")
+
+    for pred in predictions:
+        if pred.get("status") != "open":
+            continue
+        pair = pred.get("pair", "")
+        if pair not in prices:
+            continue
+
+        mid = prices[pair]["mid"]
+        direction = pred.get("direction", "")
+        target = pred.get("target")
+        invalidation = pred.get("invalidation")
+        entry = pred.get("entry_price", 0)
+
+        if not target or not invalidation or not entry:
+            continue
+
+        # Check if target reached
+        if direction == "LONG" and mid >= target:
+            pred["status"] = "correct"
+            pred["result"] = "target_reached"
+            pred["resolved_at"] = now
+            pred["pips"] = round((mid - entry) * (100 if pair.endswith("JPY") else 10000), 1)
+            changed = True
+        elif direction == "SHORT" and mid <= target:
+            pred["status"] = "correct"
+            pred["result"] = "target_reached"
+            pred["resolved_at"] = now
+            pred["pips"] = round((entry - mid) * (100 if pair.endswith("JPY") else 10000), 1)
+            changed = True
+        # Check if invalidated
+        elif direction == "LONG" and mid <= invalidation:
+            pred["status"] = "wrong"
+            pred["result"] = "invalidated"
+            pred["resolved_at"] = now
+            pred["pips"] = round((mid - entry) * (100 if pair.endswith("JPY") else 10000), 1)
+            changed = True
+        elif direction == "SHORT" and mid >= invalidation:
+            pred["status"] = "wrong"
+            pred["result"] = "invalidated"
+            pred["resolved_at"] = now
+            pred["pips"] = round((entry - mid) * (100 if pair.endswith("JPY") else 10000), 1)
+            changed = True
+        # Check if stale (>30min for scalp, >8hr for swing)
+        else:
+            try:
+                from datetime import datetime, timedelta
+                pred_time = datetime.fromisoformat(pred["timestamp"].replace("Z", "+00:00"))
+                now_time = datetime.fromisoformat(now.replace("Z", "+00:00"))
+                max_age = timedelta(minutes=30) if pred.get("agent") == "scalp-fast" else timedelta(hours=8)
+                if now_time - pred_time > max_age:
+                    # Expired — check if direction was at least right
+                    if (direction == "LONG" and mid > entry) or (direction == "SHORT" and mid < entry):
+                        pred["status"] = "partial"
+                        pred["result"] = "direction_correct_timeout"
+                    else:
+                        pred["status"] = "wrong"
+                        pred["result"] = "direction_wrong_timeout"
+                    pred["resolved_at"] = now
+                    pips_mult = 100 if pair.endswith("JPY") else 10000
+                    pred["pips"] = round((mid - entry) * pips_mult, 1) if direction == "LONG" \
+                        else round((entry - mid) * pips_mult, 1)
+                    changed = True
+            except Exception:
+                pass
+
+    if changed:
+        with open(PREDICTION_TRACKER_PATH, "w") as f:
+            json.dump(predictions, f, indent=2)
+
+
+def _build_summary(monitor: dict) -> dict:
+    """Build compact summary for scalp-fast. ~2KB instead of ~25KB."""
+    pairs_summary = {}
+    for pair, data in monitor.get("pairs", {}).items():
+        price = data.get("price", {})
+        micro = data.get("micro", {})
+        m1 = data.get("m1", {})
+        m5 = data.get("m5", {})
+        signal = data.get("signal", {})
+        sizing = data.get("sizing", {}).get("scalp", {})
+        sp = data.get("scalp_params", {})
+
+        pairs_summary[pair] = {
+            "bid": price.get("bid"), "ask": price.get("ask"),
+            "spread": price.get("spread_pips"),
+            "micro_dir": micro.get("direction"), "micro_vel": micro.get("velocity"),
+            # Key predictive indicators
+            "m1_rsi": round(m1.get("rsi", 50), 1),
+            "m1_stoch": round(m1.get("stoch_rsi", 0.5), 2),
+            "m5_adx": round(m5.get("adx", 0), 1),
+            "m5_rsi": round(m5.get("rsi", 50), 1),
+            "m5_macd_hist": round(m5.get("macd_hist", 0), 5),
+            "m5_bbw": round(m5.get("bbw", 0), 5),
+            "m5_bb_pos": round((price.get("mid", 0) - m5.get("bb_lower", 0)) /
+                               max(m5.get("bb_upper", 1) - m5.get("bb_lower", 1), 0.0001), 2)
+                         if m5.get("bb_upper") and m5.get("bb_lower") else None,
+            "m5_vwap_gap": round(m5.get("vwap_gap", 0), 1),
+            "m5_ichimoku_cloud": round(m5.get("ichimoku_cloud_pos", 0), 1),
+            "m5_div_rsi": m5.get("div_rsi_kind", 0),
+            "m5_div_macd": m5.get("div_macd_kind", 0),
+            "swing_dist_high": m5.get("swing_dist_high"),
+            "swing_dist_low": m5.get("swing_dist_low"),
+            # Scores
+            "long_score": signal.get("LONG_score", 0),
+            "short_score": signal.get("SHORT_score", 0),
+            # Sizing
+            "can_trade": sizing.get("can_trade", False),
+            "rec_units": sizing.get("recommended_units", 0),
+            # Scalp params
+            "tp_pips": sp.get("tp_pips"), "sl_pips": sp.get("sl_pips"),
+        }
+
+    # Recent predictions for agent context (so agents know what they predicted last)
+    recent_preds = []
+    try:
+        with open(PREDICTION_TRACKER_PATH) as f:
+            all_preds = json.load(f)
+        # Last 5 predictions (any agent)
+        for p in all_preds[-5:]:
+            recent_preds.append({
+                "agent": p.get("agent"),
+                "pair": p.get("pair"),
+                "direction": p.get("direction"),
+                "reason": p.get("reason", "")[:80],
+                "status": p.get("status"),
+                "pips": p.get("pips"),
+                "age_min": None,
+            })
+            # Calculate age
+            try:
+                from datetime import datetime
+                pt = datetime.fromisoformat(p["timestamp"].replace("Z", "+00:00"))
+                nt = datetime.fromisoformat(monitor["timestamp"].replace("Z", "+00:00"))
+                recent_preds[-1]["age_min"] = round((nt - pt).total_seconds() / 60, 1)
+            except Exception:
+                pass
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    # Prediction accuracy stats
+    pred_stats = {}
+    try:
+        with open(PREDICTION_TRACKER_PATH) as f:
+            preds = json.load(f)
+        for agent in ["scalp-fast", "swing-trader"]:
+            resolved = [p for p in preds if p.get("agent") == agent and p.get("status") != "open"]
+            last_10 = resolved[-10:] if len(resolved) > 10 else resolved
+            if last_10:
+                correct = sum(1 for p in last_10 if p["status"] in ("correct", "partial"))
+                wrong = sum(1 for p in last_10 if p["status"] == "wrong")
+                total = len(last_10)
+                # Find best/worst patterns
+                by_pair = {}
+                for p in resolved[-20:]:
+                    pair = p.get("pair", "?")
+                    if pair not in by_pair:
+                        by_pair[pair] = {"correct": 0, "wrong": 0}
+                    if p["status"] in ("correct", "partial"):
+                        by_pair[pair]["correct"] += 1
+                    elif p["status"] == "wrong":
+                        by_pair[pair]["wrong"] += 1
+                pred_stats[agent] = {
+                    "last_10": f"{correct}/{total} correct",
+                    "accuracy_pct": round(correct / total * 100) if total > 0 else 0,
+                    "by_pair": {k: f"{v['correct']}/{v['correct']+v['wrong']}" for k, v in by_pair.items()},
+                    "open": sum(1 for p in preds if p.get("agent") == agent and p.get("status") == "open"),
+                }
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    return {
+        "timestamp": monitor.get("timestamp"),
+        "pairs": pairs_summary,
+        "market": monitor.get("market", {}),
+        "positions": monitor.get("positions", []),
+        "account": monitor.get("account", {}),
+        "risk": monitor.get("risk", {}),
+        "session": monitor.get("session", {}),
+        "actions_taken": monitor.get("actions_taken", []),
+        "recently_closed": monitor.get("recently_closed", {}),
+        "recent_predictions": recent_preds,
+        "prediction_accuracy": pred_stats,
+    }
+
+
 def main():
     loop_sec = None
     for arg in sys.argv[1:]:
@@ -1443,6 +1766,18 @@ def main():
             OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(OUTPUT_PATH, "w") as f:
                 json.dump(monitor, f, indent=2)
+            # Write compact summary for scalp-fast (much smaller, faster to read)
+            try:
+                summary = _build_summary(monitor)
+                with open(SUMMARY_PATH, "w") as f:
+                    json.dump(summary, f, indent=2)
+            except Exception as e:
+                print(f"WARN: summary build failed: {e}", file=sys.stderr)
+            # Verify open predictions against current prices
+            try:
+                _verify_predictions(monitor)
+            except Exception as e:
+                print(f"WARN: prediction verify failed: {e}", file=sys.stderr)
             ts = monitor["timestamp"]
             n_pos = len(monitor["positions"])
             nav = monitor["account"]["nav"]

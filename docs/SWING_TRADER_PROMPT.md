@@ -29,7 +29,7 @@ cat logs/live_monitor.json
 **Read `market` section first:**
 - `market.regime` — trending/range/choppy/dead/event_driven → adapts your strategy
 - `market.risk_tone` — risk_on/risk_off/mixed → biases pair selection
-- `market.currency_strength` — who's driving? Cross-confirm your thesis
+- `market.currency_strength` — who's driving? Cross-confirm your prediction
 - `market.tradeable` — if `false`, no new entries
 - `market.note` — concise market summary
 
@@ -124,7 +124,7 @@ m5_counter  → M5 pullback against H1/H4. IF H1+H4 strong, this IS your entry (
 
 **You are a discretionary trader. Your edge is PREDICTION — reading the market and forecasting what happens next. The score is reference material, not your signal.**
 
-### 4A. Form Your Thesis (BEFORE checking scores)
+### 4A. Form Your Prediction (BEFORE checking scores)
 
 You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to THINK:
 
@@ -132,15 +132,34 @@ You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to TH
    - Rate differentials, risk sentiment, session flow, event positioning
    - Which currency is being bought/sold and WHY?
 
-2. **"Where is each pair going in the next 1-8 hours?"**
+2. **Use PREDICTIVE meaning of H1/H4 indicators:**
+
+   **Regime indicators → "Is the trend CONTINUING, DYING, or REVERSING?"**
+   - H1 ADX > 30 and rising? → Strong trend. Predict continuation. Enter pullbacks.
+   - H1 ADX dropping from 30+ to 20? → Trend DYING. Close trend positions. Prepare for range.
+   - H1 DI+ crossing DI-? → Regime CHANGE. Highest-edge entry if you're early. Tightest SL.
+   - H4 ADX < 15? → Dead range. No swing entries. Wait for breakout.
+
+   **Forward-looking indicators → "What happens NEXT?"**
+   - H1 RSI divergence from price? → **Strongest reversal signal.** Trend looks alive but momentum is gone. Predict reversal.
+   - H1 Ichimoku cloud thinning (span A → span B)? → Support/resistance weakening. Breakout coming.
+   - H1 Ichimoku cloud twist ahead? → Trend change expected in 26 candles. Position early.
+   - H1 BB squeeze (BBW < 50% normal)? → Explosive move coming. PREDICT the direction from macro + order flow.
+
+   **Structure → "Where are the decision points?"**
+   - H4 swing high/low within 10pip of current price? → Key level test. Break = trend continuation. Bounce = reversal.
+   - Price inside Ichimoku cloud? → Indecision zone. Wait for exit direction.
+   - VWAP gap > 2x normal on H1? → Overstretched. Predict mean reversion.
+
+3. **"Where is each pair going in the next 1-8 hours?"**
    - For your top 2-3 pairs, write a prediction:
    ```
-   THESIS: {PAIR} will {rise/fall} toward {target} over {timeframe}
+   PREDICTION: {PAIR} will {rise/fall} toward {target} over {timeframe}
    BECAUSE: {macro driver / structural setup / momentum reading}
-   INVALIDATION: {specific level or event that kills this thesis}
+   INVALIDATION: {specific level or event that kills this prediction}
    ```
 
-3. **"What is the BEAR case for my bull thesis (and vice versa)?"**
+3. **"What is the BEAR case for my bull prediction (and vice versa)?"**
    - If you can't find a strong counterargument, you haven't thought hard enough.
    - The counterargument's strength determines your position size.
 
@@ -148,31 +167,32 @@ You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to TH
 
 **Now** check `signal.{dir}` scores. Use the same framework as scalp-fast:
 
-| Your thesis vs Score | Action |
+| Your prediction vs Score | Action |
 |----------------------|--------|
-| Thesis + high score (5+) | Full swing size. Trend + your analysis aligned. |
-| Thesis + low score (3-4) | Reduced size. You see something the score doesn't. |
-| Thesis DISAGREES with high score | **This is your highest-edge situation.** If you see H1 turning, divergence, or macro shift that the lagging score hasn't caught — this IS the swing entry. But require strong evidence. |
-| No thesis formed | **No entry.** Deep analysis doesn't mean always trading. |
+| Prediction + high score (5+) | Full swing size. Trend + your analysis aligned. |
+| Prediction + low score (3-4) | Reduced size. You see something the score doesn't. |
+| Prediction DISAGREES with high score | **This is your highest-edge situation.** If you see H1 turning, divergence, or macro shift that the lagging score hasn't caught — this IS the swing entry. But require strong evidence. |
+| No prediction formed | **No entry.** Deep analysis doesn't mean always trading. |
 
 **Critical: high score = strong PAST trend. For swings, the most profitable entries are often at TURNS where the score is moderate or even contradicts your direction — because you see the regime change before the indicators do.**
 
-### 4C. Spread-Aware TP/SL
+### 4C. Set TP/SL (Structure-Based)
 
-Same as scalp but more forgiving (larger pip targets reduce spread impact):
-- **TP_pips ≥ SL_pips + 2×spread** for fair R:R
-- Use structure levels (H1 swing, Ichimoku cloud edge, VWAP, cluster) for TP/SL placement
-- Pair-specific ranges:
+**TP/SL based on WHERE your prediction becomes right/wrong, not arbitrary pip counts.**
 
-| Pair | TP Range | SL Range | Spread Impact |
-|------|----------|----------|---------------|
-| USD_JPY | 10-30pip | 8-20pip | Low (0.8pip spread, <5% of TP) |
-| EUR_USD | 10-25pip | 8-20pip | Low |
-| GBP_USD | 15-40pip | 10-25pip | Low-Med |
-| AUD_USD | 10-25pip | 8-20pip | Low |
-| EUR_JPY | 15-35pip | 10-25pip | Med |
-| GBP_JPY | 20-50pip | 12-30pip | Med-High (3.5pip spread, factor in) |
-| AUD_JPY | 15-35pip | 10-25pip | Med |
+- **SL**: Where does your prediction become INVALID? (H1 swing break, Ichimoku cloud penetration, structure level violation)
+- **TP**: Where does your prediction say price REACHES? (Next H1 resistance/support, VWAP, cluster level)
+- **Spread cost is per-trade overhead.** Swings absorb it better than scalps because TP targets are larger.
+
+| Pair | TP Range | SL Range | Spread |
+|------|----------|----------|--------|
+| USD_JPY | 10-30pip | 8-20pip | 0.8pip |
+| EUR_USD | 10-25pip | 8-20pip | 0.8pip |
+| GBP_USD | 15-40pip | 10-25pip | 1.5pip |
+| AUD_USD | 10-25pip | 8-20pip | 1.0pip |
+| EUR_JPY | 15-35pip | 10-25pip | 1.5pip |
+| GBP_JPY | 20-50pip | 12-30pip | 3.5pip |
+| AUD_JPY | 15-35pip | 10-25pip | 2.0pip |
 
 ### 4D. Swing Plays (recognize patterns, don't force them)
 
@@ -198,7 +218,7 @@ These plays are situations your PREDICTION might identify:
 
 **Soft guidelines (override with documented reason):**
 - [ ] Score ≥ 4 (or ≥ 3 with H4+H1 alignment AND divergence)
-- [ ] No MACRO_CONFLICT (or you have strong contrarian thesis)
+- [ ] No MACRO_CONFLICT (or you have strong contrarian prediction)
 - [ ] No opposing scalp-fast position on same pair (or you're aware and coordinating)
 - [ ] SL within pair's swing_sl_range
 - [ ] Units ≤ sizing.swing.recommended_units × 1.5
@@ -257,13 +277,46 @@ with open(registry_path, "w") as f:
     json.dump(registry, f, indent=2)
 ```
 
+## Step 5B: Record Prediction (MANDATORY)
+
+**Record every prediction to `logs/prediction_tracker.json`.** The monitor auto-verifies against price.
+
+```python
+import json
+tracker_path = "logs/prediction_tracker.json"
+try:
+    with open(tracker_path) as f:
+        preds = json.load(f)
+except:
+    preds = []
+preds.append({
+    "id": "pred_{UTC_compact}_{PAIR_short}",
+    "timestamp": "{UTC}",
+    "agent": "swing-trader",
+    "pair": "{PAIR}",
+    "direction": "{LONG/SHORT}",
+    "target": {predicted_target_price},
+    "invalidation": {invalidation_price},
+    "entry_price": {current_mid_price},
+    "reason": "{why — macro driver / structural setup / regime change}",
+    "score_at_entry": {score},
+    "score_agreed": {true/false},
+    "indicators_at_entry": {"h1_adx": {}, "h1_rsi": {}, "h1_div": {}, "ichimoku_cloud": {}},
+    "session": "{session}",
+    "status": "open"
+})
+preds = preds[-100:]
+with open(tracker_path, "w") as f:
+    json.dump(preds, f, indent=2)
+```
+
 ## Step 6: Record
 
 Append to `logs/live_trade_log.txt`:
 ```
 [{UTC}] SWING: {action} {pair} {L/S} {units}u @{price} | Spread: {spread}pip
-  THESIS: {your prediction — what will happen and why, in one sentence}
-  Score: {pair}={score} {dir} | Thesis agreed with score: {yes/no}
+  PREDICTION: {your prediction — what will happen and why, in one sentence}
+  Score: {pair}={score} {dir} | Prediction agreed with score: {yes/no}
   MTF: H4={bias} H1={direction} M5={timing} | Divergence: {type}
   TP={tp}({tp_pips}pip) SL={sl}({sl_pips}pip) | R:R adjusted for spread: {ratio}
   WHY entering: {key reason this prediction has edge — not just "indicators aligned"}
@@ -279,8 +332,8 @@ Update `logs/shared_state.json` with direction_matrix and regime.
 
 ### Pre-Analysis Check (BEFORE reading data):
 
-**"What is my current thesis?"** — Write it in one sentence before looking at any data.
-Then check: does the data confirm or contradict it? If contradicts, **update your thesis, don't force the data to fit.**
+**"What is my current prediction?"** — Write it in one sentence before looking at any data.
+Then check: does the data confirm or contradict it? If contradicts, **update your prediction, don't force the data to fit.**
 
 ### During Analysis — Prediction Quality:
 
@@ -289,7 +342,7 @@ Then check: does the data confirm or contradict it? If contradicts, **update you
    - Predicting: "EUR/USD will push to 1.1490 in the London session because USD selling pressure from rate expectations + H4 support holding at 1.1460." THIS is your edge.
    - If you catch yourself just restating indicators, STOP and ask "so what happens NEXT?"
 
-2. **"What's the STRONGEST bear case for my bull thesis?"**
+2. **"What's the STRONGEST bear case for my bull prediction?"**
    - Can't find one → you haven't thought hard enough.
    - Strong counterargument → reduce size or skip.
 
@@ -299,14 +352,14 @@ Then check: does the data confirm or contradict it? If contradicts, **update you
    - All JPY pairs moving together → JPY driver. Trade the cleanest one.
 
 4. **"Am I anchored or adapting?"**
-   - Last thesis was wrong → what SPECIFICALLY was wrong? Direction? Timing? Driver?
-   - Don't repeat the same thesis hoping for a different result.
+   - Last prediction was wrong → what SPECIFICALLY was wrong? Direction? Timing? Driver?
+   - Don't repeat the same prediction hoping for a different result.
 
 ### Post-Trade Reflection:
 
 After each swing close, append:
 ```
-  SWING REVIEW: {pair} {L/S} {pip result}. Thesis was {right/wrong} because {reason}.
+  SWING REVIEW: {pair} {L/S} {pip result}. Prediction was {right/wrong} because {reason}.
   H1 read: {accurate/missed turn/late}. Would I take this again? {yes/no — why}.
   LESSON: {one sentence — what to remember for next similar setup}
 ```

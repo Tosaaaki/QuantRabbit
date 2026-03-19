@@ -2,6 +2,41 @@
 
 ## 2026-03-19
 
+- **11:55 TRAIL_FAIL HTTP 400修正**
+  - `live_monitor.py` manage_positions Rule 1: SL→TSL切替時のOANDA API 400エラー修正
+  - 原因: `sl`変数が未定義（`pos.get("sl")`に修正）+ SLキャンセルとTSL設定を同一リクエストで送信
+  - フォールバック: atomic requestが400なら2ステップ（SLを遠くに移動→TSL設定）
+  - 参考: OANDA v20 APIはstopLoss: nullでキャンセルだがフィールド欠落で400になることがある
+
+- **23:50 v4.3f: 予測→エントリー直結化（反エントリーバイアス修正）**
+  - `SCALP_FAST_PROMPT.md`: 予測+スコア一致=即エントリー（最強パターン）に変更。「No entry is better than bad entry」削除。Score 8-9への過度な懐疑を撤廃。Self-Question #3を「理由探し→エントリー探し」に反転。3サイクル連続スキップ時のMandatory self-check追加
+  - **問題**: 予測ファーストが「見送りフィルター」化し、予測するほどエントリーしなくなっていた
+  - **修正方針**: 予測した方向にそのまま乗る。予測=トレードシグナル。スコアは確認であり許可ではない
+
+- **22:30 v4.3e: ストップ&リバース + エージェント記憶**
+  - `live_monitor.py`: `auto_reverse`機能追加。trade_registryのrules.auto_reverse=trueでSL/cut時に自動逆ポジション。TP=元SL距離、SL=元trail距離。`_api_post()`追加。
+  - `live_monitor_summary.json`: `recent_predictions`追加（直近5予測 + 経過時間 + 正否）。エージェントが「前回の自分」を即座に確認可能。
+  - `SCALP_FAST_PROMPT.md`: auto_reverseオプション説明追加。トレンド市場で使用、レンジでは非推奨。
+  - **設計思想**: 予測が外れてもSL方向のモメンタムに乗って回収。予測正→TP、予測誤→リバースで回収。両方向で稼ぐ。
+
+- **21:10 secretary: グローバルロック撤廃** — secretaryは注文しない読み取り専用タスクのため、global_agentロック取得を不要に変更。他タスクとのロック競合でスキップされ続ける問題を解消
+- **22:15 v4.3d: 予測自動学習ループ**
+  - `logs/prediction_tracker.json`: 予測記録ファイル。scalp-fast/swing-traderが毎サイクル書き込み
+  - `live_monitor.py` `_verify_predictions()`: 30秒ごとに予測をprice検証（target到達→correct、invalidation到達→wrong、タイムアウト→方向正否判定）
+  - `live_monitor_summary.json`: `prediction_accuracy`フィールド追加（last-10精度、ペア別精度）
+  - `SCALP_FAST_PROMPT.md`: Step 4B 予測記録手順追加。精度<40%→スコア確認重視、>60%→独自予測信頼
+  - `SWING_TRADER_PROMPT.md`: Step 5B 同様
+  - `MACRO_INTEL_PROMPT.md`: Section 5a2 予測パターン分析追加（ペア別/セッション別/スコア一致別/方向別の精度分析→shared_stateに改善提案書き込み）
+  - **学習ループ**: 予測→記録→自動検証→精度集計→macro-intel分析→改善提案→エージェント行動修正
+
+- **22:00 v4.3c: 予測フレームワーク + スプレッド修正 + monitor軽量化**
+  - **スプレッドTP/SLセクション修正**: 「TP≥SL+2×spread」ルール削除（数学的に無意味: EV=-spread はTP/SL比率に依存しない）。TP/SLは構造ベースに。スプレッドは「正しい予測でしか克服できないコスト」と正直に記述。
+  - **予測フレームワーク追加**:
+    - `SCALP_FAST_PROMPT.md` 3A.2: 指標の予測的意味を4カテゴリで解説（モメンタム→加速/死亡、ボラ→来る/終わる、レベル→反発/突破、クロスペア→テーマ）
+    - `SWING_TRADER_PROMPT.md` 4A.2: H1/H4レジーム指標・先行指標・構造の予測的意味
+  - **monitor軽量化**: `_build_summary()` → `logs/live_monitor_summary.json`(~2KB)出力追加。scalp-fastはサマリーを読む（25KB→2KBで読み込み10x高速化）
+  - **THESIS→PREDICTION統一**: swing-traderもPREDICTIONに統一（用語揃え）
+
 - **21:50 v4.3b: 整合性修正 + 予測精度追跡 + CLAUDE.md更新**
   - `SECRETARY_PROMPT.md`: alerts pruning矛盾修正（additive ruleにalerts例外追加）
   - `CLAUDE.md`: v4.3反映 — 予測ファースト原則、自己改善ループ図、trade_performance.py記載

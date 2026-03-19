@@ -82,11 +82,12 @@ Write the following to `logs/secretary_report.json`:
 - Did swing-trader enter during `h1_turning`? → Flag: "dangerous entry timing — H1 regime changing"
 - Has no agent traded for 30+ minutes? → Check: are scores genuinely all low, or are agents being too cautious?
 
-**d) Quality over quantity check:**
+**d) Quality over quantity check (TODAY's session only):**
 ```bash
-# Quick trade frequency check
-grep -c "FAST:" logs/live_trade_log.txt 2>/dev/null | tail -1
-grep -c "SWING:" logs/live_trade_log.txt 2>/dev/null | tail -1
+# Get today's date in UTC, then count today's trades only
+TODAY=$(date -u +%Y-%m-%d)
+grep "^\[$TODAY" logs/live_trade_log.txt 2>/dev/null | grep -c "FAST:" || echo 0
+grep "^\[$TODAY" logs/live_trade_log.txt 2>/dev/null | grep -c "SWING:" || echo 0
 ```
 - scalp-fast: 3-8 trades/session is healthy. >12 = overtrading. 0 for 2+ hours = too cautious.
 - swing-trader: 1-3 trades/session is healthy. >5 = not being selective enough.

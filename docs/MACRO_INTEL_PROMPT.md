@@ -59,6 +59,49 @@ This parses `logs/live_trade_log.txt` and outputs:
 - Directional breakdown (LONG vs SHORT — is there a bias problem?)
 - Recent trend (last 10 trades vs last 50 — improving or worsening?)
 
+### 5a2. Analyze Prediction Accuracy (NEW — v4.3)
+
+**Read prediction tracker and identify patterns:**
+```bash
+cat logs/prediction_tracker.json
+```
+
+This file is auto-maintained by the monitor. Each prediction has:
+- `status`: "correct" / "wrong" / "partial" / "open"
+- `score_agreed`: did the agent's prediction agree with the score?
+- `indicators_at_entry`: what the indicators showed when the prediction was made
+- `pair`, `session`, `direction`: for slicing
+
+**Analyze these patterns:**
+
+1. **Overall accuracy**: What % of predictions are correct? (target: >55% for scalp, >50% for swing)
+2. **Score agreement**: Are predictions that AGREE with score more accurate than those that DISAGREE?
+   - If agree > disagree accuracy: agents should weight score confirmation more
+   - If disagree > agree accuracy: agents are genuinely reading something the score can't → encourage more independent prediction
+3. **By pair**: Which pairs do we predict well? Which poorly?
+   - If EUR/USD accuracy 70% but GBP/JPY 30% → recommend focusing on EUR/USD
+4. **By session**: Better predictions in London vs Tokyo vs NY?
+5. **By indicator state**: When m5_adx was >25 at entry, were predictions more accurate?
+6. **Direction bias**: Are LONG predictions systematically worse than SHORT (or vice versa)?
+
+**Write findings to shared_state.json under `prediction_insights`:**
+```json
+{
+  "prediction_insights": {
+    "updated": "{UTC}",
+    "scalp_fast_accuracy": "6/10 (60%)",
+    "swing_accuracy": "3/5 (60%)",
+    "best_pair": "EUR_USD (7/10)",
+    "worst_pair": "GBP_JPY (1/5)",
+    "score_agree_better": true,
+    "recommendation": "Focus scalp on EUR_USD/USD_JPY. Avoid GBP_JPY scalps."
+  }
+}
+```
+
+**If accuracy < 40% for any agent → write alert to shared_state recommending that agent rely more on score confirmation until accuracy recovers.**
+**If accuracy > 60% → write encouragement to trust independent predictions more.**
+
 ### 5b. Read the Trader's Full Desk + Agent Reflections
 
 | Monitor | File | What it tells you |

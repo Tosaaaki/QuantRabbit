@@ -233,16 +233,24 @@ def parse_prediction_accuracy(log_path: Path) -> dict:
     if not log_path.exists():
         return {"total_reflections": 0}
 
-    text = log_path.read_text(encoding="utf-8", errors="replace")
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    text = "\n".join(lines)
 
     # Count prediction/thesis outcomes from REFLECTION and SWING REVIEW entries
     # scalp-fast writes "Prediction was right/wrong", swing-trader writes "Thesis was right/wrong"
     right_pattern = re.compile(r"(?:Prediction|Thesis) was right", re.IGNORECASE)
     wrong_pattern = re.compile(r"(?:Prediction|Thesis) was wrong", re.IGNORECASE)
 
-    right_count = len(right_pattern.findall(text))
-    wrong_count = len(wrong_pattern.findall(text))
-    total = right_count + wrong_count
+    # All-time counts
+    all_right = len(right_pattern.findall(text))
+    all_wrong = len(wrong_pattern.findall(text))
+    all_total = all_right + all_wrong
+
+    # Recent counts (last 200 lines — roughly last few hours of activity)
+    recent_text = "\n".join(lines[-200:]) if len(lines) > 200 else text
+    recent_right = len(right_pattern.findall(recent_text))
+    recent_wrong = len(wrong_pattern.findall(recent_text))
+    recent_total = recent_right + recent_wrong
 
     # Count REFLECTION entries (compliance check)
     reflection_count = len(re.findall(r"REFLECTION:", text))
@@ -250,16 +258,33 @@ def parse_prediction_accuracy(log_path: Path) -> dict:
     pattern_check_count = len(re.findall(r"PATTERN CHECK:", text))
     macro_review_count = len(re.findall(r"\[MACRO-INTEL REVIEW\]", text))
 
-    return {
-        "prediction_right": right_count,
-        "prediction_wrong": wrong_count,
-        "prediction_total": total,
-        "prediction_accuracy": round(right_count / total, 2) if total > 0 else None,
+    result = {
+        "prediction_right": all_right,
+        "prediction_wrong": all_wrong,
+        "prediction_total": all_total,
+        "prediction_accuracy": round(all_right / all_total, 2) if all_total > 0 else None,
+        "recent_prediction_right": recent_right,
+        "recent_prediction_wrong": recent_wrong,
+        "recent_prediction_total": recent_total,
+        "recent_prediction_accuracy": round(recent_right / recent_total, 2) if recent_total > 0 else None,
         "reflection_count": reflection_count,
         "swing_review_count": swing_review_count,
         "pattern_check_count": pattern_check_count,
         "macro_review_count": macro_review_count,
     }
+
+    # Trend detection: is recent accuracy worse than all-time?
+    if all_total >= 10 and recent_total >= 5:
+        all_acc = all_right / all_total
+        recent_acc = recent_right / recent_total
+        if recent_acc < all_acc - 0.15:
+            result["prediction_trend"] = "deteriorating"
+        elif recent_acc > all_acc + 0.15:
+            result["prediction_trend"] = "improving"
+        else:
+            result["prediction_trend"] = "stable"
+
+    return result
 
 
 def main():
@@ -357,8 +382,18 @@ def main():
     p = prediction
     if p["prediction_total"] > 0:
         print(f"\n--- Prediction Accuracy ---")
-        print(f"  Right: {p['prediction_right']} | Wrong: {p['prediction_wrong']} | "
-              f"Accuracy: {p['prediction_accuracy']:.0%}")
+        print(f"  All-time: {p['prediction_right']}R / {p['prediction_wrong']}W = "
+              f"{p['prediction_accuracy']:.0%} ({p['prediction_total']} predictions)")
+        if p.get("recent_prediction_total", 0) > 0:
+            print(f"  Recent:   {p['recent_prediction_right']}R / {p['recent_prediction_wrong']}W = "
+                  f"{p['recent_prediction_accuracy']:.0%} ({p['recent_prediction_total']} predictions)")
+        if "prediction_trend" in p:
+            trend_str = p["prediction_trend"].upper()
+            if trend_str == "DETERIORATING":
+                print(f"  !! PREDICTION ACCURACY DECLINING — lean heavier on score confirmation")
+            elif trend_str == "IMPROVING":
+                print(f"  >> Prediction accuracy improving — good sign")
+
     print(f"\n--- Self-Improvement Compliance ---")
     print(f"  REFLECTION entries: {p['reflection_count']} | SWING REVIEW: {p['swing_review_count']}")
     print(f"  PATTERN CHECK: {p['pattern_check_count']} | MACRO-INTEL REVIEW: {p['macro_review_count']}")
