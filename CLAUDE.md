@@ -9,12 +9,12 @@
 
 | タスク | モデル | 間隔 | 役割 |
 |--------|--------|------|------|
-| scalp-trader | Opus | 3分 | 市況分析→裁量判断→OANDA直接注文 |
-| market-radar | Sonnet | 2分 | ポジション監視・急変検知・レジーム変化検知 |
-| macro-intel | Sonnet | 15分 | マクロ分析・戦略改善・ツール開発 |
-| secretary | Sonnet | 10分 | エージェント監視・状況レポート・異常検知 |
+| scalp-trader | Opus | 5分 | 市況分析→裁量判断→OANDA直接注文 |
+| market-radar | Sonnet | 7分 | ポジション監視・急変検知・レジーム変化検知 |
+| macro-intel | Sonnet | 19分 | マクロ分析・戦略改善・ツール開発 |
+| secretary | Sonnet | 11分 | エージェント監視・状況レポート・異常検知 |
 
-- 排他制御: `scripts/trader_tools/task_lock.py` でファイルロック
+- 排他制御: `scripts/trader_tools/task_lock.py` でグローバルロック（`global_agent`）。互いに素な間隔で衝突最小化
 - エージェント間連携: `logs/shared_state.json`
 - 各タスクのプロンプト: `docs/*_PROMPT.md`
 - タスク定義: `~/.claude/scheduled-tasks/*/SKILL.md`
