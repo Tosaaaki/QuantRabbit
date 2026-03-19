@@ -2,6 +2,13 @@
 
 ## 2026-03-20
 
+- **update: 予測精度改善 — ADX品質フィルター+通貨強弱差分析導入**
+  - データ分析: 予測67%、M5 ADX<15で50%、ADX 15-25で100%、CS差>0.5で100%
+  - SCALP_FAST_PROMPT: 「予測精度フィルター」セクション追加（高確率/危険セットアップ+4項チェック）
+  - live_monitor.py: ADX<15に追加-1ペナルティ(PENALTY:ADX_DEAD)、adx_quality/cs_quality/cs_diffをconfluenceに注入
+  - trade_performance.py: prediction_trackerにby_adx_quality/by_cs_quality分析追加
+- **critical: ポジション所有権ルール導入** — 2026-03-20 AUD_JPY事故(FASTがSWINGのポジを-7pipで殺した→直後プラス圏)を受け、SCALP_FAST_PROMPTに「FAST:ENTRYで建てたトレードだけ決済可」ハードルール追加。SWING_TRADER_PROMPTにレジストリ書き込み確認＋失敗時フォールバック追加。clientExtensions commentが所有権マーカー
+- **fix: live_monitor ディスク満杯耐障害性強化** — `_log_action`/`save_registry`にOSErrorフォールバック追加。`logs/critical_events.log`に退避。ディスク<500MB時に毎cycleアラート
 - **fix: SCALP_FAST_PROMPT ボット化防止** — ゾーン固執禁止(3cycle reset)・PASSは1行・ゾーンはゲートではなく参考・やるな項目追加
 - **fix: live_monitor_summary.jsonのスコアが全ペア0だったバグ修正** — `LONG_score`→`long_score`キー名不一致。scalp-fastがスコアゼロで判断していた
 - **fix: swing-traderロック飢餓** — market-radarをロック不要化(読取専用)、ROTATION_GRACE_SEC 30→10秒。swing-traderが183分停止していた問題を解消
@@ -267,3 +274,4 @@
 - Shared_state alerts pruned: 17→5 (cleared Mar 19 stale alerts)
 - Prediction_insights updated: 67% accuracy, swing-trader offline flagged
 - Live_monitor stale (24h+) alert added, OANDA direct pricing workaround noted
+2026-03-19T18:06:00Z macro-intel: M5 ADX<15 gate強化(half→hard skip)、PATTERN CHECK形式追加、prediction_insights更新(67% accuracy)、EUR_USD LONG alert発報

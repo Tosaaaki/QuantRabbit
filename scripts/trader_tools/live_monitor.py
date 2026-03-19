@@ -826,11 +826,20 @@ def score_pair(pair_data: dict, direction: str, pair: str = "", macro_bias: dict
 
     # === E. PENALTIES & BONUSES ===
 
-    # E1. M5 choppy — pair-specific ADX threshold (-1)
+    # E1. M5 choppy — pair-specific ADX threshold (-1, or -2 if very weak)
     choppy_threshold = max(adx_min - 5, 12)  # pair-specific
     if m5_adx and m5_adx < choppy_threshold:
         score -= 1
         reasons.append(f"PENALTY:choppy(M5_ADX={round(m5_adx)}<{choppy_threshold})")
+    # E1b. M5 ADX < 15 = no directional conviction — extra penalty (data: 100% loss rate)
+    if m5_adx and m5_adx < 15:
+        score -= 1
+        reasons.append(f"PENALTY:ADX_DEAD(M5_ADX={round(m5_adx)}<15,trend_trades_lose)")
+        confluence["adx_quality"] = "dead"
+    elif m5_adx and m5_adx >= 25:
+        confluence["adx_quality"] = "strong"
+    else:
+        confluence["adx_quality"] = "moderate"
 
     # E2. Event risk (-1 for extreme)
     if macro_bias:
@@ -916,10 +925,20 @@ def load_registry() -> dict:
 
 
 def save_registry(registry: dict):
-    """Save trade registry."""
+    """Save trade registry. Logs a critical warning if disk is full."""
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(REGISTRY_PATH, "w") as f:
-        json.dump(list(registry.values()), f, indent=2)
+    try:
+        with open(REGISTRY_PATH, "w") as f:
+            json.dump(list(registry.values()), f, indent=2)
+    except OSError as e:
+        # Disk full: registry write failed — log to critical events so trade IDs are preserved
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ids = list(registry.keys())
+        try:
+            with open(CRITICAL_LOG_PATH, "a") as f:
+                f.write(f"[{ts}] MONITOR: REGISTRY_WRITE_FAILED disk_full trade_ids={ids} err={e}\n")
+        except Exception:
+            pass
 
 
 def infer_trade_type(pos: dict) -> str:
@@ -1527,6 +1546,29 @@ def build_monitor() -> dict:
     ccy_strength = compute_currency_strength(pairs)
     market = compute_market_regime(pairs, session, ccy_strength)
 
+    # Post-scoring: inject currency strength differential into confluence
+    for pair in ALL_PAIRS:
+        if pair not in pairs:
+            continue
+        base, quote = pair.split("_")
+        base_cs = ccy_strength.get(base, 0)
+        quote_cs = ccy_strength.get(quote, 0)
+        cs_diff = round(abs(base_cs - quote_cs), 2)
+        sig = pairs[pair].get("signal", {})
+        for d in ("long", "short"):
+            conf = sig.get(f"{d}_confluence", {})
+            if isinstance(conf, dict):
+                conf["cs_diff"] = cs_diff
+                conf["cs_base"] = round(base_cs, 2)
+                conf["cs_quote"] = round(quote_cs, 2)
+                # High CS divergence = high conviction (data: 100% win when cs_diff>0.5)
+                if cs_diff >= 0.5:
+                    conf["cs_quality"] = "strong"
+                elif cs_diff >= 0.3:
+                    conf["cs_quality"] = "moderate"
+                else:
+                    conf["cs_quality"] = "weak"
+
     # Recently closed trades (for Claude to check before closing)
     recently_closed = load_recently_closed()
 
@@ -1799,6 +1841,18 @@ def main():
             risk = monitor.get("risk", {})
             cb = " CIRCUIT_BREAKER!" if risk.get("circuit_breaker") else ""
             print(f"[{ts}] Monitor: {n_pos} pos, NAV={nav}, actions={n_act}{cb}", file=sys.stderr)
+            # Disk space check — warn if < 500MB free
+            try:
+                import os as _os
+                st = _os.statvfs(str(ROOT))
+                free_mb = st.f_bavail * st.f_frsize / 1024 / 1024
+                if free_mb < 500:
+                    warn_line = f"[{ts}] MONITOR: DISK_LOW free={free_mb:.0f}MB — registry/log writes may fail\n"
+                    print(warn_line.strip(), file=sys.stderr)
+                    with open(CRITICAL_LOG_PATH, "a") as _f:
+                        _f.write(warn_line)
+            except Exception:
+                pass
         except Exception as e:
             print(f"ERROR: {e}", file=sys.stderr)
             import traceback

@@ -305,7 +305,7 @@ def parse_prediction_tracker() -> dict:
     if not resolved:
         return {"status": "no_resolved", "total": len(preds), "open": len(open_preds)}
 
-    def _accuracy(items: list) -> dict | None:
+    def _accuracy(items: list):
         if not items:
             return None
         correct = sum(1 for p in items if p["status"] in ("correct", "partial"))
@@ -365,6 +365,29 @@ def parse_prediction_tracker() -> dict:
         else:
             score_analysis["recommendation"] = "BALANCED — both sources similar, use together"
 
+    # By M5 ADX quality at entry (key insight: ADX<15 = 100% loss rate)
+    by_adx_quality = {}
+    for bucket_name, lo, hi in [("dead_lt15", 0, 15), ("moderate_15_25", 15, 25), ("strong_gt25", 25, 999)]:
+        bucket_preds = [
+            p for p in resolved
+            if lo <= (p.get("indicators_at_entry", {}).get("m5_adx") or 0) < hi
+        ]
+        if bucket_preds:
+            by_adx_quality[bucket_name] = _accuracy(bucket_preds)
+
+    # By CS (currency strength) differential at entry
+    by_cs_quality = {}
+    for cs_name, lo, hi in [("weak_lt03", 0, 0.3), ("moderate_03_05", 0.3, 0.5), ("strong_gt05", 0.5, 99)]:
+        cs_preds = []
+        for p in resolved:
+            ind = p.get("indicators_at_entry", {})
+            # Try to compute CS diff from stored indicators
+            cs_val = ind.get("currency_strength_diff") or ind.get("cs_diff")
+            if cs_val is not None and lo <= cs_val < hi:
+                cs_preds.append(p)
+        if cs_preds:
+            by_cs_quality[cs_name] = _accuracy(cs_preds)
+
     # Recent trend (last 10 vs all)
     recent_10 = resolved[-10:] if len(resolved) > 10 else resolved
     trend_info = {
@@ -392,6 +415,8 @@ def parse_prediction_tracker() -> dict:
         "by_session": by_session,
         "by_direction": by_direction,
         "score_analysis": score_analysis,
+        "by_adx_quality": by_adx_quality,
+        "by_cs_quality": by_cs_quality,
         "trend": trend_info,
     }
 
@@ -545,6 +570,18 @@ def main():
     else:
         msg = "agents not writing predictions yet" if pt.get("total", 0) == 0 else f"{pt.get('open', 0)} open, none resolved yet"
         print(f"\n--- Prediction Tracker: {msg} ---")
+
+    # ADX quality breakdown
+    if pt.get("by_adx_quality"):
+        print(f"\n--- Prediction by M5 ADX Quality ---")
+        for bucket, stats in sorted(pt["by_adx_quality"].items()):
+            if stats:
+                print(f"    {bucket:20s}: {stats['accuracy_pct']}% ({stats['total']}pred, avg {stats['avg_pips']:+.1f}pip)")
+    if pt.get("by_cs_quality"):
+        print(f"  By CS differential:")
+        for bucket, stats in sorted(pt["by_cs_quality"].items()):
+            if stats:
+                print(f"    {bucket:20s}: {stats['accuracy_pct']}% ({stats['total']}pred, avg {stats['avg_pips']:+.1f}pip)")
 
     print(f"\n--- Self-Improvement Compliance ---")
     print(f"  REFLECTION entries: {p['reflection_count']} | SWING REVIEW: {p['swing_review_count']}")

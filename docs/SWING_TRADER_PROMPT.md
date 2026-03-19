@@ -146,6 +146,15 @@ reg.append({"trade_id": "{ID}", "owner": "swing-trader", "type": "swing", "pair"
 json.dump(reg, open("logs/trade_registry.json", "w"), indent=2)
 ```
 
+**書き込み後、必ず `trade_registry.json` を読み返して登録されたか確認しろ。**
+ディスク満杯で書き込みが無言で失敗する。失敗した場合、`live_trade_log.txt` に以下を追記:
+```
+[{UTC}] SWING: REGISTRY_FAIL {trade_id} — 手動管理モード。scalp-fastは触るな
+```
+
+### OANDA clientExtensions
+注文時に必ず `"comment": "swing-trader"` をつけろ。これがレジストリ不在時の所有権マーカーになる。
+
 ### ログ
 ```
 [{UTC}] SWING: ENTRY {pair} {L/S} {units}u @{price} | Spread: {spread}pip
