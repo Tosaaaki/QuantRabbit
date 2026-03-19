@@ -385,6 +385,28 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 
 **BOJ decision today (March 19):** Hold 0.75% expected. If Ueda hawkish (April hike signal), JPY rally risk. USD/JPY ~159.8 near intervention zone (159.45-161.95). No new UJ longs.
 
+### 2026-03-19 (macro-intel 00:31Z) — Super Central Bank Day + Oil Brent 108 + Full Event Context
+
+**CONFIRMED: BOJ held 0.75%.** Ueda hawkish lean. April 27-28 hike to 1.00% = high market consensus. JPY strength bias on any hawkish surprise in press conf. UJ SHORT = valid play (intervention + BOJ hawkish convergence).
+
+**BOE 12:00Z today — STILL PENDING.** Hold 3.75% expected. Prior vote 5-4. 28% dovish cut probability. Binary outcome:
+- Dovish (5-4 hold): GBP bears confirmed → existing SHORTs benefited. Re-enter on H1 confirm.
+- Hawkish surprise (MPC split shift): GBP recovery → wait for H1 to settle post-decision. No revenge entries.
+
+**AUS employment data today** — binary for AUD. H1 bearish intact but a strong jobs print can spike AUD_USD 30-50pip. Consider SL on AUD_USD and AUD_JPY as sufficient buffer (25-49pip currently = adequate).
+
+**Oil Brent ~$108 (WTI also elevated).** CORRECTION from prior $99 estimate. Hormuz crisis Week 3, ongoing US/Israel strikes. Oil >$100 is structural risk-off floor — not temporary. Impacts:
+- AUD terms-of-trade negative (Australia energy importer net)
+- EUR negative (eurozone energy costs)
+- JPY negative structurally but offset by BOJ rate hike path
+- USD safe-haven bid firm
+
+**VIX 23.7 (elevated baseline — corrected from stale 18.0).** Use 1.2x SL multiplier on all entries as baseline, not exception.
+
+**SNB decision today also** (CHF safe-haven flows). Watch for EUR/CHF moves.
+
+**"Super Central Bank Day" protocol:** Wide spreads guaranteed. Reduce new entry lot to 50% until BOE announcement. After BOE + Ueda press conf clear = normal sizing resumes.
+
 ### 2026-03-18 — Key Lessons (consolidated from JP log)
 - SL too tight is #1 loss cause. Minimum 2x ATR. For H1-level entries, minimum 2x H1_ATR (~35pip for EUR)
 - FOMC/BOJ/ECB day: widen SL to 1.5x H1_ATR before event. SL < H1_ATR = random stop-out
