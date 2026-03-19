@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.quantrabbit.live-monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/tossaki/App/QuantRabbit/.venv/bin/python</string>
+        <string>/Users/tossaki/App/QuantRabbit/scripts/trader_tools/live_monitor.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/tossaki/App/QuantRabbit</string>
+    <key>StartInterval</key>
+    <integer>30</integer>
+    <key>StandardErrorPath</key>
+    <string>/Users/tossaki/App/QuantRabbit/logs/live_monitor_err.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
