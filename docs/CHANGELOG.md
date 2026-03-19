@@ -2,6 +2,7 @@
 
 ## 2026-03-20
 
+- **add: 動的SL調整（BE移動+ATR追従）** — live_monitor.pyにRule 0a(BE_MOVE: 利益≧be_at_pipでSLをブレイクイーブンに自動移動)、Rule 0b(ATR_ADJUST: ATR30%変動でSL幅を比例調整)を追加。TPは裁量判断に委ねる。TRADER_PROMPTにエントリー後のSL/TP調整ガイドライン追加、registry format にentry_atr/atr_adjustフィールド追加
 - **update: TRADER_PROMPT複数エントリー+反省強制** — 「1サイクルのフロー」セクション新設（全ペア俯瞰→複数エントリー可の明示）。反省セクション強化（確認方法を追加、毎サイクル末にログ確認して閾値超えたらその場で書く）。SKILL.mdにもReminders追加
 - **update: CLAUDE.md v3→v4更新** — 5エージェント(scalp-fast/swing-trader/market-radar/macro-intel/secretary)→3エージェント(trader/analyst/secretary)に記述を更新。旧プロンプトをレガシーに移動、新プロンプト(TRADER/ANALYST)を必読に。スコアリング記述削除。変更時の必須ルールでCLAUDE.md更新を1番目に昇格
 - **update: 予測精度改善 — ADX品質フィルター+通貨強弱差分析導入**

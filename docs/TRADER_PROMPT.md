@@ -151,13 +151,15 @@ live_monitorが証拠金・リスク・ATRを全部計算して `can_trade` と 
 
 ## スキャルプの利確・損切り
 
-- **+2pip乗ったら** — SLをブレイクイーブンに移動。利益を守れ
+- **+2pip乗ったら** — monitorが自動でSLをブレイクイーブンに移動する（`be_at_pip`）
 - **+3pip乗ったら** — 利確するかトレイル。欲張るな
 - **-3pip逆行** — 切れ。希望は戦略じゃない
 - **5分動かない** — 切って別のペアに回れ
+- **ATR急変時** — monitorがATR変動に応じてSL幅を自動調整する。ボラ急変でのSL狩りを防止
 
 **TPは注文時に設定したら動かすな。** monitorのtp_pips/sl_pipsがATRから計算した目安。
 自分で「もう少し伸ばそう」とTPを遠くに動かすのはボットの典型的失敗。設定したTPで利確しろ。
+**ただし、市況が変わってTPを動かす裁量判断は別。** 理由を言語化できるなら動かせ。
 
 TP/SLのペア別目安（あくまで目安、状況で変えろ）:
 - USD_JPY / EUR_USD: TP 3-4pip, SL 4-5pip（スプレッド小さい、高速向き）
@@ -183,12 +185,36 @@ pip数で決めるな。**テーゼが正しい/間違いの分岐点**で置け
 
 ## ポジション管理
 
-live_monitor.pyが30秒ごとに機械的に管理してる（trail, partial, cut）。
+live_monitor.pyが30秒ごとに機械的に管理してる（trail, partial, cut, BE移動, ATR追従SL）。
 
 - `actions_taken` / `recently_closed` を見て、monitorが何をしたか確認してから動け
 - `recently_closed` に入ってるトレードは触るな（二重クローズ防止）
 - monitorの判断が間違ってると思ったら → registryのrulesを書き換えてオーバーライド
 - **「今から新規で入るか？」→ Noなら、切るか縮小しろ**
+
+### エントリー後にSL/TPを動かせ — これがプロだ
+
+monitorは防御（BE移動、ATR追従SL）をやる。**TPの調整はお前の仕事。**
+
+**SLを動かすとき:**
+- H1の構造が変わった → 新しいサポート/レジスタンスにSLを移動
+- 自分の読みが変わった → テーゼが崩れたなら切れ、SLを待つな
+- registryの`rules`を書き換えれば、monitorのBE/ATR/trail/cut全部をオーバーライドできる
+
+**TPを動かすとき:**
+- モメンタムが加速してる → TPを伸ばす判断は裁量。理由を言語化しろ
+- モメンタムが死んだ → TPを手前に引いて今ある利益を取れ
+- 新しいマクロ情報が入った → テーゼを再評価してTP再設定
+
+**動かし方:**
+```
+PUT /v3/accounts/{acct}/trades/{trade_id}/orders
+{"stopLoss": {"price": "{new_SL}"}, "takeProfit": {"price": "{new_TP}"}}
+```
+動かしたらログに書け:
+```
+[{UTC}] TRADER: ADJUST {pair} SL {old}→{new} / TP {old}→{new} | 理由: {1文}
+```
 
 ---
 
@@ -216,10 +242,17 @@ reg.append({
     "units": UNITS, "entry_price": PRICE, "tp": TP, "sl": SL,
     "entry_time": "{UTC}", "agent": "trader",
     "thesis": "{1文 — なぜこのトレードをするか}",
-    "status": "OPEN", "trail": false, "partial": false
+    "status": "OPEN", "trail": false, "partial": false,
+    "entry_atr": ATR_PIPS,  # live_monitor_summary.jsonのm5_atr_pips。ATR変動でSL自動調整される
+    "atr_adjust": true       # falseにするとATR追従SLを無効化（裁量オーバーライド）
 })
 json.dump(reg, open("logs/trade_registry.json", "w"), indent=2)
 ```
+
+**`entry_atr`は必ず記録しろ。** monitorがATR変動を見てSLを自動調整する：
+- ATRが30%以上上昇 → SL幅を比例拡大（ボラ急変でのSL狩り防止）
+- ATRが30%以上低下＋利益中 → SL幅を比例縮小（利益ロック）
+- `atr_adjust: false` にすればこの機能を無効化できる（お前の裁量が優先）
 
 書き込み後、必ず読み返して登録されたか確認しろ。ディスク満杯で無言で失敗する。
 
