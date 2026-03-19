@@ -592,12 +592,13 @@ def detect_event_risk(pair: str, macro_bias: dict) -> str:
     return "normal"
 
 
-def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str) -> dict:
+def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str, live_spread: float = None) -> dict:
     """Compute ATR-adaptive TP/SL/trail parameters for scalping.
 
     Instead of fixed 3-5pip TP / 5-8pip SL, use ATR-relative values.
     SL must be > 1.0x ATR to survive normal M5 noise.
     TP should be 0.5-0.8x ATR for realistic scalp targets.
+    live_spread: real-time spread in pips (falls back to spread_gate if None).
     """
     if not m5_atr or m5_atr <= 0:
         m5_atr = 5.0  # fallback
@@ -634,8 +635,9 @@ def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str) -> dic
     # Is this pair scalpable? SL > max of pair's range = too wide
     scalpable = sl_pips <= sl_range[1]
 
-    # Spread-aware R:R calculation
-    spread = profile.get("spread_gate", 2.0)  # use gate as typical spread
+    # Spread-aware R:R calculation — use live spread, fall back to gate
+    spread_gate = profile.get("spread_gate", 2.0)
+    spread = live_spread if live_spread is not None else spread_gate
     # For LONG: BID travels TP+spread up, SL-spread down
     # For SHORT: ASK travels TP+spread down, SL-spread up
     bid_tp_dist = tp_pips + spread   # distance BID/ASK must travel for TP
@@ -657,14 +659,15 @@ def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str) -> dic
         "event_risk": event_risk_level,
         "scalpable": scalpable,
         "spread_info": {
-            "typical_spread": spread,
+            "live_spread": round(spread, 1),
+            "spread_gate": spread_gate,
             "bid_tp_distance": bid_tp_dist,
             "bid_sl_distance": round(bid_sl_dist, 1),
             "true_distance_rr": true_rr,
             "spread_pct_of_tp": spread_pct_of_tp,
             "fair_tp_minimum": fair_tp_pips,
         },
-        "note": f"ATR={round(m5_atr,1)} TP={tp_pips}({tp_ratio}x) SL={sl_pips}({sl_ratio}x) spread_cost={spread_pct_of_tp}% true_RR={true_rr} event={event_risk_level}"
+        "note": f"ATR={round(m5_atr,1)} TP={tp_pips}({tp_ratio}x) SL={sl_pips}({sl_ratio}x) spread={spread}pip({spread_pct_of_tp}%) true_RR={true_rr} event={event_risk_level}"
     }
 
 
@@ -1496,9 +1499,10 @@ def build_monitor() -> dict:
             "swing": compute_max_units(pair, account["nav"], account["margin_avail"], "swing", m5_atr, mid_price),
         }
 
-        # ATR-adaptive scalp parameters (TP/SL/trail)
+        # ATR-adaptive scalp parameters (TP/SL/trail) with live spread
         ev_risk = detect_event_risk(pair, macro_bias)
-        pair_data["scalp_params"] = compute_scalp_params(pair, m5_atr or 5.0, ev_risk)
+        live_spread = price_data.get("spread_pips")
+        pair_data["scalp_params"] = compute_scalp_params(pair, m5_atr or 5.0, ev_risk, live_spread)
 
         # M5 regime for strategy selection
         m5_regime = m5.get("regime", "unknown") if isinstance(m5, dict) else "unknown"

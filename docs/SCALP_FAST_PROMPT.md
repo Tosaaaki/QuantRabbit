@@ -172,19 +172,21 @@ After prediction + score check, look deeper:
    - GBP/USD: Fakeouts at London open, then trends. Be patient.
    - AUD pairs: Risk sentiment barometer. Check equity mood.
 
-### 3D. Set TP/SL
+### 3D. Set TP/SL — TIGHT AND FAST
 
-**TP/SL should be based on STRUCTURE, not arbitrary pip counts.**
+**Scalp = small profit, high frequency. NOT swing trades with scalp labels.**
 
-- **SL placement**: Where does your prediction become WRONG? Put SL there.
-  - Below/above the nearest swing low/high, BB band edge, or Ichimoku cloud edge.
-  - Pair-specific ranges: UJ 4-7 | EU 4-7 | GU 5-9 | EJ 5-9 | GJ 7-12 | AJ 5-9 | AU 4-7pip
-- **TP placement**: Where does your prediction say price will REACH?
-  - Next resistance/support level, BB opposite band, VWAP, or your predicted target.
-- **Don't overthink TP/SL math.** The only thing that matters is: Is your PREDICTION right? If yes, TP gets hit. If no, SL gets hit. Adjusting the ratio doesn't change your edge.
+- **TP: 3-4pip max.** That's it. Don't dream of 6-8pip on a scalp.
+  - UJ/EU/AU: TP 3pip | GU/EJ/AJ: TP 4pip | GJ: TP 5pip (spread cost)
+  - Trending strongly? TP 4-5pip max. Still not 8.
+- **SL: 4-5pip.** Tight. If wrong, you're wrong. Accept it fast.
+  - UJ/EU/AU: SL 4pip | GU/EJ/AJ: SL 5pip | GJ: SL 7pip
+- **At +2pip unrealized: move SL to breakeven.** Lock in. No giving back.
+- **At +3pip unrealized: trail 1.5pip.** Let it run but protect profit.
 
-**Cooldown after SL** from `profile.cooldown_after_sl_min`:
-- UJ: 10min | GJ: 20min | Others: 15min. Override if market structure clearly changed.
+**Cooldown after SL:**
+- Same pair: 10min minimum. Different pair: OK immediately.
+- 3 consecutive losses: 15min full stop on ALL pairs.
 
 ### 3E. Size & Execute
 
@@ -192,8 +194,9 @@ After prediction + score check, look deeper:
 
 - `can_trade == false` → do not enter
 - `recommended_units` → your standard size
-- High conviction (prediction + score agree + confluence): up to 1.5x recommended
-- Low conviction (prediction only, score disagrees): 0.5x recommended
+- High conviction (prediction + score agree + confluence): up to 1.0x recommended (MAX 1500 units)
+- Low conviction (prediction only, score disagrees): 0.5x recommended (MAX 750 units)
+- **NEVER exceed 1500 units on a scalp. NEVER.** If recommended is higher, cap at 1500.
 - No prediction: **0x. Don't trade.**
 
 ### Entry Order (ALL fields MANDATORY):
@@ -225,16 +228,16 @@ registry.append({
     "type": "scalp",
     "pair": "{pair}",
     "units": {UNITS_USED},
-    "rules": {"trail_at_pip": 3, "partial_at_pip": 5, "max_hold_min": 15, "cut_at_pip": -5, "cut_age_min": 10}
+    "rules": {"trail_at_pip": 2, "partial_at_pip": 3, "max_hold_min": 8, "cut_at_pip": -4, "cut_age_min": 5}
 })
 with open(registry_path, "w") as f:
     json.dump(registry, f, indent=2)
 ```
 
 **Customize rules per setup:** You can set tighter or wider rules based on the trade:
-- Strong trend + session bonus: `trail_at_pip: 5, partial_at_pip: 8` (let it run)
-- Tight range scalp: `trail_at_pip: 2, partial_at_pip: 4, max_hold_min: 8` (quick in/out)
-- GBP/JPY scalp: `trail_at_pip: 5, partial_at_pip: 8, cut_at_pip: -8` (wider for spread)
+- Strong trend: `trail_at_pip: 3, partial_at_pip: 4, max_hold_min: 10` (slightly wider)
+- Tight range: `trail_at_pip: 1.5, partial_at_pip: 2.5, max_hold_min: 5` (ultra quick)
+- GBP/JPY: `trail_at_pip: 3, partial_at_pip: 5, cut_at_pip: -6` (spread-adjusted)
 
 **Auto-Reverse option:** Set `"auto_reverse": true` to auto-open the OPPOSITE position when SL/cut hits.
 - Monitor reverses at market with TP = original SL distance, SL = original trail distance.
@@ -380,7 +383,7 @@ Append to trade log:
 
 - **No indicator computation.** Monitor has it all.
 - **No H4/H1 deep analysis.** That's swing-trader's job.
-- **No holding for 30+ minutes.** That's swing territory. Close and rotate.
+- **No holding for 8+ minutes.** If it hasn't moved in 5min, it's not moving. Cut and rotate.
 - **No entry when circuit_breaker=true.**
 - **No hardcoded position sizes.** Always use sizing from monitor.
 - **No closing trades in `recently_closed`.** Already handled.

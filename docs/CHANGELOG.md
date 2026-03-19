@@ -2,6 +2,18 @@
 
 ## 2026-03-19
 
+- **21:42 全系統アグレッシブモード移行** — 朝1万円目標
+  - swing-trader: margin excuse撤廃。margin<50%なら即エントリー義務。TP 10-30pip
+  - shared_state: session_directive更新。全ペア解禁、margin60%まで使用可
+  - scalp-fast SKILL: AGGRESSIVE MODEメッセージ追加
+- **23:xx compute_scalp_params: リアルタイムspread使用** — spread_info計算をspread_gate固定値からlive_spreadに変更。live_spread/spread_gate両方を出力。noteにも実spread表示
+- **21:35 scalp-fast Sonnet→Opus変更** — ルール追加はボット化。裁量判断の深さが本質的課題。Opusで市況を読む力を上げる
+- **21:30 scalp-fast大幅修正 — 利確が遅く損失累積の問題**
+  - TP 3-8pip → 3-4pip に短縮。+2pipで即BE、+3pipでトレーリング
+  - SL 4-5pipに統一。8分超えたらカット（旧15分）
+  - サイズ上限 1500u ハードキャップ（旧: 制限なし→2300u,3500u等の過大サイズ）
+  - registry デフォルト: trail=2pip, partial=3pip, max_hold=8min, cut=-4pip, cut_age=5min
+  - 同一ペア連続エントリー制限（SL後10分クールダウン）、3連敗で15分停止
 - **12:25 swing-traderロック飢餓修正**
   - 根本原因: market-radar(7min+295s jitter)がほぼ毎回swing-trader(10min+220s jitter)のロック取得タイミングと衝突→常時SKIP
   - cron `*/10` → `3,13,23,33,43,53` にオフセット（market-radarと3分ずらし）

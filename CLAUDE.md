@@ -21,7 +21,7 @@
 
 | タスク | モデル | 間隔 | ロック | 役割 |
 |--------|--------|------|--------|------|
-| scalp-fast | Sonnet | 2分 | なし | PREDICT→score確認→3-8pipスキャルプ。予測精度の振り返り必須 |
+| scalp-fast | Opus | 2分 | なし | PREDICT→score確認→2-4pipスキャルプ。裁量判断で貪欲に利確 |
 | swing-trader | Opus | 10分 | global | THESIS→H1/H4深い分析→10-50pipスウィング。thesis正否の記録必須 |
 | market-radar | Sonnet | 7分 | global | 監視・急変検知・4層Self-Check（機会と危険の両方） |
 | macro-intel | Sonnet | 19分 | global | マクロ分析・5つの必須自問・クロスエージェント学習・ツール開発 |
