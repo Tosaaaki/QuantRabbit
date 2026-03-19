@@ -10,7 +10,7 @@
 - `scripts/trader_tools/live_monitor.py` — launchdで30秒ごとに実行
   - データ: pricing, S5/M1/M5指標(divergence, Ichimoku, VWAP含む), H1/H4バイアス
   - ペアプロファイル: pair別のspread gate, SL/TP範囲, ADX閾値, セッション適性, ペア性格
-  - 機械的ポジ管理: `logs/trade_registry.json` のルールに従いtrail/partial/close実行
+  - 機械的ポジ管理: `logs/trade_registry.json` のルールに従いBE移動/ATR追従SL/trail/partial/close実行
   - リスク: margin使用率, ドローダウン, サーキットブレーカー
   - 出力: `logs/live_monitor.json`, `logs/live_monitor_summary.json`（軽量版）
 

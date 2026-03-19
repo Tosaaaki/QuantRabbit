@@ -197,8 +197,11 @@ PAIR_PROFILES = {
 }
 
 # Default management rules (used when trade not in registry)
-DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -5, "cut_age_min": 10}
-DEFAULT_SWING_RULES = {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -15, "cut_age_min": 60}
+DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -5, "cut_age_min": 10, "be_at_pip": 2}
+DEFAULT_SWING_RULES = {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -15, "cut_age_min": 60, "be_at_pip": 5}
+
+# ATR adaptive threshold (SL widening on volatility spike)
+ATR_CHANGE_THRESHOLD = 0.30  # 30% ATR change triggers SL adjustment
 
 # Risk limits
 MAX_MARGIN_USAGE_PCT = 80
@@ -984,6 +987,32 @@ def get_rules_for_trade(trade_id: str, registry: dict, pos: dict = None) -> dict
     return DEFAULT_SWING_RULES.copy() if trade_type == "swing" else DEFAULT_SCALP_RULES.copy()
 
 
+def fetch_current_atr(token: str, pairs: set) -> dict:
+    """Fetch current M5 ATR for a set of pairs. Lightweight — only called for open position pairs."""
+    result = {}
+    for pair in pairs:
+        try:
+            m5 = fetch_candles_and_compute(token, pair, "M5", 30)
+            if isinstance(m5, dict) and "atr_pips" in m5:
+                result[pair] = m5["atr_pips"]
+        except Exception:
+            pass
+    return result
+
+
+def update_sl(token: str, acc: str, tid: str, new_sl: float, pos: dict) -> str:
+    """Move SL to a new price via OANDA API. Returns action string or None on failure."""
+    body = {"stopLoss": {"price": str(round(new_sl, 5))}}
+    # Preserve existing TP if present
+    if pos.get("tp") is not None:
+        body["takeProfit"] = {"price": str(round(pos["tp"], 5))}
+    try:
+        _api_put(token, f"/v3/accounts/{acc}/trades/{tid}/orders", body)
+        return None  # success
+    except Exception as e:
+        return str(e)
+
+
 def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> list:
     """Apply mechanical management rules. Returns list of actions taken.
 
@@ -991,10 +1020,15 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
     - recently_closed tracking to prevent duplicate close attempts
     - Catches OANDA 404 (trade already closed) gracefully
     - Logs all actions with rules_source for audit
+    - Dynamic SL: breakeven move + ATR-adaptive widening/tightening
     """
     registry = load_registry()
     recently_closed = load_recently_closed()
     actions = []
+
+    # Fetch current ATR for pairs with open positions (for dynamic SL adjustment)
+    open_pairs = {pos["pair"] for pos in positions if pos["id"] not in recently_closed}
+    current_atr = fetch_current_atr(token, open_pairs) if open_pairs else {}
 
     for pos in positions:
         tid = pos["id"]
@@ -1018,8 +1052,97 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
         max_hold = rules.get("max_hold_min", 30)
         cut_at = rules.get("cut_at_pip", -5)
         cut_age = rules.get("cut_age_min", 10)
+        be_at = rules.get("be_at_pip", 2 if inferred_type == "scalp" else 5)
 
         action = None
+        entry_data = registry.get(tid, {})
+        entry_price = pos.get("entry", entry_data.get("entry_price", 0))
+        is_long = units > 0
+        current_sl = pos.get("sl")
+
+        # ─── Dynamic SL Rules (run before trail/partial/cut) ───
+
+        # Rule 0a: Breakeven SL move — protect capital once in profit
+        # Only if: in profit >= be_at_pip, SL not already at/past breakeven, no trailing stop yet
+        if (upl_pips >= be_at and not has_trail and current_sl is not None
+                and not pos.get("is_be", False)):
+            # Move SL to entry + 0.5pip buffer (cover spread)
+            spread_buf = 0.5 * pip
+            if is_long:
+                new_sl = entry_price + spread_buf
+                should_move = current_sl < new_sl  # only move SL up (tighter)
+            else:
+                new_sl = entry_price - spread_buf
+                should_move = current_sl > new_sl  # only move SL down (tighter)
+
+            if should_move:
+                err = update_sl(token, acc, tid, new_sl, pos)
+                if err:
+                    if "404" in err or "TRADE_DOESNT_EXIST" in err:
+                        mark_closed(tid, pair, "gone_during_be")
+                        action = f"BE_SKIP {pair}: trade already closed"
+                    else:
+                        action = f"BE_FAIL {pair}: {err}"
+                else:
+                    action = f"BE_MOVE {pair} SL→{round(new_sl, 5)} (was {current_sl}, UPL={upl_pips}pip) [{rules_source}]"
+                    pos["sl"] = new_sl  # update local state for subsequent rules
+                    pos["is_be"] = True
+
+        # Rule 0b: ATR-adaptive SL — widen SL if volatility spiked since entry
+        # Only if: registry has entry_atr, atr_adjust not disabled, no trailing stop, SL exists
+        if (action is None and not has_trail and current_sl is not None
+                and entry_data.get("entry_atr") and entry_data.get("atr_adjust", True)):
+            entry_atr = entry_data["entry_atr"]
+            now_atr = current_atr.get(pair)
+            if now_atr and entry_atr > 0:
+                atr_ratio = now_atr / entry_atr
+                if atr_ratio > (1 + ATR_CHANGE_THRESHOLD):
+                    # Volatility spiked — widen SL proportionally to avoid premature stop
+                    if is_long:
+                        sl_dist = entry_price - current_sl  # positive
+                        new_sl_dist = sl_dist * atr_ratio
+                        new_sl = entry_price - new_sl_dist
+                        should_move = new_sl < current_sl  # only widen (move SL further away)
+                    else:
+                        sl_dist = current_sl - entry_price  # positive
+                        new_sl_dist = sl_dist * atr_ratio
+                        new_sl = entry_price + new_sl_dist
+                        should_move = new_sl > current_sl  # only widen
+
+                    if should_move:
+                        err = update_sl(token, acc, tid, new_sl, pos)
+                        if err:
+                            action = f"ATR_ADJUST_FAIL {pair}: {err}"
+                        else:
+                            action = f"ATR_WIDEN {pair} SL→{round(new_sl, 5)} (ATR {entry_atr}→{now_atr}, ratio={round(atr_ratio, 2)}) [{rules_source}]"
+                            pos["sl"] = new_sl
+
+                elif atr_ratio < (1 - ATR_CHANGE_THRESHOLD) and upl_pips > 0:
+                    # Volatility dropped AND in profit — tighten SL to lock more profit
+                    if is_long:
+                        sl_dist = entry_price - current_sl
+                        new_sl_dist = sl_dist * atr_ratio
+                        new_sl = entry_price - new_sl_dist
+                        should_move = new_sl > current_sl  # only tighten (move SL closer to price)
+                    else:
+                        sl_dist = current_sl - entry_price
+                        new_sl_dist = sl_dist * atr_ratio
+                        new_sl = entry_price + new_sl_dist
+                        should_move = new_sl < current_sl
+
+                    if should_move:
+                        err = update_sl(token, acc, tid, new_sl, pos)
+                        if err:
+                            action = f"ATR_ADJUST_FAIL {pair}: {err}"
+                        else:
+                            action = f"ATR_TIGHTEN {pair} SL→{round(new_sl, 5)} (ATR {entry_atr}→{now_atr}, ratio={round(atr_ratio, 2)}) [{rules_source}]"
+                            pos["sl"] = new_sl
+
+        # ─── Existing Rules (trail/partial/cut/timeout) ───
+        if action is not None:
+            actions.append(action)
+            _log_action(action)
+            continue  # dynamic SL action taken, skip trail/partial/cut this cycle
 
         # Rule 1: Set trailing stop if profit exceeds threshold and no trail yet
         if upl_pips >= trail_at and not has_trail:
