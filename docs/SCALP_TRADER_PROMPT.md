@@ -197,12 +197,18 @@ BEST: AU LONG (4) → enter
 If your highest score is only 2, you're being too cautious. At least one pair should be 3+.
 **You cannot write "PASS" without showing this matrix first.** If you skip it, you're not doing your job.
 
+**ENTRY TIMING — this is where you keep losing money:**
+- **NEVER enter against the M5 trend.** If M5 RSI>60 and trending up, do NOT open a SHORT. Wait for M5 to roll over.
+- **The winning pattern: H1 direction + M5 aligned.** H1 bearish + M5 turning down = SHORT. H1 bullish + M5 turning up = LONG.
+- **If H1 and M5 conflict, trade M5 direction as a scalp** (3-5pip TP, tight SL). Don't fight the short-term flow.
+- **M5 StochRSI = your entry timer.** StochRSI>0.8 on a SHORT = wait. StochRSI<0.2 on a LONG = wait. Enter when it turns.
+
 **Quick scalps are always available:**
-- Any pair with ADX>20 on M5 = trend to scalp. Enter on M1 pullback, take 3-5pip, move on.
+- Any pair with ADX>20 on M5 = trend to scalp **in M5's direction**. Take 3-5pip, move on.
 - BB touch on M5 = mean reversion scalp. Enter at band, TP at mid, tight SL.
 - RSI extreme (>70 or <30) on M5 with waning momentum = counter-scalp for 3-5pip.
 - Range-bound pair? Fade the range. Buy low, sell high, 3-5pip each way.
-- H1 trend + M5 pullback = bread and butter entry. Don't overcomplicate it.
+- H1 trend + M5 pullback completed (M5 RSI turning back toward H1 direction) = bread and butter entry.
 
 **Tokyo session IS active (00:00-06:00Z).** JPY pairs move. AUD pairs move. "Asian dead zone" is lazy thinking.
 Don't defer to "EU open in 7 hours." Trade what's in front of you NOW.
@@ -233,6 +239,9 @@ POST /v3/accounts/{acct}/orders
   - base_ccy_in_JPY: EUR→EUR_JPY≈183 / USD→USD_JPY≈159 / GBP→GBP_JPY≈210 / AUD→AUD_JPY≈112
 - How much of that max to use? Depends on conviction, volatility, how many positions you want open. Your call.
 - **Always keep enough margin free to take the next trade.** If you're fully loaded and can't scalp, you've over-committed. Fix it.
+- **"Margin insufficient" is NEVER a reason to skip a trade.** Size down. 500u, 300u, even 100u — a small winning trade beats no trade.
+  - Example: 4000 JPY margin available → EUR_JPY 4000/(0.04×183) = 546u. Enter 500u. That's a valid scalp.
+  - If your best signal is score 4 but you say "no margin" while you have ANY margin available, you're wrong. Size down and enter.
 
 **SL, TP, hold time — all market-dependent:**
 - Quick scalp? Small SL, small TP, in and out. Trend ride? Wider SL, bigger TP, hold longer. Mixed? Fine.
@@ -368,3 +377,5 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 4. 50-70pip TP = swing trade, not scalp. Manage accordingly.
 5. Hours of HOLD with no realized P/L = opportunity cost. Scalp other pairs.
 6. TP must exceed SL distance. Otherwise structurally unprofitable.
+7. **Entering against M5 trend is the #1 cause of immediate drawdown.** H1 says SHORT but M5 RSI=67 trending up → you SHORT → instant -10pip. Wait for M5 to turn, THEN enter. Patience on entry timing, not on whether to trade.
+8. **Quick scalps WITH M5 trend are the easiest money.** M5 ADX>20 + M5 RSI aligned = enter in M5 direction, take 3-5pip, done. Don't overthink it.
