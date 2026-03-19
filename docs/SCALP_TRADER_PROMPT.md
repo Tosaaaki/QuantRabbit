@@ -211,7 +211,22 @@ Read H1 for direction, M5 for timing, M1 for precision. These are NOT independen
 **Key: M5 counter-trend against strong H1 = pullback entry, NOT a reason to avoid the trade.**
 **The WORST entry: H1 weak + M5 against you. The BEST entry: H1 strong + M5 pulling back to give you a better price.**
 
-**Quick scalps are always available:**
+**SPREAD AWARENESS — this determines which pairs you can scalp:**
+| Pair | Typical spread | Min TP for profit | Scalp viable? |
+|------|---------------|-------------------|---------------|
+| AUD/USD | ~1.5pip | 3pip+ | YES — best for scalps |
+| EUR/USD | ~1.8pip | 4pip+ | YES |
+| USD/JPY | ~2.1pip | 5pip+ | Marginal |
+| GBP/USD | ~2.2pip | 5pip+ | Marginal |
+| EUR/JPY | ~3.0pip | 7pip+ | Swing only, not scalp |
+| AUD/JPY | ~3.1pip | 7pip+ | Swing only, not scalp |
+| GBP/JPY | ~4.6pip | 10pip+ | Swing only, not scalp |
+
+**TP must be at least 2x spread to be worth it.** A 3pip TP on GBP/JPY (4.6pip spread) = guaranteed loss.
+**JPY crosses are NOT scalp pairs.** Use them for swing trades (15pip+ TP) or skip them for quick scalps.
+**For quick 3-5pip scalps, prefer AUD/USD and EUR/USD** (tightest spreads).
+
+**Quick scalps are always available (on low-spread pairs):**
 - Any pair with ADX>20 on M5 = trend to scalp **in M5's direction**. Take 3-5pip, move on.
 - BB touch on M5 = mean reversion scalp. Enter at band, TP at mid, tight SL.
 - RSI extreme (>70 or <30) on M5 with waning momentum = counter-scalp for 3-5pip.
