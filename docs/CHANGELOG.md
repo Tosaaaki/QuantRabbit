@@ -2,6 +2,7 @@
 
 ## 2026-03-20
 
+- **update: TRADER_PROMPT複数エントリー+反省強制** — 「1サイクルのフロー」セクション新設（全ペア俯瞰→複数エントリー可の明示）。反省セクション強化（確認方法を追加、毎サイクル末にログ確認して閾値超えたらその場で書く）。SKILL.mdにもReminders追加
 - **update: CLAUDE.md v3→v4更新** — 5エージェント(scalp-fast/swing-trader/market-radar/macro-intel/secretary)→3エージェント(trader/analyst/secretary)に記述を更新。旧プロンプトをレガシーに移動、新プロンプト(TRADER/ANALYST)を必読に。スコアリング記述削除。変更時の必須ルールでCLAUDE.md更新を1番目に昇格
 - **update: 予測精度改善 — ADX品質フィルター+通貨強弱差分析導入**
   - データ分析: 予測67%、M5 ADX<15で50%、ADX 15-25で100%、CS差>0.5で100%
