@@ -2,6 +2,49 @@
 
 ## 2026-03-19
 
+- **16:30 v4.1: 市況レジーム + MTF矛盾検出 + 通貨強弱**
+  - `live_monitor.py`:
+    - `compute_currency_strength()` 実装: M5 RSI/EMA slope/ADX-DI → 5通貨強弱
+    - `compute_market_regime()` 新設: regime, risk_tone, tradeable, dominant_driver
+    - `compute_mtf_alignment()` 新設: H4/H1/M5 aligned/h4_counter/h1_conflict/h1_turning
+    - score_pair() E5: MTF bonus(+1)/penalty(-1~-2)。H1_turning=-2
+    - 出力に`market`セクション追加
+  - プロンプト: market先読み手順、regime別行動、MTF alignment解説、currency strength活用
+
+- **16:00 v4大改修: ペアプロファイル + スコアリング強化 + プロンプト裁量化**
+  - `live_monitor.py`:
+    - `PAIR_PROFILES` 新設: 7ペア各々にspread_gate, SL/TP範囲, セッション適性, ADX閾値, StochRSI閾値, ATR正常値, クールダウン時間, ペア性格を定義
+    - `SCALP_KEYS` 拡張: divergence(div_rsi/macd_kind/score/age), Ichimoku(cloud_pos/span_a/b_gap), VWAP, swing距離, Donchian/Keltner/Chaikin, vol_5m, MACD line/signal を出力に追加
+    - `score_pair()` v4: 5カテゴリ(Direction+Timing+Confluence+Macro+Session/Vol)、最大+10点
+      - C: Confluence新設(+3): M5ダイバージェンス整合, Ichimoku雲ポジション, VWAP方向
+      - E: Session/Vol新設(+1/-2): ペアのベストセッションでボーナス, LATE_NYペナルティ, 極端ボラペナルティ
+      - 全閾値ペア別(ADX, StochRSI, spread gate, choppy判定)
+    - `compute_scalp_params()`: SL/TPクランプをペアプロファイルのrangeに変更
+    - 出力にpair `profile`(character, SL/TP range, session_note等) と `confluence` detail追加
+  - `SCALP_FAST_PROMPT.md` 全面刷新:
+    - Decision Tree(score<4→SKIP等) 廃止 → **Score as GUIDELINE表** (score 3でも confluence強ければOK)
+    - MACRO_CONFLICTを絶対禁止から「強い警告」に緩和 (staleデータなら無視可)
+    - ペア別知識セクション: SL/TP range, cooldown, session, character
+    - sizing裁量: 1.5x recommendedまで可(score 7+)
+    - Pre-Entry Checklistを「Hard gates」と「Soft guidelines」に分離
+  - `SWING_TRADER_PROMPT.md` 全面刷新:
+    - ATR-adaptive管理: 固定trail/partial → ATR倍率ベース (partial=2.5x ATR, trail=1.5x ATR)
+    - ペア別swing特性テーブル (GJ: TP 20-50pip, SL 12-30pip等)
+    - Divergence/Ichimoku/VWAP/BB Squeeze等の具体的分析ガイド
+    - BB Squeeze Breakout playbook追加
+
+- **11:20 ATR連動TP/SL + イベントリスク + レジーム対応**
+  - `live_monitor.py`:
+    - `compute_scalp_params()` 新設: M5 ATR × 比率でTP/SL/trail算出 (TP=0.6x, SL=1.2x, trail=0.5x)
+    - `detect_event_risk()` 新設: macro_bias.event_riskからpair別にextreme/high/normal判定
+    - event_risk=extreme → SL×1.5/TP×0.8に自動拡大 + score_pairで-1ペナルティ
+    - pair_dataに `scalp_params`(ATR連動パラメータ) と `regime`(M5レジーム) 追加
+  - `SCALP_FAST_PROMPT.md`:
+    - 固定TP/SL(3-5/5-8pip) → ATR連動(`scalp_params.tp_pips/sl_pips`) に完全移行
+    - イベントリスク対応: EVENT_EXTREME時はscore≥5必須
+    - レジーム対応: trending→トレンドフォロー、range→BB逆張り、choppy→SKIP
+    - Decision Tree/Pre-Entry Checklist全面更新
+
 - **11:10 スコアリングv2 + エントリー判断フレームワーク**
   - `live_monitor.py` score_pair()完全改修:
     - 旧: trend(ADX) + RSI + micro + H1 + spread(常にtrue) = 最大5点 → スコア3で入れてノイズトレード量産
@@ -60,3 +103,4 @@
   4. USD/JPYレート動的取得: ハードコード159を廃止、pricingから取得
   5. SCALP_FAST_PROMPT.md全面改訂: Pre-Entry Checklist追加、sizing.recommended_units必須化、recently_closedチェック必須化
   6. SWING_TRADER_PROMPT.md改訂: Pre-Entry Checklist追加、sizing必須化、重複クローズ防止追加
+[2026-03-19T11:07Z] fix: margin free target調整 scalp 60%→40%, swing 70%→50%。小口座(28k)で裁量の余地確保

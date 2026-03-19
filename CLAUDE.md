@@ -8,8 +8,9 @@
 
 ### Python層（LLMコストゼロ、30秒間隔）
 - `scripts/trader_tools/live_monitor.py` — launchdで30秒ごとに実行
-  - データ: pricing, S5/M1/M5指標, H1/H4バイアス
-  - シグナルスコアリング: 7ペア×2方向を自動スコア(1-5)
+  - データ: pricing, S5/M1/M5指標(divergence, Ichimoku, VWAP含む), H1/H4バイアス
+  - シグナルスコアリングv4: 7ペア×2方向、5カテゴリ(Direction+Timing+Confluence+Macro+Session)、最大+10点
+  - ペアプロファイル: pair別のspread gate, SL/TP範囲, ADX閾値, セッション適性, ペア性格
   - 機械的ポジ管理: `logs/trade_registry.json` のルールに従いtrail/partial/close実行
   - リスク: margin使用率, ドローダウン, サーキットブレーカー
   - 出力: `logs/live_monitor.json`
@@ -18,8 +19,8 @@
 
 | タスク | モデル | 間隔 | ロック | 役割 |
 |--------|--------|------|--------|------|
-| scalp-fast | Sonnet | 2分 | なし | モニター読む→オーバーライド→3-5pipスキャルプ |
-| swing-trader | Opus | 10分 | global | H1/H4深い分析→10-30pipスウィング |
+| scalp-fast | Sonnet | 2分 | なし | モニター読む→ペア特性+コンフルエンス裁量→3-8pipスキャルプ |
+| swing-trader | Opus | 10分 | global | H1/H4+divergence/Ichimoku深い分析→10-50pipスウィング |
 | market-radar | Sonnet | 7分 | global | ポジション監視・急変検知・レジーム変化検知 |
 | macro-intel | Sonnet | 19分 | global | マクロ分析・戦略改善・ツール開発 |
 | secretary | Sonnet | 11分 | global | エージェント監視・状況レポート・異常検知 |

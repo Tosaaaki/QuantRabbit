@@ -44,7 +44,154 @@ SCALP_KEYS = [
     "rsi", "adx", "plus_di", "minus_di", "stoch_rsi", "macd_hist",
     "ema_slope_5", "ema_slope_10", "cci", "bb_upper", "bb_lower", "bb_mid",
     "close", "atr_pips", "regime", "vwap_gap", "bbw",
+    # v4: expose divergence, Ichimoku, structure to Claude
+    "div_rsi_kind", "div_rsi_score", "div_rsi_age",
+    "div_macd_kind", "div_macd_score", "div_macd_age", "div_score",
+    "ichimoku_span_a_gap", "ichimoku_span_b_gap", "ichimoku_cloud_pos",
+    "swing_dist_high", "swing_dist_low",
+    "donchian_width", "kc_width", "chaikin_vol",
+    "bb_span_pips", "vol_5m",
+    "macd", "macd_signal",
 ]
+
+# ─────────────────────────────────────────────
+# Pair Profiles — pair-specific characteristics
+# ─────────────────────────────────────────────
+
+PAIR_PROFILES = {
+    "USD_JPY": {
+        "nickname": "UJ",
+        "spread_gate": 1.5,    # tight spread pair
+        "scalp_sl_range": (4, 7),
+        "scalp_tp_range": (3, 5),
+        "swing_sl_range": (8, 20),
+        "swing_tp_range": (10, 30),
+        "character": "Most liquid JPY pair. Driven by BOJ/Fed policy divergence. Tight spreads allow aggressive scalps. Sensitive to US yields and risk sentiment. Intervention risk above 160/below 140.",
+        "best_sessions": ["TOKYO", "LONDON_NY_OVERLAP"],
+        "session_notes": {
+            "TOKYO": "Steady flow from Japanese institutions, good for range scalps",
+            "LONDON_NY_OVERLAP": "Highest volatility, breakout opportunities",
+            "LATE_NY": "Thin liquidity, avoid new entries",
+        },
+        "stoch_rsi_entry": (0.2, 0.8),  # standard
+        "adx_trend_min": 18,  # slightly lower — UJ trends smoothly
+        "atr_normal_m5": 4.0,
+        "cooldown_after_sl_min": 10,  # shorter — UJ recovers fast
+    },
+    "EUR_USD": {
+        "nickname": "EU",
+        "spread_gate": 1.5,
+        "scalp_sl_range": (4, 7),
+        "scalp_tp_range": (3, 5),
+        "swing_sl_range": (8, 20),
+        "swing_tp_range": (10, 25),
+        "character": "World's most traded pair. Macro-driven (FOMC vs ECB). Trends well on H1/H4 during London. Range-bound in Tokyo. Reacts to DXY inversely.",
+        "best_sessions": ["LONDON", "LONDON_NY_OVERLAP"],
+        "session_notes": {
+            "TOKYO": "Low volume, range-bound — avoid or scalp tight range",
+            "LONDON": "Best trending period, follow H1 direction",
+            "LONDON_NY_OVERLAP": "News-driven spikes, wide SL needed",
+        },
+        "stoch_rsi_entry": (0.2, 0.8),
+        "adx_trend_min": 20,
+        "atr_normal_m5": 4.0,
+        "cooldown_after_sl_min": 15,
+    },
+    "GBP_USD": {
+        "nickname": "GU",
+        "spread_gate": 2.0,  # slightly wider spread
+        "scalp_sl_range": (5, 9),
+        "scalp_tp_range": (4, 7),
+        "swing_sl_range": (10, 25),
+        "swing_tp_range": (15, 40),
+        "character": "Cable — volatile, fast moves. Wider spreads but bigger TP possible. UK data/BOE sensitive. Fakeouts common at London open. Trends aggressively when it moves.",
+        "best_sessions": ["LONDON", "LONDON_NY_OVERLAP"],
+        "session_notes": {
+            "TOKYO": "Avoid — thin liquidity, erratic moves",
+            "LONDON": "Strongest moves. Watch for fakeout at 07:00-08:00 UTC then trend",
+            "NEW_YORK": "Follow-through from London trends or mean reversion",
+        },
+        "stoch_rsi_entry": (0.15, 0.85),  # wider extremes needed — noisier
+        "adx_trend_min": 22,  # higher bar — noisy trends
+        "atr_normal_m5": 6.0,
+        "cooldown_after_sl_min": 15,
+    },
+    "AUD_USD": {
+        "nickname": "AU",
+        "spread_gate": 2.0,
+        "scalp_sl_range": (4, 7),
+        "scalp_tp_range": (3, 5),
+        "swing_sl_range": (8, 20),
+        "swing_tp_range": (10, 25),
+        "character": "Risk-on/risk-off barometer. Commodity-linked (iron ore, China). RBA sensitive. Trends well on H4 during risk-on. Mean-reverts during risk-off. Correlated with S&P and copper.",
+        "best_sessions": ["TOKYO", "LONDON"],
+        "session_notes": {
+            "TOKYO": "Active — Australian session overlap. Good for RBA-related moves",
+            "LONDON": "Follows risk sentiment, good trend continuation",
+            "NEW_YORK": "Follows US equities direction",
+        },
+        "stoch_rsi_entry": (0.2, 0.8),
+        "adx_trend_min": 20,
+        "atr_normal_m5": 3.5,
+        "cooldown_after_sl_min": 15,
+    },
+    "EUR_JPY": {
+        "nickname": "EJ",
+        "spread_gate": 2.5,  # cross pair — wider spread
+        "scalp_sl_range": (5, 9),
+        "scalp_tp_range": (4, 7),
+        "swing_sl_range": (10, 25),
+        "swing_tp_range": (15, 35),
+        "character": "Cross pair — driven by both EUR and JPY flows. Risk-on = up, risk-off = down. Higher ATR than majors. Avoid during conflicting EUR/JPY events. Good for trend continuation when EUR and JPY are aligned.",
+        "best_sessions": ["LONDON", "LONDON_NY_OVERLAP"],
+        "session_notes": {
+            "TOKYO": "JPY-driven flow. Watch for BOJ/Japan data",
+            "LONDON": "EUR+JPY flow combined — can be explosive",
+        },
+        "stoch_rsi_entry": (0.18, 0.82),
+        "adx_trend_min": 20,
+        "atr_normal_m5": 6.0,
+        "cooldown_after_sl_min": 15,
+    },
+    "GBP_JPY": {
+        "nickname": "GJ",
+        "spread_gate": 3.5,  # widest spread — expensive to scalp
+        "scalp_sl_range": (7, 12),
+        "scalp_tp_range": (5, 10),
+        "swing_sl_range": (12, 30),
+        "swing_tp_range": (20, 50),
+        "character": "Beast pair — extreme volatility, wide spreads (3-5pip). NOT ideal for scalps. Best as swing trade when GBP and JPY are aligned. Whipsaws violently around news. Carry trade flow dominant.",
+        "best_sessions": ["LONDON"],
+        "session_notes": {
+            "TOKYO": "DANGEROUS — thin liquidity + JPY flow = random spikes",
+            "LONDON": "Best window — GBP flow creates clean trends",
+            "NEW_YORK": "Follow-through or violent reversals",
+        },
+        "stoch_rsi_entry": (0.15, 0.85),
+        "adx_trend_min": 25,  # needs strong trend to overcome spread
+        "atr_normal_m5": 9.0,
+        "cooldown_after_sl_min": 20,  # longer — high cost per SL
+    },
+    "AUD_JPY": {
+        "nickname": "AJ",
+        "spread_gate": 2.5,
+        "scalp_sl_range": (5, 9),
+        "scalp_tp_range": (4, 7),
+        "swing_sl_range": (10, 25),
+        "swing_tp_range": (15, 35),
+        "character": "Pure risk barometer. Risk-on = up (AUD strong, JPY weak), risk-off = sharp dump. Correlated with Nikkei/ASX. Commodity-influenced. Trends cleanly during Tokyo session if RBA/China news.",
+        "best_sessions": ["TOKYO", "LONDON"],
+        "session_notes": {
+            "TOKYO": "Active — both AUD and JPY home session",
+            "LONDON": "Follows global risk tone",
+            "LATE_NY": "Thin — avoid",
+        },
+        "stoch_rsi_entry": (0.18, 0.82),
+        "adx_trend_min": 20,
+        "atr_normal_m5": 5.5,
+        "cooldown_after_sl_min": 15,
+    },
+}
 
 # Default management rules (used when trade not in registry)
 DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -5, "cut_age_min": 10}
@@ -302,7 +449,7 @@ def compute_max_units(pair: str, nav: float, margin_avail: float,
     pair_price: mid price of the pair (used to compute margin per unit in JPY).
     """
     # Margin-based limit: margin_used must stay below (1 - free_target) * NAV
-    margin_free_target = 0.60 if trade_type == "scalp" else 0.70
+    margin_free_target = 0.20 if trade_type == "scalp" else 0.35
     current_margin_used = nav - margin_avail
     max_margin_allowed = nav * (1 - margin_free_target)
     margin_budget = max(max_margin_allowed - current_margin_used, 0)
@@ -372,51 +519,161 @@ def load_macro_bias() -> dict:
         return {}
 
 
-def score_pair(pair_data: dict, direction: str, pair: str = "", macro_bias: dict = None) -> tuple:
-    """Score a pair for scalp entry. Returns (score, reasons).
+def detect_event_risk(pair: str, macro_bias: dict) -> str:
+    """Detect event risk level for a pair from macro_bias.event_risk.
 
-    Measures "should I enter NOW?" not just "is there a trend?"
-    Range: -3 to +7. Minimum 4 recommended for entry.
+    Returns: "extreme", "high", or "normal"
+    Checks each event entry independently — only flags if the entry
+    mentions BOTH this pair's currency AND a severity keyword.
+    """
+    if not macro_bias:
+        return "normal"
+    event_risk = macro_bias.get("event_risk", {})
+    if not event_risk:
+        return "normal"
 
-    A. Direction (trend on my side?)  -> up to +3
-    B. Timing (good entry point?)    -> up to +2
-    C. Macro alignment               -> +1 or PENALTY -2
-    D. Penalties                     -> down to -2
-    Spread is gate (pass/fail), not scored.
+    base, quote = pair.split("_")
+    ccy_map = {
+        "JPY": {"BOJ", "JPY", "YEN"}, "USD": {"FOMC", "FED", "NFP", "USD"},
+        "GBP": {"BOE", "GBP"}, "EUR": {"ECB", "EUR"}, "AUD": {"RBA", "AUD"},
+    }
+    pair_keywords = set()
+    for ccy in (base, quote):
+        pair_keywords.update(ccy_map.get(ccy, {ccy}))
+
+    max_level = "normal"
+    for key, text in event_risk.items():
+        # Check relevance: key name OR text must mention this pair's currency
+        # Use key name first (more precise: "BOJ_decision" → JPY only)
+        key_upper = str(key).upper()
+        text_upper = str(text).upper()
+
+        # Check if event KEY maps to a currency in this pair
+        key_relevant = any(kw in key_upper for kw in pair_keywords)
+
+        # If key doesn't match, check if text explicitly names this pair (e.g. "EUR/USD")
+        pair_slash = f"{base}/{quote}"
+        pair_under = pair
+        text_relevant = pair_slash in text_upper or pair_under in text_upper
+
+        if not key_relevant and not text_relevant:
+            continue
+
+        if "EXTREME" in text_upper or ("TODAY" in text_upper and "RISK" in text_upper):
+            return "extreme"
+        if "HIGH" in text_upper or "SURPRISE" in text_upper:
+            max_level = "high"
+
+    return "normal"
+
+
+def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str) -> dict:
+    """Compute ATR-adaptive TP/SL/trail parameters for scalping.
+
+    Instead of fixed 3-5pip TP / 5-8pip SL, use ATR-relative values.
+    SL must be > 1.0x ATR to survive normal M5 noise.
+    TP should be 0.5-0.8x ATR for realistic scalp targets.
+    """
+    if not m5_atr or m5_atr <= 0:
+        m5_atr = 5.0  # fallback
+
+    pip = 0.01 if m5_atr > 1 else 0.0001  # rough: JPY pairs have ATR > 1
+
+    # Base ATR-relative ratios
+    tp_ratio = 0.6   # TP = 0.6x ATR
+    sl_ratio = 1.2   # SL = 1.2x ATR (survives 1 candle noise)
+    trail_ratio = 0.5  # trail at 0.5x ATR profit
+
+    # Event risk adjustments
+    if event_risk_level == "extreme":
+        sl_ratio = 1.5    # wider SL for spikes
+        tp_ratio = 0.8    # wider TP to capture event moves
+        trail_ratio = 0.6
+    elif event_risk_level == "high":
+        sl_ratio = 1.3
+        tp_ratio = 0.7
+        trail_ratio = 0.55
+
+    tp_pips = round(m5_atr * tp_ratio, 1)
+    sl_pips = round(m5_atr * sl_ratio, 1)
+    trail_pips = round(m5_atr * trail_ratio, 1)
+
+    # Clamp to pair-specific ranges
+    profile = PAIR_PROFILES.get(pair, {})
+    sl_range = profile.get("scalp_sl_range", (3.0, 15.0))
+    tp_range = profile.get("scalp_tp_range", (2.0, 10.0))
+    tp_pips = max(tp_range[0], min(tp_pips, tp_range[1]))
+    sl_pips = max(sl_range[0], min(sl_pips, sl_range[1]))
+    trail_pips = max(2.0, min(trail_pips, 8.0))
+
+    # Is this pair scalpable? SL > max of pair's range = too wide
+    scalpable = sl_pips <= sl_range[1]
+
+    return {
+        "tp_pips": tp_pips,
+        "sl_pips": sl_pips,
+        "trail_pips": trail_pips,
+        "m5_atr": round(m5_atr, 1),
+        "sl_atr_ratio": round(sl_pips / m5_atr, 2),
+        "event_risk": event_risk_level,
+        "scalpable": scalpable,
+        "note": f"ATR={round(m5_atr,1)} TP={tp_pips}({tp_ratio}x) SL={sl_pips}({sl_ratio}x) event={event_risk_level}"
+    }
+
+
+def score_pair(pair_data: dict, direction: str, pair: str = "", macro_bias: dict = None,
+               session: dict = None) -> tuple:
+    """Score a pair for entry. Returns (score, reasons, confluence_detail).
+
+    v4: Uses ALL available indicators + pair profiles + session awareness.
+    Range: -4 to +10. Guidelines (not hard thresholds):
+      5+ = strong setup, 4 = solid, 3 = marginal (context-dependent), ≤2 = weak.
+
+    Categories:
+    A. Direction (trend alignment)    -> up to +3
+    B. Timing (entry precision)       -> up to +2
+    C. Confluence (extra confirmation)-> up to +3  [NEW: divergence, Ichimoku, VWAP]
+    D. Macro alignment                -> +1 or -2
+    E. Penalties/bonuses              -> -3 to +1  [NEW: session, volatility, pair-specific]
     """
     m5 = pair_data.get("m5", {})
     m1 = pair_data.get("m1", {})
     bias = pair_data.get("bias", {})
     price = pair_data.get("price", {})
+    profile = PAIR_PROFILES.get(pair, {})
     score = 0
     reasons = []
+    confluence = {}  # detailed breakdown for Claude's discretionary use
 
-    # --- GATE: Spread must be < 2pip ---
+    # --- GATE: Pair-specific spread gate ---
     spread = price.get("spread_pips", 99)
-    if spread >= 2.0:
-        return 0, [f"GATE_FAIL:spread={spread}"]
+    spread_gate = profile.get("spread_gate", 2.0)
+    if spread >= spread_gate:
+        return 0, [f"GATE_FAIL:spread={spread}>{spread_gate}"], {}
 
     # === A. DIRECTION (up to +3) ===
 
     # A1. H1 bias alignment (+1)
     h1_plus = bias.get("h1_plus_di", 0) or 0
     h1_minus = bias.get("h1_minus_di", 0) or 0
+    h1_adx = bias.get("h1_adx", 0) or 0
     if direction == "LONG" and h1_plus > h1_minus:
         score += 1
-        reasons.append("H1_bull")
+        reasons.append(f"H1_bull(DI+={round(h1_plus)}>DI-={round(h1_minus)},ADX={round(h1_adx)})")
     elif direction == "SHORT" and h1_minus > h1_plus:
         score += 1
-        reasons.append("H1_bear")
+        reasons.append(f"H1_bear(DI-={round(h1_minus)}>DI+={round(h1_plus)},ADX={round(h1_adx)})")
 
-    # A2. M5 trend: ADX > 20 AND DI aligned (+1)
+    # A2. M5 trend: pair-specific ADX threshold AND DI aligned (+1)
     m5_adx = m5.get("adx", 0) or 0
     m5_plus = m5.get("plus_di", 0) or 0
     m5_minus = m5.get("minus_di", 0) or 0
-    if m5_adx > 20:
+    adx_min = profile.get("adx_trend_min", 20)
+    if m5_adx > adx_min:
         if (direction == "LONG" and m5_plus > m5_minus) or \
            (direction == "SHORT" and m5_minus > m5_plus):
             score += 1
-            reasons.append(f"M5_trend(ADX={round(m5_adx)},DI_ok)")
+            reasons.append(f"M5_trend(ADX={round(m5_adx)}>{adx_min},DI_ok)")
 
     # A3. M1+M5 RSI alignment (+1)
     m5_rsi = m5.get("rsi", 50) or 50
@@ -430,15 +687,16 @@ def score_pair(pair_data: dict, direction: str, pair: str = "", macro_bias: dict
 
     # === B. TIMING (up to +2) ===
 
-    # B1. M1 Stoch RSI extreme (+1)
+    # B1. M1 Stoch RSI extreme — pair-specific thresholds (+1)
     m1_stoch = m1.get("stoch_rsi")
+    stoch_lo, stoch_hi = profile.get("stoch_rsi_entry", (0.2, 0.8))
     if m1_stoch is not None:
-        if direction == "LONG" and m1_stoch < 0.2:
+        if direction == "LONG" and m1_stoch < stoch_lo:
             score += 1
-            reasons.append(f"TIMING:M1_stoch_oversold({round(m1_stoch, 2)})")
-        elif direction == "SHORT" and m1_stoch > 0.8:
+            reasons.append(f"TIMING:M1_stoch_oversold({round(m1_stoch, 2)}<{stoch_lo})")
+        elif direction == "SHORT" and m1_stoch > stoch_hi:
             score += 1
-            reasons.append(f"TIMING:M1_stoch_overbought({round(m1_stoch, 2)})")
+            reasons.append(f"TIMING:M1_stoch_overbought({round(m1_stoch, 2)}>{stoch_hi})")
 
     # B2. M1 BB band edge — price near band in trade direction (+1)
     m1_close = m1.get("close", 0) or 0
@@ -454,7 +712,45 @@ def score_pair(pair_data: dict, direction: str, pair: str = "", macro_bias: dict
                 score += 1
                 reasons.append("TIMING:M1_BB_upper_reject")
 
-    # === C. MACRO ALIGNMENT (+1 or -2) ===
+    # === C. CONFLUENCE — NEW in v4 (up to +3) ===
+
+    # C1. M5 Divergence alignment (+1)
+    m5_div_score = m5.get("div_score", 0) or 0
+    m5_div_rsi_kind = m5.get("div_rsi_kind", 0) or 0
+    m5_div_macd_kind = m5.get("div_macd_kind", 0) or 0
+    # kind: +1=bullish, -1=bearish, +2=hidden bullish, -2=hidden bearish
+    if m5_div_score != 0:
+        div_bullish = m5_div_rsi_kind > 0 or m5_div_macd_kind > 0
+        div_bearish = m5_div_rsi_kind < 0 or m5_div_macd_kind < 0
+        if (direction == "LONG" and div_bullish) or (direction == "SHORT" and div_bearish):
+            score += 1
+            div_type = "bull" if div_bullish else "bear"
+            reasons.append(f"CONFLUENCE:M5_div_{div_type}(score={round(m5_div_score, 1)},RSI_k={m5_div_rsi_kind},MACD_k={m5_div_macd_kind})")
+            confluence["divergence"] = {"type": div_type, "score": m5_div_score, "rsi_kind": m5_div_rsi_kind, "macd_kind": m5_div_macd_kind}
+        elif (direction == "LONG" and div_bearish) or (direction == "SHORT" and div_bullish):
+            # Divergence AGAINST trade direction — warning, not penalty
+            reasons.append(f"WARN:M5_div_against(score={round(m5_div_score, 1)})")
+            confluence["divergence_against"] = True
+
+    # C2. M5 Ichimoku cloud position (+1)
+    m5_cloud_pos = m5.get("ichimoku_cloud_pos", 0) or 0
+    if m5_cloud_pos != 0:
+        if (direction == "LONG" and m5_cloud_pos > 0) or \
+           (direction == "SHORT" and m5_cloud_pos < 0):
+            score += 1
+            reasons.append(f"CONFLUENCE:M5_ichimoku_{'above' if m5_cloud_pos > 0 else 'below'}(gap={round(m5_cloud_pos, 1)}pip)")
+            confluence["ichimoku"] = {"position": "above" if m5_cloud_pos > 0 else "below", "gap_pips": round(m5_cloud_pos, 1)}
+
+    # C3. VWAP alignment (+1)
+    m5_vwap = m5.get("vwap_gap", 0) or 0
+    if abs(m5_vwap) > 1.0:
+        if (direction == "LONG" and m5_vwap > 0) or \
+           (direction == "SHORT" and m5_vwap < 0):
+            score += 1
+            reasons.append(f"CONFLUENCE:M5_vwap_{'above' if m5_vwap > 0 else 'below'}({round(m5_vwap, 1)}pip)")
+            confluence["vwap"] = {"gap_pips": round(m5_vwap, 1)}
+
+    # === D. MACRO ALIGNMENT (+1 or -2) ===
     if macro_bias and pair in macro_bias:
         mb = macro_bias[pair]
         macro_score = mb.get("score", 0) or 0
@@ -466,16 +762,81 @@ def score_pair(pair_data: dict, direction: str, pair: str = "", macro_bias: dict
         elif (direction == "LONG" and macro_score < 0) or \
              (direction == "SHORT" and macro_score > 0):
             score -= 2
-            reasons.append(f"!MACRO_CONFLICT({macro_label})")
+            reasons.append(f"MACRO_CONFLICT({macro_label})")
 
-    # === D. PENALTIES ===
+    # === E. PENALTIES & BONUSES ===
 
-    # D1. M5 choppy (ADX < 15) — noise kills scalps (-1)
-    if m5_adx and m5_adx < 15:
+    # E1. M5 choppy — pair-specific ADX threshold (-1)
+    choppy_threshold = max(adx_min - 5, 12)  # pair-specific
+    if m5_adx and m5_adx < choppy_threshold:
         score -= 1
-        reasons.append(f"PENALTY:choppy(M5_ADX={round(m5_adx)})")
+        reasons.append(f"PENALTY:choppy(M5_ADX={round(m5_adx)}<{choppy_threshold})")
 
-    return score, reasons
+    # E2. Event risk (-1 for extreme)
+    if macro_bias:
+        ev_risk = detect_event_risk(pair, macro_bias)
+        if ev_risk == "extreme":
+            score -= 1
+            reasons.append(f"PENALTY:EVENT_EXTREME({pair})")
+        elif ev_risk == "high":
+            reasons.append(f"WARN:EVENT_HIGH({pair})")
+
+    # E3. Session suitability (+1 or -1) — NEW
+    if session:
+        current_session = session.get("session", "")
+        best = profile.get("best_sessions", [])
+        if current_session in best:
+            score += 1
+            reasons.append(f"SESSION_BONUS({current_session})")
+        elif current_session in ("LATE_NY",):
+            score -= 1
+            reasons.append(f"PENALTY:SESSION_THIN({current_session})")
+        # Add session note for Claude
+        session_note = profile.get("session_notes", {}).get(current_session, "")
+        if session_note:
+            confluence["session_note"] = session_note
+
+    # E4. Volatility context — is current ATR normal for this pair? (-1 if extreme)
+    m5_atr = m5.get("atr_pips", 0) or 0
+    atr_normal = profile.get("atr_normal_m5", 5.0)
+    if m5_atr > 0:
+        vol_ratio = m5_atr / atr_normal
+        confluence["vol_ratio"] = round(vol_ratio, 2)
+        if vol_ratio > 2.5:
+            score -= 1
+            reasons.append(f"PENALTY:VOL_EXTREME(ATR={round(m5_atr, 1)},normal={atr_normal},ratio={round(vol_ratio, 1)}x)")
+        elif vol_ratio < 0.4:
+            score -= 1
+            reasons.append(f"PENALTY:VOL_DEAD(ATR={round(m5_atr, 1)},normal={atr_normal},ratio={round(vol_ratio, 1)}x)")
+
+    # E5. MTF alignment (+1 if aligned, -1 if conflicted, -2 if H1 turning) — NEW
+    mtf = compute_mtf_alignment(pair, m5, bias)
+    mtf_info = mtf.get(direction.lower(), {})
+    mtf_status = mtf_info.get("status", "unknown")
+    mtf_detail = mtf_info.get("detail", "")
+    confluence["mtf"] = mtf_info
+
+    if mtf_status == "aligned":
+        score += 1
+        reasons.append(f"MTF_ALIGNED({mtf_detail[:60]})")
+    elif mtf_status == "h4_counter":
+        # H4 against but H1+M5 ok — not a penalty for scalps, but note it
+        reasons.append(f"MTF:H4_COUNTER({mtf_detail[:60]})")
+    elif mtf_status in ("h1_conflict", "conflict"):
+        score -= 1
+        reasons.append(f"PENALTY:MTF_CONFLICT({mtf_detail[:60]})")
+    elif mtf_status == "h1_turning":
+        score -= 2
+        reasons.append(f"PENALTY:H1_TURNING({mtf_detail[:60]})")
+    elif mtf_status == "m5_counter":
+        score -= 1
+        reasons.append(f"PENALTY:M5_COUNTER({mtf_detail[:60]})")
+
+    # Add pair character for Claude
+    confluence["pair_character"] = profile.get("character", "")
+    confluence["cooldown_min"] = profile.get("cooldown_after_sl_min", 15)
+
+    return score, reasons, confluence
 
 
 # ─────────────────────────────────────────────
@@ -708,25 +1069,224 @@ def detect_session() -> dict:
     return {"session": session, "volatility": volatility, "utc_hour": hour}
 
 
-def compute_currency_strength(pricing: dict) -> dict:
-    """Simple currency strength from price changes vs reference."""
-    # We use micro-momentum direction across pairs as a proxy
-    # USD appears in: USD_JPY(base), EUR_USD(quote), GBP_USD(quote), AUD_USD(quote)
-    # If USD_JPY up AND EUR_USD down AND GBP_USD down → USD strong
-    strength = {"USD": 0, "EUR": 0, "GBP": 0, "AUD": 0, "JPY": 0}
+def compute_currency_strength(pairs_data: dict) -> dict:
+    """Compute currency strength from M5 momentum across all pairs.
 
-    for pair, data in pricing.items():
-        spread = data.get("spread_pips", 99)
-        if spread > 5:
+    Uses M5 RSI, EMA slope, ADX-weighted DI to score each currency.
+    Positive = strong, negative = weak. Range roughly -3 to +3.
+    """
+    strength = {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "AUD": 0.0, "JPY": 0.0}
+    counts = {"USD": 0, "EUR": 0, "GBP": 0, "AUD": 0, "JPY": 0}
+
+    for pair, pdata in pairs_data.items():
+        m5 = pdata.get("m5", {})
+        if not m5 or isinstance(m5, str):
             continue
         base, quote = pair.split("_")
-        mid = data.get("mid", 0)
-        if mid == 0:
-            continue
-        # We'd need price change for real strength, but we can approximate
-        # from the existing micro data in pair_data. For now, just return the structure.
+
+        rsi = m5.get("rsi", 50) or 50
+        rsi_signal = (rsi - 50) / 25  # normalized -2 to +2
+
+        slope = m5.get("ema_slope_5", 0) or 0
+        pip = 0.01 if "JPY" in pair else 0.0001
+        slope_signal = max(-1.5, min(1.5, slope / pip))
+
+        adx = m5.get("adx", 0) or 0
+        plus_di = m5.get("plus_di", 0) or 0
+        minus_di = m5.get("minus_di", 0) or 0
+        di_signal = ((plus_di - minus_di) / (plus_di + minus_di)) if adx > 15 and (plus_di + minus_di) > 0 else 0
+
+        combined = rsi_signal * 0.4 + slope_signal * 0.3 + di_signal * 0.3
+
+        strength[base] += combined
+        strength[quote] -= combined
+        counts[base] += 1
+        counts[quote] += 1
+
+    for ccy in strength:
+        if counts[ccy] > 0:
+            strength[ccy] = round(strength[ccy] / counts[ccy], 2)
 
     return strength
+
+
+def compute_market_regime(pairs_data: dict, session: dict, currency_strength: dict) -> dict:
+    """Detect overall market regime from cross-pair analysis.
+
+    Returns regime, risk_tone, tradeable flag, and human-readable note for Claude.
+    """
+    scores = []
+    adx_values = []
+    vol_ratios = []
+    active_pairs = []
+
+    for pair, pdata in pairs_data.items():
+        sig = pdata.get("signal", {})
+        m5 = pdata.get("m5", {})
+        best_score = sig.get("best_score", 0)
+        scores.append(best_score)
+        if best_score >= 3:
+            active_pairs.append(f"{PAIR_PROFILES.get(pair, {}).get('nickname', pair)}({best_score})")
+
+        adx_values.append(m5.get("adx", 0) or 0)
+
+        best_dir = sig.get("best", "LONG")
+        conf = sig.get(f"{best_dir.lower()}_confluence", {})
+        vol_ratios.append(conf.get("vol_ratio", 1.0))
+
+    avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+    avg_adx = round(sum(adx_values) / len(adx_values), 1) if adx_values else 0
+    avg_vol = round(sum(vol_ratios) / len(vol_ratios), 2) if vol_ratios else 1.0
+    high_score_count = sum(1 for s in scores if s >= 4)
+
+    # Regime
+    if avg_adx < 15 and avg_vol < 0.5:
+        regime = "dead"
+    elif avg_adx < 15:
+        regime = "choppy"
+    elif avg_adx > 25 and high_score_count >= 3:
+        regime = "trending"
+    elif avg_vol > 2.0:
+        regime = "event_driven"
+    else:
+        regime = "range"
+
+    # Risk tone from AUD vs JPY
+    aud = currency_strength.get("AUD", 0)
+    jpy = currency_strength.get("JPY", 0)
+    if aud > 0.3 and jpy < -0.3:
+        risk_tone = "risk_on"
+    elif aud < -0.3 and jpy > 0.3:
+        risk_tone = "risk_off"
+    elif abs(aud) < 0.2 and abs(jpy) < 0.2:
+        risk_tone = "neutral"
+    else:
+        risk_tone = "mixed"
+
+    # Dominant driver
+    sorted_str = sorted(currency_strength.items(), key=lambda x: abs(x[1]), reverse=True)
+    dominant = sorted_str[0] if sorted_str else ("", 0)
+    dominant_driver = f"{dominant[0]}({'strong' if dominant[1] > 0 else 'weak'},{dominant[1]})"
+
+    # Tradeable?
+    tradeable = True
+    note_parts = []
+
+    if regime == "dead":
+        tradeable = False
+        note_parts.append("Market dead — ATR collapsed. Sit out.")
+    elif regime == "choppy":
+        note_parts.append("Choppy — low ADX. Reduce size, tighten TP.")
+    elif regime == "event_driven":
+        note_parts.append("Event-driven vol — wider SL, reduce size.")
+    elif regime == "trending":
+        note_parts.append(f"Trending — {high_score_count} pairs score≥4.")
+
+    if avg_score < 2.0:
+        tradeable = False
+        note_parts.append(f"No setups — avg score {avg_score}. Wait.")
+
+    if risk_tone == "risk_off":
+        note_parts.append("Risk-off: JPY strong, AUD weak → favor JPY longs.")
+    elif risk_tone == "risk_on":
+        note_parts.append("Risk-on: AUD strong, JPY weak → favor AUD/crosses up.")
+
+    note_parts.append(f"Driver: {dominant_driver}")
+
+    return {
+        "regime": regime, "risk_tone": risk_tone,
+        "dominant_driver": dominant_driver,
+        "currency_strength": currency_strength,
+        "tradeable": tradeable,
+        "avg_score": avg_score, "avg_adx": avg_adx, "avg_vol_ratio": avg_vol,
+        "high_score_pairs": high_score_count,
+        "active_pairs": active_pairs,
+        "note": " | ".join(note_parts),
+    }
+
+
+# ─────────────────────────────────────────────
+# MTF Alignment Detection
+# ─────────────────────────────────────────────
+
+def compute_mtf_alignment(pair: str, m5: dict, bias: dict) -> dict:
+    """Detect multi-timeframe alignment or conflict for a pair.
+
+    Checks H4, H1, M5 direction consistency and flags:
+    - "aligned": all TFs agree → high probability
+    - "h1_m5_aligned": H1+M5 agree but H4 differs → pullback or reversal?
+    - "m5_counter": M5 against H1/H4 → short-term counter-trend, risky scalp
+    - "conflict": TFs disagree significantly → avoid or reduce size
+    - "h1_turning": H1 ADX dropping + DI narrowing → regime change imminent
+
+    Returns dict with alignment status and detail for both LONG and SHORT.
+    """
+    result = {"long": {}, "short": {}}
+
+    # Extract directions
+    h4_regime = bias.get("h4_regime", "unknown")
+    h1_adx = bias.get("h1_adx", 0) or 0
+    h1_plus = bias.get("h1_plus_di", 0) or 0
+    h1_minus = bias.get("h1_minus_di", 0) or 0
+    m5_adx = m5.get("adx", 0) or 0
+    m5_plus = m5.get("plus_di", 0) or 0
+    m5_minus = m5.get("minus_di", 0) or 0
+    m5_rsi = m5.get("rsi", 50) or 50
+
+    # Direction per TF: +1=bull, -1=bear, 0=neutral
+    def tf_dir(plus_di, minus_di, adx, threshold=15):
+        if adx < threshold:
+            return 0
+        return 1 if plus_di > minus_di else -1
+
+    h4_dir = 1 if "bull" in h4_regime.lower() else (-1 if "bear" in h4_regime.lower() else 0)
+    h1_dir = tf_dir(h1_plus, h1_minus, h1_adx)
+    m5_dir = tf_dir(m5_plus, m5_minus, m5_adx)
+
+    # H1 turning detection: ADX dropping + DI converging
+    h1_turning = False
+    if h1_adx > 0 and h1_adx < 20:
+        di_gap = abs(h1_plus - h1_minus)
+        if di_gap < 5:
+            h1_turning = True
+
+    for direction_name, dir_val in [("long", 1), ("short", -1)]:
+        h4_ok = (h4_dir == dir_val) or (h4_dir == 0)
+        h1_ok = (h1_dir == dir_val) or (h1_dir == 0)
+        m5_ok = (m5_dir == dir_val) or (m5_dir == 0)
+
+        h4_against = (h4_dir == -dir_val)
+        h1_against = (h1_dir == -dir_val)
+        m5_against = (m5_dir == -dir_val)
+
+        if h4_ok and h1_ok and m5_ok and not (h4_dir == 0 and h1_dir == 0 and m5_dir == 0):
+            status = "aligned"
+            detail = f"H4={'bull' if dir_val==1 else 'bear'}/H1=ok/M5=ok — full alignment"
+        elif h1_ok and m5_ok and h4_against:
+            status = "h4_counter"
+            detail = f"H4 AGAINST but H1+M5 aligned — pullback trade, shorter hold"
+        elif h4_ok and h1_ok and m5_against:
+            status = "m5_counter"
+            detail = f"M5 against H1/H4 — wait for M5 to turn or skip"
+        elif h4_ok and m5_ok and h1_against:
+            status = "h1_conflict"
+            detail = f"H1 against — dangerous, H1 is your anchor. Avoid."
+        else:
+            status = "conflict"
+            detail = f"TFs disagree (H4={h4_dir},H1={h1_dir},M5={m5_dir}) — avoid"
+
+        if h1_turning:
+            status = "h1_turning"
+            detail = f"H1 regime changing (ADX={round(h1_adx)},DI_gap={round(abs(h1_plus-h1_minus))}) — wait for clarity"
+
+        result[direction_name] = {
+            "status": status,
+            "detail": detail,
+            "h4_dir": h4_dir, "h1_dir": h1_dir, "m5_dir": m5_dir,
+            "h1_turning": h1_turning,
+        }
+
+    return result
 
 
 # ─────────────────────────────────────────────
@@ -765,6 +1325,9 @@ def build_monitor() -> dict:
     # Load macro bias for scoring
     macro_bias = load_macro_bias()
 
+    # Risk & session (computed early for scoring)
+    session = detect_session()
+
     # Per-pair data
     pairs = {}
     for pair in ALL_PAIRS:
@@ -778,15 +1341,29 @@ def build_monitor() -> dict:
 
         pair_data = {"price": price_data, "micro": micro, "m1": m1, "m5": m5, "bias": bias}
 
-        # Signal scoring v2 (direction + timing + macro)
-        long_score, long_reasons = score_pair(pair_data, "LONG", pair, macro_bias)
-        short_score, short_reasons = score_pair(pair_data, "SHORT", pair, macro_bias)
+        # Signal scoring v4 (direction + timing + confluence + macro + session)
+        long_score, long_reasons, long_confluence = score_pair(pair_data, "LONG", pair, macro_bias, session)
+        short_score, short_reasons, short_confluence = score_pair(pair_data, "SHORT", pair, macro_bias, session)
         best_dir = "LONG" if long_score > short_score else "SHORT"
         best_score = max(long_score, short_score)
         pair_data["signal"] = {
-            "long_score": long_score, "long_reasons": long_reasons,
-            "short_score": short_score, "short_reasons": short_reasons,
+            "long_score": long_score, "long_reasons": long_reasons, "long_confluence": long_confluence,
+            "short_score": short_score, "short_reasons": short_reasons, "short_confluence": short_confluence,
             "best": best_dir, "best_score": best_score,
+        }
+
+        # Pair profile for Claude's discretionary use
+        profile = PAIR_PROFILES.get(pair, {})
+        pair_data["profile"] = {
+            "nickname": profile.get("nickname", pair),
+            "character": profile.get("character", ""),
+            "scalp_sl_range": profile.get("scalp_sl_range", (5, 8)),
+            "scalp_tp_range": profile.get("scalp_tp_range", (3, 5)),
+            "swing_sl_range": profile.get("swing_sl_range", (10, 20)),
+            "swing_tp_range": profile.get("swing_tp_range", (10, 30)),
+            "cooldown_after_sl_min": profile.get("cooldown_after_sl_min", 15),
+            "best_sessions": profile.get("best_sessions", []),
+            "session_note": profile.get("session_notes", {}).get(session.get("session", ""), ""),
         }
 
         # Position sizing: pre-compute max units for this pair
@@ -797,11 +1374,22 @@ def build_monitor() -> dict:
             "swing": compute_max_units(pair, account["nav"], account["margin_avail"], "swing", m5_atr, mid_price),
         }
 
+        # ATR-adaptive scalp parameters (TP/SL/trail)
+        ev_risk = detect_event_risk(pair, macro_bias)
+        pair_data["scalp_params"] = compute_scalp_params(pair, m5_atr or 5.0, ev_risk)
+
+        # M5 regime for strategy selection
+        m5_regime = m5.get("regime", "unknown") if isinstance(m5, dict) else "unknown"
+        pair_data["regime"] = m5_regime
+
         pairs[pair] = pair_data
 
-    # Risk & session
+    # Risk (session already computed above)
     risk = compute_risk(account, positions)
-    session = detect_session()
+
+    # Currency strength and market regime (cross-pair analysis)
+    ccy_strength = compute_currency_strength(pairs)
+    market = compute_market_regime(pairs, session, ccy_strength)
 
     # Recently closed trades (for Claude to check before closing)
     recently_closed = load_recently_closed()
@@ -813,6 +1401,7 @@ def build_monitor() -> dict:
         "account": account,
         "risk": risk,
         "session": session,
+        "market": market,
         "actions_taken": actions,
         "recently_closed": recently_closed,
     }

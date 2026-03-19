@@ -41,74 +41,87 @@
 - Upcoming key events → record in `shared_state.json` `alerts`
 - Pre/post event → recommend lot reduction + wider SL (never recommend stopping)
 
-## 5. Self-Improvement as Strategist — Evolve the Trader's Strategy
+## 5. Self-Improvement — MANDATORY Every Cycle
 
-**Leverage all monitor data for deep analysis.**
+**This is not optional. Every 19-minute cycle MUST include self-improvement work.**
+**If you skip this, the system stagnates and keeps losing money.**
 
-### 5a. Monitor Data Reading
+### 5a. Generate Fresh Performance Data
 
-**Read everything on the trader's desk:**
+**Run the v3 trade performance tracker FIRST:**
+```bash
+cd /Users/tossaki/App/QuantRabbit && .venv/bin/python scripts/trader_tools/trade_performance.py
+```
+This parses `logs/live_trade_log.txt` and outputs:
+- Win rate, profit factor, avg pip P/L by agent (scalp-fast, swing-trader)
+- Per-pair breakdown (which pairs are profitable?)
+- Session breakdown (Tokyo/London/NY — where do we win/lose?)
+- Directional breakdown (LONG vs SHORT — is there a bias problem?)
+- Recent trend (last 10 trades vs last 50 — improving or worsening?)
+
+### 5b. Read the Trader's Full Desk
 
 | Monitor | File | What it tells you |
 |---|---|---|
-| Strategy performance | `logs/strategy_feedback.json` | Which strategies work today (WR, PF, entry multiplier) |
-| Counterfactual | `logs/trade_counterfactual_latest.json` | Would opposite position have won? |
-| Entry paths | `logs/entry_path_summary_latest.json` | Which technical combos are winning |
-| Lane scores | `logs/lane_scoreboard_latest.json` | Hot/cold strategy lanes |
-| Directional playbook | `logs/gpt_ops_report.json` | Macro direction score, driver analysis |
-| System health | `logs/health_snapshot.json` | Data freshness, mechanism integrity |
-| Trade log | `logs/live_trade_log.txt` | Recent decision review |
+| Trade performance | (output of 5a above) | Fresh W/L stats per agent, pair, session |
+| Live trade log | `logs/live_trade_log.txt` | Raw decision history — read last 30 entries |
+| Shared state | `logs/shared_state.json` | What other agents are doing |
+| Strategy feedback | `logs/strategy_feedback.json` | Legacy multipliers (may be stale) |
 
-```bash
-cd /Users/tossaki/App/QuantRabbit && .venv/bin/python -c "
-import json
-with open('logs/strategy_feedback.json') as f:
-    feedback = json.load(f)
-for name, s in feedback.get('strategies', {}).items():
-    p = s.get('strategy_params', {})
-    print(f'{name}: WR={p.get(\"win_rate\",0):.1%} PF={p.get(\"profit_factor\",0):.2f} trades={p.get(\"trades\",0)} mult={s.get(\"entry_probability_multiplier\",1):.3f}')
-"
-```
+### 5c. The Five Mandatory Questions — Answer ALL, Write to Log
 
-### 5b. Think as a Researcher
+**Every cycle, answer these in `logs/live_trade_log.txt` under `[MACRO-INTEL REVIEW]`:**
 
-1. Read strategy_feedback → **"Which approach works today?"**
-2. Check trade_counterfactual → **"Would opposite trades have won?"** → suggest bias correction
-3. Analyze entry_path_summary → **"Which entry paths are profitable?"**
-4. Synthesize and update `docs/SCALP_TRADER_PROMPT.md` Macro Context section
-5. Key lessons also go to memory/
+**Q1: "Are we making money? If not, WHY specifically?"**
+- Check performance data. If WR < 40% or PF < 1.0, identify the #1 cause:
+  - SLs too tight? → recommend wider SL to scalp-fast/swing-trader via shared_state
+  - TPs not reached? → recommend tighter TP
+  - Wrong direction? → check if bias is stale or wrong
+  - Bad timing? → recommend waiting for better entries
 
-### 5c. Strategic Self-Questioning — Think about the whole system
+**Q2: "Would the OPPOSITE of our recent trades have been better?"**
+- Look at last 10 trades. For each loser: would the reverse trade have hit TP?
+- If yes on 60%+ → **our directional bias is WRONG. Flip it and write to shared_state.**
 
-**A strategist questions the system, not individual trades:**
+**Q3: "What is the market doing that we're NOT seeing?"**
+- Cross-pair divergences (AUD weak but EUR strong → risk-selective, not risk-off)
+- Correlation breaks (USD/JPY down but DXY up → JPY-specific driver)
+- Volatility regime changes (ATR expanding/contracting across all pairs)
+- **Look for the thing everyone is ignoring.** The edge is in the unseen.
 
-**Trader behavior patterns:**
-- "Is the trader entering enough?" → if too many passes, loosen entry criteria
-- "Are the same skip reasons repeating?" → the reason itself may be wrong
-- "Is the trader's bias skewed?" → LONG/SHORT ratio, pair concentration
+**Q4: "Are the agents' rules helping or hurting?"**
+- Is scalp-fast passing on too many setups? → score threshold too high? → recommend lowering
+- Is swing-trader never entering? → entry requirements too strict? → recommend loosening
+- Are agents fighting each other? (opposing positions, contradictory bias)
+- **Are rules I wrote in previous cycles now WRONG?** → remove or update them
 
-**Risk-reward questions:**
-- "Is avg_win vs avg_loss improving?" → if avg_loss > avg_win structurally, review TP/SL ratio
-- "What's the SL hit rate? Are SLs too tight?" → verify if 2xATR is truly optimal
-- "Are profits not running, or are losses cut too late?" → different causes need different fixes
+**Q5: "What ONE change would improve results most right now?"**
+- Identify the single highest-impact improvement
+- Implement it: update shared_state, edit a prompt, write a new tool, or send an alert
+- **Do it now. Don't just recommend — act.**
 
-**System questions:**
-- "Does the trader have all necessary information?" → new tool development decision
-- "Is this prompt becoming overly restrictive?" → too many rules blocking action?
-- "Are Claude-made rules handcuffing Claude?" → self-made rules can be self-removed
-- "Is improvement actually improving? Overreacting?" → don't over-correct from 1 loss
+### 5d. Take Action — Not Just Analysis
 
-**Improvement direction (never stop trading):**
-- Too many losses → tighten entry criteria or reduce lot (don't stop)
-- Too many SL hits → widen SL (don't stop)
-- Weak in certain sessions → halve lot for that session (don't stop)
-- Weak on certain pairs → lower confidence for that pair (don't stop)
-- **strategy_feedback multiplier < 0.8 → tell trader "not working today"**
+**After answering the 5 questions, DO at least one of these:**
 
-**CRITICAL RULE for editing SCALP_TRADER_PROMPT.md Macro Context section:**
-**Never add "DO NOT", "FORBIDDEN", "AVOID", "NO NEW" to that section.**
-**Frame everything as an opportunity: "X favors LONG/SHORT on Y pair."**
-**Consolidate old entries, don't accumulate. Keep Macro Context under 40 lines.**
+| If you find... | Action |
+|---|---|
+| Direction consistently wrong | Update `shared_state.json` macro_bias with corrected direction |
+| SL too tight for current vol | Write `shared_state.json` alert: "Recommend SL = {X}x ATR for {pair}" |
+| A pair consistently losing | Write `shared_state.json` alert: "WARN: {pair} negative edge — reduce size or skip" |
+| Scoring model missing signals | Edit `docs/SCALP_FAST_PROMPT.md` or `docs/SWING_TRADER_PROMPT.md` to add the pattern |
+| Agent behavior needs fixing | Edit the relevant prompt file directly (you have permission) |
+| New tool needed | Design & build in `scripts/trader_tools/` |
+| Strategy feedback stale | Run `scripts/trader_tools/trade_performance.py` to refresh |
+
+### 5e. Meta-Questioning — Question the Questioner
+
+**Once per hour (every 3rd cycle), ask yourself:**
+- "Am I over-correcting from one bad trade? Look for PATTERNS, not incidents."
+- "Am I adding rules or removing them? If only adding → I'm making the system rigid."
+- "Has my macro analysis been CORRECT this session? Score myself honestly."
+- "What would a trader with a fresh perspective see that I'm blind to?"
+- "Is the whole SYSTEM working (Python layer + Claude layer + coordination), or is a pipe broken?"
 
 ## 6. Tool Development Pipeline — Build What the Trader Needs
 
