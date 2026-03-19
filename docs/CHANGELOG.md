@@ -2,6 +2,7 @@
 
 ## 2026-03-20
 
+- **update: TRADER_PROMPT v2 — エリートトレーダー脳内リファクタ** — Paul Rotter/Linda Raschke/Livermoreの思考法をベースに全面書き直し。(1)Context First: H1→M5→M1の階層判断、M1だけでエントリー禁止 (2)analyst警告は命令: CAUTION無視エントリー禁止 (3)動的SL/TP管理: エントリー後の市況変化に応じてSL/TP/registryを更新 (4)registry必須化: 未登録=-5pipCUTの問題を明記 (5)反省の強制化
 - **update: TRADER_PROMPT複数エントリー+反省強制** — 「1サイクルのフロー」セクション新設（全ペア俯瞰→複数エントリー可の明示）。反省セクション強化（確認方法を追加、毎サイクル末にログ確認して閾値超えたらその場で書く）。SKILL.mdにもReminders追加
 - **update: CLAUDE.md v3→v4更新** — 5エージェント(scalp-fast/swing-trader/market-radar/macro-intel/secretary)→3エージェント(trader/analyst/secretary)に記述を更新。旧プロンプトをレガシーに移動、新プロンプト(TRADER/ANALYST)を必読に。スコアリング記述削除。変更時の必須ルールでCLAUDE.md更新を1番目に昇格
 - **update: 予測精度改善 — ADX品質フィルター+通貨強弱差分析導入**
