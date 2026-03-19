@@ -2,6 +2,8 @@
 
 ## 2026-03-20
 
+- **analyst: バイアス過剰修正を修正** — 前サイクルのUSD_FIRM→EUR_SHORT修正が間違い。EUR_USD +30pip継続・AUD dominant(CS+0.21)確認。EUR_USD/AUD_USD→LEAN_LONG復帰、AUD_JPY→CAUTION(AUD急騰)。last_10 WR=30%危機継続—原因は誤バイアス、ライブ市場アラインに修正。
+
 - **update: TRADER_PROMPT v2 — エリートトレーダー脳内リファクタ** — Paul Rotter/Linda Raschke/Livermoreの思考法をベースに全面書き直し。(1)Context First: H1→M5→M1の階層判断、M1だけでエントリー禁止 (2)analyst警告は命令: CAUTION無視エントリー禁止 (3)動的SL/TP管理: エントリー後の市況変化に応じてSL/TP/registryを更新 (4)registry必須化: 未登録=-5pipCUTの問題を明記 (5)反省の強制化
 - **update: TRADER_PROMPT複数エントリー+反省強制** — 「1サイクルのフロー」セクション新設（全ペア俯瞰→複数エントリー可の明示）。反省セクション強化（確認方法を追加、毎サイクル末にログ確認して閾値超えたらその場で書く）。SKILL.mdにもReminders追加
 - **update: CLAUDE.md v3→v4更新** — 5エージェント(scalp-fast/swing-trader/market-radar/macro-intel/secretary)→3エージェント(trader/analyst/secretary)に記述を更新。旧プロンプトをレガシーに移動、新プロンプト(TRADER/ANALYST)を必読に。スコアリング記述削除。変更時の必須ルールでCLAUDE.md更新を1番目に昇格
@@ -284,3 +286,4 @@
 - analyst: Created docs/ANALYST_PROMPT.md (was missing, causing task to run without instructions)
 2026-03-19T20:44:36Z | analyst | BIAS UPDATE: AUD_JPY SHORT FLIP (China soft), USD_JPY BOUNCE_WATCH (yen crowded+intervention risk), EUR_USD LEAN_LONG wait RSI≤53
 2026-03-20 analyst: バイアス更新(USD_JPY LEAN_SHORT moderate/EUR_USD CAUTION/AUD_JPY LEAN_SHORT moderate-油価→=リスクオン緩和) + パフォーマンスアラート(last_10 WR=30%) + 全アラート刷新(旧全削除)
+2026-03-19 21:14 UTC | analyst | CRITICAL BIAS CORRECTION: USD_JPY flipped LEAN_SHORT→LEAN_LONG (Fed firm 3.5-3.75%, inflation 2.7%, no cut). EUR_USD/GBP_USD→LEAN_SHORT. Risk-off (Iran war, SPY -1.5%wk) = AUD bearish. Performance alert: last_10 WR=30% root cause = wrong macro bias.
