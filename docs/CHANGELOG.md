@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-03-20
+- 2026-03-20T23:44Z: analyst — EUR_USD→LEAN_SHORT更新(ECBがIranスタグフレーション懸念でdovish転換, EUR longs削減, support break). USD_JPY SHORT SUSPENDED(日本は石油輸入国→$103/bbl=貿易赤字悪化, 投機筋のJPYショート増加). AUD_JPY SHORT待機(+55pip上昇で112.0+ゾーン待ち). last_10 WR=40%悪化継続
+- 2026-03-20T23:34Z: analyst — USD_JPY BOUNCE→LEAN_SHORT(M5 RSI=74.5完), AUD_JPY SHORT IN ZONE(M5 RSI=60.9/ADX=25.7), EUR_USD STAND ASIDE(ADX弱), Iran risk-off確認・Fed hold/ECB hold更新
 
 - **analyst: バイアス+アラート更新 2026-03-19T23:05Z** — 全ペアバイアス更新。⚠️ MARGIN 91.5%(circuit breaker active、USD_JPY 4000u SHORT pyramid中)、last_10 WR=40%悪化(range市場でトレンド戦略が効きづらい)、AUD_JPY losing pair判定(WR=50%/PF=0.42)。post-close priority: EUR_USD LONG(M5 RSI=39.4 pullback in H1 BULL)。
 
