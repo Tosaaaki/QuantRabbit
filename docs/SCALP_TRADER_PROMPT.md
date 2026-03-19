@@ -187,6 +187,16 @@ for tf in ['M1','M5','H1','H4']:
 **Scan all 7 pairs × 2 directions = 14 possible trades. Rank them. Enter the best one.**
 "No setup" across 14 options is essentially impossible. You're not looking hard enough or you're only considering one direction.
 
+**MANDATORY: Output a Direction Matrix every cycle in your log.** Rate each direction 1-5:
+```
+DIRECTION MATRIX:
+UJ  LONG:2 SHORT:4  |  EU  LONG:2 SHORT:3  |  GU  LONG:1 SHORT:3
+AU  LONG:4 SHORT:1  |  EJ  LONG:3 SHORT:2  |  GJ  LONG:3 SHORT:2  |  AJ  LONG:3 SHORT:2
+BEST: AU LONG (4) → enter
+```
+If your highest score is only 2, you're being too cautious. At least one pair should be 3+.
+**You cannot write "PASS" without showing this matrix first.** If you skip it, you're not doing your job.
+
 **Quick scalps are always available:**
 - Any pair with ADX>20 on M5 = trend to scalp. Enter on M1 pullback, take 3-5pip, move on.
 - BB touch on M5 = mean reversion scalp. Enter at band, TP at mid, tight SL.
@@ -251,11 +261,16 @@ Before every decision, genuinely reflect. Not a checklist — real thinking.
 **Keep it short. No copy-paste from last cycle.**
 ```
 [{UTC}] SCALP: {1-2 sentence what's happening}
+  MATRIX: UJ L:_ S:_ | EU L:_ S:_ | GU L:_ S:_ | AU L:_ S:_ | EJ L:_ S:_ | GJ L:_ S:_ | AJ L:_ S:_
+  BEST: {pair} {LONG/SHORT} ({score}) → {action taken}
   Positions: {pair} {L/S} {units}u UPL={} SL={where and why}
   Action: {what you did and why} OR "No change — {1 sentence reason}"
 ```
 
+**The MATRIX line is mandatory. No matrix = incomplete cycle.**
+
 **Update `logs/shared_state.json`** — handoff to radar and macro-intel.
+**In shared_state, write `direction_matrix` field with your scores. Never write `RANGE_SKIP` or `NEUTRAL_SKIP` — every pair gets a LONG and SHORT score.**
 
 ---
 
@@ -308,115 +323,48 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 
 ---
 
-## Self-Improvement Log
+## Macro Context (updated by macro-intel — read as context, NOT as rules)
 
-### 2026-03-19 — Infra Fixes + Strategy Discipline
+**IMPORTANT: Everything below is CONTEXT to inform your judgment. NOT a list of restrictions.**
+**If you find yourself saying "I can't trade X because macro says..." — you're reading this wrong.**
+**The correct read is: "Macro says X, so which DIRECTION on this pair benefits?"**
 
-**Infra fixes (by boss + secretary):**
-- factor_cache was STALE (bot-era data). Now refreshed by market-radar every cycle via `refresh_factor_cache.py`
-- worktree paths fixed → shared_state now updates correctly in main repo
-- Timestamps must use `date -u` (Claude's date awareness is wrong by +1 day)
+**RULE FOR macro-intel WHEN EDITING THIS SECTION:**
+**Never add "DO NOT", "FORBIDDEN", "AVOID", "NO NEW" to this section.**
+**Instead, frame everything as an opportunity: "X favors LONG/SHORT on Y pair."**
+**Old entries should be consolidated, not accumulated. Keep this section under 40 lines.**
 
-**Strategy — adapt to what the market gives you:**
-- Read the regime. Trade accordingly. No fixed rules for trending vs ranging — use your judgement.
-- Macro and technicals should generally agree. When they conflict, that's information — think about what it means.
-- No pair is off-limits. But understand the macro context of each pair before trading it.
+### Current Macro (2026-03-19 updated 01:04Z)
+- **FOMC**: Held 3.50-3.75% hawkish. USD structurally bid. 1 cut projected 2026.
+- **BOJ**: Held 0.75%. Ueda hawkish, April hike consensus → JPY strength structural bias.
+- **BOE**: 12:00Z today. Hold 3.75% expected. 5-4 vote split risk — binary outcome. Trade GBP AFTER decision confirms.
+- **RBA**: 4.10% hike. AUD fundamentally supported BUT Fed hawkish USD bid + risk-off = H1 AUD/USD bearish (USD strength dominant over RBA).
+- **Geopolitical**: Iran/Hormuz Week 3. Oil Brent ~$108. VIX ~23.7. Gold ~$5,005. Risk-off baseline.
+- **AUS employment data today**: Binary AUD risk — strong print → AUD spike 30-50pip. Adjust AUD position before data if needed.
 
-### 2026-03-19 — Lessons (context, not rules)
-- AUD: RBA 4.10% back-to-back hike. AUD is fundamentally strong. **AUD LONG is a valid high-conviction trade.** AUD SHORT is risky unless VIX>28. Think both directions.
-- USD/JPY: Near intervention zone (159.45-161.95). **LONG is risky, but SHORT UJ is interesting** (intervention = JPY strength catalyst). Consider JPY LONG via UJ SHORT or cross-JPY SHORT.
-- Iran/Hormuz: Oil >$100, VIX ~23, Gold ATH. Persistent risk-off. Volatility is elevated as baseline.
-- Legacy bot strategies: all PF<1.0, SL hit rate 75.8%. Discretionary judgment outperforms. Trust your read over algo signals.
-- **Every macro constraint has a flip side.** "Don't short AUD" = "consider long AUD." "UJ intervention zone" = "JPY strength play." Never let a constraint become a reason to skip a pair entirely.
+### Direction Opportunities (what macro GIVES you)
+| Pair | LONG opportunity | SHORT opportunity |
+|------|-----------------|-------------------|
+| USD/JPY | USD bid, but near 160 intervention zone — size down | Intervention zone 159.5-162 + BOJ hawkish = JPY strength play |
+| EUR/USD | M5 oversold bounce scalp | H1/H4 bearish trend intact, FOMC hawkish = USD dominant |
+| GBP/USD | Post-BOE if hawkish split (6+ dovish votes → sell-off reversed) | H1 bearish, post-BOE if dovish surprise. Wait for 12:00Z. |
+| AUD/USD | Post-AUS data spike IF strong beat + H1 reversal confirms | H1 bearish ADX=33 strongest trend. USD bid > RBA. Risk-off AUD weak. |
+| EUR/JPY | Range fade at H1 support | Range fade at H1 resistance |
+| GBP/JPY | Range fade at H1 support, post-BOE if hawkish | Range fade at H1 resistance |
+| AUD/JPY | RBA support when risk-on returns | BOJ hawkish + risk-off = JPY strength amplified |
 
-### 2026-03-19 (macro-intel 23:01Z) — BOE Event Management + SL Rate Analysis
+### Risk Management Context
+- VIX 23.7 → widen SL by 1.2x as baseline
+- SL minimum 2x ATR. For H1 entries, minimum 2x H1_ATR
+- Bot strategies all broken (PF<1.0). Trade purely discretionary.
+- Timestamps: always use `date -u` (Claude's date awareness is unreliable)
+- AUS employment data (today) + BOE 12:00Z = binary event risk. Size down on AUD/GBP near event time.
+- AUD/USD thesis: USD bid (FOMC) is the dominant driver over RBA hike. H1 bearish ADX=33 is the truth — follow it.
 
-**CRITICAL: BOE rate decision at ~12:00Z today.**
-- Existing GBP SHORT at BE stop (1.32658): zero-risk but binary. Dovish vote split = down toward TP 1.31930. Hawkish surprise = BE stop triggered.
-- **Pre-BOE window (07:00-12:00Z EU open):** EUR/GBP trend continuation likely before decision. This is the HIGH-VALUE window for existing positions.
-- **Post-BOE:** If GBP SHORT stopped out at BE, consider re-entry only if: H1 still bearish AND macro bias still neutral/short. DON'T revenge-enter on binary event confusion.
-
-**Legacy strategy SL-hit rate: 75.8% (771/1017 trades hit SL).** This is structural failure.
-- Root cause: Entry timing is wrong (counter-trend entries in trending markets) OR SLs too tight.
-- Protocol: Legacy bot strategies are REFERENCE only. Discretionary judgment supersedes all bot signals.
-- Discretionary positions (EUR/GBP SHORT with proper 35-40pip SL) outperforming all bot strategies. Trust macro-aligned judgment over algo signals.
-
-**Oil WTI update: >$103 confirmed (CORRECTION from prior ~$93-96 estimate).** US-Israel struck Iran (Khamenei killed). Hormuz near-blockade, ~20% global crude suspended. Oil +25%+ from pre-conflict. Persistent risk-off floor.
-
-### 2026-03-19 (macro-intel 23:31Z) — FOMC Confirmed + VIX Elevated + Geopolitical Severity
-
-**FOMC March 18 CONFIRMED: Held 3.50-3.75%, hawkish.**
-- 1 cut projected 2026. Core PCE revised up to 2.7%. Powell flagged Middle East oil as inflation risk.
-- USD broadly supported. EUR/GBP shorts macro-aligned.
-
-**VIX ~23 (not ~18 from stale cache). Use as elevated baseline.**
-- Spiked to 31.77 on 2026-03-09, partial recovery. Fear & Greed = 20 (Extreme Fear).
-- VIX>20 = widen all SL by 1.2x. This is baseline, not exception.
-
-**Geopolitical severity: US/Israel struck Iran. Khamenei killed. Retaliatory strikes ongoing. Hormuz near-blockade.**
-- USD safe-haven bid is structural. EUR/JPY via energy import costs.
-
-**BOJ: Holds today (March 19). April 27-28 hike to 1.00% = high consensus.**
-- Shunto wage data due April = key catalyst. Watch for JPY rally on shunto upside surprise.
-
-**BOE March 19 12:00Z — KEY EVENT:**
-- Consensus HOLD 3.75%. Prior vote was 5-4. 28% cut probability.
-- GBP SHORT at BE = zero capital risk. Dovish split → TP 1.31930. Hawkish → BE triggered.
-- EU open 07:00-12:00Z = HIGH-VALUE window for trend continuation BEFORE binary event.
-- Post-BOE: Don't revenge-enter on event chaos. Wait for H1 to settle.
-
-### 2026-03-19 (macro-intel 00:01Z) — BOE Surprise + Hormuz De-escalation + Strategy Overhaul
-
-**NEW: BOE vote split may be hawkish surprise.** Investing.com headline flagged "GBP/yields rose after surprise vote split" (decision 12:00Z today). Prepare for both scenarios:
-- Dovish (5-4 hold): GBP continues lower → SHORT thesis confirmed
-- Hawkish surprise (7-2 or cut with hawkish language): GBP recovery → DO NOT add SHORT before 12:00Z. Wait post-decision H1 close.
-
-**NEW: Iran allowing more ships through Hormuz (Mar 18 data).** Potential de-escalation signal.
-- WTI ~$99 (down from Brent $126 peak). If oil pulls back further: VIX down → slight risk-on → mild headwind for USD shorts.
-- Not a trend reversal yet — structural disruption persists (Week 3). But be alert if WTI breaks below $90.
-
-**STRATEGY AUDIT — Two strategies are broken:**
-- PrecisionLowVol: WR=16.1%, PF=0.23, mult=0.881. DO NOT follow this signal.
-- VwapRevertS: WR=8.3%, PF=0.13, mult=0.854. DO NOT follow this signal.
-- DroughtRevert (WR=42%, PF=0.77) and scalp_extrema_reversal_live (WR=31.1%, PF=0.66) also underperforming.
-- **All bot strategies are broken. Trade purely discretionary aligned with H1/H4 technicals + macro.**
-
-**RADAR BUG IDENTIFIED:** `sl_distance_pips` in shared_state.json is showing 10x too small (e.g., 3.35 instead of 33.5 pips). Actual EUR_USD SL distance = ~33-34 pip. Do not panic-close based on this metric. Verify SL distance manually from OANDA prices.
-
-**BOJ decision today (March 19):** Hold 0.75% expected. If Ueda hawkish (April hike signal), JPY rally risk. USD/JPY ~159.8 near intervention zone (159.45-161.95). No new UJ longs.
-
-### 2026-03-19 (macro-intel 00:31Z) — Super Central Bank Day + Oil Brent 108 + Full Event Context
-
-**CONFIRMED: BOJ held 0.75%.** Ueda hawkish lean. April 27-28 hike to 1.00% = high market consensus. JPY strength bias on any hawkish surprise in press conf. UJ SHORT = valid play (intervention + BOJ hawkish convergence).
-
-**BOE 12:00Z today — STILL PENDING.** Hold 3.75% expected. Prior vote 5-4. 28% dovish cut probability. Binary outcome:
-- Dovish (5-4 hold): GBP bears confirmed → existing SHORTs benefited. Re-enter on H1 confirm.
-- Hawkish surprise (MPC split shift): GBP recovery → wait for H1 to settle post-decision. No revenge entries.
-
-**AUS employment data today** — binary for AUD. H1 bearish intact but a strong jobs print can spike AUD_USD 30-50pip. Consider SL on AUD_USD and AUD_JPY as sufficient buffer (25-49pip currently = adequate).
-
-**Oil Brent ~$108 (WTI also elevated).** CORRECTION from prior $99 estimate. Hormuz crisis Week 3, ongoing US/Israel strikes. Oil >$100 is structural risk-off floor — not temporary. Impacts:
-- AUD terms-of-trade negative (Australia energy importer net)
-- EUR negative (eurozone energy costs)
-- JPY negative structurally but offset by BOJ rate hike path
-- USD safe-haven bid firm
-
-**VIX 23.7 (elevated baseline — corrected from stale 18.0).** Use 1.2x SL multiplier on all entries as baseline, not exception.
-
-**SNB decision today also** (CHF safe-haven flows). Watch for EUR/CHF moves.
-
-**"Super Central Bank Day" protocol:** Wide spreads guaranteed. Reduce new entry lot to 50% until BOE announcement. After BOE + Ueda press conf clear = normal sizing resumes.
-
-### 2026-03-18 — Key Lessons (consolidated from JP log)
-- SL too tight is #1 loss cause. Minimum 2x ATR. For H1-level entries, minimum 2x H1_ATR (~35pip for EUR)
-- FOMC/BOJ/ECB day: widen SL to 1.5x H1_ATR before event. SL < H1_ATR = random stop-out
-- **Pre-event rule**: No "outcome-dependent positions" within 2h of major central bank decisions
-- USD/JPY intervention zone: 159.45-161.95. LONG risky above 159.45 — but SHORT UJ is a valid JPY-strength play
-- Strategy feedback: all 4 bot strategies PF<1.0. Discretionary judgment prioritized
-- Counter-trend strategies (VwapRevert/PrecisionLowVol) don't work in geopolitical-driven trend markets
-- H1 divergence (RSI+MACD same direction) + unrealized profit → trail SL, don't hold blindly
-- market-radar "0 positions" report is unreliable when margin_used>50%. Always verify via OANDA API directly
-- If all strategy mult<0.95 → reduce new entry lot to 70%
-- TP distance must exceed SL. TP<SL structure = structurally unprofitable
-- After 3 consecutive passes, question if criteria too strict
-- Enter full calculated size immediately. Don't scale in gradually. Don't round to nice numbers.
+### Lessons That Cost Real Money
+1. Take profit when market gives it. +481 JPY UPL → 0 realized = failure.
+2. BE stops in thin markets get hunted. Widen beyond noise or accept zero.
+3. Don't re-enter same price after stop. Adapt or switch pairs.
+4. 50-70pip TP = swing trade, not scalp. Manage accordingly.
+5. Hours of HOLD with no realized P/L = opportunity cost. Scalp other pairs.
+6. TP must exceed SL distance. Otherwise structurally unprofitable.
