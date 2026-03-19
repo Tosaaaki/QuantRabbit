@@ -94,9 +94,36 @@ MATRIX: UJ L:_ S:_ | EU L:_ S:_ | GU L:_ S:_ | AU L:_ S:_ | EJ L:_ S:_ | GJ L:_ 
 - SL: At structure (swing high/low, cloud edge, BB band) — minimum 2x H1 ATR
 - Size: Conservative. Keep 70% margin free (swing positions need room).
 
-## Step 5: Execute
+## Step 5: Execute & Register
 
 Same OANDA REST API as scalp-fast. Use fixed SL + TP (not trailing) at entry.
+
+**After entering, register in `logs/trade_registry.json`:**
+```python
+import json
+registry_path = "logs/trade_registry.json"
+try:
+    with open(registry_path) as f:
+        registry = json.load(f)
+except:
+    registry = []
+registry.append({
+    "trade_id": "{OANDA_TRADE_ID}",
+    "owner": "swing-trader",
+    "type": "swing",
+    "pair": "{pair}",
+    "rules": {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -15, "cut_age_min": 60}
+})
+with open(registry_path, "w") as f:
+    json.dump(registry, f, indent=2)
+```
+
+**The monitor (`live_monitor.py`) reads this registry to apply the right management rules.**
+- Swing positions get wider thresholds (trail at +8pip, not +5pip)
+- You can override rules by updating the registry (e.g., widen trail if trend is strong)
+- If you DON'T register, the monitor uses default scalp rules (trail at +5pip) — which is too tight for swings
+
+**Check `actions_taken` in `logs/live_monitor.json` each cycle** to see what the monitor did to your positions.
 
 ## Step 6: Record
 

@@ -10,109 +10,129 @@
 
 ---
 
-## Step 1: Read Monitor (ONE file)
+## How This Works
+
+A Python process (`live_monitor.py`) runs every 30 seconds and handles:
+- Data collection (pricing, S5, M1, M5 indicators)
+- **Signal scoring** (each pair scored 1-5 for LONG and SHORT)
+- **Mechanical position management** (auto-trail at +5pip, auto-partial at +8pip, auto-cut losses)
+- Risk checks (margin, drawdown, circuit breaker)
+
+**You DON'T compute anything. You read ONE file and make DECISIONS.**
+
+Your job is to:
+1. **Check what the monitor already did** (actions_taken)
+2. **Override** mechanical decisions if your judgment says different
+3. **Enter new trades** based on pre-computed signals
+4. **Register your trades** so the monitor knows how to manage them
+
+---
+
+## Step 1: Read Monitor
 
 ```bash
 cat logs/live_monitor.json
 ```
 
-This file updates every 30 seconds. Contains everything you need:
-- **Current prices** (bid/ask/spread per pair)
-- **S5 micro-momentum** (direction, velocity, range — last 2 minutes of tick data)
-- **M1 indicators** (RSI, ADX, StochRSI, MACD, EMA slopes, BB, CCI)
-- **M5 indicators** (same set)
-- **H1/H4 bias** (regime, ADX, RSI — for directional context only)
-- **Open positions** (UPL, age, trail status, SL/TP)
-- **Account** (NAV, margin)
+Key sections to check:
+- `actions_taken` — what did the monitor do this cycle? Trail set? Partial close? Cut?
+- `risk.circuit_breaker` — if `true`, **NO NEW ENTRIES. Period.**
+- `positions` — current state after monitor actions
+- `pairs.{PAIR}.signal` — pre-computed scores and reasons
 
-**You do NOT compute anything. You do NOT call factor_cache. You do NOT fetch candles. The monitor has it all.**
+## Step 2: Override Monitor Actions (if needed)
 
-## Step 2: Manage Positions FIRST
+The monitor applies **mechanical rules**. You are the **discretionary override**.
 
-For EACH open position, answer:
+Examples of when to override:
+- Monitor set a trail at +5pip, but H1 trend is very strong → **widen the trail distance**
+- Monitor wants to cut a position at -5pip after 10min, but M5 just turned in your favor → **cancel the cut, give it more room**
+- Monitor partial-closed, but you want to close the REST too → **close remaining**
 
-**"Would I enter this fresh right now?"**
+**Override via OANDA API:**
+- Change trail: `PUT /v3/accounts/{acct}/trades/{id}/orders` with `{"trailingStopLoss": {"distance": "X"}}`
+- Cancel close: not needed (monitor already closed or didn't)
+- Force close: `PUT /v3/accounts/{acct}/trades/{id}/close`
 
-| Answer | Action |
-|--------|--------|
-| YES, strong | HOLD unchanged |
-| YES, but weaker | SET TRAILING STOP if not already set |
-| MEH | PARTIAL CLOSE (half) + TRAIL the rest |
-| NO | CLOSE immediately |
+**If you DON'T override, the monitor's actions stand. This is the safety net.**
 
-**Mandatory rules:**
-- UPL > +5pip AND no trail → **SET TRAIL NOW.** `PUT /v3/accounts/{acct}/trades/{id}/orders` with `{"trailingStopLoss": {"distance": "0.050"}}` (JPY pairs) or `{"distance": "0.00050"}` (others)
-- UPL > +3pip AND age > 15min → **PARTIAL or CLOSE.** You're holding too long.
-- UPL < 0 AND age > 10min → **CLOSE.** Timing was wrong. Move on.
-- UPL > +8pip → **PARTIAL CLOSE half NOW.** Bank the money. Let rest trail.
+## Step 3: Enter New Trades
 
-## Step 3: Find Next Scalp
+Look at `pairs.{PAIR}.signal.best_score` for each pair.
 
-Scan the monitor. For each of the 7 pairs:
+**Enter if:**
+- `best_score >= 3` AND
+- `risk.circuit_breaker == false` AND
+- You have a reason beyond the score (your discretionary edge)
 
-**Quick score (1-5):**
-- M5 ADX > 20? (+1)
-- M1 and M5 RSI aligned in same direction? (+1)
-- Micro-momentum (S5) aligned with M5? (+1)
-- H1 bias supports direction? (+1)
-- Spread < 2pip? (+1)
-
-**Enter the highest-scoring pair if score ≥ 3.**
+**Don't blindly follow the score.** The score is a filter. YOU decide if the setup is real.
 
 **Scalp parameters:**
-- **TP: 3-5pip** (never more for scalps. You're not swing trading.)
+- **TP: 3-5pip** (never more for scalps)
 - **SL: 5-8pip** (structure-based if visible, else 1.5x TP)
-- **Size: quick math** from margin available. Keep 60% margin free for rotation.
-- **Trailing stop: set at entry** with distance = TP. If it runs, you win more. If it reverses, trail catches it.
+- **Size:** Keep 60% margin free for rotation
 
-**Low-spread pairs for scalps:** AUD/USD (~1.5pip), EUR/USD (~1.8pip)
-**Avoid scalping:** GBP/JPY (4.6pip spread), EUR/JPY (3pip), AUD/JPY (3pip) — swing only.
-
-## Step 4: Execute
-
-**OANDA REST API direct (urllib).**
-
+**Entry order:**
 ```
 POST /v3/accounts/{acct}/orders
-{
-  "order": {
-    "type": "MARKET",
-    "instrument": "{pair}",
-    "units": "{+BUY/-SELL}",
-    "timeInForce": "FOK",
-    "stopLossOnFill": {"price": "{SL}"},
-    "takeProfitOnFill": {"price": "{TP}"},
-    "trailingStopLossOnFill": {"distance": "{trail_dist}"}
-  }
-}
+{"order": {"type": "MARKET", "instrument": "{pair}", "units": "{+/-}",
+  "timeInForce": "FOK", "stopLossOnFill": {"price": "{SL}"},
+  "takeProfitOnFill": {"price": "{TP}"}}}
 ```
 
-Note: `trailingStopLossOnFill` and `stopLossOnFill` cannot coexist. Pick one:
-- If trend is strong (ADX>25, micro aligned) → use trailing stop only
-- If range/uncertain → use fixed SL + TP
+## Step 4: Register Your Trade
+
+After entering, write to `logs/trade_registry.json`:
+
+```python
+import json
+registry_path = "logs/trade_registry.json"
+try:
+    with open(registry_path) as f:
+        registry = json.load(f)
+except:
+    registry = []
+registry.append({
+    "trade_id": "{OANDA_TRADE_ID}",
+    "owner": "scalp-fast",
+    "type": "scalp",
+    "pair": "{pair}",
+    "rules": {"trail_at_pip": 3, "partial_at_pip": 5, "max_hold_min": 15, "cut_at_pip": -5, "cut_age_min": 10}
+})
+with open(registry_path, "w") as f:
+    json.dump(registry, f, indent=2)
+```
+
+**The monitor reads this registry to know HOW to manage your position.** If you don't register, it uses default rules.
+
+You can also UPDATE rules for existing trades (e.g., widen trail):
+```python
+for t in registry:
+    if t["trade_id"] == "{id}":
+        t["rules"]["trail_at_pip"] = 8  # let it run further
+```
 
 ## Step 5: Record (SHORT)
 
 Append to `logs/live_trade_log.txt`:
 ```
-[{UTC}] FAST: {action} {pair} {L/S} {units}u @{price} | UPL_total={} NAV={}
-  Positions: {pair} {units}u UPL={} →{HOLD|PARTIAL|TRAIL|CLOSE}
+[{UTC}] FAST: {action} {pair} {L/S} {units}u @{price} | Monitor did: {actions_taken summary}
+  Scores: UJ={s} EU={s} GU={s} AU={s} EJ={s} GJ={s} AJ={s} | Best: {pair} {dir}({score})
+  Positions: {pair} {units}u {upl_pips}pip →{what you did}
 ```
 
 Update `logs/shared_state.json` positions field.
-
-**No MATRIX. No MTF essay. Just what you did and why in one line.**
 
 ---
 
 ## What You Do NOT Do
 
-- **No H4/H1 deep analysis.** That's swing-trader's job. You just read the bias from the monitor.
-- **No factor_cache refresh.** The monitor handles it.
+- **No indicator computation.** Monitor has it all.
+- **No factor_cache refresh.** Monitor handles it.
+- **No H4/H1 deep analysis.** That's swing-trader's job.
 - **No Agent subprocesses.** Ever.
-- **No strategy_feedback.json reading.** You're not doing research.
-- **No PASS without trying.** 7 pairs × 2 directions = 14 options. Score ≥ 3 always exists.
 - **No holding for 30+ minutes.** That's swing territory. Close and rotate.
+- **No entry when circuit_breaker=true.**
 
 ## Config
 
