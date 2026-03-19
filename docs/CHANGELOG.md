@@ -292,3 +292,9 @@
 
 ## 2026-03-20
 - analyst: バイアス更新 — USD_JPY LEAN_SHORT (M5 RSI=70.3 overbought in H1 bear = SHORT zone). EUR_USD LEAN_LONG (H1 bull > macro). AUD_JPY LEAN_SHORT reinstated (H1 ADX=39.5). Macro: Fed/BOJ/ECB全保留、Middle East risk-off、JPY bid構造的。last_10 WR=30%危機継続。
+## 2026-03-20 analyst BIAS UPDATE
+- EUR_USD downgraded LEAN_LONG→CAUTION: macro BEARISH from 1.2080 (targeting 1.14), H1 RSI=71.6 overbought. Stop forcing longs.
+- AUD_JPY SHORT priority confirmed: Iran risk-off + H1 ADX=39.5 STRONG BEAR. London only, 1000u max.
+- Iran conflict = dominant driver: risk-off = JPY safe-haven bid, AUD suppressed.
+- Performance alert: last_10 WR=40% WORSENING. Rule added: NO LONG when H1 RSI >70.
+
