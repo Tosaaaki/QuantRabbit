@@ -126,42 +126,32 @@ m5_counter  → M5 pullback against H1/H4. IF H1+H4 strong, this IS your entry (
 
 ### 4A. Form Your Prediction (BEFORE checking scores)
 
-You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to THINK:
+You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to THINK about the STORY, not re-calculate indicators.
 
-1. **"What is the dominant force right now?"**
-   - Rate differentials, risk sentiment, session flow, event positioning
-   - Which currency is being bought/sold and WHY?
+**Your prediction is about MACRO THESIS and STRUCTURAL NARRATIVE — not indicator readings. The score already handles ADX/RSI/BB. Don't duplicate it.**
 
-2. **Use PREDICTIVE meaning of H1/H4 indicators:**
+1. **"What is the dominant MACRO force right now?"**
+   - Rate differentials → fundamental direction
+   - Risk sentiment (VIX, risk_tone) → AUD/JPY barometer
+   - Session flow → London selling? NY buying?
+   - Currency strength → who's being bought/sold and WHY?
+   - Events → positioning into/out of upcoming data
 
-   **Regime indicators → "Is the trend CONTINUING, DYING, or REVERSING?"**
-   - H1 ADX > 30 and rising? → Strong trend. Predict continuation. Enter pullbacks.
-   - H1 ADX dropping from 30+ to 20? → Trend DYING. Close trend positions. Prepare for range.
-   - H1 DI+ crossing DI-? → Regime CHANGE. Highest-edge entry if you're early. Tightest SL.
-   - H4 ADX < 15? → Dead range. No swing entries. Wait for breakout.
+2. **"What STRUCTURAL story is playing out on H1/H4?"**
+   - Is there a regime change happening? (H1 turning, not just indicator values)
+   - Key levels nearby — does a break open 20+ pips of space?
+   - Ichimoku cloud shape — support thinning? Twist coming?
+   - Where is the market TRYING to go? What's blocking it?
 
-   **Forward-looking indicators → "What happens NEXT?"**
-   - H1 RSI divergence from price? → **Strongest reversal signal.** Trend looks alive but momentum is gone. Predict reversal.
-   - H1 Ichimoku cloud thinning (span A → span B)? → Support/resistance weakening. Breakout coming.
-   - H1 Ichimoku cloud twist ahead? → Trend change expected in 26 candles. Position early.
-   - H1 BB squeeze (BBW < 50% normal)? → Explosive move coming. PREDICT the direction from macro + order flow.
-
-   **Structure → "Where are the decision points?"**
-   - H4 swing high/low within 10pip of current price? → Key level test. Break = trend continuation. Bounce = reversal.
-   - Price inside Ichimoku cloud? → Indecision zone. Wait for exit direction.
-   - VWAP gap > 2x normal on H1? → Overstretched. Predict mean reversion.
-
-3. **"Where is each pair going in the next 1-8 hours?"**
-   - For your top 2-3 pairs, write a prediction:
+3. **Write your prediction** — for top 2-3 pairs:
    ```
    PREDICTION: {PAIR} will {rise/fall} toward {target} over {timeframe}
-   BECAUSE: {macro driver / structural setup / momentum reading}
-   INVALIDATION: {specific level or event that kills this prediction}
+   BECAUSE: {macro/structural reason — NOT "RSI is 30" or "ADX is high"}
+   INVALIDATION: {specific level or event}
    ```
 
-3. **"What is the BEAR case for my bull prediction (and vice versa)?"**
-   - If you can't find a strong counterargument, you haven't thought hard enough.
-   - The counterargument's strength determines your position size.
+4. **Counter-argument check** — "What kills this prediction?"
+   - The counter-argument's strength determines your position size (not whether to trade).
 
 ### 4B. Check Score & Confluence (confirmation)
 
@@ -169,12 +159,12 @@ You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to TH
 
 | Your prediction vs Score | Action |
 |----------------------|--------|
-| Prediction + high score (5+) | Full swing size. Trend + your analysis aligned. |
-| Prediction + low score (3-4) | Reduced size. You see something the score doesn't. |
-| Prediction DISAGREES with high score | **This is your highest-edge situation.** If you see H1 turning, divergence, or macro shift that the lagging score hasn't caught — this IS the swing entry. But require strong evidence. |
-| No prediction formed | **No entry.** Deep analysis doesn't mean always trading. |
+| Prediction + high score (5+) | **ENTER. Full swing size.** Your thesis + data aligned = best setup. |
+| Prediction + low score (3-4) | **ENTER smaller (0.5-0.75x).** You see something the score doesn't yet. |
+| Prediction DISAGREES with high score | **Enter YOUR prediction at 0.5x** if you have macro/structural evidence. Otherwise follow the score direction. |
+| No prediction formed | **No entry.** |
 
-**Critical: high score = strong PAST trend. For swings, the most profitable entries are often at TURNS where the score is moderate or even contradicts your direction — because you see the regime change before the indicators do.**
+**KEY RULE: If your macro thesis points a direction and H1 structure supports it → ENTER. The thesis IS the signal. Score confirms, doesn't permit.**
 
 ### 4C. Set TP/SL (Structure-Based)
 

@@ -23,6 +23,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 LOG_PATH = BASE_DIR / "logs" / "live_trade_log.txt"
 OUTPUT_PATH = BASE_DIR / "logs" / "strategy_feedback.json"
+PREDICTION_TRACKER_PATH = BASE_DIR / "logs" / "prediction_tracker.json"
 
 # Patterns to extract trade results from log lines
 # Matches: [2026-03-19T10:30:00Z] FAST: CLOSED EUR_USD LONG +3.2pip
@@ -287,6 +288,114 @@ def parse_prediction_accuracy(log_path: Path) -> dict:
     return result
 
 
+def parse_prediction_tracker() -> dict:
+    """Parse prediction_tracker.json for detailed prediction accuracy analysis.
+
+    Breaks down by: agent, pair, session, direction, score_agreed.
+    This complements parse_prediction_accuracy() which only reads log text.
+    """
+    try:
+        preds = json.loads(PREDICTION_TRACKER_PATH.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"status": "no_data", "total": 0}
+
+    resolved = [p for p in preds if p.get("status") in ("correct", "partial", "wrong")]
+    open_preds = [p for p in preds if p.get("status") == "open"]
+
+    if not resolved:
+        return {"status": "no_resolved", "total": len(preds), "open": len(open_preds)}
+
+    def _accuracy(items: list) -> dict | None:
+        if not items:
+            return None
+        correct = sum(1 for p in items if p["status"] in ("correct", "partial"))
+        wrong = sum(1 for p in items if p["status"] == "wrong")
+        total = len(items)
+        avg_pips = round(sum(p.get("pips", 0) or 0 for p in items) / total, 2) if total else 0
+        return {
+            "correct": correct,
+            "wrong": wrong,
+            "total": total,
+            "accuracy_pct": round(correct / total * 100) if total else 0,
+            "avg_pips": avg_pips,
+        }
+
+    # Overall
+    overall = _accuracy(resolved)
+
+    # By agent
+    by_agent = {}
+    for agent in set(p.get("agent", "unknown") for p in resolved):
+        agent_preds = [p for p in resolved if p.get("agent") == agent]
+        by_agent[agent] = _accuracy(agent_preds)
+
+    # By pair
+    by_pair = {}
+    for pair in set(p.get("pair", "unknown") for p in resolved):
+        pair_preds = [p for p in resolved if p.get("pair") == pair]
+        by_pair[pair] = _accuracy(pair_preds)
+
+    # By session
+    by_session = {}
+    for session in set(p.get("session", "unknown") for p in resolved):
+        session_preds = [p for p in resolved if p.get("session") == session]
+        by_session[session] = _accuracy(session_preds)
+
+    # By direction
+    by_direction = {}
+    for direction in set(p.get("direction", "unknown") for p in resolved):
+        dir_preds = [p for p in resolved if p.get("direction") == direction]
+        by_direction[direction] = _accuracy(dir_preds)
+
+    # Score agreement analysis — the key insight
+    agreed = [p for p in resolved if p.get("score_agreed") is True]
+    disagreed = [p for p in resolved if p.get("score_agreed") is False]
+    score_analysis = {
+        "score_agreed": _accuracy(agreed),
+        "score_disagreed": _accuracy(disagreed),
+    }
+    # Recommendation based on data
+    if agreed and disagreed:
+        ag_acc = (score_analysis["score_agreed"] or {}).get("accuracy_pct", 0)
+        dis_acc = (score_analysis["score_disagreed"] or {}).get("accuracy_pct", 0)
+        if dis_acc > ag_acc + 10:
+            score_analysis["recommendation"] = "PREDICTIONS_BEAT_SCORE — trust your judgment more"
+        elif ag_acc > dis_acc + 10:
+            score_analysis["recommendation"] = "SCORE_MORE_RELIABLE — lean on score confirmation"
+        else:
+            score_analysis["recommendation"] = "BALANCED — both sources similar, use together"
+
+    # Recent trend (last 10 vs all)
+    recent_10 = resolved[-10:] if len(resolved) > 10 else resolved
+    trend_info = {
+        "last_10": _accuracy(recent_10),
+        "all_time": overall,
+    }
+    if len(resolved) >= 15 and recent_10:
+        all_acc = overall["accuracy_pct"]
+        recent_acc = trend_info["last_10"]["accuracy_pct"]
+        if recent_acc < all_acc - 15:
+            trend_info["trend"] = "deteriorating"
+        elif recent_acc > all_acc + 15:
+            trend_info["trend"] = "improving"
+        else:
+            trend_info["trend"] = "stable"
+
+    return {
+        "status": "active",
+        "total_predictions": len(preds),
+        "resolved": len(resolved),
+        "open": len(open_preds),
+        "overall": overall,
+        "by_agent": by_agent,
+        "by_pair": by_pair,
+        "by_session": by_session,
+        "by_direction": by_direction,
+        "score_analysis": score_analysis,
+        "trend": trend_info,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="v3 Trade Performance Tracker")
     parser.add_argument("--json", action="store_true", help="Output raw JSON")
@@ -314,6 +423,7 @@ def main():
     trend = recent_trend(trades)
 
     prediction = parse_prediction_accuracy(LOG_PATH)
+    prediction_tracker = parse_prediction_tracker()
 
     result = {
         "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -324,6 +434,7 @@ def main():
         "by_direction": by_direction,
         "trend": trend,
         "prediction_accuracy": prediction,
+        "prediction_tracker": prediction_tracker,
     }
 
     # Write to strategy_feedback.json for other agents to read
@@ -393,6 +504,37 @@ def main():
                 print(f"  !! PREDICTION ACCURACY DECLINING — lean heavier on score confirmation")
             elif trend_str == "IMPROVING":
                 print(f"  >> Prediction accuracy improving — good sign")
+
+    # Prediction Tracker (from prediction_tracker.json)
+    pt = prediction_tracker
+    if pt.get("status") == "active" and pt.get("overall"):
+        print(f"\n--- Prediction Tracker (prediction_tracker.json) ---")
+        ov = pt["overall"]
+        print(f"  Overall: {ov['correct']}/{ov['total']} correct = {ov['accuracy_pct']}% "
+              f"(avg {ov['avg_pips']:+.1f}pip)")
+        # Score analysis
+        sa = pt.get("score_analysis", {})
+        if sa.get("score_agreed"):
+            ag = sa["score_agreed"]
+            print(f"  Score Agreed:    {ag['accuracy_pct']}% ({ag['total']} predictions)")
+        if sa.get("score_disagreed"):
+            da = sa["score_disagreed"]
+            print(f"  Score Disagreed: {da['accuracy_pct']}% ({da['total']} predictions)")
+        if sa.get("recommendation"):
+            print(f"  >> {sa['recommendation']}")
+        # By pair
+        if pt.get("by_pair"):
+            print(f"  By pair:")
+            for pair, stats in sorted(pt["by_pair"].items()):
+                if stats:
+                    print(f"    {pair:8s}: {stats['accuracy_pct']}% ({stats['total']}pred, avg {stats['avg_pips']:+.1f}pip)")
+        # Trend
+        tr = pt.get("trend", {})
+        if tr.get("trend"):
+            print(f"  Trend: {tr['trend'].upper()}")
+    else:
+        msg = "agents not writing predictions yet" if pt.get("total", 0) == 0 else f"{pt.get('open', 0)} open, none resolved yet"
+        print(f"\n--- Prediction Tracker: {msg} ---")
 
     print(f"\n--- Self-Improvement Compliance ---")
     print(f"  REFLECTION entries: {p['reflection_count']} | SWING REVIEW: {p['swing_review_count']}")

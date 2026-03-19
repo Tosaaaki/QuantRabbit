@@ -2,6 +2,29 @@
 
 ## 2026-03-19
 
+- **12:25 swing-traderロック飢餓修正**
+  - 根本原因: market-radar(7min+295s jitter)がほぼ毎回swing-trader(10min+220s jitter)のロック取得タイミングと衝突→常時SKIP
+  - cron `*/10` → `3,13,23,33,43,53` にオフセット（market-radarと3分ずらし）
+  - SKIP時リトライ追加: 45秒待って1回リトライ（従来は即exit）
+  - `model: opus` 追加（前回修正分）
+
+- **12:20 タスク監査**
+  - scalp-trader残骸ディレクトリ削除
+  - 監査結果: scalp-fast=稼働OK(過剰トレード42件/日), market-radar=OK, macro-intel=OK, secretary=OK, swing-trader=ロック飢餓+model未指定で事実上死亡していた
+
+- **12:15 学習ループ整備: prediction_tracker初期化・trade_performance拡張・prune_alerts追加**
+  - `logs/prediction_tracker.json` を初期化。live_monitor.pyの`_verify_predictions()`が30秒ごとに自動検証する（既存配管を有効化）
+  - `scripts/trader_tools/trade_performance.py`: `parse_prediction_tracker()` 追加。prediction_tracker.jsonからペア別/セッション別/方向別/score_agree比較の精度分析を出力
+  - `scripts/trader_tools/prune_alerts.py`: 新規。shared_state.jsonの古いアラートを自動除去（DIRECTIVE/FIX/INVESTIGATEは保持）
+  - **背景**: Python側の予測検証配管は完成済みだったが、prediction_tracker.jsonが未初期化で全学習ループが未稼働だった
+
+- **00:05 v4.3g: 予測入力をテーマ/フローに分離（指標ダブルフィルター排除）**
+  - `SCALP_FAST_PROMPT.md` Step 3A: 指標の再計算セクション（Momentum/Volatility/Level/Cross-pair）を全削除。予測入力を「THEME（通貨強弱・リスクトーン・セッション）」+「FLOW（micro方向・加速度）」に限定。10秒で完了する設計に
+  - `SWING_TRADER_PROMPT.md` Step 4A: 同様に指標読み替えセクションを削除。予測入力を「MACRO THESIS（金利差・リスク・セッション・通貨強弱）」+「STRUCTURAL NARRATIVE（レジーム変化・キーレベル・雲形状）」に限定
+  - `SWING_TRADER_PROMPT.md` Step 4B: 予測+スコア一致=即ENTERに変更。「highest-edge situation」を不一致時に移動しないよう修正
+  - **問題**: 予測ステップがRSI/stoch/BB/divergenceを手動で再計算→スコアと同じ結論→ダブルフィルター化→エントリー不能
+  - **修正方針**: 予測=テーマ/ストーリー（なぜ動くか）。スコア=指標（何が起きてるか）。入力を完全分離
+
 - **11:55 TRAIL_FAIL HTTP 400修正**
   - `live_monitor.py` manage_positions Rule 1: SL→TSL切替時のOANDA API 400エラー修正
   - 原因: `sl`変数が未定義（`pos.get("sl")`に修正）+ SLキャンセルとTSL設定を同一リクエストで送信
