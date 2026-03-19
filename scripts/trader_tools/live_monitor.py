@@ -1701,14 +1701,33 @@ def _build_summary(monitor: dict) -> dict:
         micro = data.get("micro", {})
         m1 = data.get("m1", {})
         m5 = data.get("m5", {})
+        bias = data.get("bias", {})
         signal = data.get("signal", {})
         sizing = data.get("sizing", {}).get("scalp", {})
         sp = data.get("scalp_params", {})
+
+        # H1 direction as human-readable string
+        h1_plus = bias.get("h1_plus_di", 0) or 0
+        h1_minus = bias.get("h1_minus_di", 0) or 0
+        h1_adx_val = bias.get("h1_adx", 0) or 0
+        if h1_adx_val < 15:
+            h1_dir_str = "DEAD"
+        elif h1_plus > h1_minus:
+            h1_dir_str = "BULL"
+        else:
+            h1_dir_str = "BEAR"
 
         pairs_summary[pair] = {
             "bid": price.get("bid"), "ask": price.get("ask"),
             "spread": price.get("spread_pips"),
             "micro_dir": micro.get("direction"), "micro_vel": micro.get("velocity"),
+            # H1/H4 — MTF context (direction king)
+            "h1_bias": h1_dir_str,
+            "h1_adx": round(h1_adx_val, 1),
+            "h1_rsi": round(bias.get("h1_rsi", 50) or 50, 1),
+            "h1_di_plus": round(h1_plus, 1),
+            "h1_di_minus": round(h1_minus, 1),
+            "h4_regime": bias.get("h4_regime", "unknown"),
             # Key predictive indicators
             "m1_rsi": round(m1.get("rsi", 50), 1),
             "m1_stoch": round(m1.get("stoch_rsi", 0.5), 2),
