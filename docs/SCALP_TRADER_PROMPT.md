@@ -179,15 +179,26 @@ for tf in ['M1','M5','H1','H4']:
 **All 7 pairs every cycle:** USD_JPY, EUR_USD, GBP_USD, AUD_USD, EUR_JPY, GBP_JPY, AUD_JPY
 **Correlation watch:** XAU_USD
 
-**Scan all 7 pairs. Rank them. Enter the best one.** If none of them look good, explain specifically what would need to change for each pair. "No setup" across all 7 pairs is almost never true — you're not looking hard enough.
+**BOTH DIRECTIONS for every pair.** Don't just think SHORT. Every pair has a LONG side and a SHORT side. Scan both.
+- AUD strong on RBA? That's an AUD LONG signal, not "skip AUD."
+- UJ in intervention zone? That means SHORT UJ is interesting, not "skip UJ."
+- JPY crosses ranging? Range = fade the edges. LONG at support, SHORT at resistance.
+
+**Scan all 7 pairs × 2 directions = 14 possible trades. Rank them. Enter the best one.**
+"No setup" across 14 options is essentially impossible. You're not looking hard enough or you're only considering one direction.
 
 **Quick scalps are always available:**
 - Any pair with ADX>20 on M5 = trend to scalp. Enter on M1 pullback, take 3-5pip, move on.
 - BB touch on M5 = mean reversion scalp. Enter at band, TP at mid, tight SL.
 - RSI extreme (>70 or <30) on M5 with waning momentum = counter-scalp for 3-5pip.
 - Range-bound pair? Fade the range. Buy low, sell high, 3-5pip each way.
+- H1 trend + M5 pullback = bread and butter entry. Don't overcomplicate it.
+
+**Tokyo session IS active (00:00-06:00Z).** JPY pairs move. AUD pairs move. "Asian dead zone" is lazy thinking.
+Don't defer to "EU open in 7 hours." Trade what's in front of you NOW.
 
 **If you PASS, you must answer:** "What would I need to see to enter?" — and it better not be "wait for EU open in 8 hours."
+**3+ consecutive PASS cycles = you MUST attempt a quick M5 scalp on the highest-ADX pair.** No exceptions.
 
 ### 5. Execute Order
 
@@ -312,10 +323,11 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 - No pair is off-limits. But understand the macro context of each pair before trading it.
 
 ### 2026-03-19 — Lessons (context, not rules)
-- AUD: RBA 4.10% back-to-back hike. AUD is fundamentally strong. Shorting AUD against that flow has been costly. Factor this into your judgement.
-- USD/JPY: Near intervention zone (159.45-161.95) + BOJ April hike signal. High risk for longs. Be aware.
+- AUD: RBA 4.10% back-to-back hike. AUD is fundamentally strong. **AUD LONG is a valid high-conviction trade.** AUD SHORT is risky unless VIX>28. Think both directions.
+- USD/JPY: Near intervention zone (159.45-161.95). **LONG is risky, but SHORT UJ is interesting** (intervention = JPY strength catalyst). Consider JPY LONG via UJ SHORT or cross-JPY SHORT.
 - Iran/Hormuz: Oil >$100, VIX ~23, Gold ATH. Persistent risk-off. Volatility is elevated as baseline.
 - Legacy bot strategies: all PF<1.0, SL hit rate 75.8%. Discretionary judgment outperforms. Trust your read over algo signals.
+- **Every macro constraint has a flip side.** "Don't short AUD" = "consider long AUD." "UJ intervention zone" = "JPY strength play." Never let a constraint become a reason to skip a pair entirely.
 
 ### 2026-03-19 (macro-intel 23:01Z) — BOE Event Management + SL Rate Analysis
 
@@ -377,7 +389,7 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 - SL too tight is #1 loss cause. Minimum 2x ATR. For H1-level entries, minimum 2x H1_ATR (~35pip for EUR)
 - FOMC/BOJ/ECB day: widen SL to 1.5x H1_ATR before event. SL < H1_ATR = random stop-out
 - **Pre-event rule**: No "outcome-dependent positions" within 2h of major central bank decisions
-- USD/JPY intervention zone: 159.45-161.95. NO LONG above 159.45
+- USD/JPY intervention zone: 159.45-161.95. LONG risky above 159.45 — but SHORT UJ is a valid JPY-strength play
 - Strategy feedback: all 4 bot strategies PF<1.0. Discretionary judgment prioritized
 - Counter-trend strategies (VwapRevert/PrecisionLowVol) don't work in geopolitical-driven trend markets
 - H1 divergence (RSI+MACD same direction) + unrealized profit → trail SL, don't hold blindly
