@@ -2,6 +2,12 @@
 
 ## 2026-03-19
 
+- **22:xx SWING_TRADER_PROMPT.md全面書き直し — ルールベース→裁量トレーダー型**
+  - 388行 → 160行。チェックリスト・スコア判定テーブル・Pre-Entry Checklist撤廃
+  - 「TODAY'S MISSION: big pip gains」「margin<50%なら入れ」削除
+  - テーゼ（仮説）ベースの思考: マクロ+H1構造→テーゼ→データ検証→判断
+  - prediction_tracker.json記録義務を削除
+  - SKILL.mdも簡素化
 - **22:xx SCALP_FAST_PROMPT.md全面書き直し — ルールベース→裁量トレーダー型**
   - 400行のチェックリスト+ステップ手順 → 130行の裁量思考ガイドに凝縮
   - 「スコア4以上で」「MTF alignedで」等のルールベース判断基準を撤廃
