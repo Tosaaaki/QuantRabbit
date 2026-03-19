@@ -1674,8 +1674,8 @@ def _build_summary(monitor: dict) -> dict:
             "swing_dist_high": m5.get("swing_dist_high"),
             "swing_dist_low": m5.get("swing_dist_low"),
             # Scores
-            "long_score": signal.get("LONG_score", 0),
-            "short_score": signal.get("SHORT_score", 0),
+            "long_score": signal.get("long_score", 0),
+            "short_score": signal.get("short_score", 0),
             # Sizing
             "can_trade": sizing.get("can_trade", False),
             "rec_units": sizing.get("recommended_units", 0),

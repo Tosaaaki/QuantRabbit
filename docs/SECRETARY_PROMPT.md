@@ -70,6 +70,7 @@ Write the following to `logs/secretary_report.json`:
 | scalp-fast | `PATTERN CHECK:` after 3 losses | Alert: "scalp-fast in losing streak without pattern check" |
 | swing-trader | `SWING REVIEW:` after closes | Alert: "swing-trader not reviewing — repeating mistakes likely" |
 | macro-intel | `[MACRO-INTEL REVIEW]` Q1-Q5 | Alert: "macro-intel skipping self-improvement — system stagnating" |
+| macro-intel | `PATTERN EXTRACT:` entries | Alert: "macro-intel not extracting patterns from reflections — learning loop broken" |
 
 **b) Check cross-agent learning (read `logs/shared_state.json`):**
 - Did macro-intel update `macro_bias` recently? If stale (>30min), alert.
@@ -82,7 +83,12 @@ Write the following to `logs/secretary_report.json`:
 - Did swing-trader enter during `h1_turning`? → Flag: "dangerous entry timing — H1 regime changing"
 - Has no agent traded for 30+ minutes? → Check: are scores genuinely all low, or are agents being too cautious?
 
-**d) Quality over quantity check (TODAY's session only):**
+**d) Prediction independence check:**
+- Read last 10 ENTRY lines in trade log. Count how many have `PREDICTION:` with `DISAGREE`.
+- If 0 out of 10+ entries → Flag: "No independent predictions — agents just confirming scores. Prediction-first principle not working."
+- If DISAGREE accuracy > AGREE accuracy → Flag: "Independent predictions outperform — encourage more score-disagreement trades"
+
+**e) Quality over quantity check (TODAY's session only):**
 ```bash
 # Get today's date in UTC, then count today's trades only
 TODAY=$(date -u +%Y-%m-%d)

@@ -153,11 +153,17 @@ json.dump(reg, open("logs/trade_registry.json", "w"), indent=2)
   TP={tp} SL={sl}
 ```
 
-### 決済後
+### 決済後（必須 — monitorが自動決済した場合も次サイクルで書け）
 ```
 [{UTC}] SWING: CLOSE {pair} {L/S} {units}u @{price} | pl={pips}pip
-  REVIEW: テーゼは{正しかった/間違いだった}。{何が実際に起きたか。次への教訓}
+  SWING REVIEW: テーゼは{正しかった/間違いだった}。{何が実際に起きたか。次への教訓}
 ```
+
+### エントリーしなかった場合も振り返れ（2サイクルに1回）
+```
+[{UTC}] SWING: NO ENTRY — THESIS CHECK: {前回のテーゼ}は{まだ有効/無効化した}。理由: {1文}
+```
+**テーゼの正否を追跡しないとswing-traderの学習ループが止まる。** エントリーしなくてもテーゼの答え合わせは必ずやれ。
 
 ---
 

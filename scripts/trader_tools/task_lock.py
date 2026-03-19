@@ -26,7 +26,7 @@ from pathlib import Path
 
 LOCK_DIR = Path(__file__).resolve().parents[2] / "logs" / "locks"
 ROTATION_FILE = LOCK_DIR / "last_runner.json"
-ROTATION_GRACE_SEC = 30  # after this many seconds, same caller can go again
+ROTATION_GRACE_SEC = 10  # after this many seconds, same caller can go again
 
 
 def _lock_dir(task_name: str) -> Path:

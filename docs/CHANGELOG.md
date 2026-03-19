@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-20
+
+- **fix: live_monitor_summary.jsonのスコアが全ペア0だったバグ修正** — `LONG_score`→`long_score`キー名不一致。scalp-fastがスコアゼロで判断していた
+- **fix: swing-traderロック飢餓** — market-radarをロック不要化(読取専用)、ROTATION_GRACE_SEC 30→10秒。swing-traderが183分停止していた問題を解消
+- **fix: trade_performance.pyにclaude_only統計追加** — monitorの自動決済(11勝0敗)を除外した実判断WRを表示。79%→61.5%の実態を可視化
+- **学習ループ強化 — 4プロンプト改善**
+  - MACRO_INTEL: `PATTERN EXTRACT`ステップ追加（リフレクション→パターン抽出→アクション。ループを閉じる）
+  - SCALP_FAST: PREDICTION行にscore AGREE/DISAGREE記録を必須化。CLOSE後のREVIEW強化（monitor自動決済時も必須）
+  - SWING_TRADER: SWING REVIEW強化（monitor決済時も必須）+ NO ENTRY時のTHESIS CHECK追加（テーゼ正否追跡）
+  - SECRETARY: macro-intel PATTERN EXTRACT監査追加 + 予測独立性チェック(DISAGREE率)追加
+
 ## 2026-03-19
 
 - **22:xx SWING_TRADER_PROMPT.md全面書き直し — ルールベース→裁量トレーダー型**
@@ -247,3 +258,11 @@
   6. SWING_TRADER_PROMPT.md改訂: Pre-Entry Checklist追加、sizing必須化、重複クローズ防止追加
 [2026-03-19T11:07Z] fix: margin free target調整 scalp 60%→40%, swing 70%→50%。小口座(28k)で裁量の余地確保
 2026-03-19T13:02Z macro-intel: macro_bias refresh (VIX=27.19, EUR_USD→LEAN_LONG), prediction_insights added (USD_JPY 33% timing fix), SCALP_FAST_PROMPT.md: REFLECTION enforcement + USD_JPY M5 timing rule
+
+## 2026-03-20T17:00Z — macro-intel cycle
+- AUD_USD macro_bias flipped LEAN_SHORT→LEAN_LONG (RBA raised 4.10% Mar 15, AUD = net energy exporter, AUD_USD = best performing pair 100% WR +371pip)
+- EUR_USD macro_bias promoted NEUTRAL→LEAN_LONG (ADX=39+ bull trend confirmed, USD stagflation-weak)
+- GBP_USD macro_bias confirmed LEAN_LONG (H1 DI+=31>>DI-=15)
+- Shared_state alerts pruned: 17→5 (cleared Mar 19 stale alerts)
+- Prediction_insights updated: 67% accuracy, swing-trader offline flagged
+- Live_monitor stale (24h+) alert added, OANDA direct pricing workaround noted

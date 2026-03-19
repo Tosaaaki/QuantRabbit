@@ -125,6 +125,30 @@ grep "REFLECTION:.*loss" logs/live_trade_log.txt | tail -10
 
 **If you see the same loss reason repeated 3+ times → it's a SYSTEMIC issue, not bad luck. Fix it.**
 
+### 5b2. Pattern Extraction — MANDATORY (This Is Where the Loop Closes)
+
+**This is the step that turns reflections into system improvement. Without it, agents learn individually but the system doesn't evolve.**
+
+After reading reflections, extract actionable patterns and log them:
+
+```
+[{UTC}] MACRO: PATTERN EXTRACT:
+  Source: {N} scalp-fast reflections, {N} swing reviews
+  Patterns found:
+  1. {pattern description} → Action: {what to change}
+  2. {pattern description} → Action: {what to change}
+  Applied: {what you actually changed — prompt edit, shared_state update, or "none needed"}
+```
+
+**Examples of patterns to look for:**
+- Same pair losing 3+ times → add avoid recommendation or adjust bias
+- Same entry reason failing → the read is wrong, fix the prompt guidance
+- Timing issue (too early, too late) → adjust entry criteria
+- SL getting clipped then price reversing → SL too tight for current vol
+- Reflections say "should have waited" repeatedly → agents too aggressive, add patience guidance
+
+**If no reflections exist → write alert: "No agent reflections found. Learning loop broken. scalp-fast/swing-trader: write REFLECTION after every trade."**
+
 ### 5c. The Five Mandatory Questions — Answer ALL, Write to Log
 
 **Every cycle, answer these in `logs/live_trade_log.txt` under `[MACRO-INTEL REVIEW]`:**

@@ -416,6 +416,8 @@ def main():
         return
 
     overall = compute_stats(trades)
+    claude_trades = [t for t in trades if t.get("agent") != "monitor"]
+    claude_only = compute_stats(claude_trades) if claude_trades else None
     by_agent = breakdown_by(trades, "agent")
     by_pair = breakdown_by(trades, "pair")
     by_session = breakdown_by(trades, "session")
@@ -428,6 +430,7 @@ def main():
     result = {
         "generated_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         "overall": overall,
+        "claude_only": claude_only,
         "by_agent": by_agent,
         "by_pair": by_pair,
         "by_session": by_session,
@@ -458,6 +461,13 @@ def main():
     print(f"  Total: {o['total_pips']:+.1f}pip  |  Avg: {o['avg_pip']:+.2f}pip/trade")
     print(f"  Avg Win: +{o['avg_win']}pip  |  Avg Loss: -{o['avg_loss']}pip")
     print(f"  Best: {o['max_win']:+.1f}pip  |  Worst: {o['max_loss']:+.1f}pip")
+
+    if claude_only and claude_only["total_trades"] > 0:
+        c = claude_only
+        print(f"\n--- Claude Only (excl. monitor auto-closes, {c['total_trades']} trades) ---")
+        print(f"  Win Rate: {c['win_rate']:.1%}  |  Profit Factor: {c['profit_factor']}")
+        print(f"  Total: {c['total_pips']:+.1f}pip  |  Avg: {c['avg_pip']:+.2f}pip/trade")
+        print(f"  Avg Win: +{c['avg_win']}pip  |  Avg Loss: -{c['avg_loss']}pip")
 
     print(f"\n--- By Agent ---")
     for agent, s in by_agent.items():
