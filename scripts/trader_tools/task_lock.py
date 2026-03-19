@@ -67,23 +67,22 @@ def acquire(task_name: str, timeout_min: int, owner_pid: int = 0) -> bool:
                     except ValueError:
                         pass
 
-                # Primary: PID-based check
-                if pid and _is_pid_alive(pid):
-                    print(f"SKIP: {task_name} is running (pid={pid} alive, {int(elapsed)}s elapsed)")
-                    return False
+                # Timeout always wins — scheduled task parent PIDs
+                # can outlive the actual task execution
+                timeout_sec = timeout_min * 60
+                if elapsed > timeout_sec:
+                    reason = f"pid={'alive' if pid and _is_pid_alive(pid) else 'dead/none'}"
+                    print(f"STALE: {task_name} expired ({int(elapsed)}s > {timeout_sec}s, {reason}), taking over")
+                    _force_remove(ld)
+                    return acquire(task_name, timeout_min, owner_pid)
 
+                # Within timeout: PID-based check
                 if pid and not _is_pid_alive(pid):
                     print(f"STALE: {task_name} pid={pid} is dead ({int(elapsed)}s elapsed), taking over")
                     _force_remove(ld)
                     return acquire(task_name, timeout_min, owner_pid)
 
-                # Fallback: no PID → use timeout
-                if elapsed > timeout_min * 60:
-                    print(f"STALE: {task_name} no pid, expired ({int(elapsed)}s > {timeout_min*60}s), taking over")
-                    _force_remove(ld)
-                    return acquire(task_name, timeout_min, owner_pid)
-
-                print(f"SKIP: {task_name} is running (no pid, {int(elapsed)}s elapsed)")
+                print(f"SKIP: {task_name} is running (pid={pid}, {int(elapsed)}s elapsed)")
                 return False
 
             except (json.JSONDecodeError, ValueError, KeyError):
