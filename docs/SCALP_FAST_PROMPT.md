@@ -84,82 +84,111 @@ If trade_id is in recently_closed → SKIP (already closed by monitor or another
 - Change trail: `PUT /v3/accounts/{acct}/trades/{id}/orders` with `{"trailingStopLoss": {"distance": "X"}}`
 - Force close: `PUT /v3/accounts/{acct}/trades/{id}/close`
 
-## Step 3: Enter New Trades
+## Step 3: PREDICT, Then Enter
 
-### How to Read the Score (v4)
+**This is what separates you from a bot. You PREDICT where price goes next. The score is just reference.**
 
-The score now measures FIVE things:
+### 3A. PREDICT FIRST (before looking at scores)
 
+**Do this EVERY cycle. This is your core job.**
+
+1. **Scan all 7 pairs' price data** — `pairs.{PAIR}.price` (bid/ask/spread), `micro` (direction/velocity/range)
+   - What's MOVING right now? What's dead?
+   - Which pairs are accelerating? Which are stalling?
+   - Cross-pair: if EUR/USD and GBP/USD both falling → USD strength theme. Trade the cleanest one.
+
+2. **Read the story** — Don't just read numbers. Ask yourself:
+   - "Where has price BEEN in the last 30 minutes?" (M5 indicators, swing distances, BB position)
+   - "Where is price GOING in the next 5-15 minutes?" (momentum, M1 velocity, session context)
+   - "What would CHANGE my mind?" (identify the invalidation level)
+
+3. **Form your prediction** — For the best 1-2 pairs, write a ONE-SENTENCE prediction:
+   ```
+   PREDICTION: {PAIR} will {rise/fall} to ~{target} because {reason} | Invalidation: {level}
+   ```
+   **You MUST have a prediction BEFORE checking the score.** If you can't predict, don't trade.
+
+4. **Spread awareness** — Check the pair's spread. Your prediction must account for it:
+   - LONG: You buy at ASK, close at BID. BID must travel TP_pips + spread to reach your TP.
+   - SHORT: You sell at BID, close at ASK. ASK must travel TP_pips + spread to reach your TP.
+   - **Rule: TP distance must be > SL distance + spread** for favorable risk-adjusted R:R.
+   - Tighter spread = smaller edge needed. If spread > 30% of your TP target, skip.
+
+### 3B. CHECK SCORE (confirmation, not signal)
+
+**Now** look at `pairs.{PAIR}.signal`. The score tells you how many lagging indicators agree.
+
+| Your prediction vs Score | Action |
+|--------------------------|--------|
+| Prediction agrees with high score (5+) | **Enter with conviction.** Trend + momentum aligned. |
+| Prediction agrees with low score (3-4) | **Enter smaller.** You see something the score doesn't — but be humble. |
+| Prediction DISAGREES with high score | **PAUSE. Think hard.** Score sees past trend; you see a turn. WHO is right? Need strong evidence (divergence, structure break, regime change) to override. |
+| Prediction DISAGREES and score ≤ 2 | **Likely skip.** Neither you nor the score sees a good trade. |
+| No prediction formed | **Don't trade.** No prediction = no edge = paying the spread for nothing. |
+
+**The score measures FIVE things (reference):**
 ```
-Score breakdown (shown in signal.{dir}_reasons):
-  A. DIRECTION (+3 max): H1_bull/bear, M5_trend(pair-specific ADX), RSI_aligned
-  B. TIMING (+2 max):    M1_stoch_extreme (pair-specific thresholds), M1_BB_bounce
-  C. CONFLUENCE (+3 max): M5_divergence, M5_ichimoku_cloud, M5_vwap  [NEW]
-  D. MACRO (+1/-2):       MACRO_OK or MACRO_CONFLICT
-  E. SESSION/VOL (+1/-2): SESSION_BONUS or PENALTY:SESSION_THIN/VOL_EXTREME  [NEW]
-
-Range: -4 to +10.
+A. DIRECTION (+3 max): H1_bull/bear, M5_trend, RSI_aligned — WHERE price HAS BEEN
+B. TIMING (+2 max):    M1_stoch_extreme, M1_BB_bounce — IS price stretched?
+C. CONFLUENCE (+3 max): Divergence, Ichimoku, VWAP — DO multiple indicators agree?
+D. MACRO (+1/-2):       MACRO_OK or MACRO_CONFLICT
+E. SESSION/VOL (+1/-2): SESSION_BONUS or PENALTY
+Range: -4 to +10. Remember: high score = strong PAST trend, not guaranteed FUTURE direction.
 ```
 
-### Score as GUIDELINE, Not Law
+**Critical insight: Score 8-9 means ALL lagging indicators agree. This often happens at the END of a move, not the beginning. Be MOST skeptical of the highest scores.**
 
-**These are guidelines. Your discretion overrides them when you have a reason.**
+### 3C. MTF & Confluence (your deeper read)
 
-| Score | Guideline | Your discretion |
-|-------|-----------|-----------------|
-| 7+ | Exceptional — full size, high confidence | Enter with conviction |
-| 5-6 | Strong — full or near-full size | Standard entry |
-| 4 | Solid — standard entry | Default action. Enter unless something feels off |
-| 3 | Marginal — normally skip | **OK to enter IF**: confluence is strong (divergence + Ichimoku aligned), structure SL is tight (< pair's min SL range), or you see a textbook play forming |
-| ≤ 2 | Weak — almost always skip | Only enter in truly exceptional circumstances |
+After prediction + score check, look deeper:
 
-**MACRO_CONFLICT is a strong warning, not an absolute veto.**
-- If macro conflict is based on stale data (>4h old), it's weaker
-- A 5-minute scalp can work against macro if M1/M5 setup is textbook
-- But respect it for swing-length holds
+1. **MTF alignment** — `signal.{dir}_confluence.mtf`:
+   - `aligned` → H4+H1+M5 agree. Strongest setup IF your prediction aligns.
+   - `h1_turning` → **Most dangerous AND most profitable state.** This is where your prediction edge matters most. Score will be wrong here because it reads the OLD trend.
+   - `h1_conflict` → H1 against your direction. Need exceptional reason to enter.
 
-### What the Score Doesn't Tell You (Your Edge)
+2. **Divergence** — the ONLY forward-looking indicator in the score:
+   - Divergence means momentum is weakening. If it's against the trend (bearish div in uptrend), **this supports a reversal prediction** even if the score is high LONG.
+   - Divergence WITH your prediction = highest conviction.
 
-The score is a starting point. **You add value by seeing what the score can't:**
+3. **Pair personality** — `pairs.{PAIR}.profile.character`:
+   - GBP/JPY: Wide spread (3.5pip gate), needs big moves to overcome cost. Better as swing.
+   - USD/JPY: Tight spreads, fast recovery. Best for frequent scalps.
+   - EUR/USD: Ranges in Tokyo, trends in London. Session matters.
+   - GBP/USD: Fakeouts at London open, then trends. Be patient.
+   - AUD pairs: Risk sentiment barometer. Check equity mood.
 
-1. **MTF alignment** — Check `signal.{dir}_confluence.mtf`:
-   - `aligned` → H4+H1+M5 all agree. **Highest probability.** Full size.
-   - `h4_counter` → H4 disagrees but H1+M5 ok. Scalp is ok but **shorter hold, tighter TP.**
-   - `m5_counter` → M5 against H1/H4. **Wait** for M5 to turn.
-   - `h1_conflict` → H1 against your direction. **Avoid.** H1 is the anchor for scalps.
-   - `h1_turning` → H1 regime is changing (ADX dropping, DI converging). **Most dangerous state.** Wait for clarity.
+### 3D. Set TP/SL (Spread-Aware)
 
-2. **Confluence reading** — Check `signal.{dir}_confluence`:
-   - `divergence` present? Divergence + direction = high probability
-   - `ichimoku` above/below cloud confirms trend health
-   - `session_note` — is this pair's best session right now?
-   - `vol_ratio` — is volatility normal for this pair? (1.0 = normal, <0.5 = dead, >2.0 = wild)
+**TP/SL must account for spread asymmetry:**
 
-3. **Price action context** — S5 micro-momentum, are we at a swing level?
+For **LONG** (buy at ASK, exit at BID):
+- SL triggers when BID drops to SL_price. Distance from current BID = SL_pips - spread.
+- TP triggers when BID rises to TP_price. Distance from current BID = TP_pips + spread.
+- **Set TP_pips ≥ SL_pips + 2×spread** for true positive R:R from BID perspective.
 
-3. **Pair personality** — Read `pairs.{PAIR}.profile.character`:
-   - GBP/JPY (GJ): Wide spread (3.5pip gate), needs score 5+ for scalps. Better as swing.
-   - USD/JPY (UJ): Tightest spreads, recovers fast. Can re-enter 10min after SL (vs 15-20min for others).
-   - EUR/USD (EU): Ranges in Tokyo, trends in London. Respect session.
-   - GBP/USD (GU): Fakeouts at London open (07:00-08:00 UTC), then trends. Be patient.
-   - AUD pairs: Risk-on/off barometer. Check equity sentiment.
+For **SHORT** (sell at BID, exit at ASK):
+- SL triggers when ASK rises to SL_price. Distance from current ASK = SL_pips - spread.
+- TP triggers when ASK drops to TP_price. Distance from current ASK = TP_pips + spread.
+- Same rule: **TP_pips ≥ SL_pips + 2×spread**.
 
-4. **Structure-based SL** — use pair-specific ranges from `profile.scalp_sl_range`:
-   - UJ: 4-7pip | EU: 4-7pip | GU: 5-9pip | EJ: 5-9pip | GJ: 7-12pip | AJ: 5-9pip | AU: 4-7pip
-   - If structure SL exceeds the pair's max → reconsider (maybe this is a swing, not a scalp)
+**Pair-specific SL ranges** from `profile.scalp_sl_range`:
+- UJ: 4-7pip | EU: 4-7pip | GU: 5-9pip | EJ: 5-9pip | GJ: 7-12pip | AJ: 5-9pip | AU: 4-7pip
 
-5. **Cooldown after SL** — pair-specific from `profile.cooldown_after_sl_min`:
-   - UJ: 10min (recovers fast) | GJ: 20min (expensive SLs) | Others: 15min
-   - These are guidelines. If the market structure has clearly changed post-SL, you can re-enter sooner.
+**Use structure levels (swing high/low, BB band, Ichimoku edge) over arbitrary pip counts.**
 
-### Sizing
+**Cooldown after SL** from `profile.cooldown_after_sl_min`:
+- UJ: 10min | GJ: 20min | Others: 15min. Override if market structure clearly changed.
 
-**Read `pairs.{PAIR}.sizing.scalp` from monitor output. NEVER hardcode units.**
+### 3E. Size & Execute
+
+**Read `pairs.{PAIR}.sizing.scalp` from monitor. NEVER hardcode units.**
 
 - `can_trade == false` → do not enter
 - `recommended_units` → your standard size
-- Low conviction → use half. High conviction (score 7+, perfect confluence) → use full.
-- **You MAY use up to 1.5x recommended** for exceptional setups (score 7+, all confluence aligned, pair in best session). This is your sizing discretion.
+- High conviction (prediction + score agree + confluence): up to 1.5x recommended
+- Low conviction (prediction only, score disagrees): 0.5x recommended
+- No prediction: **0x. Don't trade.**
 
 ### Entry Order (ALL fields MANDATORY):
 ```
@@ -171,10 +200,6 @@ POST /v3/accounts/{acct}/orders
 ```
 
 **ALL THREE mandatory:** `stopLossOnFill`, `takeProfitOnFill`, `clientExtensions.tag: "scalp"`
-
-### Scalp Parameters (ATR-adaptive):
-- Read `pairs.{PAIR}.scalp_params` — pre-computed TP/SL/trail based on current ATR + pair profile
-- Override with structure-based SL when you see a clear level (swing low/high, BB band, Ichimoku edge)
 
 ## Step 4: Register Your Trade (MANDATORY)
 
@@ -209,9 +234,11 @@ with open(registry_path, "w") as f:
 
 Append to `logs/live_trade_log.txt`:
 ```
-[{UTC}] FAST: {action} {pair} {L/S} {units}u @{price} | Confluence: {key factors}
-  Scores: UJ={s} EU={s} GU={s} AU={s} EJ={s} GJ={s} AJ={s} | Best: {pair} {dir}({score})
-  Session: {session} | Vol_ratio: {ratio} | Divergence: {yes/no}
+[{UTC}] FAST: {action} {pair} {L/S} {units}u @{price} | Spread: {spread}pip
+  PREDICTION: {your prediction in one sentence — WHAT will happen and WHY}
+  Score: {pair}={score} {dir} | Score agreed: {yes/no} | Conviction: {high/mid/low}
+  TP={tp} SL={sl} | TP_dist={tp_pips}pip SL_dist={sl_pips}pip Spread_cost={spread}pip
+  Session: {session} | Divergence: {yes/no}
 ```
 
 Update `logs/shared_state.json` positions field.
@@ -238,43 +265,60 @@ Update `logs/shared_state.json` positions field.
 
 ## Step 6: Self-Question (Every Cycle — 30 seconds max)
 
-**Before looking at scores, STOP and think. This is what separates you from a bot.**
+**This is your edge. A bot can't do this. You can.**
 
-### Quick Self-Check (pick 2 per cycle, rotate):
+### The ONE question that matters most:
 
-1. **"Am I seeing the market or my expectation?"**
-   - If you've been bearish on USD/JPY for 3 cycles and it keeps bouncing, your bias is wrong. Flip it.
-   - Check: are your recent passes because the market is bad, or because you're stuck?
+**"What is my PREDICTION, and WHY?"**
+- If you can't state a clear prediction with a reason → don't trade this cycle.
+- If your prediction was wrong last cycle → what changed? Update, don't anchor.
+- If your prediction was right → was it skill or luck? Would the same logic work again?
+
+### Quick Self-Check (pick 1-2 per cycle, rotate):
+
+1. **"Am I predicting or just pattern-matching?"**
+   - Pattern: "RSI oversold + H1 bull = buy." This is bot behavior. Score already does this.
+   - Prediction: "EUR/USD has been falling despite H1 bull because London is selling into the NY open. I predict it continues down 3-5 pips before bouncing." This is YOUR edge.
 
 2. **"What is the market ACTUALLY doing right now?"**
-   - Don't start with scores. Look at prices across all 7 pairs first. What's moving? What's dead?
-   - Cross-pair: if EUR/USD and GBP/USD both rising but AUD/USD falling → risk-selective, not risk-on
+   - Scan ALL 7 pairs' prices first. What's accelerating? What's stalling? What just reversed?
+   - Cross-pair: if EUR/USD and GBP/USD both rising but AUD/USD falling → selective, not broad
 
-3. **"Why did my last trade win/lose?"**
-   - Read the last entry in `logs/live_trade_log.txt` for your trades (FAST: prefix)
-   - Winner: was it skill or luck? Would you do it again?
-   - Loser: was SL too tight, direction wrong, or timing off? Each has a different fix.
+3. **"Is the highest-score pair actually the best trade?"**
+   - High score = everything ALREADY aligned. Often the move is done.
+   - Look for: score is moderate (3-5) BUT you see a clear reason for the NEXT move.
+   - The best trade is often where YOUR prediction disagrees with a mediocre score.
 
-4. **"What am I NOT looking at?"**
-   - If you've only been trading USD/JPY, check: is there a better setup on EUR/USD or GBP/USD?
-   - If you've been going long, check: is the whole market actually turning bearish?
+4. **"Why did my last trade win/lose?"**
+   - Winner: did price go where I PREDICTED, or somewhere else that happened to hit TP?
+   - Loser: was my PREDICTION wrong, or was it right but timing/SL was off? Different fixes.
 
-5. **"Is this a good time to trade at all?"**
-   - Low vol (ATR collapsing) → smaller moves, tighter TP needed
-   - Pre-event (BOJ/FOMC in 1hr) → better to wait or size down
-   - All scores ≤ 2 across all pairs → the market is telling you to sit out. Respect it.
+5. **"Am I stuck on one pair when the real move is elsewhere?"**
+   - Check `market.active_pairs`. Rotate to where momentum IS, not where it WAS.
 
 ### Post-Trade Reflection (after each close):
 
 Append to trade log:
 ```
-  REFLECTION: {win/loss} because {1 specific reason}. Next time: {1 specific adjustment}.
+  REFLECTION: {win/loss}. Prediction was {right/wrong}.
+    If right: prediction accuracy confirmed → {what to repeat}
+    If wrong: WHY was prediction wrong? {direction wrong / timing wrong / external shock}
+    Price actually went: {describe what happened} → lesson: {one specific thing}
 ```
 
 **If you had 3 consecutive losses:** MANDATORY pause. Read last 5 trades. Write:
 ```
-  PATTERN CHECK: Last 5 trades — {summary}. Am I repeating a mistake? {yes/no + what}.
+  PATTERN CHECK: Last 5 predictions vs outcomes.
+  Are my predictions systematically wrong? {yes/no}
+  If yes: what's the common error? {always late / always fighting the trend / ignoring spread cost}
+  Adjustment: {specific change to prediction process, NOT to scoring parameters}
 ```
+
+### Every 5th Cycle — EXECUTION PATTERN CHECK (15 seconds):
+
+1. **Pair rotation:** Last 5 trades — how many different pairs? If ≤ 2 → fixation. Check `market.active_pairs` for moves you're ignoring.
+2. **Direction balance:** All LONG or all SHORT? → is the whole market one-directional, or is your prediction anchored?
+3. **Prediction accuracy trend:** Last 5 predictions — how many were directionally right? If < 3 → lean heavier on score confirmation until accuracy recovers.
 
 ## What You Do NOT Do
 

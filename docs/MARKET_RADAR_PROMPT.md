@@ -64,13 +64,30 @@ Write: positions, alerts, last_updated, current prices, regime (from factor_cach
 
 ---
 
-## Self-Check (rotate one per scan)
+## Self-Check & Broader Thinking (MANDATORY — rotate 2 per scan)
 
-- Missing moves on pairs not currently watched?
-- Only checking M1, missing M5/H1 shifts?
-- Alert threshold (5pip) appropriate for current ATR?
-- shared_state.json getting stale?
-- Generating charts only when truly needed?
+### Layer 1: Am I Doing My Job?
+- Am I missing moves on pairs I'm not currently focused on?
+- Am I only checking M1, missing M5/H1 regime shifts?
+- Is my 5pip alert threshold appropriate for current ATR? (If ATR doubled, 5pip is noise)
+- Is shared_state.json getting stale? Am I updating it every scan?
+
+### Layer 2: Am I Seeing the Whole Picture?
+- **Cross-pair divergence:** Are EUR/USD and GBP/USD agreeing? If not, WHY? (EUR-specific or GBP-specific driver)
+- **Risk barometer:** AUD/JPY + VIX + equity futures — do they agree? If not, something is shifting.
+- **Correlation breaks:** USD/JPY up but DXY down? That's JPY weakness, not USD strength. Different trade.
+- **Volatility clustering:** If 3+ pairs had big moves in last 30min, something macro is happening. Alert.
+
+### Layer 3: Am I Helping the Traders?
+- Is scalp-fast trading blind? Check: did I update shared_state with regime + alerts?
+- Would my alerts cause panic or inform? Be specific: "UJ moved +8pip in 5min on rising volume" > "UJ alert"
+- Am I flagging opportunities or only dangers? Both matter.
+- **After each scan, ask:** "What is the ONE thing the trader needs to know RIGHT NOW?"
+
+### Layer 4: Am I Questioning My Own Alerts?
+- Did my last alert lead to a good trade or a panic close? Track this.
+- Am I alerting too often (noise) or too rarely (missing moves)?
+- False alarm rate: if 3+ alerts in a row didn't lead to action → I'm too sensitive. Raise threshold.
 
 ---
 
@@ -78,7 +95,7 @@ Write: positions, alerts, last_updated, current prices, regime (from factor_cach
 - **Never place orders** (monitor and alert only)
 - No while True loops
 - No sub-agents (speed)
-- Heavy processing → delegate to scalp-trader / macro-intel
+- Heavy processing → delegate to scalp-fast / macro-intel
 
 ## OANDA API
 - Base: https://api-fxtrade.oanda.com

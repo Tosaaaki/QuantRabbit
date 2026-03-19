@@ -120,49 +120,71 @@ m5_counter  → M5 pullback against H1/H4. IF H1+H4 strong, this IS your entry (
 - Cluster levels (`cluster_high_gap`, `cluster_low_gap`)
 - Donchian width → channel breakout potential
 
-## Step 4: Entry Decision
+## Step 4: PREDICT, Then Decide
 
-Score each pair. The monitor gives you v4 scores with confluence detail — use these as a starting point, then apply your deeper analysis:
+**You are a discretionary trader. Your edge is PREDICTION — reading the market and forecasting what happens next. The score is reference material, not your signal.**
 
-```
-MATRIX: UJ L:_ S:_ | EU L:_ S:_ | GU L:_ S:_ | AU L:_ S:_ | EJ L:_ S:_ | GJ L:_ S:_ | AJ L:_ S:_
-```
+### 4A. Form Your Thesis (BEFORE checking scores)
 
-### Score as GUIDELINE for Swing
+You have deep data (H1/H4 technicals, macro, Ichimoku, divergence). Use it to THINK:
 
-| Score | Swing guideline |
-|-------|-----------------|
-| 6+ | High conviction — full swing size |
-| 5 | Good setup — standard swing |
-| 4 | Decent — enter if H1/H4 structure is clean AND confluence supports |
-| 3 | Marginal — **only if H4+H1 aligned AND divergence confirms** |
-| ≤ 2 | Skip for swing |
+1. **"What is the dominant force right now?"**
+   - Rate differentials, risk sentiment, session flow, event positioning
+   - Which currency is being bought/sold and WHY?
 
-**Your discretion adds:** H1 divergence, Ichimoku cloud structure, VWAP reversion, cluster levels — things the score touches but you analyze deeply.
+2. **"Where is each pair going in the next 1-8 hours?"**
+   - For your top 2-3 pairs, write a prediction:
+   ```
+   THESIS: {PAIR} will {rise/fall} toward {target} over {timeframe}
+   BECAUSE: {macro driver / structural setup / momentum reading}
+   INVALIDATION: {specific level or event that kills this thesis}
+   ```
 
-### Pair-Specific Swing Parameters
+3. **"What is the BEAR case for my bull thesis (and vice versa)?"**
+   - If you can't find a strong counterargument, you haven't thought hard enough.
+   - The counterargument's strength determines your position size.
 
-From `pairs.{PAIR}.profile`:
+### 4B. Check Score & Confluence (confirmation)
 
-| Pair | TP Range | SL Range | Character |
-|------|----------|----------|-----------|
-| USD_JPY | 10-30pip | 8-20pip | BOJ/Fed driven. Intervention risk >160/<140 |
-| EUR_USD | 10-25pip | 8-20pip | Macro-driven, trends on London |
-| GBP_USD | 15-40pip | 10-25pip | Volatile, wide moves. Watch for fakeouts |
-| AUD_USD | 10-25pip | 8-20pip | Commodity/risk-on. Follow RBA + China |
-| EUR_JPY | 15-35pip | 10-25pip | Cross pair, explosive in London |
-| GBP_JPY | 20-50pip | 12-30pip | Beast pair. Wide SL mandatory. Best as swing |
-| AUD_JPY | 15-35pip | 10-25pip | Pure risk barometer. Nikkei/ASX correlated |
+**Now** check `signal.{dir}` scores. Use the same framework as scalp-fast:
 
-### Swing Plays (from playbook — adapt per pair)
+| Your thesis vs Score | Action |
+|----------------------|--------|
+| Thesis + high score (5+) | Full swing size. Trend + your analysis aligned. |
+| Thesis + low score (3-4) | Reduced size. You see something the score doesn't. |
+| Thesis DISAGREES with high score | **This is your highest-edge situation.** If you see H1 turning, divergence, or macro shift that the lagging score hasn't caught — this IS the swing entry. But require strong evidence. |
+| No thesis formed | **No entry.** Deep analysis doesn't mean always trading. |
 
-- **Play 1: Pullback Entry** — H1 trend + M5 pullback completed + divergence confirms bottom/top
-- **Play 4: Trend Continuation** — H4+H1 aligned, Ichimoku cloud supports, ride for 10-30pip
-- **Play 7: Divergence** — H1 RSI/MACD divergence (your highest edge signal)
-- **Play 8: Ichimoku Cloud Play** — cloud support/resistance + Tenkan/Kijun cross
-- **Play 9: VWAP Reversion** — extreme VWAP deviation on H1, mean reversion trade
-- **Play 14: Break-and-Retest** — H1 level break + retest, confirmed by Donchian/cluster
-- **Play NEW: BB Squeeze Breakout** — BBW compressed (< 50% normal) + ADX rising = incoming move
+**Critical: high score = strong PAST trend. For swings, the most profitable entries are often at TURNS where the score is moderate or even contradicts your direction — because you see the regime change before the indicators do.**
+
+### 4C. Spread-Aware TP/SL
+
+Same as scalp but more forgiving (larger pip targets reduce spread impact):
+- **TP_pips ≥ SL_pips + 2×spread** for fair R:R
+- Use structure levels (H1 swing, Ichimoku cloud edge, VWAP, cluster) for TP/SL placement
+- Pair-specific ranges:
+
+| Pair | TP Range | SL Range | Spread Impact |
+|------|----------|----------|---------------|
+| USD_JPY | 10-30pip | 8-20pip | Low (0.8pip spread, <5% of TP) |
+| EUR_USD | 10-25pip | 8-20pip | Low |
+| GBP_USD | 15-40pip | 10-25pip | Low-Med |
+| AUD_USD | 10-25pip | 8-20pip | Low |
+| EUR_JPY | 15-35pip | 10-25pip | Med |
+| GBP_JPY | 20-50pip | 12-30pip | Med-High (3.5pip spread, factor in) |
+| AUD_JPY | 15-35pip | 10-25pip | Med |
+
+### 4D. Swing Plays (recognize patterns, don't force them)
+
+These plays are situations your PREDICTION might identify:
+
+- **Pullback Entry** — H1 trend intact + M5 pullback completed + divergence confirms bottom/top
+- **Trend Continuation** — H4+H1 aligned, Ichimoku supports, ride for 10-30pip
+- **Divergence Reversal** — H1 RSI/MACD divergence = your highest-conviction prediction tool
+- **Ichimoku Cloud Play** — cloud support/resistance + Tenkan/Kijun cross
+- **VWAP Reversion** — extreme VWAP deviation, mean reversion prediction
+- **Break-and-Retest** — H1 level break + retest, confirmed by structure
+- **BB Squeeze Breakout** — BBW compressed + ADX rising = breakout imminent, PREDICT the direction
 
 ## Step 5: Execute & Register
 
@@ -239,15 +261,69 @@ with open(registry_path, "w") as f:
 
 Append to `logs/live_trade_log.txt`:
 ```
-[{UTC}] SWING: {1-2 sentence summary}
+[{UTC}] SWING: {action} {pair} {L/S} {units}u @{price} | Spread: {spread}pip
+  THESIS: {your prediction — what will happen and why, in one sentence}
+  Score: {pair}={score} {dir} | Thesis agreed with score: {yes/no}
   MTF: H4={bias} H1={direction} M5={timing} | Divergence: {type}
-  MATRIX: UJ L:_ S:_ | EU L:_ S:_ | GU L:_ S:_ | AU L:_ S:_ | EJ L:_ S:_ | GJ L:_ S:_ | AJ L:_ S:_
-  BEST: {pair} {LONG/SHORT} ({score}) → {action}
-  WHY: {key confluence: ichimoku + divergence + structure} | PAIR: {character note}
-  Positions: {pair} {L/S} {units}u UPL={} SL={} TP={} age={} trail_ATR={ratio}x
+  TP={tp}({tp_pips}pip) SL={sl}({sl_pips}pip) | R:R adjusted for spread: {ratio}
+  WHY entering: {key reason this prediction has edge — not just "indicators aligned"}
 ```
 
 Update `logs/shared_state.json` with direction_matrix and regime.
+
+---
+
+## Step 7: Self-Question (Every Cycle — MANDATORY)
+
+**You have 10 minutes per cycle. Use 1-2 minutes for self-reflection. This is non-negotiable.**
+
+### Pre-Analysis Check (BEFORE reading data):
+
+**"What is my current thesis?"** — Write it in one sentence before looking at any data.
+Then check: does the data confirm or contradict it? If contradicts, **update your thesis, don't force the data to fit.**
+
+### During Analysis — Prediction Quality:
+
+1. **"Am I PREDICTING or just DESCRIBING?"**
+   - Describing: "H1 is bullish, M5 trend up, RSI above 50." The score already tells you this.
+   - Predicting: "EUR/USD will push to 1.1490 in the London session because USD selling pressure from rate expectations + H4 support holding at 1.1460." THIS is your edge.
+   - If you catch yourself just restating indicators, STOP and ask "so what happens NEXT?"
+
+2. **"What's the STRONGEST bear case for my bull thesis?"**
+   - Can't find one → you haven't thought hard enough.
+   - Strong counterargument → reduce size or skip.
+
+3. **"Is the market telling a cross-pair story?"**
+   - USD weakness across ALL USD pairs → macro theme. Trade the strongest non-USD.
+   - Only one pair moving → pair-specific catalyst. Don't project to others.
+   - All JPY pairs moving together → JPY driver. Trade the cleanest one.
+
+4. **"Am I anchored or adapting?"**
+   - Last thesis was wrong → what SPECIFICALLY was wrong? Direction? Timing? Driver?
+   - Don't repeat the same thesis hoping for a different result.
+
+### Post-Trade Reflection:
+
+After each swing close, append:
+```
+  SWING REVIEW: {pair} {L/S} {pip result}. Thesis was {right/wrong} because {reason}.
+  H1 read: {accurate/missed turn/late}. Would I take this again? {yes/no — why}.
+  LESSON: {one sentence — what to remember for next similar setup}
+```
+
+**After 2 consecutive swing losses:**
+```
+  SWING PATTERN CHECK: Last 3 swings: {summary}.
+  Common thread: {what's repeated — direction, pair, timing, SL too tight?}
+  Adjustment: {specific change for next cycle}
+```
+
+### Hourly Deep Reflection (every 6th cycle):
+
+- "Has my H1/H4 read been accurate today? Score: _/10"
+- "What regime change am I NOT seeing?"
+- "Is my analysis adding value over just following the monitor scores?"
+- "What would I do differently if I started fresh right now with no positions?"
 
 ---
 

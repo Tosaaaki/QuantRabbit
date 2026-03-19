@@ -609,6 +609,20 @@ def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str) -> dic
     # Is this pair scalpable? SL > max of pair's range = too wide
     scalpable = sl_pips <= sl_range[1]
 
+    # Spread-aware R:R calculation
+    spread = profile.get("spread_gate", 2.0)  # use gate as typical spread
+    # For LONG: BID travels TP+spread up, SL-spread down
+    # For SHORT: ASK travels TP+spread down, SL-spread up
+    bid_tp_dist = tp_pips + spread   # distance BID/ASK must travel for TP
+    bid_sl_dist = sl_pips - spread   # distance BID/ASK must travel for SL
+    if bid_sl_dist <= 0:
+        bid_sl_dist = 0.1  # avoid division by zero
+    true_rr = round(bid_tp_dist / bid_sl_dist, 2)  # >1 means TP harder to reach
+    spread_pct_of_tp = round(spread / tp_pips * 100, 1)
+
+    # Recommend minimum TP that gives fair R:R (TP >= SL + 2*spread)
+    fair_tp_pips = round(sl_pips + 2 * spread, 1)
+
     return {
         "tp_pips": tp_pips,
         "sl_pips": sl_pips,
@@ -617,7 +631,15 @@ def compute_scalp_params(pair: str, m5_atr: float, event_risk_level: str) -> dic
         "sl_atr_ratio": round(sl_pips / m5_atr, 2),
         "event_risk": event_risk_level,
         "scalpable": scalpable,
-        "note": f"ATR={round(m5_atr,1)} TP={tp_pips}({tp_ratio}x) SL={sl_pips}({sl_ratio}x) event={event_risk_level}"
+        "spread_info": {
+            "typical_spread": spread,
+            "bid_tp_distance": bid_tp_dist,
+            "bid_sl_distance": round(bid_sl_dist, 1),
+            "true_distance_rr": true_rr,
+            "spread_pct_of_tp": spread_pct_of_tp,
+            "fair_tp_minimum": fair_tp_pips,
+        },
+        "note": f"ATR={round(m5_atr,1)} TP={tp_pips}({tp_ratio}x) SL={sl_pips}({sl_ratio}x) spread_cost={spread_pct_of_tp}% true_RR={true_rr} event={event_risk_level}"
     }
 
 

@@ -2,6 +2,65 @@
 
 ## 2026-03-19
 
+- **21:50 v4.3b: 整合性修正 + 予測精度追跡 + CLAUDE.md更新**
+  - `SECRETARY_PROMPT.md`: alerts pruning矛盾修正（additive ruleにalerts例外追加）
+  - `CLAUDE.md`: v4.3反映 — 予測ファースト原則、自己改善ループ図、trade_performance.py記載
+  - `trade_performance.py`: prediction_accuracy追跡（right/wrong集計）+ self-improvement compliance集計
+  - `SKILL.md` x3: macro-intel(旧ファイル参照修正), secretary(4 agents), scalp-fast(PREDICT)
+
+- **21:25 v4.3: 「予測ファースト」アーキテクチャ + スプレッド考慮**
+  - **根本転換**: スコア→エントリーのボット的フローを廃止。「PREDICT first, Score second」に
+  - `SCALP_FAST_PROMPT.md` Step 3完全書き直し:
+    - 3A: 7ペアスキャン→予測形成（スコア見る前に方向予測必須）
+    - 3B: スコアは確認用。予測とスコアの一致/不一致マトリクス
+    - 3C: MTF/Confluence読み（予測を補強する材料として）
+    - 3D: スプレッド考慮TP/SL（TP≥SL+2×spread ルール追加）
+    - 3E: 予測ベースのサイジング（予測なし=0ユニット）
+  - `SWING_TRADER_PROMPT.md` Step 4同様に書き直し:
+    - 4A: Thesis形成（BEFORE scores）
+    - 4B: スコア確認マトリクス
+    - 4C: スプレッド考慮TP/SL
+    - 4D: Plays→予測が特定するパターンとして再定義
+  - `live_monitor.py`:
+    - `compute_scalp_params()`: spread_info追加（bid距離、true_distance_rr、spread%、fair_tp_minimum）
+    - `calc_sizing()`: margin_free_target 0.40→0.20(scalp), 0.50→0.35(swing)に緩和
+  - トレードログ形式: PREDICTION/THESIS必須フィールド追加
+  - Self-Questionを予測品質チェック中心に再構成
+  - **設計思想**: Claudeの本当のエッジは「過去データから未来を予測する裁量力」。スコアはラグ指標の集約であり、高スコア=動きの終盤の可能性。予測が先、スコアは参考。
+
+- **21:00 v4.2c: scalp-fast Step 6をPREDICT補完型に整理**
+  - Step 3(PREDICT→score)の改修に合わせ、Step 6を事後学習専用に再構成
+  - EXECUTION PATTERN CHECK追加（ペアローテーション・方向偏り・予測精度トレンド）
+
+- **20:45 v4.2b: 秘書アカウンタビリティ + クロスエージェント学習 + 複雑性プルーニング**
+  - `SECRETARY_PROMPT.md`: Accountability Audit(自問実施チェック) + Cross-Agent Relay + Complexity Pruning
+  - `MACRO_INTEL_PROMPT.md`: 5bにREFLECTION/SWING REVIEW読み取り追加（クロスエージェント学習）
+  - 全体: 「何もしない」→「7ペアから最高の機会を選ぶ」に方針修正
+
+- **20:31 v4.2: 全エージェント自問・自己改善・思考の広がり強化**
+  - `docs/MACRO_INTEL_PROMPT.md`: Section 5完全書き直し
+    - 旧strategy_feedback_worker.py依存を廃止 → 新trade_performance.pyに切替
+    - 5つの必須質問(Q1-Q5)を毎サイクル義務化（収益性・逆方向検証・見落とし・ルール検証・最重要改善）
+    - 5d: 分析→即行動テーブル（shared_state更新、プロンプト編集、ツール開発）
+    - 5e: メタ自問（過剰修正チェック、ルール膨張チェック、自己採点）
+  - `docs/SCALP_FAST_PROMPT.md`: Step 6 Self-Question追加
+    - サイクル毎に5つの自問ローテーション（バイアス確認・市場全体把握・直近トレード振り返り・盲点・トレード適否）
+    - Post-Trade Reflection: 勝敗理由+次回調整を毎回記録
+    - 3連敗時PATTERN CHECK義務化
+  - `docs/SWING_TRADER_PROMPT.md`: Step 7 Self-Question追加
+    - Pre-Analysis Check: データ読む前にthesis書き出し→検証
+    - 4つの自問（アンカリング・反対論・ペア偏り・クロスペア読み）
+    - Post-Trade SWING REVIEW: thesis正否+H1読みの精度自己採点
+    - 時間毎Deep Reflection（6サイクル毎）
+  - `docs/MARKET_RADAR_PROMPT.md`: Self-Check 4層構造に強化
+    - Layer 1: 基本業務チェック
+    - Layer 2: クロスペア・相関・ボラクラスタリング
+    - Layer 3: トレーダーへの貢献度
+    - Layer 4: 自分のアラート品質の自己検証
+  - `scripts/trader_tools/trade_performance.py`: 新規作成
+    - live_trade_log.txt解析 → WR/PF/avg pip/agent別/pair別/session別/direction別/trend
+    - strategy_feedback.json出力（旧worker依存なし、v3ネイティブ）
+
 - **16:30 v4.1: 市況レジーム + MTF矛盾検出 + 通貨強弱**
   - `live_monitor.py`:
     - `compute_currency_strength()` 実装: M5 RSI/EMA slope/ADX-DI → 5通貨強弱

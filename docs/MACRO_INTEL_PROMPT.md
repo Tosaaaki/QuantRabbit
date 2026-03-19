@@ -59,14 +59,28 @@ This parses `logs/live_trade_log.txt` and outputs:
 - Directional breakdown (LONG vs SHORT — is there a bias problem?)
 - Recent trend (last 10 trades vs last 50 — improving or worsening?)
 
-### 5b. Read the Trader's Full Desk
+### 5b. Read the Trader's Full Desk + Agent Reflections
 
 | Monitor | File | What it tells you |
 |---|---|---|
 | Trade performance | (output of 5a above) | Fresh W/L stats per agent, pair, session |
 | Live trade log | `logs/live_trade_log.txt` | Raw decision history — read last 30 entries |
 | Shared state | `logs/shared_state.json` | What other agents are doing |
-| Strategy feedback | `logs/strategy_feedback.json` | Legacy multipliers (may be stale) |
+| Strategy feedback | `logs/strategy_feedback.json` | v3 performance data (updated by 5a) |
+
+**READ AGENT REFLECTIONS — this is your cross-agent learning input:**
+```bash
+# scalp-fast reflections
+grep -A1 "REFLECTION:" logs/live_trade_log.txt | tail -20
+# scalp-fast pattern checks
+grep -A2 "PATTERN CHECK:" logs/live_trade_log.txt | tail -10
+# swing-trader reviews
+grep -A2 "SWING REVIEW:" logs/live_trade_log.txt | tail -10
+# Are agents repeating the same mistakes?
+grep "REFLECTION:.*loss" logs/live_trade_log.txt | tail -10
+```
+
+**If you see the same loss reason repeated 3+ times → it's a SYSTEMIC issue, not bad luck. Fix it.**
 
 ### 5c. The Five Mandatory Questions — Answer ALL, Write to Log
 
@@ -144,7 +158,7 @@ cat logs/tool_requests.json 2>/dev/null || echo "[]"
 - `scripts/trader_tools/` — Python scripts, one-shot execution
 - Use existing modules (`indicators/`, `analysis/`)
 - Output: JSON to stdout or `logs/`
-- After building: add usage to `docs/SCALP_TRADER_PROMPT.md` monitor section
+- After building: add usage to `docs/SCALP_FAST_PROMPT.md` or `docs/SWING_TRADER_PROMPT.md`
 
 ## 7. Daily Summary (around UTC 00:00)
 - Win rate, PL, per-pair performance, improvements

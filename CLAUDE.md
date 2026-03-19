@@ -15,15 +15,17 @@
   - リスク: margin使用率, ドローダウン, サーキットブレーカー
   - 出力: `logs/live_monitor.json`
 
-### Claude層（裁量判断のみ）
+### Claude層（裁量判断 — 予測ファースト）
+
+**核心原則: Claudeはスコアを見る前に「予測」を立てる。スコアは確認材料。予測がエッジ。**
 
 | タスク | モデル | 間隔 | ロック | 役割 |
 |--------|--------|------|--------|------|
-| scalp-fast | Sonnet | 2分 | なし | モニター読む→ペア特性+コンフルエンス裁量→3-8pipスキャルプ |
-| swing-trader | Opus | 10分 | global | H1/H4+divergence/Ichimoku深い分析→10-50pipスウィング |
-| market-radar | Sonnet | 7分 | global | ポジション監視・急変検知・レジーム変化検知 |
-| macro-intel | Sonnet | 19分 | global | マクロ分析・戦略改善・ツール開発 |
-| secretary | Sonnet | 11分 | global | エージェント監視・状況レポート・異常検知 |
+| scalp-fast | Sonnet | 2分 | なし | PREDICT→score確認→3-8pipスキャルプ。予測精度の振り返り必須 |
+| swing-trader | Opus | 10分 | global | THESIS→H1/H4深い分析→10-50pipスウィング。thesis正否の記録必須 |
+| market-radar | Sonnet | 7分 | global | 監視・急変検知・4層Self-Check（機会と危険の両方） |
+| macro-intel | Sonnet | 19分 | global | マクロ分析・5つの必須自問・クロスエージェント学習・ツール開発 |
+| secretary | Sonnet | 11分 | global | アカウンタビリティ監査・エージェント間学習中継・複雑性プルーニング |
 
 - 排他制御: `scripts/trader_tools/task_lock.py` でグローバルロック（`global_agent`）
 - エージェント間連携: `logs/shared_state.json`
@@ -31,11 +33,20 @@
 - 各タスクのプロンプト: `docs/*_PROMPT.md`
 - タスク定義: `~/.claude/scheduled-tasks/*/SKILL.md`
 
+### 自己改善ループ
+```
+scalp-fast → REFLECTION: → live_trade_log.txt
+swing-trader → SWING REVIEW: → live_trade_log.txt
+macro-intel → reads reflections → identifies patterns → updates shared_state/prompts
+secretary → audits compliance → relays findings → prunes complexity
+```
+
 ## 絶対ルール
 
 - **ボット禁止**: `while True` + `sleep` の常駐スクリプトを書かない。`workers/` のコードは参照のみ
 - **Pythonツールは可**: テクニカル計算・機械的ポジ管理のスクリプトは可。トレード判断はClaude裁量
 - **OANDA直接注文**: urllib で REST API を叩く。ボットプロセス経由禁止
+- **予測ファースト**: スコアを見る前に予測を立てる。スコアは確認材料。予測がエッジ
 - **裁量トレーダーであれ**: ルール実行マシンではない。市況を読んで自分で判断する
 - テクニカル指標は `logs/live_monitor.json` から読む（手計算しない）
 - 注文は必ず `logs/live_trade_log.txt` にファイル記録
@@ -63,7 +74,7 @@
 | `docs/SCALP_TRADER_PROMPT.md` | (参考) | 旧scalp-trader。教訓・Playsは今も有効。直接使うタスクはなし |
 | `docs/MARKET_RADAR_PROMPT.md` | market-radar | 監視・急変検知・アラート |
 | `docs/MACRO_INTEL_PROMPT.md` | macro-intel | マクロ分析・戦略改善・ツール開発 |
-| `docs/SECRETARY_PROMPT.md` | secretary | エージェント監視・パフォーマンス集計 |
+| `docs/SECRETARY_PROMPT.md` | secretary | アカウンタビリティ監査・クロスエージェント中継・複雑性プルーニング |
 
 ### 運用ドキュメント（必要時に参照）
 
@@ -92,7 +103,7 @@
 | `logs/shared_state.json` | 全タスク | 全タスク | エージェント間連携（バイアス、アラート等） |
 | `logs/live_trade_log.txt` | 全タスク + monitor | 全タスク | トレード実行ログ（時系列） |
 | `logs/technicals_*.json` | refresh_factor_cache | live_monitor.py | H1/H4テクニカル指標 |
-| `logs/strategy_feedback.json` | macro-intel | scalp/swing | 戦略別パフォーマンス |
+| `logs/strategy_feedback.json` | trade_performance.py | macro-intel/全タスク | v3パフォーマンス統計（W/L,ペア別,セッション別,予測精度） |
 | `logs/market_context_latest.json` | macro-intel | swing-trader | マクロコンテキスト |
 
 ### スクリプト
@@ -103,6 +114,7 @@
 | `scripts/trader_tools/refresh_factor_cache.py` | swing-traderが呼ぶ | H1/H4テクニカル指標の更新 |
 | `scripts/trader_tools/task_lock.py` | 各タスク | グローバルロック排他制御 |
 | `scripts/trader_tools/setup_live_monitor.sh` | 手動(初回) | launchdへのmonitor登録 |
+| `scripts/trader_tools/trade_performance.py` | macro-intelが呼ぶ | v3パフォーマンス集計（live_trade_log.txt解析） |
 | `scripts/trader_tools/setup_scheduled_tasks.sh` | 手動(初回) | 全タスクの登録 |
 
 ## 主要ディレクトリ
