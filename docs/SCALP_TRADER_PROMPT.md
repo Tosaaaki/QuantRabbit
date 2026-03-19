@@ -506,13 +506,13 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 **Instead, frame everything as an opportunity: "X favors LONG/SHORT on Y pair."**
 **Old entries should be consolidated, not accumulated. Keep this section under 40 lines.**
 
-### Current Macro (2026-03-19 updated 05:03Z)
+### Current Macro (2026-03-19 updated 05:32Z)
 - **FOMC**: Held 3.50-3.75% (Mar 18 confirmed). Core PCE revised 2.7%. ~1 cut priced Oct/Dec 2026. Iran war = higher-for-longer. USD floor strong. Only 22.5bp cuts priced all 2026; June cut at 22%.
-- **BOJ**: Held 0.75% today (Mar 19 meeting). HAWKISH bias retained. Takata dissented (+25bp). Ueda: "inflation rising toward 2%." April hike LIVE (57%). Intervention warning from Finance Minister at 158.5-162. UJ LONG above 160 is high-risk zone.
-- **BOE**: **HELD 3.75%** (confirmed Mar 19 12:00Z). UK CPI=3% above target; oil-driven inflation = hawkish lean. Vote ~6-3. Post-decision: re-assess GBP direction based on statement tone — hawkish hold = GBP bid, dovish lean = GBP fade.
-- **RBA**: Hiked to 4.10% (2nd consecutive hike). May hike to 4.35% priced. AUD macro bullish but VIX=23 risk-off caps rally. AUD bears valid while VIX elevated; bias flips LONG on clear risk-on turn.
+- **BOJ**: Held 0.75% (Mar 19 meeting). HAWKISH bias retained. Takata dissented (+25bp). Ueda: "inflation rising toward 2%." April hike LIVE (57%). Intervention warning from Finance Minister at 158.5-162. UJ LONG above 160 is high-risk zone.
+- **BOE**: EXPECTED HOLD 3.75% (decision at 12:00Z — unconfirmed as of 05:32Z). UK CPI=3% above target; oil-driven inflation = hawkish lean. Vote ~6-3 expected. Close GBP SHORT by 11:30Z. Post-decision: hawkish hold = GBP bid, dovish lean = GBP fade.
+- **RBA**: Hiked to 4.10% (2nd consecutive hike). May hike to 4.35% priced. AUD macro bullish but VIX=25 risk-off caps rally. AUD SHORT valid while VIX elevated; bias flips LONG on clear risk-on.
 - **ECB**: Held all parameters (Mar 19). 2 ECB hikes priced by end 2026 (oil/inflation). EUR medium-term mildly bullish, but FOMC>ECB rate gap still EUR-negative near-term.
-- **Risk-off**: Iran/Hormuz Week 3. VIX ~23 (Extreme Fear zone; peaked 31.77 Mar 9, improved). Brent ~$100. Gold ~$5,000. US 10Y = 4.2%+.
+- **Risk-off**: Iran/Hormuz Week 3. VIX=25.09 (elevated risk-off; peaked 31.77 Mar 9). Brent ~$100. Gold ~$5,000. US 10Y=4.273%.
 
 ### Direction Opportunities (what macro GIVES you)
 | Pair | LONG opportunity | SHORT opportunity |
@@ -520,17 +520,17 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 | USD/JPY | FOMC hawkish USD floor. 159-160 near-term bid while BOJ holds. | BOJ HAWKISH (Takata dissent, April hike live). Above 160 = MoF intervention zone. Battle range. |
 | EUR/USD | ECB hike cycle building; bounce from H1 oversold <1.144. | FOMC>ECB rate gap remains. H1/H4 bear trend intact. Target 1.1410. |
 | GBP/USD | Post-BOE hawkish hold confirmation; GBP spike if vote 7-2+. | Post-BOE dovish lean; H1/H4 bear still intact below 1.332. |
-| AUD/USD | 0.706 break = H1 bear weakening, macro bias shifts actively LONG. | H1 ADX=31.8 STRONG_BEAR active. VIX=23 caps RBA bid below 0.706. |
+| AUD/USD | 0.706 break = H1 bear weakening + VIX drop = macro bias shifts LONG. | H1 ADX=31.5 STRONG_BEAR active. VIX=25 caps RBA bid. SHORT valid below 0.706. |
 | EUR/JPY | FOMC>ECB gap + range support bounce. | BOJ hawkish JPY squeeze risk. Risk-off caps at range highs. |
 | GBP/JPY | Post-BOE hawkish (GBP) + range support. | BOJ hawkish JPY squeeze risk. |
 | AUD/JPY | RBA hike cycle + AUD macro bullish. Support holds = LONG opportunity. | BOJ hawkish = JPY squeeze risk. VIX=23 caps above 113. |
 
 ### Risk Management Context
-- VIX ~23 → Extreme Fear (improving from 25; peaked 31.77 Mar 9). Widen SL 1.2x. Reduce lot on new entries.
+- VIX=25.09 → Elevated risk-off (peaked 31.77 Mar 9). Widen SL 1.2x. Reduce lot on new entries.
 - SL minimum 2x ATR. For H1 entries, minimum 2x H1_ATR.
 - All bot strategies broken (PF<1.0, WR<45%). Trade purely discretionary.
 - Timestamps: always use `date -u` (Claude's date awareness is unreliable).
-- BOE result: HOLD 3.75% confirmed. Re-assess GBP post-statement. Look for clean re-entry if direction clears.
+- BOE decision at 12:00Z (unconfirmed). Close GBP positions by 11:30Z. Re-assess direction post-statement.
 
 ### Lessons That Cost Real Money
 1. Take profit when market gives it. +481 JPY UPL → 0 realized = failure.
