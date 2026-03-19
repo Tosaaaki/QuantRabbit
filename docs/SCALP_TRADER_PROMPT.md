@@ -197,11 +197,19 @@ BEST: AU LONG (4) → enter
 If your highest score is only 2, you're being too cautious. At least one pair should be 3+.
 **You cannot write "PASS" without showing this matrix first.** If you skip it, you're not doing your job.
 
-**ENTRY TIMING — this is where you keep losing money:**
-- **NEVER enter against the M5 trend.** If M5 RSI>60 and trending up, do NOT open a SHORT. Wait for M5 to roll over.
-- **The winning pattern: H1 direction + M5 aligned.** H1 bearish + M5 turning down = SHORT. H1 bullish + M5 turning up = LONG.
-- **If H1 and M5 conflict, trade M5 direction as a scalp** (3-5pip TP, tight SL). Don't fight the short-term flow.
-- **M5 StochRSI = your entry timer.** StochRSI>0.8 on a SHORT = wait. StochRSI<0.2 on a LONG = wait. Enter when it turns.
+**ENTRY TIMING — Multi-Timeframe (MTF) judgment:**
+Read H1 for direction, M5 for timing, M1 for precision. These are NOT independent signals — they work together.
+
+**MTF scenarios and what to do:**
+| H1 | M5 | Read | Action |
+|---|---|---|---|
+| Strong trend (ADX>25) | Counter-trend bounce (RSI moving against H1) | **Pullback = entry opportunity** | Wait for M5 to exhaust (StochRSI extreme), then enter WITH H1 direction. This is the best entry. |
+| Strong trend (ADX>25) | Aligned with H1 | Trend continuation | Enter on M1 dip. Ride it. |
+| Weak/ranging (ADX<20) | Trending (ADX>20) | M5 is the driver | Scalp WITH M5 direction, 3-5pip TP, tight SL. |
+| Weak/ranging | Weak/ranging | No clear driver | Fade range extremes or skip this pair. |
+
+**Key: M5 counter-trend against strong H1 = pullback entry, NOT a reason to avoid the trade.**
+**The WORST entry: H1 weak + M5 against you. The BEST entry: H1 strong + M5 pulling back to give you a better price.**
 
 **Quick scalps are always available:**
 - Any pair with ADX>20 on M5 = trend to scalp **in M5's direction**. Take 3-5pip, move on.
@@ -343,31 +351,30 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 **Instead, frame everything as an opportunity: "X favors LONG/SHORT on Y pair."**
 **Old entries should be consolidated, not accumulated. Keep this section under 40 lines.**
 
-### Current Macro (2026-03-19 updated 01:04Z)
-- **FOMC**: Held 3.50-3.75% hawkish. USD structurally bid. 1 cut projected 2026.
-- **BOJ**: Held 0.75%. Ueda hawkish, April hike consensus → JPY strength structural bias.
-- **BOE**: 12:00Z today. Hold 3.75% expected. 5-4 vote split risk — binary outcome. Trade GBP AFTER decision confirms.
-- **RBA**: 4.10% hike. AUD fundamentally supported BUT Fed hawkish USD bid + risk-off = H1 AUD/USD bearish (USD strength dominant over RBA).
-- **Geopolitical**: Iran/Hormuz Week 3. Oil Brent ~$108. VIX ~23.7. Gold ~$5,005. Risk-off baseline.
-- **AUS employment data today**: Binary AUD risk — strong print → AUD spike 30-50pip. Adjust AUD position before data if needed.
+### Current Macro (2026-03-19 updated 01:31Z)
+- **FOMC**: Held 3.50-3.75% hawkish (Mar 18 confirmed). Powell: "inflation progress, not enough." USD structurally bid. 1 cut in 2026.
+- **BOJ**: Held 0.75%. Ueda hawkish, April hike consensus → JPY strength bias.
+- **BOE**: 12:00Z today. **CUT RISK HIGH** — ING: "BOE cuts in heavily divided decision." 50/50 pricing. GBP binary ±100pip. Close GBP by 11:30Z, re-enter post-decision.
+- **AUS employment**: +17,800 released ~00:30Z. Strong but spike faded — USD bid dominant. H1 AUD/USD bearish ADX=33.8 is the truth.
+- **Geopolitical**: Hormuz Week 3. Brent $108-110. VIX 23.18. Gold $4,839. Risk-off Extreme Fear. SNB held 0% today.
 
 ### Direction Opportunities (what macro GIVES you)
 | Pair | LONG opportunity | SHORT opportunity |
 |------|-----------------|-------------------|
-| USD/JPY | USD bid, but near 160 intervention zone — size down | Intervention zone 159.5-162 + BOJ hawkish = JPY strength play |
-| EUR/USD | M5 oversold bounce scalp | H1/H4 bearish trend intact, FOMC hawkish = USD dominant |
-| GBP/USD | Post-BOE if hawkish split (6+ dovish votes → sell-off reversed) | H1 bearish, post-BOE if dovish surprise. Wait for 12:00Z. |
-| AUD/USD | Post-AUS data spike IF strong beat + H1 reversal confirms | H1 bearish ADX=33 strongest trend. USD bid > RBA. Risk-off AUD weak. |
+| USD/JPY | USD bid baseline | Near 160 intervention zone + BOJ hawkish → JPY strength play |
+| EUR/USD | M5 oversold bounce scalp | H1/H4 bearish ADX=27.9. FOMC hawkish = USD dominant |
+| GBP/USD | Post-BOE 12:00Z if surprise hold+hawkish | Post-BOE 12:00Z if cut confirmed. H1 bearish. |
+| AUD/USD | AUS spike faded already. H1 reversal if H1 ADX turns | H1 bearish ADX=33 strongest. USD bid > RBA. AUS spike faded. |
 | EUR/JPY | Range fade at H1 support | Range fade at H1 resistance |
-| GBP/JPY | Range fade at H1 support, post-BOE if hawkish | Range fade at H1 resistance |
-| AUD/JPY | RBA support when risk-on returns | BOJ hawkish + risk-off = JPY strength amplified |
+| GBP/JPY | Post-BOE if hold+hawkish outcome | Post-BOE cut confirmed. Close GBP by 11:30Z first. |
+| AUD/JPY | Risk-on recovery | BOJ hawkish + risk-off = JPY strength amplified |
 
 ### Risk Management Context
-- VIX 23.7 → widen SL by 1.2x as baseline
+- VIX 23.18 → widen SL by 1.2x as baseline
 - SL minimum 2x ATR. For H1 entries, minimum 2x H1_ATR
 - Bot strategies all broken (PF<1.0). Trade purely discretionary.
 - Timestamps: always use `date -u` (Claude's date awareness is unreliable)
-- AUS employment data (today) + BOE 12:00Z = binary event risk. Size down on AUD/GBP near event time.
+- BOE 12:00Z: GBP binary ±100pip. Close GBP positions by 11:30Z. Re-enter post-decision when H1 confirms direction.
 - AUD/USD thesis: USD bid (FOMC) is the dominant driver over RBA hike. H1 bearish ADX=33 is the truth — follow it.
 
 ### Lessons That Cost Real Money
@@ -377,5 +384,5 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 4. 50-70pip TP = swing trade, not scalp. Manage accordingly.
 5. Hours of HOLD with no realized P/L = opportunity cost. Scalp other pairs.
 6. TP must exceed SL distance. Otherwise structurally unprofitable.
-7. **Entering against M5 trend is the #1 cause of immediate drawdown.** H1 says SHORT but M5 RSI=67 trending up → you SHORT → instant -10pip. Wait for M5 to turn, THEN enter. Patience on entry timing, not on whether to trade.
+7. **Use MTF properly.** H1 strong trend + M5 pullback = best entry (pullback gives better price). H1 weak + M5 against you = worst entry (no trend to catch). Read the combination, not each timeframe in isolation.
 8. **Quick scalps WITH M5 trend are the easiest money.** M5 ADX>20 + M5 RSI aligned = enter in M5 direction, take 3-5pip, done. Don't overthink it.
