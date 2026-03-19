@@ -2,6 +2,13 @@
 
 ## 2026-03-19
 
+- **22:xx SCALP_FAST_PROMPT.md全面書き直し — ルールベース→裁量トレーダー型**
+  - 400行のチェックリスト+ステップ手順 → 130行の裁量思考ガイドに凝縮
+  - 「スコア4以上で」「MTF alignedで」等のルールベース判断基準を撤廃
+  - 「市場を読め、ストーリーを作れ、確信があれば打て」に転換
+  - SKILL.mdから「AGGRESSIVE MODE: 10,000 JPY」削除（規律破壊の元凶）
+  - prediction_tracker.json記録義務を削除（オーバーヘッド削減）
+  - 6段階チェックリスト→「読む→考える→打つ」のシンプルフロー
 - **21:42 全系統アグレッシブモード移行** — 朝1万円目標
   - swing-trader: margin excuse撤廃。margin<50%なら即エントリー義務。TP 10-30pip
   - shared_state: session_directive更新。全ペア解禁、margin60%まで使用可
@@ -233,3 +240,4 @@
   5. SCALP_FAST_PROMPT.md全面改訂: Pre-Entry Checklist追加、sizing.recommended_units必須化、recently_closedチェック必須化
   6. SWING_TRADER_PROMPT.md改訂: Pre-Entry Checklist追加、sizing必須化、重複クローズ防止追加
 [2026-03-19T11:07Z] fix: margin free target調整 scalp 60%→40%, swing 70%→50%。小口座(28k)で裁量の余地確保
+2026-03-19T13:02Z macro-intel: macro_bias refresh (VIX=27.19, EUR_USD→LEAN_LONG), prediction_insights added (USD_JPY 33% timing fix), SCALP_FAST_PROMPT.md: REFLECTION enforcement + USD_JPY M5 timing rule
