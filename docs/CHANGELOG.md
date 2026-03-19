@@ -283,3 +283,4 @@
 - analyst: Iran war macro alert — EUR/GBP longs cautioned, AUD_JPY SHORT best setup, bias updated in shared_state
 - analyst: Created docs/ANALYST_PROMPT.md (was missing, causing task to run without instructions)
 2026-03-19T20:44:36Z | analyst | BIAS UPDATE: AUD_JPY SHORT FLIP (China soft), USD_JPY BOUNCE_WATCH (yen crowded+intervention risk), EUR_USD LEAN_LONG wait RSI≤53
+2026-03-20 analyst: バイアス更新(USD_JPY LEAN_SHORT moderate/EUR_USD CAUTION/AUD_JPY LEAN_SHORT moderate-油価→=リスクオン緩和) + パフォーマンスアラート(last_10 WR=30%) + 全アラート刷新(旧全削除)
