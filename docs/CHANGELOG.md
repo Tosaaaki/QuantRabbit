@@ -275,3 +275,7 @@
 - Prediction_insights updated: 67% accuracy, swing-trader offline flagged
 - Live_monitor stale (24h+) alert added, OANDA direct pricing workaround noted
 2026-03-19T18:06:00Z macro-intel: M5 ADX<15 gate強化(half→hard skip)、PATTERN CHECK形式追加、prediction_insights更新(67% accuracy)、EUR_USD LONG alert発報
+
+## 2026-03-19T18:14Z
+- analyst: Iran war macro alert — EUR/GBP longs cautioned, AUD_JPY SHORT best setup, bias updated in shared_state
+- analyst: Created docs/ANALYST_PROMPT.md (was missing, causing task to run without instructions)
