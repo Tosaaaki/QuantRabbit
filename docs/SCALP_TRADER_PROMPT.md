@@ -506,31 +506,30 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 **Instead, frame everything as an opportunity: "X favors LONG/SHORT on Y pair."**
 **Old entries should be consolidated, not accumulated. Keep this section under 40 lines.**
 
-### Current Macro (2026-03-19 updated 04:01Z)
-- **FOMC**: Held 3.75-4.00% (Mar 18 confirmed). "Wait-and-see, data-dependent." ~22bp cuts priced for all 2026. USD floor intact. DXY ~100.18 (soft despite yields — dollar selling continues).
-- **BOJ**: Confirmed hold 0.75% TODAY (Mar 19). Ueda press conference expected dovish — JPY-negative near-term. Next hike Oct 2026. Intervention risk above 160.
-- **BOE**: 12:00Z TODAY. Hawkish hold consensus (7-2 or 6-3). Hawkish split → GBP spike. Dovish split → GBP drop. Binary event — close GBP by 11:30Z.
-- **RBA**: Back-to-back hikes (Mar 18 = 2nd consecutive). Cash rate 4.1%. May hike to 4.35% expected. AUD up +11.8% YoY. Only G10 bank hiking. H1 STRONG_BEAR may be temporary — macro strongly AUD bullish.
-- **Risk-off**: Hormuz Week 3. Brent ~$95-100. VIX ~25 (elevated, re-rising from 22.7). Gold ~$5,000. US 10Y = 4.2%+ (sticky inflation from PPI +0.7%). CNN Fear & Greed = Extreme Fear.
+### Current Macro (2026-03-19 updated 04:32Z)
+- **FOMC**: Held 3.50-3.75% (Mar 18 confirmed). Core PCE revised 2.7%. ~1 cut priced Oct/Dec 2026. Iran war = higher for longer. USD floor strong.
+- **BOJ**: Held 0.75% TODAY (Mar 19). **HAWKISH bias retained.** Takata dissented (+25bp). Ueda: "inflation rising toward 2% target." April hike LIVE (57%). JPY strength risk elevated — do not overlever UJ LONG above 159.5.
+- **BOE**: 12:00Z TODAY. Expected hold 3.75%. Feb split 5-4 (hold vs cut). Oil-driven inflation = hawkish lean. Vote likely 6-3 or 7-2 hold. Binary: hawkish → GBP spike; dovish → GBP drop. Close GBP SHORT by 11:30Z.
+- **RBA**: Hiked to 4.10% (Mar 18, 2nd consecutive). AUD spiked to 0.7102 post-hike, now pulled back to 0.704. May hike to 4.35% priced. VIX=25 risk-off caps RBA bid — AUD range-bound.
+- **Risk-off**: Iran/Hormuz Week 3. VIX ~25 (Extreme Fear; peaked 31.77 Mar 9). Gold ~$5,000. Brent ~$95-100. US 10Y = 4.2%+.
 
 ### Direction Opportunities (what macro GIVES you)
 | Pair | LONG opportunity | SHORT opportunity |
 |------|-----------------|-------------------|
-| USD/JPY | Post-Ueda dovish JPY sell. Fed/BOJ rate diff. 159.5+ stays bid. | Above 160 intervention zone. Fade spikes only. |
-| EUR/USD | M5 oversold bounce scalp only | H1 bear intact. USD DXY soft but EUR has no catalyst. Iran headwind. |
-| GBP/USD | Post-BOE hawkish outcome (7-2 hold). GBP fundamentals strong. | Post-BOE if dovish surprise (6-3+). Pre-event: close by 11:30Z. |
-| AUD/USD | RBA hawkish macro = H1 bear reversal plays. Above 0.706 = bias shift. | H1 ADX=32.6 STRONG_BEAR still active. Risk-off/VIX25 caps RBA bid. |
-| EUR/JPY | Post-Ueda JPY sell + range bounce | EUR/JPY capped by risk-off, fade at range highs |
-| GBP/JPY | Post-BOE hawkish + post-Ueda JPY sell | Pre-BOE. Close before 11:30Z. |
-| AUD/JPY | BOJ dovish today = JPY sell. RBA hawkish. Risk-on spike play. | VIX25 risk-off = JPY demand offsets AUD bid. |
+| USD/JPY | FOMC hawkish USD floor. 159.5-160 near-term bid. | BOJ HAWKISH (Takata +25bp dissent, April hike live). Above 160 = MoF intervention. 159-160 is battle zone. |
+| EUR/USD | M5 oversold bounce scalp if RSI<30 | H1/H4 bear intact. FOMC>ECB rate gap. Iran headwind. Target 1.1410. |
+| GBP/USD | Post-BOE if hawkish surprise (7-2+ hold, GBP spike). | Post-BOE if dovish split. Pre-event: close by 11:30Z. |
+| AUD/USD | 0.706 break = H1 bear weakening, bias shifts LONG. RBA macro bullish. | H1 ADX=31.8 STRONG_BEAR active. VIX25 caps RBA bid below 0.706. |
+| EUR/JPY | FOMC>ECB rate gap. Range bounce from support. | BOJ hawkish = JPY squeeze risk. Risk-off caps at range highs. |
+| GBP/JPY | Post-BOE hawkish (GBP) + range support. | Pre-BOE. BOJ hawkish JPY squeeze risk. Close before 11:30Z. |
+| AUD/JPY | RBA hawkish + AUD macro. Above 112.5 = LONG opportunity. | BOJ hawkish = JPY squeeze risk. VIX25 risk-off caps above 113. |
 
 ### Risk Management Context
-- VIX ~25 → elevated risk-off (re-rising). Widen SL by 1.2x. Reduce lot on new entries.
+- VIX ~25 → Extreme Fear (re-elevated from March 9 spike). Widen SL 1.2x. Reduce lot on new entries.
 - SL minimum 2x ATR. For H1 entries, minimum 2x H1_ATR.
 - All bot strategies broken (PF<1.0, WR<45%). Trade purely discretionary.
-- Timestamps: always use `date -u` (Claude's date awareness is unreliable)
-- BOE 12:00Z today: **BOE vote split**: 7-2 or 8-1 = GBP up. 6-3 or worse = GBP down.
-- **AUD bias risk**: RBA back-to-back hike = macro tailwind. If AUD/USD breaks above 0.706, H1 BEAR weakening — reassess shorts, favor longs on pullbacks.
+- Timestamps: always use `date -u` (Claude's date awareness is unreliable).
+- BOE 12:00Z today: Close GBP SHORT by 11:30Z. Post-decision: assess direction and re-enter if setup is clean.
 
 ### Lessons That Cost Real Money
 1. Take profit when market gives it. +481 JPY UPL → 0 realized = failure.
