@@ -506,31 +506,31 @@ with open('logs/tool_requests.json','w') as f: json.dump(reqs,f,indent=2)
 **Instead, frame everything as an opportunity: "X favors LONG/SHORT on Y pair."**
 **Old entries should be consolidated, not accumulated. Keep this section under 40 lines.**
 
-### Current Macro (2026-03-19 updated 03:04Z)
-- **FOMC**: Held 3.75-4.00% (Mar 18 confirmed). Powell: "wait-and-see, data-dependent." Middle East geopolitical uncertainty acknowledged. 1 cut projected 2026. USD bid intact.
-- **BOJ**: Held 0.75%. Ueda hawkish, April hike consensus → JPY strength bias.
-- **BOE**: 12:00Z today. Market repriced aggressively — from 2x cuts to 23bps HIKE priced by Dec 2026. Consensus: 7-2 or 6-3 HOLD (hawkish). Hawkish split → GBP spike vs dovish split → GBP drop. Close GBP by 11:30Z, re-enter post-decision.
-- **Risk-off**: Hormuz Week 3. Brent $108-110. VIX 26.5 (elevated, 90th percentile). Gold $5,400+. CNN Fear & Greed = 19 (Extreme Fear). Capital rotating to energy/defense.
-- **AUD**: RBA hawkish cycle but risk-off + USD bid dominates. AUD/USD H1 bearish ADX=33 is the truth.
+### Current Macro (2026-03-19 updated 03:34Z)
+- **FOMC**: Held 3.75-4.00% (Mar 18 confirmed). "Wait-and-see, data-dependent." Iran/Hormuz uncertainty acknowledged. 1 cut projected 2026. USD bid intact.
+- **BOJ**: Held 0.75% (cautious, stagflation flagged). Next hike expected Oct 2026 — JPY moderate strength bias, intervention risk above 159.
+- **BOE**: 12:00Z TODAY. Hawkish hold consensus (7-2 or 6-3). Hawkish split → GBP spike. Dovish split → GBP drop. Binary event — close GBP by 11:30Z.
+- **RBA**: Surprise +25bps hike to 4.10% (March 18). Only G10 bank hiking. Short-term AUD bid, but risk-off + USD dominance keeps H1 STRONG_BEAR intact.
+- **Risk-off**: Hormuz Week 3. Brent $100+. VIX 23.18 (elevated, eased from 26.5). Gold ~$5,000 range. CNN Fear & Greed = 19 (Extreme Fear). US 10Y = 4.265% (rising).
 
 ### Direction Opportunities (what macro GIVES you)
 | Pair | LONG opportunity | SHORT opportunity |
 |------|-----------------|-------------------|
-| USD/JPY | USD bid + FOMC hawkish 3.75-4.00% + rate diff intact | Near 160 intervention zone + BOJ hawkish April hike |
-| EUR/USD | M5 oversold bounce scalp | H1/H4 bearish. FOMC USD dominant. Middle East energy headwind for EUR |
-| GBP/USD | Post-BOE 12:00Z if hawkish hold vote (7-2 or tighter) | Post-BOE if dovish split (6-3 or wider). Close before 11:30Z. |
-| AUD/USD | H1 reversal if ADX turns and risk-on returns | H1 bearish ADX=33. USD bid + Extreme Fear caps AUD. |
+| USD/JPY | USD bid + Fed hold 3.75-4.00% + rate diff intact | Above 159 intervention zone. BOJ cautious. Fade spikes. |
+| EUR/USD | M5 oversold bounce scalp only | H1 bear intact. USD dominant. Iran energy headwind for EUR. |
+| GBP/USD | Post-BOE 12:00Z hawkish outcome (7-2 hold) | Post-BOE if dovish surprise (6-3+). Pre-event: close by 11:30Z. |
+| AUD/USD | RBA hike supports bounces. H1 reversal if ADX turns. | H1 ADX=32.6 STRONG_BEAR. Risk-off caps RBA bounce. Fade rallies. |
 | EUR/JPY | Range fade at H1 support | Range fade at H1 resistance |
-| GBP/JPY | Post-BOE hawkish outcome | Post-BOE dovish outcome. Close before 11:30Z. |
-| AUD/JPY | Risk-on recovery rally | BOJ April hike + VIX 26.5 risk-off = JPY strength amplified |
+| GBP/JPY | Post-BOE hawkish outcome | Post-BOE dovish surprise. Close before 11:30Z. |
+| AUD/JPY | Risk-on recovery rally only | BOJ hold + VIX 23 risk-off = JPY strength. AUD bear amplified. |
 
 ### Risk Management Context
-- VIX 26.5 → elevated regime, widen SL by 1.3x as baseline
-- SL minimum 2x ATR. For H1 entries, minimum 2x H1_ATR
-- Bot strategies all broken (PF<1.0). Trade purely discretionary.
+- VIX 23.18 → elevated regime (eased slightly). Widen SL by 1.2x as baseline.
+- SL minimum 2x ATR. For H1 entries, minimum 2x H1_ATR.
+- All bot strategies broken (PF<1.0, WR<45%). Trade purely discretionary.
 - Timestamps: always use `date -u` (Claude's date awareness is unreliable)
-- BOE 12:00Z: GBP binary event. Close GBP by 11:30Z. Re-enter post-decision when H1 confirms direction.
-- **BOE vote split key**: 7-2 or 8-1 hold = hawkish = GBP up. 6-3 or worse = dovish = GBP down. Avoid pre-event directional bias.
+- BOE 12:00Z today: GBP binary event. **BOE vote split**: 7-2 or 8-1 = hawkish = GBP up. 6-3 or worse = dovish = GBP down.
+- **RBA shock watch**: AUD may bid further. If AUD/USD breaks above 0.706, H1 BEAR may weaken — reassess bias.
 
 ### Lessons That Cost Real Money
 1. Take profit when market gives it. +481 JPY UPL → 0 realized = failure.

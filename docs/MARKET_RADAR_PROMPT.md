@@ -46,8 +46,13 @@ for pair in ['USD_JPY','EUR_USD','GBP_USD','AUD_USD','EUR_JPY','GBP_JPY','AUD_JP
 - Regime change (RANGE→TRENDING etc) → **ALERT**
 
 ### 5. SL Distance Watch
-- Calculate SL distance for each position
+Calculate SL distance **correctly** for each position:
+- **For SHORT positions:** sl_dist_pips = (SL_price - current_ask) × pip_multiplier
+- **For LONG positions:** sl_dist_pips = (current_bid - SL_price) × pip_multiplier
+- pip_multiplier: JPY pairs = 100, all others = 10000
+- **Use current price (bid for longs, ask for shorts), NOT the entry price.**
 - SL remaining < 5pip → **WARNING ALERT**
+- **Double-check your math.** A wrong SL warning causes the trader to panic-close a profitable position. If your SL distance doesn't match what OANDA shows, something is wrong with your calculation.
 
 ### 6. Update shared_state.json
 Write: positions, alerts, last_updated, current prices, regime (from factor_cache)
