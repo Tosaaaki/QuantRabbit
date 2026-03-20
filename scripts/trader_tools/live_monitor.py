@@ -22,6 +22,7 @@ Usage:
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -240,8 +241,17 @@ def _api_put(token: str, path: str, body: dict, timeout: int = 8):
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="PUT",
     )
-    resp = urllib.request.urlopen(req, timeout=timeout)
-    return json.loads(resp.read())
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        # Read error response body for detailed OANDA error info
+        error_body = ""
+        try:
+            error_body = e.read().decode()
+        except Exception:
+            pass
+        raise Exception(f"HTTP Error {e.code}: {error_body or e.reason}") from e
 
 
 def _api_post(token: str, path: str, body: dict, timeout: int = 8):
@@ -252,8 +262,16 @@ def _api_post(token: str, path: str, body: dict, timeout: int = 8):
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    resp = urllib.request.urlopen(req, timeout=timeout)
-    return json.loads(resp.read())
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        error_body = ""
+        try:
+            error_body = e.read().decode()
+        except Exception:
+            pass
+        raise Exception(f"HTTP Error {e.code}: {error_body or e.reason}") from e
 
 
 def _api_delete(token: str, path: str, timeout: int = 8):
@@ -1180,7 +1198,14 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict,
 
         # Rule 1: Set trailing stop if profit exceeds threshold and no trail yet
         if upl_pips >= trail_at and not has_trail:
-            trail_distance = str(round(trail_at * pip, 5))
+            trail_dist_pips = trail_at
+            # OANDA rejects TSL if distance < current spread; ensure distance >= spread + buffer
+            pair_spread_pips = 0
+            if pair in pricing:
+                pair_spread_pips = pricing[pair].get("spread_pips", 0)
+            if trail_dist_pips < pair_spread_pips + 0.5:
+                trail_dist_pips = round(pair_spread_pips + 0.5, 1)
+            trail_distance = str(round(trail_dist_pips * pip, 5))
             try:
                 # OANDA v20: PUT /trades/{id}/orders to set TSL
                 # If a fixed SL exists, cancel it atomically using its order ID
@@ -1215,7 +1240,7 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict,
                         })
                     else:
                         raise e1
-                action = f"TRAIL_SET {pair} {units}u trail={trail_at}pip (UPL={upl_pips}pip) [{rules_source}]"
+                action = f"TRAIL_SET {pair} {units}u trail={trail_dist_pips}pip (UPL={upl_pips}pip, spread={pair_spread_pips}pip) [{rules_source}]"
             except Exception as e:
                 if "404" in str(e) or "TRADE_DOESNT_EXIST" in str(e):
                     mark_closed(tid, pair, "gone_during_trail")
