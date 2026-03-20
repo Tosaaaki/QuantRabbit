@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-03-20
+- 2026-03-20T13:30Z: **SL-free裁量アプローチ導入** — 固定SL廃止→災害SL(-25pip)のみ。3層防衛体制(災害SL→monitor機械管理→Claude棚卸し)。TRADER_PROMPT: ポジション管理→「棚卸しが生命線」に全面書き直し、Step1を棚卸し最優先に、registry cut_at_pip=-20(災害レベル)、注文テンプレート災害SL化。live_monitor.py: DEFAULT_SCALP/SWING_RULESのcut_at_pipを-20/-25に緩和。ユーザー知見: TP有/SL無/高頻度/狭TPはボットで増えたが棚卸し不足で負けた→Claudeの裁量棚卸しが解決策
+- 2026-03-20T13:00Z: TRADER_PROMPT — 原則を3→5に拡張。「禁止」→「適応」に転換: (4)セッション適応(Tokyo=SL広め+サイズ小+フロー方向), (5)自分の分析を守れ(PATTERN CHECK後の衝動エントリー防止)。原則2に方向反転の選択肢追加。原則3に「SL広げてサイズ下げればリスク同額」の具体例(AUD_JPY 4800u×4.6pip→2400u×9.2pip)追加
 - 2026-03-20T12:30Z: TRADER_PROMPT — 全トレード分析から3原則追加: (1)MTFリバージョン使い分け(上位TF同方向=押し目→最強、逆方向=言語化必須), (2)同一テーゼ2連敗→30分クールダウン+別ペア探索, (3)SL幅はノイズ+スプレッド考慮(SL<spread×3=無理、SL<ATR=刈られる)
 - 2026-03-20T12:10Z: **momentum_close実装** — monitorにRule 5追加。registry rulesで`momentum_close: {enabled: true, min_profit_pip: 3, vel_threshold: 0.0}`を設定すると、利益が出てmicro_velが反転した瞬間に30秒以内で利確。manage_positionsにmicro_data引数追加。TRADER_PROMPTにmonitor全ルール一覧表+momentum_close設定例を追記
 - 2026-03-20T12:00Z: TRADER_PROMPT — ポジション管理を全面強化。「SL/TPは時間軸に合わせろ」(スキャルプSL+スウィングTP禁止)、「最大利益で取れ」(micro_vel減速・M5反転・swing_dist壁で手動利確、monitor待ちにするな)を追加

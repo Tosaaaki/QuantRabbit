@@ -197,8 +197,11 @@ PAIR_PROFILES = {
 }
 
 # Default management rules (used when trade not in registry)
-DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -5, "cut_age_min": 10, "be_at_pip": 2}
-DEFAULT_SWING_RULES = {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -15, "cut_age_min": 60, "be_at_pip": 5}
+# v4.4: SL-free discretionary approach — CUT is disaster-only (-20pip scalp, -25pip swing)
+# Claude does discretionary 棚卸し (position housekeeping) every 2-3min cycle.
+# Monitor only cuts at catastrophic levels to prevent blowup.
+DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -20, "cut_age_min": 10, "be_at_pip": 2}
+DEFAULT_SWING_RULES = {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -25, "cut_age_min": 60, "be_at_pip": 5}
 
 # ATR adaptive threshold (SL widening on volatility spike)
 ATR_CHANGE_THRESHOLD = 0.30  # 30% ATR change triggers SL adjustment
