@@ -201,8 +201,8 @@ PAIR_PROFILES = {
 # v4.4: SL-free discretionary approach — CUT is disaster-only (-20pip scalp, -25pip swing)
 # Claude does discretionary 棚卸し (position housekeeping) every 2-3min cycle.
 # Monitor only cuts at catastrophic levels to prevent blowup.
-DEFAULT_SCALP_RULES = {"trail_at_pip": 5, "partial_at_pip": 8, "max_hold_min": 30, "cut_at_pip": -20, "cut_age_min": 10, "be_at_pip": 2}
-DEFAULT_SWING_RULES = {"trail_at_pip": 8, "partial_at_pip": 15, "max_hold_min": 480, "cut_at_pip": -25, "cut_age_min": 60, "be_at_pip": 5}
+DEFAULT_SCALP_RULES = {"trail_at_pip": 7, "partial_at_pip": 10, "max_hold_min": 30, "cut_at_pip": -20, "cut_age_min": 10, "be_at_pip": 2}
+DEFAULT_SWING_RULES = {"trail_at_pip": 10, "partial_at_pip": 18, "max_hold_min": 480, "cut_at_pip": -25, "cut_age_min": 60, "be_at_pip": 5}
 
 # ATR adaptive threshold (SL widening on volatility spike)
 ATR_CHANGE_THRESHOLD = 0.30  # 30% ATR change triggers SL adjustment
@@ -1198,13 +1198,15 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict,
 
         # Rule 1: Set trailing stop if profit exceeds threshold and no trail yet
         if upl_pips >= trail_at and not has_trail:
-            trail_dist_pips = trail_at
-            # OANDA rejects TSL if distance < current spread; ensure distance >= spread + buffer
+            # trail_dist_pip: explicit in registry, else 60% of trail_at (lock some profit, allow room)
+            trail_dist_pips = rules.get("trail_dist_pip", round(trail_at * 0.6, 1))
+            # OANDA minimumTrailingStopDistance = 5 pips for all pairs
+            # Floor: at least 5.0 pips (OANDA hard minimum) + spread buffer
             pair_spread_pips = 0
             if pair in pricing:
                 pair_spread_pips = pricing[pair].get("spread_pips", 0)
-            if trail_dist_pips < pair_spread_pips + 0.5:
-                trail_dist_pips = round(pair_spread_pips + 0.5, 1)
+            oanda_min = max(5.0, pair_spread_pips + 1.0)  # 5pip or spread+1pip, whichever is larger
+            trail_dist_pips = max(trail_dist_pips, oanda_min)
             trail_distance = str(round(trail_dist_pips * pip, 5))
             try:
                 # OANDA v20: PUT /trades/{id}/orders to set TSL
