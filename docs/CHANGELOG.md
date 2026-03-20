@@ -312,3 +312,4 @@
 - Iran conflict = dominant driver: risk-off = JPY safe-haven bid, AUD suppressed.
 - Performance alert: last_10 WR=40% WORSENING. Rule added: NO LONG when H1 RSI >70.
 
+2026-03-20 01:54 UTC | analyst | RISK-ON REGIME SHIFT: Hormuz de-escalation + S&P +0.73%. DXY 99.26 (weakened). JPY -0.73 in CS. All Tokyo JPY-cross shorts explained. Biases updated. London 07:00Z next entry window.
