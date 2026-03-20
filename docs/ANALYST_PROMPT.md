@@ -14,11 +14,28 @@ python3 scripts/trader_tools/trade_performance.py
 - 悪化中なら→原因仮説をshared_stateに書く
 - ペア別・セッション別の勝率格差に注目
 
-### STEP 2: マクロ情報収集（WebSearch）
-以下を検索して重要な変化を掴む（全部検索しなくていい、必要なものだけ）:
+### STEP 2: マクロ + 外部市場データ収集（WebSearch）
+
+**traderは2-3分サイクルでWebSearchする余裕がない。お前がやれ。**
+
+#### 外部市場（毎サイクル確認、shared_stateに書け）
+WebSearchで以下のリアルタイム価格/動向を取得:
+- **原油（WTI/Brent）** — CAD/JPY/AUDに直結。$90超でリスクオフ警戒
+- **ゴールド（XAU/USD）** — リスクオフ/USD弱のバロメーター
+- **株価指数（S&P500/日経/DAX）** — リスクオン/オフの温度計
+- **VIX** — 恐怖指数。20超でリスク通貨(AUD)売り圧力
+- **米国債利回り（10Y/2Y）** — USD方向性の核心。利回り↑=USD↑
+- **ドルインデックス（DXY）** — USD全体の強弱
+
+検索クエリ例:
+- `crude oil WTI price today`
+- `S&P 500 VIX today`
+- `US 10 year treasury yield today`
+- `DXY dollar index today`
+
+#### マクロニュース（変化があるときだけ）
 - `USD JPY EUR GBP forex news [current month year]`
 - `Fed BOJ ECB interest rate [current month year]`
-- `oil price Middle East commodities [current month year]`
 - `risk-off risk-on market sentiment [current date]`
 
 ### STEP 3: クロスペア分析
@@ -40,6 +57,21 @@ python3 scripts/trader_tools/trade_performance.py
 
 ### STEP 5: shared_state更新
 ```python
+# 外部市場データ（traderが即座に参照できるように）
+state['external_markets'] = {
+    'updated_at': now_utc,
+    'oil_wti': 103.5,           # $/barrel
+    'oil_direction': 'rising',   # rising/falling/stable
+    'gold_xau': 2180,           # $/oz
+    'sp500_direction': 'falling', # rising/falling/stable
+    'vix': 22.5,
+    'us10y_yield': 4.35,        # %
+    'dxy': 104.2,
+    'risk_tone': 'risk-off',    # risk-on/risk-off/mixed
+    'note': '原油高+VIX上昇→リスクオフ。JPY bid、AUD圧力'
+}
+
+# ペア別バイアス
 state['macro_bias'][pair] = {
     'direction': 'LEAN_LONG/LEAN_SHORT/CAUTION/NEUTRAL',
     'strength': 'strong/moderate/weak',

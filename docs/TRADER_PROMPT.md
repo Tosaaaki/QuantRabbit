@@ -99,7 +99,10 @@ cat logs/live_monitor_summary.json
 ```
 
 データは全部ここにある。計算するな、読め。
-深い分析が必要なら `logs/live_monitor.json`（フルデータ）と `logs/shared_state.json`（macro_bias, alerts）も読め。
+深い分析が必要なら `logs/live_monitor.json`（フルデータ）と `logs/shared_state.json`（macro_bias, alerts, external_markets）も読め。
+
+**`external_markets`** — analystが10分ごとに更新する原油/金/株/VIX/米国債/DXYの最新データ。
+FXだけ見てトレードするな。他市場の動きがFXの方向性を決めることは多い。
 
 ### まず全体を見ろ
 
