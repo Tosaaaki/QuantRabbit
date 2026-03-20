@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-03-21
+- 2026-03-21T00:00Z: **共同トレードSession3反省記録** — TRADE_LOG_COLLAB_20260320に総括追加。feedback_collab_autonomy.mdにSession3反省（BG task乱発→コンテキスト破壊、利確遅延、受け身bot化）と対策を追記。全3セッション合計+1,760円(+11.9%)
+
 ## 2026-03-20
 - 2026-03-20T14:20Z: **道具の導線修正** — live_monitor.py: ATR_TIGHTEN発動条件を`upl_pips>0`→`>=3`に引上げ、SL最低距離3pip床追加（東京で+0.1pipでSL1pipまで絞られる問題を修正）。TRADER_PROMPT: registryのrulesセクション全面書き直し→side effect表+ATR_TIGHTEN DANGER実例+セッション別プリセット(東京/ロンドン/NY/スウィング)追加。登録コード例にセッション別値コメント追加。monitorルール表を重複排除
 - 2026-03-20T13:45Z: TRADER_PROMPT — 棚卸し判断精度強化: 「ノイズとテーゼ崩壊を区別しろ」セクション追加。micro_vel一時反転で閉じるな、H1+M5構造変化で判断しろ。USD_JPY -2.4pip早期撤退の実例を焼き込み
