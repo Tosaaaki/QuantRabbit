@@ -2,7 +2,7 @@
 
 ## 2026-03-20
 
-- **update: CLAUDE.md ボット化防止を提案段階まで拡大** — 「条件X→自動Y」リトマス試験、BE_MOVE/ATR_ADJUSTをNG例として明記、monitorの役割を「データ提供+registry執行のみ」に限定、提案時自問ルール追加
+- **update: CLAUDE.md 哲学整理 — 「道具のボットはOK、頭のボットがNG」** — 道具（BE移動、trail、スクリプト等）は自由。問題はClaudeの思考がボット的になること。「条件が揃ったから入る」ではなく「市場をこう読むから入る」
 - **update: CLAUDE.md「最重要哲学」セクション新設** — Claudeはボットではなくプロトレーダー本人。道具(ヘルパー/スクリプト)とボット(自動判断)の明確な区別を記載。絶対ルールも強化
 - **update: TRADER_PROMPT複数エントリー+反省強制** — 「1サイクルのフロー」セクション新設（全ペア俯瞰→複数エントリー可の明示）。反省セクション強化（確認方法を追加、毎サイクル末にログ確認して閾値超えたらその場で書く）。SKILL.mdにもReminders追加
 - **update: CLAUDE.md v3→v4更新** — 5エージェント(scalp-fast/swing-trader/market-radar/macro-intel/secretary)→3エージェント(trader/analyst/secretary)に記述を更新。旧プロンプトをレガシーに移動、新プロンプト(TRADER/ANALYST)を必読に。スコアリング記述削除。変更時の必須ルールでCLAUDE.md更新を1番目に昇格
