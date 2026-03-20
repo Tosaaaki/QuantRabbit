@@ -299,6 +299,37 @@ live_monitorが証拠金・リスク・ATRを全部計算して `can_trade` と 
 
 **「入ったら放置してTP/SL待ち」はアマチュア。プロは入った後も市場を読み続ける。**
 
+### 最重要: SL/TPは時間軸に合わせろ
+
+**スキャルプのSLでスウィングのTPを狙うな。** これが最も高頻度の失敗パターン:
+- TP=28pip（スウィング）なのに SL=6.5pip → リトレース1回で死ぬ
+- スウィングで持つなら SL は H1のスウィング高値/安値の外（15-25pip）
+- スキャルプなら TP=3-5pip、SL=4-6pip。遠いTPを置くな
+
+| 時間軸 | TP目安 | SL目安 | be_at_pip | 持ち時間 |
+|--------|--------|--------|-----------|----------|
+| スキャルプ | 3-5pip | 4-6pip | 2 | 1-8分 |
+| スウィング | 15-50pip | 15-25pip | 5-8 | 1-8時間 |
+
+**エントリー時に決めろ: これはスキャルプかスウィングか。** 途中で変えるな。
+
+### 利益が出たら: 最大利益で取れ
+
+**+4.7pip出てるのにTP=28pip待ちで放置して、結局BEで+0.5pip — これが最悪のパターン。**
+
+毎サイクル、含み益のポジションにこう聞け:
+1. **「この動き、まだ続くか？」** — micro_velが鈍化してないか。M5 RSIが反転し始めてないか
+2. **「TP到達前に反転しそうか？」** — swing_dist_high/lowを見ろ。次のレジ/サポはどこだ。そこで止まるならTPをそこに寄せろ
+3. **「今フラットだったらここで入るか？」** → Noなら利確しろ。今ある利益が消える前に
+
+**具体的に:**
+- micro_velが減速してる(例: -0.85 → -0.3 → +0.1) → **動きが死にかけてる。TPを現在価格の近くに寄せるか、手動利確**
+- M5 RSIがトレード方向と逆に動き始めた → **モメンタム反転の兆候。利確検討**
+- swing_dist_high/lowが近い → **次のレジ/サポが壁になる。そこをTPにしろ**
+- 利益が+3pip以上あってmicro_dirが反転した → **手動利確。monitorのtrail待ちにするな**
+
+**monitorはセーフティネット。お前が先に動け。** monitorのtrailやpartialは最低限の防御。「monitorがやってくれる」と思うな。お前がチャートを読んで先に判断しろ。
+
 ### SL/TPは動かせ（動的管理）
 
 市況は変わる。エントリー時の前提が崩れたらSL/TPを調整しろ。
@@ -313,8 +344,9 @@ live_monitorが証拠金・リスク・ATRを全部計算して `can_trade` と 
 
 **TPを動かすべき時:**
 - 強いモメンタムが続いてる → TPを次のレジ/サポまで延長
-- モメンタムが弱まってる → TPを近くに寄せて利確を早める
+- モメンタムが弱まってる → **TPを今すぐ近くに寄せろ。遠いTPに固執するな**
 - analystが新しいマクロ情報を出した → テーゼ再評価してTP調整
+- swing_distが次のレジ/サポまで残り少ない → **そこがTPの現実的な限界**
 
 **SL/TPの変更方法（OANDA API）:**
 ```
@@ -361,9 +393,11 @@ live_monitor.pyが30秒ごとに機械的に管理してる（trail, partial, cu
   "rules": {
     "trail_at_pip": 4,
     "partial_at_pip": 6,
+    "be_at_pip": 2,
     "max_hold_min": 30,
     "cut_at_pip": -8,
-    "cut_age_min": 12
+    "cut_age_min": 12,
+    "momentum_close": {"enabled": true, "min_profit_pip": 3, "vel_threshold": 0.0}
   }
 }
 ```
@@ -423,6 +457,42 @@ pip数で決めるな。**テーゼが正しい/間違いの分岐点**で置け
 
 monitorは防御（BE移動、ATR追従SL）をやる。**TPの調整はお前の仕事。**
 
+### monitorに利確を任せる: momentum_close
+
+**お前は2-3分に1回しか動けない。monitorは30秒ごとに動く。** モメンタムが死んだ瞬間の利確はmonitorに任せろ。
+
+registryの`rules`に以下を書けば、monitorが30秒以内に判断・執行する:
+```json
+"momentum_close": {
+    "enabled": true,
+    "min_profit_pip": 3,
+    "vel_threshold": 0.2
+}
+```
+
+- `enabled`: trueにすると、monitorがモメンタム反転を検知して利確する
+- `min_profit_pip`: この利益以上のときだけ発動（デフォルト: 3pip）
+- `vel_threshold`: micro_velがこの値を超えて逆方向に動いたら発動（デフォルト: 0.0 = 少しでも逆行したら）
+
+**例: AUD_JPY SHORT +4.7pip、micro_vel=+0.3（上昇に転換）→ monitorが即利確**
+
+スキャルプなら `min_profit_pip: 2, vel_threshold: 0.0`（少しでも反転したら即取り）。
+スウィングなら `min_profit_pip: 8, vel_threshold: 0.5`（大きな反転だけ反応）。
+
+**monitorの全ルール（お前が自由に組み替えていい）:**
+
+| ルール | 条件 | 動作 | 設定キー |
+|--------|------|------|----------|
+| BE_MOVE | 利益 ≥ be_at_pip | SLをエントリー付近に | `be_at_pip` |
+| ATR_ADJUST | ATR30%変動 | SL幅を比例調整 | `entry_atr`, `atr_adjust` |
+| TRAIL_SET | 利益 ≥ trail_at_pip | トレイリングストップ設定 | `trail_at_pip` |
+| PARTIAL | 利益 ≥ partial_at_pip | 半分利確 | `partial_at_pip` |
+| CUT | 損失 ≤ cut_at_pip + 経過 ≥ cut_age_min | 損切り | `cut_at_pip`, `cut_age_min` |
+| TIMEOUT | 経過 ≥ max_hold_min + 利益不足 | 強制決済 | `max_hold_min` |
+| MOMENTUM_CLOSE | 利益 ≥ min_profit + velocity反転 | モメンタム利確 | `momentum_close.*` |
+
+**これらは全てregistryのrulesで制御する。monitorのコード自体もお前の道具。** ルールを追加したければ `live_monitor.py` の `manage_positions()` にRule 6, 7... を足せ。
+
 **SLを動かすとき:**
 - H1の構造が変わった → 新しいサポート/レジスタンスにSLを移動
 - 自分の読みが変わった → テーゼが崩れたなら切れ、SLを待つな
@@ -480,7 +550,8 @@ reg["{TRADE_ID}"] = {
         "be_at_pip": 2,
         "max_hold_min": 30,
         "cut_at_pip": -7,
-        "cut_age_min": 12
+        "cut_age_min": 12,
+        "momentum_close": {"enabled": true, "min_profit_pip": 3, "vel_threshold": 0.0}
     }
 }
 json.dump(reg, open(reg_path, "w"), indent=2)

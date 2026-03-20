@@ -1019,7 +1019,8 @@ def update_sl(token: str, acc: str, tid: str, new_sl: float, pos: dict) -> str:
         return str(e)
 
 
-def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> list:
+def manage_positions(token: str, acc: str, positions: list, pricing: dict,
+                     micro_data: dict = None) -> list:
     """Apply mechanical management rules. Returns list of actions taken.
 
     Features:
@@ -1027,10 +1028,26 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
     - Catches OANDA 404 (trade already closed) gracefully
     - Logs all actions with rules_source for audit
     - Dynamic SL: breakeven move + ATR-adaptive widening/tightening
+    - Momentum close: close when profit + momentum reversal detected
+
+    Rule execution order:
+      0a. BE_MOVE (breakeven SL)
+      0b. ATR_ADJUST (volatility-adaptive SL)
+      1.  TRAIL_SET (trailing stop)
+      2.  PARTIAL (partial close)
+      3.  CUT (cut loss)
+      4.  TIMEOUT (max hold)
+      5.  MOMENTUM_CLOSE (profit + momentum death)
+      (Custom rules can be added after Rule 5 by the trader agent)
+
+    micro_data: dict of {pair: {"direction": str, "velocity": float}} from compute_micro_momentum.
+    Trader can modify rules in registry to control behavior. See TRADER_PROMPT.md for registry format.
     """
     registry = load_registry()
     recently_closed = load_recently_closed()
     actions = []
+    if micro_data is None:
+        micro_data = {}
 
     # Fetch current ATR for pairs with open positions (for dynamic SL adjustment)
     open_pairs = {pos["pair"] for pos in positions if pos["id"] not in recently_closed}
@@ -1287,6 +1304,46 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
                     action = f"TIMEOUT_SKIP {pair}: trade already closed"
                 else:
                     action = f"TIMEOUT_FAIL {pair}: {e}"
+
+        # Rule 5: Momentum close — take profit when momentum reverses
+        # Trader enables this per-trade via registry rules:
+        #   "momentum_close": {"enabled": true, "min_profit_pip": 3, "vel_threshold": 0.2}
+        # Default: disabled. Trader decides which trades get this behavior.
+        #
+        # Logic: if in profit >= min_profit_pip AND micro_vel has reversed direction
+        # (was going with the trade, now going against), close the position.
+        # This catches "move is dying" before price fully reverses.
+        #
+        # Trader can customize by changing:
+        #   - min_profit_pip: minimum profit before momentum check kicks in
+        #   - vel_threshold: how much velocity reversal triggers close (0 = any reversal)
+        elif action is None:
+            mc = rules.get("momentum_close", {})
+            if isinstance(mc, dict) and mc.get("enabled"):
+                mc_min = mc.get("min_profit_pip", 3)
+                mc_vel_thresh = mc.get("vel_threshold", 0.0)
+                micro = micro_data.get(pair, {})
+                micro_vel = micro.get("velocity", 0)
+
+                if upl_pips >= mc_min and micro_vel != 0:
+                    # Check if momentum is going AGAINST our trade direction
+                    # LONG: we want vel > 0 (price going up). vel < -threshold = reversal
+                    # SHORT: we want vel < 0 (price going down). vel > +threshold = reversal
+                    vel_against = (is_long and micro_vel < -mc_vel_thresh) or \
+                                  (not is_long and micro_vel > mc_vel_thresh)
+
+                    if vel_against:
+                        try:
+                            _api_put(token, f"/v3/accounts/{acc}/trades/{tid}/close", {})
+                            mark_closed(tid, pair, "momentum_close")
+                            action = (f"MOMENTUM_CLOSE {pair} {units}u +{upl_pips}pip "
+                                      f"(vel={micro_vel}, reversed) [{rules_source}]")
+                        except Exception as e:
+                            if "404" in str(e) or "TRADE_DOESNT_EXIST" in str(e):
+                                mark_closed(tid, pair, "gone_during_momentum")
+                                action = f"MOMENTUM_SKIP {pair}: trade already closed"
+                            else:
+                                action = f"MOMENTUM_FAIL {pair}: {e}"
 
         if action:
             actions.append(action)
@@ -1599,8 +1656,18 @@ def build_monitor() -> dict:
     if usdjpy_price > 0:
         _USDJPY_RATE = usdjpy_price
 
+    # Pre-compute micro momentum for open position pairs (needed for momentum_close)
+    micro_for_positions = {}
+    if positions:
+        for pos in positions:
+            p = pos["pair"]
+            if p not in micro_for_positions:
+                pip = _pip_size(p)
+                s5 = fetch_s5_candles(token, p, count=24)
+                micro_for_positions[p] = compute_micro_momentum(s5, pip)
+
     # Mechanical position management (EXECUTES TRADES)
-    actions = manage_positions(token, acc, positions, pricing)
+    actions = manage_positions(token, acc, positions, pricing, micro_data=micro_for_positions)
 
     # Re-fetch positions if actions were taken (positions may have changed)
     if actions:

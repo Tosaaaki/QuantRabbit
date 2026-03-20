@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-03-20
+- 2026-03-20T12:10Z: **momentum_close実装** — monitorにRule 5追加。registry rulesで`momentum_close: {enabled: true, min_profit_pip: 3, vel_threshold: 0.0}`を設定すると、利益が出てmicro_velが反転した瞬間に30秒以内で利確。manage_positionsにmicro_data引数追加。TRADER_PROMPTにmonitor全ルール一覧表+momentum_close設定例を追記
+- 2026-03-20T12:00Z: TRADER_PROMPT — ポジション管理を全面強化。「SL/TPは時間軸に合わせろ」(スキャルプSL+スウィングTP禁止)、「最大利益で取れ」(micro_vel減速・M5反転・swing_dist壁で手動利確、monitor待ちにするな)を追加
 - 2026-03-20T11:55Z: **致命的バグ修正** — load_registry()がdict形式のregistryを読めてなかった(list形式のみ対応)。全トレードが`inferred:scalp`扱いになり、traderが設定したSL/BE/trail/cut全てのルールが無視されていた。be_at_pip推定ロジックも改善(trail_at_pip>6→swing扱いでBE=5pip)
 - 2026-03-20T11:45Z: エントリー精度改善 — live_monitor_summaryに`cs_flow`フィールド追加(通貨フロー方向をペア別に表示)。TRADER_PROMPTに#1キラーパターン(フロー逆張りJPYクロスショート、-33pip実績)を焼き込み。cs_flowとエントリー方向の矛盾チェックを促す
 - 2026-03-20T10:30Z: TRADER_PROMPT + SKILL.md改善v2 — セッション別TP/SL調整追加。東京TP=75pip→5-10pipに。スウィング段階利確(半分→trail)明記。SL14+TP75東京死亡パターンを「過去の経験」に追記。
