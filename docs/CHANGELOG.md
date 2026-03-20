@@ -10,6 +10,7 @@
 
 - **update: TRADER_PROMPT v2 — エリートトレーダー脳内リファクタ** — Paul Rotter/Linda Raschke/Livermoreの思考法をベースに全面書き直し。(1)Context First: H1→M5→M1の階層判断、M1だけでエントリー禁止 (2)analyst警告は命令: CAUTION無視エントリー禁止 (3)動的SL/TP管理: エントリー後の市況変化に応じてSL/TP/registryを更新 (4)registry必須化: 未登録=-5pipCUTの問題を明記 (5)反省の強制化
 - **add: 動的SL調整（BE移動+ATR追従）** — live_monitor.pyにRule 0a(BE_MOVE: 利益≧be_at_pipでSLをブレイクイーブンに自動移動)、Rule 0b(ATR_ADJUST: ATR30%変動でSL幅を比例調整)を追加。TPは裁量判断に委ねる。TRADER_PROMPTにエントリー後のSL/TP調整ガイドライン追加、registry format にentry_atr/atr_adjustフィールド追加
+- **update: TRADER_PROMPT脱ボット脳** — analyst警告を「命令」→「参考」、予測精度フィルターを「ルール」→「過去の経験」、ADX<15必ず見送り撤廃、ゾーン固執3cycleルール撤廃。全体を「ルール従属」から「市況ベース裁量判断」に転換
 - **update: CLAUDE.md 哲学v3 — 道具は腕の延長** — 道具を「使う/使わない」の二択ではなく、選ぶ・調整する・改良する・作る・捨てる。プロは道具を自分の手足として育てる。コードもパラメータも市況に応じてチューニングする
 - **update: CLAUDE.md 哲学整理 — 「道具のボットはOK、頭のボットがNG」** — 道具（BE移動、trail、スクリプト等）は自由。問題はClaudeの思考がボット的になること。「条件が揃ったから入る」ではなく「市場をこう読むから入る」
 - **update: CLAUDE.md「最重要哲学」セクション新設** — Claudeはボットではなくプロトレーダー本人。道具(ヘルパー/スクリプト)とボット(自動判断)の明確な区別を記載。絶対ルールも強化
