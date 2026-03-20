@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-03-20
+- 2026-03-20T14:20Z: **道具の導線修正** — live_monitor.py: ATR_TIGHTEN発動条件を`upl_pips>0`→`>=3`に引上げ、SL最低距離3pip床追加（東京で+0.1pipでSL1pipまで絞られる問題を修正）。TRADER_PROMPT: registryのrulesセクション全面書き直し→side effect表+ATR_TIGHTEN DANGER実例+セッション別プリセット(東京/ロンドン/NY/スウィング)追加。登録コード例にセッション別値コメント追加。monitorルール表を重複排除
 - 2026-03-20T13:45Z: TRADER_PROMPT — 棚卸し判断精度強化: 「ノイズとテーゼ崩壊を区別しろ」セクション追加。micro_vel一時反転で閉じるな、H1+M5構造変化で判断しろ。USD_JPY -2.4pip早期撤退の実例を焼き込み
 - 2026-03-20T13:30Z: **SL-free裁量アプローチ導入** — 固定SL廃止→災害SL(-25pip)のみ。3層防衛体制(災害SL→monitor機械管理→Claude棚卸し)。TRADER_PROMPT: ポジション管理→「棚卸しが生命線」に全面書き直し、Step1を棚卸し最優先に、registry cut_at_pip=-20(災害レベル)、注文テンプレート災害SL化。live_monitor.py: DEFAULT_SCALP/SWING_RULESのcut_at_pipを-20/-25に緩和。ユーザー知見: TP有/SL無/高頻度/狭TPはボットで増えたが棚卸し不足で負けた→Claudeの裁量棚卸しが解決策
 - 2026-03-20T13:00Z: TRADER_PROMPT — 原則を3→5に拡張。「禁止」→「適応」に転換: (4)セッション適応(Tokyo=SL広め+サイズ小+フロー方向), (5)自分の分析を守れ(PATTERN CHECK後の衝動エントリー防止)。原則2に方向反転の選択肢追加。原則3に「SL広げてサイズ下げればリスク同額」の具体例(AUD_JPY 4800u×4.6pip→2400u×9.2pip)追加

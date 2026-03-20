@@ -1169,16 +1169,18 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict,
                             action = f"ATR_WIDEN {pair} SL→{round(new_sl, 5)} (ATR {entry_atr}→{now_atr}, ratio={round(atr_ratio, 2)}) [{rules_source}]"
                             pos["sl"] = new_sl
 
-                elif atr_ratio < (1 - ATR_CHANGE_THRESHOLD) and upl_pips > 0:
-                    # Volatility dropped AND in profit — tighten SL to lock more profit
+                elif atr_ratio < (1 - ATR_CHANGE_THRESHOLD) and upl_pips >= 3:
+                    # Volatility dropped AND meaningfully in profit — tighten SL to lock profit
+                    # Floor: never tighten SL closer than 3 pips from entry (avoid noise stop-outs)
+                    min_sl_dist = 3.0 * pip
                     if is_long:
                         sl_dist = entry_price - current_sl
-                        new_sl_dist = sl_dist * atr_ratio
+                        new_sl_dist = max(sl_dist * atr_ratio, min_sl_dist)
                         new_sl = entry_price - new_sl_dist
                         should_move = new_sl > current_sl  # only tighten (move SL closer to price)
                     else:
                         sl_dist = current_sl - entry_price
-                        new_sl_dist = sl_dist * atr_ratio
+                        new_sl_dist = max(sl_dist * atr_ratio, min_sl_dist)
                         new_sl = entry_price + new_sl_dist
                         should_move = new_sl < current_sl
 
