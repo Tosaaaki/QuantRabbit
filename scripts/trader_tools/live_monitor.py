@@ -922,7 +922,13 @@ def load_registry() -> dict:
     try:
         with open(REGISTRY_PATH) as f:
             data = json.load(f)
-        return {str(t["trade_id"]): t for t in data if "trade_id" in t}
+        # Support both dict format {"464498": {...}} and list format [{...}, ...]
+        if isinstance(data, dict):
+            # Dict format: keys are trade IDs, values are trade objects
+            return {str(k): v for k, v in data.items() if isinstance(v, dict)}
+        elif isinstance(data, list):
+            return {str(t["trade_id"]): t for t in data if isinstance(t, dict) and "trade_id" in t}
+        return {}
     except Exception:
         return {}
 
@@ -1052,7 +1058,15 @@ def manage_positions(token: str, acc: str, positions: list, pricing: dict) -> li
         max_hold = rules.get("max_hold_min", 30)
         cut_at = rules.get("cut_at_pip", -5)
         cut_age = rules.get("cut_age_min", 10)
-        be_at = rules.get("be_at_pip", 2 if inferred_type == "scalp" else 5)
+        # be_at_pip: if registry has rules (even without be_at_pip), infer from trail_at_pip
+        if "be_at_pip" in rules:
+            be_at = rules["be_at_pip"]
+        elif rules_source == "registry":
+            # Registry rules exist but no be_at_pip — derive from trade style
+            # trail_at_pip > 6 suggests swing-like → wider BE threshold
+            be_at = 5 if rules.get("trail_at_pip", 5) > 6 else 2
+        else:
+            be_at = 2 if inferred_type == "scalp" else 5
 
         action = None
         entry_data = registry.get(tid, {})

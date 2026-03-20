@@ -477,6 +477,7 @@ reg["{TRADE_ID}"] = {
     "rules": {
         "trail_at_pip": 4,
         "partial_at_pip": 6,
+        "be_at_pip": 2,
         "max_hold_min": 30,
         "cut_at_pip": -7,
         "cut_age_min": 12
