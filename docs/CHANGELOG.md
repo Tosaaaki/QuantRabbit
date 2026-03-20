@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-03-20
+- 2026-03-20T11:45Z: エントリー精度改善 — live_monitor_summaryに`cs_flow`フィールド追加(通貨フロー方向をペア別に表示)。TRADER_PROMPTに#1キラーパターン(フロー逆張りJPYクロスショート、-33pip実績)を焼き込み。cs_flowとエントリー方向の矛盾チェックを促す
 - 2026-03-20T10:30Z: TRADER_PROMPT + SKILL.md改善v2 — セッション別TP/SL調整追加。東京TP=75pip→5-10pipに。スウィング段階利確(半分→trail)明記。SL14+TP75東京死亡パターンを「過去の経験」に追記。
 - 2026-03-20T09:40Z: TRADER_PROMPT + SKILL.md改善 — analyst盲従・ゾーン待ちボット脳を修正。SKILL.mdの「ANALYST ALIGNMENT: DO NOT enter against analyst」を削除→参考情報に格下げ。Anti-Bot Checks追加（ゾーン待ち・ADX閾値機械適用・AVOID盲従の3チェック）。コピペPASS禁止。
 - 2026-03-20T23:44Z: analyst — EUR_USD→LEAN_SHORT更新(ECBがIranスタグフレーション懸念でdovish転換, EUR longs削減, support break). USD_JPY SHORT SUSPENDED(日本は石油輸入国→$103/bbl=貿易赤字悪化, 投機筋のJPYショート増加). AUD_JPY SHORT待機(+55pip上昇で112.0+ゾーン待ち). last_10 WR=40%悪化継続

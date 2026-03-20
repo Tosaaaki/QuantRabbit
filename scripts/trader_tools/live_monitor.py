@@ -1877,6 +1877,22 @@ def _build_summary(monitor: dict) -> dict:
             "tp_pips": sp.get("tp_pips"), "sl_pips": sp.get("sl_pips"),
         }
 
+    # Currency strength flow per pair — makes flow conflict instantly visible
+    cs = monitor.get("market", {}).get("currency_strength", {})
+    for pair, psum in pairs_summary.items():
+        base, quote = pair.split("_")
+        base_cs = cs.get(base, 0)
+        quote_cs = cs.get(quote, 0)
+        psum["cs_base"] = round(base_cs, 2)
+        psum["cs_quote"] = round(quote_cs, 2)
+        cs_diff = base_cs - quote_cs  # positive = base stronger = LONG flow
+        if abs(cs_diff) >= 0.5:
+            psum["cs_flow"] = "STRONG_LONG" if cs_diff > 0 else "STRONG_SHORT"
+        elif abs(cs_diff) >= 0.3:
+            psum["cs_flow"] = "LEAN_LONG" if cs_diff > 0 else "LEAN_SHORT"
+        else:
+            psum["cs_flow"] = "NEUTRAL"
+
     # Recent predictions for agent context (so agents know what they predicted last)
     recent_preds = []
     try:
