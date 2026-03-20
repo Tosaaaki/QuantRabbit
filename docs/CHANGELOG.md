@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-03-20
+- 2026-03-20T12:30Z: TRADER_PROMPT — 全トレード分析から3原則追加: (1)MTFリバージョン使い分け(上位TF同方向=押し目→最強、逆方向=言語化必須), (2)同一テーゼ2連敗→30分クールダウン+別ペア探索, (3)SL幅はノイズ+スプレッド考慮(SL<spread×3=無理、SL<ATR=刈られる)
 - 2026-03-20T12:10Z: **momentum_close実装** — monitorにRule 5追加。registry rulesで`momentum_close: {enabled: true, min_profit_pip: 3, vel_threshold: 0.0}`を設定すると、利益が出てmicro_velが反転した瞬間に30秒以内で利確。manage_positionsにmicro_data引数追加。TRADER_PROMPTにmonitor全ルール一覧表+momentum_close設定例を追記
 - 2026-03-20T12:00Z: TRADER_PROMPT — ポジション管理を全面強化。「SL/TPは時間軸に合わせろ」(スキャルプSL+スウィングTP禁止)、「最大利益で取れ」(micro_vel減速・M5反転・swing_dist壁で手動利確、monitor待ちにするな)を追加
 - 2026-03-20T11:55Z: **致命的バグ修正** — load_registry()がdict形式のregistryを読めてなかった(list形式のみ対応)。全トレードが`inferred:scalp`扱いになり、traderが設定したSL/BE/trail/cut全てのルールが無視されていた。be_at_pip推定ロジックも改善(trail_at_pip>6→swing扱いでBE=5pip)

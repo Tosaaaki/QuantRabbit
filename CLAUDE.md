@@ -98,6 +98,7 @@ secretary → health監視 → critical alerts
 2. **メモリ更新**: 該当するメモリファイル（`~/.claude/projects/.../memory/*.md`）を更新。なければ新規作成してMEMORY.mdにインデックス追加
 3. **変更ログ追記**: `docs/CHANGELOG.md` に日時と変更内容を1行で追記
 4. **mainにマージ**: ワークツリーで編集した場合は**必ずmainにマージ**する。traderタスクの作業ディレクトリはmainリポジトリ(`/Users/tossaki/App/QuantRabbit`)のため、マージしないとタスクに変更が見えない
+5. **即デプロイ**: `live_monitor.py`やスクリプトを変更したら**即座にlaunchctl stop/startで再起動**。テスト→再起動→err.log確認まで一気にやれ。「反映する？」と聞くな。作ったのに動いてない状態は障害と同じ
 
 これを怠ると次のセッションのClaudeが旧構造で動き、障害の原因になる。
 
