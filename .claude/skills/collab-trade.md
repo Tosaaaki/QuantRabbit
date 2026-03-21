@@ -12,21 +12,19 @@ trigger: "Use when the user says '共同トレード', 'collab trade', or wants 
 
 ### Step 1: 行動規範を読む
 
-`collab_trade/CLAUDE.md` を読む。ここに全ての原則・ルール・手順が書いてある。
+`collab_trade/CLAUDE.md` を**全部**読む。行動規範・手法・テクニカル・失敗パターン・ペア別ノートが全て入っている。
 
-### Step 2: 外部記憶を読む
+### Step 2: 外部記憶 + 統括を読む
 
-`collab_trade/state.md` を読む。前回セッションの状態が残っていれば即復帰。
+- `collab_trade/state.md` — 前回セッションの状態。即復帰用
+- `collab_trade/summary.md` — 全日の成績・傾向
 
 ### Step 3: 定期タスク・monitor停止
 
 ```bash
-# 定期タスク停止
 launchctl stop com.quantrabbit.trader 2>/dev/null
 launchctl stop com.quantrabbit.analyst 2>/dev/null
 launchctl stop com.quantrabbit.secretary 2>/dev/null
-
-# live_monitor停止
 launchctl stop com.quantrabbit.live-monitor 2>/dev/null
 ```
 
@@ -43,7 +41,6 @@ token = [l.split('=')[1].strip().strip('\"') for l in token.split('\n') if l.sta
 acct = [l.split('=')[1].strip().strip('\"') for l in open('config/env.toml').read().split('\n') if l.startswith('oanda_account_id')][0]
 base = 'https://api-fxtrade.oanda.com'
 
-# Account summary
 req = urllib.request.Request(f'{base}/v3/accounts/{acct}/summary', headers={'Authorization': f'Bearer {token}'})
 a = json.loads(urllib.request.urlopen(req).read())['account']
 print(f'=== ACCOUNT ===')
@@ -52,7 +49,6 @@ print(f'Margin Used: {float(a[\"marginUsed\"]):,.0f} | Available: {float(a[\"mar
 print(f'Open Trades: {a[\"openTradeCount\"]}')
 print()
 
-# Open trades
 req = urllib.request.Request(f'{base}/v3/accounts/{acct}/trades?state=OPEN', headers={'Authorization': f'Bearer {token}'})
 trades = json.loads(urllib.request.urlopen(req).read())['trades']
 if trades:
@@ -64,7 +60,6 @@ else:
     print('=== NO OPEN POSITIONS (FLAT) ===')
     print()
 
-# Pricing
 pairs = 'USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY,NZD_USD,USD_CHF,USD_CAD'
 req = urllib.request.Request(f'{base}/v3/accounts/{acct}/pricing?instruments={pairs}', headers={'Authorization': f'Bearer {token}'})
 prices = json.loads(urllib.request.urlopen(req).read())['prices']
@@ -77,20 +72,36 @@ for p in prices:
 "
 ```
 
-### Step 5: state.md を初期化
+### Step 5: 今日の日次ディレクトリ作成
 
-新しいセッション情報で `collab_trade/state.md` を更新する。
+```bash
+TODAY=$(date -u +%Y-%m-%d)
+mkdir -p collab_trade/daily/$TODAY
+```
 
-### Step 6: ユーザーに報告してトレード開始
+### Step 6: state.md を初期化
+
+今日の日付・口座状態・テーゼで `collab_trade/state.md` を更新する。
+
+### Step 7: ユーザーに報告してトレード開始
 
 口座状態・市況を簡潔に報告し、即トレード開始。
 
 ---
 
-## トレード中の行動
+## トレード中の記録先
 
-- **全ての原則は `collab_trade/CLAUDE.md` に従う**
-- **state.md に随時書き込む**（外部記憶）
-- **live_trade_log.txt に全トレードを記録**
+| ファイル | いつ書く | 何を書く |
+|----------|---------|---------|
+| `collab_trade/state.md` | 随時 | 現在のポジション・テーゼ・確定益（外部記憶） |
+| `collab_trade/daily/YYYY-MM-DD/trades.md` | トレード毎 | エントリー・決済の詳細テーブル |
+| `collab_trade/daily/YYYY-MM-DD/notes.md` | 随時 | ユーザー発言・気づき・発見 |
+| `collab_trade/summary.md` | セッション終了時 | 日次統括の更新 |
+| `collab_trade/CLAUDE.md` | 重要発見時 | notes→手法・ルールへの昇格 |
+| `logs/live_trade_log.txt` | トレード毎 | 時系列実行ログ（自動トレードと共通） |
+
+## 絶対ルール
+
 - **バックグラウンドタスク禁止** — 対話の中でその場でAPI叩く
-- **気づいたことは即書く。ToDoは達成する**
+- **気づいたことは即書く** — ToDoは達成する。「次回やる」は禁止
+- **全ての詳細は `collab_trade/CLAUDE.md` を参照**
