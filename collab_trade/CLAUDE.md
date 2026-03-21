@@ -1,8 +1,7 @@
 # 共同トレード — Claude行動規範
 
-> ルートに戻る: [`../CLAUDE.md`](../CLAUDE.md)
-
 「共同トレード」と言われたら、ここに来る。まずこのファイルを読む。
+**共同トレード中はこのファイルが正本。ルートのCLAUDE.mdは自動トレード用なので読まなくていい。**
 
 ---
 
@@ -45,6 +44,30 @@
 - 相場読み、指示、フィードバック、雑談でも。全部書く
 - 重要な発見（手法・ルールになりうるもの）→ このCLAUDE.mdの該当セクションに昇格
 - 「ちゃんと記録してる？」と聞かれた時点で負け。聞かれる前にやれ
+
+---
+
+## トレード実行フロー
+
+```
+┌─→ OANDA APIで価格取得（その場で叩く。裏で回さない）
+│   quick_calc.pyでテクニカル計算（パラメータいじりながら）
+│   全ペアスキャンして考える（市況判断、テーゼ）
+│   どの通貨でやるか決める
+│   エントリー → state.md + daily/trades.md に即記録
+│   ↓
+│   ユーザーが何か言う → 即 daily/notes.md に記録
+│   重要な発見 → CLAUDE.md の手法・ルールに昇格
+│   ↓
+│   API叩いてポジション確認・価格確認
+│   テクニカル再計算
+│   判断（利確？ホールド？ナンピン？損切り？）
+│   → 行動したら即記録
+│   → state.md を更新
+└─← 繰り返し
+```
+
+**全部が対話の中でリアルタイムに起きる。裏で何も動かさない。**
 
 ---
 
@@ -91,74 +114,72 @@
 
 ## テクニカル一覧
 
-全て `indicators/calc_core.py` の `IndicatorEngine` が計算（84指標）。live_monitor.pyが30秒毎に実行して `logs/live_monitor_summary.json` に出力。
+共同トレードでは **`collab_trade/indicators/`** のコピーを使う（本体に影響せずパラメータ自由にいじれる）。
+元は `indicators/calc_core.py` の `IndicatorEngine`（84指標）をコピーしたもの。
 
 ### トレンド・モメンタム系
 
 | 指標 | 期間 | 出力フィールド | 使い方 | コード |
 |------|------|---------------|--------|--------|
-| **ADX** | 14 | `adx`, `plus_di`, `minus_di` | 25超=トレンドあり。DI+>DI-=上昇トレンド | `indicators/calc_core.py` `_adx()` |
-| **EMA** | 12,20,24,26 | `ema12`, `ema20`, `ema24` | EMA12>EMA26=上昇。クロスでトレンド転換 | `indicators/calc_core.py` |
-| **EMAスロープ** | 5,10,20 | `ema_slope_5/10/20` | 傾きの強さ。正=上昇、負=下降 | `indicators/calc_core.py` `_slope()` |
-| **MACD** | 12,26,9 | `macd`, `macd_signal`, `macd_hist` | ヒストグラム反転=モメンタム変化 | `indicators/calc_core.py` |
-| **ROC** | 5,10 | `roc5`, `roc10` | 価格変化率。急騰急落の検知 | `indicators/calc_core.py` `_roc()` |
-| **Microモメンタム** | S5 | `micro_dir`, `micro_vel` | UP/DOWN/FLAT + 速度(pip/min)。超短期方向 | `live_monitor.py` `compute_micro_momentum()` |
+| **ADX** | 14 | `adx`, `plus_di`, `minus_di` | 25超=トレンドあり。DI+>DI-=上昇トレンド | `collab_trade/indicators/calc_core.py` `_adx()` |
+| **EMA** | 12,20,24,26 | `ema12`, `ema20`, `ema24` | EMA12>EMA26=上昇。クロスでトレンド転換 | `collab_trade/indicators/calc_core.py` |
+| **EMAスロープ** | 5,10,20 | `ema_slope_5/10/20` | 傾きの強さ。正=上昇、負=下降 | `collab_trade/indicators/calc_core.py` `_slope()` |
+| **MACD** | 12,26,9 | `macd`, `macd_signal`, `macd_hist` | ヒストグラム反転=モメンタム変化 | `collab_trade/indicators/calc_core.py` |
+| **ROC** | 5,10 | `roc5`, `roc10` | 価格変化率。急騰急落の検知 | `collab_trade/indicators/calc_core.py` `_roc()` |
+| **Microモメンタム** | S5 | `micro_dir`, `micro_vel` | UP/DOWN/FLAT + 速度(pip/min)。超短期方向 | `live_monitor.py`（共同トレード中は使用不可） |
 
 ### オシレーター系
 
 | 指標 | 期間 | 出力フィールド | 使い方 | コード |
 |------|------|---------------|--------|--------|
-| **RSI** | 14 | `rsi` | 70超=買われすぎ、30未満=売られすぎ | `indicators/calc_core.py` `_rsi()` |
-| **Stochastic RSI** | 14 | `stoch_rsi` | RSIのRSI。より敏感な過熱判断 | `indicators/calc_core.py` `_stoch_rsi()` |
-| **CCI** | 14 | `cci` | +100超=買われすぎ、-100未満=売られすぎ | `indicators/calc_core.py` `_cci()` |
+| **RSI** | 14 | `rsi` | 70超=買われすぎ、30未満=売られすぎ | `collab_trade/indicators/calc_core.py` `_rsi()` |
+| **Stochastic RSI** | 14 | `stoch_rsi` | RSIのRSI。より敏感な過熱判断 | `collab_trade/indicators/calc_core.py` `_stoch_rsi()` |
+| **CCI** | 14 | `cci` | +100超=買われすぎ、-100未満=売られすぎ | `collab_trade/indicators/calc_core.py` `_cci()` |
 
 ### ボラティリティ系
 
 | 指標 | 期間 | 出力フィールド | 使い方 | コード |
 |------|------|---------------|--------|--------|
-| **ATR** | 14 | `atr`, `atr_pips` | SL/TP幅の基準。SL < ATR = 狩られる | `indicators/calc_core.py` `_atr()` |
-| **Bollinger Band** | 20 (2σ) | `bb_upper/mid/lower`, `bbw`, `bb_span_pips` | bb=0→下限、1→上限。0.01以下でナンピン検討。bbw小=スクイーズ→ブレイク予兆 | `indicators/calc_core.py` `_bollinger()` |
-| **Keltner Channel** | 20 (1.5x) | `kc_width` | BBと併用。BB>KC=ブレイクアウト、BB<KC=スクイーズ | `indicators/calc_core.py` `_keltner_width()` |
-| **Donchian幅** | 20 | `donchian_width` | レンジの広さ | `indicators/calc_core.py` `_donchian_width()` |
-| **Chaikinボラ** | 10/20 | `chaikin_vol` | ボラティリティ変化率 | `indicators/calc_core.py` `_chaikin_vol()` |
+| **ATR** | 14 | `atr`, `atr_pips` | SL/TP幅の基準。SL < ATR = 狩られる | `collab_trade/indicators/calc_core.py` `_atr()` |
+| **Bollinger Band** | 20 (2σ) | `bb_upper/mid/lower`, `bbw`, `bb_span_pips` | bb=0→下限、1→上限。0.01以下でナンピン検討。bbw小=スクイーズ→ブレイク予兆 | `collab_trade/indicators/calc_core.py` `_bollinger()` |
+| **Keltner Channel** | 20 (1.5x) | `kc_width` | BBと併用。BB>KC=ブレイクアウト、BB<KC=スクイーズ | `collab_trade/indicators/calc_core.py` `_keltner_width()` |
+| **Donchian幅** | 20 | `donchian_width` | レンジの広さ | `collab_trade/indicators/calc_core.py` `_donchian_width()` |
+| **Chaikinボラ** | 10/20 | `chaikin_vol` | ボラティリティ変化率 | `collab_trade/indicators/calc_core.py` `_chaikin_vol()` |
 
 ### 価格構造系
 
 | 指標 | 期間 | 出力フィールド | 使い方 | コード |
 |------|------|---------------|--------|--------|
-| **VWAP乖離** | 時間加重 | `vwap_gap` (pips) | フェアバリューからの距離。回帰トレードの基準 | `indicators/calc_core.py` `_vwap_gap()` |
-| **Ichimoku雲** | 9,26,52 | `ichimoku_span_a/b_gap`, `ichimoku_cloud_pos` (pips) | 雲の上=強気、下=弱気。雲の厚さ=サポート強度 | `indicators/calc_core.py` `_ichimoku_position()` |
-| **Swing距離** | 50本 | `swing_dist_high/low` (pips) | 直近高安までの距離。TP/SLの参考 | `indicators/calc_core.py` `_swing_distance()` |
-| **価格クラスター** | 120本 | `cluster_high/low_gap` (pips) | 価格が集中するレベル。S/R | `indicators/calc_core.py` `_cluster_distance()` |
-| **ヒゲ平均** | 20本 | `upper/lower_wick_avg_pips` | ヒゲが長い=反転圧力。ノイズ幅の参考 | `indicators/calc_core.py` `_wick_ratios()` |
-| **高安タッチ回数** | 30本 | `high/low_hits`, `high/low_hit_interval` | 何回テストされたか。多い=ブレイクしやすい | `indicators/calc_core.py` `_hit_stats()` |
+| **VWAP乖離** | 時間加重 | `vwap_gap` (pips) | フェアバリューからの距離。回帰トレードの基準 | `collab_trade/indicators/calc_core.py` `_vwap_gap()` |
+| **Ichimoku雲** | 9,26,52 | `ichimoku_span_a/b_gap`, `ichimoku_cloud_pos` (pips) | 雲の上=強気、下=弱気。雲の厚さ=サポート強度 | `collab_trade/indicators/calc_core.py` `_ichimoku_position()` |
+| **Swing距離** | 50本 | `swing_dist_high/low` (pips) | 直近高安までの距離。TP/SLの参考 | `collab_trade/indicators/calc_core.py` `_swing_distance()` |
+| **価格クラスター** | 120本 | `cluster_high/low_gap` (pips) | 価格が集中するレベル。S/R | `collab_trade/indicators/calc_core.py` `_cluster_distance()` |
+| **ヒゲ平均** | 20本 | `upper/lower_wick_avg_pips` | ヒゲが長い=反転圧力。ノイズ幅の参考 | `collab_trade/indicators/calc_core.py` `_wick_ratios()` |
+| **高安タッチ回数** | 30本 | `high/low_hits`, `high/low_hit_interval` | 何回テストされたか。多い=ブレイクしやすい | `collab_trade/indicators/calc_core.py` `_hit_stats()` |
 
 ### ダイバージェンス
 
 | 指標 | 出力フィールド | 使い方 | コード |
 |------|---------------|--------|--------|
-| **RSIダイバージェンス** | `div_rsi_kind`(±1=regular, ±2=hidden), `div_rsi_score`, `div_rsi_age` | 価格とRSIの乖離。反転サイン | `indicators/divergence.py` |
-| **MACDダイバージェンス** | `div_macd_kind`, `div_macd_score`, `div_macd_age` | 価格とMACDの乖離 | `indicators/divergence.py` |
-| **統合ダイバージェンス** | `div_score` (60%RSI + 40%MACD) | 総合的な反転確度 | `indicators/calc_core.py` |
+| **RSIダイバージェンス** | `div_rsi_kind`(±1=regular, ±2=hidden), `div_rsi_score`, `div_rsi_age` | 価格とRSIの乖離。反転サイン | `collab_trade/indicators/divergence.py` |
+| **MACDダイバージェンス** | `div_macd_kind`, `div_macd_score`, `div_macd_age` | 価格とMACDの乖離 | `collab_trade/indicators/divergence.py` |
+| **統合ダイバージェンス** | `div_score` (60%RSI + 40%MACD) | 総合的な反転確度 | `collab_trade/indicators/calc_core.py` |
 
 ### マーケットコンテキスト
 
-| 指標 | 出力フィールド | 使い方 | コード |
-|------|---------------|--------|--------|
-| **レジーム** | `regime` (Trend/Range/Breakout/Mixed) | 市場状態の分類。戦略選択の基準 | `analysis/regime_classifier.py` |
-| **通貨強弱フロー** | `cs_base`, `cs_quote`, `cs_flow` | **最大の武器**。STRONG_SHORTで+889円実績 | `live_monitor.py` |
-| **H1バイアス** | `h1_bias`, `h1_adx`, `h1_rsi`, `h1_di_plus/minus` | 上位足の方向。逆らうと危険 | `live_monitor.py` |
-| **H4レジーム** | `h4_regime` | さらに上位の市場状態 | `live_monitor.py` |
-| **セッション** | (時間ベース) | 東京/ロンドン/NY判定 | `live_monitor.py` |
+| 指標 | 使い方 | 共同トレードでの取得方法 |
+|------|--------|------------------------|
+| **レジーム** (Trend/Range/Breakout/Mixed) | 市場状態の分類。戦略選択の基準 | quick_calc.pyのADX+BBWから判断（ADX>25=Trend、BBW小=Range） |
+| **通貨強弱フロー** | **最大の武器**。STRONG_SHORTで+889円実績 | 複数ペアのquick_calc結果を比較して手動判断。例: AUD_USDとAUD_JPY両方下落→AUD弱い |
+| **H1バイアス** | 上位足の方向。逆らうと危険 | `quick_calc.py {pair} H1 60` で取得 |
+| **セッション** | 東京/ロンドン/NY判定 | 現在時刻から判断（セッション時間帯テーブル参照） |
+
+> **注意**: 共同トレードではlive_monitorを止めるため、cs_flowやH1バイアスは自分で計算する。
+> 複数ペアを見比べて通貨強弱を判断する。これがプロの仕事。
 
 ### データ取得方法
 
-**方法1: live_monitor_summary.jsonを読む**（monitor稼働時）
-```bash
-cat logs/live_monitor_summary.json | python3 -m json.tool
-```
-
-**方法2: quick_calc.py（共同トレードのメインツール）**
+**quick_calc.py（共同トレードのメインツール）**
 ```bash
 # 基本: ペア 時間足 本数
 python3 collab_trade/indicators/quick_calc.py USD_JPY M5 50

@@ -98,7 +98,6 @@ mkdir -p collab_trade/daily/$TODAY
 | `collab_trade/daily/YYYY-MM-DD/notes.md` | 随時 | ユーザー発言・気づき・発見 |
 | `collab_trade/summary.md` | セッション終了時 | 日次統括の更新 |
 | `collab_trade/CLAUDE.md` | 重要発見時 | notes→手法・ルールへの昇格 |
-| `logs/live_trade_log.txt` | トレード毎 | 時系列実行ログ（自動トレードと共通） |
 
 ## 絶対ルール
 
