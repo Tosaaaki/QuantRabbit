@@ -40,6 +40,12 @@
 - 思ったこと・決めたことは即mdに書く。後回しにしない
 - ToDoは言うだけじゃなく達成すること。「次回やる」は禁止
 
+### ユーザーが何か言ったら即記録
+- ユーザーの発言は即 `daily/YYYY-MM-DD/notes.md` に書く。後回しにしない
+- 相場読み、指示、フィードバック、雑談でも。全部書く
+- 重要な発見（手法・ルールになりうるもの）→ このCLAUDE.mdの該当セクションに昇格
+- 「ちゃんと記録してる？」と聞かれた時点で負け。聞かれる前にやれ
+
 ---
 
 ## 手法・ルール
@@ -85,35 +91,95 @@
 
 ## テクニカル一覧
 
-### 既存の計算エンジン（`indicators/`）
+全て `indicators/calc_core.py` の `IndicatorEngine` が計算（84指標）。live_monitor.pyが30秒毎に実行して `logs/live_monitor_summary.json` に出力。
 
-| 指標 | ファイル | 用途 |
-|------|----------|------|
-| IndicatorEngine全体 | `indicators/engine.py` | RSI, BB, EMA, ATR, VWAP, Ichimoku等の一括計算 |
-| RSI | `indicators/engine.py` | 過熱判断。70超=買われすぎ、30未満=売られすぎ |
-| Bollinger Band | `indicators/engine.py` | バンド位置(bb)。0=下限、1=上限。0.01以下でナンピン検討 |
-| EMA(9/21) | `indicators/engine.py` | トレンド方向。EMA9>EMA21=上昇 |
-| ATR | `indicators/engine.py` | ボラティリティ。SL/TP幅の参考 |
-| VWAP | `indicators/engine.py` | 出来高加重平均。フェアバリュー |
-| Ichimoku | `indicators/engine.py` | 雲の位置、転換線/基準線 |
+### トレンド・モメンタム系
 
-### live_monitor経由（`logs/live_monitor_summary.json`）
+| 指標 | 期間 | 出力フィールド | 使い方 | コード |
+|------|------|---------------|--------|--------|
+| **ADX** | 14 | `adx`, `plus_di`, `minus_di` | 25超=トレンドあり。DI+>DI-=上昇トレンド | `indicators/calc_core.py` `_adx()` |
+| **EMA** | 12,20,24,26 | `ema12`, `ema20`, `ema24` | EMA12>EMA26=上昇。クロスでトレンド転換 | `indicators/calc_core.py` |
+| **EMAスロープ** | 5,10,20 | `ema_slope_5/10/20` | 傾きの強さ。正=上昇、負=下降 | `indicators/calc_core.py` `_slope()` |
+| **MACD** | 12,26,9 | `macd`, `macd_signal`, `macd_hist` | ヒストグラム反転=モメンタム変化 | `indicators/calc_core.py` |
+| **ROC** | 5,10 | `roc5`, `roc10` | 価格変化率。急騰急落の検知 | `indicators/calc_core.py` `_roc()` |
+| **Microモメンタム** | S5 | `micro_dir`, `micro_vel` | UP/DOWN/FLAT + 速度(pip/min)。超短期方向 | `live_monitor.py` `compute_micro_momentum()` |
 
-| 指標 | 用途 |
-|------|------|
-| cs_flow | 通貨強弱フロー（STRONG_SHORT等）。最大の武器 |
-| H1 bias | H1足の方向バイアス |
-| regime | トレンド/レンジ判定 |
-| divergence | RSI/価格のダイバージェンス |
-| micro_vel | 短期モメンタム |
+### オシレーター系
 
-### その場で計算してもOK
+| 指標 | 期間 | 出力フィールド | 使い方 | コード |
+|------|------|---------------|--------|--------|
+| **RSI** | 14 | `rsi` | 70超=買われすぎ、30未満=売られすぎ | `indicators/calc_core.py` `_rsi()` |
+| **Stochastic RSI** | 14 | `stoch_rsi` | RSIのRSI。より敏感な過熱判断 | `indicators/calc_core.py` `_stoch_rsi()` |
+| **CCI** | 14 | `cci` | +100超=買われすぎ、-100未満=売られすぎ | `indicators/calc_core.py` `_cci()` |
 
-OANDA APIでキャンドル取得 → Pythonでその場で計算。パラメータも自由にいじれる。
-```python
-# 例: H1キャンドル20本取得
-GET /v3/instruments/{pair}/candles?granularity=H1&count=20&price=M
+### ボラティリティ系
+
+| 指標 | 期間 | 出力フィールド | 使い方 | コード |
+|------|------|---------------|--------|--------|
+| **ATR** | 14 | `atr`, `atr_pips` | SL/TP幅の基準。SL < ATR = 狩られる | `indicators/calc_core.py` `_atr()` |
+| **Bollinger Band** | 20 (2σ) | `bb_upper/mid/lower`, `bbw`, `bb_span_pips` | bb=0→下限、1→上限。0.01以下でナンピン検討。bbw小=スクイーズ→ブレイク予兆 | `indicators/calc_core.py` `_bollinger()` |
+| **Keltner Channel** | 20 (1.5x) | `kc_width` | BBと併用。BB>KC=ブレイクアウト、BB<KC=スクイーズ | `indicators/calc_core.py` `_keltner_width()` |
+| **Donchian幅** | 20 | `donchian_width` | レンジの広さ | `indicators/calc_core.py` `_donchian_width()` |
+| **Chaikinボラ** | 10/20 | `chaikin_vol` | ボラティリティ変化率 | `indicators/calc_core.py` `_chaikin_vol()` |
+
+### 価格構造系
+
+| 指標 | 期間 | 出力フィールド | 使い方 | コード |
+|------|------|---------------|--------|--------|
+| **VWAP乖離** | 時間加重 | `vwap_gap` (pips) | フェアバリューからの距離。回帰トレードの基準 | `indicators/calc_core.py` `_vwap_gap()` |
+| **Ichimoku雲** | 9,26,52 | `ichimoku_span_a/b_gap`, `ichimoku_cloud_pos` (pips) | 雲の上=強気、下=弱気。雲の厚さ=サポート強度 | `indicators/calc_core.py` `_ichimoku_position()` |
+| **Swing距離** | 50本 | `swing_dist_high/low` (pips) | 直近高安までの距離。TP/SLの参考 | `indicators/calc_core.py` `_swing_distance()` |
+| **価格クラスター** | 120本 | `cluster_high/low_gap` (pips) | 価格が集中するレベル。S/R | `indicators/calc_core.py` `_cluster_distance()` |
+| **ヒゲ平均** | 20本 | `upper/lower_wick_avg_pips` | ヒゲが長い=反転圧力。ノイズ幅の参考 | `indicators/calc_core.py` `_wick_ratios()` |
+| **高安タッチ回数** | 30本 | `high/low_hits`, `high/low_hit_interval` | 何回テストされたか。多い=ブレイクしやすい | `indicators/calc_core.py` `_hit_stats()` |
+
+### ダイバージェンス
+
+| 指標 | 出力フィールド | 使い方 | コード |
+|------|---------------|--------|--------|
+| **RSIダイバージェンス** | `div_rsi_kind`(±1=regular, ±2=hidden), `div_rsi_score`, `div_rsi_age` | 価格とRSIの乖離。反転サイン | `indicators/divergence.py` |
+| **MACDダイバージェンス** | `div_macd_kind`, `div_macd_score`, `div_macd_age` | 価格とMACDの乖離 | `indicators/divergence.py` |
+| **統合ダイバージェンス** | `div_score` (60%RSI + 40%MACD) | 総合的な反転確度 | `indicators/calc_core.py` |
+
+### マーケットコンテキスト
+
+| 指標 | 出力フィールド | 使い方 | コード |
+|------|---------------|--------|--------|
+| **レジーム** | `regime` (Trend/Range/Breakout/Mixed) | 市場状態の分類。戦略選択の基準 | `analysis/regime_classifier.py` |
+| **通貨強弱フロー** | `cs_base`, `cs_quote`, `cs_flow` | **最大の武器**。STRONG_SHORTで+889円実績 | `live_monitor.py` |
+| **H1バイアス** | `h1_bias`, `h1_adx`, `h1_rsi`, `h1_di_plus/minus` | 上位足の方向。逆らうと危険 | `live_monitor.py` |
+| **H4レジーム** | `h4_regime` | さらに上位の市場状態 | `live_monitor.py` |
+| **セッション** | (時間ベース) | 東京/ロンドン/NY判定 | `live_monitor.py` |
+
+### データ取得方法
+
+**方法1: live_monitor_summary.jsonを読む**（monitor稼働時）
+```bash
+cat logs/live_monitor_summary.json | python3 -m json.tool
 ```
+
+**方法2: quick_calc.py（共同トレードのメインツール）**
+```bash
+# 基本: ペア 時間足 本数
+python3 collab_trade/indicators/quick_calc.py USD_JPY M5 50
+python3 collab_trade/indicators/quick_calc.py EUR_USD H1 60
+python3 collab_trade/indicators/quick_calc.py AUD_USD M1 100
+
+# 全ペア一括スキャン
+for p in USD_JPY EUR_USD GBP_USD AUD_USD EUR_JPY GBP_JPY; do
+  python3 collab_trade/indicators/quick_calc.py $p M5 50
+done
+```
+本体(`indicators/`)のコピーが `collab_trade/indicators/` にある。**パラメータは自由にいじれる。本体には影響しない。**
+- RSI期間を変えたい → `collab_trade/indicators/calc_core.py` を編集
+- BB幅を変えたい → 同上
+- ダイバージェンス感度 → `collab_trade/indicators/divergence.py` を編集
+
+**方法3: technicals_{PAIR}.jsonを読む**（refresh_factor_cache実行後）
+```bash
+cat logs/technicals_USD_JPY.json | python3 -m json.tool
+```
+H1/H4の指標が入っている。
 
 ---
 
@@ -162,6 +228,11 @@ collab_trade/
 ├── CLAUDE.md          ← 今読んでるファイル（行動規範・手法・テクニカル）
 ├── state.md           ← 外部記憶（現在のポジション・テーゼ）
 ├── summary.md         ← 全日の統括（成績推移・全体傾向）
+├── CHANGELOG.md       ← この共同トレード環境自体の変更ログ
+├── indicators/        ← テクニカル計算エンジン（本体のコピー。パラメータ自由にいじれる）
+│   ├── calc_core.py   ← IndicatorEngine本体
+│   ├── divergence.py  ← ダイバージェンス検出
+│   └── quick_calc.py  ← ワンコマンド分析ツール
 └── daily/
     └── YYYY-MM-DD/
         ├── trades.md  ← その日のトレード履歴（即分析できる形式）
@@ -170,3 +241,4 @@ collab_trade/
 
 - **重要な発見** → notes.md から CLAUDE.md の手法・ルールに昇格
 - **日次の統括** → summary.md に集約
+- **変更ログ** → 共同トレード環境の変更は `CHANGELOG.md` に（本体の `docs/CHANGELOG.md` ではない）
