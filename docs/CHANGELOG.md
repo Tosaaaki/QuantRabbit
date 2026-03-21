@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-03-21
+- 2026-03-21T01:00Z: **`/collab-trade` スキル作成 + 導線整備** — `.claude/skills/collab-trade.md`新設（起動→行動規範読み→状態復帰→タスク停止→口座確認→トレード開始を自動化）。feedback_collab_trade_trigger.mdをcollab_trade/CLAUDE.md正本に更新。CLAUDE.md主要ディレクトリにcollab_trade/追加。MEMORY.mdインデックス更新
+- 2026-03-21T00:30Z: **共同トレード専用ディレクトリ作成** — `collab_trade/CLAUDE.md`（行動規範・思考原則・利確鉄則・記録先）、`collab_trade/state.md`（外部記憶テンプレート）を新設。CLAUDE.mdに「共同トレード」コマンドの導線と運用の鉄則（即記録・ToDo達成・外部記憶）を追記
 - 2026-03-21T00:00Z: **共同トレードSession3反省記録** — TRADE_LOG_COLLAB_20260320に総括追加。feedback_collab_autonomy.mdにSession3反省（BG task乱発→コンテキスト破壊、利確遅延、受け身bot化）と対策を追記。全3セッション合計+1,760円(+11.9%)
 
 ## 2026-03-20

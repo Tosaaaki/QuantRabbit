@@ -156,6 +156,7 @@ secretary → health監視 → critical alerts
 
 ## 主要ディレクトリ
 
+- `collab_trade/` — **共同トレード専用**。CLAUDE.md（行動規範）、state.md（外部記憶）
 - `docs/` — プロンプト、変更ログ、戦略ドキュメント
 - `scripts/trader_tools/` — live_monitor, 分析ツール、ロック機構
 - `indicators/` — テクニカル指標計算エンジン (IndicatorEngine)
@@ -166,3 +167,10 @@ secretary → health監視 → critical alerts
 
 - 「トレード開始」→ マルチエージェント裁量トレードセッション起動
 - 「秘書」→ トレーディング秘書モード(状況確認・指示伝達)
+- 「共同トレード」→ **`collab_trade/CLAUDE.md` を読んでから開始**。ユーザー×Claude共同裁量トレード
+
+## 運用の鉄則
+
+- **気づいたこと・やると言ったことは即書け**: メモリ、md、ログに即記録。後回しにしない
+- **ToDoは言うだけじゃなく達成しろ**: 「次回やる」は禁止。今やれ。できないなら書いて残せ
+- **外部記憶を使え**: コンテキストは溢れる。mdファイルに状態を書いておけば復帰できる
