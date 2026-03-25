@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-03-24
+- 2026-03-24T23:40Z: **Slack通知統合 — 記録3点→4点セット** — (1) `slack_trade_notify.py` 新規作成: entry/modify/closeの3アクションで `#qr-trades` に自動投稿。スレッド返信対応 (2) `env.toml` にチャンネルID追加: slack_channel_trades/commands/daily (3) recording.md: 3点セット→4点セットに更新。Slack通知コマンド例を追加 (4) SKILL.md(trader): 記録セクションにSlack通知を追加 (5) collab_trade/CLAUDE.md: 3箇所の記録ルールを4点セットに更新
+- 2026-03-24T22:30Z: **v6.5 — 2分短命セッション + 2分cronリレー** — (1) 12サイクル固定→時間ベース(最大2分)に変更。1セッション=1サイクル。記録を書き切ってから終了 (2) cron間隔を5分→2分に短縮 (3) SESSION_END時のメモリ保存+ロック解放をBash内に組み込み。traderが止まってもロック確実解放 (4) 被りはOK設計: ALREADY_RUNNINGスキップが正常動作。根本原因: 長時間セッションでの途中死亡で記録未保存。短命化で記録確実性を確保
+- 2026-03-24T18:10Z: **v6.4 — 生存ルール追加** — エラー耐性(API/スクリプト/ファイルどれが失敗してもスキップして続行、死ぬな) + コンテキスト節約(出力短縮、ファイル読み最小化、JSON全表示禁止、思考を短く)。セッションが途中で死ぬ原因を潰す
+- 2026-03-24T18:00Z: **v6.3 — state.md即時更新 + ユーザー発言即記録** — state.md更新を3段階に整理: (1)即時更新(トレード・決済・ユーザー発言) (2)サイクル末尾の軽量更新(タイムスタンプ) (3)ハンドオフ時フル更新。30分+セッションで途中クラッシュしてもデータロス最小化。ユーザー口出しは受けた瞬間に記録が先、分析が後
+- 2026-03-24T17:50Z: **v6.2 — 無限セッション + ハンドオフ終了のみ** — 時間・サイクル数ベースの終了条件を全廃止。唯一の終了トリガー = handoff_request検知（＝次の定期タスクが起動した時）。旧セッションは次のセッションが来るまで永遠にサイクルを回し続ける
+- 2026-03-24T17:40Z: **v6.1 — ハンドオフプロトコル追加** — セッション間の引き継ぎをファイルベースシグナル(.trader_handoff_request/.trader_handoff_complete/.trader_lock)で実装。新セッション起動→旧セッションがstate.md保存→引き継ぎ完了→新セッション開始。セッションが途中で止まる問題の根本対策。スキル活用セクション追加。SETUP_TRADER_TASK.md同期更新
+- 2026-03-24T17:00Z: **v6 — trader一本化。Cowork全廃止。消費量1/8に** — (1) Cowork 3タスク(quantrabbit-analyst/secretary/news)を全て無効化・廃止 (2) CLAUDE.mdを236行→120行に簡素化。マルチエージェント参照を全削除 (3) TRADER_PROMPT.mdを1021行→~680行に簡素化。analyst/secretary/news/shared_state/monitor参照を全削除。traderが自分でOANDA API・WebSearch・refresh_factor_cacheでデータ取得する自律型に (4) shared_state.json/news_digest.json/secretary_report.json廃止 (5) 自己改善ループ: trader→strategy_memory.md→次のtrader。中間エージェント不要
+
+## 2026-03-23
+- 2026-03-23T22:50Z: **Coworkタスク改修 — Python 3.10互換 + secretary shared_state書き込み修正** — (1) position_diff.pyのload_config(): tomllib→手動TOML解析に変更。CoworkのPython 3.10で動かなかった根本原因を修正 (2) refresh_factor_cache.pyのtomli import: tomllib→tomli→手動解析の3段fallback追加 (3) secretaryタスクプロンプト全面改修: STEP 5にshared_state.json書き込み(secretary_last_run, account, positions, secretary_status, margin_warning)を明示追加。従来はsecretary_report.jsonのみ書いてshared_state未更新だった。STEP 0にrepoパス自動検出追加。全インラインスクリプトからtomllib排除 (4) 全Coworkタスク(analyst/secretary/news)をSonnetモデルに明示設定
+- 2026-03-24T00:10Z: **trader SKILL.md v5.1更新** — 30分間隔scheduled taskのSKILL.mdを全面書き換え。20-30分ノンストップ連続サイクル、sleep 30→次サイクル、strategy_memory読み込み、止まるな原則を反映。旧タスク(scalp-fast/swing-trader/market-radar/macro-intel/secretary/analyst)は全てdisabled確認済み
+- 2026-03-23T23:55Z: **止まるな対策** — PASSで止まる問題を根本解決。(1) Step 5に「sleep 30して次のサイクル」を明示。全ペアPASSでも止まらず回し続ける (2) 「何もしないのはポジション」の逃げ道を塞ぐ文言修正 (3) SETUP_TRADER_TASK.mdも同様に更新
+- 2026-03-23T23:45Z: **マージン90%上限 + テクニカル網羅分析** — (1) マージン使用上限を30%残し→10%残し(90%使用OK)に変更。攻めのスタイル (2) TRADER_PROMPTのテクニカル分析セクションを4カテゴリ(トレンド/オシレーター/ボラティリティ/先行指標)+構造系に大幅拡充。複数視点の立体分析を推奨
+- 2026-03-23T23:30Z: **v5.1 — 20-30分連続トレード + strategy_memory.md自律学習** — (1) traderセッションを2-3分→20-30分に延長。連続サイクルでノンストップトレード (2) strategy_memory.md追加: analystが日次でパフォーマンスを蒸留→traderがセッション開始時に読む長期学習記憶 (3) TRADER_PROMPT: Step 0にstrategy_memory読み込み追加、Step 5に連続トレードの心得追加 (4) ANALYST_PROMPT: STEP 5にstrategy_memory更新手順追加、MEMORY UPDATEアクション追加
+- 2026-03-23T23:00Z: **v5デプロイ** — analyst scheduled task無効化(enabled:false)。trader SKILL.md v5化(live_monitor参照削除→shared_state.json/state.md中心)。TRADER_PROMPT/ANALYST_PROMPT/collab_trade CLAUDEからlive_monitor参照を全削除。quality_alertを共同トレード限定に簡素化。collab_trade/CLAUDE.mdのlive_monitor停止手順削除・番号修正
+- 2026-03-23T22:30Z: **v5 — Claude Code=trader 1本、Cowork=analyst+secretary+news** — analyst(10分)をCoworkに移行。Claude Codeはtrader 1タスクのみ。毎サイクル2-3分の新セッションでコンテキスト劣化を根本解決。shared_state.jsonが唯一のハブ。state.mdが外部記憶。SETUP_TRADER_TASK.md追加
+- 2026-03-23T22:00Z: **v4.3 — 品質自動監視(QUALITY_ALERT)** — Cowork secretaryがlive_trade_log.txtを解析し、トレード品質劣化を自動検知。5パターン(PANIC_TRADING, LOSING_STREAK, POST_LOSS_CHASING, SL_REMOVED_AFTER_LOSS, TILT_SIZING)。shared_state.jsonのquality_alertフィールドに書き込み。CRITICAL時はサーキットブレーカー発動(5分停止+サイズ縮小)。collab_trade/CLAUDE.mdとTRADER_PROMPT.mdに対応ルール追加。長時間セッションでのコンテキスト劣化を人手ゼロで検知・矯正する仕組み
+- 2026-03-23T21:00Z: **v4.2 — スパイク判断フレームワーク + Cowork分離** — (1) TRADER_PROMPT: 5カテゴリ分析ツール(インジケーター/プライスアクション/チャートパターン/波動/比率)を「スパイク判断フレームワーク」として追加。スパイク→足型→指標→パターン→波動→Fibの5秒スキャン判断フロー。パニック切りの代わりに5つの武器で判断する体制 (2) secretary/newsをCoworkスケジュールタスクに分離。quantrabbit-secretary(11分間隔): position_diff.py実行+secretary_report.json出力。quantrabbit-news(15分間隔): WebSearchでFXニュース取得→news_digest.json出力。トレード以外をCoworkに委譲し、Claude Codeはトレードに集中する体制 (3) CLAUDE.md: ランタイムファイルにnews_digest.json追加、Coworkタスク一覧追加
+- 2026-03-23: secretary SKILL.md v4.1更新 — position_diff.pyによるポジション変化検知・自動記録をサイクルに追加。collab_modeフラグ対応
+- 2026-03-23: **secretary v4.1 — 記録係に拡張** — position_diff.pyでOANDAポジション変化を自動検知・記録。共同トレード中のstate.md/daily/trades.md自動更新。collab_modeフラグでモード切替。トレーダーの記録漏れをsecretaryが補完するマルチエージェント設計
+- 2026-03-23: **live_monitor完全削除** — launchd plist削除・live_monitor.py削除・setup_live_monitor.sh削除。ユーザー指示により永久停止
+- 2026-03-23: **analyst有効化 + 土日モード追加** — analystタスク(10分間隔/Sonnet)をオン。SKILL.mdに土日モード追加: テクニカル(STEP 2-3)スキップ、マクロニュース収集+market_narrative更新+来週イベント整理に集中。月曜オープンでtraderが週末の動きを即把握できるように
+- 2026-03-23: **ANALYST_PROMPT STEP 4 ナラティブ品質強化** — ストーリーに「前回からの変化」「シナリオ分岐(bull/bear/base + 確率感)」を必須項目として追加。key_thesisにchange_from_lastフィールド追加。Sonnetでもストーリーのうねり・時間軸の物語を出せるようプロンプト型を強化
+- 2026-03-23: **SKILL.mdナラティブ対応** — analyst SKILL.mdにSTEP 4（market_narrative毎サイクル更新）を明示追加。trader SKILL.mdにStep 0（ストーリー読み込み）を明示追加。collab_trade/CLAUDE.mdにユーザー相場読み「チャート状態込み記録」ルール追加
+
+## 2026-03-22
+- 2026-03-22T10:00Z: **ナラティブレイヤー導入 — セッション間のストーリー連続性** — ClaudeCodeの最大弱点（コンテキスト切れで「別人」になる）を解消するため、相場のストーリーをシステムに焼き込む。(1) ANALYST_PROMPT: STEP 4「相場ストーリーを書け」追加。shared_stateに`market_narrative`フィールド（story/key_thesis/session_learnings）を定義。毎サイクルでナラティブ更新を義務化 (2) TRADER_PROMPT: Step 0「ストーリーを掴め」追加。セッション開始時+30分ごとにmarket_narrativeを読み込み、データをストーリーの文脈で解釈する (3) collab_trade/CLAUDE.md: state.mdのテーゼ書き方をナラティブ型に拡張（根拠・転換条件・経過・ユーザー読み・教訓を含む）。共同トレードでも自動トレードでもストーリーが繋がる設計
+
 ## 2026-03-21
 - 2026-03-21T02:00Z: **collab_trade/ディレクトリ構築完了** — 共同トレード専用ディレクトリ新設。詳細は `collab_trade/CHANGELOG.md` を参照。テクニカルエンジン、日次ログ構造、スキル、外部記憶、コンテキスト管理を整備
 
@@ -325,3 +354,4 @@
 - Performance alert: last_10 WR=40% WORSENING. Rule added: NO LONG when H1 RSI >70.
 
 2026-03-20 01:54 UTC | analyst | RISK-ON REGIME SHIFT: Hormuz de-escalation + S&P +0.73%. DXY 99.26 (weakened). JPY -0.73 in CS. All Tokyo JPY-cross shorts explained. Biases updated. London 07:00Z next entry window.
+- 2026-03-23T03:28:35Z: [collab] 記録ルール強化。collab_mode未設定バグ修正。trades.md即時記録を必須化。注文と記録を同一動作に定義

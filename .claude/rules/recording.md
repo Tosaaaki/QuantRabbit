@@ -1,0 +1,44 @@
+# 記録ルール — 注文と記録は同一動作
+
+**注文を出したら、その場で4つセットで書く。後回し禁止。**
+
+| ファイル | 何を書く |
+|----------|---------|
+| `collab_trade/daily/YYYY-MM-DD/trades.md` | エントリー・決済の詳細テーブル |
+| `collab_trade/state.md` | 現在のポジション・テーゼ・確定益（外部記憶） |
+| `logs/live_trade_log.txt` | トレード実行ログ（時系列） |
+| `#qr-trades` (Slack通知) | エントリー/変更/決済をSlackに投稿 |
+
+## Slack通知（4点目）
+
+注文実行と同時に `slack_trade_notify.py` で `#qr-trades` に投稿する。
+
+```bash
+# エントリー
+python3 scripts/trader_tools/slack_trade_notify.py entry --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} [--sl {SL}] [--thesis "テーゼ"]
+
+# 変更（半利確、SL移動、ナンピン等）
+python3 scripts/trader_tools/slack_trade_notify.py modify --pair {PAIR} --action "TP半利確" --units {UNITS} --price {PRICE} --pl "{PL}" [--note "残units, BE移動等"]
+
+# 全決済
+python3 scripts/trader_tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} --pl "{PL}" [--total_pl "確定益合計"]
+```
+
+## state.md はスナップショットじゃない。ストーリーだ
+
+**悪い例:** `USD_JPY: H1上昇トレンド(ADX32)。押し目買い狙い`
+**良い例:**
+```
+## USD_JPY LONG テーゼ
+- 読み: 円安方向。158.50→159.00を目指す
+- 根拠: Fed hawkish hold + Iran risk-off → USD bid
+- 転換条件: DXY 98.5割れ、米国債利回り急落、または158.30明確割れ
+- 経過: 158.38→ナンピン158.37→半利確158.41
+```
+
+## ユーザー発言の記録
+
+ユーザーが何か言ったら即 `daily/YYYY-MM-DD/notes.md` に**チャート状態込み**で記録。
+`ユーザー: 「上がりそう」— M5で3本連続陰線後に長い下ヒゲ、BB下限タッチ、H1上昇中(ADX=32)、RSI=35`
+
+**「ちゃんと記録してる？」と聞かれた時点で負け。**

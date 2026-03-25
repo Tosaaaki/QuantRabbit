@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 scripts/trader_tools/*)",
+      "Bash(python3 collab_trade/indicators/*)",
+      "Bash(python3 -c *oanda*)",
+      "Bash(curl *api-fxtrade.oanda.com*)",
+      "Bash(cat logs/*)",
+      "Bash(mkdir -p collab_trade/daily/*)",
+      "Bash(launchctl stop com.quantrabbit.*)",
+      "Bash(launchctl start com.quantrabbit.*)",
+      "Bash(sleep *)",
+      "Bash(python3 collab_trade/memory/*)"
+    ]
+  }
+}

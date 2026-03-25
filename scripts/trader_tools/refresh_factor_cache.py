@@ -19,7 +19,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-import tomli
+try:
+    import tomllib as tomli  # Python 3.11+
+except ImportError:
+    try:
+        import tomli  # backport
+    except ImportError:
+        tomli = None  # fallback to manual parsing
 import pandas as pd
 from indicators.factor_cache import on_candle, all_factors
 from indicators.calc_core import IndicatorEngine
@@ -38,8 +44,20 @@ EXPORT_KEYS = [
 
 
 def _load_config():
-    with open(ROOT / "config" / "env.toml", "rb") as f:
-        cfg = tomli.load(f)
+    if tomli is not None:
+        with open(ROOT / "config" / "env.toml", "rb") as f:
+            cfg = tomli.load(f)
+    else:
+        # Fallback: manual TOML parsing (Python 3.10 without tomli)
+        cfg = {}
+        with open(ROOT / "config" / "env.toml") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    cfg[k.strip()] = v.strip().strip('"').strip("'")
     return cfg["oanda_token"], cfg["oanda_account_id"]
 
 
@@ -160,11 +178,14 @@ def main():
     pairs = []
     quiet = False
     use_all = False
+    tf_filter = None  # None = all timeframes
     for arg in sys.argv[1:]:
         if arg == "--quiet":
             quiet = True
         elif arg == "--all":
             use_all = True
+        elif arg.startswith("--tf="):
+            tf_filter = arg[5:].split(",")  # e.g. --tf=M1,M5
         elif not arg.startswith("-"):
             pairs.append(arg)
 
@@ -173,9 +194,15 @@ def main():
     elif not pairs:
         pairs = ["USD_JPY"]
 
+    if tf_filter:
+        global TF_MAP
+        TF_MAP = {k: v for k, v in TF_MAP.items() if k in tf_filter}
+
     if not quiet:
-        print(f"Refreshing technicals for {', '.join(pairs)}...")
+        print(f"Refreshing technicals for {', '.join(pairs)} [{','.join(TF_MAP.keys())}]...")
     asyncio.run(refresh(pairs, quiet))
+    # Always print a completion line so scheduled tasks don't stall on empty output
+    print(f"OK {len(pairs)}pairs {','.join(TF_MAP.keys())}")
 
 
 if __name__ == "__main__":

@@ -83,9 +83,23 @@ mkdir -p collab_trade/daily/$TODAY
 
 今日の日付・口座状態・テーゼで `collab_trade/state.md` を更新する。
 
-### Step 7: ユーザーに報告してトレード開始
+### Step 7: メモリ検索 — 過去の関連記憶を引く
 
-口座状態・市況を簡潔に報告し、即トレード開始。
+保有ペア・今日の状況に関連する過去の記憶を memory.db から検索。
+
+```bash
+cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 recall.py search '今日の市況に近い過去のセッション' --top 3
+```
+
+保有ペアごとに教訓も引く:
+```bash
+# 例: EUR_USD を持っていたら
+python3 recall.py search 'EUR_USD 教訓 失敗' --pair EUR_USD --top 2
+```
+
+### Step 8: ユーザーに報告してトレード開始
+
+口座状態・市況・過去の関連記憶を簡潔に報告し、即トレード開始。
 
 ---
 
@@ -98,6 +112,12 @@ mkdir -p collab_trade/daily/$TODAY
 | `collab_trade/daily/YYYY-MM-DD/notes.md` | 随時 | ユーザー発言・気づき・発見 |
 | `collab_trade/summary.md` | セッション終了時 | 日次統括の更新 |
 | `collab_trade/CLAUDE.md` | 重要発見時 | notes→手法・ルールへの昇格 |
+
+## セッション終了時
+
+セッション終了時は以下を実行:
+1. `state.md` と `summary.md` を更新
+2. **メモリ保存**: `cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force`
 
 ## 絶対ルール
 

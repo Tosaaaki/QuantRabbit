@@ -75,3 +75,10 @@ $KEY
 $KEY.pub
 =
 .claude/worktrees/
+CLAUDE.md.v5.1.bak
+docs/TRADER_PROMPT.md.v5.1.bak
+*.bak
+collab_trade/memory/memory.db
+collab_trade/memory/memory.db-shm
+collab_trade/memory/memory.db-wal
+collab_trade/memory/__pycache__/
