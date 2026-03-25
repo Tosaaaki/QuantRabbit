@@ -2,10 +2,16 @@
 QuantRabbit Trading Memory — Session Ingest
 セッション終了後にdaily/の trades.md, notes.md, state.md を
 QAチャンクに分割 → Ruri v3 で埋め込み → memory.db に保存
+
+v2 (2026-03-25): OANDA APIから当日トレードを直接取得する機能を追加。
+trades.mdパースは補助情報（テーゼ・教訓）として引き続き使用。
 """
+import json
 import re
 import sys
-from datetime import date
+import urllib.request
+import urllib.parse
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from schema import get_conn, init_db, serialize_f32, fetchone_val, fetchall_dict, DB_PATH
@@ -188,6 +194,132 @@ def chunk_state_md(text: str, session_date: str) -> list[dict]:
     return chunks
 
 
+# --- OANDA API トレード取得 ---
+
+ENV_TOML = Path(__file__).parent.parent.parent / "config" / "env.toml"
+
+def _load_oanda_config():
+    text = ENV_TOML.read_text()
+    cfg = {}
+    for line in text.strip().split('\n'):
+        if '=' in line:
+            k, v = line.split('=', 1)
+            cfg[k.strip()] = v.strip().strip('"')
+    return cfg
+
+OANDA_PAIRS = {"USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"}
+
+
+def fetch_oanda_trades(session_date: str) -> list[dict]:
+    """OANDA APIから指定日の決済済みトレードを取得してtradesテーブル形式で返す"""
+    try:
+        cfg = _load_oanda_config()
+    except Exception as e:
+        print(f"  OANDA config error: {e}")
+        return []
+
+    token = cfg.get('oanda_token', '')
+    acct = cfg.get('oanda_account_id', '')
+    base = 'https://api-fxtrade.oanda.com'
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+    }
+
+    since = f"{session_date}T00:00:00.000000000Z"
+    # 翌日の00:00まで
+    dt = datetime.strptime(session_date, '%Y-%m-%d')
+    next_day = dt.replace(hour=0, minute=0, second=0) + __import__('datetime').timedelta(days=1)
+    to = next_day.strftime('%Y-%m-%dT00:00:00.000000000Z')
+
+    try:
+        params = urllib.parse.urlencode({
+            'from': since,
+            'to': to,
+            'type': 'ORDER_FILL',
+            'pageSize': 1000,
+        })
+        url = f"{base}/v3/accounts/{acct}/transactions?{params}"
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req) as resp:
+            id_range = json.loads(resp.read())
+
+        all_txns = []
+        for page_url in id_range.get('pages', []):
+            req = urllib.request.Request(page_url, headers=headers)
+            with urllib.request.urlopen(req) as resp:
+                data = json.loads(resp.read())
+                all_txns.extend(data.get('transactions', []))
+    except Exception as e:
+        print(f"  OANDA API error: {e}")
+        return []
+
+    # パース: エントリーと決済をtrade_idでマッチ
+    entries = {}
+    closes = {}
+
+    for txn in all_txns:
+        if txn.get('type') != 'ORDER_FILL':
+            continue
+        instrument = txn.get('instrument', '')
+        if instrument not in OANDA_PAIRS:
+            continue
+
+        # 新規エントリー
+        trade_opened = txn.get('tradeOpened')
+        if trade_opened:
+            tid = trade_opened.get('tradeID', '')
+            units = int(float(trade_opened.get('units', 0)))
+            entries[tid] = {
+                'price': float(txn.get('price', 0)),
+                'units': abs(units),
+                'direction': 'LONG' if units > 0 else 'SHORT',
+                'pair': instrument,
+                'time': txn.get('time', ''),
+                'reason': txn.get('reason', ''),
+            }
+
+        # 決済
+        for tc in txn.get('tradesClosed', []) + txn.get('tradesReduced', []):
+            tid = tc.get('tradeID', '')
+            pl = float(tc.get('realizedPL', 0))
+            units = abs(int(float(tc.get('units', 0))))
+            if tid not in closes:
+                closes[tid] = {'price': float(txn.get('price', 0)), 'pl': pl, 'units': units}
+            else:
+                closes[tid]['pl'] += pl
+                closes[tid]['units'] += units
+
+    # マージ
+    trades = []
+    for tid in set(list(entries.keys()) + list(closes.keys())):
+        entry = entries.get(tid)
+        close = closes.get(tid)
+        if not close:
+            continue  # まだオープン中
+
+        ts = entry['time'] if entry else ''
+        try:
+            dt = datetime.fromisoformat(ts.replace('Z', '+00:00').split('.')[0] + '+00:00') if ts else None
+        except:
+            dt = None
+
+        trades.append({
+            'session_date': session_date,
+            'trade_id': tid,
+            'pair': entry['pair'] if entry else 'UNKNOWN',
+            'direction': entry['direction'] if entry else ('LONG' if close.get('pl', 0) >= 0 else 'SHORT'),
+            'units': entry['units'] if entry else close['units'],
+            'entry_price': entry['price'] if entry else None,
+            'exit_price': close['price'],
+            'pl': close['pl'],
+            'session_hour': dt.hour if dt else None,
+            'reason': entry.get('reason', '') if entry else '',
+        })
+
+    return trades
+
+
 # --- Ingest ---
 
 def ingest_date(session_date: str, force: bool = False):
@@ -274,9 +406,40 @@ def ingest_date(session_date: str, force: bool = False):
     if notes_path.exists():
         notes_text = notes_path.read_text()
 
-    # trades テーブル
+    # trades テーブル — OANDA API優先、trades.mdは補助情報
+    # 1) OANDA APIから当日の確定トレードを取得
+    existing_trade_ids = set()
+    oanda_trades = fetch_oanda_trades(session_date)
+    for t in oanda_trades:
+        # 重複チェック
+        exists = fetchone_val(conn,
+            "SELECT COUNT(*) FROM trades WHERE trade_id = ?", (t['trade_id'],))
+        if exists and exists > 0:
+            continue
+        conn.execute(
+            """INSERT INTO trades (session_date, trade_id, pair, direction, units,
+               entry_price, exit_price, pl, session_hour, reason)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (t['session_date'], t['trade_id'], t['pair'], t['direction'], t['units'],
+             t['entry_price'], t['exit_price'], t['pl'], t['session_hour'], t['reason'])
+        )
+        existing_trade_ids.add(t['trade_id'])
+    if oanda_trades:
+        print(f"  oanda_trades: {len(oanda_trades)} records")
+
+    # 2) trades.mdからの構造化パース（テーゼ・教訓等の補助情報）
     structured_trades = parse_trades(trades_text, session_date)
+    md_inserted = 0
     for t in structured_trades:
+        # OANDA APIで既に挿入済みならスキップ
+        if t.get('trade_id') and t['trade_id'] in existing_trade_ids:
+            continue
+        # trade_idがある場合はDB内でも重複チェック
+        if t.get('trade_id'):
+            exists = fetchone_val(conn,
+                "SELECT COUNT(*) FROM trades WHERE trade_id = ?", (t['trade_id'],))
+            if exists and exists > 0:
+                continue
         conn.execute(
             """INSERT INTO trades (session_date, trade_id, pair, direction, units,
                entry_price, exit_price, pl,
@@ -290,8 +453,9 @@ def ingest_date(session_date: str, force: bool = False):
              t['regime'], t['vix'], t['dxy'], t['active_headlines'], t['event_risk'], t['session_hour'],
              t['entry_type'], t['had_sl'], t['reason'], t['lesson'], t['user_call_id'])
         )
-    if structured_trades:
-        print(f"  trades: {len(structured_trades)} records")
+        md_inserted += 1
+    if md_inserted:
+        print(f"  trades_md: {md_inserted} additional records")
 
     # user_calls テーブル
     user_calls = parse_user_calls(notes_text, session_date)
