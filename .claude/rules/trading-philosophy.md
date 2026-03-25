@@ -9,8 +9,7 @@
 - **ホールドは終わりじゃない**: 7ペアある。次のエントリーチャンスを探し続けろ
 - **予測を語れ、報告するな**: 「HOLD」で終わるな。「次に何が起きるか」を語れ
 - **貪欲であれ**: 7割の確信で打て。完璧なセットアップは来ない
-- **エントリー前に記憶を引け**: `cd collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}` で過去の勝率・スパイク・教訓を確認。HIGH判定ならサイズ半減+SL必須
-- **エントリー前に記憶を引け**: `cd collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}` で過去の勝率・スパイク・教訓を確認。HIGH判定ならサイズ半減+SL必須
+- **エントリー前にpretrade_check**: recording.mdのSTEP 0参照。スキップ禁止
 
 ## 絶対禁止
 

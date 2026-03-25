@@ -1,6 +1,18 @@
-# 記録ルール — 注文と記録は同一動作
+# 記録ルール — チェック→注文→記録は同一動作
 
-**注文を出したら、その場で4つセットで書く。後回し禁止。**
+**エントリーの流れ: pretrade_check → 注文 → 4点記録。この5ステップは分割不可。**
+
+## STEP 0: pretrade_check（注文の前に必ず実行）
+
+```bash
+cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}
+```
+
+- **HIGH判定** → サイズ半減 + SL必須。それでも入るか再考
+- **LOW/MEDIUM** → 通常通り進む
+- 結果をtrades.mdのエントリー記録に含める（`pretrade: LOW` 等）
+
+## STEP 1-4: 注文 → 4点記録（後回し禁止）
 
 | ファイル | 何を書く |
 |----------|---------|
