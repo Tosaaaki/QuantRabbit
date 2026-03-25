@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-25
+- 2026-03-25T16:30Z: **メモリシステム恒久改善** — (1) OANDA APIバックフィル: 全期間の決済済みトレード6,123件をtradesテーブルに一括投入。pretrade_checkの学習データが6件→6,129件に (2) ingest.py v2: SESSION_END時にOANDA APIから当日トレードを自動取得。trades.mdの不安定パースに依存しない確実なデータ収集 (3) backfill_trades.py新規作成: 再実行可能なバックフィルツール
+- 2026-03-25T16:00Z: **未コミットファイル一括整理** — v4体制以降の変更を3コミットで整理: (1) コード・設定(memory/, slack連携, rules, skills, prompts) (2) トレード記録(daily/2026-03-23~25) (3) .gitignore整備(memory.db, .bak除外)
+
 ## 2026-03-24
 - 2026-03-24T23:40Z: **Slack通知統合 — 記録3点→4点セット** — (1) `slack_trade_notify.py` 新規作成: entry/modify/closeの3アクションで `#qr-trades` に自動投稿。スレッド返信対応 (2) `env.toml` にチャンネルID追加: slack_channel_trades/commands/daily (3) recording.md: 3点セット→4点セットに更新。Slack通知コマンド例を追加 (4) SKILL.md(trader): 記録セクションにSlack通知を追加 (5) collab_trade/CLAUDE.md: 3箇所の記録ルールを4点セットに更新
 - 2026-03-24T22:30Z: **v6.5 — 2分短命セッション + 2分cronリレー** — (1) 12サイクル固定→時間ベース(最大2分)に変更。1セッション=1サイクル。記録を書き切ってから終了 (2) cron間隔を5分→2分に短縮 (3) SESSION_END時のメモリ保存+ロック解放をBash内に組み込み。traderが止まってもロック確実解放 (4) 被りはOK設計: ALREADY_RUNNINGスキップが正常動作。根本原因: 長時間セッションでの途中死亡で記録未保存。短命化で記録確実性を確保
