@@ -9,8 +9,8 @@
 cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}
 ```
 
-- **HIGH判定** → サイズ半減 + SL必須。それでも入るか再考
-- **LOW/MEDIUM** → 通常通り進む
+- 出力はデータと過去の教訓。**判断はお前がしろ**
+- HIGH/MEDIUM/LOWはデータの要約であって指示ではない。状況で判断を変えるのがプロ
 - 結果をtrades.mdのエントリー記録に含める（`pretrade: LOW` 等）
 
 ## STEP 0b: preclose_check（決済前に必ず実行）
