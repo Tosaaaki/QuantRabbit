@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-27
+- **資金効率改善** — マージン目標を90%→70-80%に変更。50%未満=怠慢ルール追加。日次10%には80%水準が必要（計算根拠: NAV18万×25倍×80%=名目363万、7ペア分散で1ペア平均7pipで達成）
+- **ボット的撤退ルール改善** — SKILL.mdの段階的撤退テーブル（固定時間・固定pip）をテーゼベース判断に改善。preclose_check組込
+
 ## 2026-03-26
 - **v8 — traderを正のシステムとして昇格** — リポジトリ全面整理。旧遺産を全てarchive/に統合。ディレクトリをCLAUDE.md, collab_trade/, tools/, indicators/, logs/, config/, docs/, archive/の8個に整理。21GB削減。staleワークツリー30個+、ブランチ130個+削除。パス変更: scripts/trader_tools/ → tools/
 - **trade_performance.py v4** — v6ログ形式対応。日別/ペア別/セッション別集計追加
