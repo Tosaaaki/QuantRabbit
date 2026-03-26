@@ -1,8 +1,9 @@
 # 記録ルール — チェック→注文→記録は同一動作
 
 **エントリーの流れ: pretrade_check → 注文 → 4点記録。この5ステップは分割不可。**
+**決済の流れ: preclose_check → 決済 → 4点記録。この流れも分割不可。**
 
-## STEP 0: pretrade_check（注文の前に必ず実行）
+## STEP 0a: pretrade_check（エントリー前に必ず実行）
 
 ```bash
 cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}
@@ -11,6 +12,17 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 - **HIGH判定** → サイズ半減 + SL必須。それでも入るか再考
 - **LOW/MEDIUM** → 通常通り進む
 - 結果をtrades.mdのエントリー記録に含める（`pretrade: LOW` 等）
+
+## STEP 0b: preclose_check（決済前に必ず実行）
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SIDE} {UNITS} {含み損益円}
+```
+
+- 出力はテーゼの再確認と事実の提示。判断を奪わない
+- 答えた上で決済するのはOK。答えずに反射で切るのがNG
+- **決済理由はlive_trade_logに必ず明記**（`reason=H1_DI+逆転` 等）
+- **理由なき決済 = ルール違反**
 
 ## STEP 1-4: 注文 → 4点記録（後回し禁止）
 
