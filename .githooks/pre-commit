@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${ROOT_DIR}"
-
-exec python3 scripts/preflight_guard.py
+# v8: 旧preflight_guard.pyは不要（ボットworkers/strategies廃止済み）
+# 必要に応じて新しいガードをここに追加
+exit 0
