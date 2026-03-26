@@ -27,13 +27,13 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 
 ```bash
 # エントリー
-python3 scripts/trader_tools/slack_trade_notify.py entry --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} [--sl {SL}] [--thesis "テーゼ"]
+python3 tools/slack_trade_notify.py entry --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} [--sl {SL}] [--thesis "テーゼ"]
 
 # 変更（半利確、SL移動、ナンピン等）
-python3 scripts/trader_tools/slack_trade_notify.py modify --pair {PAIR} --action "TP半利確" --units {UNITS} --price {PRICE} --pl "{PL}" [--note "残units, BE移動等"]
+python3 tools/slack_trade_notify.py modify --pair {PAIR} --action "TP半利確" --units {UNITS} --price {PRICE} --pl "{PL}" [--note "残units, BE移動等"]
 
 # 全決済
-python3 scripts/trader_tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} --pl "{PL}" [--total_pl "確定益合計"]
+python3 tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} --pl "{PL}" [--total_pl "確定益合計"]
 ```
 
 ## state.md はスナップショットじゃない。ストーリーだ

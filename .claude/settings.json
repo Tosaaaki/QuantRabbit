@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 scripts/trader_tools/*)",
+      "Bash(python3 tools/*)",
       "Bash(python3 collab_trade/indicators/*)",
       "Bash(python3 -c *oanda*)",
       "Bash(curl *api-fxtrade.oanda.com*)",

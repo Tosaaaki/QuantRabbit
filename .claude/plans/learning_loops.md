@@ -24,7 +24,7 @@ Python側の配管は完備:
 - 既存の `parse_prediction_accuracy()` はログベースのまま維持（補完的に使う）
 
 ### 3. shared_state アラートpruning ユーティリティ
-- `scripts/trader_tools/prune_alerts.py` — 1時間以上前のアラートを除去
+- `tools/prune_alerts.py` — 1時間以上前のアラートを除去
 - secretaryやmacro-intelがbashで呼べるように
 
 ### 変更しないもの

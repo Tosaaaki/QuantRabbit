@@ -15,9 +15,9 @@ base = 'https://api-fxtrade.oanda.com'  # 本番環境
 ## データ取得ツール
 | ツール | 用途 |
 |--------|------|
-| `python3 scripts/trader_tools/refresh_factor_cache.py --all --quiet` | H1/H4テクニカル更新 |
+| `python3 tools/refresh_factor_cache.py --all --quiet` | H1/H4テクニカル更新 |
 | `python3 collab_trade/indicators/quick_calc.py {PAIR} {TF} {BARS}` | 共同トレード時のテクニカル計算 |
-| `python3 scripts/trader_tools/trade_performance.py` | パフォーマンス集計 |
+| `python3 tools/trade_performance.py` | パフォーマンス集計 |
 | `cat logs/technicals_{PAIR}.json` | キャッシュ済みテクニカル参照 |
 
 ## 監視ペア

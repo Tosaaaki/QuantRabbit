@@ -45,7 +45,7 @@ for t in resp2.get('trades', []):
 
 - `logs/shared_state.json` — レジーム・アラート・テクニカル（updated_atが10分以上古ければ「データが古い」と明示）
 - `tail -30 logs/live_trade_log.txt` — 直近のトレーダー判断
-- `python3 scripts/trader_tools/task_lock.py status` — ロック状態
+- `python3 tools/task_lock.py status` — ロック状態
 
 ### Step 3: レポート出力
 
