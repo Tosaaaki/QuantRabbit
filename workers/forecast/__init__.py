@@ -1,3 +1,0 @@
-"""
-Forecast worker package.
-"""

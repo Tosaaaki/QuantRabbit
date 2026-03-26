@@ -1,1 +1,0 @@
-"""Scalp VWAP revert wrapper."""

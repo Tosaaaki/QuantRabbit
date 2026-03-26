@@ -1,1 +1,0 @@
-"""RangeFader scalp worker package."""

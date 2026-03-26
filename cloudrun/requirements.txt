@@ -1,4 +1,0 @@
-flask
-google-cloud-storage
-feedparser
-pandas

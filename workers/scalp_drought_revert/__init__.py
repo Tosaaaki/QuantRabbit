@@ -1,1 +1,0 @@
-"""Scalp drought revert wrapper."""
