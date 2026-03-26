@@ -1,0 +1,10 @@
+[Unit]
+Description=Run QuantRabbit type maintenance every day
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+Unit=quant-type-maintenance.service
+
+[Install]
+WantedBy=timers.target

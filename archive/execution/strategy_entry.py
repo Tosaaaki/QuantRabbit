@@ -1,0 +1,4622 @@
+"""Strategy-facing entry helpers.
+
+Strategies submit orders through this module. Before dispatching, it coordinates
+entry intent via order_manager's blackboard to keep strategy-level intent and avoid
+duplicate cross-strategy overexposure.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import math
+import os
+from typing import Any, Iterable, Literal, Optional
+
+from analysis import auto_canary, market_context, strategy_feedback
+from indicators.factor_cache import all_factors
+from execution.order_manager import cancel_order, close_trade, set_trade_protections
+from execution import order_manager
+from workers.common.dynamic_alloc import load_strategy_profile
+from workers.common.macro_news_context import (
+    load_current_context as load_macro_news_context,
+)
+from workers.common.participation_alloc import (
+    load_strategy_profile as load_participation_profile,
+)
+from workers.common.setup_context import derive_live_setup_context
+from workers.common import forecast_gate, pattern_gate
+
+
+def get_last_order_status_by_client_id(
+    client_order_id: Optional[str],
+) -> Optional[dict[str, object]]:
+    """Compatibility wrapper retained for existing strategy imports."""
+    return order_manager.get_last_order_status_by_client_id(client_order_id)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+_ENTRY_TECH_CONTEXT_ENABLED = _env_bool("ENTRY_TECH_CONTEXT_ENABLED", True)
+_ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS = _env_bool(
+    "ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS",
+    False,
+)
+
+
+def _env_csv(name: str, default: str) -> list[str]:
+    raw = os.getenv(name)
+    if raw is None:
+        raw = default
+    out: list[str] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if token:
+            out.append(token.upper())
+    return out
+
+
+_STRATEGY_PATTERN_GATE_ENABLED = _env_bool("STRATEGY_PATTERN_GATE_ENABLED", True)
+_STRATEGY_PATTERN_GATE_AUTO_OPT_IN = _env_bool(
+    "STRATEGY_PATTERN_GATE_AUTO_OPT_IN",
+    False,
+)
+_ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS = _env_bool(
+    "ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS",
+    False,
+)
+_STRATEGY_FORECAST_CONTEXT_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_CONTEXT_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX = max(
+    0.0,
+    min(0.95, _env_float("STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX", 0.65)),
+)
+_STRATEGY_FORECAST_FUSION_UNITS_BOOST_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_UNITS_BOOST_MAX", 0.20)),
+)
+_STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE = max(
+    0.05,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE", 0.25)),
+)
+_STRATEGY_FORECAST_FUSION_UNITS_MAX_SCALE = max(
+    _STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE,
+    min(2.0, _env_float("STRATEGY_FORECAST_FUSION_UNITS_MAX_SCALE", 1.20)),
+)
+_STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT", 0.65)),
+)
+_STRATEGY_FORECAST_FUSION_PROB_GAIN = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_PROB_GAIN", 0.22)),
+)
+_STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT", 0.70)),
+)
+_STRATEGY_FORECAST_FUSION_SYNTH_PROB_IF_MISSING = _env_bool(
+    "STRATEGY_FORECAST_FUSION_SYNTH_PROB_IF_MISSING",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_TP_BLEND_BASE = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_TP_BLEND_BASE", 0.20)),
+)
+_STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN", 0.40)),
+)
+_STRATEGY_FORECAST_FUSION_TF_CUT_MAX = max(
+    0.0,
+    min(0.9, _env_float("STRATEGY_FORECAST_FUSION_TF_CUT_MAX", 0.35)),
+)
+_STRATEGY_FORECAST_FUSION_TF_BOOST_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_TF_BOOST_MAX", 0.12)),
+)
+_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX", 0.22)),
+)
+_STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN", 0.65)),
+)
+_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED",
+    False,
+)
+_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX", 0.50)),
+)
+_STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX", 0.30)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_ENABLED = _env_bool(
+    "STRATEGY_FORECAST_FUSION_REBOUND_ENABLED",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX", 0.18)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX = max(
+    0.0,
+    min(0.9, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX", 0.30)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN = max(
+    0.0,
+    min(0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN", 0.10)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA = _env_bool(
+    "STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA",
+    True,
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN = max(
+    0.0,
+    min(1.0, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN", 0.82)),
+)
+_STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX = max(
+    0.0,
+    min(
+        0.5, _env_float("STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX", 0.18)
+    ),
+)
+_STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED = _env_bool(
+    "STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED",
+    False,
+)
+_STRATEGY_ENTRY_NET_EDGE_POCKETS = _env_csv(
+    "STRATEGY_ENTRY_NET_EDGE_POCKETS",
+    "scalp_fast",
+)
+_STRATEGY_ENTRY_NET_EDGE_POCKETS = {
+    p.lower().strip() for p in _STRATEGY_ENTRY_NET_EDGE_POCKETS if p
+}
+_STRATEGY_ENTRY_NET_EDGE_MIN_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_MIN_PIPS",
+    0.0,
+)
+_STRATEGY_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS",
+    0.20,
+)
+_STRATEGY_ENTRY_NET_EDGE_SLIPPAGE_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_SLIPPAGE_PIPS",
+    0.05,
+)
+_STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT = _env_float(
+    "STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS",
+    0.02,
+)
+_STRATEGY_DYNAMIC_ALLOC_ENABLED = _env_bool("STRATEGY_DYNAMIC_ALLOC_ENABLED", True)
+_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY = _env_bool("STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY", True)
+_STRATEGY_DYNAMIC_ALLOC_PATH = os.getenv(
+    "STRATEGY_DYNAMIC_ALLOC_PATH", "config/dynamic_alloc.json"
+)
+_STRATEGY_DYNAMIC_ALLOC_TTL_SEC = max(
+    1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_TTL_SEC", 20.0)
+)
+_STRATEGY_DYNAMIC_ALLOC_MULT_MIN = max(
+    0.05,
+    min(1.0, _env_float("STRATEGY_DYNAMIC_ALLOC_MULT_MIN", 0.10)),
+)
+_STRATEGY_DYNAMIC_ALLOC_MULT_MAX = max(
+    _STRATEGY_DYNAMIC_ALLOC_MULT_MIN,
+    min(2.0, _env_float("STRATEGY_DYNAMIC_ALLOC_MULT_MAX", 1.00)),
+)
+_STRATEGY_DYNAMIC_ALLOC_POCKETS = {
+    p.lower().strip()
+    for p in _env_csv("STRATEGY_DYNAMIC_ALLOC_POCKETS", "scalp_fast,micro,scalp")
+    if p
+}
+_STRATEGY_PARTICIPATION_ALLOC_ENABLED = _env_bool(
+    "STRATEGY_PARTICIPATION_ALLOC_ENABLED", True
+)
+_STRATEGY_PARTICIPATION_ALLOC_PATH = os.getenv(
+    "STRATEGY_PARTICIPATION_ALLOC_PATH",
+    "config/participation_alloc.json",
+)
+_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC = max(
+    1.0,
+    _env_float("STRATEGY_PARTICIPATION_ALLOC_TTL_SEC", 30.0),
+)
+_STRATEGY_PARTICIPATION_ALLOC_MULT_MIN = max(
+    0.10,
+    min(1.0, _env_float("STRATEGY_PARTICIPATION_ALLOC_MULT_MIN", 0.60)),
+)
+_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX = max(
+    1.0,
+    min(1.5, _env_float("STRATEGY_PARTICIPATION_ALLOC_MULT_MAX", 1.24)),
+)
+_STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX = max(
+    0.0,
+    min(0.25, _env_float("STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX", 0.12)),
+)
+_STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX = max(
+    0.0,
+    min(
+        0.25,
+        _env_float(
+            "STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX",
+            _STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX,
+        ),
+    ),
+)
+_STRATEGY_PARTICIPATION_ALLOC_POCKETS = {
+    p.lower().strip()
+    for p in _env_csv("STRATEGY_PARTICIPATION_ALLOC_POCKETS", "scalp_fast,micro,scalp")
+    if p
+}
+_STRATEGY_MARKET_CONTEXT_ENABLED = _env_bool("STRATEGY_MARKET_CONTEXT_ENABLED", True)
+_STRATEGY_MARKET_CONTEXT_PATH = os.getenv(
+    "STRATEGY_MARKET_CONTEXT_PATH",
+    "logs/market_context_latest.json",
+)
+_STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC = max(
+    60.0,
+    _env_float("STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC", 1800.0),
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_ENABLED = _env_bool(
+    "STRATEGY_MACRO_NEWS_CONTEXT_ENABLED", True
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_PATH = os.getenv(
+    "STRATEGY_MACRO_NEWS_CONTEXT_PATH",
+    "logs/macro_news_context.json",
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_TTL_SEC = max(
+    1.0,
+    _env_float("STRATEGY_MACRO_NEWS_CONTEXT_TTL_SEC", 60.0),
+)
+_STRATEGY_MACRO_NEWS_CONTEXT_MAX_AGE_SEC = max(
+    60.0,
+    _env_float("STRATEGY_MACRO_NEWS_CONTEXT_MAX_AGE_SEC", 7200.0),
+)
+_STRATEGY_AUTO_CANARY_ENABLED = _env_bool("STRATEGY_AUTO_CANARY_ENABLED", True)
+_STRATEGY_AUTO_CANARY_MULT_MIN = max(
+    0.50,
+    min(1.0, _env_float("STRATEGY_AUTO_CANARY_MULT_MIN", 0.80)),
+)
+_STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX = max(
+    0.0,
+    min(0.10, _env_float("STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX", 0.05)),
+)
+_PATTERN_GATE_META_KEYS = (
+    "pattern_gate_opt_in",
+    "use_pattern_gate",
+    "pattern_gate_enabled",
+)
+_TECH_DEFAULT_TFS_BY_POCKET = {
+    "macro": ("D1", "H4", "H1", "M5", "M1"),
+    "micro": ("H4", "H1", "M5", "M1"),
+    "scalp": ("H1", "M5", "M1"),
+    "scalp_fast": ("H1", "M5", "M1"),
+    "manual": ("H4", "H1", "M5", "M1"),
+}
+_TECH_ALL_KNOWN_TFS = ("D1", "H4", "H1", "M5", "M1")
+_DEFAULT_ENTRY_TECH_TFS = _env_csv(
+    "ENTRY_TECH_DEFAULT_TFS",
+    ",".join(_TECH_ALL_KNOWN_TFS),
+)
+
+_TECH_POLICY_REQUIRE_ALL = {}
+_FORECAST_SUPPORT_DEFAULT_BY_HORIZON: dict[str, tuple[str, ...]] = {
+    "1m": ("5m", "10m"),
+    "5m": ("1m", "10m"),
+    "10m": ("5m", "1h"),
+    "1h": ("10m", "8h"),
+    "8h": ("1h", "1d"),
+    "1d": ("8h", "1w"),
+}
+
+
+def _coerce_bool(value: object, default: Optional[bool] = None) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        if value in (0, 0.0):
+            return False
+        if value in (1, 1.0):
+            return True
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
+def _has_pattern_gate_optin(entry_thesis: Optional[dict], meta: Optional[dict]) -> bool:
+    for container in (entry_thesis, meta):
+        if not isinstance(container, dict):
+            continue
+        if any(key in container for key in _PATTERN_GATE_META_KEYS):
+            return True
+    return False
+
+
+def _normalize_env_prefix(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    value_text = str(value).strip()
+    if not value_text:
+        return None
+    return value_text.upper()
+
+
+def _infer_env_prefix_from_strategy_tag(strategy_tag: Optional[str]) -> Optional[str]:
+    tag = str(strategy_tag or "").strip().upper()
+    if not tag:
+        return None
+    if tag.startswith("SCALP_PING_5S_FLOW"):
+        return "SCALP_PING_5S_FLOW"
+    if tag.startswith("SCALP_PING_5S_B"):
+        return "SCALP_PING_5S_B"
+    if tag.startswith("SCALP_PING_5S_C"):
+        return "SCALP_PING_5S_C"
+    if tag.startswith("SCALP_PING_5S_D"):
+        return "SCALP_PING_5S_D"
+    if tag.startswith("SCALP_PING_5S"):
+        return "SCALP_PING_5S"
+    return None
+
+
+def _normalize_pattern_gate_meta(
+    entry_thesis: Optional[dict], meta: Optional[dict]
+) -> Optional[dict]:
+    if _has_pattern_gate_optin(entry_thesis, meta):
+        return meta if isinstance(meta, dict) else None
+    if not _STRATEGY_PATTERN_GATE_AUTO_OPT_IN:
+        return meta if isinstance(meta, dict) else None
+    if isinstance(meta, dict):
+        injected = dict(meta)
+    else:
+        injected = {}
+    injected["pattern_gate_opt_in"] = True
+    return injected
+
+
+def _coalesce_env_prefix(
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+    strategy_tag: Optional[str] = None,
+) -> Optional[str]:
+    inferred_env_prefix = _infer_env_prefix_from_strategy_tag(strategy_tag)
+    if inferred_env_prefix is not None:
+        return inferred_env_prefix
+
+    for container in (entry_thesis, meta):
+        if not isinstance(container, dict):
+            continue
+        value = _normalize_env_prefix(
+            container.get("env_prefix") or container.get("ENV_PREFIX")
+        )
+        if not value:
+            continue
+        return value
+    return None
+
+
+def _inject_env_prefix_context(
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+    strategy_tag: Optional[str] = None,
+) -> tuple[dict, dict]:
+    env_prefix = _coalesce_env_prefix(entry_thesis, meta, strategy_tag)
+    normalized_entry_thesis: dict = (
+        dict(entry_thesis) if isinstance(entry_thesis, dict) else {}
+    )
+    normalized_meta: dict = dict(meta) if isinstance(meta, dict) else {}
+    if env_prefix:
+        normalized_entry_thesis["env_prefix"] = env_prefix
+        normalized_entry_thesis["ENV_PREFIX"] = env_prefix
+        normalized_meta["env_prefix"] = env_prefix
+        normalized_meta["ENV_PREFIX"] = env_prefix
+    return normalized_entry_thesis, normalized_meta
+
+
+_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = {
+    "SCALP_PING_5S": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "1m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 1},
+        "forecast_support_horizons": ["5m", "10m"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_M1SCALPER": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "ema24",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 120, "M5": 80, "H1": 60},
+        "forecast_horizon": "5m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 5},
+        "forecast_support_horizons": ["1m", "10m"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_MACD_RSI_DIV": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema24",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "macd_hist",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 160, "M5": 100, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_TICK_IMBALANCE": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+            "tick_rate",
+        ],
+        "technical_context_candle_counts": {"M1": 160, "M5": 90, "H1": 50},
+        "forecast_horizon": "5m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 5},
+        "forecast_support_horizons": ["1m", "10m"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_PING_5S_B": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "1m",
+        "forecast_profile": {"timeframe": "M1", "step_bars": 1},
+        "forecast_support_horizons": ["5m", "10m"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_WICK_REVERSAL_BLEND": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_WICK_REVERSAL_PRO": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SCALP_SQUEEZE_PULSE_BREAK": {
+        "technical_context_tfs": ["M1", "M5", "H1", "H4"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "ema12",
+            "ema20",
+            "ema24",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 140, "M5": 90, "H1": 70, "H4": 40},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "MICRO_ADAPTIVE_REVERT": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M5": 120, "M1": 80, "H1": 50},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "MICRO_MULTISTRAT": {
+        "technical_context_tfs": ["M5", "M1", "H1"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema20",
+            "rsi",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "macd",
+            "volume",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M5": 120, "M1": 140, "H1": 60},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+    "SESSION_OPEN": {
+        "technical_context_tfs": ["M1", "M5", "H1"],
+        "technical_context_fields": [
+            "ma10",
+            "ma20",
+            "ema12",
+            "ema24",
+            "atr",
+            "atr_pips",
+            "adx",
+            "bbw",
+            "rsi",
+            "macd",
+        ],
+        "technical_context_ticks": [
+            "latest_bid",
+            "latest_ask",
+            "latest_mid",
+            "spread_pips",
+        ],
+        "technical_context_candle_counts": {"M1": 120, "M5": 90, "H1": 60},
+        "forecast_horizon": "10m",
+        "forecast_profile": {"timeframe": "M5", "step_bars": 2},
+        "forecast_support_horizons": ["5m", "1h"],
+        "forecast_technical_only": True,
+        "tech_policy": dict(_TECH_POLICY_REQUIRE_ALL),
+    },
+}
+
+_STRATEGY_TECH_CONTEXT_REQUIREMENTS.update(
+    {
+        "SCALP_TICK_IMBALANCE_RRPLUS": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]
+        ),
+        "SCALP_TICK_WICK_REVERSAL": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_WICK_REVERSAL": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_WICK_REVERSAL_HF": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_TICK_WICK_REVERSAL_HF": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"]
+        ),
+        "SCALP_LEVEL_REJECT": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]
+        ),
+        "SCALP_LEVEL_REJECT_PLUS": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"]
+        ),
+        "MICRO_RANGEBREAK": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_VWAPBOUND": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_VWAPREVERT": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_MOMENTUMBURST": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_MOMENTUMSTACK": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_PULLBACKEMA": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_LEVELREACTOR": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_TRENDMOMENTUM": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_TRENDRETEST": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_COMPRESSIONREVERT": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_MOMENTUMPULSE": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "TECH_FUSION": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]),
+        "MACRO_TECH_FUSION": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
+        "RANGE_COMPRESSION_BREAK": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "MICRO_PULLBACK_FIB": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"]
+        ),
+        "SCALP_REVERSAL_NWAVE": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]
+        ),
+        "TREND_RECLAIM_LONG": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]
+        ),
+        "VOL_SPIKE_RIDER": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"]),
+        "LONDON_MOMENTUM": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
+        "MACRO_H1MOMENTUM": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
+        "TREND_H1": dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]),
+        "H1_MOMENTUMSWING": dict(
+            _STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"]
+        ),
+    }
+)
+
+
+def _strategy_key(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _normalize_strategy_requirements(
+    requirements: dict[str, dict[str, object]],
+) -> dict[str, dict[str, object]]:
+    return {_strategy_key(key): dict(value) for key, value in requirements.items()}
+
+
+_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS: dict[str, dict[str, object]] = (
+    _normalize_strategy_requirements(_STRATEGY_TECH_CONTEXT_REQUIREMENTS)
+)
+
+
+def _resolve_strategy_technical_context_contract(
+    strategy_tag: Optional[str],
+    pocket: str,
+) -> dict[str, object]:
+    key = _strategy_key(strategy_tag)
+    if not key:
+        return {}
+    if key in _NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS:
+        return dict(_NORMALIZED_STRATEGY_TECH_CONTEXT_REQUIREMENTS[key])
+    if "sessionopen" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SESSION_OPEN"])
+    if key.startswith("techfusion"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["TECH_FUSION"])
+    if key.startswith("macrotechfusion"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MACRO_TECH_FUSION"])
+    if key.startswith("micropullbackfib"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_PULLBACK_FIB"])
+    if key.startswith("rangecompressionbreak"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["RANGE_COMPRESSION_BREAK"])
+    if key.startswith("scalpreversalnwave"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_REVERSAL_NWAVE"])
+    if key.startswith("trendreclaim"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["TREND_RECLAIM_LONG"])
+    if key.startswith("volspikerider"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["VOL_SPIKE_RIDER"])
+    if (
+        key.startswith("macroh1momentum")
+        or key.startswith("h1momentumswing")
+        or key.startswith("trendh1")
+    ):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MACRO_H1MOMENTUM"])
+    if key.startswith("londonmomentum"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["LONDON_MOMENTUM"])
+    if "ping" in key and key.startswith("scalp"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_PING_5S"])
+    if ("m1" in key and key.startswith("scalp")) or key.startswith("scalpm1"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"])
+    if "macd" in key and key.startswith("scalp"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"])
+    if "tickimbalance" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"])
+    if "tickwick" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_WICK_REVERSAL"])
+    if "levelreject" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_LEVEL_REJECT"])
+    if "tick" in key or "imbalance" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_TICK_IMBALANCE"])
+    if "squeeze" in key and "pulse" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_SQUEEZE_PULSE_BREAK"])
+    if "wick" in key and "reversal" in key:
+        if "pro" in key:
+            return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_PRO"])
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_WICK_REVERSAL_BLEND"])
+    if "micro" in key and key.startswith("micro"):
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"])
+    if "micro" in key:
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"])
+    if pocket == "micro":
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["MICRO_MULTISTRAT"])
+    if pocket == "scalp":
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_M1SCALPER"])
+    if pocket == "macro":
+        return dict(_STRATEGY_TECH_CONTEXT_REQUIREMENTS["SCALP_MACD_RSI_DIV"])
+    return {}
+
+
+def _attach_strategy_technical_context_requirements(
+    entry_thesis: Optional[dict],
+    strategy_tag: Optional[str],
+    pocket: str,
+) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    if not isinstance(strategy_tag, str) and not pocket:
+        return entry_thesis
+    contract = _resolve_strategy_technical_context_contract(strategy_tag, pocket)
+    if not contract:
+        return entry_thesis
+    if (
+        not _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS
+        and not _has_explicit_technical_context_requirements(entry_thesis)
+    ):
+        return entry_thesis
+    for key, raw_value in contract.items():
+        if key in entry_thesis:
+            if key == "tech_policy":
+                existing_policy = entry_thesis.get("tech_policy")
+                if isinstance(existing_policy, dict) and isinstance(raw_value, dict):
+                    merged_policy = dict(existing_policy)
+                    for policy_key, policy_value in raw_value.items():
+                        if policy_key in {
+                            "require_fib",
+                            "require_nwave",
+                            "require_candle",
+                        }:
+                            co = _coerce_bool(policy_value, default=False)
+                            if co is not None:
+                                merged_policy[policy_key] = co
+                        elif policy_key == "tech_policy_locked":
+                            if _coerce_bool(policy_value, default=False):
+                                merged_policy[policy_key] = True
+                        elif policy_key not in merged_policy:
+                            merged_policy[policy_key] = policy_value
+                    entry_thesis["tech_policy"] = merged_policy
+            continue
+        if key == "tech_policy" and isinstance(raw_value, dict) and not raw_value:
+            continue
+        if isinstance(raw_value, dict):
+            entry_thesis[key] = dict(raw_value)
+        elif isinstance(raw_value, (list, tuple, set)):
+            entry_thesis[key] = list(raw_value)
+        else:
+            entry_thesis[key] = raw_value
+    return entry_thesis
+
+
+def _has_explicit_technical_context_requirements(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    for key in (
+        "technical_context",
+        "technical_context_tfs",
+        "technical_context_fields",
+        "technical_context_ticks",
+        "technical_context_candle_counts",
+    ):
+        if key in entry_thesis:
+            return True
+    return False
+
+
+def _resolve_strategy_tag(
+    strategy_tag: Optional[str],
+    client_order_id: Optional[str],
+    entry_thesis: Optional[dict],
+) -> Optional[str]:
+    if isinstance(entry_thesis, dict):
+        thesis_strategy_tag = order_manager._strategy_tag_from_thesis(entry_thesis)
+        if thesis_strategy_tag:
+            return thesis_strategy_tag
+    resolved = strategy_tag
+    if not resolved:
+        resolved = order_manager._strategy_tag_from_client_id(client_order_id)
+    if not resolved and isinstance(entry_thesis, dict):
+        resolved = order_manager._strategy_tag_from_thesis(entry_thesis)
+    return resolved
+
+
+def _resolve_entry_probability(
+    entry_thesis: Optional[dict],
+    confidence: Optional[float],
+) -> Optional[float]:
+    if not isinstance(entry_thesis, dict):
+        return _entry_probability_value(confidence) if confidence is not None else None
+    for key in ("entry_probability", "confidence"):
+        if key not in entry_thesis:
+            continue
+        raw = entry_thesis.get(key)
+        try:
+            probability = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(probability) or math.isinf(probability):
+            continue
+        if probability <= 1.0:
+            return max(0.0, min(1.0, probability))
+        return max(0.0, min(1.0, probability / 100.0))
+    return _entry_probability_value(confidence) if confidence is not None else None
+
+
+def _entry_probability_value(raw: Optional[float]) -> Optional[float]:
+    if raw is None:
+        return None
+    try:
+        probability = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(probability) or math.isinf(probability):
+        return None
+    if probability <= 1.0:
+        return max(0.0, min(1.0, probability))
+    return max(0.0, min(1.0, probability / 100.0))
+
+
+def _inject_entry_intent_contract(
+    entry_thesis: Optional[dict],
+    units: int,
+    entry_probability: Optional[float],
+) -> tuple[Optional[dict], float]:
+    normalized_probability = _entry_probability_value(entry_probability)
+    if normalized_probability is None and isinstance(entry_thesis, dict):
+        normalized_probability = _entry_probability_value(
+            entry_thesis.get("entry_probability")
+        )
+        if normalized_probability is None:
+            normalized_probability = _entry_probability_value(
+                entry_thesis.get("confidence")
+            )
+    if normalized_probability is None:
+        normalized_probability = 1.0
+    if not isinstance(entry_thesis, dict):
+        return None, normalized_probability
+    thesis = dict(entry_thesis)
+    thesis["entry_probability"] = normalized_probability
+    thesis["entry_units_intent"] = abs(int(units))
+    return thesis, normalized_probability
+
+
+def _entry_path_stage_status(
+    *,
+    units_before: Optional[int] = None,
+    units_after: Optional[int] = None,
+    entry_probability_before: Optional[float] = None,
+    entry_probability_after: Optional[float] = None,
+    skip_when_unchanged: bool = False,
+) -> str:
+    before_abs = abs(int(units_before)) if units_before is not None else None
+    after_abs = abs(int(units_after)) if units_after is not None else None
+    if after_abs == 0 and (before_abs is None or before_abs > 0):
+        return "block"
+    if before_abs is not None and after_abs is not None:
+        if after_abs < before_abs:
+            return "reduce"
+        if after_abs > before_abs:
+            return "boost"
+    prob_before = _entry_probability_value(entry_probability_before)
+    prob_after = _entry_probability_value(entry_probability_after)
+    if prob_before is not None and prob_after is not None:
+        if prob_after + 1e-9 < prob_before:
+            return "reduce"
+        if prob_after > prob_before + 1e-9:
+            return "boost"
+    if skip_when_unchanged:
+        return "skip"
+    return "pass"
+
+
+def _entry_path_reason(payload: object, *keys: str) -> Optional[str]:
+    if not isinstance(payload, dict):
+        return None
+    for key in keys:
+        raw = payload.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return None
+
+
+def _append_entry_path_stage(
+    entry_thesis: Optional[dict],
+    *,
+    stage: str,
+    status: str,
+    units_before: Optional[int] = None,
+    units_after: Optional[int] = None,
+    entry_probability_before: Optional[float] = None,
+    entry_probability_after: Optional[float] = None,
+    reason: Optional[str] = None,
+    detail_key: Optional[str] = None,
+) -> Optional[dict]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    thesis = dict(entry_thesis)
+    existing = thesis.get("entry_path_attribution")
+    trail: list[dict[str, object]] = []
+    if isinstance(existing, list):
+        trail = [dict(item) for item in existing if isinstance(item, dict)]
+    record: dict[str, object] = {
+        "stage": stage,
+        "status": status,
+    }
+    if units_before is not None:
+        record["units_before"] = int(units_before)
+    if units_after is not None:
+        record["units_after"] = int(units_after)
+    normalized_prob_before = _entry_probability_value(entry_probability_before)
+    if normalized_prob_before is not None:
+        record["entry_probability_before"] = round(float(normalized_prob_before), 6)
+    normalized_prob_after = _entry_probability_value(entry_probability_after)
+    if normalized_prob_after is not None:
+        record["entry_probability_after"] = round(float(normalized_prob_after), 6)
+    if reason:
+        record["reason"] = reason
+    if detail_key:
+        record["detail_key"] = detail_key
+    trail.append(record)
+    thesis["entry_path_attribution_version"] = 1
+    thesis["entry_path_attribution"] = trail
+    return thesis
+
+
+def _strategy_tag_to_env_prefix(strategy_tag: Optional[str]) -> Optional[str]:
+    raw = str(strategy_tag or "").strip().upper()
+    if not raw:
+        return None
+    chars: list[str] = []
+    prev_sep = False
+    for ch in raw:
+        if ch.isalnum():
+            chars.append(ch)
+            prev_sep = False
+            continue
+        if not prev_sep:
+            chars.append("_")
+            prev_sep = True
+    prefix = "".join(chars).strip("_")
+    if not prefix:
+        return None
+    for suffix in ("_LIVE", "_PAPER", "_DEMO", "_WORKER"):
+        if prefix.endswith(suffix) and len(prefix) > len(suffix):
+            prefix = prefix[: -len(suffix)]
+            break
+    prefix = prefix.strip("_")
+    return prefix or None
+
+
+def _strategy_tag_family_env_prefixes(strategy_tag: Optional[str]) -> list[str]:
+    raw = str(strategy_tag or "").strip()
+    if not raw or "-" not in raw:
+        return []
+    parts = [part.strip() for part in raw.split("-") if part.strip()]
+    if len(parts) <= 1:
+        return []
+    families: list[str] = []
+    for end in range(len(parts) - 1, 0, -1):
+        candidate = _strategy_tag_to_env_prefix("-".join(parts[:end]))
+        normalized = _normalize_env_prefix(candidate)
+        if normalized and normalized not in families:
+            families.append(normalized)
+    return families
+
+
+def _strategy_env_prefix_candidates(
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> list[str]:
+    candidates: list[str] = []
+    for candidate in (
+        _coalesce_env_prefix(entry_thesis, meta, strategy_tag),
+        _strategy_tag_to_env_prefix(strategy_tag),
+        *_strategy_tag_family_env_prefixes(strategy_tag),
+    ):
+        normalized = _normalize_env_prefix(candidate)
+        if normalized and normalized not in candidates:
+            candidates.append(normalized)
+    return candidates
+
+
+def _strategy_env_raw(prefixes: list[str], suffix: str) -> Optional[str]:
+    for prefix in prefixes:
+        raw = os.getenv(f"{prefix}_{suffix}")
+        if raw is not None:
+            return raw
+    return os.getenv(f"STRATEGY_{suffix}")
+
+
+def _strategy_env_bool(prefixes: list[str], suffix: str, default: bool) -> bool:
+    raw = _strategy_env_raw(prefixes, suffix)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _strategy_env_float(prefixes: list[str], suffix: str, default: float) -> float:
+    raw = _strategy_env_raw(prefixes, suffix)
+    if raw is None:
+        return float(default)
+    try:
+        parsed = float(raw)
+    except (TypeError, ValueError):
+        return float(default)
+    if math.isnan(parsed) or math.isinf(parsed):
+        return float(default)
+    return float(parsed)
+
+
+def _signed_component_from_probability(
+    raw_probability: object,
+    *,
+    side_sign: int,
+) -> Optional[float]:
+    parsed = _to_float(raw_probability)
+    if parsed is None:
+        return None
+    probability = _entry_probability_value(parsed)
+    if probability is None:
+        return None
+    side_probability = probability if side_sign >= 0 else (1.0 - probability)
+    return max(-1.0, min(1.0, (side_probability - 0.5) * 2.0))
+
+
+def _signed_component_from_score(
+    raw_value: object,
+    *,
+    zero_to_one_as_probability: bool = False,
+) -> Optional[float]:
+    value = _to_float(raw_value)
+    if value is None:
+        return None
+    if zero_to_one_as_probability and 0.0 <= value <= 1.0:
+        return max(-1.0, min(1.0, (value - 0.5) * 2.0))
+    if -1.0 <= value <= 1.0:
+        return max(-1.0, min(1.0, value))
+    if zero_to_one_as_probability and 0.0 <= value <= 100.0:
+        return max(-1.0, min(1.0, ((value / 100.0) - 0.5) * 2.0))
+    if -100.0 <= value <= 100.0:
+        return max(-1.0, min(1.0, value / 100.0))
+    return max(-1.0, min(1.0, math.tanh(value)))
+
+
+def _pattern_quality_component(entry_thesis: Optional[dict]) -> Optional[float]:
+    if not isinstance(entry_thesis, dict):
+        return None
+    gate = entry_thesis.get("pattern_gate")
+    if not isinstance(gate, dict):
+        return None
+    quality = str(gate.get("quality") or "").strip().lower()
+    if not quality:
+        return None
+    if quality in {"avoid", "bad", "reject", "blocked"}:
+        return -1.0
+    if quality in {"good", "prefer", "boost"}:
+        return 0.55
+    if quality in {"strong", "excellent"}:
+        return 0.8
+    return None
+
+
+def _leading_components(
+    *,
+    side_sign: int,
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+) -> dict[str, float]:
+    components: dict[str, float] = {}
+
+    forecast_comp: Optional[float] = None
+    if isinstance(forecast_context, dict):
+        forecast_comp = _signed_component_from_probability(
+            forecast_context.get("p_up"),
+            side_sign=side_sign,
+        )
+        if forecast_comp is None:
+            forecast_comp = _signed_component_from_score(
+                forecast_context.get("direction_bias"),
+                zero_to_one_as_probability=False,
+            )
+    if forecast_comp is None and isinstance(entry_thesis, dict):
+        fusion = entry_thesis.get("forecast_fusion")
+        if isinstance(fusion, dict):
+            forecast_comp = _signed_component_from_probability(
+                fusion.get("direction_prob"),
+                side_sign=side_sign,
+            )
+            if forecast_comp is None:
+                forecast_comp = _signed_component_from_score(
+                    fusion.get("direction_bias"),
+                    zero_to_one_as_probability=False,
+                )
+        if forecast_comp is None:
+            forecast_comp = _signed_component_from_probability(
+                entry_thesis.get("projection_probability"),
+                side_sign=side_sign,
+            )
+    if forecast_comp is not None:
+        components["forecast"] = float(forecast_comp)
+
+    if isinstance(entry_thesis, dict):
+        tech_comp = _signed_component_from_score(
+            entry_thesis.get("tech_score"),
+            zero_to_one_as_probability=False,
+        )
+        if tech_comp is None:
+            tech_ctx = entry_thesis.get("technical_context")
+            if isinstance(tech_ctx, dict):
+                tech_result = tech_ctx.get("result")
+                if isinstance(tech_result, dict):
+                    tech_comp = _signed_component_from_score(
+                        tech_result.get("score"),
+                        zero_to_one_as_probability=False,
+                    )
+        if tech_comp is not None:
+            components["tech"] = float(tech_comp)
+
+        range_comp = _signed_component_from_score(
+            entry_thesis.get("range_score"),
+            zero_to_one_as_probability=True,
+        )
+        if range_comp is not None:
+            components["range"] = float(range_comp)
+
+        micro_comp = _signed_component_from_score(
+            entry_thesis.get("air_score"),
+            zero_to_one_as_probability=True,
+        )
+        if micro_comp is None:
+            extrema = entry_thesis.get("extrema")
+            if isinstance(extrema, dict):
+                micro_comp = _signed_component_from_score(
+                    extrema.get("tick_strength"),
+                    zero_to_one_as_probability=False,
+                )
+        if micro_comp is not None:
+            components["micro"] = float(micro_comp)
+
+        pattern_comp = _pattern_quality_component(entry_thesis)
+        if pattern_comp is not None:
+            components["pattern"] = float(pattern_comp)
+
+    return components
+
+
+def _strategy_surface_leading_override(
+    *,
+    strategy_tag: Optional[str],
+    side_sign: int,
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+) -> Optional[dict[str, object]]:
+    if side_sign <= 0 or not isinstance(entry_thesis, dict):
+        return None
+    if not _strategy_key(strategy_tag).startswith("microlevelreactor"):
+        return None
+
+    setup_fingerprint = str(entry_thesis.get("setup_fingerprint") or "").strip()
+    if not setup_fingerprint:
+        live_setup = entry_thesis.get("live_setup_context")
+        if isinstance(live_setup, dict):
+            setup_fingerprint = str(live_setup.get("setup_fingerprint") or "").strip()
+
+    if setup_fingerprint.startswith(
+        "MicroLevelReactor-bounce-lower|long|range_fade|normal_normal|"
+    ):
+        if "gap:down_flat" not in setup_fingerprint:
+            return None
+
+        pattern_tag = str(entry_thesis.get("pattern_tag") or "").strip().lower()
+        if not all(
+            token in pattern_tag for token in ("c:spin_dn", "w:lower", "tr:flat")
+        ):
+            return None
+
+        forecast_payload = (
+            forecast_context
+            if isinstance(forecast_context, dict)
+            else entry_thesis.get("forecast")
+        )
+        if not isinstance(forecast_payload, dict):
+            return None
+        if _coerce_bool(forecast_payload.get("allowed"), None) is not False:
+            return None
+        if (
+            str(forecast_payload.get("reason") or "").strip().lower()
+            != "expected_pips_contra"
+        ):
+            return None
+
+        expected_pips = _to_float(forecast_payload.get("expected_pips"))
+        if expected_pips is None or expected_pips > -0.25:
+            return None
+        forecast_p_up = _to_float(forecast_payload.get("p_up"))
+        if forecast_p_up is not None and forecast_p_up > 0.40:
+            return None
+
+        tech_score = _to_float(entry_thesis.get("tech_score"))
+        if tech_score is None:
+            technical_context = entry_thesis.get("technical_context")
+            if isinstance(technical_context, dict):
+                tech_result = technical_context.get("result")
+                if isinstance(tech_result, dict):
+                    tech_score = _to_float(tech_result.get("score"))
+        if tech_score is None or tech_score > 0.25:
+            return None
+
+        history_score = None
+        history_perf = entry_thesis.get("history_perf")
+        if isinstance(history_perf, dict):
+            history_score = _to_float(history_perf.get("score"))
+        if history_score is None or history_score > 0.25:
+            return None
+
+        range_score = _to_float(entry_thesis.get("range_score"))
+        if range_score is None or range_score < 0.40:
+            return None
+
+        return {
+            "mode": "force_reject",
+            "reason": "entry_leading_profile_surface_reject",
+            "surface": "mlr_bounce_lower_range_fade_normal_normal_gap_down_flat_spin_dn",
+            "forecast_reason": str(forecast_payload.get("reason") or ""),
+            "forecast_expected_pips": round(float(expected_pips), 4),
+            "forecast_p_up": (
+                round(float(forecast_p_up), 6) if forecast_p_up is not None else None
+            ),
+            "tech_score": round(float(tech_score), 6),
+            "history_score": round(float(history_score), 6),
+            "range_score": round(float(range_score), 6),
+            "setup_fingerprint": setup_fingerprint,
+            "pattern_tag": pattern_tag,
+        }
+
+    if not setup_fingerprint.startswith(
+        "MicroLevelReactor-bounce-lower|long|range_fade|tight_normal|"
+    ):
+        return None
+    if "gap:down_flat" not in setup_fingerprint:
+        return None
+
+    pattern_tag = str(entry_thesis.get("pattern_tag") or "").strip().lower()
+    if not any(token in pattern_tag for token in ("w:lower", "w:balanced")):
+        return None
+    if "w:balanced" in pattern_tag and "rsi:os" not in pattern_tag:
+        return None
+    if not any(token in pattern_tag for token in ("c:doji_up", "c:trend_up")):
+        return None
+
+    forecast_payload = (
+        forecast_context
+        if isinstance(forecast_context, dict)
+        else entry_thesis.get("forecast")
+    )
+    if not isinstance(forecast_payload, dict):
+        return None
+    if _coerce_bool(forecast_payload.get("allowed"), None) is not False:
+        return None
+    if (
+        str(forecast_payload.get("reason") or "").strip().lower()
+        != "style_mismatch_range"
+    ):
+        return None
+
+    expected_pips = _to_float(forecast_payload.get("expected_pips"))
+    if expected_pips is None or expected_pips > -0.95:
+        return None
+    forecast_p_up = _to_float(forecast_payload.get("p_up"))
+    if forecast_p_up is not None and forecast_p_up > 0.35:
+        return None
+
+    live_setup_context = entry_thesis.get("live_setup_context")
+    if not isinstance(live_setup_context, dict):
+        return None
+    if str(live_setup_context.get("microstructure_bucket") or "") != "tight_normal":
+        return None
+    if str(live_setup_context.get("gap_bucket") or "") != "down_flat":
+        return None
+
+    ma_gap = _to_float(live_setup_context.get("ma_gap_pips"))
+    if ma_gap is None:
+        return None
+    if ma_gap < -0.70 or ma_gap > -0.30:
+        return None
+
+    history_score = None
+    history_perf = entry_thesis.get("history_perf")
+    if isinstance(history_perf, dict):
+        history_score = _to_float(history_perf.get("score"))
+    if history_score is None or history_score > 0.55:
+        return None
+
+    range_score = _to_float(entry_thesis.get("range_score"))
+    if range_score is None or range_score < 0.24:
+        return None
+
+    return {
+        "mode": "force_reject",
+        "reason": "entry_leading_profile_surface_reject",
+        "surface": "mlr_bounce_lower_range_fade_tight_normal_gap_down_flat_weak_ma_gap_style_mismatch",
+        "forecast_reason": str(forecast_payload.get("reason") or ""),
+        "forecast_expected_pips": round(float(expected_pips), 4),
+        "forecast_p_up": (
+            round(float(forecast_p_up), 6) if forecast_p_up is not None else None
+        ),
+        "ma_gap_pips": round(float(ma_gap), 6),
+        "history_score": round(float(history_score), 6),
+        "range_score": round(float(range_score), 6),
+        "setup_fingerprint": setup_fingerprint,
+        "pattern_tag": pattern_tag,
+    }
+
+
+def _apply_strategy_leading_profile(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+    meta: Optional[dict] = None,
+) -> tuple[int, Optional[float], dict[str, object]]:
+    if not units:
+        return units, entry_probability, {}
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, {}
+
+    prefixes = _strategy_env_prefix_candidates(strategy_tag, entry_thesis, meta)
+    if not _strategy_env_bool(prefixes, "ENTRY_LEADING_PROFILE_ENABLED", True):
+        return units, entry_probability, {}
+
+    raw_probability = entry_probability
+    if raw_probability is None and isinstance(entry_thesis, dict):
+        raw_probability = _resolve_entry_probability(entry_thesis, None)
+    if raw_probability is None:
+        return units, entry_probability, {}
+    base_probability = max(0.0, min(1.0, float(raw_probability)))
+
+    side_sign = 1 if units > 0 else -1
+    side_key = "LONG" if side_sign > 0 else "SHORT"
+    reject_below = _strategy_env_float(
+        prefixes, "ENTRY_LEADING_PROFILE_REJECT_BELOW", 0.0
+    )
+    reject_below = _strategy_env_float(
+        prefixes,
+        f"ENTRY_LEADING_PROFILE_REJECT_BELOW_{side_key}",
+        reject_below,
+    )
+    reject_below = max(0.0, min(1.0, reject_below))
+    floor = _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_FLOOR", 0.0)
+    ceil = _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_CEIL", 1.0)
+    floor = max(0.0, min(1.0, floor))
+    ceil = max(floor, min(1.0, ceil))
+    boost_max = max(
+        0.0,
+        min(
+            0.5, _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_BOOST_MAX", 0.10)
+        ),
+    )
+    penalty_max = max(
+        0.0,
+        min(
+            0.7,
+            _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_PENALTY_MAX", 0.16),
+        ),
+    )
+    units_min_mult = max(
+        0.1,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_UNITS_MIN_MULT", 1.0),
+    )
+    units_max_mult = max(
+        units_min_mult,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_UNITS_MAX_MULT", 1.0),
+    )
+    weight_forecast = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_FORECAST", 0.45),
+    )
+    weight_tech = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_TECH", 0.25),
+    )
+    weight_range = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_RANGE", 0.15),
+    )
+    weight_micro = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_MICRO", 0.10),
+    )
+    weight_pattern = max(
+        0.0,
+        _strategy_env_float(prefixes, "ENTRY_LEADING_PROFILE_WEIGHT_PATTERN", 0.05),
+    )
+    weights: dict[str, float] = {
+        "forecast": weight_forecast,
+        "tech": weight_tech,
+        "range": weight_range,
+        "micro": weight_micro,
+        "pattern": weight_pattern,
+    }
+
+    components = _leading_components(
+        side_sign=side_sign,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
+    total_weight = sum(weights.get(name, 0.0) for name in components)
+    support = 0.0
+    contra = 0.0
+    if total_weight > 0.0:
+        support = (
+            sum(
+                max(0.0, components[name]) * weights.get(name, 0.0)
+                for name in components
+            )
+            / total_weight
+        )
+        contra = (
+            sum(
+                max(0.0, -components[name]) * weights.get(name, 0.0)
+                for name in components
+            )
+            / total_weight
+        )
+    probability_delta = support * boost_max - contra * penalty_max
+    adjusted_probability = max(
+        floor,
+        min(ceil, base_probability + probability_delta),
+    )
+
+    reject = bool(reject_below > 0.0 and adjusted_probability < reject_below)
+    adjusted_units = int(units)
+    units_multiplier = 1.0
+    if reject:
+        adjusted_units = 0
+    elif adjusted_units:
+        scale_floor = max(floor, reject_below)
+        scale_ceiling = max(scale_floor, ceil)
+        if scale_ceiling <= scale_floor:
+            ratio = 1.0 if adjusted_probability >= scale_floor else 0.0
+        else:
+            ratio = (adjusted_probability - scale_floor) / (scale_ceiling - scale_floor)
+        ratio = max(0.0, min(1.0, ratio))
+        units_multiplier = units_min_mult + (units_max_mult - units_min_mult) * ratio
+        scaled_units = int(round(abs(adjusted_units) * units_multiplier))
+        if scaled_units <= 0:
+            adjusted_units = 0
+        else:
+            adjusted_units = (1 if side_sign > 0 else -1) * scaled_units
+
+    surface_override = _strategy_surface_leading_override(
+        strategy_tag=strategy_tag,
+        side_sign=side_sign,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
+    if isinstance(surface_override, dict):
+        adjusted_units = 0
+        reject = True
+        units_multiplier = 0.0
+        if reject_below > 0.0:
+            adjusted_probability = min(
+                adjusted_probability, max(0.0, reject_below - 1e-6)
+            )
+
+    applied: dict[str, object] = {
+        "strategy_tag": str(strategy_tag or ""),
+        "env_prefixes": prefixes,
+        "units_before": int(units),
+        "units_after": int(adjusted_units),
+        "entry_probability_before": round(float(base_probability), 6),
+        "entry_probability_after": round(float(adjusted_probability), 6),
+        "entry_probability_delta": round(float(probability_delta), 6),
+        "reject_below": round(float(reject_below), 6),
+        "reject": reject,
+        "units_multiplier": round(float(units_multiplier), 6),
+        "components": {k: round(float(v), 6) for k, v in components.items()},
+        "weights": {k: round(float(v), 6) for k, v in weights.items() if v > 0.0},
+        "support": round(float(support), 6),
+        "contra": round(float(contra), 6),
+        "floor": round(float(floor), 6),
+        "ceil": round(float(ceil), 6),
+    }
+    if isinstance(surface_override, dict):
+        applied["surface_override"] = dict(surface_override)
+    if reject:
+        if isinstance(surface_override, dict):
+            applied["reason"] = str(
+                surface_override.get("reason") or "entry_leading_profile_reject"
+            )
+        else:
+            applied["reason"] = "entry_leading_profile_reject"
+    elif adjusted_units != units:
+        applied["reason"] = "entry_leading_profile_scaled"
+    else:
+        applied["reason"] = "entry_leading_profile_passthrough"
+
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_probability"] = adjusted_probability
+        entry_thesis["entry_probability_leading_profile"] = applied
+
+    return adjusted_units, adjusted_probability, applied
+
+
+def _to_float(value: object) -> Optional[float]:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(parsed) or math.isinf(parsed):
+        return None
+    return parsed
+
+
+def _to_positive_int(value: object) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _normalize_timeframe(value: object) -> Optional[str]:
+    candidate = str(value or "").strip().upper() if value is not None else ""
+    if candidate in {"M1", "M5", "H1", "H4", "D1"}:
+        return candidate
+    return None
+
+
+def _parse_horizon_minutes(value: object) -> Optional[int]:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    unit = text[-1:]
+    raw = text[:-1]
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return None
+    if unit == "m":
+        return n
+    if unit == "h":
+        return n * 60
+    if unit == "d":
+        return n * 24 * 60
+    if unit == "w":
+        return n * 7 * 24 * 60
+    return None
+
+
+def _normalize_horizon_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        tokens = list(value)
+    else:
+        tokens = str(value).replace("|", ",").split(",")
+    out: list[str] = []
+    for token in tokens:
+        text = str(token or "").strip().lower()
+        if not text:
+            continue
+        if _parse_horizon_minutes(text) is None:
+            continue
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def _normalize_forecast_horizon_profile(profile_raw: object) -> dict[str, object]:
+    if not isinstance(profile_raw, dict):
+        return {}
+    out: dict[str, object] = {}
+    timeframe = _normalize_timeframe(profile_raw.get("timeframe"))
+    if timeframe is None:
+        timeframe = _normalize_timeframe(profile_raw.get("forecast_timeframe"))
+    if timeframe is not None:
+        out["timeframe"] = timeframe
+    step_bars = _to_positive_int(profile_raw.get("step_bars"))
+    if step_bars is None:
+        step_bars = _to_positive_int(profile_raw.get("forecast_step_bars"))
+    if step_bars is not None:
+        out["step_bars"] = int(step_bars)
+    for key in (
+        "support_horizons",
+        "confirm_horizons",
+        "forecast_support_horizons",
+        "forecast_confirm_horizons",
+    ):
+        horizons = _normalize_horizon_list(profile_raw.get(key))
+        if horizons:
+            out["support_horizons"] = horizons
+            break
+    for key in ("blend", "blend_with_bundle", "technical_only"):
+        if key in profile_raw:
+            out[key] = bool(profile_raw.get(key))
+    if out:
+        return out
+    return {}
+
+
+def _build_entry_forecast_profile(
+    entry_thesis: Optional[dict],
+    *,
+    strategy_tag: Optional[str] = None,
+    pocket: str = "",
+    meta: Optional[dict] = None,
+) -> Optional[dict[str, object]]:
+    if not isinstance(entry_thesis, dict):
+        entry_thesis = {}
+
+    contract = _resolve_strategy_technical_context_contract(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
+    contract_profile = _normalize_forecast_horizon_profile(
+        contract.get("forecast_profile") if isinstance(contract, dict) else None
+    )
+    profile = dict(contract_profile or {})
+    if isinstance(contract, dict):
+        if "forecast_timeframe" in contract:
+            tf = _normalize_timeframe(contract.get("forecast_timeframe"))
+            if tf is not None:
+                profile["timeframe"] = tf
+        if "forecast_step_bars" in contract:
+            step = _to_positive_int(contract.get("forecast_step_bars"))
+            if step is not None:
+                profile["step_bars"] = int(step)
+        if (
+            "forecast_horizon" in contract
+            and str(contract.get("forecast_horizon")).strip()
+        ):
+            profile["horizon"] = str(contract.get("forecast_horizon")).strip().lower()
+        if "forecast_blend_with_bundle" in contract:
+            profile["blend_with_bundle"] = bool(
+                contract.get("forecast_blend_with_bundle")
+            )
+        if "forecast_technical_only" in contract:
+            profile["technical_only"] = bool(contract.get("forecast_technical_only"))
+        if "blend_with_bundle" in contract:
+            profile["blend_with_bundle"] = bool(contract.get("blend_with_bundle"))
+        if "technical_only" in contract:
+            profile["technical_only"] = bool(contract.get("technical_only"))
+        support_horizons = _normalize_horizon_list(
+            contract.get("forecast_support_horizons")
+            or contract.get("forecast_confirm_horizons")
+            or contract.get("support_horizons")
+        )
+        if support_horizons:
+            profile["support_horizons"] = support_horizons
+
+    direct_profile = _normalize_forecast_horizon_profile(
+        entry_thesis.get("forecast_profile")
+    )
+    if direct_profile:
+        profile.update(direct_profile)
+    explicit_timeframe = _normalize_timeframe(entry_thesis.get("forecast_timeframe"))
+    explicit_step = _to_positive_int(entry_thesis.get("forecast_step_bars"))
+    if explicit_timeframe is not None:
+        profile["timeframe"] = explicit_timeframe
+    if explicit_step is not None:
+        profile["step_bars"] = int(explicit_step)
+    if "forecast_blend_with_bundle" in entry_thesis:
+        profile["blend_with_bundle"] = bool(
+            entry_thesis.get("forecast_blend_with_bundle")
+        )
+    if "forecast_technical_only" in entry_thesis:
+        profile["technical_only"] = bool(entry_thesis.get("forecast_technical_only"))
+    explicit_support_horizons = _normalize_horizon_list(
+        entry_thesis.get("forecast_support_horizons")
+        or entry_thesis.get("forecast_confirm_horizons")
+        or entry_thesis.get("support_horizons")
+    )
+    if explicit_support_horizons:
+        profile["support_horizons"] = explicit_support_horizons
+    elif isinstance(meta, dict):
+        meta_support_horizons = _normalize_horizon_list(
+            meta.get("forecast_support_horizons")
+            or meta.get("forecast_confirm_horizons")
+            or meta.get("support_horizons")
+        )
+        if meta_support_horizons:
+            profile["support_horizons"] = meta_support_horizons
+
+    horizon = (
+        entry_thesis.get("forecast_horizon")
+        or entry_thesis.get("horizon")
+        or profile.get("horizon")
+    )
+    if not horizon:
+        try:
+            horizon = forecast_gate._infer_horizon_from_profile(profile)  # noqa: SLF001
+        except (AttributeError, TypeError, KeyError):
+            horizon = None
+    if not horizon:
+        return None
+
+    horizon_text = str(horizon).strip().lower()
+    horizon_minutes = _parse_horizon_minutes(horizon_text)
+    default_meta = {}
+    try:
+        default_meta = dict(forecast_gate._HORIZON_META)
+    except (AttributeError, TypeError):
+        default_meta = {}
+    default_meta = (
+        default_meta.get(horizon_text) if isinstance(default_meta, dict) else None
+    )
+    if isinstance(default_meta, dict):
+        tf = _normalize_timeframe(default_meta.get("timeframe"))
+        if tf is not None:
+            profile["timeframe"] = tf
+        step_bars = _to_positive_int(default_meta.get("step_bars"))
+        if step_bars is not None:
+            profile["step_bars"] = int(step_bars)
+
+    counts = contract.get("technical_context_candle_counts")
+    if not isinstance(counts, dict):
+        counts = entry_thesis.get("technical_context_candle_counts")
+    if isinstance(counts, dict):
+        requested_tf = profile.get("timeframe")
+        if requested_tf is None:
+            requested_tf = _normalize_timeframe(next(iter(counts.keys()), ""))
+        if requested_tf is not None:
+            count = _to_positive_int(counts.get(requested_tf))
+            if count is not None:
+                # Use contract-defined candle depth as a directional hint for forecast profile.
+                # Keep it in a practical range for technical fallback latency.
+                profile["timeframe"] = str(requested_tf)
+                profile["step_bars"] = min(24, max(6, max(1, int(round(count / 12)))))
+
+    if profile.get("timeframe") is None and profile.get("step_bars") is None:
+        if horizon_minutes is not None:
+            if horizon_minutes <= 1:
+                profile["timeframe"] = "M1"
+            elif horizon_minutes <= 10:
+                profile["timeframe"] = "M5"
+            else:
+                profile["timeframe"] = "H1"
+
+    if profile.get("step_bars") is None and horizon_minutes is not None:
+        if horizon_minutes <= 1:
+            profile["step_bars"] = 12
+        elif horizon_minutes <= 10:
+            profile["step_bars"] = 6
+        elif horizon_minutes <= 180:
+            profile["step_bars"] = 9
+        else:
+            profile["step_bars"] = 12
+    profile["horizon"] = horizon_text
+    support_horizons = _normalize_horizon_list(profile.get("support_horizons"))
+    if not support_horizons:
+        support_horizons = [
+            candidate
+            for candidate in _FORECAST_SUPPORT_DEFAULT_BY_HORIZON.get(horizon_text, ())
+            if candidate != horizon_text
+        ]
+    else:
+        support_horizons = [
+            candidate for candidate in support_horizons if candidate != horizon_text
+        ]
+    if support_horizons:
+        profile["support_horizons"] = support_horizons
+    elif "support_horizons" in profile:
+        profile.pop("support_horizons", None)
+    if profile.get("blend_with_bundle") in {"", None}:
+        profile.pop("blend_with_bundle", None)
+    if profile.get("technical_only") in {"", None}:
+        profile.pop("technical_only", None)
+    if not profile:
+        return None
+    return profile
+
+
+def _scale_price_by_entry_distance(
+    *,
+    entry_price: Optional[float],
+    price: Optional[float],
+    multiplier: float,
+) -> Optional[float]:
+    if entry_price is None or price is None:
+        return price
+    anchor = _to_float(entry_price)
+    target = _to_float(price)
+    if anchor is None or target is None:
+        return price
+    distance = target - anchor
+    if distance == 0:
+        return price
+    scaled = anchor + (distance) * max(0.05, min(5.0, float(multiplier)))
+    return round(float(scaled), 3)
+
+
+def _to_float_or_bool(value: object) -> object | None:
+    if isinstance(value, bool):
+        return value
+    try:
+        float_value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(float_value) or math.isinf(float_value):
+        return None
+    return float_value
+
+
+def _normalize_tf_list(values: Iterable[object] | None) -> list[str]:
+    if values is None:
+        return []
+    out: list[str] = []
+    for value in values:
+        text = str(value).strip().upper()
+        if not text:
+            continue
+        if text not in out:
+            out.append(text)
+    return out
+
+
+def _to_tfs(
+    entry_thesis: Optional[dict], requested: list[str], pocket: str
+) -> list[str]:
+    output: list[str] = []
+
+    if isinstance(entry_thesis, dict):
+        candidate = entry_thesis.get("technical_context_tfs")
+        if isinstance(candidate, str):
+            parsed = _normalize_tf_list(token.strip() for token in candidate.split(","))
+            if parsed:
+                return parsed
+        elif isinstance(candidate, (tuple, list)):
+            parsed = _normalize_tf_list(candidate)
+            if parsed:
+                return parsed
+        tech_tfs = entry_thesis.get("tech_tfs")
+        if isinstance(tech_tfs, dict):
+            for key in ("fib", "median", "nwave", "candle", "default"):
+                parsed = _normalize_tf_list(tech_tfs.get(key))
+                if parsed:
+                    output.extend(parsed)
+            if output:
+                return output
+
+    if requested:
+        output.extend(requested)
+    if not output:
+        output.extend(_TECH_DEFAULT_TFS_BY_POCKET.get(pocket, ()))
+    if not output:
+        output.extend(_DEFAULT_ENTRY_TECH_TFS or ("D1", "H4", "H1", "M5", "M1"))
+    if not output:
+        return []
+    deduped: list[str] = []
+    for tf in output:
+        if tf not in deduped:
+            deduped.append(tf)
+    return deduped
+
+
+def _to_fields(entry_thesis: Optional[dict]) -> list[str]:
+    if not isinstance(entry_thesis, dict):
+        return []
+    candidate = entry_thesis.get("technical_context_fields")
+    if isinstance(candidate, str):
+        return [token.strip() for token in candidate.split(",") if token.strip()]
+    if not isinstance(candidate, (tuple, list)):
+        return []
+    return [str(token).strip() for token in candidate if str(token).strip()]
+
+
+def _to_tick_requirements(entry_thesis: Optional[dict]) -> list[str]:
+    if not isinstance(entry_thesis, dict):
+        return ["latest_bid", "latest_ask", "latest_mid", "spread_pips"]
+    candidate = entry_thesis.get("technical_context_ticks")
+    if isinstance(candidate, str):
+        parsed = [token.strip() for token in candidate.split(",") if token.strip()]
+        if parsed:
+            return parsed
+    elif isinstance(candidate, (tuple, list)):
+        parsed = [str(token).strip() for token in candidate if str(token).strip()]
+        if parsed:
+            return parsed
+    return ["latest_bid", "latest_ask", "latest_mid", "spread_pips"]
+
+
+def _to_candle_counts(entry_thesis: Optional[dict]) -> dict[str, int]:
+    if not isinstance(entry_thesis, dict):
+        return {}
+    candidate = entry_thesis.get("technical_context_candle_counts")
+    if isinstance(candidate, str):
+        counts: dict[str, int] = {}
+        for item in candidate.split(","):
+            item = item.strip()
+            if not item or ":" not in item:
+                continue
+            tf, raw = item.split(":", 1)
+            tf = tf.strip().upper()
+            if not tf:
+                continue
+            try:
+                value = int(raw.strip())
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                counts[tf] = value
+        return counts
+    if not isinstance(candidate, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for tf_raw, raw in candidate.items():
+        tf = str(tf_raw).strip().upper()
+        if not tf:
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            counts[tf] = value
+    return counts
+
+
+def _collect_strategy_tick_context(
+    *,
+    requested_fields: list[str],
+) -> dict[str, object]:
+    if not requested_fields:
+        return {}
+    try:
+        from market_data import tick_window
+    except ImportError:
+        return {}
+    latest = {}
+    try:
+        latest = tick_window.summarize(seconds=4.0) or {}
+    except Exception:  # noqa: BLE001 - tick_window can fail many ways
+        return {}
+    out: dict[str, object] = {}
+    for key in requested_fields:
+        if key in latest:
+            value = _to_float_or_bool(latest.get(key))
+            if value is not None:
+                out[key] = value
+    return out
+
+
+def _collect_strategy_technical_context(
+    *,
+    strategy_tag: Optional[str],
+    requested_tfs: list[str],
+    requested_fields: list[str],
+    requested_candle_counts: dict[str, int],
+) -> dict[str, object]:
+    fields_set = set(
+        field for field in requested_fields if field not in {"", "candles"}
+    )
+    include_all_fields = not fields_set
+    snapshot: dict[str, object] = {}
+    factors = all_factors()
+    candle_requirements = dict(requested_candle_counts or {})
+    for tf in requested_tfs:
+        tf_data = factors.get(tf)
+        if not isinstance(tf_data, dict):
+            continue
+        payload: dict[str, object] = {}
+        for key, raw in tf_data.items():
+            if key in {
+                "candles",
+                "timestamp",
+                "last_closed_timestamp",
+                "live_updated_ts",
+            }:
+                continue
+            if not include_all_fields and key not in fields_set:
+                continue
+            value = _to_float_or_bool(raw)
+            if value is None:
+                continue
+            payload[key] = value
+        candle_count = candle_requirements.get(tf, 0)
+        if candle_count > 0:
+            raw_candles = tf_data.get("candles")
+            if isinstance(raw_candles, list):
+                selected = raw_candles[-int(candle_count) :]
+                parsed_candles: list[dict[str, object]] = []
+                for raw in selected:
+                    if not isinstance(raw, dict):
+                        continue
+                    candle_payload = {}
+                    for key in ("timestamp", "time", "open", "high", "low", "close"):
+                        value = raw.get(key)
+                        if key in {"timestamp", "time"}:
+                            if isinstance(value, str) and value:
+                                candle_payload[key] = value
+                            continue
+                        value_float = _to_float(value)
+                        if value_float is None:
+                            continue
+                        candle_payload[key] = value_float
+                    if candle_payload:
+                        parsed_candles.append(candle_payload)
+                payload["candles"] = parsed_candles
+        if payload:
+            if strategy_tag:
+                payload["_strategy_tag"] = strategy_tag
+            snapshot[tf] = payload
+    return snapshot
+
+
+def _resolve_entry_side(units: int) -> str:
+    return "long" if units >= 0 else "short"
+
+
+def _resolve_entry_price(
+    units: int,
+    entry_thesis: Optional[dict],
+    *,
+    limit_price: Optional[float] = None,
+) -> Optional[float]:
+    if limit_price is not None:
+        resolved = _to_float(limit_price)
+        if resolved is not None:
+            return resolved
+    if isinstance(entry_thesis, dict):
+        for key in ("entry_price", "price", "mid", "current_mid"):
+            value = _to_float(entry_thesis.get(key))
+            if value and value > 0:
+                return value
+        side = _resolve_entry_side(units)
+        for key in ("current_ask", "ask", "current_bid", "bid"):
+            if side == "long" and key in ("current_bid", "bid"):
+                continue
+            value = _to_float(entry_thesis.get(key))
+            if value is not None and value > 0:
+                return value
+        for key in ("current_bid", "bid", "current_ask", "ask"):
+            if side == "short" and key in ("current_ask", "ask"):
+                continue
+            value = _to_float(entry_thesis.get(key))
+            if value is not None and value > 0:
+                return value
+    try:
+        from market_data import tick_window
+    except ImportError:
+        return None
+    try:
+        latest = tick_window.summarize(seconds=2.5)
+        if not latest:
+            return None
+        side = _resolve_entry_side(units)
+        if side == "long":
+            value = _to_float(latest.get("latest_ask"))
+            if value is not None and value > 0:
+                return value
+        value = _to_float(latest.get("latest_bid"))
+        if value is not None and value > 0:
+            return value
+        return _to_float(latest.get("latest_mid"))
+    except Exception:  # noqa: BLE001 - tick_window can fail many ways
+        return None
+
+
+def _format_forecast_context(decision: Any) -> dict[str, object]:
+    if not decision:
+        return {
+            "forecast_source": "strategy_entry",
+            "horizon": None,
+            "reason": "not_applicable",
+        }
+    return {
+        "forecast_source": "strategy_entry",
+        "horizon": str(decision.horizon) if decision.horizon is not None else None,
+        "allowed": bool(getattr(decision, "allowed", True)),
+        "scale": _to_float(decision.scale),
+        "reason": str(decision.reason or ""),
+        "edge": _to_float(decision.edge),
+        "p_up": _to_float(decision.p_up),
+        "rebound_probability": _to_float(
+            getattr(decision, "rebound_probability", None)
+        ),
+        "expected_pips": _to_float(decision.expected_pips),
+        "anchor_price": _to_float(decision.anchor_price),
+        "target_price": _to_float(decision.target_price),
+        "range_low_pips": _to_float(decision.range_low_pips),
+        "range_high_pips": _to_float(decision.range_high_pips),
+        "range_sigma_pips": _to_float(decision.range_sigma_pips),
+        "range_low_price": _to_float(decision.range_low_price),
+        "range_high_price": _to_float(decision.range_high_price),
+        "tp_pips_hint": _to_float(decision.tp_pips_hint),
+        "target_reach_prob": _to_float(decision.target_reach_prob),
+        "sl_pips_cap": _to_float(decision.sl_pips_cap),
+        "rr_floor": _to_float(decision.rr_floor),
+        "trend_strength": _to_float(decision.trend_strength),
+        "range_pressure": _to_float(decision.range_pressure),
+        "future_flow": (
+            str(decision.future_flow) if decision.future_flow is not None else None
+        ),
+        "volatility_state": (
+            str(decision.volatility_state)
+            if decision.volatility_state is not None
+            else None
+        ),
+        "trend_state": (
+            str(decision.trend_state) if decision.trend_state is not None else None
+        ),
+        "range_state": (
+            str(decision.range_state) if decision.range_state is not None else None
+        ),
+        "volatility_rank": _to_float(decision.volatility_rank),
+        "regime_score": _to_float(decision.regime_score),
+        "leading_indicator": (
+            str(decision.leading_indicator)
+            if decision.leading_indicator is not None
+            else None
+        ),
+        "leading_indicator_strength": _to_float(decision.leading_indicator_strength),
+        "tf_confluence_score": _to_float(decision.tf_confluence_score),
+        "tf_confluence_count": (
+            int(decision.tf_confluence_count)
+            if decision.tf_confluence_count is not None
+            else None
+        ),
+        "tf_confluence_horizons": (
+            str(decision.tf_confluence_horizons)
+            if decision.tf_confluence_horizons is not None
+            else None
+        ),
+        "source": str(decision.source) if decision.source is not None else None,
+        "style": str(decision.style) if decision.style is not None else None,
+        "feature_ts": (
+            str(decision.feature_ts) if decision.feature_ts is not None else None
+        ),
+    }
+
+
+def _inject_entry_forecast_context(
+    *,
+    instrument: str,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_thesis: Optional[dict],
+    meta: Optional[dict],
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not _STRATEGY_FORECAST_CONTEXT_ENABLED:
+        return entry_thesis, None
+    if not isinstance(entry_thesis, dict):
+        entry_thesis = {}
+    if not strategy_tag:
+        return (
+            entry_thesis,
+            {
+                "forecast_source": "strategy_entry",
+                "enabled": False,
+                "reason": "missing_strategy_tag",
+            },
+        )
+    if not units:
+        return (
+            entry_thesis,
+            {
+                "forecast_source": "strategy_entry",
+                "enabled": True,
+                "horizon": None,
+                "reason": "zero_units",
+            },
+        )
+    side = "buy" if units > 0 else "sell"
+    forecast_profile = _build_entry_forecast_profile(
+        entry_thesis,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        meta=meta if isinstance(meta, dict) else None,
+    )
+    if isinstance(forecast_profile, dict) and forecast_profile:
+        entry_thesis["forecast_profile"] = forecast_profile
+        if "horizon" in forecast_profile and isinstance(
+            forecast_profile.get("horizon"), str
+        ):
+            entry_thesis["forecast_horizon"] = str(forecast_profile.get("horizon"))
+        if "timeframe" in forecast_profile:
+            entry_thesis["forecast_timeframe"] = forecast_profile.get("timeframe")
+        if "step_bars" in forecast_profile:
+            entry_thesis["forecast_step_bars"] = forecast_profile.get("step_bars")
+        if "blend_with_bundle" in forecast_profile:
+            entry_thesis["forecast_blend_with_bundle"] = bool(
+                forecast_profile.get("blend_with_bundle")
+            )
+        if "technical_only" in forecast_profile:
+            entry_thesis["forecast_technical_only"] = bool(
+                forecast_profile.get("technical_only")
+            )
+        if "support_horizons" in forecast_profile:
+            support = _normalize_horizon_list(forecast_profile.get("support_horizons"))
+            if support:
+                entry_thesis["forecast_support_horizons"] = support
+    forecast_meta: dict[str, object] = {"instrument": instrument}
+    if isinstance(meta, dict):
+        forecast_meta.update(meta)
+    try:
+        decision = forecast_gate.decide(
+            strategy_tag=strategy_tag,
+            pocket=pocket,
+            side=side,
+            units=units,
+            entry_thesis=entry_thesis,
+            meta=forecast_meta,
+        )
+        forecast_context = _format_forecast_context(decision)
+    except Exception as exc:  # noqa: BLE001 - forecast gate can fail many ways
+        forecast_context = {
+            "forecast_source": "strategy_entry",
+            "enabled": True,
+            "horizon": None,
+            "reason": "error",
+            "error": str(exc),
+        }
+    current_forecast = entry_thesis.get("forecast")
+    merged = dict(current_forecast) if isinstance(current_forecast, dict) else {}
+    merged.update(forecast_context)
+    if merged:
+        entry_thesis["forecast"] = merged
+    return entry_thesis, forecast_context
+
+
+def _inject_entry_technical_context(
+    *,
+    units: int,
+    pocket: str,
+    strategy_tag: Optional[str],
+    entry_thesis: Optional[dict],
+    entry_price: Optional[float],
+) -> Optional[dict]:
+    if not _ENTRY_TECH_CONTEXT_ENABLED:
+        return entry_thesis
+    if entry_price is None:
+        if not isinstance(entry_thesis, dict):
+            return entry_thesis
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis
+    entry_thesis = _attach_strategy_technical_context_requirements(
+        entry_thesis,
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+    )
+    if (
+        not _ENTRY_TECH_CONTEXT_STRATEGY_REQUIREMENTS
+        and not _has_explicit_technical_context_requirements(entry_thesis)
+    ):
+        return entry_thesis
+    requested_tfs = _to_tfs(entry_thesis, list(_DEFAULT_ENTRY_TECH_TFS), pocket)
+    requested_fields = _to_fields(entry_thesis)
+    requested_ticks = _to_tick_requirements(entry_thesis)
+    requested_candle_counts = _to_candle_counts(entry_thesis)
+    requested_ticks = requested_ticks or [
+        "latest_bid",
+        "latest_ask",
+        "latest_mid",
+        "spread_pips",
+    ]
+    technical_snapshot = _collect_strategy_technical_context(
+        strategy_tag=strategy_tag,
+        requested_tfs=requested_tfs,
+        requested_fields=requested_fields,
+        requested_candle_counts=requested_candle_counts,
+    )
+    tick_snapshot = _collect_strategy_tick_context(
+        requested_fields=requested_ticks,
+    )
+    existing_context = entry_thesis.get("technical_context")
+    if isinstance(existing_context, dict):
+        existing_result = (
+            existing_context.get("result")
+            if isinstance(existing_context.get("result"), dict)
+            else None
+        )
+    else:
+        existing_context = {}
+        existing_result = None
+    context = {
+        "enabled": True,
+        "entry_price": entry_price,
+        "side": _resolve_entry_side(units),
+        "entry_side": _resolve_entry_side(units),
+        "requested_timeframes": requested_tfs,
+        "requested_fields": requested_fields or ["all"],
+        "requested_ticks": requested_ticks,
+        "requested_candle_counts": requested_candle_counts,
+        "indicators": technical_snapshot,
+        "ticks": tick_snapshot,
+        "requested": {
+            "timeframes": requested_tfs,
+            "fields": requested_fields or ["all"],
+            "ticks": requested_ticks,
+            "candle_counts": requested_candle_counts,
+        },
+    }
+    try:
+        if isinstance(existing_result, dict):
+            context["result"] = existing_result
+            if isinstance(existing_context.get("debug"), dict):
+                context["debug"] = dict(existing_context.get("debug"))
+        else:
+            context["result"] = {
+                "allowed": True,
+                "reason": "strategy_local_only",
+                "score": 0.0,
+                "coverage": 0.0,
+                "size_mult": 1.0,
+            }
+            context["debug"] = {
+                "strategy_local_only": True,
+            }
+    except Exception as exc:  # noqa: BLE001 - technical eval can fail many ways
+        context["debug"] = {"error": str(exc)}
+        context["result"] = {
+            "allowed": True,
+            "reason": "entry_technical_eval_failed",
+            "score": 0.0,
+            "coverage": 0.0,
+            "size_mult": 1.0,
+        }
+    prev = existing_context
+    if isinstance(prev, dict):
+        merged = dict(prev)
+        merged.update(context)
+        entry_thesis["technical_context"] = merged
+    else:
+        entry_thesis["technical_context"] = context
+    return entry_thesis
+
+
+def _apply_strategy_feedback(
+    strategy_tag: Optional[str],
+    *,
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_price: Optional[float],
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[float], Optional[float], Optional[float], dict[str, object]]:
+    side = "long" if units >= 0 else "short"
+    try:
+        advice = strategy_feedback.current_advice(
+            strategy_tag,
+            pocket=pocket,
+            side=side,
+            entry_thesis=entry_thesis,
+        )
+    except Exception:  # noqa: BLE001 - strategy_feedback can fail many ways
+        return units, entry_probability, sl_price, tp_price, {}
+    if not advice:
+        return units, entry_probability, sl_price, tp_price, {}
+    if not isinstance(entry_thesis, dict):
+        entry_thesis = None
+
+    orig_units = int(units)
+    adjusted_units = orig_units
+    adjusted_probability = entry_probability
+    adjusted_sl_price = sl_price
+    adjusted_tp_price = tp_price
+    applied: dict[str, object] = {}
+
+    units_multiplier = _to_float(advice.get("entry_units_multiplier", 1.0))
+    if units_multiplier is None:
+        units_multiplier = 1.0
+    units_multiplier = max(0.0, min(5.0, units_multiplier))
+    if units_multiplier != 1.0 and orig_units:
+        sign = 1 if orig_units >= 0 else -1
+        adjusted_units = sign * max(0, int(round(abs(orig_units) * units_multiplier)))
+        applied["entry_units_multiplier"] = round(units_multiplier, 6)
+        if adjusted_units != orig_units:
+            applied["entry_units"] = {
+                "before": orig_units,
+                "after": adjusted_units,
+            }
+
+    units_min_raw = advice.get("entry_units_min")
+    units_min = _to_float(units_min_raw)
+    if units_min is not None:
+        units_min = max(0.0, units_min)
+        if adjusted_units:
+            if abs(adjusted_units) < units_min:
+                sign = 1 if adjusted_units >= 0 else -1
+                adjusted_units = sign * int(round(units_min))
+                applied["entry_units_min"] = int(round(units_min))
+
+    units_max_raw = advice.get("entry_units_max")
+    units_max = _to_float(units_max_raw)
+    if units_max is not None:
+        units_max = max(0.0, units_max)
+        if adjusted_units and abs(adjusted_units) > units_max:
+            sign = 1 if adjusted_units >= 0 else -1
+            adjusted_units = sign * int(round(units_max))
+            applied["entry_units_max"] = int(round(units_max))
+
+    if adjusted_probability is not None:
+        probability_multiplier = _to_float(
+            advice.get("entry_probability_multiplier", 1.0)
+        )
+        if probability_multiplier is None:
+            probability_multiplier = 1.0
+        probability_delta = _to_float(advice.get("entry_probability_delta", 0.0))
+        if probability_delta is None:
+            probability_delta = 0.0
+        if probability_multiplier != 1.0 or probability_delta != 0.0:
+            adjusted_probability = (
+                adjusted_probability * probability_multiplier + probability_delta
+            )
+            adjusted_probability = max(0.0, min(1.0, adjusted_probability))
+            if adjusted_probability != entry_probability:
+                applied["entry_probability"] = {
+                    "before": entry_probability,
+                    "after": adjusted_probability,
+                }
+
+    sl_multiplier = _to_float(advice.get("sl_distance_multiplier", 1.0))
+    if sl_multiplier is None:
+        sl_multiplier = 1.0
+    if sl_multiplier != 1.0:
+        candidate = _scale_price_by_entry_distance(
+            entry_price=entry_price,
+            price=adjusted_sl_price,
+            multiplier=sl_multiplier,
+        )
+        if candidate != adjusted_sl_price:
+            adjusted_sl_price = candidate
+            applied["sl_distance_multiplier"] = round(sl_multiplier, 6)
+
+    tp_multiplier = _to_float(advice.get("tp_distance_multiplier", 1.0))
+    if tp_multiplier is None:
+        tp_multiplier = 1.0
+    if tp_multiplier != 1.0:
+        candidate = _scale_price_by_entry_distance(
+            entry_price=entry_price,
+            price=adjusted_tp_price,
+            multiplier=tp_multiplier,
+        )
+        if candidate != adjusted_tp_price:
+            adjusted_tp_price = candidate
+            applied["tp_distance_multiplier"] = round(tp_multiplier, 6)
+
+    if adjusted_probability is not None and entry_thesis is not None:
+        entry_thesis["entry_probability"] = adjusted_probability
+    strategy_params = advice.get("strategy_params")
+    configured_params = advice.get("configured_params")
+    analysis_feedback: dict[str, object] = {
+        "source": advice.get("_meta", {}),
+        "applied": applied,
+    }
+    notes = advice.get("notes")
+    if notes is not None:
+        analysis_feedback["notes"] = notes
+    if isinstance(strategy_params, dict) and strategy_params:
+        analysis_feedback["strategy_params"] = strategy_params
+    if isinstance(configured_params, dict) and configured_params:
+        analysis_feedback["configured_params"] = configured_params
+    if (
+        applied
+        or analysis_feedback.get("strategy_params")
+        or analysis_feedback.get("configured_params")
+    ) and entry_thesis is not None:
+        # Keep both the new key (analysis_feedback) and historical key
+        # (analysis_advice) for compatibility with any downstream consumers.
+        entry_thesis["analysis_feedback"] = analysis_feedback
+        entry_thesis["analysis_advice"] = analysis_feedback
+    return (
+        adjusted_units,
+        adjusted_probability,
+        adjusted_sl_price,
+        adjusted_tp_price,
+        applied,
+    )
+
+
+def _apply_forecast_fusion(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+) -> tuple[int, Optional[float], dict[str, object]]:
+    if not _STRATEGY_FORECAST_FUSION_ENABLED:
+        return units, entry_probability, {}
+    if not units:
+        return units, entry_probability, {}
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, {}
+    if not isinstance(forecast_context, dict):
+        return units, entry_probability, {}
+
+    p_up_raw = _to_float(forecast_context.get("p_up"))
+    if p_up_raw is None:
+        return units, entry_probability, {}
+    p_up = max(0.0, min(1.0, float(p_up_raw)))
+    side_sign = 1 if units > 0 else -1
+    direction_prob = p_up if side_sign > 0 else (1.0 - p_up)
+    direction_prob = max(0.0, min(1.0, direction_prob))
+    direction_bias = max(-1.0, min(1.0, (direction_prob - 0.5) * 2.0))
+    rebound_probability_raw = _to_float(
+        forecast_context.get("rebound_probability"),
+    )
+    if rebound_probability_raw is None:
+        rebound_probability_raw = _to_float(forecast_context.get("rebound_signal_20"))
+    rebound_probability = (
+        max(0.0, min(1.0, float(rebound_probability_raw)))
+        if rebound_probability_raw is not None
+        else None
+    )
+    rebound_side_support: Optional[float] = None
+    rebound_units_multiplier = 1.0
+    rebound_probability_shift = 0.0
+    if _STRATEGY_FORECAST_FUSION_REBOUND_ENABLED and rebound_probability is not None:
+        rebound_side_support = (rebound_probability - 0.5) * 2.0
+        if side_sign < 0:
+            rebound_side_support *= -1.0
+        rebound_side_support = max(-1.0, min(1.0, float(rebound_side_support)))
+
+    edge_raw = _to_float(forecast_context.get("edge"))
+    if edge_raw is None:
+        edge_strength = max(0.0, min(1.0, abs(direction_bias)))
+    else:
+        edge_clamped = max(0.0, min(1.0, float(edge_raw)))
+        # Strength is distance from neutral (0.5), not only bullish-side excess.
+        # This allows strong bearish forecasts (edge<<0.5) to trigger contra rejects.
+        edge_strength = max(0.0, min(1.0, abs(edge_clamped - 0.5) / 0.5))
+
+    allowed_flag = _coerce_bool(forecast_context.get("allowed"), None)
+    tf_confluence_score_raw = _to_float(forecast_context.get("tf_confluence_score"))
+    tf_confluence_score = (
+        max(-1.0, min(1.0, float(tf_confluence_score_raw)))
+        if tf_confluence_score_raw is not None
+        else None
+    )
+    tf_confluence_count = _to_positive_int(forecast_context.get("tf_confluence_count"))
+    if tf_confluence_count is None:
+        tf_confluence_weight = 0.5
+    else:
+        tf_confluence_weight = max(0.35, min(1.0, float(tf_confluence_count) / 3.0))
+
+    units_scale = 1.0
+    if direction_bias >= 0.0:
+        units_scale += (
+            _STRATEGY_FORECAST_FUSION_UNITS_BOOST_MAX * direction_bias * edge_strength
+        )
+    else:
+        units_scale -= (
+            _STRATEGY_FORECAST_FUSION_UNITS_CUT_MAX
+            * abs(direction_bias)
+            * (0.5 + 0.5 * edge_strength)
+        )
+    if tf_confluence_score is not None:
+        if tf_confluence_score >= 0.0:
+            units_scale *= (
+                1.0
+                + _STRATEGY_FORECAST_FUSION_TF_BOOST_MAX
+                * tf_confluence_score
+                * tf_confluence_weight
+            )
+        else:
+            units_scale *= (
+                1.0
+                - _STRATEGY_FORECAST_FUSION_TF_CUT_MAX
+                * abs(tf_confluence_score)
+                * tf_confluence_weight
+            )
+    if rebound_side_support is not None:
+        if rebound_side_support >= 0.0:
+            rebound_gain = (
+                _STRATEGY_FORECAST_FUSION_REBOUND_UNITS_BOOST_MAX
+                * rebound_side_support
+                * (0.45 + 0.55 * max(0.0, -direction_bias))
+            )
+            rebound_units_multiplier = 1.0 + rebound_gain
+        else:
+            rebound_cut = (
+                _STRATEGY_FORECAST_FUSION_REBOUND_UNITS_CUT_MAX
+                * abs(rebound_side_support)
+                * (0.35 + 0.65 * edge_strength)
+            )
+            rebound_units_multiplier = max(0.0, 1.0 - rebound_cut)
+        units_scale *= rebound_units_multiplier
+    if allowed_flag is False:
+        units_scale *= _STRATEGY_FORECAST_FUSION_DISALLOW_UNITS_MULT
+    units_scale = max(
+        _STRATEGY_FORECAST_FUSION_UNITS_MIN_SCALE,
+        min(_STRATEGY_FORECAST_FUSION_UNITS_MAX_SCALE, units_scale),
+    )
+    adjusted_units = int((1 if side_sign > 0 else -1) * round(abs(units) * units_scale))
+
+    adjusted_probability = entry_probability
+    if adjusted_probability is None and _STRATEGY_FORECAST_FUSION_SYNTH_PROB_IF_MISSING:
+        adjusted_probability = direction_prob
+    if adjusted_probability is not None:
+        probability_shift = (
+            direction_bias
+            * _STRATEGY_FORECAST_FUSION_PROB_GAIN
+            * (0.35 + 0.65 * edge_strength)
+        )
+        adjusted_probability = max(
+            0.0,
+            min(1.0, float(adjusted_probability) + probability_shift),
+        )
+        if tf_confluence_score is not None:
+            adjusted_probability = max(
+                0.0,
+                min(
+                    1.0,
+                    float(adjusted_probability)
+                    + tf_confluence_score
+                    * _STRATEGY_FORECAST_FUSION_PROB_GAIN
+                    * 0.35
+                    * tf_confluence_weight,
+                ),
+            )
+        if rebound_side_support is not None:
+            rebound_probability_shift = (
+                rebound_side_support
+                * _STRATEGY_FORECAST_FUSION_REBOUND_PROB_GAIN
+                * (0.45 + 0.55 * max(0.0, -direction_bias))
+            )
+            adjusted_probability = max(
+                0.0,
+                min(1.0, float(adjusted_probability) + rebound_probability_shift),
+            )
+        if allowed_flag is False:
+            adjusted_probability = max(
+                0.0,
+                min(
+                    1.0,
+                    float(adjusted_probability)
+                    * _STRATEGY_FORECAST_FUSION_DISALLOW_PROB_MULT,
+                ),
+            )
+
+    rebound_override_strong_contra = (
+        _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_STRONG_CONTRA
+        and side_sign > 0
+        and rebound_probability is not None
+        and rebound_probability >= _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_PROB_MIN
+        and direction_prob <= _STRATEGY_FORECAST_FUSION_REBOUND_OVERRIDE_DIR_PROB_MAX
+    )
+    strong_contra = (
+        _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_REJECT_ENABLED
+        and direction_prob <= _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_PROB_MAX
+        and edge_strength >= _STRATEGY_FORECAST_FUSION_STRONG_CONTRA_EDGE_MIN
+        and (allowed_flag is False or direction_bias < 0.0)
+        and not rebound_override_strong_contra
+    )
+    weak_contra = (
+        _STRATEGY_FORECAST_FUSION_WEAK_CONTRA_REJECT_ENABLED
+        and direction_prob <= _STRATEGY_FORECAST_FUSION_WEAK_CONTRA_PROB_MAX
+        and edge_strength <= _STRATEGY_FORECAST_FUSION_WEAK_CONTRA_EDGE_MAX
+        and (allowed_flag is False or direction_bias < 0.0)
+        and not rebound_override_strong_contra
+    )
+    if strong_contra or weak_contra:
+        adjusted_units = 0
+        if adjusted_probability is not None:
+            adjusted_probability = max(
+                0.0, min(float(adjusted_probability), direction_prob)
+            )
+
+    applied: dict[str, object] = {
+        "strategy_tag": str(strategy_tag or ""),
+        "pocket": str(pocket or ""),
+        "units_before": int(units),
+        "units_after": int(adjusted_units),
+        "units_scale": round(float(units_scale), 6),
+        "entry_probability_before": (
+            round(float(entry_probability), 6)
+            if entry_probability is not None
+            else None
+        ),
+        "entry_probability_after": (
+            round(float(adjusted_probability), 6)
+            if adjusted_probability is not None
+            else None
+        ),
+        "direction_prob": round(float(direction_prob), 6),
+        "direction_bias": round(float(direction_bias), 6),
+        "edge_strength": round(float(edge_strength), 6),
+        "rebound_probability": (
+            round(float(rebound_probability), 6)
+            if rebound_probability is not None
+            else None
+        ),
+        "rebound_side_support": (
+            round(float(rebound_side_support), 6)
+            if rebound_side_support is not None
+            else None
+        ),
+        "rebound_units_multiplier": round(float(rebound_units_multiplier), 6),
+        "rebound_probability_shift": round(float(rebound_probability_shift), 6),
+        "rebound_override_strong_contra": bool(rebound_override_strong_contra),
+        "forecast_horizon": forecast_context.get("horizon"),
+        "forecast_allowed": allowed_flag,
+        "forecast_reason": forecast_context.get("reason"),
+        "tf_confluence_score": (
+            round(float(tf_confluence_score), 6)
+            if tf_confluence_score is not None
+            else None
+        ),
+        "tf_confluence_count": tf_confluence_count,
+        "strong_contra_reject": bool(strong_contra),
+        "weak_contra_reject": bool(weak_contra),
+    }
+    if strong_contra:
+        applied["reject_reason"] = "strong_contra_forecast"
+    elif weak_contra:
+        applied["reject_reason"] = "weak_contra_forecast"
+
+    if isinstance(entry_thesis, dict):
+        entry_thesis["forecast_fusion"] = applied
+        if adjusted_probability is not None:
+            entry_thesis["entry_probability"] = adjusted_probability
+        if adjusted_units != 0 and _STRATEGY_FORECAST_FUSION_TP_BLEND_ENABLED:
+            tp_hint = _to_float(forecast_context.get("tp_pips_hint"))
+            if tp_hint is not None and tp_hint > 0.0 and direction_prob >= 0.5:
+                base_tp = _to_float(
+                    entry_thesis.get("tp_pips") or entry_thesis.get("target_tp_pips")
+                )
+                if base_tp is None or base_tp <= 0.0:
+                    merged_tp = tp_hint
+                    tp_blend = 1.0
+                else:
+                    tp_blend = max(
+                        0.0,
+                        min(
+                            1.0,
+                            _STRATEGY_FORECAST_FUSION_TP_BLEND_BASE
+                            + _STRATEGY_FORECAST_FUSION_TP_BLEND_EDGE_GAIN
+                            * edge_strength
+                            * max(0.0, direction_bias),
+                        ),
+                    )
+                    merged_tp = (1.0 - tp_blend) * base_tp + tp_blend * tp_hint
+                entry_thesis["tp_pips"] = round(max(0.1, float(merged_tp)), 3)
+                applied["tp_hint_pips"] = round(float(tp_hint), 4)
+                applied["tp_blend"] = round(float(tp_blend), 4)
+                applied["tp_after"] = round(float(entry_thesis["tp_pips"]), 4)
+
+        if adjusted_units != 0:
+            sl_cap = _to_float(forecast_context.get("sl_pips_cap"))
+            current_sl = _to_float(entry_thesis.get("sl_pips"))
+            if (
+                sl_cap is not None
+                and sl_cap > 0.0
+                and current_sl is not None
+                and current_sl > sl_cap
+            ):
+                entry_thesis["sl_pips"] = round(float(sl_cap), 3)
+                applied["sl_cap_applied"] = round(float(sl_cap), 4)
+
+    return adjusted_units, adjusted_probability, applied
+
+
+def _apply_strategy_net_edge_gate(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+    forecast_context: Optional[dict[str, object]],
+    meta: Optional[dict] = None,
+) -> tuple[int, Optional[float], dict[str, object]]:
+    if not _STRATEGY_ENTRY_NET_EDGE_GATE_ENABLED:
+        return units, entry_probability, {"enabled": 0.0}
+    if not units:
+        return units, entry_probability, {"enabled": 0.0}
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, {"enabled": 0.0}
+
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key and pocket_key not in _STRATEGY_ENTRY_NET_EDGE_POCKETS:
+        return (
+            units,
+            entry_probability,
+            {
+                "enabled": 0.0,
+                "pocket": pocket_key,
+            },
+        )
+
+    prefixes = _strategy_env_prefix_candidates(strategy_tag, entry_thesis, meta)
+    probability = _entry_probability_value(entry_probability)
+    sl_pips, tp_pips = order_manager._entry_thesis_sl_tp_pips(entry_thesis)
+    spread_pips = order_manager._entry_thesis_spread_pips(entry_thesis)
+    spread_source = "thesis"
+    if spread_pips is None:
+        spread_source = "fallback"
+        spread_pips = _strategy_env_float(
+            prefixes,
+            "ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS",
+            _STRATEGY_ENTRY_NET_EDGE_UNKNOWN_SPREAD_PIPS_DEFAULT,
+        )
+    spread_pips = max(0.0, float(spread_pips or 0.0))
+
+    slippage_pips = max(
+        0.0,
+        float(
+            _strategy_env_float(
+                prefixes,
+                "ENTRY_NET_EDGE_SLIPPAGE_PIPS",
+                _STRATEGY_ENTRY_NET_EDGE_SLIPPAGE_PIPS_DEFAULT,
+            )
+        ),
+    )
+    reject_cost_pips = max(
+        0.0,
+        float(
+            _strategy_env_float(
+                prefixes,
+                "ENTRY_NET_EDGE_REJECT_COST_PIPS",
+                _STRATEGY_ENTRY_NET_EDGE_REJECT_COST_PIPS_DEFAULT,
+            )
+        ),
+    )
+    min_edge_pips = float(
+        _strategy_env_float(
+            prefixes,
+            "ENTRY_NET_EDGE_MIN_PIPS",
+            _STRATEGY_ENTRY_NET_EDGE_MIN_PIPS_DEFAULT,
+        )
+    )
+    details: dict[str, object] = {
+        "enabled": 1.0,
+        "entry_probability": probability,
+        "sl_pips": sl_pips,
+        "tp_pips": tp_pips,
+        "spread_pips": spread_pips,
+        "spread_source": spread_source,
+        "slippage_pips": slippage_pips,
+        "reject_cost_pips": reject_cost_pips,
+        "min_edge_pips": min_edge_pips,
+        "strategy_tag": strategy_tag,
+        "pocket": pocket,
+        "forecast_context_present": bool(forecast_context is not None),
+    }
+
+    if probability is None:
+        details["reason"] = "missing_probability"
+        if isinstance(entry_thesis, dict):
+            entry_thesis["entry_net_edge_gate"] = details
+        return units, entry_probability, details
+
+    if sl_pips is None or tp_pips is None:
+        details["reason"] = "missing_tp_sl"
+        if isinstance(entry_thesis, dict):
+            entry_thesis["entry_net_edge_gate"] = details
+        return units, entry_probability, details
+
+    probability = max(0.0, min(1.0, float(probability)))
+    gross_edge_pips = probability * float(tp_pips) - (1.0 - probability) * float(
+        sl_pips
+    )
+    cost_pips = float(spread_pips) + slippage_pips + reject_cost_pips
+    net_edge_pips = gross_edge_pips - cost_pips
+    details.update(
+        {
+            "gross_edge_pips": round(float(gross_edge_pips), 6),
+            "cost_pips": round(float(cost_pips), 6),
+            "net_edge_pips": round(float(net_edge_pips), 6),
+        }
+    )
+
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_net_edge"] = round(float(net_edge_pips), 6)
+        entry_thesis["entry_net_edge_gate"] = details
+
+    if net_edge_pips + 1e-9 < min_edge_pips:
+        details["reason"] = "negative"
+        if isinstance(entry_thesis, dict):
+            entry_thesis["entry_net_edge_gate"] = details
+        return 0, entry_probability, details
+
+    details["reason"] = "pass"
+    if isinstance(entry_thesis, dict):
+        entry_thesis["entry_net_edge_gate"] = details
+    return units, entry_probability, details
+
+
+def _has_dynamic_alloc_applied(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    if "dynamic_alloc" not in entry_thesis:
+        return False
+    payload = entry_thesis.get("dynamic_alloc")
+    return isinstance(payload, dict) and bool(payload)
+
+
+def _apply_dynamic_alloc_trim(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    min_units: int,
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[str]]:
+    if not _STRATEGY_DYNAMIC_ALLOC_ENABLED:
+        return units, None
+    if not strategy_tag or not units:
+        return units, None
+    if (pocket or "").lower() == "manual":
+        return units, None
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key and pocket_key not in _STRATEGY_DYNAMIC_ALLOC_POCKETS:
+        return units, None
+    if _has_dynamic_alloc_applied(entry_thesis):
+        return units, None
+    if not isinstance(entry_thesis, dict):
+        return units, None
+
+    try:
+        profile = load_strategy_profile(
+            strategy_tag,
+            pocket_key,
+            entry_thesis=entry_thesis,
+            path=_STRATEGY_DYNAMIC_ALLOC_PATH,
+            ttl_sec=_STRATEGY_DYNAMIC_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        profile = None
+    if not isinstance(profile, dict):
+        return units, None
+    if profile.get("payload_stale") is True:
+        return units, None
+
+    mult_raw = profile.get("lot_multiplier", 1.0)
+    try:
+        mult = float(mult_raw)
+    except (TypeError, ValueError):
+        mult = 1.0
+    if math.isnan(mult) or math.isinf(mult) or mult <= 0.0:
+        mult = 1.0
+    mult = max(
+        _STRATEGY_DYNAMIC_ALLOC_MULT_MIN, min(_STRATEGY_DYNAMIC_ALLOC_MULT_MAX, mult)
+    )
+    effective_mult = min(1.0, mult) if _STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY else mult
+    if effective_mult >= 0.999:
+        return units, None
+
+    requested_abs = abs(int(units))
+    scaled_abs = int(round(requested_abs * effective_mult))
+    if min_units > 0 and scaled_abs < int(min_units):
+        scaled_abs = int(min_units)
+    if scaled_abs <= 0:
+        return 0, "dynamic_alloc_scale_zero"
+    if scaled_abs >= requested_abs:
+        return units, None
+
+    next_units = scaled_abs if units > 0 else -scaled_abs
+    entry_thesis["dynamic_alloc"] = {
+        "source": "strategy_entry",
+        "trim_only": bool(_STRATEGY_DYNAMIC_ALLOC_TRIM_ONLY),
+        "strategy_key": profile.get("strategy_key"),
+        "score": profile.get("score"),
+        "trades": profile.get("trades"),
+        "lot_multiplier": round(mult, 4),
+        "effective_mult": round(float(effective_mult), 4),
+        "min_units": int(min_units),
+        "requested_units": int(requested_abs),
+        "applied_units": int(abs(next_units)),
+    }
+    setup_override = profile.get("setup_override")
+    if isinstance(setup_override, dict):
+        entry_thesis["dynamic_alloc"]["setup_override"] = dict(setup_override)
+    return int(next_units), None
+
+
+def _has_participation_alloc_applied(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    payload = entry_thesis.get("participation_alloc")
+    return isinstance(payload, dict) and bool(payload)
+
+
+def _apply_participation_alloc(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    min_units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[float], Optional[dict[str, object]]]:
+    if not _STRATEGY_PARTICIPATION_ALLOC_ENABLED:
+        return units, entry_probability, None
+    if not strategy_tag or not units:
+        return units, entry_probability, None
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, None
+    pocket_key = str(pocket or "").strip().lower()
+    if pocket_key and pocket_key not in _STRATEGY_PARTICIPATION_ALLOC_POCKETS:
+        return units, entry_probability, None
+    if not isinstance(entry_thesis, dict):
+        return units, entry_probability, None
+    if _has_participation_alloc_applied(entry_thesis):
+        return units, entry_probability, None
+
+    try:
+        profile = load_participation_profile(
+            strategy_tag,
+            pocket_key,
+            entry_thesis=entry_thesis,
+            path=_STRATEGY_PARTICIPATION_ALLOC_PATH,
+            ttl_sec=_STRATEGY_PARTICIPATION_ALLOC_TTL_SEC,
+        )
+    except Exception:
+        profile = None
+    if not isinstance(profile, dict) or not profile.get("found"):
+        return units, entry_probability, None
+    if profile.get("payload_stale") is True:
+        return units, entry_probability, None
+
+    requested_abs = abs(int(units))
+    action = str(profile.get("action") or "").strip().lower()
+    raw_mult = float(
+        profile.get("units_multiplier", profile.get("lot_multiplier", 1.0)) or 1.0
+    )
+    if raw_mult <= 0.0:
+        raw_mult = float(profile.get("lot_multiplier", 1.0) or 1.0)
+    if raw_mult <= 0.0:
+        raw_mult = 1.0
+    profile_mult_max = 1.0 + max(
+        0.0,
+        min(0.30, float(profile.get("max_units_boost", 0.0) or 0.0)),
+    )
+    mult_max = max(1.0, min(_STRATEGY_PARTICIPATION_ALLOC_MULT_MAX, profile_mult_max))
+    if action == "boost_participation" and raw_mult > 1.0:
+        mult = max(1.0, min(mult_max, raw_mult))
+    else:
+        mult = max(
+            _STRATEGY_PARTICIPATION_ALLOC_MULT_MIN,
+            min(1.0, raw_mult),
+        )
+    next_units = int(units)
+    if requested_abs > 0 and (mult < 0.999 or mult > 1.001):
+        scaled_abs = int(round(requested_abs * mult))
+        if mult < 1.0 and min_units > 0 and scaled_abs < int(min_units):
+            scaled_abs = int(min_units)
+        if mult < 1.0:
+            scaled_abs = min(requested_abs, scaled_abs)
+        else:
+            scaled_abs = max(requested_abs, scaled_abs)
+        if scaled_abs > 0 and scaled_abs != requested_abs:
+            next_units = scaled_abs if units > 0 else -scaled_abs
+
+    normalized_probability = _entry_probability_value(entry_probability)
+    raw_prob_offset = float(profile.get("probability_offset", 0.0) or 0.0)
+    profile_prob_cap = max(
+        0.0,
+        min(0.25, float(profile.get("max_probability_boost", 0.0) or 0.0)),
+    )
+    profile_prob_cut_cap = max(
+        0.0,
+        min(
+            0.25,
+            float(
+                profile.get(
+                    "max_probability_cut",
+                    profile.get("max_probability_boost", 0.0),
+                )
+                or 0.0
+            ),
+        ),
+    )
+    prob_offset = 0.0
+    if raw_prob_offset < 0.0:
+        prob_offset = max(
+            -min(
+                _STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
+                profile_prob_cut_cap
+                or _STRATEGY_PARTICIPATION_ALLOC_PROB_OFFSET_ABS_MAX,
+            ),
+            min(0.0, raw_prob_offset),
+        )
+    raw_boost = max(0.0, float(profile.get("probability_boost", 0.0) or 0.0))
+    if profile_prob_cap <= 0.0:
+        profile_prob_cap = max(
+            0.0,
+            min(
+                0.25,
+                float(profile.get("max_probability_boost", raw_boost) or raw_boost),
+            ),
+        )
+    prob_boost = min(
+        _STRATEGY_PARTICIPATION_ALLOC_PROB_BOOST_MAX, profile_prob_cap, raw_boost
+    )
+    next_probability = normalized_probability
+    if normalized_probability is not None:
+        if prob_offset < 0.0:
+            next_probability = max(0.0, min(1.0, normalized_probability + prob_offset))
+        elif prob_boost > 0.0:
+            next_probability = max(
+                0.0,
+                min(
+                    1.0,
+                    normalized_probability
+                    + (1.0 - normalized_probability) * prob_boost,
+                ),
+            )
+    if next_probability is not None:
+        next_probability = round(float(next_probability), 6)
+
+    if next_units == int(units) and next_probability == normalized_probability:
+        return units, entry_probability, None
+
+    payload: dict[str, object] = {
+        "source": "strategy_entry",
+        "strategy_key": str(profile.get("strategy_key") or strategy_tag),
+        "requested_units": int(requested_abs),
+        "applied_units": int(abs(next_units)),
+        "lot_multiplier": round(mult, 4),
+        "action": action or "hold",
+        "preflights": int(profile.get("preflights") or 0),
+        "filled": int(profile.get("filled") or 0),
+        "fill_rate": round(float(profile.get("fill_rate") or 0.0), 4),
+        "hard_block_rate": round(float(profile.get("hard_block_rate") or 0.0), 4),
+        "quality_score": round(float(profile.get("quality_score") or 0.0), 4),
+        "current_share": round(float(profile.get("current_share") or 0.0), 5),
+        "target_share": round(float(profile.get("target_share") or 0.0), 5),
+        "reason": "pass",
+    }
+    applied_abs = abs(int(next_units))
+    if applied_abs > requested_abs:
+        payload["reason"] = "boost_participation"
+    elif applied_abs < requested_abs:
+        payload["reason"] = "overused_trim"
+    if prob_offset < 0.0:
+        payload["probability_offset"] = round(prob_offset, 4)
+    if (
+        normalized_probability is not None
+        and next_probability is not None
+        and abs(next_probability - normalized_probability) > 1e-9
+    ):
+        if prob_boost > 0.0:
+            payload["probability_boost"] = round(prob_boost, 4)
+        payload["entry_probability_before"] = round(normalized_probability, 6)
+        payload["entry_probability_after"] = round(next_probability, 6)
+        if (
+            next_probability > normalized_probability + 1e-9
+            and payload.get("reason") == "pass"
+        ):
+            payload["reason"] = "underused_boost"
+        elif (
+            next_probability > normalized_probability + 1e-9
+            and payload.get("reason") == "overused_trim"
+        ):
+            payload["reason"] = "rebalance"
+        elif (
+            next_probability < normalized_probability - 1e-9
+            and payload.get("reason") == "pass"
+        ):
+            payload["reason"] = "overused_trim"
+    setup_override = profile.get("setup_override")
+    if isinstance(setup_override, dict):
+        payload["setup_override"] = dict(setup_override)
+    entry_thesis["participation_alloc"] = payload
+    return int(next_units), next_probability, payload
+
+
+def _inject_macro_news_context(
+    entry_thesis: Optional[dict],
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not _STRATEGY_MACRO_NEWS_CONTEXT_ENABLED:
+        return entry_thesis, None
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis, None
+    try:
+        current = load_macro_news_context(
+            path=_STRATEGY_MACRO_NEWS_CONTEXT_PATH,
+            ttl_sec=_STRATEGY_MACRO_NEWS_CONTEXT_TTL_SEC,
+            max_age_sec=_STRATEGY_MACRO_NEWS_CONTEXT_MAX_AGE_SEC,
+        )
+    except Exception:
+        current = None
+    if (
+        not isinstance(current, dict)
+        or not current.get("found")
+        or current.get("stale")
+    ):
+        return entry_thesis, None
+
+    headlines: list[dict[str, object]] = []
+    raw_headlines = current.get("headlines")
+    if isinstance(raw_headlines, list):
+        for item in raw_headlines[:3]:
+            if not isinstance(item, dict):
+                continue
+            headlines.append(
+                {
+                    "source": item.get("source"),
+                    "published_at": item.get("published_at"),
+                    "title": item.get("title"),
+                    "severity": item.get("severity"),
+                }
+            )
+    summary: dict[str, object] = {
+        "generated_at": current.get("generated_at"),
+        "age_sec": round(float(current.get("age_sec") or 0.0), 1),
+        "event_severity": str(current.get("event_severity") or "unknown"),
+        "caution_window_active": bool(current.get("caution_window_active")),
+        "usd_jpy_bias": str(current.get("usd_jpy_bias") or "neutral"),
+        "headlines": headlines,
+        "sources": (
+            current.get("sources") if isinstance(current.get("sources"), list) else []
+        ),
+    }
+    entry_thesis["macro_news_context"] = summary
+    if summary["caution_window_active"]:
+        entry_thesis["macro_caution_window_active"] = True
+    bias = str(summary.get("usd_jpy_bias") or "").strip()
+    if bias:
+        entry_thesis["usd_jpy_macro_bias"] = bias
+    return entry_thesis, summary
+
+
+def _inject_market_context(
+    entry_thesis: Optional[dict],
+    *,
+    instrument: Optional[str],
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not _STRATEGY_MARKET_CONTEXT_ENABLED:
+        return entry_thesis, None
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis, None
+    pair = str(instrument or "USD_JPY").replace("/", "_").strip().upper() or "USD_JPY"
+    try:
+        current = market_context.current_context(
+            pair=pair,
+            path=_STRATEGY_MARKET_CONTEXT_PATH,
+            max_age_sec=_STRATEGY_MARKET_CONTEXT_MAX_AGE_SEC,
+        )
+    except Exception:
+        current = None
+    if not isinstance(current, dict) or not current or current.get("stale"):
+        return entry_thesis, None
+
+    summary: dict[str, object] = {
+        "generated_at": current.get("generated_at"),
+        "age_sec": round(float(current.get("age_sec") or 0.0), 1),
+        "pair": str(current.get("pair") or pair),
+        "pair_price": current.get("pair_price"),
+        "pair_change_pct_24h": current.get("pair_change_pct_24h"),
+        "dxy_change_pct_24h": current.get("dxy_change_pct_24h"),
+        "us_jp_10y_spread": current.get("us_jp_10y_spread"),
+        "risk_mode": current.get("risk_mode"),
+        "high_impact_events": current.get("high_impact_events"),
+        "total_events": current.get("total_events"),
+        "minutes_to_next_event": current.get("minutes_to_next_event"),
+        "next_event_name": current.get("next_event_name"),
+        "event_severity": str(current.get("event_severity") or "none"),
+        "bias_score": current.get("bias_score"),
+        "bias_label": str(current.get("bias_label") or "neutral"),
+    }
+    entry_thesis["market_context"] = summary
+    bias_label = str(summary.get("bias_label") or "").strip()
+    if bias_label:
+        entry_thesis["market_bias_label"] = bias_label
+    return entry_thesis, summary
+
+
+def _inject_live_setup_context(
+    entry_thesis: Optional[dict],
+    *,
+    units: int,
+) -> tuple[Optional[dict], Optional[dict[str, object]]]:
+    if not isinstance(entry_thesis, dict):
+        return entry_thesis, None
+    summary = derive_live_setup_context(entry_thesis, units=units)
+    if not isinstance(summary, dict):
+        return entry_thesis, None
+    entry_thesis["live_setup_context"] = summary
+    for key in ("flow_regime", "microstructure_bucket", "setup_fingerprint"):
+        value = str(summary.get(key) or "").strip()
+        if value:
+            entry_thesis.setdefault(key, value)
+    return entry_thesis, summary
+
+
+def _has_auto_canary_applied(entry_thesis: Optional[dict]) -> bool:
+    if not isinstance(entry_thesis, dict):
+        return False
+    payload = entry_thesis.get("auto_canary")
+    return isinstance(payload, dict) and bool(payload)
+
+
+def _apply_auto_canary(
+    *,
+    strategy_tag: Optional[str],
+    pocket: str,
+    units: int,
+    min_units: int,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict],
+) -> tuple[int, Optional[float], Optional[dict[str, object]]]:
+    if not _STRATEGY_AUTO_CANARY_ENABLED:
+        return units, entry_probability, None
+    if not strategy_tag or not units:
+        return units, entry_probability, None
+    if (pocket or "").lower() == "manual":
+        return units, entry_probability, None
+    if not isinstance(entry_thesis, dict):
+        return units, entry_probability, None
+    if _has_auto_canary_applied(entry_thesis):
+        return units, entry_probability, None
+
+    try:
+        override = auto_canary.current_override(strategy_tag, entry_thesis=entry_thesis)
+    except Exception:
+        override = None
+    if not isinstance(override, dict) or not override.get("enabled", True):
+        return units, entry_probability, None
+
+    requested_abs = abs(int(units))
+    raw_mult = float(override.get("units_multiplier", 1.0) or 1.0)
+    effective_mult = max(_STRATEGY_AUTO_CANARY_MULT_MIN, min(1.0, raw_mult))
+    next_units = int(units)
+    if effective_mult < 0.999 and requested_abs > 0:
+        scaled_abs = int(round(requested_abs * effective_mult))
+        if min_units > 0 and scaled_abs < int(min_units):
+            scaled_abs = int(min_units)
+        scaled_abs = min(requested_abs, scaled_abs)
+        if scaled_abs > 0 and scaled_abs < requested_abs:
+            next_units = scaled_abs if units > 0 else -scaled_abs
+
+    normalized_probability = _entry_probability_value(entry_probability)
+    raw_prob_offset = float(override.get("probability_offset", 0.0) or 0.0)
+    prob_offset = max(
+        -_STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX,
+        min(_STRATEGY_AUTO_CANARY_PROB_OFFSET_ABS_MAX, raw_prob_offset),
+    )
+    next_probability = normalized_probability
+    if normalized_probability is not None and abs(prob_offset) > 1e-9:
+        next_probability = max(0.0, min(1.0, normalized_probability + prob_offset))
+
+    if next_units == int(units) and next_probability == normalized_probability:
+        return units, entry_probability, None
+
+    payload: dict[str, object] = {
+        "source": "strategy_entry",
+        "strategy_key": str(override.get("strategy_key") or strategy_tag),
+        "mode": str(override.get("mode") or "canary"),
+        "confidence": round(float(override.get("confidence") or 0.0), 4),
+        "requested_units": int(requested_abs),
+        "applied_units": int(abs(next_units)),
+        "units_multiplier": round(effective_mult, 4),
+        "probability_offset": round(prob_offset, 4),
+        "reason": str(override.get("reason") or "auto_canary"),
+    }
+    setup_override = override.get("setup_override")
+    if isinstance(setup_override, dict):
+        payload["setup_override"] = dict(setup_override)
+    if (
+        normalized_probability is not None
+        and next_probability is not None
+        and abs(next_probability - normalized_probability) > 1e-9
+    ):
+        payload["entry_probability_before"] = round(normalized_probability, 6)
+        payload["entry_probability_after"] = round(next_probability, 6)
+    entry_thesis["auto_canary"] = payload
+    return int(next_units), next_probability, payload
+
+
+async def _coordinate_entry_units(
+    *,
+    instrument: str,
+    pocket: str,
+    strategy_tag: Optional[str],
+    units: int,
+    reduce_only: bool,
+    entry_probability: Optional[float],
+    client_order_id: Optional[str],
+    entry_thesis: Optional[dict] = None,
+    meta: Optional[dict] = None,
+    forecast_context: Optional[dict[str, object]] = None,
+) -> tuple[int, Optional[str]]:
+    if not units:
+        return units, None
+    requested_abs_units = abs(int(units))
+    if reduce_only:
+        return units, None
+    if not strategy_tag:
+        if (pocket or "").lower() != "manual":
+            return 0, "missing_strategy_tag"
+        return units, None
+    min_units = order_manager.min_units_for_strategy(strategy_tag, pocket=pocket)
+    if _STRATEGY_PATTERN_GATE_ENABLED and not reduce_only and pocket != "manual":
+        if isinstance(entry_thesis, dict):
+            gate_meta = _normalize_pattern_gate_meta(entry_thesis, meta)
+            try:
+                pattern_decision = pattern_gate.decide(
+                    strategy_tag=strategy_tag,
+                    pocket=pocket,
+                    side=1 if units > 0 else -1,
+                    units=units,
+                    entry_thesis=entry_thesis,
+                    meta=gate_meta,
+                )
+            except Exception:  # noqa: BLE001 - pattern_gate.decide can fail many ways
+                pattern_decision = None
+            if pattern_decision is not None:
+                entry_thesis["pattern_gate"] = pattern_decision.to_payload()
+                if not pattern_decision.allowed:
+                    return 0, "pattern_gate_block"
+                if pattern_decision.scale != 1.0:
+                    scaled_units = int(round(abs(units) * pattern_decision.scale))
+                    if scaled_units < min_units:
+                        if _ORDER_PATTERN_GATE_SCALE_TO_MIN_UNITS and min_units > 0:
+                            scaled_units = min_units
+                        else:
+                            return 0, "pattern_gate_below_min"
+                    if scaled_units > 0:
+                        units = int((1 if units > 0 else -1) * scaled_units)
+    units, dyn_reason = _apply_dynamic_alloc_trim(
+        strategy_tag=strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=min_units,
+        entry_thesis=entry_thesis,
+    )
+    if not units:
+        return units, dyn_reason or "dynamic_alloc_reject"
+    final_units, reason, details = await order_manager.coordinate_entry_intent(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=strategy_tag,
+        side=1 if units > 0 else -1,
+        raw_units=units,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+        min_units=min_units,
+        forecast_context=forecast_context,
+    )
+    if not final_units and reason in {"reject", "scaled", "rejected", None}:
+        reject_reason: Optional[str] = None
+        if isinstance(details, dict):
+            coord_error = details.get("coordination_error")
+            if isinstance(coord_error, str) and coord_error.strip():
+                reject_reason = f"coordination_{coord_error.strip()}"
+            else:
+                decision = details.get("decision")
+                if isinstance(decision, str) and decision.strip():
+                    reject_reason = f"coordination_{decision.strip()}"
+        if not reject_reason:
+            if reason:
+                reject_reason = f"coordination_{str(reason).strip()}"
+            else:
+                reject_reason = "coordination_reject"
+        return 0, reject_reason
+    final_units_int = int(final_units)
+    # Keep strategy-side intent as the upper bound. Coordination may reduce or
+    # reject, but should not amplify beyond the strategy's requested size.
+    if (
+        requested_abs_units > 0
+        and final_units_int
+        and abs(final_units_int) > requested_abs_units
+    ):
+        final_units_int = (
+            requested_abs_units if final_units_int > 0 else -requested_abs_units
+        )
+    return final_units_int, None
+
+
+def _normalized_reject_reason(reason: object, fallback: str) -> str:
+    text = str(reason or "").strip().lower()
+    if not text:
+        return fallback
+    compact = text.replace(":", "_").replace("/", "_").replace(" ", "_")
+    safe = "".join(ch for ch in compact if ch.isalnum() or ch in {"_", "-", "."})
+    safe = safe.strip("._-")
+    return safe or fallback
+
+
+def _cache_entry_reject_status(
+    *,
+    client_order_id: Optional[str],
+    reason: str,
+    requested_units: int,
+    units: int,
+    strategy_tag: Optional[str],
+    pocket: str,
+    entry_probability: Optional[float],
+    entry_thesis: Optional[dict] = None,
+    extra_payload: Optional[dict[str, object]] = None,
+) -> None:
+    if not client_order_id:
+        return
+    side_units = units if units else requested_units
+    side = "buy" if side_units > 0 else "sell"
+    reason_token = _normalized_reject_reason(reason, "entry_reject")
+    request_payload: dict[str, object] = {
+        "strategy_tag": strategy_tag,
+        "pocket": pocket,
+        "entry_probability": entry_probability,
+    }
+    if isinstance(entry_thesis, dict):
+        request_payload["entry_thesis"] = entry_thesis
+    if isinstance(extra_payload, dict):
+        request_payload["extra_payload"] = extra_payload
+    order_manager._cache_order_status(
+        ts=datetime.now(timezone.utc).isoformat(),
+        client_order_id=client_order_id,
+        status=reason_token,
+        attempt=0,
+        side=side,
+        units=int(units),
+        error_code=reason_token,
+        error_message=reason_token,
+        request_payload=request_payload,
+    )
+
+
+async def market_order(
+    instrument: str,
+    units: int,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    pocket: Literal["micro", "macro", "scalp", "scalp_fast", "manual"],
+    *,
+    client_order_id: Optional[str] = None,
+    strategy_tag: Optional[str] = None,
+    reduce_only: bool = False,
+    entry_thesis: Optional[dict] = None,
+    meta: Optional[dict] = None,
+    confidence: Optional[int] = None,
+    stage_index: Optional[int] = None,
+    arbiter_final: bool = False,
+) -> Optional[str]:
+    requested_units = int(units)
+    resolved_strategy_tag = _resolve_strategy_tag(
+        strategy_tag, client_order_id, entry_thesis
+    )
+    if entry_thesis is None:
+        entry_thesis = {}
+    entry_thesis = _inject_entry_technical_context(
+        units=units,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_price=_resolve_entry_price(units, entry_thesis),
+    )
+    entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="technical_context",
+        status="pass",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="technical_context",
+    )
+    entry_thesis, market_ctx = _inject_market_context(
+        entry_thesis,
+        instrument=instrument,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="market_context",
+        status="pass" if isinstance(market_ctx, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(market_ctx, "bias_label", "event_severity"),
+        detail_key="market_context",
+    )
+    entry_thesis, live_setup_ctx = _inject_live_setup_context(
+        entry_thesis,
+        units=units,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="live_setup_context",
+        status="pass" if isinstance(live_setup_ctx, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(
+            live_setup_ctx, "flow_regime", "microstructure_bucket"
+        ),
+        detail_key="live_setup_context",
+    )
+    entry_thesis, macro_news_context = _inject_macro_news_context(entry_thesis)
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="macro_news_context",
+        status="pass" if isinstance(macro_news_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(macro_news_context, "event_severity"),
+        detail_key="macro_news_context",
+    )
+    entry_thesis, forecast_context = _inject_entry_forecast_context(
+        instrument=instrument,
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_thesis=entry_thesis,
+        meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_context",
+        status="pass" if isinstance(forecast_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(forecast_context, "reason"),
+    )
+    feedback_units_before = units
+    feedback_probability_before = entry_probability
+    units, entry_probability, sl_price, tp_price, feedback_applied = (
+        _apply_strategy_feedback(
+            resolved_strategy_tag,
+            pocket=pocket,
+            units=units,
+            entry_probability=entry_probability,
+            entry_price=_resolve_entry_price(units, entry_thesis),
+            sl_price=sl_price,
+            tp_price=tp_price,
+            entry_thesis=entry_thesis,
+        )
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="analysis_feedback",
+        status=_entry_path_stage_status(
+            units_before=feedback_units_before,
+            units_after=units,
+            entry_probability_before=feedback_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(feedback_applied, dict)
+            or not feedback_applied,
+        ),
+        units_before=feedback_units_before,
+        units_after=units,
+        entry_probability_before=feedback_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(feedback_applied, "reason"),
+        detail_key="analysis_feedback",
+    )
+    if not units:
+        feedback_reason = "analysis_feedback_zero_units"
+        if isinstance(feedback_applied, dict):
+            feedback_reason = _normalized_reject_reason(
+                feedback_applied.get("reason"),
+                feedback_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=feedback_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+        )
+        return None
+    forecast_units_before = units
+    forecast_probability_before = entry_probability
+    units, entry_probability, forecast_applied = _apply_forecast_fusion(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_fusion",
+        status=_entry_path_stage_status(
+            units_before=forecast_units_before,
+            units_after=units,
+            entry_probability_before=forecast_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(forecast_applied, dict)
+            or not forecast_applied,
+        ),
+        units_before=forecast_units_before,
+        units_after=units,
+        entry_probability_before=forecast_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(
+            forecast_applied, "reject_reason", "forecast_reason", "reason"
+        ),
+        detail_key="forecast_fusion",
+    )
+    if not units:
+        forecast_reason = "forecast_fusion_reject"
+        if isinstance(forecast_applied, dict):
+            reject_reason = forecast_applied.get("reject_reason")
+            if isinstance(reject_reason, str) and reject_reason.strip():
+                forecast_reason = reject_reason.strip()
+            else:
+                raw_reason = forecast_applied.get("forecast_reason")
+                if isinstance(raw_reason, str) and raw_reason.strip():
+                    forecast_reason = f"forecast_{raw_reason.strip()}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=forecast_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+        )
+        return None
+    net_edge_units_before = units
+    net_edge_probability_before = entry_probability
+    units, entry_probability, net_edge_applied = _apply_strategy_net_edge_gate(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_net_edge_gate",
+        status=_entry_path_stage_status(
+            units_before=net_edge_units_before,
+            units_after=units,
+            entry_probability_before=net_edge_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(net_edge_applied, dict)
+            or not net_edge_applied,
+        ),
+        units_before=net_edge_units_before,
+        units_after=units,
+        entry_probability_before=net_edge_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(net_edge_applied, "reason"),
+        detail_key="entry_net_edge_gate",
+    )
+    if not units:
+        net_edge_reason = "entry_net_edge_gate"
+        if isinstance(net_edge_applied, dict):
+            gate_reason = net_edge_applied.get("reason")
+            if isinstance(gate_reason, str) and gate_reason.strip():
+                if gate_reason == "negative":
+                    net_edge_reason = "entry_net_edge_negative"
+                else:
+                    net_edge_reason = f"entry_net_edge_{gate_reason}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=net_edge_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+            extra_payload=net_edge_applied,
+        )
+        return None
+    entry_thesis, meta = _inject_env_prefix_context(
+        entry_thesis, meta, resolved_strategy_tag
+    )
+    leading_units_before = units
+    leading_probability_before = entry_probability
+    units, entry_probability, leading_applied = _apply_strategy_leading_profile(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="leading_profile",
+        status=_entry_path_stage_status(
+            units_before=leading_units_before,
+            units_after=units,
+            entry_probability_before=leading_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(leading_applied, dict)
+            or not leading_applied,
+        ),
+        units_before=leading_units_before,
+        units_after=units,
+        entry_probability_before=leading_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(leading_applied, "reason"),
+        detail_key="entry_probability_leading_profile",
+    )
+    if not units:
+        leading_reason = "entry_leading_profile_reject"
+        if isinstance(leading_applied, dict):
+            leading_reason = _normalized_reject_reason(
+                leading_applied.get("reason"),
+                leading_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=leading_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+            extra_payload=leading_applied,
+        )
+        return None
+    participation_units_before = units
+    participation_probability_before = entry_probability
+    participation_min_units = order_manager.min_units_for_strategy(
+        resolved_strategy_tag,
+        pocket=pocket,
+    )
+    units, entry_probability, participation_applied = _apply_participation_alloc(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="participation_alloc",
+        status=_entry_path_stage_status(
+            units_before=participation_units_before,
+            units_after=units,
+            entry_probability_before=participation_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(participation_applied, dict)
+            or not participation_applied,
+        ),
+        units_before=participation_units_before,
+        units_after=units,
+        entry_probability_before=participation_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(participation_applied, "reason"),
+        detail_key="participation_alloc",
+    )
+    auto_canary_units_before = units
+    auto_canary_probability_before = entry_probability
+    units, entry_probability, auto_canary_applied = _apply_auto_canary(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="auto_canary",
+        status=_entry_path_stage_status(
+            units_before=auto_canary_units_before,
+            units_after=units,
+            entry_probability_before=auto_canary_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(auto_canary_applied, dict)
+            or not auto_canary_applied,
+        ),
+        units_before=auto_canary_units_before,
+        units_after=units,
+        entry_probability_before=auto_canary_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(auto_canary_applied, "reason"),
+        detail_key="auto_canary",
+    )
+    coordination_units_before = units
+    coordinated_units, coordination_reason = await _coordinate_entry_units(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        units=units,
+        reduce_only=reduce_only,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+        entry_thesis=entry_thesis,
+        meta=meta,
+        forecast_context=forecast_context,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="blackboard_coordination",
+        status=_entry_path_stage_status(
+            units_before=coordination_units_before,
+            units_after=coordinated_units,
+        ),
+        units_before=coordination_units_before,
+        units_after=coordinated_units,
+        entry_probability_after=entry_probability,
+        reason=str(coordination_reason).strip() if coordination_reason else None,
+        detail_key="entry_intent_board",
+    )
+    if not coordinated_units:
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=str(coordination_reason or "coordination_reject"),
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+        )
+        return None
+    if coordinated_units != units:
+        units = coordinated_units
+    contract_probability_before = entry_probability
+    entry_thesis, entry_probability = _inject_entry_intent_contract(
+        entry_thesis=entry_thesis,
+        units=units,
+        entry_probability=entry_probability,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_intent_contract",
+        status=_entry_path_stage_status(
+            units_before=units,
+            units_after=units,
+            entry_probability_before=contract_probability_before,
+            entry_probability_after=entry_probability,
+        ),
+        units_before=units,
+        units_after=units,
+        entry_probability_before=contract_probability_before,
+        entry_probability_after=entry_probability,
+        detail_key="entry_units_intent",
+    )
+    return await order_manager.market_order(
+        instrument=instrument,
+        units=units,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        pocket=pocket,
+        client_order_id=client_order_id,
+        strategy_tag=resolved_strategy_tag,
+        reduce_only=reduce_only,
+        entry_thesis=entry_thesis,
+        meta=meta,
+        confidence=confidence,
+        stage_index=stage_index,
+        arbiter_final=arbiter_final,
+    )
+
+
+async def limit_order(
+    instrument: str,
+    units: int,
+    price: float,
+    sl_price: Optional[float],
+    tp_price: Optional[float],
+    pocket: Literal["micro", "macro", "scalp"],
+    *,
+    current_bid: Optional[float] = None,
+    current_ask: Optional[float] = None,
+    require_passive: bool = True,
+    client_order_id: Optional[str] = None,
+    strategy_tag: Optional[str] = None,
+    reduce_only: bool = False,
+    ttl_ms: float = 800.0,
+    entry_thesis: Optional[dict] = None,
+    confidence: Optional[int] = None,
+    meta: Optional[dict] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    requested_units = int(units)
+    resolved_strategy_tag = _resolve_strategy_tag(
+        strategy_tag, client_order_id, entry_thesis
+    )
+    if entry_thesis is None:
+        entry_thesis = {}
+    entry_thesis = _inject_entry_technical_context(
+        units=units,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        entry_thesis=entry_thesis,
+        entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
+    )
+    entry_probability = _resolve_entry_probability(entry_thesis, confidence)
+    entry_thesis = dict(entry_thesis) if isinstance(entry_thesis, dict) else None
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="technical_context",
+        status="pass",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        detail_key="technical_context",
+    )
+    entry_thesis, market_ctx = _inject_market_context(
+        entry_thesis,
+        instrument=instrument,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="market_context",
+        status="pass" if isinstance(market_ctx, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(market_ctx, "bias_label", "event_severity"),
+        detail_key="market_context",
+    )
+    entry_thesis, live_setup_ctx = _inject_live_setup_context(
+        entry_thesis,
+        units=units,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="live_setup_context",
+        status="pass" if isinstance(live_setup_ctx, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(
+            live_setup_ctx, "flow_regime", "microstructure_bucket"
+        ),
+        detail_key="live_setup_context",
+    )
+    entry_thesis, macro_news_context = _inject_macro_news_context(entry_thesis)
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="macro_news_context",
+        status="pass" if isinstance(macro_news_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(macro_news_context, "event_severity"),
+        detail_key="macro_news_context",
+    )
+    entry_thesis, forecast_context = _inject_entry_forecast_context(
+        instrument=instrument,
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_thesis=entry_thesis,
+        meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_context",
+        status="pass" if isinstance(forecast_context, dict) else "skip",
+        units_after=units,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(forecast_context, "reason"),
+    )
+    feedback_units_before = units
+    feedback_probability_before = entry_probability
+    units, entry_probability, sl_price, tp_price, feedback_applied = (
+        _apply_strategy_feedback(
+            resolved_strategy_tag,
+            pocket=pocket,
+            units=units,
+            entry_probability=entry_probability,
+            entry_price=_resolve_entry_price(units, entry_thesis, limit_price=price),
+            sl_price=sl_price,
+            tp_price=tp_price,
+            entry_thesis=entry_thesis,
+        )
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="analysis_feedback",
+        status=_entry_path_stage_status(
+            units_before=feedback_units_before,
+            units_after=units,
+            entry_probability_before=feedback_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(feedback_applied, dict)
+            or not feedback_applied,
+        ),
+        units_before=feedback_units_before,
+        units_after=units,
+        entry_probability_before=feedback_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(feedback_applied, "reason"),
+        detail_key="analysis_feedback",
+    )
+    if not units:
+        feedback_reason = "analysis_feedback_zero_units"
+        if isinstance(feedback_applied, dict):
+            feedback_reason = _normalized_reject_reason(
+                feedback_applied.get("reason"),
+                feedback_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=feedback_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+        )
+        return None, None
+    forecast_units_before = units
+    forecast_probability_before = entry_probability
+    units, entry_probability, forecast_applied = _apply_forecast_fusion(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="forecast_fusion",
+        status=_entry_path_stage_status(
+            units_before=forecast_units_before,
+            units_after=units,
+            entry_probability_before=forecast_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(forecast_applied, dict)
+            or not forecast_applied,
+        ),
+        units_before=forecast_units_before,
+        units_after=units,
+        entry_probability_before=forecast_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(
+            forecast_applied, "reject_reason", "forecast_reason", "reason"
+        ),
+        detail_key="forecast_fusion",
+    )
+    if not units:
+        forecast_reason = "forecast_fusion_reject"
+        if isinstance(forecast_applied, dict):
+            reject_reason = forecast_applied.get("reject_reason")
+            if isinstance(reject_reason, str) and reject_reason.strip():
+                forecast_reason = reject_reason.strip()
+            else:
+                raw_reason = forecast_applied.get("forecast_reason")
+                if isinstance(raw_reason, str) and raw_reason.strip():
+                    forecast_reason = f"forecast_{raw_reason.strip()}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=forecast_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+        )
+        return None, None
+    net_edge_units_before = units
+    net_edge_probability_before = entry_probability
+    units, entry_probability, net_edge_applied = _apply_strategy_net_edge_gate(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_net_edge_gate",
+        status=_entry_path_stage_status(
+            units_before=net_edge_units_before,
+            units_after=units,
+            entry_probability_before=net_edge_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(net_edge_applied, dict)
+            or not net_edge_applied,
+        ),
+        units_before=net_edge_units_before,
+        units_after=units,
+        entry_probability_before=net_edge_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(net_edge_applied, "reason"),
+        detail_key="entry_net_edge_gate",
+    )
+    if not units:
+        net_edge_reason = "entry_net_edge_gate"
+        if isinstance(net_edge_applied, dict):
+            gate_reason = net_edge_applied.get("reason")
+            if isinstance(gate_reason, str) and gate_reason.strip():
+                if gate_reason == "negative":
+                    net_edge_reason = "entry_net_edge_negative"
+                else:
+                    net_edge_reason = f"entry_net_edge_{gate_reason}"
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=net_edge_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+            extra_payload=net_edge_applied,
+        )
+        return None, None
+    entry_thesis, meta = _inject_env_prefix_context(
+        entry_thesis, meta, resolved_strategy_tag
+    )
+    leading_units_before = units
+    leading_probability_before = entry_probability
+    units, entry_probability, leading_applied = _apply_strategy_leading_profile(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+        forecast_context=forecast_context,
+        meta=meta,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="leading_profile",
+        status=_entry_path_stage_status(
+            units_before=leading_units_before,
+            units_after=units,
+            entry_probability_before=leading_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(leading_applied, dict)
+            or not leading_applied,
+        ),
+        units_before=leading_units_before,
+        units_after=units,
+        entry_probability_before=leading_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(leading_applied, "reason"),
+        detail_key="entry_probability_leading_profile",
+    )
+    if not units:
+        leading_reason = "entry_leading_profile_reject"
+        if isinstance(leading_applied, dict):
+            leading_reason = _normalized_reject_reason(
+                leading_applied.get("reason"),
+                leading_reason,
+            )
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=leading_reason,
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+            extra_payload=leading_applied,
+        )
+        return None, None
+    participation_units_before = units
+    participation_probability_before = entry_probability
+    participation_min_units = order_manager.min_units_for_strategy(
+        resolved_strategy_tag,
+        pocket=pocket,
+    )
+    units, entry_probability, participation_applied = _apply_participation_alloc(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="participation_alloc",
+        status=_entry_path_stage_status(
+            units_before=participation_units_before,
+            units_after=units,
+            entry_probability_before=participation_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(participation_applied, dict)
+            or not participation_applied,
+        ),
+        units_before=participation_units_before,
+        units_after=units,
+        entry_probability_before=participation_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(participation_applied, "reason"),
+        detail_key="participation_alloc",
+    )
+    auto_canary_units_before = units
+    auto_canary_probability_before = entry_probability
+    units, entry_probability, auto_canary_applied = _apply_auto_canary(
+        strategy_tag=resolved_strategy_tag,
+        pocket=pocket,
+        units=units,
+        min_units=participation_min_units,
+        entry_probability=entry_probability,
+        entry_thesis=entry_thesis,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="auto_canary",
+        status=_entry_path_stage_status(
+            units_before=auto_canary_units_before,
+            units_after=units,
+            entry_probability_before=auto_canary_probability_before,
+            entry_probability_after=entry_probability,
+            skip_when_unchanged=not isinstance(auto_canary_applied, dict)
+            or not auto_canary_applied,
+        ),
+        units_before=auto_canary_units_before,
+        units_after=units,
+        entry_probability_before=auto_canary_probability_before,
+        entry_probability_after=entry_probability,
+        reason=_entry_path_reason(auto_canary_applied, "reason"),
+        detail_key="auto_canary",
+    )
+    coordination_units_before = units
+    coordinated_units, coordination_reason = await _coordinate_entry_units(
+        instrument=instrument,
+        pocket=pocket,
+        strategy_tag=resolved_strategy_tag,
+        units=units,
+        reduce_only=reduce_only,
+        entry_probability=entry_probability,
+        client_order_id=client_order_id,
+        entry_thesis=entry_thesis,
+        meta=meta,
+        forecast_context=forecast_context,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="blackboard_coordination",
+        status=_entry_path_stage_status(
+            units_before=coordination_units_before,
+            units_after=coordinated_units,
+        ),
+        units_before=coordination_units_before,
+        units_after=coordinated_units,
+        entry_probability_after=entry_probability,
+        reason=str(coordination_reason).strip() if coordination_reason else None,
+        detail_key="entry_intent_board",
+    )
+    if not coordinated_units:
+        _cache_entry_reject_status(
+            client_order_id=client_order_id,
+            reason=str(coordination_reason or "coordination_reject"),
+            requested_units=requested_units,
+            units=units,
+            strategy_tag=resolved_strategy_tag,
+            pocket=pocket,
+            entry_probability=entry_probability,
+            entry_thesis=entry_thesis,
+        )
+        return None, None
+    if coordinated_units != units:
+        units = coordinated_units
+    contract_probability_before = entry_probability
+    entry_thesis, entry_probability = _inject_entry_intent_contract(
+        entry_thesis=entry_thesis,
+        units=units,
+        entry_probability=entry_probability,
+    )
+    entry_thesis = _append_entry_path_stage(
+        entry_thesis,
+        stage="entry_intent_contract",
+        status=_entry_path_stage_status(
+            units_before=units,
+            units_after=units,
+            entry_probability_before=contract_probability_before,
+            entry_probability_after=entry_probability,
+        ),
+        units_before=units,
+        units_after=units,
+        entry_probability_before=contract_probability_before,
+        entry_probability_after=entry_probability,
+        detail_key="entry_units_intent",
+    )
+    return await order_manager.limit_order(
+        instrument=instrument,
+        units=units,
+        price=price,
+        sl_price=sl_price,
+        tp_price=tp_price,
+        pocket=pocket,
+        current_bid=current_bid,
+        current_ask=current_ask,
+        require_passive=require_passive,
+        client_order_id=client_order_id,
+        reduce_only=reduce_only,
+        ttl_ms=ttl_ms,
+        entry_thesis=entry_thesis,
+        confidence=confidence,
+        meta=meta,
+    )

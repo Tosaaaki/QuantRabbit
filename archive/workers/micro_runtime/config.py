@@ -1,0 +1,278 @@
+from __future__ import annotations
+
+import os
+
+ENV_PREFIX = "MICRO_MULTI"
+
+
+def _parse_hours(raw: str) -> set[int]:
+    hours: set[int] = set()
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_s, end_s = token.split("-", 1)
+            try:
+                start = int(float(start_s))
+                end = int(float(end_s))
+            except ValueError:
+                continue
+            if start > end:
+                start, end = end, start
+            for h in range(start, end + 1):
+                if 0 <= h <= 23:
+                    hours.add(h)
+            continue
+        try:
+            h = int(float(token))
+        except ValueError:
+            continue
+        if 0 <= h <= 23:
+            hours.add(h)
+    return hours
+
+
+def _parse_csv(raw: str) -> frozenset[str]:
+    values: set[str] = set()
+    for token in raw.split(","):
+        item = token.strip()
+        if item:
+            values.add(item)
+    return frozenset(values)
+
+
+def _parse_strategy_mults(raw: str) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for token in raw.split(","):
+        item = token.strip()
+        if not item or ":" not in item:
+            continue
+        name, mult_raw = item.split(":", 1)
+        strategy = name.strip()
+        if not strategy:
+            continue
+        try:
+            mult = float(mult_raw.strip())
+        except ValueError:
+            continue
+        if mult <= 0.0:
+            continue
+        values[strategy] = mult
+    return values
+
+
+def _bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+POCKET = "micro"
+LOOP_INTERVAL_SEC = float(os.getenv("MICRO_MULTI_LOOP_INTERVAL_SEC", "8.0"))
+ENABLED = os.getenv("MICRO_MULTI_ENABLED", "0").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+LOG_PREFIX = os.getenv("MICRO_MULTI_LOG_PREFIX", "[MicroMulti]")
+
+CONFIDENCE_FLOOR = 35
+CONFIDENCE_CEIL = 90
+MIN_UNITS = int(os.getenv("MICRO_MULTI_MIN_UNITS", "1500"))
+BASE_ENTRY_UNITS = int(os.getenv("MICRO_MULTI_BASE_UNITS", "20000"))
+MAX_MARGIN_USAGE = float(os.getenv("MICRO_MULTI_MAX_MARGIN_USAGE", "0.9"))
+
+CAP_MIN = float(os.getenv("MICRO_MULTI_CAP_MIN", "0.15"))
+CAP_MAX = float(os.getenv("MICRO_MULTI_CAP_MAX", "0.95"))
+
+# TrendMomentumMicro が沈んだ時間帯を任意でブロック（デフォルト無効）
+TREND_BLOCK_HOURS_UTC = frozenset(
+    _parse_hours(os.getenv("MICRO_TREND_BLOCK_HOURS_UTC", ""))
+)
+
+MAX_FACTOR_AGE_SEC = float(os.getenv("MICRO_MULTI_MAX_FACTOR_AGE_SEC", "90.0"))
+
+# Trend/Projection reconciliation (avoid counter-trend traps without reducing frequency).
+TREND_FLIP_ENABLED = _bool("MICRO_MULTI_TREND_FLIP_ENABLED", True)
+TREND_FLIP_GAP_PIPS = float(os.getenv("MICRO_MULTI_TREND_FLIP_GAP_PIPS", "0.6"))
+TREND_FLIP_ADX_MIN = float(os.getenv("MICRO_MULTI_TREND_FLIP_ADX_MIN", "20.0"))
+TREND_FLIP_TP_MULT = float(os.getenv("MICRO_MULTI_TREND_FLIP_TP_MULT", "1.12"))
+TREND_FLIP_SL_MULT = float(os.getenv("MICRO_MULTI_TREND_FLIP_SL_MULT", "0.95"))
+TREND_FLIP_STRATEGY_ALLOWLIST = _parse_csv(
+    os.getenv("MICRO_MULTI_TREND_FLIP_STRATEGY_ALLOWLIST", "")
+)
+TREND_FLIP_STRATEGY_BLOCKLIST = _parse_csv(
+    os.getenv(
+        "MICRO_MULTI_TREND_FLIP_STRATEGY_BLOCKLIST",
+        "MicroLevelReactor,MicroCompressionRevert",
+    )
+)
+
+PROJ_FLIP_ENABLED = _bool("MICRO_MULTI_PROJ_FLIP_ENABLED", True)
+PROJ_CONFLICT_ALLOW = _bool("MICRO_MULTI_PROJ_CONFLICT_ALLOW", True)
+
+# Fresh factor fallback (avoid stale M1 driving wrong direction).
+FRESH_TICKS_ON_STALE = _bool("MICRO_MULTI_FRESH_TICKS_ON_STALE", True)
+FRESH_TICKS_LOOKBACK_SEC = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_LOOKBACK_SEC", "1800.0")
+)
+FRESH_TICKS_MIN_CANDLES = int(os.getenv("MICRO_MULTI_FRESH_TICKS_MIN_CANDLES", "30"))
+FRESH_TICKS_REFRESH_SEC = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_REFRESH_SEC", "20.0")
+)
+FRESH_TICKS_STALE_SCALE_MIN = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_STALE_SCALE_MIN", "0.32")
+)
+FRESH_TICKS_STALE_SCALE_HARD_SEC = float(
+    os.getenv("MICRO_MULTI_FRESH_TICKS_STALE_SCALE_HARD_SEC", "420.0")
+)
+
+# Range-mode selection bias.
+RANGE_ONLY_SCORE = float(os.getenv("MICRO_MULTI_RANGE_ONLY_SCORE", "0.45"))
+RANGE_BIAS_SCORE = float(os.getenv("MICRO_MULTI_RANGE_BIAS_SCORE", "0.30"))
+RANGE_STRATEGY_BONUS = float(os.getenv("MICRO_MULTI_RANGE_STRATEGY_BONUS", "12"))
+RANGE_TREND_PENALTY = float(os.getenv("MICRO_MULTI_RANGE_TREND_PENALTY", "10"))
+RANGE_ONLY_TREND_ALLOWLIST = _parse_csv(
+    os.getenv("MICRO_MULTI_RANGE_ONLY_TREND_ALLOWLIST", "")
+)
+
+# Recent micro-structure tilt: boost choppy/range-friendly strategies and
+# downsize momentum continuation when the last few M1 bars are rotational.
+CHOP_ENABLED = _bool("MICRO_MULTI_CHOP_ENABLED", True)
+CHOP_LOOKBACK_BARS = int(os.getenv("MICRO_MULTI_CHOP_LOOKBACK_BARS", "12"))
+CHOP_SIGN_FLIP_MIN = float(os.getenv("MICRO_MULTI_CHOP_SIGN_FLIP_MIN", "0.42"))
+CHOP_DIRECTIONAL_EFF_MAX = float(
+    os.getenv("MICRO_MULTI_CHOP_DIRECTIONAL_EFF_MAX", "0.18")
+)
+CHOP_MEAN_RANGE_MIN_PIPS = float(
+    os.getenv("MICRO_MULTI_CHOP_MEAN_RANGE_MIN_PIPS", "2.0")
+)
+CHOP_STRATEGY_SCORE_BONUS = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_CHOP_STRATEGY_SCORE_BONUS", "")
+)
+CHOP_STRATEGY_SCORE_PENALTY = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_CHOP_STRATEGY_SCORE_PENALTY", "")
+)
+CHOP_STRATEGY_UNITS_MULT = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_CHOP_STRATEGY_UNITS_MULT", "")
+)
+
+# MicroLevelReactor safety gate: require stronger range context to avoid trend-side stop cascades.
+MLR_STRICT_RANGE_GATE = _bool("MICRO_MULTI_MLR_STRICT_RANGE_GATE", True)
+MLR_MIN_RANGE_SCORE = float(os.getenv("MICRO_MULTI_MLR_MIN_RANGE_SCORE", "0.62"))
+MLR_MAX_ADX = float(os.getenv("MICRO_MULTI_MLR_MAX_ADX", "20.0"))
+MLR_MAX_MA_GAP_PIPS = float(os.getenv("MICRO_MULTI_MLR_MAX_MA_GAP_PIPS", "2.2"))
+MLR_CHOP_OVERRIDE_ENABLED = _bool("MICRO_MULTI_MLR_CHOP_OVERRIDE_ENABLED", True)
+MLR_CHOP_SCORE_MIN = float(os.getenv("MICRO_MULTI_MLR_CHOP_SCORE_MIN", "0.55"))
+MLR_CHOP_MAX_ADX = float(os.getenv("MICRO_MULTI_MLR_CHOP_MAX_ADX", "42.0"))
+MLR_CHOP_MAX_MA_GAP_PIPS = float(
+    os.getenv("MICRO_MULTI_MLR_CHOP_MAX_MA_GAP_PIPS", "4.8")
+)
+
+# Strategy diversity: promote idle strategies without inflating risk sizing.
+DIVERSITY_ENABLED = os.getenv(
+    "MICRO_MULTI_DIVERSITY_ENABLED", "1"
+).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DIVERSITY_IDLE_SEC = float(os.getenv("MICRO_MULTI_DIVERSITY_IDLE_SEC", "300"))
+DIVERSITY_SCALE_SEC = float(os.getenv("MICRO_MULTI_DIVERSITY_SCALE_SEC", "900"))
+DIVERSITY_MAX_BONUS = float(os.getenv("MICRO_MULTI_DIVERSITY_MAX_BONUS", "12"))
+
+# Multi-signal dispatch (variety): send top-N signals per cycle with smaller sizing.
+MAX_SIGNALS_PER_CYCLE = int(os.getenv("MICRO_MULTI_MAX_SIGNALS_PER_CYCLE", "2"))
+MULTI_SIGNAL_MIN_SCALE = float(os.getenv("MICRO_MULTI_MULTI_SIGNAL_MIN_SCALE", "0.6"))
+# Per-strategy minimum interval between entries to avoid same-minute burst stacking.
+STRATEGY_COOLDOWN_SEC = float(os.getenv("MICRO_MULTI_STRATEGY_COOLDOWN_SEC", "0.0"))
+# MomentumBurst can opt into a shorter cooldown only for reacceleration entries.
+MOMENTUMBURST_REACCEL_COOLDOWN_SEC = float(
+    os.getenv("MOMENTUMBURST_REACCEL_COOLDOWN_SEC", "0.0")
+)
+STRATEGY_UNITS_MULT = _parse_strategy_mults(
+    os.getenv("MICRO_MULTI_STRATEGY_UNITS_MULT", "")
+)
+SIGNAL_TAG_CONTAINS = frozenset(
+    token.lower()
+    for token in _parse_csv(os.getenv("MICRO_MULTI_SIGNAL_TAG_CONTAINS", ""))
+)
+
+# Dynamic winner routing from config/dynamic_alloc.json
+DYN_ALLOC_ENABLED = os.getenv(
+    "MICRO_MULTI_DYN_ALLOC_ENABLED", "1"
+).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DYN_ALLOC_PATH = os.getenv("MICRO_MULTI_DYN_ALLOC_PATH", "config/dynamic_alloc.json")
+DYN_ALLOC_TTL_SEC = float(os.getenv("MICRO_MULTI_DYN_ALLOC_TTL_SEC", "20"))
+DYN_ALLOC_MIN_TRADES = int(os.getenv("MICRO_MULTI_DYN_ALLOC_MIN_TRADES", "10"))
+DYN_ALLOC_WINNER_SCORE = float(os.getenv("MICRO_MULTI_DYN_ALLOC_WINNER_SCORE", "0.62"))
+DYN_ALLOC_LOSER_SCORE = float(os.getenv("MICRO_MULTI_DYN_ALLOC_LOSER_SCORE", "0.28"))
+DYN_ALLOC_WINNER_ONLY = os.getenv(
+    "MICRO_MULTI_DYN_ALLOC_WINNER_ONLY", "1"
+).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DYN_ALLOC_LOSER_BLOCK = os.getenv(
+    "MICRO_MULTI_DYN_ALLOC_LOSER_BLOCK", "1"
+).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+}
+DYN_ALLOC_SCORE_BONUS = float(os.getenv("MICRO_MULTI_DYN_ALLOC_SCORE_BONUS", "10.0"))
+DYN_ALLOC_MULT_MIN = float(os.getenv("MICRO_MULTI_DYN_ALLOC_MULT_MIN", "0.7"))
+DYN_ALLOC_MULT_MAX = float(os.getenv("MICRO_MULTI_DYN_ALLOC_MULT_MAX", "1.8"))
+
+# Strategy history selector (trades.db) fallback scores.
+HIST_ENABLED = os.getenv("MICRO_MULTI_HIST_ENABLED", "1").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+HIST_DB_PATH = os.getenv("MICRO_MULTI_HIST_DB_PATH", "logs/trades.db")
+HIST_TTL_SEC = float(os.getenv("MICRO_MULTI_HIST_TTL_SEC", "30"))
+HIST_LOOKBACK_DAYS = int(os.getenv("MICRO_MULTI_HIST_LOOKBACK_DAYS", "7"))
+HIST_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_MIN_TRADES", "12"))
+HIST_REGIME_MIN_TRADES = int(os.getenv("MICRO_MULTI_HIST_REGIME_MIN_TRADES", "8"))
+HIST_PF_CAP = float(os.getenv("MICRO_MULTI_HIST_PF_CAP", "2.0"))
+HIST_SKIP_SCORE = float(os.getenv("MICRO_MULTI_HIST_SKIP_SCORE", "0.34"))
+_hist_skip_score_override_raw = os.getenv(
+    "MICRO_MULTI_HIST_SKIP_SCORE_OVERRIDE", ""
+).strip()
+HIST_SKIP_SCORE_OVERRIDE = (
+    float(_hist_skip_score_override_raw) if _hist_skip_score_override_raw else None
+)
+HIST_CONF_WEIGHT = float(os.getenv("MICRO_MULTI_HIST_CONF_WEIGHT", "14.0"))
+HIST_LOT_MIN = float(os.getenv("MICRO_MULTI_HIST_LOT_MIN", "0.72"))
+HIST_LOT_MAX = float(os.getenv("MICRO_MULTI_HIST_LOT_MAX", "1.28"))
+HIST_SETUP_WINNER_PROTECT_ENABLED = os.getenv(
+    "MICRO_MULTI_HIST_SETUP_WINNER_PROTECT_ENABLED",
+    "1",
+).strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "no",
+    "off",
+}
+HIST_SETUP_WINNER_MIN_TRADES = int(
+    os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_MIN_TRADES", "2")
+)
+HIST_SETUP_WINNER_SCORE = float(
+    os.getenv("MICRO_MULTI_HIST_SETUP_WINNER_SCORE", "0.58")
+)

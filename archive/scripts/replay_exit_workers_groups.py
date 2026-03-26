@@ -1,0 +1,1534 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Replay with exit_worker using entry schedules derived from replay_workers.
+
+This matches the exit_worker-based replay pattern used for the replay scalp workers,
+while reusing each worker's replay entry logic to generate entry events.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import inspect
+import json
+import logging
+import os
+import importlib
+from bisect import bisect_right
+from importlib import import_module
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from collections import deque
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import scripts.replay_exit_workers as rew
+import scripts.replay_workers as rw
+
+PIP = 0.01
+
+
+def _optional_import(module_name: str):
+    try:
+        return import_module(module_name)
+    except Exception:
+        return None
+
+
+WORKER_SPECS = {
+    "impulse_break_s5": {
+        "tag": "impulse_break_s5",
+        "exit_module_name": "workers.impulse_break_s5.exit_worker",
+        "exit_worker_class": "ImpulseBreakExitWorker",
+        "config_module_name": "workers.impulse_break_s5.config",
+    },
+    "impulse_retest_s5": {
+        "tag": "impulse_retest_s5",
+        "exit_module_name": "workers.impulse_retest_s5.exit_worker",
+        "exit_worker_class": "ImpulseRetestExitWorker",
+        "config_module_name": "workers.impulse_retest_s5.config",
+    },
+    "impulse_momentum_s5": {
+        "tag": "impulse_momentum_s5",
+        "exit_module_name": "workers.impulse_momentum_s5.exit_worker",
+        "exit_worker_class": "ImpulseMomentumExitWorker",
+        "config_module_name": "workers.impulse_momentum_s5.config",
+    },
+    "pullback_s5": {
+        "tag": "pullback_s5",
+        "exit_module_name": "workers.pullback_s5.exit_worker",
+        "exit_worker_class": "PullbackExitWorker",
+        "config_module_name": "workers.pullback_s5.config",
+    },
+    "vwap_magnet_s5": {
+        "tag": "vwap_magnet_s5",
+        "exit_module_name": "workers.vwap_magnet_s5.exit_worker",
+        "exit_worker_class": "VWAPMagnetExitWorker",
+        "config_module_name": "workers.vwap_magnet_s5.config",
+    },
+    "stop_run_reversal": {
+        "tag": "stop_run_reversal",
+        "exit_module_name": "workers.stop_run_reversal.exit_worker",
+        "exit_worker_class": "StopRunReversalExitWorker",
+        "config_module_name": "workers.stop_run_reversal.config",
+    },
+    "session_open": {
+        "tag": "session_open_breakout",
+        "exit_module_name": "workers.session_open.exit_worker",
+        "exit_worker_class": "SessionOpenExitWorker",
+        "config_module_name": "workers.session_open.config",
+    },
+    "trend_breakout": {
+        "tag": "TrendBreakout",
+        "exit_module_name": "workers.scalp_trend_breakout.exit_worker",
+        "exit_worker_class": "M1ScalperExitWorker",
+        "config_module_name": "workers.scalp_trend_breakout.config",
+    },
+    "pullback_continuation": {
+        "tag": "PullbackContinuation",
+        "exit_module_name": "workers.scalp_pullback_continuation.exit_worker",
+        "exit_worker_class": "M1ScalperExitWorker",
+        "config_module_name": "workers.scalp_pullback_continuation.config",
+    },
+    "failed_break_reverse": {
+        "tag": "FailedBreakReverse",
+        "exit_module_name": "workers.scalp_failed_break_reverse.exit_worker",
+        "exit_worker_class": "M1ScalperExitWorker",
+        "config_module_name": "workers.scalp_failed_break_reverse.config",
+    },
+}
+
+_AVAILABLE_SPECS: dict[str, dict] = {}
+for _worker_name, _spec in WORKER_SPECS.items():
+    _exit_module = _optional_import(str(_spec["exit_module_name"]))
+    if _exit_module is None:
+        continue
+    merged = dict(_spec)
+    merged["exit_module"] = _exit_module
+    _AVAILABLE_SPECS[_worker_name] = merged
+
+WORKER_TAGS = {name: str(spec["tag"]) for name, spec in _AVAILABLE_SPECS.items()}
+EXIT_MODULES = {name: spec["exit_module"] for name, spec in _AVAILABLE_SPECS.items()}
+EXIT_WORKER_CLASSES = {
+    name: str(spec["exit_worker_class"]) for name, spec in _AVAILABLE_SPECS.items()
+}
+M1_FAMILY_WORKERS = {"trend_breakout", "pullback_continuation", "failed_break_reverse"}
+
+
+@dataclass
+class EntryEvent:
+    ts: datetime
+    direction: str
+    entry_price: float
+    tp_pips: Optional[float]
+    sl_pips: Optional[float]
+    units: int
+    strategy_tag: Optional[str] = None
+
+
+def _parse_iso(ts: str) -> datetime:
+    return rew.parse_iso8601(ts)
+
+
+def _safe_float_value(value: object, default: float | None = None) -> float | None:
+    try:
+        if isinstance(value, bool):
+            return None if default is None else float(default)
+        out = float(value)
+    except Exception:
+        if default is None:
+            return None
+        return float(default)
+    if out != out:
+        return None if default is None else float(default)
+    return out
+
+
+def _safe_int_value(value: object, default: int | None = None) -> int | None:
+    try:
+        if isinstance(value, bool):
+            return None if default is None else int(default)
+        return int(float(value))
+    except Exception:
+        if default is None:
+            return None
+        return int(default)
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        txt = value.strip()
+        if not txt:
+            return None
+        try:
+            return _parse_iso(txt)
+        except Exception:
+            try:
+                parsed = datetime.fromisoformat(txt.replace("Z", "+00:00"))
+            except Exception:
+                try:
+                    stamp = float(txt)
+                except Exception:
+                    return None
+                if stamp > 1.0e12:
+                    stamp = stamp / 1000.0
+                return datetime.fromtimestamp(stamp, tz=timezone.utc)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+    try:
+        if isinstance(value, (int, float)):
+            if isinstance(value, bool):
+                return None
+            stamp = float(value)
+            if stamp > 1.0e12:
+                stamp = stamp / 1000.0
+            return datetime.fromtimestamp(stamp, tz=timezone.utc)
+    except Exception:
+        return None
+    return None
+
+
+def _first_present(mapping: dict, keys: list[str]) -> object | None:
+    for key in keys:
+        if key in mapping:
+            return mapping[key]
+    return None
+
+
+def _parse_side(value: object) -> str | None:
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {
+            "long",
+            "buy",
+            "up",
+            "bull",
+            "1",
+            "true",
+            "t",
+            "l",
+            "open_long",
+            "openlong",
+            "open-long",
+            "open long",
+        }:
+            return "long"
+        if text in {
+            "short",
+            "sell",
+            "down",
+            "bear",
+            "-1",
+            "false",
+            "f",
+            "s",
+            "open_short",
+            "openshort",
+            "open-short",
+            "open short",
+        }:
+            return "short"
+        if text.startswith("open_") and text.endswith("_long"):
+            return "long"
+        if text.startswith("open_") and text.endswith("_short"):
+            return "short"
+        if text.startswith("open-") and text.endswith("-long"):
+            return "long"
+        if text.startswith("open-") and text.endswith("-short"):
+            return "short"
+        try:
+            num = float(text)
+        except Exception:
+            return None
+        if num > 0:
+            return "long"
+        if num < 0:
+            return "short"
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        num = float(value)
+        if num > 0:
+            return "long"
+        if num < 0:
+            return "short"
+    return None
+
+
+def _load_entries_from_replay(path: Path) -> List[EntryEvent]:
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        print(f"[replay_exit_workers_groups] failed to parse json: {path}")
+        return []
+
+    if isinstance(payload, dict):
+        trades = payload.get("trades")
+        if trades is None:
+            for key in (
+                "entries",
+                "signals",
+                "actions",
+                "data",
+                "record",
+                "records",
+                "entry",
+            ):
+                candidate = payload.get(key)
+                if candidate is not None:
+                    if isinstance(candidate, dict):
+                        trades = [candidate]
+                    else:
+                        trades = candidate
+                    break
+    else:
+        trades = payload
+    raw_count = 0
+    accepted_count = 0
+    entries: List[EntryEvent] = []
+    issues: dict[str, int] = {
+        "missing_payload": 0,
+        "non_dict_trade": 0,
+        "missing_required": 0,
+        "invalid_datetime": 0,
+        "invalid_direction": 0,
+        "invalid_entry_price": 0,
+        "invalid_units": 0,
+        "invalid_tp_sl": 0,
+    }
+    if not isinstance(trades, list):
+        issues["missing_payload"] += 1
+        print(
+            f"[replay_exit_workers_groups] parsed_entries={accepted_count}/{raw_count} "
+            + ",".join(f"{k}={v}" for k, v in issues.items() if v > 0)
+        )
+        return entries
+
+    for tr in trades:
+        raw_count += 1
+        if not isinstance(tr, dict):
+            issues["non_dict_trade"] += 1
+            continue
+        entry_time = _first_present(
+            tr,
+            [
+                "entry_time",
+                "open_time",
+                "time",
+                "ts",
+                "timestamp",
+                "created_at",
+                "open_epoch",
+                "epoch",
+            ],
+        )
+        direction = _first_present(tr, ["direction", "side", "action"])
+        entry_price = _first_present(
+            tr, ["entry_price", "price", "open_price", "entry", "entry_px"]
+        )
+        if entry_time is None or direction is None:
+            issues["missing_required"] += 1
+            continue
+        if entry_price is None:
+            issues["missing_required"] += 1
+            continue
+
+        parsed_time = _parse_dt(entry_time)
+        if parsed_time is None:
+            issues["invalid_datetime"] += 1
+            continue
+
+        side = _parse_side(direction)
+        if side is None:
+            issues["invalid_direction"] += 1
+            continue
+
+        entry_price_value = _safe_float_value(entry_price)
+        if entry_price_value is None:
+            issues["invalid_entry_price"] += 1
+            continue
+
+        tp_pips = None
+        sl_pips = None
+        tp_price = _first_present(
+            tr, ["tp_price", "tp_price_val", "take_profit_price", "take_profit"]
+        )
+        if tp_price is not None:
+            tp_price_value = _safe_float_value(tp_price)
+            if tp_price_value is not None:
+                tp_pips = abs(tp_price_value - entry_price_value) / PIP
+            else:
+                issues["invalid_tp_sl"] += 1
+        else:
+            tp_pips_raw = _first_present(
+                tr, ["tp_pips", "target_pips", "tp", "tp_distance"]
+            )
+            tp_pips_value = _safe_float_value(tp_pips_raw)
+            if tp_pips_raw is not None and tp_pips_value is not None:
+                tp_pips = abs(tp_pips_value)
+            elif tp_pips_raw is not None and tp_pips_value is None:
+                issues["invalid_tp_sl"] += 1
+
+        sl_price = _first_present(
+            tr, ["sl_price", "sl_price_val", "stop_loss_price", "stop_loss"]
+        )
+        if sl_price is not None:
+            sl_price_value = _safe_float_value(sl_price)
+            if sl_price_value is not None:
+                sl_pips = abs(sl_price_value - entry_price_value) / PIP
+            else:
+                issues["invalid_tp_sl"] += 1
+        else:
+            sl_pips_raw = _first_present(tr, ["sl_pips", "sl_distance"])
+            sl_pips_value = _safe_float_value(sl_pips_raw)
+            if sl_pips_raw is not None and sl_pips_value is not None:
+                sl_pips = abs(sl_pips_value)
+            elif sl_pips_raw is not None and sl_pips_value is None:
+                issues["invalid_tp_sl"] += 1
+
+        units = _first_present(
+            tr,
+            ["units", "size", "quantity", "units_int", "units_float", "units_signed"],
+        )
+        if units is None:
+            units = 10000
+        units_value = _safe_int_value(units)
+        if units_value is None or units_value == 0:
+            issues["invalid_units"] += 1
+            continue
+
+        strategy_tag = (
+            tr.get("strategy_tag")
+            or tr.get("strategy")
+            or tr.get("tag")
+            or tr.get("name")
+        )
+        entries.append(
+            EntryEvent(
+                ts=parsed_time,
+                direction=side,
+                entry_price=float(entry_price_value),
+                tp_pips=tp_pips,
+                sl_pips=sl_pips,
+                units=abs(units_value),
+                strategy_tag=str(strategy_tag) if strategy_tag else None,
+            )
+        )
+        accepted_count += 1
+    entries.sort(key=lambda e: e.ts)
+
+    if (
+        issues["missing_required"]
+        or issues["invalid_datetime"]
+        or issues["invalid_direction"]
+        or issues["invalid_entry_price"]
+        or issues["invalid_units"]
+        or issues["invalid_tp_sl"]
+    ):
+        print(
+            f"[replay_exit_workers_groups] parsed_entries={accepted_count}/{raw_count} "
+            + ",".join(f"{k}={v}" for k, v in issues.items() if v > 0)
+        )
+
+    return entries
+
+
+def _run_replay_workers(
+    *,
+    worker: str,
+    ticks_path: Path,
+    out_path: Path,
+    env: Optional[Dict[str, str]] = None,
+    ticks_cache: Optional[List[rw.Tick]] = None,
+) -> dict:
+    original_env = os.environ.copy()
+    if env:
+        os.environ.update(env)
+    try:
+        spec = WORKER_SPECS.get(worker) or {}
+        module_names = [str(spec.get("config_module_name") or "")]
+        for mod_name in module_names:
+            if not mod_name:
+                continue
+            mod = sys.modules.get(mod_name)
+            if mod is not None:
+                importlib.reload(mod)
+
+        ticks = ticks_cache if ticks_cache is not None else rw.load_ticks(ticks_path)
+        func_name = f"replay_{worker}"
+        if not hasattr(rw, func_name):
+            raise RuntimeError(f"replay function not found: {func_name}")
+        result = getattr(rw, func_name)(ticks)
+        rw.attach_replay_coverage(result, ticks=ticks, worker=worker)
+        out_path.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        return result
+    finally:
+        for key in list(os.environ.keys()):
+            if key not in original_env:
+                os.environ.pop(key, None)
+        for key, value in original_env.items():
+            os.environ[key] = value
+
+
+def _tuning_env(worker: str) -> Dict[str, str]:
+    base = {"REPLAY_TUNED": "1"}
+    # conservative tighten rules
+    mapping = {
+        "impulse_break_s5": {
+            "IMPULSE_BREAK_S5_MAX_SPREAD_PIPS": "0.9",
+            "IMPULSE_BREAK_S5_MIN_ATR_PIPS": "1.1",
+        },
+        "impulse_retest_s5": {
+            "IMPULSE_RETEST_S5_MAX_SPREAD_PIPS": "0.9",
+            "IMPULSE_RETEST_S5_MIN_ATR_PIPS": "1.0",
+        },
+        "impulse_momentum_s5": {
+            "IMPULSE_MOMENTUM_S5_MAX_SPREAD_PIPS": "1.0",
+            "IMPULSE_MOMENTUM_S5_MIN_ATR_PIPS": "0.8",
+        },
+        "pullback_s5": {
+            "PULLBACK_S5_MAX_SPREAD_PIPS": "0.9",
+            "PULLBACK_S5_MIN_ATR_PIPS": "1.2",
+        },
+    }
+    tuned = mapping.get(worker, {})
+    if not tuned:
+        return base
+    base.update(tuned)
+    return base
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+    except Exception:
+        return float(default)
+    if out != out:
+        return float(default)
+    return out
+
+
+def _parse_scenarios(raw: str) -> list[str]:
+    default = ["all"]
+    normalized = [
+        s.strip().lower().replace("-", "_").replace(" ", "_")
+        for s in (raw or "").split(",")
+        if s.strip()
+    ]
+    if not normalized:
+        return default
+
+    alias = {
+        "all": "all",
+        "wide": "wide_spread",
+        "wide_spread": "wide_spread",
+        "tight": "tight_spread",
+        "tight_spread": "tight_spread",
+        "high": "high_vol",
+        "high_vol": "high_vol",
+        "highvol": "high_vol",
+        "high_volatility": "high_vol",
+        "low": "low_vol",
+        "low_vol": "low_vol",
+        "lowvol": "low_vol",
+        "low_volatility": "low_vol",
+        "trend": "trend",
+        "trend_up": "trend_up",
+        "trendup": "trend_up",
+        "uptrend": "trend_up",
+        "trend_down": "trend_down",
+        "trenddown": "trend_down",
+        "downtrend": "trend_down",
+        "range": "range",
+        "rangebound": "range",
+        "range_bound": "range",
+        "gap": "gap",
+        "gap_up": "gap_up",
+        "gapup": "gap_up",
+        "gap_down": "gap_down",
+        "gapdown": "gap_down",
+        "stale": "stale",
+        "stale_tick": "stale",
+        "stale_ticks": "stale",
+    }
+
+    seen: list[str] = []
+    for item in normalized:
+        canonical = alias.get(item, item)
+        if canonical in seen:
+            continue
+        seen.append(canonical)
+    return seen
+
+
+SCENARIO_OPTIONS: set[str] = {
+    "all",
+    "wide_spread",
+    "tight_spread",
+    "high_vol",
+    "low_vol",
+    "trend",
+    "trend_up",
+    "trend_down",
+    "range",
+    "gap",
+    "gap_up",
+    "gap_down",
+    "stale",
+}
+
+
+def _build_tick_scenarios(ticks: List[rw.Tick]) -> tuple[
+    List[datetime],
+    Dict[str, List[bool]],
+    Dict[str, object],
+]:
+    times: List[datetime] = []
+    spreads: List[float] = []
+    mid_values: List[float] = []
+    if not ticks:
+        return (
+            [],
+            {"all": []},
+            {
+                "count": 0,
+                "spread_percentiles": {"q20": 0.0, "q80": 0.0},
+                "minute_rows": 0,
+                "counts": {"all": 0},
+            },
+        )
+    for tick in ticks:
+        ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
+        if ts is None:
+            continue
+        times.append(ts)
+        spread = max(0.0, getattr(tick, "ask", 0.0) - getattr(tick, "bid", 0.0))
+        spreads.append(spread / PIP)
+        try:
+            mid_values.append(float(getattr(tick, "mid", 0.0)))
+        except Exception:
+            mid_values.append(0.0)
+    total = len(times)
+    if total == 0:
+        return (
+            [],
+            {"all": []},
+            {
+                "count": 0,
+                "spread_percentiles": {"q20": 0.0, "q80": 0.0},
+                "minute_rows": 0,
+                "counts": {"all": 0},
+            },
+        )
+
+    sorted_spreads = sorted(spreads)
+    if sorted_spreads:
+        q_low_idx = int(round((len(sorted_spreads) - 1) * 0.2))
+        q_high_idx = int(round((len(sorted_spreads) - 1) * 0.8))
+        q_low_idx = max(0, min(len(sorted_spreads) - 1, q_low_idx))
+        q_high_idx = max(0, min(len(sorted_spreads) - 1, q_high_idx))
+        q_low = sorted_spreads[q_low_idx]
+        q_high = sorted_spreads[q_high_idx]
+    else:
+        q_low = 0.0
+        q_high = 0.0
+
+    minute_rows: List[Dict[str, float]] = []
+    minute_for_tick: List[int] = []
+    first_tick_with_ts: rw.Tick | None = None
+    current_minute_start: Optional[datetime] = None
+    open_price: float = 0.0
+    high_price: float = 0.0
+    low_price: float = 0.0
+    close_price: float = 0.0
+    current_minute_index: int = -1
+
+    def _close_minute() -> None:
+        nonlocal minute_rows, open_price, high_price, low_price, close_price
+        if current_minute_start is None:
+            return
+        minute_rows.append(
+            {
+                "start": current_minute_start,
+                "open": open_price,
+                "high": high_price,
+                "low": low_price,
+                "close": close_price,
+            }
+        )
+
+    for tick in ticks:
+        ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
+        if ts is None:
+            continue
+        if first_tick_with_ts is None:
+            first_tick_with_ts = tick
+        row_start = ts.replace(second=0, microsecond=0)
+        try:
+            price = float(getattr(tick, "mid", 0.0))
+        except Exception:
+            price = 0.0
+        if current_minute_start is None:
+            current_minute_start = row_start
+            current_minute_index = len(minute_rows)
+            open_price = float(price)
+            high_price = float(price)
+            low_price = float(price)
+            close_price = float(price)
+        elif row_start != current_minute_start:
+            _close_minute()
+            current_minute_start = row_start
+            current_minute_index = len(minute_rows)
+            open_price = float(price)
+            high_price = float(price)
+            low_price = float(price)
+            close_price = float(price)
+        else:
+            high_price = max(high_price, float(price))
+            low_price = min(low_price, float(price))
+            close_price = float(price)
+        minute_for_tick.append(current_minute_index)
+        if len(minute_for_tick) == total:
+            break
+
+    for _ in range(len(minute_for_tick), total):
+        minute_for_tick.append(current_minute_index if current_minute_index >= 0 else 0)
+
+    if current_minute_start is not None:
+        _close_minute()
+
+    if not minute_rows and total > 0:
+        fallback_tick = first_tick_with_ts or ticks[0]
+        minute_rows.append(
+            {
+                "start": getattr(fallback_tick, "ts", times[0]).replace(
+                    second=0, microsecond=0
+                ),
+                "open": float(getattr(fallback_tick, "mid", 0.0)),
+                "high": float(getattr(fallback_tick, "mid", 0.0)),
+                "low": float(getattr(fallback_tick, "mid", 0.0)),
+                "close": float(getattr(fallback_tick, "mid", 0.0)),
+            }
+        )
+
+    minute_flags: List[Set[str]] = []
+    range_window = max(2, len(minute_rows) // 20) if minute_rows else 2
+    recent_ranges: deque[float] = deque(maxlen=range_window)
+    recent_deltas: deque[float] = deque(maxlen=range_window)
+    prev_close = 0.0
+    for idx, row in enumerate(minute_rows):
+        close = _safe_float(row.get("close"), 0.0)
+        high = _safe_float(row.get("high"), 0.0)
+        low = _safe_float(row.get("low"), 0.0)
+        open_price = _safe_float(row.get("open"), close)
+        range_pips = max(0.0, (high - low) / PIP)
+        body_pips = abs(close - open_price) / PIP
+
+        if idx > 0:
+            delta_pips = abs(close - prev_close) / PIP
+            recent_deltas.append(delta_pips)
+        if recent_ranges:
+            avg_range = sum(recent_ranges) / len(recent_ranges)
+            avg_delta = (
+                sum(recent_deltas) / len(recent_deltas) if recent_deltas else avg_range
+            )
+            flags: Set[str] = set()
+            if avg_range > 0:
+                if range_pips >= avg_range * 1.6:
+                    flags.add("high_vol")
+                if range_pips <= avg_range * 0.5:
+                    flags.add("low_vol")
+            if avg_delta > 0:
+                if body_pips >= avg_delta * 1.2:
+                    flags.add("trend")
+                    if close >= open_price:
+                        flags.add("trend_up")
+                    else:
+                        flags.add("trend_down")
+                if body_pips <= avg_delta * 0.4:
+                    flags.add("range")
+            minute_flags.append(flags)
+        else:
+            minute_flags.append(set())
+
+        recent_ranges.append(range_pips)
+        prev_close = close
+
+    scenario_flags: Dict[str, List[bool]] = {
+        "all": [True] * total,
+        "wide_spread": [],
+        "tight_spread": [],
+        "high_vol": [],
+        "low_vol": [],
+        "trend": [],
+        "range": [],
+        "trend_up": [],
+        "trend_down": [],
+        "gap": [],
+        "gap_up": [],
+        "gap_down": [],
+        "stale": [],
+    }
+
+    def _percentile(values: list[float], ratio: float) -> float:
+        if not values:
+            return 0.0
+        sorted_values = sorted(values)
+        idx = int(round((len(sorted_values) - 1) * ratio))
+        idx = max(0, min(len(sorted_values) - 1, idx))
+        return sorted_values[idx]
+
+    gap_candidates = [
+        abs(curr - prev) / PIP
+        for prev, curr in zip(mid_values[:-1], mid_values[1:])
+        if curr == curr and prev == prev
+    ]
+    time_candidates = [
+        (curr - prev).total_seconds()
+        for prev, curr in zip(times[:-1], times[1:])
+        if curr >= prev and (curr - prev).total_seconds() >= 0
+    ]
+    # Use median-based sensitivity for jump detection to keep sparse data robust.
+    gap_threshold = max(3.0, _percentile(gap_candidates, 0.50) * 1.8)
+    stale_threshold = max(2.0, _percentile(time_candidates, 0.5) * 3.0, 1.0)
+
+    for idx in range(total):
+        minute_idx = minute_for_tick[idx] if minute_for_tick else -1
+        base_flags = {"all"}
+        if minute_idx >= 0 and minute_idx < len(minute_flags):
+            base_flags.update(minute_flags[minute_idx])
+        if spreads[idx] >= q_high:
+            base_flags.add("wide_spread")
+        if spreads[idx] <= q_low:
+            base_flags.add("tight_spread")
+        if idx > 0:
+            delta_mid = abs(mid_values[idx] - mid_values[idx - 1]) / PIP
+            if delta_mid >= gap_threshold:
+                base_flags.add("gap")
+                if mid_values[idx] >= mid_values[idx - 1]:
+                    base_flags.add("gap_up")
+                else:
+                    base_flags.add("gap_down")
+            dt_sec = (times[idx] - times[idx - 1]).total_seconds()
+            if dt_sec >= stale_threshold:
+                base_flags.add("stale")
+        for name in scenario_flags:
+            if name == "all":
+                continue
+            scenario_flags[name].append(name in base_flags)
+
+    meta: Dict[str, object] = {
+        "count": total,
+        "spread_percentiles": {
+            "q20": q_low,
+            "q80": q_high,
+        },
+        "minute_rows": len(minute_rows),
+        "counts": {},
+    }
+    for name, flags in scenario_flags.items():
+        meta["counts"][name] = sum(1 for v in flags if v)
+    return times, scenario_flags, meta
+
+
+def _filter_entries_for_scenario(
+    *,
+    entries: List[EntryEvent],
+    scenario: str,
+    times: List[datetime],
+    scenario_flags: Dict[str, List[bool]],
+) -> tuple[List[EntryEvent], Dict[str, int]]:
+    if scenario == "all":
+        return list(entries), {
+            "requested": len(entries),
+            "applied": len(entries),
+            "excluded": 0,
+        }
+    active = scenario_flags.get(scenario)
+    if active is None or not times:
+        return [], {"requested": len(entries), "applied": 0, "excluded": len(entries)}
+    selected: List[EntryEvent] = []
+    excluded = 0
+    for ent in entries:
+        idx = bisect_right(times, ent.ts) - 1
+        if idx < 0 or not active[idx]:
+            excluded += 1
+            continue
+        selected.append(ent)
+    return selected, {
+        "requested": len(entries),
+        "applied": len(selected),
+        "excluded": excluded,
+    }
+
+
+def _scenario_output_path(out_dir: Path, worker: str, mode: str, scenario: str) -> Path:
+    suffix = "" if scenario == "all" else f"_{scenario}"
+    return out_dir / f"replay_exit_{worker}_{mode}{suffix}.json"
+
+
+class GenericExitRunner:
+    def __init__(self, name: str, module, worker, broker: rew.SimBroker) -> None:
+        self.name = name
+        self.module = module
+        self.worker = worker
+        self.broker = broker
+        self.last_eval = 0.0
+        self.interval = getattr(worker, "loop_interval", 1.0)
+
+    def _filter_trades(self, trades: list[dict]) -> list[dict]:
+        if hasattr(self.worker, "_filter_trades"):
+            try:
+                return self.worker._filter_trades(trades)  # type: ignore[attr-defined]
+            except Exception:
+                return trades
+        tags = getattr(self.module, "ALLOWED_TAGS", set())
+        if hasattr(self.module, "_filter_trades"):
+            try:
+                return self.module._filter_trades(trades, tags)  # type: ignore[attr-defined]
+            except Exception:
+                return trades
+        return trades
+
+    def _client_id(self, trade: dict) -> Optional[str]:
+        if hasattr(self.module, "_client_id"):
+            try:
+                cid = self.module._client_id(trade)  # type: ignore[attr-defined]
+                if cid:
+                    return cid
+            except Exception:
+                pass
+        client_id = trade.get("client_order_id")
+        if not client_id:
+            ext = trade.get("clientExtensions")
+            if isinstance(ext, dict):
+                client_id = ext.get("id")
+        return client_id
+
+    def _extract_ctx(self, ctx) -> tuple[Optional[float], Optional[float], bool]:
+        if ctx is None:
+            return None, None, False
+        if isinstance(ctx, tuple):
+            mid = ctx[0] if len(ctx) > 0 else None
+            rsi = ctx[1] if len(ctx) > 1 else None
+            range_active = bool(ctx[2]) if len(ctx) > 2 else False
+            return mid, rsi, range_active
+        mid = getattr(ctx, "mid", None)
+        rsi = getattr(ctx, "rsi", None)
+        range_active = bool(getattr(ctx, "range_active", False))
+        return mid, rsi, range_active
+
+    async def step(self, now: datetime) -> None:
+        if now.timestamp() - self.last_eval < self.interval:
+            return
+        self.last_eval = now.timestamp()
+        positions = self.broker.get_open_positions()
+        pocket = getattr(self.module, "POCKET", None) or "scalp"
+        pocket_info = positions.get(pocket) or {}
+        trades = list(pocket_info.get("open_trades") or [])
+        trades = self._filter_trades(trades)
+        if hasattr(self.worker, "_states"):
+            try:
+                active_ids = {
+                    str(tr.get("trade_id")) for tr in trades if tr.get("trade_id")
+                }
+                for tid in list(self.worker._states.keys()):  # type: ignore[attr-defined]
+                    if tid not in active_ids:
+                        self.worker._states.pop(tid, None)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        if not trades:
+            return
+
+        if hasattr(self.worker, "_review_trade"):
+            ctx = self.worker._context() if hasattr(self.worker, "_context") else None
+            mid, rsi, range_active = self._extract_ctx(ctx)
+            sig = inspect.signature(self.worker._review_trade)  # type: ignore[attr-defined]
+            params = list(sig.parameters)
+            argc = len(params)
+            if params and params[0] == "self":
+                argc = max(0, argc - 1)
+            for tr in trades:
+                if argc <= 2:
+                    await self.worker._review_trade(tr, now)  # type: ignore[attr-defined]
+                else:
+                    if mid is None:
+                        continue
+                    if argc == 3:
+                        await self.worker._review_trade(tr, now, mid)  # type: ignore[attr-defined]
+                    elif argc == 4:
+                        await self.worker._review_trade(tr, now, mid, rsi)  # type: ignore[attr-defined]
+                    else:
+                        await self.worker._review_trade(tr, now, mid, rsi, range_active)  # type: ignore[attr-defined]
+            return
+
+        if not hasattr(self.worker, "_evaluate"):
+            return
+
+        ctx = self.worker._context() if hasattr(self.worker, "_context") else None
+        mid, rsi, range_active = self._extract_ctx(ctx)
+        if mid is None:
+            return
+
+        close_fn = getattr(self.worker, "_close", None)
+        close_sig = inspect.signature(close_fn) if close_fn else None
+
+        for tr in trades:
+            try:
+                reason = self.worker._evaluate(tr, ctx, now)  # type: ignore[attr-defined]
+            except Exception:
+                continue
+            if not reason:
+                continue
+            trade_id = str(tr.get("trade_id"))
+            units = int(tr.get("units", 0) or 0)
+            if units == 0:
+                continue
+            client_id = self._client_id(tr)
+            if not client_id:
+                continue
+            entry_price = float(tr.get("price") or 0.0)
+            if entry_price <= 0.0:
+                continue
+            mark_pnl = getattr(self.module, "mark_pnl_pips", None)
+            pnl = mark_pnl(entry_price, units, mid=mid) if callable(mark_pnl) else 0.0
+            allow_negative = pnl <= 0
+            side = "long" if units > 0 else "short"
+            touch_count = None
+            if hasattr(self.worker, "_states"):
+                try:
+                    state = self.worker._states.get(trade_id)  # type: ignore[attr-defined]
+                    touch_count = getattr(state, "last_touch_count", None)
+                except Exception:
+                    touch_count = None
+            if close_fn and close_sig:
+                candidate = {
+                    "trade_id": trade_id,
+                    "units": -units,
+                    "reason": reason,
+                    "pnl": pnl,
+                    "side": side,
+                    "range_mode": range_active,
+                    "client_id": client_id,
+                    "client_order_id": client_id,
+                    "allow_negative": allow_negative,
+                    "touch_count": touch_count,
+                }
+                kwargs = {
+                    k: v for k, v in candidate.items() if k in close_sig.parameters
+                }
+                await close_fn(**kwargs)
+            else:
+                self.broker.close_trade(trade_id, str(reason))
+            if hasattr(self.worker, "_states"):
+                try:
+                    self.worker._states.pop(trade_id, None)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+
+class NoopExitRunner:
+    async def step(self, now: datetime) -> None:
+        return None
+
+
+class BasicM1FamilyExitRunner:
+    def __init__(self, broker: rew.SimBroker) -> None:
+        self._broker = broker
+        self._states: dict[str, dict[str, float]] = {}
+        self._min_hold_sec = max(
+            1.0, float(os.getenv("M1SCALP_EXIT_MIN_HOLD_SEC", "10") or 10.0)
+        )
+        self._max_hold_sec = max(
+            self._min_hold_sec + 1.0,
+            float(
+                os.getenv("M1SCALP_EXIT_MAX_HOLD_SEC", str(12 * 60.0)) or (12 * 60.0)
+            ),
+        )
+        self._max_adverse_pips = max(
+            0.0,
+            float(os.getenv("M1SCALP_EXIT_MAX_ADVERSE_PIPS", "6.0") or 6.0),
+        )
+        self._profit_take = max(
+            0.1, float(os.getenv("M1SCALP_EXIT_PROFIT_TAKE_PIPS", "2.2") or 2.2)
+        )
+        self._trail_start = max(
+            0.1, float(os.getenv("M1SCALP_EXIT_TRAIL_START_PIPS", "2.8") or 2.8)
+        )
+        self._trail_backoff = max(
+            0.05,
+            float(os.getenv("M1SCALP_EXIT_TRAIL_BACKOFF_PIPS", "0.9") or 0.9),
+        )
+        self._lock_buffer = max(
+            0.05,
+            float(os.getenv("M1SCALP_EXIT_LOCK_BUFFER_PIPS", "0.5") or 0.5),
+        )
+        self._loop_interval = max(
+            0.1, float(os.getenv("M1SCALP_EXIT_LOOP_INTERVAL_SEC", "0.8") or 0.8)
+        )
+        self._last_eval = 0.0
+
+    async def step(self, now: datetime) -> None:
+        if now.timestamp() - self._last_eval < self._loop_interval:
+            return None
+        self._last_eval = now.timestamp()
+        tick = self._broker.last_tick
+        if tick is None:
+            return None
+
+        for trade_id, trade in list(self._broker.open_trades.items()):
+            units = int(trade.get("units", 0) or 0)
+            entry_price = float(trade.get("price") or 0.0)
+            if units == 0 or entry_price <= 0.0:
+                continue
+
+            side = "long" if units > 0 else "short"
+            current_price = float(tick.mid)
+            pnl_pips = (
+                (current_price - entry_price) / PIP
+                if side == "long"
+                else (entry_price - current_price) / PIP
+            )
+            state = self._states.setdefault(trade_id, {"best_pnl": pnl_pips})
+            state["best_pnl"] = max(float(state.get("best_pnl") or pnl_pips), pnl_pips)
+
+            open_time = trade.get("open_time")
+            opened_at = rew.parse_iso8601(str(open_time)) if open_time else now
+            hold_sec = max(0.0, (now - opened_at).total_seconds())
+            trail_anchor = max(self._profit_take, self._trail_start, self._lock_buffer)
+
+            reason = None
+            if hold_sec >= self._max_hold_sec:
+                reason = "time_stop"
+            elif hold_sec >= self._min_hold_sec and pnl_pips <= -self._max_adverse_pips:
+                reason = "max_adverse"
+            elif state["best_pnl"] >= trail_anchor and pnl_pips <= max(
+                self._lock_buffer,
+                state["best_pnl"] - self._trail_backoff,
+            ):
+                reason = "trail_stop"
+
+            if not reason:
+                continue
+            self._broker.close_trade(trade_id, reason)
+            self._states.pop(trade_id, None)
+
+
+def _simulate(
+    *,
+    ticks_path: Path,
+    ticks_cache: Optional[List[object]] = None,
+    entries: List[EntryEvent],
+    worker: str,
+    out_path: Path,
+    no_hard_sl: bool,
+    no_hard_tp: bool,
+    exclude_end_of_replay: bool,
+    prefeed_h4: Optional[List[dict]] = None,
+    latency_ms: float = 0.0,
+    slip_base_pips: float = 0.0,
+    slip_spread_coef: float = 0.0,
+    slip_atr_coef: float = 0.0,
+    slip_latency_coef: float = 0.0,
+    fill_mode: str = "lko",
+) -> dict:
+    start = None
+    end = None
+
+    sim_clock = rew.SimClock()
+    rew._reset_replay_state(sim_clock)
+
+    broker = rew.SimBroker(
+        slip_base_pips=slip_base_pips,
+        slip_spread_coef=slip_spread_coef,
+        slip_atr_coef=slip_atr_coef,
+        slip_latency_coef=slip_latency_coef,
+        latency_ms=latency_ms,
+        fill_mode=fill_mode,
+    )
+    broker.hard_sl = not no_hard_sl
+    broker.hard_tp = not no_hard_tp
+
+    exit_mod = EXIT_MODULES[worker]
+    rew._patch_exit_module(exit_mod, broker)
+
+    worker_obj = None
+    class_name = EXIT_WORKER_CLASSES.get(worker)
+    if class_name and hasattr(exit_mod, class_name):
+        worker_obj = getattr(exit_mod, class_name)()
+    else:
+        for name in dir(exit_mod):
+            if name.endswith("ExitWorker"):
+                worker_obj = getattr(exit_mod, name)()
+                break
+    if worker_obj is None:
+        runner = (
+            BasicM1FamilyExitRunner(broker)
+            if worker in M1_FAMILY_WORKERS
+            else NoopExitRunner()
+        )
+    else:
+        runner = GenericExitRunner(worker, exit_mod, worker_obj, broker)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # pre-feed H4 candles (system_backtest style)
+    if prefeed_h4 is None:
+        prefeed_h4 = []
+        h4_prefeed_builder = rew.CandleBuilder(240)
+        for tick in rew._iter_ticks(ticks_path, "USD_JPY", start, end):
+            closed = h4_prefeed_builder.update(tick.ts, tick.mid, 1)
+            if closed:
+                prefeed_h4.append(closed)
+    for candle in prefeed_h4:
+        loop.run_until_complete(rew.factor_cache.on_candle("H4", candle))
+
+    builder_m1 = rew.CandleBuilder(1)
+    builder_m5 = rew.CandleBuilder(5)
+    builder_h1 = rew.CandleBuilder(60)
+
+    entry_idx = 0
+    total_entries = len(entries)
+
+    tick_iter = (
+        ticks_cache
+        if ticks_cache is not None
+        else rew._iter_ticks(ticks_path, "USD_JPY", start, end)
+    )
+    for tick in tick_iter:
+        tick_ts = getattr(tick, "ts", None) or getattr(tick, "dt", None)
+        if tick_ts is None:
+            continue
+        if not hasattr(tick, "ts"):
+            try:
+                setattr(tick, "ts", tick_ts)
+            except Exception:
+                pass
+        sim_clock.now = tick.epoch
+        broker.set_last_tick(tick)
+
+        class _Tick:
+            def __init__(self, bid: float, ask: float, ts: datetime) -> None:
+                self.bid = bid
+                self.ask = ask
+                self.time = ts
+
+        t = _Tick(tick.bid, tick.ask, tick_ts)
+        rew.tick_window.record(t)
+        try:
+            rew.spread_monitor.update_from_tick(t)
+        except Exception:
+            pass
+
+        closed_m1 = builder_m1.update(tick_ts, tick.mid, 1)
+        if closed_m1:
+            loop.run_until_complete(rew.factor_cache.on_candle("M1", closed_m1))
+            closed_m5 = builder_m5.update(closed_m1["time"], closed_m1["close"], 1)
+            if closed_m5:
+                loop.run_until_complete(rew.factor_cache.on_candle("M5", closed_m5))
+            closed_h1 = builder_h1.update(closed_m1["time"], closed_m1["close"], 1)
+            if closed_h1:
+                loop.run_until_complete(rew.factor_cache.on_candle("H1", closed_h1))
+
+        # open entries scheduled up to this tick
+        while entry_idx < total_entries and entries[entry_idx].ts <= tick_ts:
+            ent = entries[entry_idx]
+            direction = ent.direction.lower()
+            if direction not in {"long", "short"}:
+                entry_idx += 1
+                continue
+            tag = ent.strategy_tag or WORKER_TAGS[worker]
+            broker.open_trade(
+                pocket="scalp",
+                strategy_tag=tag,
+                direction=direction,
+                entry_price=ent.entry_price,
+                entry_time=ent.ts,
+                tp_pips=ent.tp_pips,
+                sl_pips=ent.sl_pips,
+                units=ent.units,
+                source=worker,
+            )
+            entry_idx += 1
+
+        broker.check_sl_tp(tick)
+        loop.run_until_complete(runner.step(tick_ts))
+
+    # end of replay close
+    last_tick = broker.last_tick
+    if last_tick is not None:
+        for trade_id in list(broker.open_trades.keys()):
+            broker.close_trade(trade_id, "end_of_replay")
+
+    trades = broker.closed_trades
+    if exclude_end_of_replay:
+        trades = [t for t in trades if t.get("reason") != "end_of_replay"]
+
+    summary = rew._summarize(trades)
+    payload = {
+        "summary": summary,
+        "trades": broker.closed_trades,
+    }
+    out_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return summary
+
+
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Exit-worker replay for S5/pullback groups."
+    )
+    ap.add_argument("--ticks", required=True, type=Path)
+    ap.add_argument("--workers", required=True, help="Comma separated worker names")
+    ap.add_argument(
+        "--out-dir", type=Path, default=Path("tmp/replay_exit_workers_groups")
+    )
+    ap.add_argument("--no-hard-sl", action="store_true")
+    ap.add_argument("--no-hard-tp", action="store_true")
+    ap.add_argument("--exclude-end-of-replay", action="store_true")
+    ap.add_argument("--tune", action="store_true")
+    ap.add_argument(
+        "--resample-sec",
+        type=float,
+        default=0.0,
+        help="Optional downsample interval in seconds.",
+    )
+    ap.add_argument(
+        "--realistic",
+        action="store_true",
+        help="Apply realistic latency/slippage defaults.",
+    )
+    ap.add_argument(
+        "--scenarios",
+        default="all",
+        help=(
+            "Comma separated replay scenarios: "
+            "all, wide_spread, tight_spread, high_vol, low_vol, "
+            "trend, trend_up, trend_down, range, gap, gap_up, gap_down, stale"
+        ),
+    )
+    ap.add_argument("--slip-base-pips", type=float, default=0.0)
+    ap.add_argument("--slip-spread-coef", type=float, default=0.0)
+    ap.add_argument("--slip-atr-coef", type=float, default=0.0)
+    ap.add_argument("--slip-latency-coef", type=float, default=0.0)
+    ap.add_argument("--latency-ms", type=float, default=150.0)
+    ap.add_argument(
+        "--fill-mode",
+        choices=("lko", "next_tick"),
+        default="lko",
+        help="Fill policy: lko=last known quote at/before latency target, next_tick=first tick after latency.",
+    )
+    return ap.parse_args()
+
+
+def _resample_ticks(ticks: List[rw.Tick], sec: float) -> List[rw.Tick]:
+    if sec <= 0:
+        return ticks
+    out: List[rw.Tick] = []
+    bucket: Optional[int] = None
+    last: Optional[rw.Tick] = None
+    for tick in ticks:
+        current_bucket = int(tick.epoch // sec)
+        if bucket is None:
+            bucket = current_bucket
+            last = tick
+            continue
+        if current_bucket == bucket:
+            last = tick
+            continue
+        if last is not None:
+            out.append(last)
+        bucket = current_bucket
+        last = tick
+    if last is not None:
+        out.append(last)
+    return out
+
+
+def main() -> None:
+    args = parse_args()
+    logging.disable(logging.CRITICAL)
+    if args.realistic:
+        args.latency_ms = 180.0
+        args.slip_base_pips = 0.02
+        args.slip_spread_coef = 0.15
+        args.slip_atr_coef = 0.02
+        args.slip_latency_coef = 0.0006
+        args.fill_mode = "next_tick"
+    workers = [w.strip() for w in args.workers.split(",") if w.strip()]
+    runnable_workers = [w for w in workers if w in WORKER_TAGS]
+    skipped_workers = [w for w in workers if w not in WORKER_TAGS]
+    if skipped_workers:
+        print(
+            f"[replay_exit_workers_groups] skip unavailable workers: {','.join(skipped_workers)}"
+        )
+    if not runnable_workers:
+        available = ",".join(sorted(WORKER_TAGS.keys())) or "<none>"
+        raise SystemExit(
+            f"no compatible workers to run (requested={','.join(workers)} available={available})"
+        )
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+
+    results: Dict[str, dict] = {}
+
+    # precompute H4 candles once to reuse across workers
+    prefeed_h4: List[dict] = []
+    h4_prefeed_builder = rew.CandleBuilder(240)
+    replay_ticks = rw.load_ticks(args.ticks)
+    if args.resample_sec and args.resample_sec > 0.0:
+        replay_ticks = _resample_ticks(replay_ticks, args.resample_sec)
+    for tick in replay_ticks:
+        if not hasattr(tick, "ts"):
+            try:
+                setattr(tick, "ts", tick.dt)
+            except Exception:
+                pass
+    for tick in replay_ticks:
+        closed = h4_prefeed_builder.update(tick.dt, tick.mid, 1)
+        if closed:
+            prefeed_h4.append(closed)
+    scenario_names = _parse_scenarios(args.scenarios)
+    invalid_scenarios = [
+        name for name in scenario_names if name not in SCENARIO_OPTIONS
+    ]
+    if invalid_scenarios:
+        raise SystemExit(f"unknown scenario(s): {','.join(invalid_scenarios)}")
+    tick_times, scenario_flags, scenario_meta = _build_tick_scenarios(replay_ticks)
+    if "all" not in scenario_names:
+        scenario_names = ["all"] + scenario_names
+
+    for worker in runnable_workers:
+        replay_out = args.out_dir / f"replay_workers_{worker}_base.json"
+        entry_replay = _run_replay_workers(
+            worker=worker,
+            ticks_path=args.ticks,
+            out_path=replay_out,
+            ticks_cache=replay_ticks,
+        )
+        entries = _load_entries_from_replay(replay_out)
+        has_entries = bool(entries)
+        base_scenarios: Dict[str, dict] = {}
+        for scenario in scenario_names:
+            filtered_entries, selection = _filter_entries_for_scenario(
+                entries=entries,
+                scenario=scenario,
+                times=tick_times,
+                scenario_flags=scenario_flags,
+            )
+            base_out = _scenario_output_path(args.out_dir, worker, "base", scenario)
+            base_summary = _simulate(
+                ticks_path=args.ticks,
+                ticks_cache=replay_ticks,
+                entries=filtered_entries,
+                worker=worker,
+                out_path=base_out,
+                no_hard_sl=args.no_hard_sl,
+                no_hard_tp=args.no_hard_tp,
+                exclude_end_of_replay=args.exclude_end_of_replay,
+                prefeed_h4=prefeed_h4,
+                latency_ms=args.latency_ms,
+                slip_base_pips=args.slip_base_pips,
+                slip_spread_coef=args.slip_spread_coef,
+                slip_atr_coef=args.slip_atr_coef,
+                slip_latency_coef=args.slip_latency_coef,
+                fill_mode=args.fill_mode,
+            )
+            base_scenarios[scenario] = {
+                "summary": base_summary,
+                "selection": selection,
+                "out_path": str(base_out),
+                "tick_count": len(scenario_flags.get(scenario, [])),
+                "tick_meta": scenario_meta,
+            }
+        base_summary = base_scenarios.get("all", {}).get("summary", rew._summarize([]))
+        results[worker] = {
+            "entry_replay": {
+                "summary": entry_replay.get("summary", {}),
+                "out_path": str(replay_out),
+            },
+            "base": base_summary,
+            "base_scenarios": base_scenarios,
+        }
+
+        if args.tune and has_entries and base_summary.get("total_pnl_pips", 0.0) <= 0:
+            tuned_env = os.environ.copy()
+            tuned_env.update(_tuning_env(worker))
+            replay_tuned_out = args.out_dir / f"replay_workers_{worker}_tuned.json"
+            tuned_entry_replay = _run_replay_workers(
+                worker=worker,
+                ticks_path=args.ticks,
+                out_path=replay_tuned_out,
+                env=tuned_env,
+                ticks_cache=replay_ticks,
+            )
+            entries = _load_entries_from_replay(replay_tuned_out)
+            tuned_scenarios: Dict[str, dict] = {}
+            for scenario in scenario_names:
+                filtered_entries, selection = _filter_entries_for_scenario(
+                    entries=entries,
+                    scenario=scenario,
+                    times=tick_times,
+                    scenario_flags=scenario_flags,
+                )
+                tuned_out = _scenario_output_path(
+                    args.out_dir, worker, "tuned", scenario
+                )
+                tuned_summary = _simulate(
+                    ticks_path=args.ticks,
+                    ticks_cache=replay_ticks,
+                    entries=filtered_entries,
+                    worker=worker,
+                    out_path=tuned_out,
+                    no_hard_sl=args.no_hard_sl,
+                    no_hard_tp=args.no_hard_tp,
+                    exclude_end_of_replay=args.exclude_end_of_replay,
+                    prefeed_h4=prefeed_h4,
+                    latency_ms=args.latency_ms,
+                    slip_base_pips=args.slip_base_pips,
+                    slip_spread_coef=args.slip_spread_coef,
+                    slip_atr_coef=args.slip_atr_coef,
+                    slip_latency_coef=args.slip_latency_coef,
+                    fill_mode=args.fill_mode,
+                )
+                tuned_scenarios[scenario] = {
+                    "summary": tuned_summary,
+                    "selection": selection,
+                    "out_path": str(tuned_out),
+                    "tick_count": len(scenario_flags.get(scenario, [])),
+                    "tick_meta": scenario_meta,
+                }
+            tuned_summary = tuned_scenarios.get("all", {}).get("summary")
+            if tuned_summary is not None:
+                results[worker]["tuned"] = tuned_summary
+            results[worker]["entry_replay_tuned"] = {
+                "summary": tuned_entry_replay.get("summary", {}),
+                "out_path": str(replay_tuned_out),
+            }
+            results[worker]["tuned_scenarios"] = tuned_scenarios
+
+    summary_path = args.out_dir / "summary_all.json"
+    summary_path.write_text(
+        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(str(summary_path))
+
+
+if __name__ == "__main__":
+    main()

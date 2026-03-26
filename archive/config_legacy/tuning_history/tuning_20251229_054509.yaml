@@ -1,0 +1,21 @@
+meta:
+  generated_at: '2025-12-29T05:45:09.881718Z'
+  window_min: 15
+exit:
+  lowvol:
+    upper_bound_max_sec: 3.7
+    min_grace_before_scratch_ms: 100
+    scratch_requires_events: 0
+strategies:
+  MomentumPulse:
+    min_confidence: 0.67
+  MicroVWAPRevert:
+    vwap_z_min: 2.3
+  VolCompressionBreak:
+    accel_pctile: 77
+  BB_RSI_Fast:
+    reentry_block_s: 17
+alloc:
+  regime:
+    quiet_low_vol:
+      micro_share: 0.3

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run QuantRabbit V2 audit periodically
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*:00/10
+Persistent=true
+Unit=quant-v2-audit.service
+
+[Install]
+WantedBy=timers.target

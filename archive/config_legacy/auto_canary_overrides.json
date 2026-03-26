@@ -1,0 +1,244 @@
+{
+  "generated_at": "2026-03-17T03:42:37.639115+00:00",
+  "validation": {
+    "replay_status": "pass",
+    "counterfactual_strategy": "scalp_ping_5s_b_live",
+    "counterfactual_action": "block",
+    "counterfactual_uplift_lcb_pips": 43.1769
+  },
+  "strategies": {
+    "MicroLevelReactor-bounce-lower": {
+      "enabled": true,
+      "mode": "canary",
+      "confidence": 0.65455,
+      "units_multiplier": 0.808,
+      "probability_offset": -0.0305,
+      "reason": "loser_cluster_canary",
+      "reasons": [
+        "loser_cluster_canary"
+      ],
+      "source": {
+        "worst_severity": 0.872733,
+        "replay_status": "pass",
+        "counterfactual_strategy": "scalp_ping_5s_b_live",
+        "counterfactual_action": "block"
+      },
+      "setup_overrides": [
+        {
+          "match_dimension": "setup_fingerprint",
+          "setup_fingerprint": "MicroLevelReactor|long|trend_short|unknown|rsi:ext_oversold|atr:low|gap:down_strong|c:maru_up|w:none|tr:dn_strong|rsi:os|vol:tight|atr:ultra_low|d:long|align:mixed",
+          "flow_regime": "trend_short",
+          "microstructure_bucket": "unknown",
+          "enabled": true,
+          "mode": "canary",
+          "confidence": 0.65455,
+          "units_multiplier": 0.808,
+          "probability_offset": -0.0305,
+          "reason": "loser_cluster_canary",
+          "reasons": [
+            "loser_cluster_canary"
+          ],
+          "samples": 6,
+          "severity": 0.872733,
+          "source": {
+            "cluster_key": "long|unknown|unknown|unknown|range_01_025_045|unknown|unknown|trend_short|unknown|MicroLevelReactor|long|trend_short|unknown|rsi:ext_oversold|atr:low|gap:down_strong|c:maru_up|w:none|tr:dn_strong|rsi:os|vol:tight|atr:ultra_low|d:long|align:mixed",
+            "counterfactual_strategy": "scalp_ping_5s_b_live",
+            "counterfactual_action": "block",
+            "replay_status": "pass"
+          }
+        },
+        {
+          "match_dimension": "setup_fingerprint",
+          "setup_fingerprint": "MicroLevelReactor-bounce-lower|long|range_fade|unknown|rsi:oversold|atr:low|gap:down_lean|c:spin_up|w:lower|tr:dn_strong|rsi:mid_low|vol:tight|atr:ultra_low|d:long",
+          "flow_regime": "range_fade",
+          "microstructure_bucket": "unknown",
+          "enabled": true,
+          "mode": "canary",
+          "confidence": 0.6375,
+          "units_multiplier": 0.813,
+          "probability_offset": -0.0297,
+          "reason": "loser_cluster_canary",
+          "reasons": [
+            "loser_cluster_canary"
+          ],
+          "samples": 6,
+          "severity": 0.85,
+          "source": {
+            "cluster_key": "long|unknown|unknown|unknown|range_01_025_045|unknown|unknown|range_fade|unknown|MicroLevelReactor-bounce-lower|long|range_fade|unknown|rsi:oversold|atr:low|gap:down_lean|c:spin_up|w:lower|tr:dn_strong|rsi:mid_low|vol:tight|atr:ultra_low|d:long",
+            "counterfactual_strategy": "scalp_ping_5s_b_live",
+            "counterfactual_action": "block",
+            "replay_status": "pass"
+          }
+        }
+      ]
+    },
+    "PrecisionLowVol": {
+      "enabled": true,
+      "mode": "canary",
+      "confidence": 0.5585,
+      "units_multiplier": 0.8362,
+      "probability_offset": -0.0261,
+      "reason": "loser_cluster_canary",
+      "reasons": [
+        "loser_cluster_canary"
+      ],
+      "source": {
+        "worst_severity": 0.744667,
+        "replay_status": "pass",
+        "counterfactual_strategy": "scalp_ping_5s_b_live",
+        "counterfactual_action": "block"
+      },
+      "setup_overrides": [
+        {
+          "match_dimension": "setup_fingerprint",
+          "setup_fingerprint": "PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression",
+          "flow_regime": "range_fade",
+          "microstructure_bucket": "unknown",
+          "enabled": true,
+          "mode": "canary",
+          "confidence": 0.5585,
+          "units_multiplier": 0.8362,
+          "probability_offset": -0.0261,
+          "reason": "loser_cluster_canary",
+          "reasons": [
+            "loser_cluster_canary"
+          ],
+          "samples": 5,
+          "severity": 0.744667,
+          "source": {
+            "cluster_key": "short|rsi_03_55_65|adx_01_15_25|unknown|range_01_025_045|unknown|unknown|range_fade|unknown|PrecisionLowVol|short|range_fade|unknown|rsi:overbought|atr:low|gap:down_flat|volatility_compression",
+            "counterfactual_strategy": "scalp_ping_5s_b_live",
+            "counterfactual_action": "block",
+            "replay_status": "pass"
+          }
+        }
+      ]
+    },
+    "RangeFader-buy-fade": {
+      "enabled": true,
+      "mode": "canary",
+      "confidence": 0.702231,
+      "units_multiplier": 0.8,
+      "probability_offset": -0.0328,
+      "reason": "loser_cluster_canary",
+      "reasons": [
+        "loser_cluster_canary"
+      ],
+      "source": {
+        "worst_severity": 0.936308,
+        "replay_status": "pass",
+        "counterfactual_strategy": "scalp_ping_5s_b_live",
+        "counterfactual_action": "block"
+      },
+      "setup_overrides": [
+        {
+          "match_dimension": "setup_fingerprint",
+          "setup_fingerprint": "RangeFader|long|range_fade|unknown|rsi:oversold|atr:mid|gap:down_flat|volatility_compression|macro:trend_long",
+          "flow_regime": "range_fade",
+          "microstructure_bucket": "unknown",
+          "enabled": true,
+          "mode": "canary",
+          "confidence": 0.702231,
+          "units_multiplier": 0.8,
+          "probability_offset": -0.0328,
+          "reason": "loser_cluster_canary",
+          "reasons": [
+            "loser_cluster_canary"
+          ],
+          "samples": 13,
+          "severity": 0.936308,
+          "source": {
+            "cluster_key": "long|unknown|unknown|unknown|range_01_025_045|unknown|unknown|range_fade|unknown|RangeFader|long|range_fade|unknown|rsi:oversold|atr:mid|gap:down_flat|volatility_compression|macro:trend_long",
+            "counterfactual_strategy": "scalp_ping_5s_b_live",
+            "counterfactual_action": "block",
+            "replay_status": "pass"
+          }
+        }
+      ]
+    },
+    "RangeFader-neutral-fade": {
+      "enabled": true,
+      "mode": "canary",
+      "confidence": 0.700966,
+      "units_multiplier": 0.8,
+      "probability_offset": -0.0327,
+      "reason": "loser_cluster_canary",
+      "reasons": [
+        "loser_cluster_canary"
+      ],
+      "source": {
+        "worst_severity": 0.934622,
+        "replay_status": "pass",
+        "counterfactual_strategy": "scalp_ping_5s_b_live",
+        "counterfactual_action": "block"
+      },
+      "setup_overrides": [
+        {
+          "match_dimension": "setup_fingerprint",
+          "setup_fingerprint": "RangeFader|long|neutral-fade|range_fade|p0",
+          "flow_regime": "range_fade",
+          "microstructure_bucket": "unknown",
+          "enabled": true,
+          "mode": "canary",
+          "confidence": 0.700966,
+          "units_multiplier": 0.8,
+          "probability_offset": -0.0327,
+          "reason": "loser_cluster_canary",
+          "reasons": [
+            "loser_cluster_canary"
+          ],
+          "samples": 6,
+          "severity": 0.934622,
+          "source": {
+            "cluster_key": "long|unknown|unknown|magap_01_-1_0|range_02_045_065|unknown|unknown|range_fade|unknown|RangeFader|long|neutral-fade|range_fade|p0",
+            "counterfactual_strategy": "scalp_ping_5s_b_live",
+            "counterfactual_action": "block",
+            "replay_status": "pass"
+          }
+        }
+      ]
+    },
+    "RangeFader-sell-fade": {
+      "enabled": true,
+      "mode": "canary",
+      "confidence": 0.669786,
+      "units_multiplier": 0.8035,
+      "probability_offset": -0.0313,
+      "reason": "loser_cluster_canary",
+      "reasons": [
+        "loser_cluster_canary"
+      ],
+      "source": {
+        "worst_severity": 0.893048,
+        "replay_status": "pass",
+        "counterfactual_strategy": "scalp_ping_5s_b_live",
+        "counterfactual_action": "block"
+      },
+      "setup_overrides": [
+        {
+          "match_dimension": "setup_fingerprint",
+          "setup_fingerprint": "RangeFader|short|sell-fade|transition|p0",
+          "flow_regime": "transition",
+          "microstructure_bucket": "unknown",
+          "enabled": true,
+          "mode": "canary",
+          "confidence": 0.669786,
+          "units_multiplier": 0.8035,
+          "probability_offset": -0.0313,
+          "reason": "loser_cluster_canary",
+          "reasons": [
+            "loser_cluster_canary"
+          ],
+          "samples": 7,
+          "severity": 0.893048,
+          "source": {
+            "cluster_key": "short|unknown|unknown|magap_02_0_1|range_02_045_065|unknown|unknown|transition|unknown|RangeFader|short|sell-fade|transition|p0",
+            "counterfactual_strategy": "scalp_ping_5s_b_live",
+            "counterfactual_action": "block",
+            "replay_status": "pass"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit Ops Policy timer
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=1min
+AccuracySec=10s
+RandomizedDelaySec=0s
+
+[Install]
+WantedBy=timers.target

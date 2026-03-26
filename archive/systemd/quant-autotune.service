@@ -1,0 +1,17 @@
+[Unit]
+Description=QuantRabbit Continuous Backtest + AutoTune
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/tossaki/QuantRabbit
+ExecStart=/home/tossaki/QuantRabbit/.venv/bin/python scripts/continuous_backtest.py --profile all
+Restart=on-failure
+RestartSec=10
+User=tossaki
+Environment=PYTHONUNBUFFERED=1
+Environment=AUTOTUNE_BQ_TABLE=quantrabbit.autotune_runs
+Environment=AUTOTUNE_BQ_SETTINGS_TABLE=quantrabbit.autotune_settings
+
+[Install]
+WantedBy=multi-user.target

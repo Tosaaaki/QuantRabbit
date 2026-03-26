@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantRabbit SSH watchdog timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=20s
+Unit=quant-ssh-watchdog.service
+
+[Install]
+WantedBy=timers.target

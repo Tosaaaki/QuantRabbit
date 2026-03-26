@@ -1,0 +1,14 @@
+[Unit]
+Description=Run quant-ping5s-d-canary-guard.service every hour
+
+[Timer]
+OnBootSec=8min
+OnUnitActiveSec=1h
+AccuracySec=2min
+RandomizedDelaySec=1min
+Persistent=true
+Unit=quant-ping5s-d-canary-guard.service
+
+[Install]
+WantedBy=timers.target
+

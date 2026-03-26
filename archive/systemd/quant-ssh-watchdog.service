@@ -1,0 +1,8 @@
+[Unit]
+Description=QuantRabbit SSH watchdog
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/tossaki/QuantRabbit/scripts/ssh_watchdog.sh

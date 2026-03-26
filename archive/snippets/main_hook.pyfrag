@@ -1,0 +1,23 @@
+# === ONLINE TUNER HOOK (call every 5–15min) ===================================
+# pre-req:
+#   - env flags: TUNER_ENABLE, TUNER_INTERVAL_SEC, TUNER_SHADOW_MODE
+#   - files: config/tuning_presets.yaml (base), config/tuning_overrides.yaml (output)
+# call site: after metrics flush / before next regime decision
+
+import os, time, subprocess, shlex, datetime as _dt
+_TUNER_LAST_RUN = globals().get('_TUNER_LAST_RUN', 0.0)
+if flags('TUNER_ENABLE'):
+    interval = int(env('TUNER_INTERVAL_SEC', 600))
+    if time.time() - _TUNER_LAST_RUN > interval:
+        logs_glob = env('TUNER_LOGS_GLOB', 'tmp/exit_eval*.csv')
+        presets   = env('TUNER_PRESETS', 'config/tuning_presets.yaml')
+        overrides = env('TUNER_OVERRIDES', 'config/tuning_overrides.yaml')
+        shadow    = env('TUNER_SHADOW_MODE', 'true').lower() == 'true'
+        cmd = f'python3 scripts/run_online_tuner.py --logs-glob "{logs_glob}" --presets "{presets}" --overrides-out "{overrides}" {"--shadow" if shadow else ""}'
+        try:
+            subprocess.run(shlex.split(cmd), timeout=20)
+            _TUNER_LAST_RUN = time.time()
+        except Exception as e:
+            log.warn(f'[tuner] skipped: {e}')
+globals()['_TUNER_LAST_RUN'] = _TUNER_LAST_RUN
+# =============================================================================

@@ -1,0 +1,57 @@
+# Replay quality gate defaults for scripts/replay_exit_workers.py backend.
+# Worker filters:
+#   - Strategy tag/name: TrendMA, BB_RSI, ...
+#   - __overall__
+#   - pocket:<name> (example: pocket:micro)
+#   - source:<name> (example: source:strategy)
+
+# Multiple roots are supported; replay + archive are merged and de-duplicated by basename.
+ticks_globs:
+  - "logs/replay/USD_JPY/USD_JPY_ticks_*.jsonl"
+  - "logs/archive/replay.*.dir/USD_JPY/USD_JPY_ticks_*.jsonl"
+# Ignore low-sample/partial tick days to avoid false fold failures.
+min_tick_lines: 50000
+
+workers:
+  - TrendMA
+  - BB_RSI
+
+replay:
+  backend: exit_workers_main
+  no_hard_sl: true
+  no_hard_tp: false
+  exclude_end_of_replay: true
+  realistic: true
+  # Per-file UTC intraday window (YYYYMMDD is derived from tick filename).
+  # Keep disabled by default; narrow windows + exclude_end_of_replay can
+  # collapse closed trades to zero and distort gate precision.
+  # Use explicit start/end (or set both fields) only for targeted probes.
+  intraday_start_utc: ""
+  intraday_end_utc: ""
+  fast_only: false
+  sp_only: false
+  sp_live_entry: false
+  disable_macro: false
+  no_main_strategies: false
+  main_only: false
+  fill_mode: next_tick
+
+gates:
+  default:
+    min_train_trades: 20
+    min_test_trades: 10
+    min_test_pf: 1.0
+    min_test_win_rate: 0.50
+    min_test_total_pips: 0.0
+    max_test_drawdown_pips: 45.0
+    min_pf_stability_ratio: 0.60
+  workers:
+    # Example:
+    # TrendMA:
+    #   min_test_pf: 1.05
+
+walk_forward:
+  train_files: 2
+  test_files: 1
+  step_files: 1
+  min_fold_pass_rate: 0.70

@@ -1,0 +1,13 @@
+[Unit]
+Description=QuantRabbit log cleanup
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/tossaki/QuantRabbit/scripts/cleanup_logs.sh
+WorkingDirectory=/home/tossaki/QuantRabbit
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

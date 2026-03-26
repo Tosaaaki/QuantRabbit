@@ -1,0 +1,12 @@
+[Unit]
+Description=QuantRabbit range mode metrics timer
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=20s
+RandomizedDelaySec=15s
+Unit=quant-range-metrics.service
+
+[Install]
+WantedBy=timers.target

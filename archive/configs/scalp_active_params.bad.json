@@ -1,0 +1,45 @@
+{
+  "BB_RSI": {
+    "atr_pips_max": 9.0,
+    "bbw_max": 0.28,
+    "bbw_min": 0.12,
+    "rsi_lower": 36,
+    "rsi_upper": 64,
+    "sl_scale": 1.0,
+    "tp_scale": 1.0
+  },
+  "Donchian55": {
+    "atr_pips_max": 140.0,
+    "atr_pips_min": 35.0,
+    "breakout_buffer_pips": 1.0,
+    "sl_pips": 60,
+    "timeout_sec": 172800,
+    "tp_factor": 2.0
+  },
+  "PulseBreak": {
+    "adx_min": 24.0,
+    "atr_pips_max": 6.2,
+    "atr_pips_min": 3.7,
+    "price_to_fast_max_pips": 4.2,
+    "timeout_sec": 420,
+    "trend_ema": 34,
+    "vol_5m_max": 2.25,
+    "vol_5m_min": 1.45
+  },
+  "RangeFader": {
+    "atr_pips_max": 3.6,
+    "band_type": "ema",
+    "ema_length": 20,
+    "rsi_lower": 36,
+    "rsi_upper": 64,
+    "vol_5m_max": 2.3
+  },
+  "TrendMA": {
+    "adx_min": 23.9,
+    "ma_gap_min_pips": 0.47,
+    "ma_spread_scale": 0.35,
+    "price_to_fast_max_pips": 7.52,
+    "projected_cross_minutes_max": 10.35,
+    "timeout_sec": 44610
+  }
+}

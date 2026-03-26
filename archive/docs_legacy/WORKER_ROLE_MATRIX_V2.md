@@ -1,0 +1,494 @@
+# WORKER ROLE MATRIX (V2)
+
+## 目的
+
+本番プロセスでの役割混線をなくすため、責務を固定する。  
+「集約責務の重複」「main からの横断起動」「複数戦略を 1 つのワーカーサービスで処理」を全て排除する。
+
+## V1 問題点（混線）
+
+- `main.py` と `quantrabbit.service` が生存していたことで、サービス起動制御・実行制御・一部戦略処理が混在した。
+- `order_manager` / `position_manager` が多数の戦略ワーカーと EXIT ワーカーから直接参照され、独立面が不明瞭になった。
+- 補助ワーカーの有効化/無効化が一部残存し、起動状態の把握が難しかった。
+
+## V2 役割定義（最終方針）
+
+### 1) データ面（単独）
+
+- `quant-market-data-feed.service`
+  - OANDA から tick を受ける
+  - `tick_window` 更新
+  - M1/M5/H1/H4/D1 集約
+  - `factor_cache` 更新
+  - `factor_cache` 連携は `on_candle(timeframe, candle)` 契約を維持し、購読側に渡すハンドラは
+    timeframe を束縛した `Callable[[Candle], ...]` で実行する（`on_candle(candle)` 形式を禁止）
+  - 起動時と定期再起動時のシードは、既存キャッシュ終端（最後の確定足）から「境界を1本進めた時点→now」へレンジ補完する。
+
+### 2) 制御面（単独）
+
+- `quant-strategy-control.service`
+  - `global_entry_enabled` / `global_exit_enabled` / `global_lock` の集約
+  - strategy slug 単位の `entry_enabled` / `exit_enabled` 配信
+  - 市場オープン時に `data_lag_ms` / `decision_latency_ms` を `metrics.db` へ定期発行し、
+    V2 の SLO 観測値を供給する
+  - 各戦略のロジックには介入せず、実行可否のガード（`entry_enabled` / `exit_enabled` / `global_lock`）としてのみ働く
+- `quant-regime-router.service`（opt-in）
+  - `M1/H4` レジームを定期評価し、`REGIME_ROUTER_MANAGED_STRATEGIES` で指定した戦略だけ
+    `entry_enabled` を動的に切替える。
+  - `exit_enabled` / `global_lock` には介入しない。
+  - 既存の V2 導線（strategy worker → strategy_control → order_manager）を維持したまま、
+    戦略間の entry 割当を切替える分析・配分レイヤとして扱う。
+
+### 3) 戦略実行面（完全1:1）
+
+- 戦略の ENTRY / EXIT はセットで1:1運用
+- `quant-scalp-ping-5s-b` + `quant-scalp-ping-5s-b-exit`
+- `quant-scalp-ping-5s-c` + `quant-scalp-ping-5s-c-exit`（profit-first 検証用）
+- `quant-scalp-ping-5s-d` + `quant-scalp-ping-5s-d-exit`（C分離の独立検証用）
+- `quant-scalp-macd-rsi-div` + `quant-scalp-macd-rsi-div-exit`
+- `quant-scalp-macd-rsi-div-b` + `quant-scalp-macd-rsi-div-b-exit`
+- `quant-scalp-precision-lowvol` + `quant-scalp-precision-lowvol-exit`
+- `quant-scalp-tick-imbalance` + `quant-scalp-tick-imbalance-exit`
+- `quant-scalp-squeeze-pulse-break` + `quant-scalp-squeeze-pulse-break-exit`
+- `quant-scalp-vwap-revert` + `quant-scalp-vwap-revert-exit`
+- `quant-scalp-wick-reversal-blend` + `quant-scalp-wick-reversal-blend-exit`
+- `quant-scalp-wick-reversal-pro` + `quant-scalp-wick-reversal-pro-exit`
+- `quant-scalp-drought-revert` + `quant-scalp-drought-revert-exit`
+- `quant-m1scalper` + `quant-m1scalper-exit`
+- `quant-scalp-trend-breakout` + `quant-scalp-trend-breakout-exit`（entry/exitロジック独立化済み、初期は disabled）
+- `quant-scalp-pullback-continuation` + `quant-scalp-pullback-continuation-exit`（entry/exitロジック独立化済み、初期は disabled）
+- `quant-scalp-failed-break-reverse` + `quant-scalp-failed-break-reverse-exit`（entry/exitロジック独立化済み、初期は disabled）
+- `quant-micro-rangebreak` + `quant-micro-rangebreak-exit`
+- `quant-micro-levelreactor` + `quant-micro-levelreactor-exit`
+- `quant-micro-vwapbound` + `quant-micro-vwapbound-exit`
+- `quant-micro-vwaprevert` + `quant-micro-vwaprevert-exit`
+- `quant-micro-momentumburst` + `quant-micro-momentumburst-exit`
+- `quant-micro-momentumstack` + `quant-micro-momentumstack-exit`
+- `quant-micro-pullbackema` + `quant-micro-pullbackema-exit`
+- `quant-micro-trendmomentum` + `quant-micro-trendmomentum-exit`
+- `quant-micro-trendretest` + `quant-micro-trendretest-exit`
+- `quant-micro-compressionrevert` + `quant-micro-compressionrevert-exit`
+- `quant-micro-momentumpulse` + `quant-micro-momentumpulse-exit`
+- `quant-session-open` + `quant-session-open-exit`（該当期間のみ）
+- 補助戦略の追加は、ENTRY/EXIT を追加してから有効化
+- 共通ルール:
+- 各戦略ENTRYは `entry_thesis` に `entry_probability` と `entry_units_intent` を必須で付与する。
+  - `entry_probability` は戦略ローカルの「どれだけ入るべきか」判断、`entry_units_intent` は戦略ローカルの希望ロットを表す。
+  - `AddonLiveBroker` 経路（`session_open` など）でも上記2値を `entry_thesis` に渡し、order manager はそれを前提にガード/リスク判定のみを行う。
+  - `order_manager` は strategy 側意図の受け取りとガード/リスク検査のみで、戦略横断の採点・再選別は行わない。
+  - 補足: `execution/order_manager.py` 側で `market_order()` / `limit_order()` 呼び出し時に当該2値の欠落補完を行うフェールセーフは実装済み。通常は戦略側での注入を優先し、欠損時のみ補完。
+  - 補足（ポジ/監査系）: `execution/position_manager.py` 再構成処理は `request_json` / `oanda.order.units` / `orders.units` を使って
+    `entry_probability` / `entry_units_intent` の欠損復元を試み、trades 再保存時の監査再現性を補う。
+- `execution/strategy_entry.py` では、`analysis_feedback` / `forecast_fusion` / `strategy_net_edge_gate` / `leading_profile` / `coordinate_entry_intent`
+  の順に戦略ローカルの意図整形を確定し、最終的に `entry_intent_board` を経由して `order_manager` 側へ送る。
+  - `strategy_net_edge_gate` は `STRATEGY_ENTRY_NET_EDGE_*` を参照して、
+    `entry_probability` / `TP` / `SL` / `spread` / (`slippage` + `reject_cost`) を使って `entry_net_edge`/`entry_net_edge_gate` を生成し、
+    `entry_probability_reject` 以前に戦略側で `entry_net_edge_negative` 判定を付加する。
+    - 対象 pocket は `STRATEGY_ENTRY_NET_EDGE_POCKETS` で制御し、`ENTRY_NET_EDGE` の戦略別設定は
+    `SCALP_PING_5S_B_ENTRY_NET_EDGE_MIN_PIPS` / `SCALP_PING_5S_C_ENTRY_NET_EDGE_MIN_PIPS` を含む `env` で分離可能。
+- 各戦略ENTRYでは `entry_thesis["technical_context"]` に技術入力断面（`indicators`/`ticks`/要求TF）を保持する。  
+- N波/フィボ/ローソクを含む技術判定は、各戦略ワーカー側のローカルロジックで実施する。  
+- 各戦略ENTRYは、戦略タグ別の `forecast_profile`（`timeframe`/`step_bars`）を `entry_thesis` へ持ち、
+  ローカル予測（テクニカル由来の方向・期待pips）を算出して `tp_mult` / `size_mult` の補正に使う。  
+- TP再計算とロット補正は戦略ワーカー内で完結させ、`order_manager` 側で戦略意図を再採点しない。  
+- `technical_context.result` は保存用の監査フィールド。戦略側が独自評価を入れる場合のみ埋める。  
+- 補足（技術要件契約）:
+  - 技術要件は `execution/strategy_entry.py` の契約辞書で戦略タグ単位に定義し、`entry_thesis` 未指定項目を自動補完する。
+  - `entry_thesis["technical_context_tfs"]` / `technical_context_fields` / `technical_context_ticks` / `technical_context_candle_counts` を各戦略別に規定。
+  - 各戦略が必要なら `entry_thesis["tech_policy"]` で
+    `require_fib` / `require_nwave` / `require_candle` を明示する。
+  - `strategy_entry` 側は `technical_context` の保存補完のみで、上記要求を強制的に追加しない。
+  - 現行マッピング（`_STRATEGY_TECH_CONTEXT_REQUIREMENTS`）:
+  - Scalp系
+    - `scalp_ping_5s_b`
+    - `scalp_ping_5s_c`
+    - `scalp_ping_5s_d`
+    - `scalp_m1scalper`
+    - `scalp_tick_imbalance`/`scalp_tick_imbalance_rrplus` 系
+    - `scalp_tick_wick_reversal`, `scalp_wick_reversal`, `scalp_wick_reversal_pro`, `scalp_wick_reversal_hf`, `scalp_tick_wick_reversal_hf`
+    - `scalp_level_reject`, `scalp_level_reject_plus`
+    - `scalp_squeeze_pulse_break`
+    - `scalp_macd_rsi_div`
+    - `ScalpReversalNWave`（`-reversal` suffix を受ける）
+    - `TrendReclaimLong`
+    - `VolSpikeRider`
+  - Micro系
+    - `MicroRangeBreak`（`workers/micro_rangebreak` 経由）
+    - `MicroRangeBreak`（`workers/micro_rangebreak` 経由）
+    - `MicroLevelReactor`（`workers/micro_levelreactor`）
+    - `MicroVWAPBound`（`workers/micro_vwapbound`）
+    - `MicroVWAPRevert`（`workers/micro_vwaprevert`）
+    - `MomentumBurstMicro`（`workers/micro_momentumburst`）
+    - `MicroMomentumStack`（`workers/micro_momentumstack`）
+    - `MicroPullbackEMA`（`workers/micro_pullbackema`）
+    - `TrendMomentumMicro`（`workers/micro_trendmomentum`）
+    - `MicroTrendRetest`（`workers/micro_trendretest`）
+    - `MicroCompressionRevert`（`workers/micro_compressionrevert`）
+    - `MomentumPulse`（`workers/micro_momentumpulse`）
+    - `micro_adaptive_revert`（レガシー想定）
+    - `MicroPullbackFib`（`-pullback` suffix を受ける）
+    - `RangeCompressionBreak`（`-break` suffix を受ける）
+  - Macro系
+    - `MacroTechFusion`（`-trend` suffix を受ける）
+    - `TechFusion`
+    - `MacroH1Momentum`
+    - `trend_h1`
+    - `LondonMomentum`
+    - `H1MomentumSwing`
+  - `session_open`
+  - 技術コンテキスト共通の取得項目
+    - `technical_context_ticks`: 原則 `["latest_bid", "latest_ask", "latest_mid", "spread_pips"]`
+      - microstructure pace を setup identity に使う戦略は `tick_rate` を追加してよい
+      - current では `tick_imbalance` 系に加え `scalp_extrema_reversal_live` と `scalp_wick_reversal_blend` 系も `tick_rate` を要求する
+    - `technical_context_candle_counts`: 戦略別に個別上限（例: Scalp系 `M1/H1/M5/H4` 系、Micro系 `M5/M1/H1` 系）
+  - `live_setup_context` は `technical_context` から導出し、
+    最低限 `flow_regime / microstructure_bucket / setup_fingerprint` を持つ。
+    追加で `H1/H4/D1` が入っている場合は
+    `h1_flow_regime / h4_flow_regime / d1_flow_regime / macro_flow_regime / mtf_alignment`
+    を保持してよい。
+  - strategy-local `flow_guard` / `entry_thesis` でも
+    `macro_flow_regime / mtf_alignment / mtf_countertrend_pressure / m5/h1/h4_flow_regime`
+    を保持してよい。
+    ただしこれは worker local の quality guard 用であり、
+    shared `flow_regime`
+    を post-hoc に上書きする用途では使わない。
+  - `setup_fingerprint` の MTF suffix は無制限に増やさず、
+    local flow と macro flow がズレる場合、
+    または `mtf_alignment in {countertrend, mixed}` の場合だけ
+    `macro:*` / `align:*` を追加する。
+- 仕様上の役割分離は維持:
+  - 共通 `strategy_entry.py` は指標入力契約の補完・保存を担い、評価ロジックの主体は各戦略ワーカーへ移す。
+  - 最終的な受け入れ/サイズ拡大縮小は `order_manager` 側で再選別しない（意図受け渡し + ガード/リスクのみ）。
+- 戦略側は `entry_thesis` により要求仕様（`technical_context_tfs` / `technical_context_fields` /
+  `technical_context_ticks` / `technical_context_candle_counts`）を明示できる。  
+- `strategy_entry` 側は `strategy_tag` を受け、該当戦略の契約要件を既定補完する。  
+  補完優先順位は `entry_thesis` 指定値 > 戦略契約既定値。
+- `ENTRY_TECH_DEFAULT_TFS` で初期取得TF順を切替え、必要なら
+  `entry_thesis["technical_context_tfs"]` / `entry_thesis["technical_context_fields"]` で戦略側制限を付与可能。  
+- order-manager では `technical_context` を上書きしない（保存専有）。
+
+※ `quant-micro-adaptive-revert*` と `quant-impulse-retest-s5*` は V2再整備で VM から停止対象へ移行予定の legacy。  
+  現行では `OPS_V2_ALLOWED_LEGACY_SERVICES` に明示登録することで監査を `critical` でなく `warn` 運用にできる（監査ログ上で明示追跡）。
+
+### 4) 予測面（独立）
+
+- `quant-forecast.service` + `workers/forecast/worker.py` + `workers/common/forecast_gate.py`
+- 目的: `order_manager` の forecast gate は `forecast_decide` API を経由して `allow/reduce/block` を取得。
+- `FORECAST_SERVICE_ENABLED=1` と `FORECAST_SERVICE_URL` が有効な場合、`forecast_gate` 決定をワーカー越しで取得して
+  `order_manager` に反映。
+- local-v2 の `trade_min` / `trade_cover` / `trade_all` は `quant-forecast` を常駐対象へ含め、manual restart / watchdog /
+  launchd 復旧でも `8302` の forecast service を維持する。
+- 2026-03-10 JST 時点の `trade_cover` は、core + forecast/feedback に加えて
+  `scalp_ping_5s_b` / `scalp_macd_rsi_div_b` / `scalp_pullback_continuation` /
+  `scalp_trend_breakout` / `scalp_rangefader` /
+  `scalp_extrema_reversal` / `scalp_failed_break_reverse` /
+  `scalp_false_break_fade` / `scalp_tick_imbalance` /
+  `scalp_squeeze_pulse_break` / `micro_rangebreak` / `micro_levelreactor` /
+  `micro_momentumburst` / `micro_momentumpulse` / `micro_momentumstack` /
+  `micro_trendmomentum` / `micro_trendretest` / `micro_vwapbound` / `micro_vwaprevert` /
+  `m1scalper` の ENTRY+EXIT を常駐対象とし、
+  trend / breakout / failed-break / range / vwap / transition の regime coverage を持つ。
+- `order_manager` 側ではサービス障害時のみローカル fallback を許容し、判定仕様を維持。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` を維持したまま dedicated forecast gate を使う場合は、
+  `ORDER_MANAGER_FORECAST_GATE_APPLY_WITH_PRESERVE_INTENT=1` を `quant-order-manager.env` の opt-in とし、
+  allowlist 戦略だけに `allow/reduce/block` を適用する。
+- 予測決定は `expected_pips` に加えて `anchor_price` / `target_price` / `tp_pips_hint` / `sl_pips_cap` / `rr_floor`
+  を `forecast_context` として各経路へ伝播し、`order_manager` と `entry_intent_board` の監査へ反映する。
+- EXIT 側は共通一律ゲートを追加せず、各 `exit_worker` が `entry_thesis.forecast` / `forecast_fusion`
+  を参照して `profit_take` / `trail_start` / `lock_buffer` / `loss_cut_*` を戦略内で補正する。
+  補正係数の定義は戦略パッケージ内のEXITモジュールに保持し、最終判定は各戦略ワーカー側ロジックのまま維持する。
+- EXIT 実行導線は `exit_worker` 間の委譲（他戦略 worker 呼び出し）を禁止し、各戦略パッケージ内で
+  実体ロジックを保持する。
+- EXIT 低レイヤ（close送出、loss-cut判定、reentry判定、pro-stop、rollout判定、forecast補正、scale計算）も
+  `workers/common/*` 直参照を避け、戦略パッケージ内モジュールとして内製化する。
+- 戦略ワーカー側では forecast gate とは独立に、短中期（例: `M1x1`, `M1x5`, `M5x2`）のローカル予測を
+  エントリー時に都度計算し、`entry_thesis.tech_tp_mult` / `tech_score` / `entry_units_intent` へ反映する。
+- ローカル予測の過去再現評価は `scripts/eval_local_forecast.py` を正規手順として使い、
+  `baseline` 比で `hit_rate` と `MAE(pips)` を同時監査する。
+- 短期 horizon（`1m`/`5m`/`10m`）は `forecast_gate` 内で `M1` 基準に正規化して計算する。
+  戦略が `M5x2` のような指定を渡した場合も、短期は `M1` へ換算（例: `M5x2 -> M1x10`）し、
+  足更新遅延による stale/欠損の影響を最小化する。
+- さらに `factor_cache` の `M1` が stale のときは `logs/oanda/candles_M1_latest.json` を短期予測入力の
+  フォールバックとして使い、短期出力の欠落を避ける。
+- `forecast` 系は `order_manager` の判定処理から切り離し、`execution` 側の責務分離として
+  専用 service を通した決定供給を行う。
+
+### 5) オーダー面（分離済み）
+
+- `execution/order_manager.py` の注文経路は `quant-order-manager.service` 経由。
+- 目的: 戦略は「注文意図」を投げ、実API送信は order-manager が担当。
+- 受け渡しは `entry_probability` / `entry_units_intent` を前提にし、`order_manager` 側は意図の再選別をせず、ガード・リスク検査のみ実施。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1`（既定）運用では、戦略側が意図した
+  `entry_probability` / `entry_units_intent` / SL/TP 設計を、`order_manager` 側で上書きしない方針へ統一。  
+  例外として、`ORDER_MANAGER_PRESERVE_INTENT_UNIT_ADJUST_ENABLED=1`（strategy 固有キー
+  `ORDER_MANAGER_PRESERVE_INTENT_UNIT_ADJUST_ENABLED_STRATEGY_<TAG>`）を明示した場合のみ、
+  `entry_probability` によるサイズ調整・リジェクトを有効化する。
+- `entry_probability` / `entry_units_intent` をもとに、`execution/strategy_entry.py` が
+  `execution/order_manager.py` の `/order/coordinate_entry_intent` を呼んで黒板協調を行った後に
+  注文を `order-manager` へ転送する。
+- `ORDER_MANAGER_PRESERVE_STRATEGY_INTENT=1` 方針は維持し、`order_manager` は
+  戦略意図を上書きしない前提で、ガード/リスク判定と必要最小限の縮小・拒否のみに留める。
+- `execution/strategy_entry.py` 経由の協調判定は以下を固定ルール化する。  
+  - 判定対象は `ORDER_INTENT_COORDINATION_ENABLED=true` かつ `pocket != manual` のみ。  
+  - 同一 `strategy_tag` + `instrument` + `window`（既定 2 秒）内の未期限 board を集約し、`own_score=abs(raw_units)*prob` とする。  
+  - `opposite_score` が 0 のときは協調受理。  
+  - `opposite_score > 0` のときも方向意図は原則維持し、`raw_units` をそのまま通す。`dominance` は監査記録用に保持する。  
+  - `abs(final_units) < min_units_for_strategy(strategy_tag, pocket)` は拒否（優先解釈は戦略別設定）。  
+  - `reason` は `order_manager` の `entry_intent_board` へ記録し、`strategy_entry` は 0 なら注文を出さない。  
+
+### 6) ポジ管理面（分離済み）
+
+- `execution/position_manager.py` は `quant-position-manager.service` 経由。
+- 目的: 保有集計・sync/trades の集約責任を独立し、各戦略が状態管理を持たない。
+- `quant-position-manager` worker は background `sync_trades` を持ち、`trades.db` を `orders.db` へ常時追随させる。
+- `get_open_positions` はホットパスでの `orders.db` 参照を最小化し、`orders.db` は read-only/短timeoutで参照する。
+  writer 競合時は fail-fast + 既存キャッシュ返却を優先し、strategy worker 側 timeout を増幅させない。
+- service 呼び出し側は keep-alive session と短TTL/stale キャッシュを持ち、`open_positions` の tail latency を吸収する。
+- `PositionManager.close()` の契約:
+  - `POSITION_MANAGER_SERVICE_ENABLED=1` のクライアント側から shared service の `/position/close` を呼ばない。
+  - close は呼び出し元プロセスのローカル fallback 接続 (`self.con`) の解放のみに限定し、
+    singleton `quant-position-manager` の DB 接続を誤って閉じない。
+
+### 7) 分析・監視面（データ管理）
+
+- `quant-pattern-book`, `quant-dynamic-alloc`, `quant-ops-policy`, `quant-policy-guard`, `quant-range-metrics`, `quant-strategy-feedback`, `quant-replay-quality-gate`, `quant-trade-counterfactual`, `quant-regime-router`, `quant-forecast-improvement-audit` は分析/監視へ固定
+- 分析系が戦略判断本体と混ざる構造を禁ずる
+- `quant-dynamic-alloc` は strategy tag の一時サフィックス（例: `-l<hex>`）を正規化して集計し、
+  同一戦略の成績分断による配分劣化を防ぐ（2026-02-24 更新）。
+- `quant-replay-quality-gate` は `REPLAY_QUALITY_GATE_AUTO_IMPROVE_ENABLED=1` の場合、
+  replay run 出力を `analysis.trade_counterfactual_worker` へ連結し、
+  `policy_hints.block_jst_hours` は改善提案として監査ログに記録し、
+  反映は自動実施しない。`policy_hints.reentry_overrides` は
+  `config/worker_reentry.yaml` へ反映対象とする。
+  `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MAX_BLOCK_HOURS` を超える候補は反映しない。
+  `REPLAY_QUALITY_GATE_AUTO_IMPROVE_MIN_APPLY_INTERVAL_SEC` 内は
+  `worker_reentry` 反映をスキップし、解析のみ継続する。
+  反映可否は `logs/replay_quality_gate_latest.json.auto_improve` を監査正本とする。
+
+## 禁止ルール（V2）
+
+1. 1つの戦略ワーカーが複数戦略ロジックを実体レベルで担当しないこと
+2. market_data / control / strategy / order / position の責務混在を許可しないこと
+3. `quantrabbit.service` の本番起動を許可しないこと
+4. `main.py` を systemd 本番エントリとして扱わないこと
+5. order-manager / strategy-control が戦略の意思決定を上書きしないこと
+6. entry/exit の戦略ワーカーは `scalp_precision` の共通実行器を経由しないこと（完全に戦略ロゴ独立実行）
+
+## 現在の状態（2026-02-17 時点）
+
+- runtime env は `ops/env/quant-v2-runtime.env` を基準参照とし、共通設定を持つ。  
+  `order_manager` / `position_manager` は各ワーカー固定実行のため、service-mode の制御は専用 env でオーバーライド:
+  - `ops/env/quant-order-manager.env`
+  - `ops/env/quant-position-manager.env`
+- strategy 固有の追加設定は `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_c.env` / `ops/env/scalp_ping_5s_d.env` などの既存上書き env に加え、各ENTRY/EXIT戦略の基本設定を
+  `ops/env/quant-<service>.env` へ集約する。
+
+- この図は V2 運用で構成が変わるたびに更新する（組織図更新の必須運用）。  
+  `docs/WORKER_REFACTOR_LOG.md` と同一コミットで差分が並走すること。
+
+- 実装済み（運用へ反映）
+  - `quant-market-data-feed`
+  - `quant-strategy-control`
+  - `quant-scalp-*`/`quant-micro-*` の ENTRY+EXIT 1:1化
+  - 補助的冗長ワーカー群の縮小
+- 実装済み（2026-02-14 時点）
+- `quant-order-manager.service` / `quant-position-manager.service` 追加
+- `execution/order_manager.py`, `execution/position_manager.py` の service-first 経路化
+- API 契約（/order/*, /position/*）を基準化
+- 注記: 直近の運用レビューでは、データ記録系 DB と分析系成果物の更新は確認済み（VM側状態監査前提）。
+- 予測判定専用 `quant-forecast.service` を追加し、`ORDER_MANAGER_FORECAST_GATE_ENABLED=1` で
+  `order_manager` からサービス経由で `forecast_decide` を取得する導線を実装。
+- 運用整備（2026-02-16 追加）
+  - 戦略ENTRYの出力に `entry_probability` / `entry_units_intent` を必須化し、V2本体戦略から `order_manager` への意図受け渡しを統一。
+  - `WORKER_REFACTOR_LOG.md` の同時追記を行い、実装・図面の変更差分を同一コミットへ反映。
+- 5秒スキャBでは `SCALP_PING_5S_B_MIN_UNITS` を `50` まで下げる運用を許容するため、`workers/scalp_ping_5s/config.py` の
+  ローカル最小ロット下限を固定100から可変化（`max(1, ...)`）して、`ORDER_MIN_UNITS_SCALP_FAST`（50）との整合を担保。
+- 運用整備（2026-02-16）
+  - VM側で `quantrabbit.service` を除去し、レガシー戦略・補助ユニット（`quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`, `quant-trend-reclaim-long*`, `quant-margin-relief-exit*`, `quant-hard-stop-backfill*`, `quant-realtime-metrics*`, precision 系）を停止・無効化。
+  - `systemctl list-unit-files --state=enabled --all` で V2実行群（`market-data-feed`, `strategy-control`, 各ENTRY/EXIT, `order-manager`, `position-manager`）のみが実行系として起動対象であることを確認。
+- 運用整備（2026-02-17）
+  - `quant-order-manager.service` / `quant-position-manager.service` へ専用 env を追加し、共通 runtime env でサービス自体を
+    ON にしない形へ分離。  
+  - worker起動時に service-mode の誤自己参照を抑止するガードを追加。
+  - `position_manager` の `/position/open_positions` 呼び出しを keep-alive session + 短TTLキャッシュで平準化し、
+    `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_TIMEOUT` を既定 4.5s に分離。
+  - `openTrades` の upstream 取得 timeout は `POSITION_MANAGER_OPEN_TRADES_HTTP_TIMEOUT`（既定 3.5s）で
+    `open_positions` client timeout より短く制御し、worker 側 6s timeout への連鎖を抑止。
+  - `quant-position-manager` は Uvicorn access log を既定 OFF とし、
+    高頻度 `open_positions` リクエスト時のログI/O飽和を抑止。
+- 運用整備（2026-02-18）
+  - `workers/position_manager/worker.py` の API 実装を single-flight 化し、
+    `/position/open_positions` / `/position/sync_trades` は worker 側で fresh/stale cache を返す。
+  - manager 呼び出しを `asyncio.wait_for(...to_thread...)` で timeout 制御し、
+    同時アクセス集中時でも `/health` を含む応答詰まりを起こしにくい構成へ更新。
+  - `open_positions` の `busy/timeout` 残存に対し、worker cache 未命中時は
+    `PositionManager._last_positions` へフォールバックして `ok=true` 応答を優先。
+  - `execution/position_manager.py` は `entry_thesis` 補完対象を不足 trade 中心へ絞り、
+    `client_order_id -> entry_thesis` の TTL cache を導入して `orders.db` 再参照を削減。
+  - 2026-02-24 追記: `open_positions` で推定済み `strategy_tag` が非canonical
+    （短縮タグ/ハッシュ混在）な場合は補完対象へ強制昇格し、
+    `orders.db` の `entry_thesis` から canonical tag を再解決する。
+    これにより exit_worker の tag allowlist 不一致で未決済が取り残される経路を抑止する。
+  - runtime は `POSITION_MANAGER_SERVICE_OPEN_POSITIONS_CACHE_TTL_SEC=4.0` /
+    `...STALE_MAX_AGE_SEC=24.0` / `...OPEN_POSITIONS_TIMEOUT=8.0` に更新し、
+    クライアント側の過密ポーリングを抑制。
+- `micro_multistrat` は共通Runnerとしての運用を打ち切り、レンジ時の順張り/押し目判定運用は各独立 micro ワーカー側へ移行したため、同種の範囲制御は
+  各専用ワーカーの設定で管理している。
+- 運用整備（2026-02-24）
+  - `analysis/strategy_feedback_worker.py` を追加し、`quant-strategy-feedback.service` / `quant-strategy-feedback.timer` で
+    `logs/trades.db` と strategy list を再解析して `logs/strategy_feedback.json` を更新する分析係ワーカーを導入。
+  - 戦略の追加・停止（systemd/service状態）に追従して指標を更新し、停止/追加時の事故条件を避ける `keep_inactive` 制約を明記。
+  - エントリーワーカー稼働を優先判定に変更し、EXITワーカーのみ残存するケースでは `strategy_feedback` の更新適用を抑止。
+  - directional split-tag（例: `MicroTrendRetest-long/-short`）は discovered base strategy key
+    （例: `MicroTrendRetest`）へ再解決して集計し、runtime `current_advice()` も
+    split-tag から base `strategy_feedback` を fallback 参照する。
+  - `ops/env/quant-strategy-feedback.env` に `STRATEGY_FEEDBACK_*` を追加し、lookback / min_trades / systemd_path を運用制御可能化。
+- 運用整備（2026-02-17）
+  - `scalp_ping_5s_b` / `scalp_ping_5s_flow` は VM 実ログの skip 要因（`revert_not_found`, `low_tick_count`, `units_below_min`）に合わせ、
+    戦略ローカル閾値を `ops/env/scalp_ping_5s_b.env` / `ops/env/scalp_ping_5s_flow.env` で緩和して現況追従性を回復。
+  - 追記（2026-02-17 08:46 UTC 反映）:
+    - `scalp_ping_5s_b` は `short_bottom_m1m5` 連発抑止のため short extrema 閾値を緩和し、`MIN_UNITS` を 150 へ引き下げ。
+    - `scalp_ping_5s_flow` は `revert_not_found` 優勢に対し `REVERT_*` と `SIGNAL_WINDOW_FALLBACK_ALLOW_FULL_WINDOW` を緩和。
+  - 追記（2026-02-17 08:51 UTC 反映）:
+    - `scalp_ping_5s_flow` は `orders.db` 上でエントリー 0 件が継続したため、
+      `LOOKAHEAD_GATE_ENABLED=0` と `REVERT_*`（window/range/sweep/bounce）および `DROP_FLOW_*` 閾値を追加緩和。
+    - `no_signal:revert_not_found` が継続したため、config下限に合わせて `MIN_*`/`SHORT_MIN_*`/`IMBALANCE_MIN` を明示し、
+      `MOMENTUM_TRIGGER_PIPS` を 0.10 へ引き下げて momentum 側シグナルの成立条件を緩和。
+- 運用整備（2026-02-18）
+  - `scalp_ping_5s` / `scalp_ping_5s_b` の EXIT worker に
+    予測バイアス（`analysis.local_decider._technical_forecast_bias`）を併用した
+    `direction_flip` 判定を追加（戦略内で完結、共通一律ゲートは追加しない）。
+  - `direction_flip` は「de-risk（部分クローズ）→ full-exit（全クローズ）」の二段階制御にし、
+    疑い局面ではロットを落として観察、継続悪化でのみ撤退する。
+  - `direction_flip` はヒステリシスと連続確認でノイズを抑制し、
+    含み損の取り残し玉のみを対象に close する。
+  - `range_timeout` 非依存の取り残しを抑えるため、
+    非レンジ時の含み損向け `non_range_max_hold_sec` を追加。
+  - 新ルールは `RANGEFADER_EXIT_NEW_POLICY_START_TS` 以降の新規建玉に限定し、
+    既存建玉には適用しない。
+- 運用整備（2026-02-21）
+  - `execution/reentry_gate.py` の時間帯フィルタ運用として、
+    `config/worker_reentry.yaml` に時間帯損失ガードを追加。
+  - `M1Scalper` は `block_jst_hours=[3,5,6,20,21,22]`、`scalp_ping_5s_b_live` は
+    `block_jst_hours=[3,5,6,20,21,22]` を適用し、
+    V2導線を変えずに strategy-tag 単位でエントリー可否のみを制御する。
+  - 目的は「共通一律の後付け判定」ではなく、
+    既存ガード導線（order_manager preflight）内での時間帯リスク制御。
+
+## 監査用更新プロトコル（毎回）
+
+- 変更を加えるたびに実行:
+1. `docs/WORKER_REFACTOR_LOG.md` に変更内容を追記
+2. `docs/WORKER_ROLE_MATRIX_V2.md` の「現在の状態」を同一コミットで更新
+3. `docs/INDEX.md` が必要なら参照を同期
+4. `main` 統合 → `git commit` → `git push` → VM 反映
+
+### 自動監査（VM監査ユニット）
+
+- 追加サービス（導線監査の自動化）: `quant-v2-audit.service` + `quant-v2-audit.timer`
+- 実施内容:
+  - `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` / `quant-position-manager` の実行状態
+  - strategy 主要ENTRY/EXITユニットの稼働監査
+  - V2 runtime env と service/env 分離状態の監査
+  - `position/open_positions` 周りの 405 / Method Not Allowed 監査
+    - 405 判定は `POST`/`GET` の該当リクエスト行または `Method Not Allowed` 文字列のみを対象化
+    - journal タイムスタンプ中の `:405` を誤判定しない
+  - `quant-v2-runtime.env` の主要制御キー値差分監査
+  - `quantrabbit.service` 等 legacy active 判定
+- 出力: `logs/ops_v2_audit_latest.json`
+- デフォルト実行: 10分間隔（`OnCalendar=*:00/10`）
+
+### 2026-02-17（追記）install/trade 監査連携
+
+- `scripts/install_trading_services.sh --all` の対象外にして V2外のレガシー戦略を勝手に再有効化しない運用を追加。
+  - 除外対象: `quant-impulse-retest-s5*`, `quant-micro-adaptive-revert*`
+- V2運用中の監査対象外扱いを維持するため、`--all` 実行では上記を明示的にスキップし、
+  レガシーは必要時の `--units` 指定時にのみ再導入可能とする。
+
+### 2026-02-14（追記）install_trading_services の実行安定化
+
+- `scripts/install_trading_services.sh --all` 実行中に、`quant-strategy-optimizer.service` の
+  oneshot 長時間起動が原因で `systemctl start` がブロックし、後続ユニット有効化が停滞する問題を対策。
+- `NO_BLOCK_START_UNITS` を導入し、`quant-strategy-optimizer.service` は
+  `systemctl start --no-block` で起動要求する運用へ変更。
+- `--all` 実行の完了性を担保し、V2監査/運用サービスの再起動ループを維持する状態に更新。
+
+### 2026-02-27（追記）運用スクリプト既定値を V2 導線へ統一
+
+- `scripts/install_trading_services.sh` の既定インストール対象を
+  `quant-market-data-feed` / `quant-strategy-control` / `quant-order-manager` /
+  `quant-position-manager` + 保守系に変更し、`quantrabbit.service` 前提を除去。
+- `scripts/vm.sh` / `scripts/deploy_to_vm.sh` の既定 service を
+  `quant-market-data-feed.service` に更新し、V2 運用時の誤再起動・誤ログ監視を防止。
+
+## V2 反映図（最上位・並行）
+
+```mermaid
+flowchart LR
+  OANDA["OANDA API"] --> MD["quant-market-data-feed<br>/workers/market_data_feed/worker.py"]
+  MD --> TW["market_data.tick_window.record"]
+  MD --> FC["indicators.factor_cache.on_candle / on_candle_live"]
+  FC --> RR["quant-regime-router<br>/workers/regime_router/worker.py"]
+
+  subgraph "戦略サイド（並行）"
+    SCW[ "strategy ENTRY workers<br>/workers/*/worker.py" ]
+    SWX[ "strategy EXIT workers<br>/workers/*/exit_worker.py" ]
+  end
+
+  SC["quant-strategy-control<br>/workers/strategy_control/worker.py<br>/workers/common/strategy_control.py"] -->|entry/exit flags| SCW
+  SC -->|entry/exit flags| SWX
+  RR -->|strategy entry flags| SC
+  TW --> SCW
+  FC --> SCW
+  TW --> SWX
+  FC --> SWX
+
+  SCW --> OM["order intents<br>entry_probability / entry_units_intent"]
+  SWX --> OM
+  OM --> OWM["quant-order-manager<br>/workers/order_manager/worker.py"]
+  OWM --> OEX["execution/order_manager.py"]
+  OEX -->|forecast_decide| FSG["quant-forecast<br>/workers/forecast/worker.py"]
+  OEX --> OANDA_ORDER["OANDA Order API"]
+
+  PM["quant-position-manager<br>/workers/position_manager/worker.py"] -->|sync/positions| SWX
+  PM -->|position snapshot| SCW
+  OEX --> PM
+  PM --> DB["logs/trades.db, logs/orders.db"]
+
+  ANAL["analysis/services<br>quant-pattern-book, quant-range-metrics, quant-strategy-feedback, quant-replay-quality-gate, quant-trade-counterfactual, etc."] -->|feedback params / labels| SCW
+  ANAL -->|feedback params / labels| SWX
+
+  UI["QuantRabbit UI<br>apps/autotune_ui.py"] --> SC
+  UI -->|strategy on/off / global lock| SC
+```
+
+備考
+- 既存ワーカーは「並行実行」に前提を置く。ENTRY/EXIT は原則 1:1 で個別 `systemd` ユニット化。
+- `strategy control` は「可否フラグ配信」だけを担当。実行判断と注文/保有更新は各ワーカーと専用サービスで実施。
+- dedicated `exit_worker` は close 判定に加えて、
+  `config/strategy_exit_protections.yaml`
+  の
+  `be_profile / tp_move`
+  に基づく broker `SL/TP`
+  更新も担当する。
+  current local-v2 では
+  `ATR / spread / setup_quality / continuation_pressure / extrema setup pressure`
+  を使う live multiplier で
+  `trigger / lock / TP buffer`
+  を補正する。
+  これは strategy-local 実装であり、
+  共通の後付け exit manager を復活させるものではない。
+- `scalp_ping_5s_c_live` の current local-v2 では、
+  worker local `min_units_rescue`
+  が発火した small probe に対して
+  bounded post-probability floor を先に掛け、
+  `order_manager` preserve-intent scale 後も
+  `entry_probability_below_min_units`
+  で潰れないようにする。
+  これは cadence 回復のための strategy-local sizing であり、
+  shared `ORDER_MIN_UNITS` や broad pocket guard を緩める方針ではない。
+
+
+## 監査用の記載先
+
+- AGENTS は規約面、`docs/WORKER_REFACTOR_LOG.md` は実装履歴、`docs/INDEX.md` には本ドキュメント参照を追加済み

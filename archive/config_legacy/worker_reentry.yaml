@@ -1,0 +1,446 @@
+defaults:
+  cooldown_win_sec: 60
+  cooldown_loss_sec: 180
+  same_dir_reentry_pips: 1.8
+  same_dir_mode: return
+  allow_jst_hours: []
+  block_jst_hours:
+  - 7
+  - 8
+  return_wait_bias: neutral
+  max_open_trades: 0
+  max_open_adverse_pips: 0.0
+  max_open_avg_adverse_pips: 0.0
+  max_open_trades_hard: 0
+  stack_reentry_pips: 0.0
+strategies:
+  MicroPullbackEMA:
+    cooldown_win_sec: 40
+    cooldown_loss_sec: 66
+    same_dir_reentry_pips: 0.8
+    same_dir_mode: both
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+  MomentumBurst:
+    cooldown_win_sec: 44
+    cooldown_loss_sec: 138
+    same_dir_reentry_pips: 0.8
+    same_dir_mode: both
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  MicroLevelReactor:
+    cooldown_win_sec: 4
+    cooldown_loss_sec: 10
+    same_dir_reentry_pips: 0.15
+    same_dir_mode: both
+    return_wait_bias: neutral
+    return_wait_reason: recovery_day
+    max_open_trades: 10
+    max_open_trades_hard: 18
+    max_open_adverse_pips: 12.0
+    max_open_avg_adverse_pips: 6.0
+    stack_reentry_pips: 0.8
+    block_jst_hours: []
+  Donchian5:
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 670
+    same_dir_reentry_pips: 1.8
+    max_open_trades: 2
+    max_open_adverse_pips: 40.0
+    max_open_trades_hard: 6
+    stack_reentry_pips: 30.0
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  fast_scalp:
+    cooldown_win_sec: 177
+    cooldown_loss_sec: 174
+    same_dir_reentry_pips: 1.577
+    same_dir_mode: both
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  RangeFader:
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 45
+    same_dir_reentry_pips: 0.5
+    return_wait_bias: neutral
+  WickReversal:
+    cooldown_win_sec: 60
+    cooldown_loss_sec: 180
+    same_dir_reentry_pips: 1.8
+    same_dir_mode: both
+    return_wait_bias: neutral
+  WickReversalHF:
+    cooldown_win_sec: 45
+    cooldown_loss_sec: 90
+    same_dir_reentry_pips: 1.2
+    same_dir_mode: both
+    return_wait_bias: neutral
+  TickWickReversal:
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 45
+    same_dir_reentry_pips: 0.8
+    same_dir_mode: both
+    return_wait_bias: neutral
+  SqueezePulseBreak:
+    cooldown_win_sec: 20
+    cooldown_loss_sec: 45
+    same_dir_reentry_pips: 1.0
+    same_dir_mode: both
+    return_wait_bias: neutral
+  MicroRangeBreak:
+    cooldown_win_sec: 8
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.2
+    same_dir_mode: both
+    max_open_trades: 8
+    max_open_trades_hard: 14
+    max_open_adverse_pips: 10
+    max_open_avg_adverse_pips: 5
+    stack_reentry_pips: 0.8
+  MicroVWAPBound:
+    cooldown_win_sec: 40
+    cooldown_loss_sec: 120
+    same_dir_reentry_pips: 1.0
+    same_dir_mode: both
+    max_open_trades: 2
+    max_open_trades_hard: 4
+    max_open_adverse_pips: 6
+    max_open_avg_adverse_pips: 3
+  ImpulseRetrace:
+    cooldown_win_sec: 46
+    cooldown_loss_sec: 106
+    same_dir_reentry_pips: 0.8
+    same_dir_mode: both
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  MomentumP:
+    cooldown_win_sec: 118
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.8
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  MomentumPulse:
+    cooldown_win_sec: 8
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.2
+    same_dir_mode: both
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    max_open_trades: 6
+    max_open_trades_hard: 12
+    stack_reentry_pips: 0.8
+    block_jst_hours: []
+  M1Scalper:
+    cooldown_win_sec: 2
+    cooldown_loss_sec: 4
+    same_dir_reentry_pips: 0.05
+    same_dir_mode: both
+    return_wait_bias: neutral
+    return_wait_reason: recovery_scalp_push
+    max_open_trades: 8
+    max_open_trades_hard: 16
+    max_open_adverse_pips: 12.0
+    max_open_avg_adverse_pips: 6.0
+    stack_reentry_pips: 0.35
+    block_jst_hours: []
+  scalp_ping_5s_b_live:
+    return_wait_reason: no_time_block_20260226
+    block_jst_hours: []
+  scalp_ping_5s_c_live:
+    return_wait_reason: no_time_block_20260226
+    block_jst_hours: []
+  scalp_ping_5s_d_live:
+    return_wait_reason: hourly_pnl_guard_20260222_d
+    block_jst_hours: []
+  TrendMA:
+    cooldown_win_sec: 600
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 5.0
+    same_dir_mode: both
+    max_open_trades: 1
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  H1Momentum:
+    cooldown_win_sec: 600
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 5.0
+    same_dir_mode: both
+    max_open_trades: 1
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  TrendMAbu:
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.8
+    max_open_trades: 3
+    max_open_adverse_pips: 50.0
+    max_open_trades_hard: 12
+    stack_reentry_pips: 35.0
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  VolCompre:
+    cooldown_win_sec: 254
+    cooldown_loss_sec: 91
+    same_dir_reentry_pips: 1.8
+    max_open_trades: 3
+    max_open_adverse_pips: 30.0
+    max_open_trades_hard: 10
+    stack_reentry_pips: 20.0
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  VolCompressionBreak:
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.8
+    same_dir_mode: both
+    max_open_trades: 3
+    max_open_adverse_pips: 30.0
+    max_open_trades_hard: 10
+    stack_reentry_pips: 20.0
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  impulse_retest_s5:
+    cooldown_win_sec: 161
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+  BB_RSI:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  Tren:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 1.8
+  TrendMomentumMicro:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 1.8
+  VolCompressionBr:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  unknown:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 8.0
+  BB_RSI_Fast:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 195
+    cooldown_loss_sec: 83
+    same_dir_reentry_pips: 1.12
+  DivergenceRevert:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  Donchian55:
+    return_wait_bias: avoid
+    return_wait_reason: be_post_60_or_hold_skew
+    block_jst_hours: []
+    cooldown_win_sec: 900
+    cooldown_loss_sec: 1800
+    same_dir_reentry_pips: 8.0
+    max_open_trades: 1
+    max_open_adverse_pips: 40.0
+  HedgeBalancer:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 8.0
+  LevelReject:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 124
+    same_dir_reentry_pips: 0.8
+  LevelRejectPlus:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  LiquiditySweep:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 48
+    cooldown_loss_sec: 107
+    same_dir_reentry_pips: 0.8
+  MicroCompressionRevert:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 295
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 0.8
+  MicroVWAPRevert:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 8
+    cooldown_loss_sec: 20
+    same_dir_reentry_pips: 0.2
+    same_dir_mode: both
+    max_open_trades: 8
+    max_open_trades_hard: 14
+    max_open_adverse_pips: 10.0
+    max_open_avg_adverse_pips: 5.0
+    stack_reentry_pips: 0.8
+  TickImbalance:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 120
+    same_dir_reentry_pips: 0.0
+    same_dir_mode: both
+  VolSpikeRider:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 2.8
+  VwapRevertS:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 43
+    cooldown_loss_sec: 124
+    same_dir_reentry_pips: 0.8
+  WickReversalBlend:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+    same_dir_mode: both
+  impulser6c29c8c05:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 3.4
+  m1scalpe68edca63a:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 2.56
+  m1scalpeb247b7f0a:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 2.4
+  mirror_spike:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 69
+    cooldown_loss_sec: 297
+    same_dir_reentry_pips: 1.6
+  mirror_spike_s5:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8
+  mirror_spike_tight:
+    return_wait_bias: neutral
+    return_wait_reason: default
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.82
+  mm_lite:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 246
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 1.32
+  mmlite:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 72
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.84
+  pullback_runner_s5:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 1.58
+  pullback_scalp:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 2.28
+  rangefad6c790f3d9:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 300
+    cooldown_loss_sec: 900
+    same_dir_reentry_pips: 8.0
+  sig:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 256
+    cooldown_loss_sec: 305
+    same_dir_reentry_pips: 1.74
+  tickimbaf38baab25:
+    return_wait_bias: neutral
+    return_wait_reason: low_sample
+    block_jst_hours: []
+    cooldown_win_sec: 30
+    cooldown_loss_sec: 60
+    same_dir_reentry_pips: 0.8

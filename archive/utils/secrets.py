@@ -1,0 +1,190 @@
+import logging
+import os
+import threading
+import toml
+import pathlib
+from typing import Optional
+
+# NOTE:
+#   Importing google.cloud.secretmanager pulls in grpc (cygrpc) which installs fork handlers.
+#   In local replay/backtest we sometimes spawn subprocesses; on macOS that can deadlock in
+#   grpc atfork prepare. Keep the import lazy so grpc is only loaded when we actually need
+#   to call GCP Secret Manager.
+
+_ENV_PATH = pathlib.Path("config/env.toml")
+# プロジェクトIDは複数の一般的な環境変数を順に参照
+PROJECT_ID = (
+    os.environ.get("GCP_PROJECT")
+    or os.environ.get("GOOGLE_CLOUD_PROJECT")
+    or os.environ.get("GOOGLE_CLOUD_PROJECT_NUMBER")
+    or "quantrabbit"
+)
+
+# OS 環境変数へのマッピング（優先）
+ENV_MAP = {
+    "oanda_token": "OANDA_TOKEN",
+    "oanda_account_id": "OANDA_ACCOUNT",
+    "oanda_account": "OANDA_ACCOUNT",
+    "oanda_practice": "OANDA_PRACTICE",
+    "oanda_hedging_enabled": "OANDA_HEDGING_ENABLED",
+    "gcp_project_id": "GCP_PROJECT",
+    "ui_bucket_name": "GCS_UI_BUCKET",
+    "analytics_bucket_name": "GCS_ANALYTICS_BUCKET",
+}
+
+
+# ---------------------------------------------------------------------------
+# Hot-reload TOML cache: re-read config/env.toml when the file's mtime
+# changes, so autotune writes are picked up without a systemd restart.
+# Thread-safe via a lightweight lock.
+# ---------------------------------------------------------------------------
+_toml_cache: dict = {}
+_toml_mtime: float = 0.0
+_toml_lock = threading.Lock()
+
+
+def _load_toml() -> dict:
+    """Return cached TOML dict, automatically reloading when file changes."""
+    global _toml_cache, _toml_mtime
+    if not _ENV_PATH.exists():
+        return {}
+    try:
+        current_mtime = _ENV_PATH.stat().st_mtime
+    except OSError:
+        return _toml_cache or {}
+    if current_mtime != _toml_mtime or not _toml_cache:
+        with _toml_lock:
+            # Double-check after acquiring the lock
+            try:
+                current_mtime = _ENV_PATH.stat().st_mtime
+            except OSError:
+                return _toml_cache or {}
+            if current_mtime != _toml_mtime or not _toml_cache:
+                try:
+                    _toml_cache = toml.loads(_ENV_PATH.read_text())
+                    old_mtime = _toml_mtime
+                    _toml_mtime = current_mtime
+                    if old_mtime != 0.0 and old_mtime != current_mtime:
+                        logging.info(
+                            "[secrets] hot-reloaded %s (mtime %.0f -> %.0f)",
+                            _ENV_PATH,
+                            old_mtime,
+                            current_mtime,
+                        )
+                except Exception:
+                    pass
+    return _toml_cache
+
+
+def _from_env(key: str) -> Optional[str]:
+    # 1. 直接一致（大文字）
+    direct = os.environ.get(key) or os.environ.get(key.upper())
+    if direct:
+        return str(direct)
+    # 2. マッピング
+    env_name = ENV_MAP.get(key)
+    if env_name and env_name in os.environ:
+        return str(os.environ[env_name])
+    return None
+
+
+def _from_toml(key: str, data: Optional[dict] = None) -> Optional[str]:
+    data = data or _load_toml()
+    # フラット優先
+    if key in data:
+        return str(data[key])
+    # セクション形式の互換
+    if "_" in key:
+        section, real_key = key.split("_", 1)
+        if section in data and real_key in data[section]:
+            return str(data[section][real_key])
+    return None
+
+
+def _gcp_disabled() -> bool:
+    return os.environ.get("DISABLE_GCP_SECRET_MANAGER", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _prefer_gcp(key: str) -> bool:
+    """
+    Decide whether to consult Secret Manager before local sources.
+    - Prefer when PREFER_GCP_SECRET_MANAGER is explicitly set.
+    """
+    prefer_env = os.environ.get("PREFER_GCP_SECRET_MANAGER", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    return prefer_env
+
+
+def _fetch_from_gcp(key: str) -> Optional[str]:
+    if _gcp_disabled():
+        return None
+    try:
+        from google.cloud import secretmanager  # type: ignore
+
+        client = secretmanager.SecretManagerServiceClient()
+        secret_name = f"projects/{PROJECT_ID}/secrets/{key}/versions/latest"
+        response = client.access_secret_version(name=secret_name, timeout=2.0)
+        return response.payload.data.decode("UTF-8")
+    except Exception:
+        return None
+
+
+def _is_placeholder(key: str, value: str) -> bool:
+    """Detect obvious placeholder values to allow falling back to Secret Manager."""
+    val = str(value).strip()
+    low = val.lower()
+    if "placeholder" in low:
+        return True
+    return False
+
+
+def get_secret(key: str) -> str:
+    prefer_gcp = _prefer_gcp(key)
+    placeholder_value: Optional[str] = None
+
+    # 0) Prefer GCP first for centralized keys (with fallback to local)
+    if prefer_gcp:
+        v = _fetch_from_gcp(key)
+        if v is not None:
+            if _is_placeholder(key, v):
+                placeholder_value = v
+            else:
+                return v
+
+    # 1) OS 環境変数
+    v = _from_env(key)
+    if v is not None:
+        if _is_placeholder(key, v):
+            placeholder_value = placeholder_value or v
+        else:
+            return v
+
+    # 2) TOML
+    v = _from_toml(key)
+    if v is not None:
+        if _is_placeholder(key, v):
+            placeholder_value = placeholder_value or v
+        else:
+            return v
+
+    # 3) GCP Secret Manager（常に短いタイムアウトで試行。明示的に無効化も可）
+    v = _fetch_from_gcp(key)
+    if v is not None:
+        if _is_placeholder(key, v):
+            placeholder_value = placeholder_value or v
+        else:
+            return v
+
+    if placeholder_value is not None:
+        return placeholder_value
+
+    raise KeyError(
+        f"Secret '{key}' not found in env vars, {_ENV_PATH}, or GCP Secret Manager"
+    )

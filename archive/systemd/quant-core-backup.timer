@@ -1,0 +1,11 @@
+[Unit]
+Description=Hourly guarded QuantRabbit core backup
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=900
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
