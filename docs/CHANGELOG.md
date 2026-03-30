@@ -1,6 +1,208 @@
 # Changelog
 
+## 2026-03-31 (6) — TP推奨を構造的レベルベースに全面改修
+
+問題: protection_check.pyのTP推奨がATR×1.0固定（距離だけの無意味な価格）。swing/cluster/BB/Ichimoku等の構造的レベル（市場が実際に反応する価格）を使っていなかった。M5の構造的データも未活用。
+
+### protection_check.py全面改修
+- **find_structural_levels()新設**: H1+M5の全構造的レベルを収集し距離順にソート
+  - H1: swing high/low, cluster, BB upper/mid/lower, Ichimoku雲SpanA/B
+  - M5: swing high/low, cluster, BB upper/mid/lower
+  - LONG→上方向、SHORT→下方向のみ返す
+- **TP推奨**: ATR×1.0固定 → 構造的レベルのメニュー表示（最大5候補）。最寄りに「← 推奨」マーカー
+- **修正コマンド出力**: `=== 修正コマンド (N件) ===` セクションにコピペで即実行可能なPUTコマンドを表示。SL広すぎ修正・TP修正・Trailing設定のコマンド
+- 結果例: GBP_JPY SHORT TP=210.000(ATR×2.5)→候補5つ(M5 BB mid/lower, M5 swing low, M5 cluster, H1 swing low)をATR比付きで表示
+
+## 2026-03-31 (5) — 回転数不足+TP/SL放置+1ペア集中の根本対策
+
+問題: 24時間で4エントリーしかしていない。全9ポジがSL広すぎ(ATR×2.5-3.2)+TP広すぎ(ATR×2.3-5.0)+Trailing=NONE。protection_checkの警告を12時間以上放置。GBP_JPYに5ポジ7375u集中（ナンピン地獄）。ボラ的に7,000-12,000円/日取れるのに+834円。
+
+### SKILL.md改善
+1. **protection_check警告→即修正**: 「読むだけで次に行くな」を強調。`SL広すぎ`→即PUT修正。放置した実績（3/31 12時間放置→回転不能）を記載
+2. **Trailing=NONEは異常**: 含み益ATR×1.0以上でTrailingないなら即設定。全ポジTrailing=NONEだった事実を明記
+3. **回転数の目標値追加**: 3,000円=3回転（最低）、7,000円=3-4ペア×3回転（保守的に取れる）、15,000円=5ペア×3回転
+4. **1ペア集中禁止**: 1ペア最大3ポジ推奨、含み損合計-500円超えたら他ペアで稼げ
+5. **判断の罠に3パターン追加**: protection_check放置、ナンピン地獄、HOLD=仕事の錯覚
+6. **時間配分にprotection_check対応を明記**: 0-1分にTP/SL/Trail修正を含める
+7. **「1セッション最低1トレード」削除**: スプ広い時は見送りが正解
+
+## 2026-03-31 (4) — スプレッドガード実装
+
+問題: スプレッドに関するガードレールが一切なかった。bid/askは取得しているのにスプレッドを計算すらしていない。スプ3pipで5pip狙いのスキャルプに入ってRR崩壊。
+
+### session_data.py — スプレッド表示+警告
+- PRICES表示にスプレッドpip計算を追加: `USD_JPY bid=158.598 ask=158.606 Sp=0.8pip`
+- 2.0pip超で `⚠️ スプ広い` 警告表示
+
+### pretrade_check.py — スプレッドペナルティ(第6軸)
+- エントリー前にOANDA APIからリアルタイムスプレッド取得
+- 波の大きさ別の利幅目標に対するスプレッド比率を計算
+  - 大波(20pip目標), 中波(12pip), 小波(7pip)
+  - 30%超 = -2点（RR崩壊。見送れ）、20%超 = -1点（サイズ控えめに）
+- 確度スコアに直接影響 → サイジングが自動で下がる
+
+### SKILL_trader.md — スプレッド意識セクション追加
+- スプレッドと利幅の関係表（大波/中波/小波 × スプ0.8/1.5/3.0pip）
+- スプレッドが広がるタイミング（早朝、指標前後、GBP_JPY常時広い）
+- live_trade_logにスプレッド記録: `Sp=1.2pip`
+
+## 2026-03-31 (3) — TP/SL幅の根本修正 + 波サイズ≠ポジサイズ
+
+問題: 全TPが「テーゼ夢ターゲット」(round number)でATR×2.4〜5.1先。SLもATR×2.0〜3.2。つまりTP到達不能、SL hit時は-6,000円級。また、波サイズがポジサイズを制限しており小波=小サイズだった。
+
+### TP/SLの正しい付け方
+- **TP**: テーゼ目標(round number)→最寄り構造的レベル(swing/cluster/Fib)に変更。ATR×1.0付近を半TP→残りtrailing
+- **SL**: ATR×2-3→ATR×1.2に修正。hit時の損失額を明記して妥当性を確認
+- **protection_check.py更新**: TP残距離>ATR×2.0で「TP広すぎ」警告、SL>ATR×2.5で「SL広すぎ」警告。構造的レベル(swing_dist, cluster_gap)ベースのTP推奨に変更
+- SKILL.md: 「TP/SLの正しい付け方」セクション追加（❌❌✅✅の対比例付き）
+
+### 波サイズ≠ポジサイズ
+- **旧**: 小波=2000-3000u、中波=5000-8000u、大波=8000-10000u
+- **新**: 確度がサイジングを決める。波サイズはpip目標と保有時間を決めるだけ
+- 小波でも確度Sなら8000u。M5でタイミング見れてれば5-10pipでも+400-800円
+- pretrade_check.py: サイジング表を確度一本に統一（S=8000-10000u regardless of wave）
+
+### MTF評価の波サイズ対応
+- 大波(H4/H1): H4+H1一致で+3点。M5未一致でもペナルティなし（M5はタイミング、セットアップ品質ではない）
+- 中波(H1/M5): H1+M5一致で+4点
+- 小波(M5/M1): M5+H1背景一致で+3点
+
+## 2026-03-31 (2) — 確度評価の根本修正 + TP/SL/BE保護チェック
+
+問題: pretrade_checkが過去WRしか見ず全部LOW判定(25/30件がLOW)。確度S/A/B/Cがどこにも実装されていない。全7ポジションがTP/SL/Trailなしの裸ポジ。
+
+### pretrade_check.py根本改修
+- **セットアップ品質評価を追加(前向き)**: 既存のリスク警告(後ろ向き)に加え、今のテクニカルセットアップの質を0-10で数値化
+  - MTF方向一致(0-4点): H4+H1+M5全一致=4, H1+M5=3, H4+H1=2
+  - ADXトレンド強度(0-2点): H1 ADX>30で+2
+  - マクロ通貨強弱一致(0-2点): 7ペアテクニカルから通貨強弱を自動計算
+  - テクニカル複合(0-2点): ダイバージェンス、StochRSI極限、BB位置
+  - 波の位置ペナルティ(-2〜+1点): H4極端(CCI±200/RSI極端)で同方向エントリー=-2
+- **確度→サイジング直結**: S(8+)=8000-10000u / A(6-7)=5000-8000u / B(4-5)=2000-3000u / C(0-3)=1000u以下
+- **実際のテスト結果**: GBP_JPY SHORT→S(8), EUR_JPY SHORT→A(6), USD_JPY LONG→C(0)。今まで全部LOWだったものが正しく差別化された
+- 背景: 今まで全エントリーが `pretrade=LOW` でサイズ2000u。LOWで入ってサイズだけ膨らませて-2,253円
+
+### tools/protection_check.py新規作成
+- 全ポジのTP/SL/Trailing有無をATRベースで評価
+- SL推奨: ATR×1.2(ノイズ耐性)。構造的レベル(cluster)との併記
+- TP推奨: 最寄り構造的レベル(ATR×1.0付近) → 半TP + trailing
+- BE推奨: 含み益ATR×0.8→BE検討、ATR×1.5→Trailing強く推奨
+- SL too tight警告: ATR×0.7未満は「ノイズで刈られるリスク」を警告
+- TP広すぎ警告: 残距離>ATR×2.0で警告（ATR何本分かを表示）
+- SL広すぎ警告: >ATR×2.5で警告
+- session_data.pyのTRADE PROTECTIONS表示と連携
+
+### session flow更新
+- Bash②b: `profit_check --all` + `protection_check` を並列実行
+- SKILL.md: エントリー前チェックに確度→サイジング表を追加
+- recording.md: protection_checkをSTEP 0b-2に組み込み
+
+## 2026-03-31 — 「5分で稼げ」+ サイジング逆転修正
+
+問題: NAV 187kで1日-1,284円。勝ちトレード2000uで+300円、負けトレード10500uで-2,253円。勝つ時に小さく負ける時に大きい。5分セッションの大半を分析テキスト書きに消費。
+
+### SKILL.md改善
+1. **「5分で稼げ」時間配分**: 0-1分=データ+判断、1-4分=トレード実行、4-5分=記録。分析テキスト書く時間=稼いでいない時間
+2. **サイジング鉄則追加**: 確度S=8000-10000u、確度A=5000-8000u、確度B=2000-3000u、確度C=1000u。自信がある時に大きく張れ
+3. **STEP 0簡素化**: fib_wave --all + adaptive_technicalsの毎サイクル実行を廃止。session_data.pyで十分。必要時のみ
+4. **波サイズテーブル拡大**: 大波8000-10000u(+1500-3000円/trade)、中波5000-8000u、小波2000-3000u
+5. **テーゼポジ以外でスキャルプ**: ホールド中に他ペアのM5/M1チャンスを並行で取れ。2ペアしか触らないのはAIの無駄遣い
+6. **risk-management.md整合性修正**: マージン管理をSKILL.md哲学と統一
+7. **CLAUDE.md整合性修正**: 同上
+
+6. **指値・TP・SL・トレーリングストップ活用**: 成行のみ→LIMIT/TP/SL/Trailing全活用。セッション間も自動で稼ぐ/守る。コード例付き
+7. **session_data.pyにPENDING ORDERS + TRADE PROTECTIONS追加**: 毎セッション冒頭で指値の状態と全ポジのTP/SL有無を表示。「⚠️ NO PROTECTION」で裸ポジを警告
+8. **oanda-api.md更新**: 注文タイプ一覧（MARKET/LIMIT/TP/SL/Trailing/Cancel）追加
+
+- 背景: 「おれだったらこの資産で今日中に3万円稼げる」。15pip×20回転×10000u=30,000円。同じ相場読みでサイズだけ変えれば今日の利確合計+3,000→+8,000円だった。さらに全7ポジションがTP/SL/Trail全てなし=セッション間は完全無防備だった
+
+## 2026-03-30 (3) — 回転思考の根本改善 + 「波のどこにいるか」
+
+問題: 方向は当たっている(JPY強テーゼ正解)のに稼げない。利確+3,047円→同方向に10500u再エントリー→-2,253円吐き出し。H4 CCI=-274(動き切った後)にSHORT新規。
+
+### SKILL.md改善
+1. **「動き切った後は逆を取れ」**: H4 CCI±200超/RSI極端の時、利確後に同方向再エントリー禁止。バウンス方向で小さく取り、バウンス天井でテーゼ方向に再エントリー = 本当の回転
+2. **セッション内で値動きを「観る」**: M1キャンドルを判断前後で2回見る。指標(過去)ではなくM1(今)で勢いを感じる
+3. **確定利益を守れ**: 利確直後に前回以上のサイズで同方向エントリー = 倍賭け。再エントリーは同サイズ以下
+4. **マージン圧力ルール修正**: 「60%=怠慢→入れ」→「60%未満ならチャンスを見逃してないか自問。ただしマージン自体はエントリー理由にならない」
+5. **アクション強制ルール撤去**: 「5回連続HOLDで赤信号→何かしろ」→ 撤去。チャンスがなければ待て。行動の強制がオーバートレードを生んだ
+6. **回転の定義変更**: 「TP→同方向に再エントリー」→「TP→バウンス取り→テーゼ方向に再エントリー = 波の上下で稼ぐ」
+
+7. **波の大きさに合わせたサイジング**: 大波(H4/H1)3000-5000u / 中波(M5)2000-3000u / 小波(M1)1000-2000u。H1/H4合致しなくてもM1で明らかなバウンスが見えたら小さく取れ
+8. **risk-management.md整合性修正**: マージン管理セクションの「常時80-90%で回せ。60%未満=怠慢」をSKILL.md改善と整合するよう修正。「margin_boostはエントリー理由にならない」を明記
+
+- 背景: EUR_JPY +1,379円利確後に10500u積んで-2,253円。GBP_JPY H4 CCI=-241でSHORT新規。方向の正しさ≠エントリータイミングの正しさ
+- SKILL.mdはgit管理に移行済み(docs/SKILL_trader.md → symlink)
+
+## 2026-03-30 (2) — traderタスク判断品質改善
+
+問題: traderタスクが30セッション連続「全ポジHOLD」のレポーターと化していた。分析は書くが行動しない。含み益+20pipを-9pipの損切りにしてしまう（テーゼ目標に固執して市場がくれたものを逃す）。
+
+### SKILL.md改善（~/.claude/scheduled-tasks/trader/SKILL.md）
+1. **「市場がくれるものを取れ」マインドセット追加**: テーゼ目標への固執を禁止。利確→押し目再エントリーの回転思考を最上位に配置
+2. **値動き確認ステップ(Bash②c)追加**: 指標より先にM5キャンドルで勢いと形を確認。ピーク記録をstate.mdに残す
+3. **Devil's Advocate**: 含み損-5k超ポジにprofit_checkがHOLDを出した場合、「今すぐ切るべき理由」を3つ挙げて反論する義務
+4. **アクション自己監視**: 連続HOLDセッションカウンター。3回連続で黄色、5回連続で赤（何かアクションを取れ）
+5. **state.md肥大化防止**: サイクルログは上書き（積み上げ禁止）。目標100行以内
+6. **レポーター化・ユーザー指示免罪符の明示的禁止**: 自分の見解を必ず併記、構造変化時はSlackで提案
+
+### schema.py修正
+- `get_conn()`に`busy_timeout=5000ms`追加。traderとingest.pyの並行アクセスでpretrade_checkがBusyErrorスキップされていた問題を修正
+
+- 背景: 2026-03-30 USD_JPY +20pip→-9pip損切り。state.md 290行30エントリー中30回「HOLD継続」。pretrade_checkがapsw errorでスキップ
+
+## 2026-03-30 — ニュースパイプライン追加（Cowork → Claude Code）
+- **Cowork定期タスク `qr-news-digest`**: 15分間隔でWebSearch×3 + APIパーサでFXニュースを収集し、トレーダー目線の要約を `logs/news_digest.md` に書き出す
+- **tools/news_fetcher.py 新規作成**: 3ソース対応（Finnhub経済カレンダー+ヘッドライン、Alpha Vantageセンチメント、Forex Factoryカレンダー）。APIキー未設定でもFF fallbackで動作
+- **session_data.py 更新**: NEWS DIGESTセクション追加。Coworkが作成した `news_digest.md` を読んでtraderセッションに提供。鮮度チェック付き
+- **設計思想**: テクニカルだけでは「なぜ動いているか」が分からない。マクロ・地政学・要人発言がテーゼの土台。Coworkの強み（WebSearch+LLM要約）を活かし、Claude Codeのtraderは読むだけ
+- **APIキー設定（任意）**: `config/env.toml` に `finnhub_token`, `alphavantage_token` を追加するとセンチメント分析が有効に
+- 更新ファイル: `tools/news_fetcher.py`(新規), `tools/session_data.py`, `CLAUDE.md`, `docs/CHANGELOG.md`
+
+## 2026-03-27 (5) — デフォルト逆転 + profit_check.py + 1分cron
+- **利確デフォルト逆転**: 「なぜ切るか」→「なぜ持つか」に反転。持つ側が根拠を示す設計に
+- **profit_check.py新設**: 6軸評価（ATR比・M5モメンタム・H1構造・7ペア相関・S/R距離・ピーク比較）で利確判定
+- **cronを7分→1分に短縮**: ロック機構で多重起動防止。セッション終了→最大1分で次が起動。APIコスト変化なし
+- 更新ファイル: `tools/profit_check.py`(新規), `risk-management.md`, `recording.md`, `SKILL.md`, `CLAUDE.md`
+- 背景: GBP含み益+3,000円→-4,796円の教訓。HOLDバイアスが利確を阻害していた
+
+## 2026-03-27 (4)
+- **利確プロトコルの空白を埋めた** — 「利確を問うトリガー」を策定:
+  - `risk-management.md`: 「利確を問うトリガー」セクション追加。5つの状況（別ポジ急変・レンジBB mid・M5モメンタム低下・セッション跨ぎ含み益減・300円超）を定義
+  - `recording.md`: STEP 0b-2「profit_check」追加。各セッション開始時に含み益ポジを照合する習慣化
+  - `strategy_memory.md`: 今日の失敗（GBP含み益消滅）を Active Observations に追記
+  - 設計思想: 命令ではなく「問いを強制するトリガー」。HOLD OK、ただし根拠を言語化しろ
+  - 背景: 2026-03-27 GBP LONG 含み益+3,000円超がAUD急変中に誰も見ず消滅した教訓
+
+## 2026-03-27 (3)
+- **セッション生存率改善** — 3分セッションが短すぎてトレードに辿り着けない問題を解決:
+  1. `tools/session_data.py` 新規作成: Bash②③④（テクニカル更新・OANDA・macro_view・adaptive_technicals・Slack・memory recall・performance）を1スクリプトに統合。4回のBash呼び出しが1回に
+  2. trader SKILL.md: 309行→約90行に圧縮。ルールは`.claude/rules/`に委譲し重複削除
+  3. セッション時間: 3分→5分、cron間隔: 5分→7分
+  4. `tools/adaptive_technicals.py`: ROOTパスバグ修正（parents[2]→parent.parent）
+
+## 2026-03-27 (2)
+- **自律学習ループ構築** — データが溜まっても行動が変わらない問題を根本解決:
+  1. `ingest.py`: OANDA/trades.mdパス統合。OANDAレコードにtrades.mdの質的データ(テーゼ・教訓・regime)をUPDATE。UNKNOWNペア問題修正。live_trade_logからも補完
+  2. `parse_structured.py`: regime検出強化(ADX値判定・英語対応)、lesson抽出拡張(plain text対応)、user_call検出拡張(「」なし対応)
+  3. `schema.py`: pretrade_outcomesテーブル追加（pretrade_checkの予測 vs 実際のP&L追跡）
+  4. `pretrade_check.py`: チェック結果をpretrade_outcomesに自動記録 + 過去の同条件エントリー結末を表示
+  5. `tools/daily_review.py` 新規作成: 日次データ収集エンジン。OANDA決済トレード・pretrade結果マッチング・パターン分析
+  6. `daily-review` scheduled task 新規作成: 毎日06:00 UTC。Claudeが自分のトレードを振り返り、strategy_memory.mdを進化させる
+  7. `strategy_memory.md` 構造リニューアル: Confirmed Patterns / Active Observations / Deprecated / Pretrade Feedback のセクション分割
+  8. trader SKILL.md: strategy_memory.mdの読み方を明確化（Confirmed=ルール、Active=参考）
+  9. CLAUDE.md: アーキテクチャにdaily-review記載
+  - 設計思想: ボット的自動化ではなく、プロトレーダーが毎日振り返って強くなるプロセスの自動化
+
 ## 2026-03-27
+- **金額トリガー全廃 + マクロ導線接続 + MTF統合** — ユーザー指示で3点同時改修:
+  1. risk-management.md: 金額ベース損切り(-500円, -1000円閾値)を全廃。H1構造→テーゼ根拠→反対シグナルの3段階市況判断フローに置換
+  2. SKILL.md: 撤退ルールの金額トリガー(-30pip/-500円/ペア別pip上限)を削除。macro_view参照の市況判断に置換。判断フローにmacro_view読みをStep 0として追加
+  3. tools/macro_view.py 新規作成: 7ペアtechnicalsから通貨強弱スコア・テーマ判定・MTF一致ペア検出・H1 Div一覧を4行で出力。Bash②に組込み
+  - 背景: traderがM5テクニカルだけでボット的判断→低確度トレード乱発→利益を損失で相殺。マクロ視点(通貨強弱・テーマ)と金額に頼らない市況判断で改善
+- **メモリ学習ループ修復** — SKILL.md Bash③を改修: 汎用クエリ1本→保有ペアごとのrecall検索に変更。6,260トレードの記憶がトレード判断に活かされるように
+- **collab_trade/CLAUDE.md 死参照掃除** — v6で廃止済みのanalyst/secretary/shared_state.json/quality_alert参照を全削除。macro_view.py参照に置換。品質監視は自己監視に変更
+- **close_trade.py追加** — ヘッジ口座でPOST /ordersに反対unitsを送ると新規ポジが開くバグ対策。決済は必ずPUT /trades/{id}/closeを使うラッパースクリプト。SKILL.md・oanda-api.mdに決済ルール追記
 - **資金効率改善** — マージン目標を90%→70-80%に変更。50%未満=怠慢ルール追加。日次10%には80%水準が必要（計算根拠: NAV18万×25倍×80%=名目363万、7ペア分散で1ペア平均7pipで達成）
 - **ボット的撤退ルール改善** — SKILL.mdの段階的撤退テーブル（固定時間・固定pip）をテーゼベース判断に改善。preclose_check組込
 

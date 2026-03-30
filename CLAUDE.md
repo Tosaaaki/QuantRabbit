@@ -30,34 +30,56 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 
 ## アーキテクチャ (v8)
 
-### trader 1本。それだけ。
+### trader + daily-review。2本で回る。
 
 | タスク | モデル | 間隔 | セッション長 | 役割 |
 |--------|--------|------|-------------|------|
-| trader | Sonnet | 1分cron | 最大2分 | プロトレーダー。分析もニュースもトレードも全部自分でやる |
+| trader | Opus | 1分cron | 最大5分 | プロトレーダー。分析もニュースもトレードも全部自分でやる |
+| daily-review | Opus | 毎日06:00 UTC | ~5分 | 日次振り返り。strategy_memory.mdを進化させる |
+| **qr-news-digest** | **Cowork** | **1時間間隔** | **~2分** | **ニュース収集+トレーダー目線要約。WebSearchで網羅的に取得** |
 
-**方式**: 2分短命セッション + 1分cronリレー。1セッション=1サイクル。判断→実行→引き継ぎ書き切りを完遂して死ぬ。
+**方式**: 5分短命セッション + 1分cronリレー。ロック機構で多重起動防止。セッション終了→最大1分で次が起動。1セッション=1サイクル。判断→実行→引き継ぎ書き切りを完遂して死ぬ。
 
 - 記憶の引き継ぎ: `collab_trade/state.md`（セッション跨ぎの外部記憶）
-- 長期学習記憶: `collab_trade/strategy_memory.md`（自分で蒸留、自分で参照）
-- ベクトル記憶: `collab_trade/memory/memory.db`（SQLite + sqlite-vec。Ruri v3 埋め込み。過去セッションのQAチャンクをベクトル検索）
-- タスク定義: `~/.claude/scheduled-tasks/trader/SKILL.md`
+- 長期学習記憶: `collab_trade/strategy_memory.md`（daily-reviewが毎日蒸留）
+- ベクトル記憶: `collab_trade/memory/memory.db`（SQLite + sqlite-vec。Ruri v3 埋め込み）
+- フィードバックDB: `pretrade_outcomes`テーブル（pretrade_checkの予測 vs 実際のP&L）
+- **ニュースキャッシュ**: `logs/news_digest.md`（Coworkが1時間間隔で更新） + `logs/news_cache.json`（APIパーサ構造化データ）
+- タスク定義: `~/.claude/scheduled-tasks/trader/SKILL.md`, `daily-review/SKILL.md`
+
+### ニュースパイプライン（Cowork → Claude Code）
+```
+毎1時間: Cowork qr-news-digest
+  ├── WebSearch × 3（速報・中央銀行・経済カレンダー）
+  ├── python3 tools/news_fetcher.py（API構造化データ: Finnhub+AV+FF）
+  └── WRITES: logs/news_digest.md（トレーダー目線要約）+ logs/news_cache.json
+
+毎1分: trader session
+  ├── session_data.py が logs/news_digest.md を読む（10秒で掴めるマクロ文脈）
+  └── テーゼ構築にニュースを組み込む（「なぜ動いているか」の根拠）
+```
 
 ### 自己改善ループ
 ```
-trader → 市場を読む → 判断→実行→引き継ぎ → セッション終了
-  ↑ reads                                      ↓ writes
-strategy_memory.md ← trader自身が日次でパフォーマンス蒸留
-state.md ← 毎セッション終了時に更新
-memory.db ← セッション終了時にQAチャンク化+ベクトル埋め込み保存
-  ↑ vector search
-次セッション開始時に関連記憶を自動検索
+毎7分: trader session
+  ├── reads: strategy_memory.md（蓄積された知見）
+  ├── runs: pretrade_check.py → pretrade_outcomes に記録
+  ├── trades → trades.md + live_trade_log.txt + Slack
+  └── SESSION_END: ingest.py（OANDA + trades.md統合）→ memory.db
+
+毎日06:00 UTC: daily-review session
+  ├── runs: daily_review.py（事実収集 + pretrade結果紐付け）
+  ├── THINKS: 何が上手くいった？なぜ？
+  ├── WRITES: strategy_memory.md（パターン昇格/追加/反証）
+  └── runs: ingest.py --force（enriched再取り込み）
+
+翌日のtrader → 更新されたstrategy_memory.mdを読む → 行動が変わる
 ```
 
-### メモリシステム（memory.db） — 3層構造
-- **SQL層**: 構造化データ（trades / user_calls / market_events テーブル）→ 勝率・的中率の定量分析
-- **Vector層**: Ruri v3-30m (256次元) で QA チャンクをベクトル検索 → 「似た状況」のナラティブ検索
-- **蒸留層**: strategy_memory.md → 上記から自動/手動で蒸留された教訓
+### メモリシステム（memory.db） — 3層+フィードバック
+- **SQL層**: trades / user_calls / market_events / **pretrade_outcomes** → 定量分析+予測精度追跡
+- **Vector層**: Ruri v3-30m (256次元) QAチャンク → 「似た状況」のナラティブ検索
+- **蒸留層**: strategy_memory.md → daily-reviewが毎日更新する経験知
 
 **使い方**:
 - `/pretrade-check` — **エントリー前に必ず実行**。3層照合でリスク判定
@@ -65,7 +87,7 @@ memory.db ← セッション終了時にQAチャンク化+ベクトル埋め込
 - `/memory-recall` — 過去の記憶を検索
 
 ### ルール
-- **マージン管理**: 常時70-80%で回せ。50%未満は怠慢。90%超で新規禁止。95%超で強制半利確
+- **マージン管理**: 60%未満はチャンスを見逃してないか自問（ただしマージン自体はエントリー理由にならない）。90%超で新規禁止。95%超で強制半利確
 - **1ペア最大5本**: add-onは5本まで
 - **クローズアウト後30分待て**: 同じテーゼで即再エントリー禁止
 
@@ -130,6 +152,8 @@ memory.db ← セッション終了時にQAチャンク化+ベクトル埋め込
 | `collab_trade/state.md` | セッション間の状態引き継ぎ（ポジション・ストーリー・教訓） |
 | `collab_trade/strategy_memory.md` | 長期学習記憶（通貨ペア別の癖、パターン有効性、教訓） |
 | `logs/live_trade_log.txt` | トレード実行ログ（時系列） |
+| `logs/news_digest.md` | Coworkが15分間隔で更新するニュース要約 |
+| `logs/news_cache.json` | APIパーサの構造化ニュースデータ |
 | `logs/technicals_*.json` | H1/H4テクニカル指標 |
 | `logs/trade_registry.json` | ポジション管理台帳 |
 
@@ -137,9 +161,12 @@ memory.db ← セッション終了時にQAチャンク化+ベクトル埋め込
 
 | ファイル | 内容 |
 |----------|------|
+| `tools/session_data.py` | traderセッション開始時の全データ取得（テクニカル+OANDA+macro+Slack+memory一括） |
+| `tools/close_trade.py` | ポジション決済（PUT /trades/{id}/close。ヘッジ口座ミス防止） |
 | `tools/refresh_factor_cache.py` | H1/H4テクニカル指標の更新 |
 | `tools/trade_performance.py` | パフォーマンス集計 |
 | `tools/slack_trade_notify.py` | Slack通知 |
+| `tools/news_fetcher.py` | ニュース取得（Finnhub+AlphaVantage+FF。Coworkタスクから呼ばれる） |
 | `tools/slack_daily_summary.py` | 日次サマリー |
 
 ## 主要ディレクトリ

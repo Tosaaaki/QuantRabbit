@@ -279,13 +279,18 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
                 'reason': txn.get('reason', ''),
             }
 
-        # 決済
+        # 決済（instrumentも保存してUNKNOWN問題を修正）
         for tc in txn.get('tradesClosed', []) + txn.get('tradesReduced', []):
             tid = tc.get('tradeID', '')
             pl = float(tc.get('realizedPL', 0))
             units = abs(int(float(tc.get('units', 0))))
             if tid not in closes:
-                closes[tid] = {'price': float(txn.get('price', 0)), 'pl': pl, 'units': units}
+                closes[tid] = {
+                    'price': float(txn.get('price', 0)),
+                    'pl': pl,
+                    'units': units,
+                    'instrument': instrument,  # 決済txnからペア名を取得
+                }
             else:
                 closes[tid]['pl'] += pl
                 closes[tid]['units'] += units
@@ -298,6 +303,13 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
         if not close:
             continue  # まだオープン中
 
+        # ペア名: entry優先、なければclose txnのinstrumentを使う（UNKNOWN回避）
+        pair = 'UNKNOWN'
+        if entry:
+            pair = entry['pair']
+        elif close.get('instrument'):
+            pair = close['instrument']
+
         ts = entry['time'] if entry else ''
         try:
             dt = datetime.fromisoformat(ts.replace('Z', '+00:00').split('.')[0] + '+00:00') if ts else None
@@ -307,7 +319,7 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
         trades.append({
             'session_date': session_date,
             'trade_id': tid,
-            'pair': entry['pair'] if entry else 'UNKNOWN',
+            'pair': pair,
             'direction': entry['direction'] if entry else ('LONG' if close.get('pl', 0) >= 0 else 'SHORT'),
             'units': entry['units'] if entry else close['units'],
             'entry_price': entry['price'] if entry else None,
@@ -318,6 +330,44 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
         })
 
     return trades
+
+
+def _enrich_from_log(conn, session_date: str, log_path: Path) -> int:
+    """live_trade_log.txtからテーゼ・理由をDBのtradesに補完"""
+    enriched = 0
+    try:
+        log_text = log_path.read_text()
+    except Exception:
+        return 0
+
+    for line in log_text.split('\n'):
+        if session_date not in line:
+            continue
+        # trade_id (#NNNNN) を抽出
+        tid_match = re.search(r'#(\d{5,})', line)
+        if not tid_match:
+            continue
+        tid = tid_match.group(1)
+
+        # reason= や thesis= を抽出
+        reason_match = re.search(r'(?:reason|thesis)[=:]\s*(.+?)(?:\||$)', line)
+        if not reason_match:
+            continue
+        reason_text = reason_match.group(1).strip()
+
+        # DBに既にreasonが入ってなければUPDATE
+        existing_reason = fetchone_val(conn,
+            "SELECT reason FROM trades WHERE trade_id = ?", (tid,))
+        if existing_reason and existing_reason not in ('', 'MARKET_ORDER'):
+            continue
+
+        conn.execute(
+            "UPDATE trades SET reason = ? WHERE trade_id = ? AND (reason IS NULL OR reason = '' OR reason = 'MARKET_ORDER')",
+            (reason_text, tid)
+        )
+        enriched += 1
+
+    return enriched
 
 
 # --- Ingest ---
@@ -406,12 +456,11 @@ def ingest_date(session_date: str, force: bool = False):
     if notes_path.exists():
         notes_text = notes_path.read_text()
 
-    # trades テーブル — OANDA API優先、trades.mdは補助情報
+    # trades テーブル — OANDA + trades.md統合（質的データを失わない）
     # 1) OANDA APIから当日の確定トレードを取得
-    existing_trade_ids = set()
     oanda_trades = fetch_oanda_trades(session_date)
+    oanda_inserted = 0
     for t in oanda_trades:
-        # 重複チェック
         exists = fetchone_val(conn,
             "SELECT COUNT(*) FROM trades WHERE trade_id = ?", (t['trade_id'],))
         if exists and exists > 0:
@@ -423,23 +472,43 @@ def ingest_date(session_date: str, force: bool = False):
             (t['session_date'], t['trade_id'], t['pair'], t['direction'], t['units'],
              t['entry_price'], t['exit_price'], t['pl'], t['session_hour'], t['reason'])
         )
-        existing_trade_ids.add(t['trade_id'])
-    if oanda_trades:
-        print(f"  oanda_trades: {len(oanda_trades)} records")
+        oanda_inserted += 1
+    if oanda_inserted:
+        print(f"  oanda_trades: {oanda_inserted} inserted")
 
-    # 2) trades.mdからの構造化パース（テーゼ・教訓等の補助情報）
+    # 2) trades.mdからの構造化パース → OANDAレコードをUPDATE（質的データ補完）
     structured_trades = parse_trades(trades_text, session_date)
+    enriched = 0
     md_inserted = 0
     for t in structured_trades:
-        # OANDA APIで既に挿入済みならスキップ
-        if t.get('trade_id') and t['trade_id'] in existing_trade_ids:
-            continue
-        # trade_idがある場合はDB内でも重複チェック
         if t.get('trade_id'):
+            # OANDAで挿入済みなら質的データでUPDATE（スキップではなく統合）
             exists = fetchone_val(conn,
                 "SELECT COUNT(*) FROM trades WHERE trade_id = ?", (t['trade_id'],))
             if exists and exists > 0:
+                # 質的データがあるフィールドだけUPDATE
+                updates = []
+                params = []
+                for col in ['h1_adx', 'h1_trend', 'm5_adx', 'm5_trend', 'rsi', 'stoch_rsi',
+                            'regime', 'vix', 'dxy', 'active_headlines', 'event_risk',
+                            'entry_type', 'had_sl', 'lesson']:
+                    val = t.get(col)
+                    if val is not None:
+                        updates.append(f"{col} = ?")
+                        params.append(val)
+                # reason: trades.mdのテーゼはOANDAの'MARKET_ORDER'より有用
+                if t.get('reason') and t['reason'] != 'MARKET_ORDER':
+                    updates.append("reason = ?")
+                    params.append(t['reason'])
+                if updates:
+                    params.append(t['trade_id'])
+                    conn.execute(
+                        f"UPDATE trades SET {', '.join(updates)} WHERE trade_id = ?",
+                        tuple(params)
+                    )
+                    enriched += 1
                 continue
+        # trade_idがないか、DBにもOANDAにもない → 新規INSERT
         conn.execute(
             """INSERT INTO trades (session_date, trade_id, pair, direction, units,
                entry_price, exit_price, pl,
@@ -454,8 +523,17 @@ def ingest_date(session_date: str, force: bool = False):
              t['entry_type'], t['had_sl'], t['reason'], t['lesson'], t['user_call_id'])
         )
         md_inserted += 1
+    if enriched:
+        print(f"  enriched: {enriched} OANDA records with trades.md qualitative data")
     if md_inserted:
         print(f"  trades_md: {md_inserted} additional records")
+
+    # 3) live_trade_log.txtからもテーゼ/理由を補完
+    log_path = Path(__file__).parent.parent.parent / "logs" / "live_trade_log.txt"
+    if log_path.exists():
+        log_enriched = _enrich_from_log(conn, session_date, log_path)
+        if log_enriched:
+            print(f"  log_enriched: {log_enriched} records from live_trade_log.txt")
 
     # user_calls テーブル
     user_calls = parse_user_calls(notes_text, session_date)

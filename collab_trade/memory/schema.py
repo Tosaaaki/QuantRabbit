@@ -13,6 +13,7 @@ VEC_DIM = 256  # Ruri v3-30m
 
 def get_conn() -> apsw.Connection:
     conn = apsw.Connection(str(DB_PATH))
+    conn.setbusytimeout(5000)  # 5秒リトライ（cron並列アクセス時のBusyError防止）
     conn.enableloadextension(True)
     conn.loadextension(sqlite_vec.loadable_path())
     conn.enableloadextension(False)
@@ -132,6 +133,26 @@ def init_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_user_calls_pair ON user_calls(pair)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_user_calls_outcome ON user_calls(outcome)")
+
+    # --- ⑤ pretrade_outcomes: pretrade_checkの予測 vs 実際の結果 ---
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pretrade_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_date TEXT NOT NULL,
+            trade_id TEXT,
+            pair TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            pretrade_level TEXT,
+            pretrade_score INTEGER,
+            pretrade_warnings TEXT,
+            pl REAL,
+            thesis TEXT,
+            lesson_from_review TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_pair ON pretrade_outcomes(pair)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_date ON pretrade_outcomes(session_date)")
 
     print(f"memory.db initialized at {DB_PATH}")
 

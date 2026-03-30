@@ -139,9 +139,13 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
         header = header_match.group(1)
 
         # 相場読み系のセクションを検出
-        is_call = any(kw in header for kw in ['ユーザー読み', 'ユーザー指示'])
-        # 直接引用パターン
+        is_call = any(kw in header for kw in ['ユーザー読み', 'ユーザー指示', 'ユーザー', 'USER'])
+        # 直接引用パターン（「」 or "ユーザー:" プレフィックス）
         quotes = re.findall(r'「(.+?)」', section)
+        # 「」がなくても "ユーザー:" や "USER:" のパターンでキャプチャ
+        if not quotes:
+            user_prefix = re.findall(r'(?:ユーザー|USER)[:\s：]\s*(.+?)(?:\n|$)', section, re.I)
+            quotes.extend(user_prefix)
 
         if not is_call and not quotes:
             continue
@@ -314,16 +318,26 @@ def _extract_trend(text: str, tf: str) -> str | None:
     return None
 
 
-def _detect_regime(text: str) -> str:
+def _detect_regime(text: str) -> str | None:
     if re.search(r'ヘッドライン|スパイク|急騰|急落|ニュース|headline', text, re.I):
         return 'headline'
-    if re.search(r'チョッピー|レンジ|横ばい|方向感なし', text, re.I):
+    if re.search(r'チョッピー|レンジ|横ばい|方向感なし|range|choppy', text, re.I):
         return 'quiet'
     if re.search(r'薄商い|流動性|thin|holiday', text, re.I):
         return 'thin_liquidity'
-    if re.search(r'ADX[=:]?(?:3[5-9]|[4-9]\d)', text):
+    # ADX値から判定（ADX>30 = trending）
+    adx_match = re.search(r'ADX[=:]?\s*(\d+\.?\d*)', text)
+    if adx_match:
+        adx_val = float(adx_match.group(1))
+        if adx_val >= 30:
+            return 'trending'
+        if adx_val < 15:
+            return 'quiet'
+    if re.search(r'strong.?(?:bear|bull|trend)|強(?:ベア|ブル|bull|bear)|トレンド(?:強|発生)', text, re.I):
         return 'trending'
-    return 'quiet'
+    if re.search(r'squeeze|スクイーズ|ブレイク待ち', text, re.I):
+        return 'squeeze'
+    return None  # 判定不能はNone（'quiet'で上書きしない）
 
 
 def _extract_headlines(text: str) -> str | None:
@@ -372,13 +386,23 @@ def _detect_entry_type(text: str) -> str:
 
 
 def _extract_lesson(text: str) -> str | None:
-    lessons = re.findall(r'(?:教訓|反省)[:\s]*\*?\*?(.+?)(?:\*\*|\n|$)', text)
+    # 1. 「教訓:」「反省:」パターン（bold有無問わず）
+    lessons = re.findall(r'(?:教訓|反省)[:\s：]*\*?\*?(.+?)(?:\*\*|\n|$)', text)
     if lessons:
         return ' / '.join(l.strip() for l in lessons[:3])
+    # 2. bold内にキーワードがある
     bold = re.findall(r'\*\*([^*]+)\*\*', text)
     lesson_bold = [b for b in bold if any(kw in b for kw in ['教訓', '反省', 'ミス', '禁止', 'NG'])]
     if lesson_bold:
         return ' / '.join(lesson_bold[:3])
+    # 3. 行内に学び系キーワードがある（plain text対応）
+    learn_lines = re.findall(r'^.*(?:正解|失敗|学び|次回|ミス|注意)[:\s：](.+?)$', text, re.M)
+    if learn_lines:
+        return ' / '.join(l.strip() for l in learn_lines[:3])
+    # 4. reason=やlesson=形式（live_trade_log由来）
+    reason_lessons = re.findall(r'(?:reason|lesson)[=:]\s*(.+?)(?:\||$|\n)', text)
+    if reason_lessons:
+        return ' / '.join(l.strip() for l in reason_lessons[:3])
     return None
 
 

@@ -13,6 +13,20 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 - HIGH/MEDIUM/LOWはデータの要約であって指示ではない。状況で判断を変えるのがプロ
 - 結果をtrades.mdのエントリー記録に含める（`pretrade: LOW` 等）
 
+## STEP 0b-2: profit_check（各セッション開始時に必ず実行）
+
+**「今、利確すべきか」をデータで問う道具。セッション冒頭で全ポジに対して自動実行。**
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && python3 tools/protection_check.py
+```
+
+- **profit_check**: ATR比、M5モメンタム、H1構造、7ペア相関、S/R距離、ピーク比較を一括評価
+- **protection_check**: 全ポジのTP/SL/Trailing状態をATRベースで評価。NO PROTECTIONは即対処
+- **デフォルトは利確。** TAKE_PROFIT/HALF_TP推奨が出たら「なぜ持つか」を言語化しろ
+- 言語化できない → 利確。言語化できた → HOLD（根拠をstate.mdに追記）
+- **state.md にピーク記録を残せ**: `ピーク: +3,200円 @1.33620 (03:20Z)`
+
 ## STEP 0b: preclose_check（決済前に必ず実行）
 
 ```bash

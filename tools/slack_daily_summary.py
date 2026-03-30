@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 def load_config():
     cfg = {}
-    path = os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'env.toml')
+    path = os.path.join(os.path.dirname(__file__), '..', 'config', 'env.toml')
     for line in open(path):
         line = line.strip()
         if '=' in line and not line.startswith('#'):
