@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Fib/Wave — Fibonacci retracement/extension + N-wave構造検出
+Fib/Wave — Fibonacci retracement/extension + N-wave structure detection
 
 Usage:
-    python3 tools/fib_wave.py USD_JPY M5 100   # 単一ペア
-    python3 tools/fib_wave.py --all              # 全7ペア一括 (M5 100)
-    python3 tools/fib_wave.py --all H1 200       # 全ペア + TF/count指定
+    python3 tools/fib_wave.py USD_JPY M5 100   # single pair
+    python3 tools/fib_wave.py --all              # all 7 pairs at once (M5 100)
+    python3 tools/fib_wave.py --all H1 200       # all pairs + specify TF/count
 """
 import json
 import sys
@@ -214,7 +214,7 @@ def nearest_fib_label(current, levels, pair):
             best_dist = dist
             best = (ratio, price, dist)
     if best and best[2] < 5:
-        return f"Fib {best[0]*100:.1f}% = 押し目ゾーン" if best[2] < 3 else f"Fib {best[0]*100:.1f}%付近"
+        return f"Fib {best[0]*100:.1f}% = pullback zone" if best[2] < 3 else f"near Fib {best[0]*100:.1f}%"
     return None
 
 
@@ -225,7 +225,7 @@ def format_detail(pair, tf, candles, pivots, current):
     lines.append(f"=== {pair} {tf} Fib/Wave ===")
 
     if len(pivots) < 2:
-        lines.append("ピボット不足 (データ不十分)")
+        lines.append("Insufficient pivots (not enough data)")
         return "\n".join(lines)
 
     # Find most recent swing high and swing low
@@ -240,7 +240,7 @@ def format_detail(pair, tf, candles, pivots, current):
             break
 
     if not recent_high or not recent_low:
-        lines.append("Swing H/L 検出不可")
+        lines.append("Swing H/L not detected")
         return "\n".join(lines)
 
     h_price, l_price = recent_high[1], recent_low[1]
@@ -258,7 +258,7 @@ def format_detail(pair, tf, candles, pivots, current):
     fib_note = nearest_fib_label(
         current, fib_retracement(h_price, l_price, direction), pair
     )
-    cur_str = f"現在値: {fmt_price(current, pair)}"
+    cur_str = f"Current: {fmt_price(current, pair)}"
     if fib_note:
         cur_str += f" ({fib_note})"
     lines.append(cur_str)
@@ -269,7 +269,7 @@ def format_detail(pair, tf, candles, pivots, current):
     lines.append(f"Fib Retracement ({'H→L' if direction == 'BULL' else 'L→H'}):")
     for ratio, price in ret_levels:
         dist = to_pips(price - current, pair)
-        mark = " <- 近接" if abs(dist) < 3 else ""
+        mark = " <- near" if abs(dist) < 3 else ""
         lines.append(
             f"  {ratio*100:.1f}%: {fmt_price(price, pair)}  [{dist:+.0f}pip]{mark}"
         )
@@ -316,17 +316,17 @@ def format_detail(pair, tf, candles, pivots, current):
             invalidation = a[1] + pip * 2
             tp = c[1] - ab * 1.272
         lines.append(
-            f"  再エントリー: {fmt_price(min(re_entry_lo, re_entry_hi), pair)}"
+            f"  Re-entry: {fmt_price(min(re_entry_lo, re_entry_hi), pair)}"
             f"-{fmt_price(max(re_entry_lo, re_entry_hi), pair)} "
             f"(Fib 38.2-61.8% of AB)"
         )
         lines.append(
-            f"  無効化: {fmt_price(invalidation, pair)} "
+            f"  Invalidation: {fmt_price(invalidation, pair)} "
             f"({'below A' if w['dir'] == 'BULL' else 'above A'})"
         )
-        lines.append(f"  TP目標: {fmt_price(tp, pair)} (127.2% ext)")
+        lines.append(f"  TP target: {fmt_price(tp, pair)} (127.2% ext)")
     else:
-        lines.append("N-Wave: 未検出")
+        lines.append("N-Wave: not detected")
 
     return "\n".join(lines)
 
@@ -335,7 +335,7 @@ def format_summary(pair, tf, candles, pivots, current):
     """Condensed one-line summary for --all mode."""
     pip = pip_size(pair)
     if len(pivots) < 2:
-        return f"{pair}: ピボット不足"
+        return f"{pair}: insufficient pivots"
 
     recent_high = None
     recent_low = None
@@ -348,7 +348,7 @@ def format_summary(pair, tf, candles, pivots, current):
             break
 
     if not recent_high or not recent_low:
-        return f"{pair}: Swing検出不可"
+        return f"{pair}: Swing not detected"
 
     h_price, l_price = recent_high[1], recent_low[1]
     h_idx, l_idx = recent_high[0], recent_low[0]

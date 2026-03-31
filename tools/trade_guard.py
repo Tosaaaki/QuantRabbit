@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""毎サイクル実行: トレード品質を自動検知して警告。
-margin_alert.pyと併用。traderのBash②/次サイクルBashに組み込む。
+"""Run every cycle: auto-detect trade quality issues and warn.
+Used alongside margin_alert.py. Embed in the trader's Bash ② / next-cycle Bash.
 
-方針: 機械的にBLOCKしない。事実を突きつけて認識させる。
+Policy: do not mechanically BLOCK. Present the facts and force awareness.
 """
 import json, re, os, sys
 from datetime import datetime, timezone, timedelta
@@ -11,7 +11,7 @@ LOG_PATH = 'logs/live_trade_log.txt'
 JST = timezone(timedelta(hours=9))
 
 def parse_trades_today():
-    """今日のCLOSEトレードをパース"""
+    """Parse today's CLOSE trades"""
     today = datetime.now(JST).strftime('%Y-%m-%d')
     closes = []
     if not os.path.exists(LOG_PATH):
@@ -37,7 +37,7 @@ def parse_trades_today():
         if is_today:
             pair_m = re.search(r'CLOSE (\w+_\w+)', line)
             pair = pair_m.group(1) if pair_m else '?'
-            # 理由も抽出
+            # Also extract reason
             reason_m = re.search(r'reason=(.+?)(?:\||$)', line)
             reason = reason_m.group(1).strip()[:60] if reason_m else ''
             closes.append({'pl': pl, 'pair': pair, 'reason': reason, 'line': line.strip()[:100]})
@@ -46,16 +46,16 @@ def parse_trades_today():
 
 
 def check_garbage_wins(closes):
-    """ゴミ利確の検知"""
+    """Detect garbage wins (tiny profit takes)"""
     garbage = [c for c in closes if 0 < c['pl'] <= 30]
     if len(garbage) >= 3:
         total = sum(c['pl'] for c in garbage)
-        return f'🗑️ 今日{len(garbage)}件の30円以下利確（合計+{total:.0f}円）。この利確額はスプレッド+手間に見合ってるか？'
+        return f'🗑️ {len(garbage)} closes today at 30 JPY or less (total +{total:.0f} JPY). Is this profit worth the spread + effort?'
     return None
 
 
 def check_recent_losses():
-    """直近の連続損切りの理由を表示（機械的パニック判定ではなく、事実の提示）"""
+    """Display the reasons behind recent consecutive stop losses (fact presentation, not mechanical panic detection)"""
     if not os.path.exists(LOG_PATH):
         return None
 
@@ -70,13 +70,13 @@ def check_recent_losses():
         pair_m = re.search(r'CLOSE (\w+_\w+)', line)
         pair = pair_m.group(1) if pair_m else '?'
         reason_m = re.search(r'reason=(.+?)(?:\||$)', line)
-        reason = reason_m.group(1).strip()[:60] if reason_m else '理由なし'
+        reason = reason_m.group(1).strip()[:60] if reason_m else 'no reason'
         recent_closes.append({'pl': pl, 'pair': pair, 'reason': reason})
 
     if len(recent_closes) < 3:
         return None
 
-    # 末尾からの連続損切りを取得
+    # Get the streak of consecutive stop losses from the end
     streak = []
     for c in reversed(recent_closes):
         if c['pl'] < 0:
@@ -89,16 +89,16 @@ def check_recent_losses():
 
     streak.reverse()
     total = sum(c['pl'] for c in streak)
-    lines = [f'  {c["pair"]} {c["pl"]:+,.0f}円 | {c["reason"]}' for c in streak[-5:]]  # 最大5件表示
+    lines = [f'  {c["pair"]} {c["pl"]:+,.0f} JPY | {c["reason"]}' for c in streak[-5:]]  # show up to 5
 
-    result = f'⚡ 直近{len(streak)}連続損切り（合計{total:+,.0f}円）。理由を確認しろ:\n'
+    result = f'⚡ {len(streak)} consecutive stop losses (total {total:+,.0f} JPY). Check the reasons:\n'
     result += '\n'.join(lines)
-    result += '\n  → 全部「H1構造変化」なら正しい判断。同じ理由の繰り返しならパニック'
+    result += '\n  → If all are "H1 structure change" that is correct judgment. If the same reason repeats, that is panic'
     return result
 
 
 def check_rr_ratio(closes):
-    """RR比の事実提示"""
+    """Present the RR ratio as a fact"""
     wins = [c['pl'] for c in closes if c['pl'] > 0]
     losses = [c['pl'] for c in closes if c['pl'] < 0]
 
@@ -110,12 +110,12 @@ def check_rr_ratio(closes):
     rr = avg_win / abs(avg_loss)
 
     if rr < 0.7:
-        return f'📊 RR: 平均勝ち+{avg_win:.0f}円 vs 平均負け{avg_loss:.0f}円（RR={rr:.2f}）。勝ちを伸ばす意識を持て'
+        return f'📊 RR: avg win +{avg_win:.0f} JPY vs avg loss {avg_loss:.0f} JPY (RR={rr:.2f}). Focus on letting winners run'
     return None
 
 
 def check_pair_loss(closes):
-    """特定ペアでの累積損失"""
+    """Cumulative loss on a specific pair"""
     pair_pl = {}
     for c in closes:
         pair = c['pair']
@@ -126,7 +126,7 @@ def check_pair_loss(closes):
     alerts = []
     for pair, pl in pair_pl.items():
         if pl < -1000:
-            alerts.append(f'📊 {pair}: 今日{pl:+,.0f}円。この事実を踏まえた上で判断しろ')
+            alerts.append(f'📊 {pair}: {pl:+,.0f} JPY today. Factor this into your judgment')
     return alerts
 
 
@@ -137,22 +137,22 @@ def main():
 
     alerts = []
 
-    # 直近の連続損切り（理由付き）
+    # Recent consecutive stop losses (with reasons)
     recent = check_recent_losses()
     if recent:
         alerts.append(recent)
 
-    # ゴミ利確
+    # Garbage wins
     garbage = check_garbage_wins(closes)
     if garbage:
         alerts.append(garbage)
 
-    # RR比
+    # RR ratio
     rr = check_rr_ratio(closes)
     if rr:
         alerts.append(rr)
 
-    # ペア別累積損失
+    # Per-pair cumulative loss
     pair_alerts = check_pair_loss(closes)
     alerts.extend(pair_alerts)
 

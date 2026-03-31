@@ -1,13 +1,13 @@
 """
 QuantRabbit Trading Memory — Pre-Trade Check
-エントリー直前に過去の記憶を3層照合(リスク) + 今のセットアップ品質(確度)を評価
+Cross-references 3 memory layers (risk) immediately before entry + evaluates current setup quality (conviction)
 
-出力:
-  - RISK: HIGH/MEDIUM/LOW — 過去データからのリスク警告（後ろ向き）
-  - CONFIDENCE: S/A/B/C — 今のセットアップの質（前向き） → サイジング決定の根拠
-  - RECOMMENDED SIZE: 確度に基づくunit数
+Output:
+  - RISK: HIGH/MEDIUM/LOW — risk warnings from historical data (backward-looking)
+  - CONFIDENCE: S/A/B/C — quality of current setup (forward-looking) → basis for sizing decisions
+  - RECOMMENDED SIZE: unit count based on conviction
 
-使い方:
+Usage:
   python3 pretrade_check.py GBP_USD SHORT [--adx 38] [--headline "Iran"]
 """
 import sys
@@ -24,10 +24,10 @@ PAIR_CURRENCIES = {
     "AUD_JPY": ("AUD", "JPY"),
 }
 
-# --- SQL Layer: 構造化データからの統計 ---
+# --- SQL Layer: Statistics from structured data ---
 
 def trade_stats(conn, pair: str, direction: str) -> dict:
-    """ペア×方向の勝率・平均PL"""
+    """Win rate and average P&L by pair x direction"""
     all_trades = fetchall_dict(conn,
         "SELECT pl, regime, had_sl, entry_type, lesson FROM trades WHERE pair = ? AND direction = ? AND pl IS NOT NULL",
         (pair, direction))
@@ -54,7 +54,7 @@ def trade_stats(conn, pair: str, direction: str) -> dict:
 
 
 def regime_stats(conn, pair: str, direction: str, regime: str) -> dict:
-    """特定レジームでの勝率"""
+    """Win rate under a specific regime"""
     trades = fetchall_dict(conn,
         "SELECT pl FROM trades WHERE pair = ? AND direction = ? AND regime = ? AND pl IS NOT NULL",
         (pair, direction, regime))
@@ -72,7 +72,7 @@ def regime_stats(conn, pair: str, direction: str, regime: str) -> dict:
 
 
 def headline_risk(conn, pair: str) -> list[dict]:
-    """このペアに関連する過去のマーケットイベント"""
+    """Past market events related to this pair"""
     return fetchall_dict(conn,
         """SELECT event_type, headline, spike_pips, spike_direction, impact, session_date
            FROM market_events
@@ -82,7 +82,7 @@ def headline_risk(conn, pair: str) -> list[dict]:
 
 
 def active_headlines_history(conn, headline_keyword: str) -> list[dict]:
-    """特定ヘッドラインが出た時の過去のトレード結果"""
+    """Historical trade results when a specific headline was active"""
     return fetchall_dict(conn,
         """SELECT pair, direction, pl, regime, lesson
            FROM trades
@@ -94,7 +94,7 @@ def active_headlines_history(conn, headline_keyword: str) -> list[dict]:
 # --- User Call Layer ---
 
 def user_call_stats(conn, pair: str = None, direction: str = None) -> dict:
-    """ユーザーの相場読みの的中率"""
+    """Accuracy rate of user's market reads"""
     where = ["outcome IS NOT NULL"]
     params = []
     if pair:
@@ -124,7 +124,7 @@ def user_call_stats(conn, pair: str = None, direction: str = None) -> dict:
 
 
 def latest_user_call(conn, pair: str = None) -> dict | None:
-    """直近のユーザーコール"""
+    """Most recent user call"""
     if pair:
         return fetchone_dict(conn,
             "SELECT * FROM user_calls WHERE pair = ? ORDER BY id DESC LIMIT 1", (pair,))
@@ -135,7 +135,7 @@ def latest_user_call(conn, pair: str = None) -> dict | None:
 # --- Vector Layer ---
 
 def similar_trades_narrative(query: str, top_k: int = 3) -> list[dict]:
-    """ベクトル検索で類似状況のナラティブを引く"""
+    """Retrieve narratives of similar situations via vector search"""
     try:
         from recall import hybrid_search
         return hybrid_search(query, top_k=top_k)
@@ -143,10 +143,10 @@ def similar_trades_narrative(query: str, top_k: int = 3) -> list[dict]:
         return []
 
 
-# --- Setup Quality Assessment (前向き: 今のセットアップの質) ---
+# --- Setup Quality Assessment (forward-looking: quality of current setup) ---
 
 def _load_technicals(pair: str) -> dict:
-    """logs/technicals_{PAIR}.json からテクニカルデータを読む"""
+    """Read technical data from logs/technicals_{PAIR}.json"""
     f = ROOT / f"logs/technicals_{pair}.json"
     if not f.exists():
         return {}
@@ -157,7 +157,7 @@ def _load_technicals(pair: str) -> dict:
 
 
 def _calc_currency_strength() -> dict[str, float]:
-    """H1のADX×DI方向から通貨別スコアを算出"""
+    """Calculate per-currency scores from H1 ADX x DI direction"""
     scores: dict[str, list[float]] = {c: [] for c in ["USD", "EUR", "GBP", "AUD", "JPY"]}
     for pair in PAIRS:
         tfs = _load_technicals(pair)
@@ -177,7 +177,7 @@ def _calc_currency_strength() -> dict[str, float]:
 
 
 def _get_current_spread(pair: str) -> float | None:
-    """OANDA pricing APIから現在のスプレッドを取得(pip単位)"""
+    """Fetch current spread in pips from OANDA pricing API"""
     try:
         cfg = {}
         for line in open(ROOT / "config" / "env.toml"):
@@ -202,17 +202,17 @@ def _get_current_spread(pair: str) -> float | None:
 
 def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
     """
-    今のセットアップの質を0-12で評価 → S/A/B/C確度を出す
+    Score current setup quality 0-12 → output S/A/B/C conviction grade
 
-    wave: "big" (H4/H1スイング), "mid" (M5トレード), "small" (M1スキャルプ), "auto" (自動判定)
+    wave: "big" (H4/H1 swing), "mid" (M5 trade), "small" (M1 scalp), "auto" (auto-detect)
 
-    評価軸（波の大きさで重みが変わる）:
-    1. MTF方向一致 (0-4点): 波の大きさに応じたTFの一致
-    2. ADXトレンド強度 (0-2点): 注目TFのADXの強さ
-    3. マクロ通貨強弱一致 (0-2点): 通貨ペアの強弱方向と一致してるか
-    4. テクニカル複合確認 (0-2点): ダイバージェンス、StochRSI極限、BB位置
-    5. 波の位置ペナルティ (-2〜+1点): H4極端で同方向エントリーはペナルティ
-    6. スプレッドペナルティ (-2〜0点): 狙いに対してスプが大きすぎたらペナルティ
+    Evaluation axes (weights vary by wave size):
+    1. MTF direction alignment (0-4 pts): TF agreement based on wave size
+    2. ADX trend strength (0-2 pts): ADX strength of the reference TF
+    3. Macro currency strength alignment (0-2 pts): does currency pair strength direction agree?
+    4. Technical confluence (0-2 pts): divergence, StochRSI extremes, BB position
+    5. Wave position penalty (-2 to +1 pts): penalty for same-direction entry at H4 extremes
+    6. Spread penalty (-2 to 0 pts): penalty if spread is too large relative to target
     """
     tfs = _load_technicals(pair)
     h4 = tfs.get("H4", {})
@@ -237,9 +237,9 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
 
     # --- Auto-detect wave size ---
     if wave == "auto":
-        # H4+H1一致 → 大波（スイング）
-        # H1+M5一致だがH4逆 → 中波（トレンド転換の初動）
-        # M5のみ → 小波
+        # H4+H1 aligned → big wave (swing)
+        # H1+M5 aligned but H4 opposite → mid wave (early trend reversal)
+        # M5 only → small wave
         if h4_aligned and h1_aligned:
             wave = "big"
         elif h1_aligned and m5_aligned:
@@ -247,51 +247,51 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
         elif m5_aligned:
             wave = "small"
         else:
-            wave = "big"  # デフォルトはスイング基準で評価
+            wave = "big"  # default: evaluate against swing standard
 
-    # --- 1. MTF Direction Agreement (0-4) --- 波の大きさで評価基準が変わる
+    # --- 1. MTF Direction Agreement (0-4) --- evaluation criteria vary by wave size
     aligned_count = sum([h4_aligned, h1_aligned, m5_aligned])
 
     if wave == "big":
-        # 大波: H4+H1が重要。M5はタイミングであってセットアップの質ではない
+        # Big wave: H4+H1 are important. M5 is timing, not setup quality
         if h4_aligned and h1_aligned and m5_aligned:
             quality_score += 4
-            details.append(f"[大波] MTF全一致(H4+H1+M5) +4")
+            details.append(f"[big wave] MTF full alignment (H4+H1+M5) +4")
         elif h4_aligned and h1_aligned:
             quality_score += 3
-            details.append(f"[大波] H4+H1一致 +3 (M5はタイミング待ち)")
+            details.append(f"[big wave] H4+H1 aligned +3 (M5 awaiting timing)")
         elif h1_aligned and m5_aligned:
             quality_score += 3
-            details.append(f"[大波] H1+M5一致 +3 (H4転換の初動かも)")
+            details.append(f"[big wave] H1+M5 aligned +3 (may be early H4 reversal)")
         elif h1_aligned:
             quality_score += 1
-            details.append(f"[大波] H1のみ一致 +1")
+            details.append(f"[big wave] H1 only aligned +1")
         else:
-            details.append(f"[大波] 上位TF一致なし +0")
+            details.append(f"[big wave] no upper TF alignment +0")
 
     elif wave == "mid":
-        # 中波: H1+M5が重要。H4は参考
+        # Mid wave: H1+M5 are important. H4 is reference
         if h1_aligned and m5_aligned:
             quality_score += 4 if h4_aligned else 3
-            h4_note = " + H4も一致" if h4_aligned else ""
-            details.append(f"[中波] H1+M5一致{h4_note} +{4 if h4_aligned else 3}")
+            h4_note = " + H4 aligned" if h4_aligned else ""
+            details.append(f"[mid wave] H1+M5 aligned{h4_note} +{4 if h4_aligned else 3}")
         elif m5_aligned:
             quality_score += 2
-            details.append(f"[中波] M5一致(H1逆) +2")
+            details.append(f"[mid wave] M5 aligned (H1 opposite) +2")
         else:
             quality_score += 1 if h1_aligned else 0
-            details.append(f"[中波] M5未一致 +{1 if h1_aligned else 0}")
+            details.append(f"[mid wave] M5 not aligned +{1 if h1_aligned else 0}")
 
     elif wave == "small":
-        # 小波: M5が重要。H1は方向感の参考。H4は関係ない
+        # Small wave: M5 is important. H1 is directional reference. H4 irrelevant
         if m5_aligned:
             quality_score += 3 if h1_aligned else 2
-            h1_note = " + H1順行" if h1_aligned else " (H1逆行注意)"
-            details.append(f"[小波] M5一致{h1_note} +{3 if h1_aligned else 2}")
+            h1_note = " + H1 aligned" if h1_aligned else " (H1 opposing - caution)"
+            details.append(f"[small wave] M5 aligned{h1_note} +{3 if h1_aligned else 2}")
         else:
-            details.append(f"[小波] M5未一致 +0 ← 入るな")
+            details.append(f"[small wave] M5 not aligned +0 ← don't enter")
 
-    # --- 2. ADX Trend Strength (0-2) --- 注目TFのADX
+    # --- 2. ADX Trend Strength (0-2) --- ADX of the reference TF
     if wave == "big":
         ref_adx = h1.get("adx", 0) if h1 else 0
         ref_aligned = h1_aligned
@@ -322,24 +322,24 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
         quote_str = ccy_strength.get(quote, 0)
 
         if is_long:
-            # LONG = base強 + quote弱 が理想
+            # LONG = base strong + quote weak is ideal
             macro_aligned = base_str > 0.1 and quote_str < -0.1
             macro_neutral = base_str > quote_str
         else:
-            # SHORT = base弱 + quote強 が理想
+            # SHORT = base weak + quote strong is ideal
             macro_aligned = base_str < -0.1 and quote_str > 0.1
             macro_neutral = base_str < quote_str
 
         if macro_aligned:
             quality_score += 2
-            details.append(f"マクロ一致({base}={base_str:+.2f},{quote}={quote_str:+.2f}) +2")
+            details.append(f"Macro aligned ({base}={base_str:+.2f},{quote}={quote_str:+.2f}) +2")
         elif macro_neutral:
             quality_score += 1
-            details.append(f"マクロ中立({base}={base_str:+.2f},{quote}={quote_str:+.2f}) +1")
+            details.append(f"Macro neutral ({base}={base_str:+.2f},{quote}={quote_str:+.2f}) +1")
         else:
-            details.append(f"マクロ逆行({base}={base_str:+.2f},{quote}={quote_str:+.2f}) +0")
+            details.append(f"Macro opposing ({base}={base_str:+.2f},{quote}={quote_str:+.2f}) +0")
     except Exception:
-        details.append("マクロ計算不可 +0")
+        details.append("Macro calculation unavailable +0")
 
     # --- 4. Technical Confluence (0-2) ---
     confluence = 0
@@ -359,32 +359,32 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
             div_supports = True
         if div_supports:
             confluence += 1
-            confluence_notes.append(f"H1 Div確認(score={div_rsi:.1f})")
+            confluence_notes.append(f"H1 Div confirmed (score={div_rsi:.1f})")
 
     # StochRSI extreme in entry direction
     if m5:
         stoch = m5.get("stoch_rsi", 0.5)
         if is_long and stoch < 0.15:
             confluence += 1
-            confluence_notes.append(f"M5 StRSI={stoch:.2f}(極端売られすぎ)")
+            confluence_notes.append(f"M5 StRSI={stoch:.2f} (extreme oversold)")
         elif not is_long and stoch > 0.85:
             confluence += 1
-            confluence_notes.append(f"M5 StRSI={stoch:.2f}(極端買われすぎ)")
+            confluence_notes.append(f"M5 StRSI={stoch:.2f} (extreme overbought)")
 
     # BB position
     if m5:
         bb_pos = m5.get("bb", 0.5)
         if is_long and bb_pos < 0.1:
-            confluence_notes.append(f"M5 BB下限({bb_pos:.2f})")
+            confluence_notes.append(f"M5 BB lower band ({bb_pos:.2f})")
         elif not is_long and bb_pos > 0.9:
-            confluence_notes.append(f"M5 BB上限({bb_pos:.2f})")
+            confluence_notes.append(f"M5 BB upper band ({bb_pos:.2f})")
 
     conf_points = min(confluence, 2)
     quality_score += conf_points
     if confluence_notes:
-        details.append(f"テクニカル複合: {', '.join(confluence_notes)} +{conf_points}")
+        details.append(f"Technical confluence: {', '.join(confluence_notes)} +{conf_points}")
     else:
-        details.append("テクニカル複合なし +0")
+        details.append("No technical confluence +0")
 
     # --- 5. Wave Position Penalty/Bonus (-2 to +1) ---
     if h4:
@@ -396,42 +396,42 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
 
         if is_long and h4_extreme_long:
             quality_score -= 2
-            details.append(f"⚠ H4過熱圏でLONG(CCI={h4_cci:.0f},RSI={h4_rsi:.0f}) -2 ← 動き切った後に入るな")
+            details.append(f"⚠ H4 overbought LONG (CCI={h4_cci:.0f},RSI={h4_rsi:.0f}) -2 ← don't enter after the move is done")
         elif not is_long and h4_extreme_short:
             quality_score -= 2
-            details.append(f"⚠ H4極端売られすぎでSHORT(CCI={h4_cci:.0f},RSI={h4_rsi:.0f}) -2 ← 動き切った後に入るな")
+            details.append(f"⚠ H4 extreme oversold SHORT (CCI={h4_cci:.0f},RSI={h4_rsi:.0f}) -2 ← don't enter after the move is done")
         elif is_long and h4_extreme_short:
             quality_score += 1
-            details.append(f"H4売られすぎでLONG(CCI={h4_cci:.0f}) +1 ← 逆張りチャンス")
+            details.append(f"H4 oversold LONG (CCI={h4_cci:.0f}) +1 ← counter-trend opportunity")
         elif not is_long and h4_extreme_long:
             quality_score += 1
-            details.append(f"H4過熱圏でSHORT(CCI={h4_cci:.0f}) +1 ← 逆張りチャンス")
+            details.append(f"H4 overbought SHORT (CCI={h4_cci:.0f}) +1 ← counter-trend opportunity")
         else:
-            details.append(f"H4ニュートラル(CCI={h4_cci:.0f},RSI={h4_rsi:.0f}) +0")
+            details.append(f"H4 neutral (CCI={h4_cci:.0f},RSI={h4_rsi:.0f}) +0")
     else:
-        details.append("H4データなし +0")
+        details.append("H4 data unavailable +0")
 
-    # --- 6. Spread Penalty (0 to -2) --- スプレッドが狙いに対して大きすぎるか
+    # --- 6. Spread Penalty (0 to -2) --- is spread too large relative to target
     spread_pip = _get_current_spread(pair)
     if spread_pip is not None:
-        # 波の大きさで許容スプレッドが変わる
-        # 大波(15-30pip狙い): スプ2.0pipでも6-13%→許容
-        # 中波(10-15pip狙い): スプ2.0pipで13-20%→注意
-        # 小波(5-10pip狙い): スプ2.0pipで20-40%→致命的
+        # Acceptable spread varies by wave size
+        # Big wave (targeting 15-30 pip): 2.0 pip spread = 6-13% → acceptable
+        # Mid wave (targeting 10-15 pip): 2.0 pip spread = 13-20% → caution
+        # Small wave (targeting 5-10 pip): 2.0 pip spread = 20-40% → fatal
         pip_targets = {"big": 20, "mid": 12, "small": 7}
         target = pip_targets.get(wave, 12)
         spread_ratio = spread_pip / target
 
-        if spread_ratio > 0.30:  # スプが利幅の30%超 → 致命的
+        if spread_ratio > 0.30:  # spread > 30% of target profit → fatal
             quality_score -= 2
-            details.append(f"⚠️ スプレッド={spread_pip:.1f}pip (利幅{target}pipの{spread_ratio:.0%}) -2 ← RR崩壊。見送れ")
-        elif spread_ratio > 0.20:  # 20%超 → 要注意
+            details.append(f"⚠️ Spread={spread_pip:.1f}pip ({spread_ratio:.0%} of {target}pip target) -2 ← R:R broken. Pass.")
+        elif spread_ratio > 0.20:  # > 20% → caution
             quality_score -= 1
-            details.append(f"⚠️ スプレッド={spread_pip:.1f}pip (利幅{target}pipの{spread_ratio:.0%}) -1 ← サイズ控えめに")
+            details.append(f"⚠️ Spread={spread_pip:.1f}pip ({spread_ratio:.0%} of {target}pip target) -1 ← reduce size")
         else:
-            details.append(f"スプレッド={spread_pip:.1f}pip (利幅{target}pipの{spread_ratio:.0%}) OK")
+            details.append(f"Spread={spread_pip:.1f}pip ({spread_ratio:.0%} of {target}pip target) OK")
     else:
-        details.append("スプレッド取得不可 +0")
+        details.append("Spread unavailable +0")
 
     # --- Grade mapping ---
     quality_score = max(0, quality_score)  # floor at 0
@@ -444,13 +444,13 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
     else:
         grade = "C"
 
-    # Sizing recommendation — 確度がサイズを決める。波の大きさではない。
-    # 小波でも確度Sなら大きく張れ。利幅が小さい分、サイズで稼ぐ。
+    # Sizing recommendation — conviction determines size, not wave size.
+    # Even on a small wave, if conviction is S, size up. Compensate for smaller profit target with size.
     sizing = {
-        "S": "8000-10000u (鉄板。大きく張れ)",
-        "A": "5000-8000u (高確度。しっかり張れ)",
-        "B": "2000-3000u (控えめに)",
-        "C": "1000u以下 (根拠弱い。見送り推奨)",
+        "S": "8000-10000u (iron-clad. size up)",
+        "A": "5000-8000u (high conviction. trade it properly)",
+        "B": "2000-3000u (conservative)",
+        "C": "1000u or less (weak basis. pass recommended)",
     }
 
     return {
@@ -463,7 +463,7 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
     }
 
 
-# --- Risk Assessment (後ろ向き: 過去データからのリスク) ---
+# --- Risk Assessment (backward-looking: risk from historical data) ---
 
 def assess_risk(
     pair: str,
@@ -473,50 +473,50 @@ def assess_risk(
     regime: str = None,
     wave: str = "auto",
 ) -> dict:
-    """総合リスク+セットアップ品質判定"""
+    """Overall risk + setup quality assessment"""
     conn = get_conn()
     warnings = []
     risk_score = 0  # 0-10
 
-    # 1. トレード統計
+    # 1. Trade statistics
     stats = trade_stats(conn, pair, direction)
     if stats["count"] > 0:
         if stats["win_rate"] < 0.5:
-            warnings.append(f"⚠️ {pair} {direction} 勝率: {stats['win_rate']:.0%} ({stats['wins']}/{stats['count']})")
+            warnings.append(f"⚠️ {pair} {direction} win rate: {stats['win_rate']:.0%} ({stats['wins']}/{stats['count']})")
             risk_score += 2
         if stats["worst"] < -1000:
-            warnings.append(f"🚨 過去最大損失: {stats['worst']:+,.0f}円")
+            warnings.append(f"🚨 Historical max loss: {stats['worst']:+,.0f} JPY")
             risk_score += 3
 
-    # 2. レジーム別
+    # 2. By regime
     if regime:
         rs = regime_stats(conn, pair, direction, regime)
         if rs["count"] > 0 and rs["win_rate"] < 0.4:
-            warnings.append(f"⚠️ {regime}レジームでの勝率: {rs['win_rate']:.0%} ({rs['count']}件)")
+            warnings.append(f"⚠️ Win rate in {regime} regime: {rs['win_rate']:.0%} ({rs['count']} trades)")
             risk_score += 2
 
-    # 3. ヘッドライン/イベントリスク
+    # 3. Headline / event risk
     if headline:
         hl_trades = active_headlines_history(conn, headline)
         if hl_trades:
             hl_pls = [t["pl"] for t in hl_trades]
             avg = sum(hl_pls) / len(hl_pls)
             if avg < 0:
-                warnings.append(f"🚨 {headline}ヘッドライン中の平均PL: {avg:+,.0f}円 ({len(hl_trades)}件)")
+                warnings.append(f"🚨 Avg P&L during {headline} headline: {avg:+,.0f} JPY ({len(hl_trades)} trades)")
                 risk_score += 3
             losses = [t for t in hl_trades if t["pl"] < -500]
             for lt in losses:
-                warnings.append(f"  → {lt['pair']} {lt['direction']} {lt['pl']:+,.0f}円: {lt['lesson']}")
+                warnings.append(f"  → {lt['pair']} {lt['direction']} {lt['pl']:+,.0f} JPY: {lt['lesson']}")
 
     events = headline_risk(conn, pair)
     if events:
         high_events = [e for e in events if e["impact"] == "high"]
         if high_events:
             for e in high_events[:2]:
-                warnings.append(f"🚨 過去スパイク: {e['headline']} → {pair} {e['spike_pips']:.0f}pip ({e['session_date']})")
+                warnings.append(f"🚨 Historical spike: {e['headline']} → {pair} {e['spike_pips']:.0f}pip ({e['session_date']})")
                 risk_score += 2
 
-    # 4. ユーザーコール
+    # 4. User call
     uc = latest_user_call(conn, pair)
     if uc:
         user_dir = uc.get("direction")
@@ -524,22 +524,22 @@ def assess_risk(
             uc_stats = user_call_stats(conn, pair)
             if uc_stats["count"] > 0:
                 warnings.append(
-                    f"⚠️ ユーザー直近コール: 「{uc['call_text']}」({user_dir}) "
-                    f"= {direction}と逆方向 (ユーザー的中率: {uc_stats['accuracy']:.0%})"
+                    f"⚠️ Latest user call: \"{uc['call_text']}\" ({user_dir}) "
+                    f"= opposite to {direction} (user accuracy: {uc_stats['accuracy']:.0%})"
                 )
                 risk_score += 2
 
-    # 5. SLなしの過去の結果
+    # 5. Historical results without SL
     if stats["count"] > 0 and stats["no_sl_count"] == stats["count"]:
         losses_no_sl = [t for t in fetchall_dict(conn,
             "SELECT pl FROM trades WHERE pair = ? AND had_sl = 0 AND pl IS NOT NULL AND pl < 0",
             (pair,))]
         if losses_no_sl:
             worst = min(t["pl"] for t in losses_no_sl)
-            warnings.append(f"⚠️ SLなしでの最大損失: {worst:+,.0f}円 → SL設定を検討")
+            warnings.append(f"⚠️ Max loss without SL: {worst:+,.0f} JPY → consider setting SL")
             risk_score += 1
 
-    # リスクレベル
+    # Risk level
     if risk_score >= 7:
         level = "HIGH"
     elif risk_score >= 4:
@@ -547,10 +547,10 @@ def assess_risk(
     else:
         level = "LOW"
 
-    # 6. pretrade_outcomes: 過去に同条件で入った時の結末
+    # 6. pretrade_outcomes: outcomes when same conditions were entered in the past
     past_outcomes = _past_pretrade_outcomes(conn, pair, direction, level)
 
-    # 6b. Setup Quality Assessment (前向き)
+    # 6b. Setup Quality Assessment (forward-looking)
     setup = assess_setup_quality(pair, direction, wave=wave)
 
     result = {
@@ -564,7 +564,7 @@ def assess_risk(
         "setup_quality": setup,
     }
 
-    # 7. ベクトル検索で類似状況
+    # 7. Similar situations via vector search
     query_text = f"{pair} {direction}"
     if headline:
         query_text += f" {headline}"
@@ -577,14 +577,14 @@ def assess_risk(
             for n in narratives
         ]
 
-    # 8. このチェック結果を pretrade_outcomes に記録（後でdaily_reviewがplを埋める）
+    # 8. Log this check result to pretrade_outcomes (daily_review will fill in pl later)
     _log_pretrade(conn, pair, direction, level, risk_score, warnings)
 
     return result
 
 
 def _past_pretrade_outcomes(conn, pair: str, direction: str, level: str) -> list[dict]:
-    """過去に同じpair/direction/levelで入った時の結末"""
+    """Outcomes when the same pair/direction/level was entered in the past"""
     return fetchall_dict(conn,
         """SELECT session_date, pl, lesson_from_review, thesis
            FROM pretrade_outcomes
@@ -594,7 +594,7 @@ def _past_pretrade_outcomes(conn, pair: str, direction: str, level: str) -> list
 
 
 def _log_pretrade(conn, pair: str, direction: str, level: str, score: int, warnings: list):
-    """このチェック結果をpretrade_outcomesに記録"""
+    """Log this check result to pretrade_outcomes"""
     try:
         conn.execute(
             """INSERT INTO pretrade_outcomes
@@ -604,11 +604,11 @@ def _log_pretrade(conn, pair: str, direction: str, level: str, score: int, warni
              json.dumps(warnings, ensure_ascii=False))
         )
     except Exception:
-        pass  # テーブルがまだない場合は無視
+        pass  # ignore if table does not yet exist
 
 
 def format_check(result: dict) -> str:
-    """チェック結果を読みやすく表示"""
+    """Format check result for readable display"""
     lines = []
     level = result["risk_level"]
     setup = result.get("setup_quality", {})
@@ -618,52 +618,52 @@ def format_check(result: dict) -> str:
     grade_icon = {"S": "🔥", "A": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
     risk_icon = {"HIGH": "🚨", "MEDIUM": "⚠️", "LOW": "✅"}[level]
 
-    # Main header: 確度が最重要（サイジングを決める）
-    wave_label = {"big": "大波", "mid": "中波", "small": "小波"}.get(setup.get("wave", "?"), "?")
-    lines.append(f"{grade_icon} 確度: {grade} (score={q_score}) | リスク: {level} (score={result['risk_score']}) | 波: {wave_label}")
+    # Main header: conviction is most important (determines sizing)
+    wave_label = {"big": "big wave", "mid": "mid wave", "small": "small wave"}.get(setup.get("wave", "?"), "?")
+    lines.append(f"{grade_icon} Conviction: {grade} (score={q_score}) | Risk: {level} (score={result['risk_score']}) | Wave: {wave_label}")
     lines.append(f"   {result['pair']} {result['direction']} → {setup.get('sizing', '?')}")
     lines.append("")
 
     # Setup quality details
-    lines.append("📐 セットアップ品質:")
+    lines.append("📐 Setup quality:")
     for detail in setup.get("details", []):
         lines.append(f"  {detail}")
     lines.append("")
 
-    # トレード統計
+    # Trade statistics
     stats = result.get("trade_stats")
     if stats:
-        lines.append(f"📊 過去実績: {stats['wins']}勝{stats['losses']}敗 (勝率{stats['win_rate']:.0%}) 平均PL={stats['avg_pl']:+,.0f}円 合計={stats['total_pl']:+,.0f}円")
+        lines.append(f"📊 Historical record: {stats['wins']}W {stats['losses']}L (win rate {stats['win_rate']:.0%}) avg P&L={stats['avg_pl']:+,.0f} JPY total={stats['total_pl']:+,.0f} JPY")
 
-    # 警告
+    # Warnings
     if result["warnings"]:
         lines.append("")
         for w in result["warnings"]:
             lines.append(w)
 
-    # 過去の教訓
+    # Historical lessons
     if stats and stats.get("lessons"):
         lines.append("")
-        lines.append("📝 過去の教訓:")
+        lines.append("📝 Historical lessons:")
         for lesson in stats["lessons"][:3]:
             lines.append(f"  - {lesson}")
 
-    # 過去の同条件エントリー結末（フィードバックループの核心）
+    # Outcomes from past same-condition entries (core of feedback loop)
     past = result.get("past_outcomes", [])
     if past:
         lines.append("")
-        lines.append(f"📖 前回 {result['pair']} {result['direction']} を pretrade {result['risk_level']} で入った時:")
+        lines.append(f"📖 Last time {result['pair']} {result['direction']} was entered at pretrade {result['risk_level']}:")
         for p in past:
             outcome = "WIN" if p['pl'] and p['pl'] > 0 else "LOSS"
-            pl_str = f"{p['pl']:+,.0f}円" if p['pl'] else "?"
+            pl_str = f"{p['pl']:+,.0f} JPY" if p['pl'] else "?"
             lines.append(f"  [{p['session_date']}] {outcome} {pl_str}")
             if p.get('lesson_from_review'):
                 lines.append(f"    → {p['lesson_from_review']}")
 
-    # 類似記憶
+    # Similar memories
     if result.get("similar_memories"):
         lines.append("")
-        lines.append("🧠 類似状況の記憶:")
+        lines.append("🧠 Memories of similar situations:")
         for mem in result["similar_memories"]:
             lines.append(f"  [{mem['date']}] {mem['content'][:150]}...")
 
@@ -676,7 +676,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("Usage: python3 pretrade_check.py <PAIR> <LONG|SHORT> [--wave big|mid|small] [--adx N] [--headline TEXT] [--regime TYPE]")
         print("Example: python3 pretrade_check.py GBP_USD SHORT --wave big")
-        print("  --wave: big=H4/H1スイング, mid=M5トレード, small=M1スキャルプ, auto=自動判定(デフォルト)")
+        print("  --wave: big=H4/H1 swing, mid=M5 trade, small=M1 scalp, auto=auto-detect (default)")
         sys.exit(1)
 
     pair = sys.argv[1]

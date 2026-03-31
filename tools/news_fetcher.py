@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-News Fetcher — 3ソースからFXニュースを定期取得してJSONキャッシュ
+News Fetcher — Periodically fetch FX news from 3 sources and cache as JSON
 
-ソース:
-1. Finnhub: マーケットニュース (forex) + 経済カレンダー
-2. Alpha Vantage: ニュースセンチメント (通貨別)
-3. Forex Factory: 経済カレンダー (HTMLスクレイピング)
+Sources:
+1. Finnhub: Market news (forex) + economic calendar
+2. Alpha Vantage: News sentiment (by currency)
+3. Forex Factory: Economic calendar (HTML scraping)
 
-出力: logs/news_cache.json
-実行: 別cronで15分間隔。traderセッションはキャッシュを読むだけ。
+Output: logs/news_cache.json
+Run: Separate cron at 15-minute intervals. Trader session only reads the cache.
 
 Usage:
-    python3 tools/news_fetcher.py              # 全ソース取得
-    python3 tools/news_fetcher.py --summary     # キャッシュの要約表示
-    python3 tools/news_fetcher.py --calendar    # カレンダーのみ
-    python3 tools/news_fetcher.py --headlines   # ヘッドラインのみ
-    python3 tools/news_fetcher.py --sentiment   # センチメントのみ
+    python3 tools/news_fetcher.py              # Fetch all sources
+    python3 tools/news_fetcher.py --summary     # Display cache summary
+    python3 tools/news_fetcher.py --calendar    # Calendar only
+    python3 tools/news_fetcher.py --headlines   # Headlines only
+    python3 tools/news_fetcher.py --sentiment   # Sentiment only
 """
 import json
 import os
@@ -32,7 +32,7 @@ CACHE_FILE = ROOT / "logs" / "news_cache.json"
 FX_CURRENCIES = ["USD", "JPY", "EUR", "GBP", "AUD"]
 FX_PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 
-# SSL context (一部環境でSSL検証問題を回避)
+# SSL context (workaround for SSL verification issues in some environments)
 SSL_CTX = ssl.create_default_context()
 
 
@@ -50,7 +50,7 @@ def load_config():
 
 
 def api_get(url, headers=None, timeout=10):
-    """urllib GETリクエスト。失敗時はNone返却"""
+    """urllib GET request. Returns None on failure."""
     try:
         req = urllib.request.Request(url, headers=headers or {})
         resp = urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX)
@@ -61,7 +61,7 @@ def api_get(url, headers=None, timeout=10):
 
 
 def load_existing_cache():
-    """既存キャッシュを読み込み。マージ用"""
+    """Load existing cache. Used for merging."""
     if CACHE_FILE.exists():
         try:
             return json.loads(CACHE_FILE.read_text())
@@ -73,7 +73,7 @@ def load_existing_cache():
 # ========== SOURCE 1: Finnhub ==========
 
 def fetch_finnhub_news(token: str, max_items: int = 30) -> list[dict]:
-    """Finnhub /news?category=forex → FX関連ヘッドライン"""
+    """Finnhub /news?category=forex → FX-related headlines"""
     url = f"https://finnhub.io/api/v1/news?category=forex&token={token}"
     data = api_get(url)
     if not data:
@@ -81,7 +81,7 @@ def fetch_finnhub_news(token: str, max_items: int = 30) -> list[dict]:
 
     results = []
     for item in data[:max_items]:
-        # 関連通貨を推定
+        # Estimate related currencies
         related = detect_currencies(item.get("headline", "") + " " + item.get("summary", ""))
         results.append({
             "time": datetime.fromtimestamp(item.get("datetime", 0), tz=timezone.utc).isoformat(),
@@ -96,8 +96,8 @@ def fetch_finnhub_news(token: str, max_items: int = 30) -> list[dict]:
 
 
 def fetch_finnhub_calendar(token: str) -> list[dict]:
-    """Finnhub /calendar/economic → 経済カレンダー"""
-    # 今日〜3日後
+    """Finnhub /calendar/economic → Economic calendar"""
+    # Today through 3 days ahead
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     end = (datetime.now(timezone.utc) + timedelta(days=3)).strftime("%Y-%m-%d")
 
@@ -110,7 +110,7 @@ def fetch_finnhub_calendar(token: str) -> list[dict]:
     results = []
     for ev in events:
         country = ev.get("country", "")
-        # FX関連国のみ
+        # FX-related countries only
         if country not in ["US", "JP", "EU", "GB", "AU", "DE", "FR", "CA", "NZ", "CH"]:
             continue
 
@@ -126,7 +126,7 @@ def fetch_finnhub_calendar(token: str) -> list[dict]:
             "unit": ev.get("unit", ""),
         })
 
-    # impact順でソート (high > medium > low)
+    # Sort by impact (high > medium > low)
     impact_order = {"high": 0, "medium": 1, "low": 2}
     results.sort(key=lambda x: (impact_order.get(x["impact"], 3), x["time"]))
     return results
@@ -135,8 +135,8 @@ def fetch_finnhub_calendar(token: str) -> list[dict]:
 # ========== SOURCE 2: Alpha Vantage ==========
 
 def fetch_alphavantage_sentiment(token: str) -> dict:
-    """Alpha Vantage NEWS_SENTIMENT → 通貨別センチメント"""
-    # FX関連ティッカーでフィルタ
+    """Alpha Vantage NEWS_SENTIMENT → Sentiment by currency"""
+    # Filter by FX-related tickers
     tickers = "FOREX:USD,FOREX:JPY,FOREX:EUR,FOREX:GBP,FOREX:AUD"
     url = (
         f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT"
@@ -147,7 +147,7 @@ def fetch_alphavantage_sentiment(token: str) -> dict:
     if not data or "feed" not in data:
         return {"scores": {}, "articles": []}
 
-    # 通貨別スコア集計
+    # Aggregate scores by currency
     currency_scores: dict[str, list[float]] = {c: [] for c in FX_CURRENCIES}
     articles = []
 
@@ -156,7 +156,7 @@ def fetch_alphavantage_sentiment(token: str) -> dict:
         sentiment = float(item.get("overall_sentiment_score", 0))
         time_str = item.get("time_published", "")
 
-        # 通貨ごとのセンチメント
+        # Sentiment per currency
         for ticker_data in item.get("ticker_sentiment", []):
             ticker = ticker_data.get("ticker", "")
             score = float(ticker_data.get("ticker_sentiment_score", 0))
@@ -164,7 +164,7 @@ def fetch_alphavantage_sentiment(token: str) -> dict:
                 if ccy in ticker:
                     currency_scores[ccy].append(score)
 
-        # 記事リスト（関連通貨付き）
+        # Article list (with related currencies)
         related = detect_currencies(headline)
         if related:
             articles.append({
@@ -176,7 +176,7 @@ def fetch_alphavantage_sentiment(token: str) -> dict:
                 "related_currencies": related,
             })
 
-    # 平均スコア
+    # Average scores
     scores = {}
     for ccy, vals in currency_scores.items():
         if vals:
@@ -191,7 +191,7 @@ def fetch_alphavantage_sentiment(token: str) -> dict:
 
 
 def format_av_time(time_str: str) -> str:
-    """Alpha Vantage時刻 '20260330T120000' → ISO形式"""
+    """Alpha Vantage time '20260330T120000' → ISO format"""
     try:
         dt = datetime.strptime(time_str[:15], "%Y%m%dT%H%M%S")
         return dt.replace(tzinfo=timezone.utc).isoformat()
@@ -215,7 +215,7 @@ def sentiment_label(score: float) -> str:
 # ========== SOURCE 3: Forex Factory Calendar (RSS) ==========
 
 def fetch_forexfactory_calendar() -> list[dict]:
-    """Forex Factory のRSS/XMLからイベント取得（フォールバック）"""
+    """Fetch events from Forex Factory RSS/XML (fallback)"""
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     data = api_get(url, timeout=10)
     if not data:
@@ -239,14 +239,14 @@ def fetch_forexfactory_calendar() -> list[dict]:
     return results
 
 
-# ========== ユーティリティ ==========
+# ========== Utilities ==========
 
 def detect_currencies(text: str) -> list[str]:
-    """テキストから関連通貨を検出"""
+    """Detect related currencies from text"""
     text_upper = text.upper()
     found = []
 
-    # 通貨名マッチ
+    # Currency name matching
     currency_keywords = {
         "USD": ["USD", "DOLLAR", "FED ", "FEDERAL RESERVE", "US ECONOMY", "FOMC",
                 "NFP", "NONFARM", "TREASURY", "WALL STREET"],
@@ -263,7 +263,7 @@ def detect_currencies(text: str) -> list[str]:
 
 
 def estimate_impact(event_name: str, raw_impact: str) -> str:
-    """イベント名からインパクト推定"""
+    """Estimate impact from event name"""
     if raw_impact:
         raw = raw_impact.lower()
         if raw in ("high", "medium", "low"):
@@ -283,17 +283,17 @@ def estimate_impact(event_name: str, raw_impact: str) -> str:
     return "low"
 
 
-# ========== メイン ==========
+# ========== Main ==========
 
 def fetch_all(cfg: dict) -> dict:
-    """全ソースから取得してキャッシュに書く"""
+    """Fetch from all sources and write to cache"""
     now = datetime.now(timezone.utc).isoformat()
     cache = load_existing_cache()
 
     finnhub_token = cfg.get("finnhub_token", "")
     av_token = cfg.get("alphavantage_token", "")
 
-    # 1. 経済カレンダー（Finnhub + FF フォールバック）
+    # 1. Economic calendar (Finnhub + FF fallback)
     print("[1/3] Economic Calendar...")
     calendar = []
     if finnhub_token:
@@ -303,14 +303,14 @@ def fetch_all(cfg: dict) -> dict:
         calendar = fetch_forexfactory_calendar()
         print(f"  FF calendar (fallback): {len(calendar)} events")
 
-    # 2. ヘッドラインニュース（Finnhub）
+    # 2. Headline news (Finnhub)
     print("[2/3] Headlines...")
     headlines = []
     if finnhub_token:
         headlines = fetch_finnhub_news(finnhub_token)
         print(f"  Finnhub headlines: {len(headlines)} articles")
 
-    # 3. センチメント（Alpha Vantage）
+    # 3. Sentiment (Alpha Vantage)
     print("[3/3] Sentiment...")
     sentiment = {"scores": {}, "articles": []}
     if av_token:
@@ -318,7 +318,7 @@ def fetch_all(cfg: dict) -> dict:
         print(f"  AV sentiment: {len(sentiment.get('scores', {}))} currencies, "
               f"{len(sentiment.get('articles', []))} articles")
 
-    # 既存のヘッドラインとマージ（重複排除、最新24h以内のみ保持）
+    # Merge with existing headlines (deduplicate, keep only within last 24h)
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
     old_headlines = [h for h in cache.get("headlines", []) if h.get("time", "") > cutoff]
     old_headings = {h.get("headline", "") for h in old_headlines}
@@ -327,7 +327,7 @@ def fetch_all(cfg: dict) -> dict:
         old_headlines + new_headlines,
         key=lambda x: x.get("time", ""),
         reverse=True
-    )[:60]  # 最大60件保持
+    )[:60]  # Keep up to 60 items
 
     result = {
         "fetched_at": now,
@@ -341,7 +341,7 @@ def fetch_all(cfg: dict) -> dict:
         "sentiment": sentiment,
     }
 
-    # キャッシュ書き出し
+    # Write cache
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(json.dumps(result, indent=2, ensure_ascii=False))
     print(f"\n→ Saved to {CACHE_FILE} ({len(json.dumps(result))} bytes)")
@@ -349,27 +349,27 @@ def fetch_all(cfg: dict) -> dict:
 
 
 def print_summary():
-    """キャッシュの要約を表示（traderセッション向け）"""
+    """Display cache summary (for trader session)"""
     if not CACHE_FILE.exists():
-        print("NEWS: キャッシュなし。python3 tools/news_fetcher.py で取得してください")
+        print("NEWS: No cache. Run python3 tools/news_fetcher.py to fetch.")
         return
 
     cache = json.loads(CACHE_FILE.read_text())
     fetched = cache.get("fetched_at", "unknown")
 
-    # 鮮度チェック
+    # Freshness check
     try:
         fetched_dt = datetime.fromisoformat(fetched)
         age_min = (datetime.now(timezone.utc) - fetched_dt).total_seconds() / 60
-        age_str = f"{age_min:.0f}分前"
+        age_str = f"{age_min:.0f}m ago"
         if age_min > 60:
-            age_str = f"⚠️ {age_min/60:.1f}時間前（古い）"
+            age_str = f"⚠️ {age_min/60:.1f}h ago (stale)"
     except Exception:
-        age_str = "不明"
+        age_str = "unknown"
 
     print(f"📰 NEWS ({age_str})")
 
-    # カレンダー: 今日のhigh impactイベント
+    # Calendar: today's high impact events
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     high_events = [e for e in cache.get("calendar", [])
                    if e.get("impact") == "high" and today in str(e.get("time", ""))]
@@ -377,32 +377,32 @@ def print_summary():
         print(f"🔴 HIGH IMPACT TODAY:")
         for ev in high_events[:5]:
             actual = f" → {ev['actual']}" if ev.get("actual") else ""
-            forecast = f" (予想:{ev['forecast']})" if ev.get("forecast") else ""
+            forecast = f" (forecast:{ev['forecast']})" if ev.get("forecast") else ""
             print(f"  {ev.get('time','')[:16]} {ev['country']} {ev['event']}{forecast}{actual}")
     else:
         upcoming_high = [e for e in cache.get("calendar", []) if e.get("impact") == "high"]
         if upcoming_high:
-            print(f"📅 次のHIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({upcoming_high[0].get('time','')})")
+            print(f"📅 Next HIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({upcoming_high[0].get('time','')})")
         else:
-            print("📅 直近のhigh impactイベントなし")
+            print("📅 No upcoming high impact events")
 
-    # ヘッドライン: 最新5件
+    # Headlines: latest 5
     headlines = cache.get("headlines", [])
     if headlines:
-        print(f"📢 最新ヘッドライン ({len(headlines)}件中 top5):")
+        print(f"📢 Latest headlines ({len(headlines)} total, top 5):")
         for h in headlines[:5]:
             currencies = ",".join(h.get("related_currencies", []))
             time_short = h.get("time", "")[:16]
             print(f"  [{currencies}] {h['headline'][:80]} ({time_short})")
 
-    # センチメント
+    # Sentiment
     scores = cache.get("sentiment", {}).get("scores", {})
     if scores:
         sorted_scores = sorted(scores.items(), key=lambda x: x[1].get("score", 0), reverse=True)
         score_line = " | ".join(
             f"{ccy}:{data['score']:+.3f}({data['label']})" for ccy, data in sorted_scores
         )
-        print(f"💭 センチメント: {score_line}")
+        print(f"💭 Sentiment: {score_line}")
 
 
 def main():
@@ -443,7 +443,7 @@ def main():
         print(json.dumps(sentiment, indent=2, ensure_ascii=False))
         return
 
-    # --if-stale N: キャッシュがN分以上古い場合のみ再取得
+    # --if-stale N: re-fetch only if cache is older than N minutes
     if "--if-stale" in args:
         idx = args.index("--if-stale")
         stale_min = int(args[idx + 1]) if idx + 1 < len(args) else 15
@@ -456,14 +456,14 @@ def main():
                     print(f"[news_fetcher: cache fresh ({age:.0f}m < {stale_min}m), skip]")
                     return
             except Exception:
-                pass  # キャッシュ壊れてる→再取得
+                pass  # Cache is corrupted → re-fetch
 
-    # デフォルト: 全取得
+    # Default: fetch all
     if not cfg.get("finnhub_token") and not cfg.get("alphavantage_token"):
-        print("⚠️ APIキー未設定。config/env.toml に以下を追加:")
+        print("⚠️ API keys not set. Add the following to config/env.toml:")
         print('  finnhub_token = "YOUR_KEY"        # https://finnhub.io/register')
         print('  alphavantage_token = "YOUR_KEY"    # https://www.alphavantage.co/support/#api-key')
-        print("\nForex Factoryカレンダーのみで実行します...\n")
+        print("\nRunning with Forex Factory calendar only...\n")
 
     t0 = time.time()
     fetch_all(cfg)

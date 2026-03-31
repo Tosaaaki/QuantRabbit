@@ -445,24 +445,24 @@ def main():
     # ─── Recommendations ───
     print(f"\n--- Recommendations ---")
     if o["win_rate"] < 0.4:
-        print("  ⚠️  WIN RATE < 40% — 方向判断を見直せ")
+        print("  ⚠️  WIN RATE < 40% — Review your directional judgment")
     if o["profit_factor"] < 1.0:
-        print("  ⚠️  PF < 1.0 — 負けている。SL/TP比率を見直せ")
+        print("  ⚠️  PF < 1.0 — Losing overall. Review SL/TP ratio")
     if o.get("avg_loss_jpy", 0) > o.get("avg_win_jpy", 0) * 1.5:
-        print("  ⚠️  平均損失 > 平均利益×1.5 — 損切り遅延 or 利確遅延")
+        print("  ⚠️  Avg loss > avg win x1.5 — Delayed stop-loss or delayed profit-taking")
 
     # Pair-specific warnings
     for pair, s in by_pair.items():
         if s["total_trades"] >= 3 and s["win_rate"] < 0.3:
-            print(f"  ⚠️  {pair}: WR={s['win_rate']:.0%} — このペアは避けるかサイズ縮小")
+            print(f"  ⚠️  {pair}: WR={s['win_rate']:.0%} — Avoid this pair or reduce size")
         if s["total_trades"] >= 3 and s["total_pl_jpy"] < -100:
-            print(f"  ⚠️  {pair}: P/L={s['total_pl_jpy']:+,.0f}円 — 損失ペア。テーゼ再検証")
+            print(f"  ⚠️  {pair}: P/L={s['total_pl_jpy']:+,.0f}JPY — Losing pair. Re-examine thesis")
 
     # Hedge warning
     if h["hedge_trades"]["total_trades"] > 0:
         ht = h["hedge_trades"]
         if ht["total_pl_jpy"] < -50:
-            print(f"  ⚠️  ヘッジ損失={ht['total_pl_jpy']:+,.0f}円 — ヘッジが効いていない")
+            print(f"  ⚠️  Hedge loss={ht['total_pl_jpy']:+,.0f}JPY — Hedge is not working")
 
     # Direction imbalance
     long_n = by_direction.get("LONG", {}).get("total_trades", 0)
@@ -471,9 +471,9 @@ def main():
     if total_n > 5:
         ratio = long_n / total_n
         if ratio > 0.75:
-            print(f"  ⚠️  LONG偏重 ({ratio:.0%}) — SHORT機会を探せ")
+            print(f"  ⚠️  LONG bias ({ratio:.0%}) — Look for SHORT opportunities")
         elif ratio < 0.25:
-            print(f"  ⚠️  SHORT偏重 ({1-ratio:.0%}) — LONG機会を探せ")
+            print(f"  ⚠️  SHORT bias ({1-ratio:.0%}) — Look for LONG opportunities")
 
     print()
 

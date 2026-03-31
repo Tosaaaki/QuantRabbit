@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slack チャンネルの最新メッセージを読む（urllib版）
+"""Read latest messages from a Slack channel (urllib version)
 Usage: python3 tools/slack_read.py [--limit N] [--channel CHANNEL_ID] [--user-only] [--after TS] [--json]
 """
 import urllib.request, urllib.parse, json, sys, os
@@ -55,9 +55,9 @@ if __name__ == '__main__':
     parser.add_argument('--channel', type=str, default=None)
     parser.add_argument('--json', action='store_true', help='Output raw JSON')
     parser.add_argument('--user-only', action='store_true',
-                        help='Bot投稿(U0AP9UF8XL0)を除外し、人間の投稿のみ表示')
+                        help='Exclude bot posts (U0AP9UF8XL0) and show only human posts')
     parser.add_argument('--after', type=str, default=None,
-                        help='このタイムスタンプより後のメッセージのみ取得（Slack ts形式）')
+                        help='Only fetch messages after this timestamp (Slack ts format)')
     args = parser.parse_args()
 
     messages = read_messages(channel_id=args.channel, limit=args.limit, after=args.after)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Slack チャンネルにメッセージを投稿する（urllib版）
-Usage: python3 tools/slack_post.py "メッセージ" [--channel CHANNEL_ID] [--thread TS]
+"""Post a message to a Slack channel (urllib version)
+Usage: python3 tools/slack_post.py "message" [--channel CHANNEL_ID] [--thread TS]
 """
 import urllib.request, json, sys, os
 
@@ -47,9 +47,9 @@ def post_message(text, channel_id=None, thread_ts=None):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('message', type=str, help='投稿するメッセージ')
+    parser.add_argument('message', type=str, help='Message to post')
     parser.add_argument('--channel', type=str, default=None)
-    parser.add_argument('--thread', type=str, default=None, help='スレッドのts')
+    parser.add_argument('--thread', type=str, default=None, help='Thread ts')
     args = parser.parse_args()
 
     result = post_message(args.message, channel_id=args.channel, thread_ts=args.thread)

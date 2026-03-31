@@ -1,6 +1,6 @@
 """
 QuantRabbit Trading Memory — Recall (Search & Retrieve)
-ベクトル検索 + キーワード検索のハイブリッドで過去の記憶を引く
+Retrieve past memories via hybrid vector search + keyword search
 """
 import sys
 from schema import get_conn, serialize_f32, fetchall_dict, fetchone_val
@@ -16,15 +16,15 @@ def get_model():
 
 
 def embed_query(text: str) -> list[float]:
-    """Ruri v3 のクエリ用プレフィックス付き"""
+    """With Ruri v3 query prefix"""
     model = get_model()
-    vec = model.encode([f"クエリ: {text}"], normalize_embeddings=True)
+    vec = model.encode([f"query: {text}"], normalize_embeddings=True)
     return vec[0].tolist()
 
 
 def vector_search(query: str, top_k: int = 5, pair: str | None = None,
                    chunk_type: str | None = None) -> list[dict]:
-    """ベクトル類似度検索"""
+    """Vector similarity search"""
     conn = get_conn()
     qvec = embed_query(query)
 
@@ -65,7 +65,7 @@ def vector_search(query: str, top_k: int = 5, pair: str | None = None,
 
 def keyword_search(keyword: str, top_k: int = 10, pair: str | None = None,
                     chunk_type: str | None = None) -> list[dict]:
-    """キーワード全文検索（LIKE）"""
+    """Keyword full-text search (LIKE)"""
     conn = get_conn()
 
     where_clauses = ["(content LIKE ? OR question LIKE ?)"]
@@ -90,7 +90,7 @@ def keyword_search(keyword: str, top_k: int = 10, pair: str | None = None,
 
 def hybrid_search(query: str, top_k: int = 5, pair: str | None = None,
                    chunk_type: str | None = None) -> list[dict]:
-    """ベクトル + キーワードのハイブリッド検索（重複排除）"""
+    """Hybrid vector + keyword search (deduplicated)"""
     vec_results = vector_search(query, top_k=top_k, pair=pair, chunk_type=chunk_type)
     kw_results = keyword_search(query, top_k=top_k, pair=pair, chunk_type=chunk_type)
 
@@ -113,9 +113,9 @@ def hybrid_search(query: str, top_k: int = 5, pair: str | None = None,
 
 
 def format_results(results: list[dict]) -> str:
-    """検索結果を読みやすい文字列に"""
+    """Format search results into a readable string"""
     if not results:
-        return "記憶なし"
+        return "No memories found"
 
     lines = []
     for i, r in enumerate(results, 1):
@@ -137,7 +137,7 @@ def format_results(results: list[dict]) -> str:
 
 
 def stats():
-    """DBの統計情報"""
+    """DB statistics"""
     conn = get_conn()
     total = fetchone_val(conn, "SELECT COUNT(*) FROM chunks")
     by_type = fetchall_dict(conn, "SELECT chunk_type, COUNT(*) as cnt FROM chunks GROUP BY chunk_type ORDER BY cnt DESC")

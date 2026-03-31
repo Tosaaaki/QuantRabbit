@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Adaptive Technicals — 状況に応じた指標を自動選択して表示
+Adaptive Technicals — Automatically selects and displays indicators suited to the current situation
 
-固定9個じゃない。84個の武器庫から、今の状況に効くものを出す。
+Not a fixed set of 9. Draws from an arsenal of 84, picking what works for the situation now.
 
 Usage:
-    python3 tools/adaptive_technicals.py          # 全ペア
-    python3 tools/adaptive_technicals.py USD_JPY  # 1ペア詳細
+    python3 tools/adaptive_technicals.py          # all pairs
+    python3 tools/adaptive_technicals.py USD_JPY  # single pair detail
 """
 import json
 import os
@@ -25,7 +25,7 @@ def load_technicals(pair: str) -> dict:
 
 
 def classify_situation(tf_data: dict) -> list[str]:
-    """ADX/BBW/RSI等からその時間足の状況を分類。複数の状況が重複しうる。"""
+    """Classify the situation for this timeframe from ADX/BBW/RSI etc. Multiple situations can overlap."""
     situations = []
     adx = tf_data.get("adx", 0)
     bbw = tf_data.get("bbw", 999)
@@ -58,7 +58,7 @@ def classify_situation(tf_data: dict) -> list[str]:
 
 
 def format_base(d: dict) -> str:
-    """ベース指標（必ず表示）"""
+    """Base indicators (always shown)."""
     return (
         f"RSI={d.get('rsi', 0):.0f} "
         f"ADX={d.get('adx', 0):.0f} "
@@ -68,7 +68,7 @@ def format_base(d: dict) -> str:
 
 
 def format_adaptive(d: dict, situations: list[str]) -> str:
-    """状況に応じた追加指標"""
+    """Additional indicators selected for the current situation."""
     parts = []
 
     if "strong_trend" in situations:
@@ -98,7 +98,7 @@ def format_adaptive(d: dict, situations: list[str]) -> str:
         )
 
     if "squeeze" in situations:
-        parts.append(f"[SQUEEZE] BBW={d.get('bbw', 0):.5f} ← ブレイク警戒")
+        parts.append(f"[SQUEEZE] BBW={d.get('bbw', 0):.5f} <- breakout alert")
 
     if "reversal" in situations:
         parts.append(
@@ -111,32 +111,32 @@ def format_adaptive(d: dict, situations: list[str]) -> str:
         parts.append(
             f"[EXTREME] RSI={d.get('rsi', 0):.0f} "
             f"VWAP_gap={d.get('vwap_gap', 0):.1f}pip "
-            f"BB_pos={'上抜' if d.get('close', 0) > d.get('bb_upper', 999) else '下抜' if d.get('close', 0) < d.get('bb_lower', 0) else 'BB内'}"
+            f"BB_pos={'above BB' if d.get('close', 0) > d.get('bb_upper', 999) else 'below BB' if d.get('close', 0) < d.get('bb_lower', 0) else 'inside BB'}"
         )
 
-    # Ichimoku（雲との位置関係は常に有用）
+    # Ichimoku (position relative to cloud is always useful)
     ichi = d.get("ichimoku_cloud_pos", None)
     if ichi is not None and ichi != 0:
-        parts.append(f"Ichi雲={ichi:.0f}pip{'上' if ichi > 0 else '下'}")
+        parts.append(f"Ichi_cloud={ichi:.0f}pip {'above' if ichi > 0 else 'below'}")
 
     return " | ".join(parts) if parts else ""
 
 
 def format_alerts(pair: str, all_tfs: dict) -> list[str]:
-    """TF横断のアラート（ペア間関係性を見るため）"""
+    """Cross-TF alerts (for detecting inter-pair relationships)."""
     alerts = []
     for tf_name, d in all_tfs.items():
         sr = d.get("stoch_rsi", 0.5)
         if sr <= 0.01:
-            alerts.append(f"⚡ {tf_name} StochRSI=0.0 (売られすぎ極限)")
+            alerts.append(f"⚡ {tf_name} StochRSI=0.0 (extreme oversold)")
         elif sr >= 0.99:
-            alerts.append(f"⚡ {tf_name} StochRSI=1.0 (買われすぎ極限)")
+            alerts.append(f"⚡ {tf_name} StochRSI=1.0 (extreme overbought)")
         if abs(d.get("cci", 0)) > 200:
-            alerts.append(f"⚡ {tf_name} CCI={d.get('cci', 0):.0f} (極端)")
+            alerts.append(f"⚡ {tf_name} CCI={d.get('cci', 0):.0f} (extreme)")
         if d.get("div_rsi_score", 0) > 0 or d.get("div_macd_score", 0) > 0:
-            alerts.append(f"⚡ {tf_name} ダイバージェンス検出")
+            alerts.append(f"⚡ {tf_name} divergence detected")
         if d.get("bbw", 999) < 0.001:
-            alerts.append(f"⚡ {tf_name} BB超squeeze BBW={d.get('bbw', 0):.5f}")
+            alerts.append(f"⚡ {tf_name} extreme BB squeeze BBW={d.get('bbw', 0):.5f}")
     return alerts
 
 
@@ -154,14 +154,14 @@ def main():
         print(f"  {pair}")
         print(f"{'='*60}")
 
-        # アラート（最優先で表示）
+        # Alerts (highest priority — shown first)
         alerts = format_alerts(pair, tfs)
         if alerts:
             for a in alerts:
                 print(f"  {a}")
             print()
 
-        # TF別表示
+        # Per-TF display
         for tf_name in ["H4", "H1", "M5", "M1"]:
             d = tfs.get(tf_name)
             if not d:
@@ -178,7 +178,7 @@ def main():
                 print(f"    +Add: {adaptive}")
 
             if detail_mode:
-                # 詳細モード: 全指標表示
+                # Detail mode: show all indicators
                 print(f"    Full: close={d.get('close', 0)} ATR={d.get('atr_pips', 0):.1f}pip "
                       f"MACD={d.get('macd', 0):.5f} MACD_H={d.get('macd_hist', 0):.5f} "
                       f"CCI={d.get('cci', 0):.0f} ROC5={d.get('roc5', 0):.3f} "

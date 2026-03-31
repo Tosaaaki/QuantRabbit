@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Profit Check — 保有ポジションの「今、利確すべきか」をデータで問う
+Profit Check — Ask the data whether to take profit on open positions right now.
 
-pretrade_checkのTP版。判断はトレーダーがする。道具は事実を出すだけ。
+The TP counterpart to pretrade_check. The trader makes the decision; the tool just presents facts.
 
 Usage:
-    python3 tools/profit_check.py              # 含み益ポジ全件チェック
-    python3 tools/profit_check.py --all        # 含み損も含めて全件チェック
+    python3 tools/profit_check.py              # Check all positions with unrealized profit
+    python3 tools/profit_check.py --all        # Check all positions including unrealized losses
 """
 from __future__ import annotations
 import json
@@ -51,11 +51,11 @@ def load_technicals(pair: str) -> dict:
 
 
 def get_peak_from_state(pair: str) -> dict | None:
-    """state.mdからピーク記録を抽出"""
+    """Extract peak record from state.md"""
     if not STATE_PATH.exists():
         return None
     content = STATE_PATH.read_text()
-    # ピーク: +3,200円 @1.33620 のパターンを探す
+    # Look for patterns like: peak: +3,200 JPY @1.33620
     lines = content.split("\n")
     in_section = False
     peak_info = {}
@@ -76,7 +76,7 @@ def get_peak_from_state(pair: str) -> dict | None:
 
 
 def classify_momentum(d: dict) -> str:
-    """M5モメンタムの方向と強さを判定"""
+    """Determine M5 momentum direction and strength"""
     macd_hist = d.get("macd_hist", 0)
     stoch_rsi = d.get("stoch_rsi", 0.5)
     ema_slope = d.get("ema_slope_5", 0)
@@ -90,15 +90,15 @@ def classify_momentum(d: dict) -> str:
 
     # StochRSI position
     if stoch_rsi > 0.8:
-        signals.append(f"StRSI={stoch_rsi:.2f}(過熱)")
+        signals.append(f"StRSI={stoch_rsi:.2f}(overbought)")
     elif stoch_rsi < 0.2:
-        signals.append(f"StRSI={stoch_rsi:.2f}(売られ)")
+        signals.append(f"StRSI={stoch_rsi:.2f}(oversold)")
     else:
         signals.append(f"StRSI={stoch_rsi:.2f}")
 
     # EMA slope
     if abs(ema_slope) < 0.0001:
-        signals.append("slope横ばい")
+        signals.append("slope=flat")
     elif ema_slope > 0:
         signals.append("slope↑")
     else:
@@ -108,7 +108,7 @@ def classify_momentum(d: dict) -> str:
 
 
 def check_cross_pair_correlation(pair: str, side: str, all_technicals: dict) -> list[str]:
-    """7ペア相関チェック"""
+    """7-pair correlation check"""
     notes = []
     # Extract currency from pair
     base, quote = pair.split("_")
@@ -129,24 +129,24 @@ def check_cross_pair_correlation(pair: str, side: str, all_technicals: dict) -> 
         # Same base currency moving same direction = currency-level move
         if other_base == base:
             if side == "LONG" and other_slope > 0.0002:
-                notes.append(f"{other_pair}も{base}買い方向(slope={other_slope:.4f})")
+                notes.append(f"{other_pair} also {base} bid direction (slope={other_slope:.4f})")
             elif side == "SHORT" and other_slope < -0.0002:
-                notes.append(f"{other_pair}も{base}売り方向(slope={other_slope:.4f})")
+                notes.append(f"{other_pair} also {base} offer direction (slope={other_slope:.4f})")
             elif side == "LONG" and other_slope < -0.0002:
-                notes.append(f"⚠ {other_pair}は{base}売り方向(slope={other_slope:.4f}) = 逆行")
+                notes.append(f"⚠ {other_pair} is {base} offer direction (slope={other_slope:.4f}) = adverse")
 
         # Same quote currency
         if other_quote == quote:
             if side == "LONG" and other_slope > 0.0002:
-                notes.append(f"{other_pair}も{quote}売り方向 = 相関一致")
+                notes.append(f"{other_pair} also {quote} offer direction = correlation aligned")
             elif side == "SHORT" and other_slope < -0.0002:
-                notes.append(f"{other_pair}も{quote}買い方向 = 相関一致")
+                notes.append(f"{other_pair} also {quote} bid direction = correlation aligned")
 
     return notes[:4]  # Max 4 notes
 
 
 def check_sr_distance(d: dict) -> str:
-    """S/R距離"""
+    """S/R distance"""
     parts = []
     cluster_high = d.get("cluster_high_gap", None)
     cluster_low = d.get("cluster_low_gap", None)
@@ -154,19 +154,19 @@ def check_sr_distance(d: dict) -> str:
     swing_low = d.get("swing_dist_low", None)
 
     if cluster_high is not None and 0 < cluster_high < 10:
-        parts.append(f"レジ{cluster_high:.1f}pip近")
+        parts.append(f"res {cluster_high:.1f}pip close")
     if cluster_low is not None and 0 < cluster_low < 10:
-        parts.append(f"サポ{cluster_low:.1f}pip近")
+        parts.append(f"sup {cluster_low:.1f}pip close")
     if swing_high is not None:
-        parts.append(f"swing高{swing_high:.1f}pip")
+        parts.append(f"swing high {swing_high:.1f}pip")
     if swing_low is not None:
-        parts.append(f"swing安{swing_low:.1f}pip")
+        parts.append(f"swing low {swing_low:.1f}pip")
 
-    return " | ".join(parts) if parts else "S/Rデータなし"
+    return " | ".join(parts) if parts else "no S/R data"
 
 
 def assess_position(trade: dict, all_technicals: dict) -> dict:
-    """1ポジションの利確判定"""
+    """Take profit assessment for a single position"""
     pair = trade["instrument"]
     units = int(trade["currentUnits"])
     side = "LONG" if units > 0 else "SHORT"
@@ -215,21 +215,21 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
 
     # 1. ATR ratio
     if atr_ratio >= 1.5:
-        result["signals"].append(f"ATR比 {atr_ratio:.1f}x ← 十分な利幅")
+        result["signals"].append(f"ATR ratio {atr_ratio:.1f}x ← sufficient profit margin")
         take_signals += 2
     elif atr_ratio >= 1.0:
-        result["signals"].append(f"ATR比 {atr_ratio:.1f}x ← トリガー到達")
+        result["signals"].append(f"ATR ratio {atr_ratio:.1f}x ← trigger reached")
         take_signals += 1
     elif atr_ratio >= 0.5:
-        result["signals"].append(f"ATR比 {atr_ratio:.1f}x ← まだ伸びる余地")
+        result["signals"].append(f"ATR ratio {atr_ratio:.1f}x ← room to run")
     else:
-        result["signals"].append(f"ATR比 {atr_ratio:.1f}x ← ATR未達")
+        result["signals"].append(f"ATR ratio {atr_ratio:.1f}x ← below ATR")
         hold_signals += 1
 
     # 2. M5 Momentum
     if m5:
         momentum = classify_momentum(m5)
-        result["signals"].append(f"M5モメンタム: {momentum}")
+        result["signals"].append(f"M5 momentum: {momentum}")
 
         macd_hist = m5.get("macd_hist", 0)
         stoch_rsi = m5.get("stoch_rsi", 0.5)
@@ -237,17 +237,17 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
         # Momentum fading for longs
         if side == "LONG":
             if macd_hist < 0 and stoch_rsi > 0.8:
-                result["signals"].append("⚠ M5 MACD反転+過熱 = モメンタム減衰")
+                result["signals"].append("⚠ M5 MACD reversal+overbought = momentum fading")
                 take_signals += 2
             elif stoch_rsi > 0.9:
-                result["signals"].append("⚠ M5 StochRSI>0.9 = 過熱圏")
+                result["signals"].append("⚠ M5 StochRSI>0.9 = overbought zone")
                 take_signals += 1
         else:  # SHORT
             if macd_hist > 0 and stoch_rsi < 0.2:
-                result["signals"].append("⚠ M5 MACD反転+売られすぎ = モメンタム減衰")
+                result["signals"].append("⚠ M5 MACD reversal+oversold = momentum fading")
                 take_signals += 2
             elif stoch_rsi < 0.1:
-                result["signals"].append("⚠ M5 StochRSI<0.1 = 売られすぎ")
+                result["signals"].append("⚠ M5 StochRSI<0.1 = oversold")
                 take_signals += 1
 
     # 3. H1 structure
@@ -255,26 +255,26 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
         adx = h1.get("adx", 0)
         plus_di = h1.get("plus_di", 0)
         minus_di = h1.get("minus_di", 0)
-        h1_trend = "DI+優位" if plus_di > minus_di else "DI-優位"
+        h1_trend = "DI+ dominant" if plus_di > minus_di else "DI- dominant"
 
         # Is H1 aligned with position?
         h1_aligned = (side == "LONG" and plus_di > minus_di) or \
                      (side == "SHORT" and minus_di > plus_di)
 
         if h1_aligned and adx > 25:
-            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} テーゼ健在")
+            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} thesis intact")
             hold_signals += 2
         elif h1_aligned:
-            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} テーゼ方向一致(弱)")
+            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} thesis direction aligned (weak)")
             hold_signals += 1
         else:
-            result["signals"].append(f"⚠ H1 ADX={adx:.0f} {h1_trend} テーゼ逆行")
+            result["signals"].append(f"⚠ H1 ADX={adx:.0f} {h1_trend} thesis adverse")
             take_signals += 2
 
         # H1 divergence against position
         div_score = h1.get("div_rsi_score", 0) + h1.get("div_macd_score", 0)
         if div_score > 0:
-            result["signals"].append(f"⚠ H1 ダイバージェンス検出(score={div_score:.1f})")
+            result["signals"].append(f"⚠ H1 divergence detected (score={div_score:.1f})")
             take_signals += 1
 
         # ADX < 20 = range → BB mid is natural TP
@@ -283,7 +283,7 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
             if bb_mid:
                 bb_dist = (bb_mid - current_price) * pip_mult if side == "LONG" else (current_price - bb_mid) * pip_mult
                 if 0 < bb_dist < 5:
-                    result["signals"].append(f"⚠ H1レンジ(ADX<20) + BB mid残{bb_dist:.1f}pip = 自然なTP")
+                    result["signals"].append(f"⚠ H1 range (ADX<20) + BB mid {bb_dist:.1f}pip away = natural TP")
                     take_signals += 2
 
     # 4. Cross-pair correlation
@@ -291,15 +291,15 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
     if corr_notes:
         for note in corr_notes:
             result["signals"].append(note)
-            if "逆行" in note:
+            if "adverse" in note:
                 take_signals += 1
-            elif "一致" in note or "方向" in note:
+            elif "aligned" in note or "direction" in note:
                 hold_signals += 1
 
     # 5. S/R distance
     if h1:
         sr = check_sr_distance(h1)
-        if "近" in sr:
+        if "close" in sr:
             result["signals"].append(f"S/R: {sr}")
             take_signals += 1
         else:
@@ -312,7 +312,7 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
         if upl > 0 and peak_yen > 0:
             drawdown = peak_yen - upl
             if drawdown > peak_yen * 0.3:
-                result["signals"].append(f"⚠ ピーク{peak_yen:+,.0f}円から{drawdown:,.0f}円戻し({drawdown/peak_yen*100:.0f}%)")
+                result["signals"].append(f"⚠ Peak {peak_yen:+,.0f} JPY, pulled back {drawdown:,.0f} JPY ({drawdown/peak_yen*100:.0f}%)")
                 take_signals += 2
 
     # --- Recommendation ---
@@ -325,7 +325,7 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
     elif hold_signals >= 3:
         result["recommendation"] = "HOLD"
     elif atr_ratio < 0.5:
-        result["recommendation"] = "HOLD(ATR未達)"
+        result["recommendation"] = "HOLD(below ATR)"
     else:
         result["recommendation"] = "REVIEW"
 
@@ -336,12 +336,12 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
 
 
 def format_result(r: dict) -> str:
-    """1ポジションの結果をフォーマット"""
+    """Format the result for a single position"""
     icon = {
         "TAKE_PROFIT": "🔴",
         "HALF_TP": "🟡",
         "HOLD": "🟢",
-        "HOLD(ATR未達)": "🟢",
+        "HOLD(below ATR)": "🟢",
         "REVIEW": "🟡",
         "LOSS_POSITION": "⚪",
     }.get(r["recommendation"], "⚪")
@@ -349,8 +349,8 @@ def format_result(r: dict) -> str:
     lines = []
     lines.append(
         f"{icon} {r['pair']} {r['side']} {r['units']}u | "
-        f"UPL: {r['upl']:+,.0f}円 ({r['pip_distance']:+.1f}pip) | "
-        f"ATR比: {r['atr_ratio']:.1f}x (ATR={r['atr_pips']:.1f}pip) | "
+        f"UPL: {r['upl']:+,.0f} JPY ({r['pip_distance']:+.1f}pip) | "
+        f"ATR ratio: {r['atr_ratio']:.1f}x (ATR={r['atr_pips']:.1f}pip) | "
         f"→ {r['recommendation']}"
     )
     for sig in r["signals"]:
@@ -375,7 +375,7 @@ def main():
         sys.exit(1)
 
     if not trades:
-        print("=== PROFIT CHECK: ポジションなし ===")
+        print("=== PROFIT CHECK: no open positions ===")
         return
 
     # Load all technicals
@@ -395,7 +395,7 @@ def main():
     print()
 
     # Sort: TAKE_PROFIT first, then HALF_TP, then REVIEW, then HOLD
-    priority = {"TAKE_PROFIT": 0, "HALF_TP": 1, "REVIEW": 2, "HOLD": 3, "HOLD(ATR未達)": 4, "LOSS_POSITION": 5}
+    priority = {"TAKE_PROFIT": 0, "HALF_TP": 1, "REVIEW": 2, "HOLD": 3, "HOLD(below ATR)": 4, "LOSS_POSITION": 5}
     results.sort(key=lambda r: priority.get(r["recommendation"], 3))
 
     for r in results:
@@ -405,9 +405,9 @@ def main():
     # Summary
     tp_count = sum(1 for r in results if r["recommendation"] in ("TAKE_PROFIT", "HALF_TP"))
     if tp_count > 0:
-        print(f"--- {tp_count}件の利確候補あり。デフォルトは利確。持つなら根拠を言え。 ---")
+        print(f"--- {tp_count} take profit candidate(s). Default is to take profit. Justify holding. ---")
     else:
-        print(f"--- 利確候補なし。全ポジHOLD。 ---")
+        print(f"--- No take profit candidates. All positions HOLD. ---")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """
 QuantRabbit Trading Memory — Structured Parser
-trades.md / notes.md から構造化データ（trades / user_calls / market_events）を抽出
+Extract structured data (trades / user_calls / market_events) from trades.md / notes.md
 """
 import re
 import json
@@ -9,7 +9,7 @@ import json
 # --- Trade Parser ---
 
 def parse_trades(text: str, session_date: str) -> list[dict]:
-    """trades.md からトレードレコードを構造化抽出"""
+    """Structured extraction of trade records from trades.md"""
     trades = []
     sections = re.split(r'\n(?=###\s)', text)
 
@@ -23,13 +23,13 @@ def parse_trades(text: str, session_date: str) -> list[dict]:
             continue
         header = header_match.group(1)
 
-        # トレードヘッダーのパターン: "GBP_USD SHORT 2000u #464922 — 損切り -3,832円"
+        # Trade header pattern: "GBP_USD SHORT 2000u #464922 — stop-loss -3,832JPY"
         trade_match = re.match(
             r'(\w+_\w+)\s+(LONG|SHORT)\s+(\d+)u\s+#(\d+).*?([—\-])\s*(.+)',
             header
         )
         if not trade_match:
-            # 半利確パターン: "GBP_USD LONG 1500u #464993 半利確 750u — +390.55円確定"
+            # Half profit-take pattern: "GBP_USD LONG 1500u #464993 half-TP 750u — +390.55JPY confirmed"
             trade_match2 = re.match(
                 r'(\w+_\w+)\s+(LONG|SHORT)\s+(\d+)u\s+#(\d+)\s+(.+)',
                 header
@@ -48,19 +48,19 @@ def parse_trades(text: str, session_date: str) -> list[dict]:
             trade_id = trade_match.group(4)
             rest = trade_match.group(6)
 
-        # P/L 抽出
+        # Extract P/L
         pl = _extract_pl(rest) or _extract_pl(section)
 
-        # 価格抽出
+        # Extract price
         entry_price = _extract_float(section, r'エントリー[:\s]*(\d+\.\d+)')
         if not entry_price:
             entry_price = _extract_float(section, r'@\s*(\d+\.\d+)')
         exit_price = _extract_float(section, r'(?:クローズ|TP約定|損切り)[:\s]*(\d+\.\d+)')
 
-        # 時間抽出
+        # Extract time
         hour = _extract_hour(section)
 
-        # テクニカル値抽出
+        # Extract technical values
         h1_adx = _extract_float(section, r'H1\s+ADX[=:]?(\d+\.?\d*)')
         h1_trend = _extract_trend(section, 'H1')
         m5_adx = _extract_float(section, r'M5\s+ADX[=:]?(\d+\.?\d*)')
@@ -70,20 +70,20 @@ def parse_trades(text: str, session_date: str) -> list[dict]:
         rsi = _extract_float(section, r'RSI[=:]?(\d+\.?\d*)')
         stoch_rsi = _extract_float(section, r'StochRSI[=:]?(\d+\.?\d*)')
 
-        # マーケットコンテキスト
+        # Market context
         regime = _detect_regime(section)
         headlines = _extract_headlines(section)
         event_risk = _detect_event_risk(section)
         vix = _extract_float(section, r'VIX[=:]?(\d+\.?\d*)')
         dxy = _extract_float(section, r'DXY[=:]?(\d+\.?\d*)')
 
-        # 行動分析
+        # Behavior analysis
         entry_type = _detect_entry_type(section)
         had_sl = 1 if re.search(r'SL[=:]?\d|ストップ|stop.?loss', section, re.I) else 0
         if re.search(r'SLなし|SL未設定|SL撤廃', section):
             had_sl = 0
 
-        # 教訓抽出
+        # Extract lessons
         lesson = _extract_lesson(section)
         reason = _extract_reason(section)
 
@@ -121,10 +121,10 @@ def parse_trades(text: str, session_date: str) -> list[dict]:
 # --- User Call Parser ---
 
 def parse_user_calls(text: str, session_date: str) -> list[dict]:
-    """notes.md からユーザーの相場読みを構造化抽出"""
+    """Structured extraction of user's market reads from notes.md"""
     calls = []
 
-    # "ユーザー読み" or "ユーザー指示" セクション
+    # "User read" or "User instruction" sections
     sections = re.split(r'\n(?=##\s)', text)
 
     for section in sections:
@@ -132,15 +132,15 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
         if not section:
             continue
 
-        # ユーザーの相場読みを検出
+        # Detect user's market read
         header_match = re.match(r'##\s+(.+)', section)
         if not header_match:
             continue
         header = header_match.group(1)
 
-        # 相場読み系のセクションを検出
+        # Detect market-read type sections
         is_call = any(kw in header for kw in ['ユーザー読み', 'ユーザー指示', 'ユーザー', 'USER'])
-        # 直接引用パターン（「」 or "ユーザー:" プレフィックス）
+        # Direct quote pattern (「」 or "User:" prefix)
         quotes = re.findall(r'「(.+?)」', section)
         # 「」がなくても "ユーザー:" や "USER:" のパターンでキャプチャ
         if not quotes:
@@ -150,7 +150,7 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
         if not is_call and not quotes:
             continue
 
-        # 方向性のある発言を抽出
+        # Extract directional statements
         for quote in quotes:
             direction = _detect_direction(quote)
             if not direction:
@@ -160,7 +160,7 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
             price = _extract_float(section, r'(?:EUR_USD|GBP_USD|USD_JPY|AUD_USD)\s+(\d+\.\d+)')
             timestamp = _extract_timestamp(header)
 
-            # コンディション抽出
+            # Extract conditions
             conditions = {}
             sr = _extract_float(section, r'StochRSI[=:]?(\d+\.?\d*)')
             if sr is not None:
@@ -175,10 +175,10 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
             if h1t:
                 conditions['h1_trend'] = h1t
 
-            # アウトカム検出（同セクション内 or 直後のセクション）
+            # Detect outcome (within same section or immediately following section)
             outcome, pl_result = _detect_outcome(section)
 
-            # 確信度
+            # Confidence level
             confidence = 'strong'
             if any(w in quote for w in ['かも', 'そう', 'っぽい']):
                 confidence = 'tentative'
@@ -208,10 +208,10 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
 # --- Market Event Parser ---
 
 def parse_market_events(text: str, session_date: str) -> list[dict]:
-    """trades.md / notes.md からマーケットイベント（スパイク等）を抽出"""
+    """Extract market events (spikes etc.) from trades.md / notes.md"""
     events = []
 
-    # スパイク検出
+    # Spike detection
     spike_matches = re.finditer(
         r'(\d+\.?\d*)\s*pip\s*(?:の|スパイク|巨大|急騰|急落)',
         text, re.I
@@ -219,9 +219,9 @@ def parse_market_events(text: str, session_date: str) -> list[dict]:
     for m in spike_matches:
         pips = float(m.group(1))
         if pips < 10:
-            continue  # 小さいのは無視
+            continue  # Ignore small moves
 
-        # 周辺コンテキストから詳細抽出
+        # Extract details from surrounding context
         start = max(0, m.start() - 500)
         end = min(len(text), m.end() + 500)
         context = text[start:end]
@@ -246,7 +246,7 @@ def parse_market_events(text: str, session_date: str) -> list[dict]:
             'impact': 'high' if pips > 30 else 'medium' if pips > 15 else 'low',
         })
 
-    # ヘッドライン駆動のイベント（スパイクとして検出されない場合）
+    # Headline-driven events (when not detected as spike)
     headline_patterns = [
         r'ヘッドライン.{0,50}(?:スパイク|急|暴)',
         r'(?:Iran|イラン|ホルムズ|FOMC|雇用統計|CPI).{0,100}(?:→|が|で)',
@@ -257,7 +257,7 @@ def parse_market_events(text: str, session_date: str) -> list[dict]:
             end = min(len(text), m.end() + 300)
             context = text[start:end]
 
-            # 既にスパイクとして検出されてたらスキップ
+            # Skip if already detected as a spike
             pair = _extract_pair_from_text(context)
             if any(e['pairs_affected'] == pair and e['session_date'] == session_date for e in events):
                 continue
@@ -300,7 +300,7 @@ def _extract_hour(text: str) -> int | None:
 
 
 def _extract_trend(text: str, tf: str) -> str | None:
-    """TF (H1/M5等) のトレンド方向を抽出"""
+    """Extract trend direction for TF (H1/M5 etc.)"""
     patterns = [
         rf'{tf}\s+(?:ADX[=:]\d+\s+)?(?:DI\+[=:]\d+[^)]*\s+)?(BULL|BEAR|FLAT)',
         rf'{tf}[^.]*?(BULL|BEAR)',
@@ -325,7 +325,7 @@ def _detect_regime(text: str) -> str | None:
         return 'quiet'
     if re.search(r'薄商い|流動性|thin|holiday', text, re.I):
         return 'thin_liquidity'
-    # ADX値から判定（ADX>30 = trending）
+    # Determine from ADX value (ADX>30 = trending)
     adx_match = re.search(r'ADX[=:]?\s*(\d+\.?\d*)', text)
     if adx_match:
         adx_val = float(adx_match.group(1))
@@ -337,7 +337,7 @@ def _detect_regime(text: str) -> str | None:
         return 'trending'
     if re.search(r'squeeze|スクイーズ|ブレイク待ち', text, re.I):
         return 'squeeze'
-    return None  # 判定不能はNone（'quiet'で上書きしない）
+    return None  # Undeterminable returns None (don't overwrite with 'quiet')
 
 
 def _extract_headlines(text: str) -> str | None:
@@ -386,20 +386,20 @@ def _detect_entry_type(text: str) -> str:
 
 
 def _extract_lesson(text: str) -> str | None:
-    # 1. 「教訓:」「反省:」パターン（bold有無問わず）
+    # 1. "Lesson:" "Reflection:" pattern (with or without bold)
     lessons = re.findall(r'(?:教訓|反省)[:\s：]*\*?\*?(.+?)(?:\*\*|\n|$)', text)
     if lessons:
         return ' / '.join(l.strip() for l in lessons[:3])
-    # 2. bold内にキーワードがある
+    # 2. Keywords inside bold text
     bold = re.findall(r'\*\*([^*]+)\*\*', text)
     lesson_bold = [b for b in bold if any(kw in b for kw in ['教訓', '反省', 'ミス', '禁止', 'NG'])]
     if lesson_bold:
         return ' / '.join(lesson_bold[:3])
-    # 3. 行内に学び系キーワードがある（plain text対応）
+    # 3. Learning-type keywords in line (supports plain text)
     learn_lines = re.findall(r'^.*(?:正解|失敗|学び|次回|ミス|注意)[:\s：](.+?)$', text, re.M)
     if learn_lines:
         return ' / '.join(l.strip() for l in learn_lines[:3])
-    # 4. reason=やlesson=形式（live_trade_log由来）
+    # 4. reason= or lesson= format (from live_trade_log)
     reason_lessons = re.findall(r'(?:reason|lesson)[=:]\s*(.+?)(?:\||$|\n)', text)
     if reason_lessons:
         return ' / '.join(l.strip() for l in reason_lessons[:3])

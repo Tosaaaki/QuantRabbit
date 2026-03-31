@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""日次サマリーを #qr-daily に投稿する
+"""Post daily summary to #qr-daily
 Usage: python3 tools/slack_daily_summary.py [--date YYYY-MM-DD]
 """
 import urllib.request, json, sys, os, argparse, glob
@@ -54,7 +54,7 @@ def get_account_summary(cfg):
 
 
 def get_daily_trades(date_str):
-    """trades.mdからその日のエントリー/決済を集計"""
+    """Aggregate entries/closes for the day from trades.md"""
     base = os.path.join(os.path.dirname(__file__), '..', '..', 'collab_trade', 'daily', date_str)
     trades_path = os.path.join(base, 'trades.md')
     if not os.path.exists(trades_path):
@@ -67,7 +67,7 @@ def get_daily_trades(date_str):
 
 
 def get_daily_pl_from_log(date_str):
-    """live_trade_log.txtからその日の確定損益を集計"""
+    """Aggregate realized P&L for the day from live_trade_log.txt"""
     log_path = os.path.join(os.path.dirname(__file__), '..', '..', 'logs', 'live_trade_log.txt')
     if not os.path.exists(log_path):
         return 0.0
@@ -76,14 +76,14 @@ def get_daily_pl_from_log(date_str):
     for line in open(log_path):
         if date_str not in line:
             continue
-        # PLの抽出: PL=+123.45 or PL=-67.89 パターン
+        # Extract P/L: PL=+123.45 or PL=-67.89 pattern
         if 'PL=' in line:
             try:
                 pl_part = line.split('PL=')[1].split()[0].replace('円', '').replace(',', '')
                 total_pl += float(pl_part)
             except (ValueError, IndexError):
                 pass
-        # realized_pl パターン
+        # realized_pl pattern
         elif 'realized_pl' in line:
             try:
                 import re
@@ -96,7 +96,7 @@ def get_daily_pl_from_log(date_str):
 
 
 def get_performance_summary():
-    """trade_performance.pyの結果からWR等を取得"""
+    """Get win rate etc. from trade_performance.py results"""
     import subprocess
     perf_path = os.path.join(os.path.dirname(__file__), 'trade_performance.py')
     try:
@@ -106,7 +106,7 @@ def get_performance_summary():
             cwd=os.path.join(os.path.dirname(__file__), '..', '..')
         )
         output = result.stdout
-        # Overall行を探す
+        # Find the Overall line
         for line in output.split('\n'):
             if 'Overall' in line and 'WR=' in line:
                 return line.strip()
@@ -131,34 +131,34 @@ def main():
     trades_info = get_daily_trades(target_date)
     perf_line = get_performance_summary()
 
-    # サマリー構築
+    # Build summary
     lines = []
     lines.append(f"\U0001f4ca *Daily Summary: {target_date}*")
     lines.append("")
 
-    # 日次損益
+    # Daily P&L
     pl_icon = "\U0001f7e2" if daily_pl >= 0 else "\U0001f534"
-    lines.append(f"{pl_icon} *日次確定損益: {daily_pl:+,.0f}円*")
+    lines.append(f"{pl_icon} *Daily Realized P&L: {daily_pl:+,.0f}JPY*")
 
-    # トレード数
+    # Trade count
     if trades_info and trades_info['has_data']:
-        lines.append(f"\U0001f4dd エントリー: {trades_info['entries']}件 | 決済: {trades_info['closes']}件")
+        lines.append(f"\U0001f4dd Entries: {trades_info['entries']} | Closes: {trades_info['closes']}")
     else:
-        lines.append(f"\U0001f4dd トレード記録なし")
+        lines.append(f"\U0001f4dd No trade records")
 
     lines.append("")
 
-    # 口座状態
-    lines.append("*口座状態:*")
-    lines.append(f"  Balance: {acct['balance']:,.0f}円")
-    lines.append(f"  NAV: {acct['nav']:,.0f}円")
-    lines.append(f"  未実現損益: {acct['unrealized_pl']:+,.0f}円")
-    lines.append(f"  オープン: {acct['open_trades']}本 ({acct['open_positions']}ペア)")
+    # Account status
+    lines.append("*Account Status:*")
+    lines.append(f"  Balance: {acct['balance']:,.0f}JPY")
+    lines.append(f"  NAV: {acct['nav']:,.0f}JPY")
+    lines.append(f"  Unrealized P&L: {acct['unrealized_pl']:+,.0f}JPY")
+    lines.append(f"  Open: {acct['open_trades']} trades ({acct['open_positions']} pairs)")
 
-    # パフォーマンス
+    # Performance
     if perf_line:
         lines.append("")
-        lines.append(f"*通算:* {perf_line}")
+        lines.append(f"*Overall:* {perf_line}")
 
     message = "\n".join(lines)
     channel = cfg.get('slack_channel_daily', cfg.get('slack_channel_id', ''))

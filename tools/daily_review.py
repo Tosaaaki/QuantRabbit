@@ -1,13 +1,13 @@
 """
 QuantRabbit — Daily Review Data Gatherer
-日次振り返りのための事実収集。判断はしない、事実を並べる。
+Fact collection for daily review. No judgment — just lay out the facts.
 
-daily-review scheduled taskが呼ぶ。Claudeはこの出力を読んで
-strategy_memory.mdに振り返りを書く。
+Called by the daily-review scheduled task. Claude reads this output and
+writes the review to strategy_memory.md.
 
-使い方:
+Usage:
   python3 tools/daily_review.py --date 2026-03-27
-  python3 tools/daily_review.py  # 今日
+  python3 tools/daily_review.py  # today
 """
 import json
 import re
@@ -35,7 +35,7 @@ def _load_oanda_config():
 
 
 def fetch_closed_trades(session_date: str) -> list[dict]:
-    """OANDA APIから指定日の決済済みトレードを取得"""
+    """Fetch closed trades for the specified date from the OANDA API"""
     try:
         cfg = _load_oanda_config()
     except Exception:
@@ -115,7 +115,7 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
         pair = entry['pair'] if entry else close.get('instrument', 'UNKNOWN')
         direction = entry['direction'] if entry else ('LONG' if close['pl'] >= 0 else 'SHORT')
 
-        # 保持時間計算
+        # Hold time calculation
         hold_min = None
         if entry and close:
             try:
@@ -140,8 +140,8 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
 
 
 def match_pretrade_outcomes(conn, session_date: str, oanda_trades: list[dict]):
-    """pretrade_outcomesテーブルのplを埋める（予測と結果の紐付け）"""
-    # この日のpretrade_outcomes（plがまだ空のもの）
+    """Fill pl in the pretrade_outcomes table (linking predictions to results)"""
+    # pretrade_outcomes for this day (where pl is still null)
     outcomes = fetchall_dict(conn,
         """SELECT id, pair, direction, pretrade_level
            FROM pretrade_outcomes
@@ -151,7 +151,7 @@ def match_pretrade_outcomes(conn, session_date: str, oanda_trades: list[dict]):
     if not outcomes:
         return 0
 
-    # ペア×方向でグループ化
+    # Group by pair × direction
     from collections import defaultdict
     trade_by_key = defaultdict(list)
     for t in oanda_trades:
@@ -164,7 +164,7 @@ def match_pretrade_outcomes(conn, session_date: str, oanda_trades: list[dict]):
         if not trades_for_key:
             continue
 
-        # 最初の未マッチトレードを紐付け
+        # Link the first unmatched trade
         trade = trades_for_key.pop(0)
         conn.execute(
             "UPDATE pretrade_outcomes SET pl = ?, trade_id = ? WHERE id = ?",
@@ -176,18 +176,18 @@ def match_pretrade_outcomes(conn, session_date: str, oanda_trades: list[dict]):
 
 
 def parse_pretrade_from_trades_md(trades_md_path: Path) -> list[dict]:
-    """trades.mdからpretrade結果付きエントリーを抽出"""
+    """Extract entries with pretrade results from trades.md"""
     if not trades_md_path.exists():
         return []
 
     text = trades_md_path.read_text()
     entries = []
 
-    # テーブル行からpretrade結果を抽出
+    # Extract pretrade results from table rows
     for line in text.split('\n'):
         if 'pretrade' not in line.lower() and 'LOW' not in line and 'MEDIUM' not in line and 'HIGH' not in line:
             continue
-        # ペアと方向を抽出
+        # Extract pair and direction
         pair_match = re.search(r'(USD_JPY|EUR_USD|GBP_USD|AUD_USD|EUR_JPY|GBP_JPY|AUD_JPY)', line)
         dir_match = re.search(r'(LONG|SHORT)', line)
         level_match = re.search(r'(?:pretrade|PRETRADE)[:\s]*(\w+)', line)
@@ -206,28 +206,28 @@ def parse_pretrade_from_trades_md(trades_md_path: Path) -> list[dict]:
 
 
 def generate_report(session_date: str) -> str:
-    """日次レビュー用の構造化レポートを生成"""
+    """Generate a structured report for the daily review"""
     conn = get_conn()
     lines = []
 
     lines.append(f"# Daily Review Report: {session_date}")
     lines.append("")
 
-    # 1. OANDA決済トレード
+    # 1. OANDA closed trades
     oanda_trades = fetch_closed_trades(session_date)
-    lines.append(f"## 決済トレード ({len(oanda_trades)}件)")
+    lines.append(f"## Closed Trades ({len(oanda_trades)} trades)")
     lines.append("")
 
     if not oanda_trades:
-        lines.append("決済トレードなし")
+        lines.append("No closed trades")
     else:
         total_pl = sum(t['pl'] for t in oanda_trades)
         wins = [t for t in oanda_trades if t['pl'] > 0]
         losses = [t for t in oanda_trades if t['pl'] <= 0]
-        lines.append(f"合計P&L: {total_pl:+,.0f}円 | 勝: {len(wins)} 敗: {len(losses)} | 勝率: {len(wins)/len(oanda_trades)*100:.0f}%")
+        lines.append(f"Total P&L: {total_pl:+,.0f} JPY | Win: {len(wins)} Loss: {len(losses)} | Win rate: {len(wins)/len(oanda_trades)*100:.0f}%")
         lines.append("")
 
-        # ペア別集計
+        # Per-pair summary
         from collections import defaultdict
         by_pair = defaultdict(list)
         for t in oanda_trades:
@@ -236,19 +236,19 @@ def generate_report(session_date: str) -> str:
         for pair, trades in sorted(by_pair.items()):
             pair_pl = sum(t['pl'] for t in trades)
             pair_wins = sum(1 for t in trades if t['pl'] > 0)
-            lines.append(f"### {pair}: {pair_pl:+,.0f}円 ({pair_wins}/{len(trades)}勝)")
+            lines.append(f"### {pair}: {pair_pl:+,.0f} JPY ({pair_wins}/{len(trades)} wins)")
             for t in trades:
                 hold = f" ({t['hold_minutes']}min)" if t['hold_minutes'] is not None else ""
-                lines.append(f"  {t['direction']} {t['units']}u → {t['pl']:+,.0f}円{hold}")
+                lines.append(f"  {t['direction']} {t['units']}u → {t['pl']:+,.0f} JPY{hold}")
             lines.append("")
 
-    # 2. pretrade_outcomes マッチング
+    # 2. pretrade_outcomes matching
     matched = match_pretrade_outcomes(conn, session_date, oanda_trades)
     if matched:
-        lines.append(f"## Pretrade Outcomes: {matched}件紐付け済み")
+        lines.append(f"## Pretrade Outcomes: {matched} matched")
         lines.append("")
 
-    # 3. pretrade結果 vs 実際のP&L（この日のフィードバック）
+    # 3. pretrade results vs actual P&L (feedback for this day)
     outcomes = fetchall_dict(conn,
         """SELECT pair, direction, pretrade_level, pretrade_score, pl, pretrade_warnings
            FROM pretrade_outcomes
@@ -257,56 +257,56 @@ def generate_report(session_date: str) -> str:
         (session_date,))
 
     if outcomes:
-        lines.append("## Pretrade予測 vs 結果")
+        lines.append("## Pretrade Prediction vs Result")
         lines.append("")
         for o in outcomes:
             result = "WIN" if o['pl'] > 0 else "LOSS"
-            lines.append(f"  {o['pair']} {o['direction']} pretrade={o['pretrade_level']}(score={o['pretrade_score']}) → {result} {o['pl']:+,.0f}円")
+            lines.append(f"  {o['pair']} {o['direction']} pretrade={o['pretrade_level']}(score={o['pretrade_score']}) → {result} {o['pl']:+,.0f} JPY")
         lines.append("")
 
-        # LOW無視の分析
+        # Analysis of ignored LOW entries
         low_entries = [o for o in outcomes if o['pretrade_level'] == 'LOW']
         if low_entries:
             low_wins = sum(1 for o in low_entries if o['pl'] > 0)
             low_total_pl = sum(o['pl'] for o in low_entries)
-            lines.append(f"### LOW無視エントリー: {len(low_entries)}件")
-            lines.append(f"  勝率: {low_wins}/{len(low_entries)} | 合計: {low_total_pl:+,.0f}円")
+            lines.append(f"### LOW-ignored entries: {len(low_entries)} trades")
+            lines.append(f"  Win rate: {low_wins}/{len(low_entries)} | Total: {low_total_pl:+,.0f} JPY")
             lines.append("")
 
-    # 4. trades.mdからpretrade注記のあるエントリー（DB未登録のものも拾う）
+    # 4. Entries with pretrade notes from trades.md (also catches those not in DB)
     trades_md_path = ROOT / "collab_trade" / "daily" / session_date / "trades.md"
     md_entries = parse_pretrade_from_trades_md(trades_md_path)
     if md_entries:
-        lines.append("## trades.md内のpretrade注記エントリー")
+        lines.append("## Pretrade-annotated entries in trades.md")
         lines.append("")
         for e in md_entries:
             lines.append(f"  {e['pair']} {e['direction']} pretrade={e['pretrade_level']}")
         lines.append("")
 
-    # 5. 勝ちパターン vs 負けパターン
+    # 5. Win patterns vs loss patterns
     if oanda_trades:
-        lines.append("## パターン分析")
+        lines.append("## Pattern Analysis")
         lines.append("")
 
-        # 勝ちの平均保持時間 vs 負けの平均保持時間
+        # Average hold time: wins vs losses
         win_holds = [t['hold_minutes'] for t in wins if t['hold_minutes'] is not None]
         loss_holds = [t['hold_minutes'] for t in losses if t['hold_minutes'] is not None]
         if win_holds:
-            lines.append(f"  勝ちの平均保持: {sum(win_holds)/len(win_holds):.0f}分")
+            lines.append(f"  Avg hold (wins): {sum(win_holds)/len(win_holds):.0f} min")
         if loss_holds:
-            lines.append(f"  負けの平均保持: {sum(loss_holds)/len(loss_holds):.0f}分")
+            lines.append(f"  Avg hold (losses): {sum(loss_holds)/len(loss_holds):.0f} min")
 
-        # 最大勝ち/負け
+        # Best/worst trade
         if wins:
             best = max(wins, key=lambda t: t['pl'])
-            lines.append(f"  最大勝ち: {best['pair']} {best['direction']} {best['pl']:+,.0f}円")
+            lines.append(f"  Best win: {best['pair']} {best['direction']} {best['pl']:+,.0f} JPY")
         if losses:
             worst = min(losses, key=lambda t: t['pl'])
-            lines.append(f"  最大負け: {worst['pair']} {worst['direction']} {worst['pl']:+,.0f}円")
+            lines.append(f"  Worst loss: {worst['pair']} {worst['direction']} {worst['pl']:+,.0f} JPY")
 
         lines.append("")
 
-    # 6. DBのtrades統計（全期間との比較）
+    # 6. DB trades stats (comparison against all-time)
     db_stats = fetchall_dict(conn,
         """SELECT pair, direction,
            COUNT(*) as cnt,
@@ -318,11 +318,11 @@ def generate_report(session_date: str) -> str:
            ORDER BY total_pl""")
 
     if db_stats:
-        lines.append("## 全期間ペア×方向別成績（参考）")
+        lines.append("## All-time stats by pair × direction (reference)")
         lines.append("")
         for s in db_stats:
             wr = s['wins'] / s['cnt'] * 100 if s['cnt'] > 0 else 0
-            lines.append(f"  {s['pair']} {s['direction']}: {s['wins']}/{s['cnt']}勝({wr:.0f}%) 平均{s['avg_pl']:+,.0f}円 合計{s['total_pl']:+,.0f}円")
+            lines.append(f"  {s['pair']} {s['direction']}: {s['wins']}/{s['cnt']} wins ({wr:.0f}%) avg {s['avg_pl']:+,.0f} JPY total {s['total_pl']:+,.0f} JPY")
         lines.append("")
 
     return "\n".join(lines)

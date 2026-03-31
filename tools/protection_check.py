@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Protection Check — 全保有ポジションのTP/SL/Trailing Stop/BE保護状況を評価・推奨
+Protection Check — Evaluate and recommend TP/SL/Trailing Stop/BE protection status for all open positions
 
-各ポジションについて:
-- 現在の保護状況（TP/SL/Trailing有無）を表示
-- 構造的レベル(swing/cluster/BB/Ichimoku)ベースのTP推奨
-- ATRベースのSL推奨値
-- BE移動・トレイリングストップの推奨
-- 即実行可能なPUTコマンドを出力
+For each position:
+- Display current protection status (TP/SL/Trailing presence)
+- TP recommendation based on structural levels (swing/cluster/BB/Ichimoku)
+- ATR-based SL recommended value
+- BE move and trailing stop recommendations
+- Output immediately executable PUT commands
 
 Usage:
-    python3 tools/protection_check.py          # 全トレードチェック
+    python3 tools/protection_check.py          # Check all trades
 """
 from __future__ import annotations
 import json
@@ -66,10 +66,10 @@ def pips_to_price(pips: float, pair: str) -> float:
 
 def find_structural_levels(pair: str, side: str, current_price: float, tfs: dict) -> list[tuple[float, float, str]]:
     """
-    構造的レベル(S/R)を収集して距離順にソート。
+    Collect structural levels (S/R) and sort by distance.
     Returns: [(price, distance_pips, label), ...]
 
-    TP方向のレベルのみ返す（LONG→上のレベル、SHORT→下のレベル）
+    Returns only levels in the TP direction (LONG → levels above, SHORT → levels below)
     """
     pip_mult = PIP_MULT.get(pair, 10000)
     h1 = tfs.get("H1", {})
@@ -82,7 +82,7 @@ def find_structural_levels(pair: str, side: str, current_price: float, tfs: dict
         dist_pips = (price - current_price) * pip_mult
         if side == "SHORT":
             dist_pips = -dist_pips  # SHORT: below current = positive distance
-        if dist_pips > 1.0:  # 1pip以上先のもののみ
+        if dist_pips > 1.0:  # Only levels more than 1 pip away
             candidates.append((price, dist_pips, label))
 
     # --- H1 structural levels ---
@@ -123,11 +123,11 @@ def find_structural_levels(pair: str, side: str, current_price: float, tfs: dict
     if ichi_a is not None and abs(ichi_a) > 3:
         ichi_a_price = current_price + pips_to_price(ichi_a, pair)
         if (side == "SHORT" and ichi_a_price < current_price) or (side == "LONG" and ichi_a_price > current_price):
-            add_candidate(ichi_a_price, f"H1 雲SpanA ({abs(ichi_a):.0f}pip)")
+            add_candidate(ichi_a_price, f"H1 Cloud SpanA ({abs(ichi_a):.0f}pip)")
     if ichi_b is not None and abs(ichi_b) > 3:
         ichi_b_price = current_price + pips_to_price(ichi_b, pair)
         if (side == "SHORT" and ichi_b_price < current_price) or (side == "LONG" and ichi_b_price > current_price):
-            add_candidate(ichi_b_price, f"H1 雲SpanB ({abs(ichi_b):.0f}pip)")
+            add_candidate(ichi_b_price, f"H1 Cloud SpanB ({abs(ichi_b):.0f}pip)")
 
     # --- M5 structural levels ---
     m5_swing_low = m5.get("swing_dist_low")
@@ -165,7 +165,7 @@ def find_structural_levels(pair: str, side: str, current_price: float, tfs: dict
 
 
 def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
-    """1ポジションの保護状況を評価"""
+    """Evaluate protection status of a single position"""
     pair = trade["instrument"]
     units = int(trade["currentUnits"])
     side = "LONG" if units > 0 else "SHORT"
@@ -224,15 +224,15 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
     current_status = []
     recommendations = []
     warnings = []
-    put_commands = []  # 即実行可能なコマンド
+    put_commands = []  # Immediately executable commands
 
     acct = cfg["oanda_account_id"]
 
     # Current status
     if has_tp:
-        current_status.append(f"TP: {fmt_price(tp_price, pair)} (残{tp_remaining_pips:+.1f}pip)")
+        current_status.append(f"TP: {fmt_price(tp_price, pair)} (remaining {tp_remaining_pips:+.1f}pip)")
     else:
-        current_status.append("TP: なし")
+        current_status.append("TP: none")
     if has_sl:
         sl_info = f"SL: {fmt_price(sl_price, pair)} ({sl_dist_pips:.1f}pip"
         if sl_atr_ratio is not None:
@@ -240,12 +240,12 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
         sl_info += ")"
         current_status.append(sl_info)
     else:
-        current_status.append("SL: なし")
+        current_status.append("SL: none")
     if has_trailing:
         trailing_pips = trailing_distance * pip_mult
         current_status.append(f"Trailing: {trailing_pips:.1f}pip")
     else:
-        current_status.append("Trailing: なし")
+        current_status.append("Trailing: none")
 
     if not has_any_protection:
         warnings.append("NO PROTECTION")
@@ -255,21 +255,21 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
         recommended_sl_pips = atr_pips * 1.2
         if has_sl:
             if sl_atr_ratio is not None and sl_atr_ratio < 0.7:
-                warnings.append(f"SL tight (ATR x{sl_atr_ratio:.1f}) -- ノイズで刈られるリスク")
+                warnings.append(f"SL too tight (ATR x{sl_atr_ratio:.1f}) -- noise stop-out risk")
                 if side == "LONG":
                     better_sl = entry_price - pips_to_price(recommended_sl_pips, pair)
                 else:
                     better_sl = entry_price + pips_to_price(recommended_sl_pips, pair)
-                recommendations.append(f"SL拡大推奨: {fmt_price(better_sl, pair)} (ATR x1.2)")
+                recommendations.append(f"Widen SL recommendation: {fmt_price(better_sl, pair)} (ATR x1.2)")
             elif sl_atr_ratio is not None and sl_atr_ratio > 2.5:
-                warnings.append(f"SL広すぎ: {sl_dist_pips:.1f}pip (ATR x{sl_atr_ratio:.1f})")
+                warnings.append(f"SL too wide: {sl_dist_pips:.1f}pip (ATR x{sl_atr_ratio:.1f})")
                 if side == "LONG":
                     better_sl = entry_price - pips_to_price(recommended_sl_pips, pair)
                 else:
                     better_sl = entry_price + pips_to_price(recommended_sl_pips, pair)
-                recommendations.append(f"SL縮小推奨: {fmt_price(better_sl, pair)} (ATR x1.2 = {recommended_sl_pips:.1f}pip)")
+                recommendations.append(f"Tighten SL recommendation: {fmt_price(better_sl, pair)} (ATR x1.2 = {recommended_sl_pips:.1f}pip)")
                 put_commands.append(
-                    f'# SL修正 {pair} id={trade_id}\n'
+                    f'# SL fix {pair} id={trade_id}\n'
                     f'python3 -c "import urllib.request,json; '
                     f"req=urllib.request.Request('https://api-fxtrade.oanda.com/v3/accounts/{acct}/trades/{trade_id}/orders',"
                     f'data=json.dumps({{"stopLoss":{{"price":"{fmt_price(better_sl, pair)}","timeInForce":"GTC"}}}}).encode(),'
@@ -281,32 +281,32 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
                 rec_sl = entry_price - pips_to_price(recommended_sl_pips, pair)
             else:
                 rec_sl = entry_price + pips_to_price(recommended_sl_pips, pair)
-            recommendations.append(f"SL推奨: {fmt_price(rec_sl, pair)} (ATR x1.2 = {recommended_sl_pips:.1f}pip)")
+            recommendations.append(f"SL recommendation: {fmt_price(rec_sl, pair)} (ATR x1.2 = {recommended_sl_pips:.1f}pip)")
 
-    # --- TP Recommendation (構造的レベルベース) ---
+    # --- TP Recommendation (structural level based) ---
     if atr_pips > 0 and structural_levels:
         if not has_tp:
-            # TPなし → 最寄り構造的レベルを推奨
+            # No TP → recommend nearest structural level
             nearest = structural_levels[0]
-            recommendations.append(f"TP推奨: {fmt_price(nearest[0], pair)} ({nearest[2]}, {nearest[1]:.0f}pip先)")
+            recommendations.append(f"TP recommendation: {fmt_price(nearest[0], pair)} ({nearest[2]}, {nearest[1]:.0f}pip away)")
             if len(structural_levels) > 1:
-                recommendations.append(f"  半利確@{fmt_price(nearest[0], pair)} → 残りtrailing推奨")
+                recommendations.append(f"  Half TP @{fmt_price(nearest[0], pair)} → trailing recommended for remainder")
         else:
             tp_atr_ratio = tp_remaining_pips / atr_pips if tp_remaining_pips and atr_pips > 0 else 0
             if tp_remaining_pips and tp_remaining_pips < 0:
-                recommendations.append(f"TP既にブレイク済み (残{tp_remaining_pips:.1f}pip)")
+                recommendations.append(f"TP already breached (remaining {tp_remaining_pips:.1f}pip)")
             elif tp_atr_ratio > 2.0:
-                warnings.append(f"TP広すぎ: 残{tp_remaining_pips:.1f}pip (ATR x{tp_atr_ratio:.1f})")
-                # 構造的レベルのメニューを表示
-                recommendations.append("📍 構造的TP候補:")
+                warnings.append(f"TP too wide: {tp_remaining_pips:.1f}pip remaining (ATR x{tp_atr_ratio:.1f})")
+                # Show structural level menu
+                recommendations.append("📍 Structural TP candidates:")
                 for i, (price, dist, label) in enumerate(structural_levels[:5]):
                     atr_x = dist / atr_pips
-                    marker = " ← 推奨" if i == 0 else ""
+                    marker = " <- recommended" if i == 0 else ""
                     recommendations.append(f"  {i+1}. {fmt_price(price, pair)} = {label} (ATR x{atr_x:.1f}){marker}")
-                # 最寄りレベルでの修正コマンドを出力
+                # Output fix command for nearest level
                 best = structural_levels[0]
                 put_commands.append(
-                    f'# TP修正 {pair} id={trade_id} → {fmt_price(best[0], pair)} ({best[2]})\n'
+                    f'# TP fix {pair} id={trade_id} → {fmt_price(best[0], pair)} ({best[2]})\n'
                     f'python3 -c "import urllib.request,json; '
                     f"req=urllib.request.Request('https://api-fxtrade.oanda.com/v3/accounts/{acct}/trades/{trade_id}/orders',"
                     f'data=json.dumps({{"takeProfit":{{"price":"{fmt_price(best[0], pair)}","timeInForce":"GTC"}}}}).encode(),'
@@ -314,22 +314,22 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
                     f"method='PUT'); urllib.request.urlopen(req)\""
                 )
     elif atr_pips > 0 and not structural_levels:
-        # 構造的レベルが見つからない → ATRベースのフォールバック
+        # No structural levels found → ATR-based fallback
         atr_tp_pips = atr_pips * 1.0
         if side == "LONG":
             atr_tp_price = current_price + pips_to_price(atr_tp_pips, pair)
         else:
             atr_tp_price = current_price - pips_to_price(atr_tp_pips, pair)
-        recommendations.append(f"TP推奨(ATRフォールバック): {fmt_price(atr_tp_price, pair)} (ATR x1.0 = {atr_tp_pips:.1f}pip)")
+        recommendations.append(f"TP recommendation (ATR fallback): {fmt_price(atr_tp_price, pair)} (ATR x1.0 = {atr_tp_pips:.1f}pip)")
 
     # --- BE Recommendation ---
     if atr_pips > 0:
         if pip_profit > atr_pips * 1.5:
             rec_trail = atr_pips * 0.5
-            recommendations.append(f"Trailing強く推奨: 含み益{pip_profit:.1f}pip (ATR x{pip_profit/atr_pips:.1f}) → trail {rec_trail:.0f}pip")
+            recommendations.append(f"Trailing strongly recommended: unrealized profit {pip_profit:.1f}pip (ATR x{pip_profit/atr_pips:.1f}) → trail {rec_trail:.0f}pip")
             trail_price_dist = pips_to_price(rec_trail, pair)
             put_commands.append(
-                f'# Trailing設定 {pair} id={trade_id} ({rec_trail:.0f}pip)\n'
+                f'# Trailing set {pair} id={trade_id} ({rec_trail:.0f}pip)\n'
                 f'python3 -c "import urllib.request,json; '
                 f"req=urllib.request.Request('https://api-fxtrade.oanda.com/v3/accounts/{acct}/trades/{trade_id}/orders',"
                 f'data=json.dumps({{"trailingStopLoss":{{"distance":"{trail_price_dist:.5f}","timeInForce":"GTC"}}}}).encode(),'
@@ -341,20 +341,20 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
                 be_price = entry_price + pips_to_price(1, pair)
             else:
                 be_price = entry_price - pips_to_price(1, pair)
-            recommendations.append(f"BE検討: 含み益{pip_profit:.1f}pip (ATR x{pip_profit/atr_pips:.1f}) → SL→{fmt_price(be_price, pair)}")
+            recommendations.append(f"Consider BE: unrealized profit {pip_profit:.1f}pip (ATR x{pip_profit/atr_pips:.1f}) → SL→{fmt_price(be_price, pair)}")
         elif pip_profit <= 0:
-            recommendations.append("BE: N/A (含み損)")
+            recommendations.append("BE: N/A (unrealized loss)")
         else:
-            recommendations.append(f"BE: まだ早い (含み益{pip_profit:.1f}pip, ATR x{pip_profit/atr_pips:.1f})")
+            recommendations.append(f"BE: too early (unrealized profit {pip_profit:.1f}pip, ATR x{pip_profit/atr_pips:.1f})")
 
     # --- Trailing Stop Recommendation ---
     if atr_pips > 0 and pip_profit > atr_pips * 1.0 and not has_trailing:
         rec_trail = atr_pips * 0.6
         trail_price_dist = pips_to_price(rec_trail, pair)
-        recommendations.append(f"Trailing推奨: {rec_trail:.0f}pip (ATR x0.6)")
+        recommendations.append(f"Trailing recommended: {rec_trail:.0f}pip (ATR x0.6)")
         if not any("Trailing" in cmd for cmd in put_commands):
             put_commands.append(
-                f'# Trailing設定 {pair} id={trade_id} ({rec_trail:.0f}pip)\n'
+                f'# Trailing set {pair} id={trade_id} ({rec_trail:.0f}pip)\n'
                 f'python3 -c "import urllib.request,json; '
                 f"req=urllib.request.Request('https://api-fxtrade.oanda.com/v3/accounts/{acct}/trades/{trade_id}/orders',"
                 f'data=json.dumps({{"trailingStopLoss":{{"distance":"{trail_price_dist:.5f}","timeInForce":"GTC"}}}}).encode(),'
@@ -388,7 +388,7 @@ def format_result(r: dict) -> str:
     lines.append(
         f"{r['pair']} {r['side']} {'-' if r['side'] == 'SHORT' else '+'}{r['units']}u "
         f"id={r['trade_id']} | entry={fmt_price(r['entry_price'], pair)} | "
-        f"UPL={r['upl']:+,.0f}円 ({r['pip_profit']:+.1f}pip) | {atr_text}"
+        f"UPL={r['upl']:+,.0f}JPY ({r['pip_profit']:+.1f}pip) | {atr_text}"
     )
 
     status_line = "  Current: " + " | ".join(r["current_status"])
@@ -419,7 +419,7 @@ def main():
         sys.exit(1)
 
     if not trades:
-        print("=== PROTECTION CHECK: ポジションなし ===")
+        print("=== PROTECTION CHECK: No open positions ===")
         return
 
     all_technicals = {}
@@ -451,9 +451,9 @@ def main():
     else:
         print(f"--- All {len(results)} trades have some form of protection ---")
 
-    # 即実行コマンドを出力
+    # Output immediately executable commands
     if all_put_commands:
-        print(f"\n=== 修正コマンド ({len(all_put_commands)}件) — コピペで即実行 ===")
+        print(f"\n=== Fix Commands ({len(all_put_commands)} items) — copy-paste to execute immediately ===")
         for cmd in all_put_commands:
             print()
             print(cmd)

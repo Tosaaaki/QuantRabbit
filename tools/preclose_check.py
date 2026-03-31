@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""決済前リフレクション。BLOCKではなく「思い出させる」。
-pretrade_checkと同じ哲学: 過去の教訓を思い出させて判断の質を上げる。
-判断を奪わない。判断に必要な情報を突きつける。
+"""Pre-close reflection. Not a BLOCK — a reminder.
+Same philosophy as pretrade_check: surface past lessons to improve decision quality.
+Does not override judgment. Presents the information needed to make the call.
 
 Usage:
     python3 tools/preclose_check.py EUR_USD SHORT 12000 -612
 
-出力: 判断に必要な事実。最終判断はトレーダーが下す。
+Output: Facts needed for the decision. Final judgment is the trader's.
 """
 import sys
 import os
@@ -20,7 +20,7 @@ STATE_PATH = 'collab_trade/state.md'
 
 
 def get_consecutive_losses():
-    """末尾からの連続損切り数"""
+    """Number of consecutive losses from the most recent close."""
     if not os.path.exists(LOG_PATH):
         return 0, 0
     closes = []
@@ -42,7 +42,7 @@ def get_consecutive_losses():
 
 
 def get_pair_pl_today(pair):
-    """今日のペア別確定損益"""
+    """Realized P&L for this pair today."""
     total = 0
     if not os.path.exists(LOG_PATH):
         return total
@@ -56,11 +56,11 @@ def get_pair_pl_today(pair):
 
 
 def get_thesis_from_state(pair):
-    """state.mdからそのペアのテーゼ・覚悟を抽出"""
+    """Extract the thesis and conviction for this pair from state.md."""
     if not os.path.exists(STATE_PATH):
         return None
     content = open(STATE_PATH).read()
-    # ペア名を含むセクションを探す
+    # Find the section containing the pair name
     lines = content.split('\n')
     section = []
     in_section = False
@@ -76,7 +76,7 @@ def get_thesis_from_state(pair):
 
 
 def get_today_stats():
-    """今日の勝敗統計"""
+    """Today's win/loss statistics."""
     wins = 0
     losses = 0
     win_sum = 0
@@ -108,65 +108,65 @@ def main():
     units = int(sys.argv[3])
     upl = float(sys.argv[4])
 
-    print(f'=== 📋 PRECLOSE REFLECTION: {pair} {side} {units}u ({upl:+,.0f}円) ===')
+    print(f'=== 📋 PRECLOSE REFLECTION: {pair} {side} {units}u (unrealized P&L: {upl:+,.0f} JPY) ===')
     print()
 
-    # === 1. お前のテーゼを思い出せ ===
+    # === 1. Remember your thesis ===
     thesis = get_thesis_from_state(pair)
     if thesis:
-        print('【お前が書いたテーゼ】')
-        # テーゼから転換条件を抽出
+        print('[YOUR THESIS]')
+        # Extract invalidation conditions from the thesis
         for line in thesis.split('\n'):
             if '転換条件' in line or 'テーゼ' in line or '読み' in line or '根拠' in line or 'CONVICTION' in line:
                 print(f'  {line.strip()}')
         print()
 
-    # === 2. 事実を突きつける ===
+    # === 2. Present the facts ===
     facts = []
 
-    # 連続損切り状況
+    # Consecutive loss streak
     streak, streak_sum = get_consecutive_losses()
     if streak >= 2 and upl < 0:
-        facts.append(f'⚡ 直近{streak}連続損切り（合計{streak_sum:+,.0f}円）。今切ると{streak+1}連続目')
+        facts.append(f'⚡ Last {streak} closes were losses (total {streak_sum:+,.0f} JPY). Closing now would be loss #{streak+1}')
 
-    # ペア累積損失
+    # Pair cumulative loss today
     pair_pl = get_pair_pl_today(pair)
     if pair_pl < -500 and upl < 0:
-        facts.append(f'📊 {pair}は今日すでに{pair_pl:+,.0f}円確定損')
+        facts.append(f'📊 {pair} is already down {pair_pl:+,.0f} JPY realized today')
 
-    # ゴミ利確の事実
+    # Garbage take-profit
     if 0 < upl <= 30:
-        facts.append(f'📊 この利確は+{upl:.0f}円。スプレッド差し引くとほぼ±0円。今日の平均勝ちは？')
+        facts.append(f'📊 This close would lock in +{upl:.0f} JPY. After spread, essentially break-even. What is today\'s average win?')
 
-    # 大量一括
+    # Large full close
     if units >= 8000 and upl < -500:
-        facts.append(f'📊 {units}u一括。全部切る以外に半分だけ切る選択肢は？')
+        facts.append(f'📊 {units}u position. Besides full close, have you considered closing half?')
 
-    # 小さい含み損
+    # Small unrealized loss
     if -100 < upl < 0:
-        facts.append(f'📊 含み損{upl:+,.0f}円はノイズ幅。テーゼ崩壊と確信してるか？')
+        facts.append(f'📊 Unrealized P&L of {upl:+,.0f} JPY is noise-level. Are you certain the thesis has collapsed?')
 
     if facts:
-        print('【事実】')
+        print('[FACTS]')
         for f in facts:
             print(f'  {f}')
         print()
 
-    # === 3. 問い ===
-    print('【決済前に答えろ】')
+    # === 3. Questions to answer ===
+    print('[ANSWER THESE BEFORE CLOSING]')
     if upl < 0:
-        print('  1. H1構造は変わったか？（DI+/DI-逆転、ADX変化）')
-        print('  2. テーゼの転換条件に該当してるか？')
-        print('  3. これはパニックか、それとも分析に基づく判断か？')
+        print('  1. Has the H1 structure changed? (DI+/DI- crossover, ADX shift)')
+        print('  2. Does this match the thesis invalidation condition?')
+        print('  3. Is this panic, or a judgment based on analysis?')
     elif 0 < upl <= 50:
-        print('  1. ATRの何%に達してる？50%未満なら早すぎないか？')
-        print('  2. テーゼのTP目標に対して何%か？')
-        print('  3. この利確額はスプレッド+手間に見合うか？')
+        print('  1. What % of ATR have you reached? If under 50%, is this too early?')
+        print('  2. What % of the thesis TP target have you hit?')
+        print('  3. Is this profit worth the spread + effort?')
     else:
-        print('  → 利確理由をログに明記しろ（「テクニカルの何が変わったか」）')
+        print('  → Log the reason for closing (what technically changed?)')
 
     print()
-    print('答えた上で決済するなら、live_trade_logに理由を明記。')
+    print('If you can answer these, close — but record the reason in live_trade_log.')
     print('================================================')
 
 

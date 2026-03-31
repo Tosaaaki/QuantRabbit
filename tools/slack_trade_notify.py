@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""トレード通知を #qr-trades に投稿する
+"""Post trade notifications to #qr-trades
 Usage:
   python3 tools/slack_trade_notify.py entry --pair USD_JPY --side LONG --units 5000 --price 158.42 [--sl 158.00] [--thesis "Fed hawkish"]
-  python3 tools/slack_trade_notify.py modify --pair USD_JPY --action "TP半利確" --units 2500 --price 158.55 --pl "+13pip, +1,625円" [--note "残2500, BE移動"]
-  python3 tools/slack_trade_notify.py close --pair USD_JPY --side LONG --units 5000 --price 158.60 --pl "+18pip, +2,250円" [--total_pl "+3,875円"]
+  python3 tools/slack_trade_notify.py modify --pair USD_JPY --action "TP half-close" --units 2500 --price 158.55 --pl "+13pip, +1,625JPY" [--note "remaining 2500, move to BE"]
+  python3 tools/slack_trade_notify.py close --pair USD_JPY --side LONG --units 5000 --price 158.60 --pl "+18pip, +2,250JPY" [--total_pl "+3,875JPY"]
 """
 import urllib.request, json, sys, os, argparse
 from datetime import datetime
@@ -45,8 +45,8 @@ def post(text, channel_id, thread_ts=None):
 def format_entry(args):
     now = datetime.now().strftime('%H:%M')
     icon = "\U0001f7e2" if args.side == "LONG" else "\U0001f534"
-    sl_text = f"SL: {args.sl}" if args.sl else "SL: なし(裁量)"
-    thesis_text = f"\n  テーゼ: {args.thesis}" if args.thesis else ""
+    sl_text = f"SL: {args.sl}" if args.sl else "SL: none (discretionary)"
+    thesis_text = f"\n  Thesis: {args.thesis}" if args.thesis else ""
     return f"{icon} {args.side} {args.pair} {args.units}units @{args.price}  [{now}]\n  {sl_text}{thesis_text}"
 
 
@@ -58,8 +58,8 @@ def format_modify(args):
 
 def format_close(args):
     now = datetime.now().strftime('%H:%M')
-    total = f"\n  確定益合計: {args.total_pl}" if args.total_pl else ""
-    return f"\u2B1B {args.pair} {args.side} 全決済 {args.units}units @{args.price} ({args.pl})  [{now}]{total}"
+    total = f"\n  Total realized P&L: {args.total_pl}" if args.total_pl else ""
+    return f"\u2B1B {args.pair} {args.side} FULL CLOSE {args.units}units @{args.price} ({args.pl})  [{now}]{total}"
 
 
 def main():

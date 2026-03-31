@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Macro View — 7ペアのテクニカルから通貨強弱とマクロビューを合成
+Macro View — Synthesizes currency strength and macro view from technicals across 7 pairs
 
-technicals_*.json を読んで:
-1. 通貨別の強弱スコア（H1 ADX×DI方向で計算）
-2. 全体のテーマ（USD強/弱、リスクオン/オフ等）
-3. MTFの整合性（H1とM5が一致してるペア = 高確度チャンス）
+Reads technicals_*.json and produces:
+1. Per-currency strength score (calculated from H1 ADX × DI direction)
+2. Overall theme (USD strong/weak, risk-on/off, etc.)
+3. MTF alignment (pairs where H1 and M5 agree = high-confidence opportunity)
 
-出力は3-5行。traderが一目でマクロを掴めるように。
+Output is 3-5 lines so the trader can grasp the macro picture at a glance.
 """
 import json
 from pathlib import Path
@@ -15,8 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 
-# ペアから通貨ペアの方向を定義
-# base/quote: base強 = 価格上昇, quote強 = 価格下降
+# Define direction for each currency pair
+# base/quote: base strong = price rises, quote strong = price falls
 PAIR_CURRENCIES = {
     "USD_JPY": ("USD", "JPY"),
     "EUR_USD": ("EUR", "USD"),
@@ -36,7 +36,7 @@ def load_technicals(pair: str) -> dict:
 
 
 def calc_currency_strength() -> dict[str, float]:
-    """H1のADX×DI方向から通貨別スコアを算出"""
+    """Calculate per-currency score from H1 ADX × DI direction"""
     scores: dict[str, list[float]] = {c: [] for c in ["USD", "EUR", "GBP", "AUD", "JPY"]}
 
     for pair in PAIRS:
@@ -50,15 +50,15 @@ def calc_currency_strength() -> dict[str, float]:
         di_minus = h1.get("minus_di", 0)
         base, quote = PAIR_CURRENCIES[pair]
 
-        # DI差をADXで重み付け: トレンドが強いほどスコアに影響
+        # Weight DI difference by ADX: stronger trend = more influence on score
         direction = (di_plus - di_minus) / max(di_plus + di_minus, 1)  # -1 to 1
-        weight = min(adx / 30, 1.5)  # ADX30で重み1.0、45で1.5
+        weight = min(adx / 30, 1.5)  # ADX 30 = weight 1.0, ADX 45 = weight 1.5
         signal = direction * weight
 
         scores[base].append(signal)
-        scores[quote].append(-signal)  # quote通貨は逆
+        scores[quote].append(-signal)  # quote currency is inverted
 
-    # 平均化
+    # Average
     result = {}
     for ccy, vals in scores.items():
         result[ccy] = sum(vals) / len(vals) if vals else 0
@@ -66,7 +66,7 @@ def calc_currency_strength() -> dict[str, float]:
 
 
 def find_mtf_aligned(pair: str, tfs: dict) -> str | None:
-    """H1とM5の方向が一致してるか判定"""
+    """Determine whether H1 and M5 direction are aligned"""
     h1 = tfs.get("H1", {})
     m5 = tfs.get("M5", {})
     if not h1 or not m5:
@@ -84,7 +84,7 @@ def find_mtf_aligned(pair: str, tfs: dict) -> str | None:
 
 
 def find_divergences(pair: str, tfs: dict) -> list[str]:
-    """H1のダイバージェンスを検出"""
+    """Detect divergences on H1"""
     alerts = []
     h1 = tfs.get("H1", {})
     if not h1:
@@ -106,7 +106,7 @@ def find_divergences(pair: str, tfs: dict) -> list[str]:
 
 
 def main():
-    # 1. 通貨強弱
+    # 1. Currency strength
     strength = calc_currency_strength()
     sorted_ccy = sorted(strength.items(), key=lambda x: x[1], reverse=True)
 
@@ -116,28 +116,28 @@ def main():
     strength_line = " > ".join(
         f"{ccy}({score:+.2f})" for ccy, score in sorted_ccy
     )
-    print(f"💪 通貨強弱: {strength_line}")
+    print(f"💪 Currency strength: {strength_line}")
 
-    # 2. テーマ判定
+    # 2. Theme determination
     usd_score = strength.get("USD", 0)
     jpy_score = strength.get("JPY", 0)
 
     themes = []
     if usd_score > 0.3:
-        themes.append("USD強")
+        themes.append("USD strong")
     elif usd_score < -0.3:
-        themes.append("USD弱")
+        themes.append("USD weak")
     if jpy_score > 0.3:
-        themes.append("JPY強(リスクオフ)")
+        themes.append("JPY strong (risk-off)")
     elif jpy_score < -0.3:
-        themes.append("JPY弱(リスクオン)")
+        themes.append("JPY weak (risk-on)")
 
     if not themes:
-        themes.append("方向感薄い")
+        themes.append("no clear direction")
 
-    print(f"🎯 テーマ: {' + '.join(themes)} | 最強={strongest[0]} 最弱={weakest[0]}")
+    print(f"🎯 Theme: {' + '.join(themes)} | Strongest={strongest[0]} Weakest={weakest[0]}")
 
-    # 3. MTF一致ペア（高確度チャンス）
+    # 3. MTF-aligned pairs (high-confidence opportunities)
     aligned = []
     for pair in PAIRS:
         tfs = load_technicals(pair)
@@ -146,11 +146,11 @@ def main():
             aligned.append(f"{pair} {result}")
 
     if aligned:
-        print(f"✅ MTF一致: {' | '.join(aligned)}")
+        print(f"✅ MTF aligned: {' | '.join(aligned)}")
     else:
-        print("⚠️ MTF一致ペアなし — 高確度チャンスを待て")
+        print("⚠️ No MTF-aligned pairs — wait for a high-confidence opportunity")
 
-    # 4. H1ダイバージェンス（転換予兆）
+    # 4. H1 divergences (reversal signals)
     all_divs = []
     for pair in PAIRS:
         tfs = load_technicals(pair)
@@ -159,7 +159,7 @@ def main():
             all_divs.append(f"{pair}: {', '.join(divs)}")
 
     if all_divs:
-        print(f"🔄 H1 Div: {' | '.join(all_divs)}")
+        print(f"🔄 H1 Divergence: {' | '.join(all_divs)}")
 
 
 if __name__ == "__main__":

@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """
-position_diff.py — ポジション変化検知 & 自動記録
+position_diff.py — Position change detection & automatic recording
 
-secretaryが定期的に呼ぶ。OANDAの現在のポジション/トレードと前回スナップショットを比較し、
-変化があればstate.mdとdaily/trades.mdに自動記録する。
+Called periodically by secretary. Compares current OANDA positions/trades with the previous
+snapshot, and automatically records any changes to state.md and daily/trades.md.
 
 Usage:
     python3 tools/position_diff.py [--collab]
 
-    --collab: 共同トレードモード。collab_trade/state.md と collab_trade/daily/ に書く
+    --collab: Collab trade mode. Writes to collab_trade/state.md and collab_trade/daily/
 
 Output (stdout JSON):
     {
-        "changes": [...],       # 検知した変化のリスト
-        "open_positions": [...], # 現在のオープンポジション
-        "recorded": true/false   # 記録を書いたかどうか
+        "changes": [...],       # List of detected changes
+        "open_positions": [...], # Current open positions
+        "recorded": true/false   # Whether records were written
     }
 """
 
@@ -165,7 +165,7 @@ def now_jst():
     return datetime.now(timezone.utc) + timedelta(hours=9)
 
 def record_to_state_md(curr_trades, account, collab_mode):
-    """Update state.md with current positions. Only updates the ポジション section."""
+    """Update state.md with current positions. Only updates the Positions section."""
     if collab_mode:
         state_path = os.path.join(REPO_DIR, "collab_trade", "state.md")
     else:
@@ -179,13 +179,13 @@ def record_to_state_md(curr_trades, account, collab_mode):
 
     # Build position section
     lines = []
-    lines.append(f"**最終更新**: {now} ({jst}) [secretary自動記録]")
+    lines.append(f"**Last Updated**: {now} ({jst}) [secretary auto-recorded]")
     lines.append("")
-    lines.append("## ポジション")
+    lines.append("## Positions")
     lines.append("")
 
     if not curr_trades:
-        lines.append("*ポジションなし*")
+        lines.append("*No positions*")
     else:
         # Group by instrument + direction
         groups = {}
@@ -200,21 +200,21 @@ def record_to_state_md(curr_trades, account, collab_mode):
             direction = trades[0]["direction"]
             total_units = sum(abs(t["units"]) for t in trades)
             total_upl = sum(t["unrealizedPL"] for t in trades)
-            lines.append(f"### {inst} {direction} — {len(trades)}ポジション")
+            lines.append(f"### {inst} {direction} — {len(trades)} position(s)")
             for t in trades:
                 upl_jpy = round(t["unrealizedPL"])
-                lines.append(f"- Trade ID: {t['id']} | {t['price']} ({abs(t['units'])}u) → **{'+' if upl_jpy >= 0 else ''}{upl_jpy}円**")
-            lines.append(f"- **合計**: {total_units}u, 含み損益 {'+' if total_upl >= 0 else ''}{round(total_upl)}円")
+                lines.append(f"- Trade ID: {t['id']} | {t['price']} ({abs(t['units'])}u) → **{'+' if upl_jpy >= 0 else ''}{upl_jpy}JPY**")
+            lines.append(f"- **Total**: {total_units}u, unrealized P&L {'+' if total_upl >= 0 else ''}{round(total_upl)}JPY")
             lines.append("")
 
-    # Read existing state.md and replace the header + ポジション section
+    # Read existing state.md and replace the header + Positions section
     with open(state_path) as f:
         content = f.read()
 
-    # Find where ポジション section starts and the next ## section
+    # Find where Positions section starts and the next ## section
     import re
-    # Replace from "**最終更新**" to the line before the next non-ポジション "## " header
-    # Strategy: keep everything from "## 今日のストーリー" onwards
+    # Replace from "**Last Updated**" to the line before the next non-Positions "## " header
+    # Strategy: keep everything from "## Today's Story" onwards
     pattern = r'\*\*最終更新\*\*.*?(?=## 今日の|## 確定|## 教訓|## メモ|\Z)'
     new_content = "\n".join(lines) + "\n\n"
 
@@ -245,11 +245,11 @@ def record_to_trades_md(changes, collab_mode):
     lines = []
     for c in changes:
         if c["type"] == "OPEN":
-            lines.append(f"- [{now}] **OPEN** {c['instrument']} {c['direction']} {c['units']}u @ {c['price']} (TradeID: {c['trade_id']}) [secretary検知]")
+            lines.append(f"- [{now}] **OPEN** {c['instrument']} {c['direction']} {c['units']}u @ {c['price']} (TradeID: {c['trade_id']}) [secretary detected]")
         elif c["type"] == "CLOSE":
             pl = c.get("realizedPL", 0)
-            pl_str = f"+{round(pl)}円" if pl >= 0 else f"{round(pl)}円"
-            lines.append(f"- [{now}] **CLOSE** {c['instrument']} {c['direction']} {c['units']}u (TradeID: {c['trade_id']}) → {pl_str} [secretary検知]")
+            pl_str = f"+{round(pl)}JPY" if pl >= 0 else f"{round(pl)}JPY"
+            lines.append(f"- [{now}] **CLOSE** {c['instrument']} {c['direction']} {c['units']}u (TradeID: {c['trade_id']}) → {pl_str} [secretary detected]")
 
     if lines:
         with open(trades_path, "a") as f:

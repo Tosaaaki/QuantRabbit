@@ -1,10 +1,10 @@
 """
 QuantRabbit Trading Memory — Session Ingest
-セッション終了後にdaily/の trades.md, notes.md, state.md を
-QAチャンクに分割 → Ruri v3 で埋め込み → memory.db に保存
+After session end, split trades.md, notes.md, state.md from daily/ into
+QA chunks → embed with Ruri v3 → save to memory.db
 
-v2 (2026-03-25): OANDA APIから当日トレードを直接取得する機能を追加。
-trades.mdパースは補助情報（テーゼ・教訓）として引き続き使用。
+v2 (2026-03-25): Added feature to fetch today's trades directly from OANDA API.
+trades.md parsing continues to be used as supplementary info (thesis, lessons).
 """
 import json
 import re
@@ -35,7 +35,7 @@ def get_model():
 
 
 def embed(texts: list[str]) -> list[list[float]]:
-    """Ruri v3 は 'クエリ: ' プレフィックスで検索、ドキュメントはそのまま"""
+    """Ruri v3 uses 'query: ' prefix for search; documents are passed as-is"""
     model = get_model()
     vecs = model.encode(texts, normalize_embeddings=True)
     return [v.tolist() for v in vecs]
@@ -52,10 +52,10 @@ def extract_pair(text: str) -> str | None:
 
 
 def chunk_trades_md(text: str, session_date: str) -> list[dict]:
-    """trades.md をトレード単位のチャンクに分割"""
+    """Split trades.md into per-trade chunks"""
     chunks = []
 
-    # ### で始まるセクションを分割
+    # Split by sections starting with ###
     sections = re.split(r'\n(?=###\s)', text)
 
     for section in sections:
@@ -65,11 +65,11 @@ def chunk_trades_md(text: str, session_date: str) -> list[dict]:
 
         header_match = re.match(r'###\s+(.+)', section)
         if not header_match:
-            # ### がないセクション（市況読み等）もキャプチャ
+            # Also capture sections without ### (market reads etc.)
             if "市況読み" in section or "保有ポジション" in section:
                 chunks.append({
                     "chunk_type": "market_read",
-                    "question": f"{session_date}の市況読みは？",
+                    "question": f"What was the market read for {session_date}?",
                     "content": section,
                     "pair": None,
                     "tags": "market,context",
@@ -80,17 +80,17 @@ def chunk_trades_md(text: str, session_date: str) -> list[dict]:
         header = header_match.group(1)
         pair = extract_pair(section)
 
-        # トレードチャンク
+        # Trade chunk
         if any(kw in header for kw in ["ENTRY", "CLOSE", "LONG", "SHORT", "利確", "損切"]):
-            # P/L抽出
+            # Extract P/L
             pl_match = re.search(r'([+-][\d,]+円)', header)
             pl = pl_match.group(1) if pl_match else ""
 
-            # 教訓・反省抽出
+            # Extract lessons/reflections
             lessons = re.findall(r'\*\*(.+?)\*\*', section)
             lesson_text = " / ".join(lessons) if lessons else ""
 
-            question = f"{pair or ''}のトレード: {header.split('—')[0].strip()}"
+            question = f"{pair or ''} trade: {header.split('—')[0].strip()}"
             tags_list = ["trade"]
             if "損切" in section or "損切り" in section:
                 tags_list.append("loss")
@@ -108,18 +108,18 @@ def chunk_trades_md(text: str, session_date: str) -> list[dict]:
                 "source_file": "trades.md",
             })
 
-        # 教訓セクション
+        # Lessons section
         elif "教訓" in header:
             chunks.append({
                 "chunk_type": "lesson",
-                "question": f"{session_date}のセッションから得た教訓は？",
+                "question": f"What lessons were learned from the {session_date} session?",
                 "content": section,
                 "pair": None,
                 "tags": "lesson,review",
                 "source_file": "trades.md",
             })
 
-    # 確定損益サマリー
+    # Realized P&L summary
     if "確定損益" in text or "確定益" in text:
         summary_match = re.search(
             r'(##\s*(?:確定損益サマリー|セッション\d*\s*確定益?)[\s\S]*?)(?=\n##\s|\n---|\Z)',
@@ -128,7 +128,7 @@ def chunk_trades_md(text: str, session_date: str) -> list[dict]:
         if summary_match:
             chunks.append({
                 "chunk_type": "summary",
-                "question": f"{session_date}の損益結果は？",
+                "question": f"What were the P&L results for {session_date}?",
                 "content": summary_match.group(1).strip(),
                 "pair": None,
                 "tags": "pl,summary",
@@ -139,7 +139,7 @@ def chunk_trades_md(text: str, session_date: str) -> list[dict]:
 
 
 def chunk_notes_md(text: str, session_date: str) -> list[dict]:
-    """notes.md をユーザー発言単位のチャンクに分割"""
+    """Split notes.md into per-user-statement chunks"""
     chunks = []
     sections = re.split(r'\n(?=###\s)', text)
 
@@ -155,10 +155,10 @@ def chunk_notes_md(text: str, session_date: str) -> list[dict]:
         header = header_match.group(1)
         pair = extract_pair(section)
 
-        # ユーザーの発言 + チャート状態
+        # User statement + chart state
         chunks.append({
             "chunk_type": "user_call",
-            "question": f"ユーザーの相場読み: {header}",
+            "question": f"User's market read: {header}",
             "content": section,
             "pair": pair,
             "tags": "user_call,market_read",
@@ -169,7 +169,7 @@ def chunk_notes_md(text: str, session_date: str) -> list[dict]:
 
 
 def chunk_state_md(text: str, session_date: str) -> list[dict]:
-    """state.md からアクティブなテーゼをチャンク化"""
+    """Chunk active theses from state.md"""
     chunks = []
     sections = re.split(r'\n(?=##\s)', text)
 
@@ -181,10 +181,10 @@ def chunk_state_md(text: str, session_date: str) -> list[dict]:
         pair = extract_pair(section)
         if "テーゼ" in section or "LONG" in section or "SHORT" in section:
             header_match = re.match(r'##\s+(.+)', section)
-            header = header_match.group(1) if header_match else "テーゼ"
+            header = header_match.group(1) if header_match else "Thesis"
             chunks.append({
                 "chunk_type": "thesis",
-                "question": f"{pair or ''}のトレードテーゼ: {header}",
+                "question": f"{pair or ''} trade thesis: {header}",
                 "content": section,
                 "pair": pair,
                 "tags": "thesis,strategy",
@@ -194,7 +194,7 @@ def chunk_state_md(text: str, session_date: str) -> list[dict]:
     return chunks
 
 
-# --- OANDA API トレード取得 ---
+# --- OANDA API Trade Fetch ---
 
 ENV_TOML = Path(__file__).parent.parent.parent / "config" / "env.toml"
 
@@ -211,7 +211,7 @@ OANDA_PAIRS = {"USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY",
 
 
 def fetch_oanda_trades(session_date: str) -> list[dict]:
-    """OANDA APIから指定日の決済済みトレードを取得してtradesテーブル形式で返す"""
+    """Fetch closed trades for the specified date from OANDA API and return in trades table format"""
     try:
         cfg = _load_oanda_config()
     except Exception as e:
@@ -227,7 +227,7 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
     }
 
     since = f"{session_date}T00:00:00.000000000Z"
-    # 翌日の00:00まで
+    # Until 00:00 of the next day
     dt = datetime.strptime(session_date, '%Y-%m-%d')
     next_day = dt.replace(hour=0, minute=0, second=0) + __import__('datetime').timedelta(days=1)
     to = next_day.strftime('%Y-%m-%dT00:00:00.000000000Z')
@@ -254,7 +254,7 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
         print(f"  OANDA API error: {e}")
         return []
 
-    # パース: エントリーと決済をtrade_idでマッチ
+    # Parse: match entries and closes by trade_id
     entries = {}
     closes = {}
 
@@ -265,7 +265,7 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
         if instrument not in OANDA_PAIRS:
             continue
 
-        # 新規エントリー
+        # New entry
         trade_opened = txn.get('tradeOpened')
         if trade_opened:
             tid = trade_opened.get('tradeID', '')
@@ -279,7 +279,7 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
                 'reason': txn.get('reason', ''),
             }
 
-        # 決済（instrumentも保存してUNKNOWN問題を修正）
+        # Close (also save instrument to fix UNKNOWN issue)
         for tc in txn.get('tradesClosed', []) + txn.get('tradesReduced', []):
             tid = tc.get('tradeID', '')
             pl = float(tc.get('realizedPL', 0))
@@ -289,21 +289,21 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
                     'price': float(txn.get('price', 0)),
                     'pl': pl,
                     'units': units,
-                    'instrument': instrument,  # 決済txnからペア名を取得
+                    'instrument': instrument,  # Get pair name from close txn
                 }
             else:
                 closes[tid]['pl'] += pl
                 closes[tid]['units'] += units
 
-    # マージ
+    # Merge
     trades = []
     for tid in set(list(entries.keys()) + list(closes.keys())):
         entry = entries.get(tid)
         close = closes.get(tid)
         if not close:
-            continue  # まだオープン中
+            continue  # Still open
 
-        # ペア名: entry優先、なければclose txnのinstrumentを使う（UNKNOWN回避）
+        # Pair name: prefer entry, otherwise use instrument from close txn (avoid UNKNOWN)
         pair = 'UNKNOWN'
         if entry:
             pair = entry['pair']
@@ -333,7 +333,7 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
 
 
 def _enrich_from_log(conn, session_date: str, log_path: Path) -> int:
-    """live_trade_log.txtからテーゼ・理由をDBのtradesに補完"""
+    """Supplement trades in DB with thesis/reason from live_trade_log.txt"""
     enriched = 0
     try:
         log_text = log_path.read_text()
@@ -343,19 +343,19 @@ def _enrich_from_log(conn, session_date: str, log_path: Path) -> int:
     for line in log_text.split('\n'):
         if session_date not in line:
             continue
-        # trade_id (#NNNNN) を抽出
+        # Extract trade_id (#NNNNN)
         tid_match = re.search(r'#(\d{5,})', line)
         if not tid_match:
             continue
         tid = tid_match.group(1)
 
-        # reason= や thesis= を抽出
+        # Extract reason= or thesis=
         reason_match = re.search(r'(?:reason|thesis)[=:]\s*(.+?)(?:\||$)', line)
         if not reason_match:
             continue
         reason_text = reason_match.group(1).strip()
 
-        # DBに既にreasonが入ってなければUPDATE
+        # UPDATE only if reason is not already in DB
         existing_reason = fetchone_val(conn,
             "SELECT reason FROM trades WHERE trade_id = ?", (tid,))
         if existing_reason and existing_reason not in ('', 'MARKET_ORDER'):
@@ -373,7 +373,7 @@ def _enrich_from_log(conn, session_date: str, log_path: Path) -> int:
 # --- Ingest ---
 
 def ingest_date(session_date: str, force: bool = False):
-    """指定日のデータを memory.db に取り込む"""
+    """Ingest data for the specified date into memory.db"""
     day_dir = DAILY_DIR / session_date
 
     if not day_dir.exists():
@@ -382,7 +382,7 @@ def ingest_date(session_date: str, force: bool = False):
 
     conn = get_conn()
 
-    # 既存チェック（forceなら削除して再取り込み）
+    # Check existing (if force, delete and re-ingest)
     existing = fetchone_val(conn, "SELECT COUNT(*) FROM chunks WHERE session_date = ?", (session_date,))
 
     if existing > 0 and not force:
@@ -415,7 +415,7 @@ def ingest_date(session_date: str, force: bool = False):
         text = notes_path.read_text()
         all_chunks.extend(chunk_notes_md(text, session_date))
 
-    # state.md（当日分のスナップショット）
+    # state.md (today's snapshot)
     if STATE_MD.exists():
         text = STATE_MD.read_text()
         all_chunks.extend(chunk_state_md(text, session_date))
@@ -424,7 +424,7 @@ def ingest_date(session_date: str, force: bool = False):
         print(f"{session_date}: no chunks extracted")
         return 0
 
-    # 埋め込み生成（Q + content の結合テキスト）
+    # Generate embeddings (combined text of Q + content)
     texts = []
     for c in all_chunks:
         t = c["question"] + "\n" + c["content"] if c["question"] else c["content"]
@@ -433,7 +433,7 @@ def ingest_date(session_date: str, force: bool = False):
     print(f"Embedding {len(texts)} chunks...")
     vectors = embed(texts)
 
-    # DB挿入
+    # DB insert
     for chunk, vec in zip(all_chunks, vectors):
         conn.execute(
             """INSERT INTO chunks (session_date, chunk_type, question, content, pair, tags, source_file)
@@ -446,7 +446,7 @@ def ingest_date(session_date: str, force: bool = False):
             "INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)",
             (chunk_id, serialize_f32(vec))
         )
-    # --- 構造化データ取り込み ---
+    # --- Structured data ingestion ---
     trades_text = ""
     notes_text = ""
     trades_path = day_dir / "trades.md"
@@ -456,8 +456,8 @@ def ingest_date(session_date: str, force: bool = False):
     if notes_path.exists():
         notes_text = notes_path.read_text()
 
-    # trades テーブル — OANDA + trades.md統合（質的データを失わない）
-    # 1) OANDA APIから当日の確定トレードを取得
+    # trades table — OANDA + trades.md integration (don't lose qualitative data)
+    # 1) Fetch today's closed trades from OANDA API
     oanda_trades = fetch_oanda_trades(session_date)
     oanda_inserted = 0
     for t in oanda_trades:
@@ -476,17 +476,17 @@ def ingest_date(session_date: str, force: bool = False):
     if oanda_inserted:
         print(f"  oanda_trades: {oanda_inserted} inserted")
 
-    # 2) trades.mdからの構造化パース → OANDAレコードをUPDATE（質的データ補完）
+    # 2) Structured parse from trades.md → UPDATE OANDA records (supplement qualitative data)
     structured_trades = parse_trades(trades_text, session_date)
     enriched = 0
     md_inserted = 0
     for t in structured_trades:
         if t.get('trade_id'):
-            # OANDAで挿入済みなら質的データでUPDATE（スキップではなく統合）
+            # If already inserted by OANDA, UPDATE with qualitative data (integrate, don't skip)
             exists = fetchone_val(conn,
                 "SELECT COUNT(*) FROM trades WHERE trade_id = ?", (t['trade_id'],))
             if exists and exists > 0:
-                # 質的データがあるフィールドだけUPDATE
+                # UPDATE only fields that have qualitative data
                 updates = []
                 params = []
                 for col in ['h1_adx', 'h1_trend', 'm5_adx', 'm5_trend', 'rsi', 'stoch_rsi',
@@ -496,7 +496,7 @@ def ingest_date(session_date: str, force: bool = False):
                     if val is not None:
                         updates.append(f"{col} = ?")
                         params.append(val)
-                # reason: trades.mdのテーゼはOANDAの'MARKET_ORDER'より有用
+                # reason: thesis from trades.md is more useful than OANDA's 'MARKET_ORDER'
                 if t.get('reason') and t['reason'] != 'MARKET_ORDER':
                     updates.append("reason = ?")
                     params.append(t['reason'])
@@ -508,7 +508,7 @@ def ingest_date(session_date: str, force: bool = False):
                     )
                     enriched += 1
                 continue
-        # trade_idがないか、DBにもOANDAにもない → 新規INSERT
+        # No trade_id, or not in DB or OANDA → new INSERT
         conn.execute(
             """INSERT INTO trades (session_date, trade_id, pair, direction, units,
                entry_price, exit_price, pl,
@@ -528,14 +528,14 @@ def ingest_date(session_date: str, force: bool = False):
     if md_inserted:
         print(f"  trades_md: {md_inserted} additional records")
 
-    # 3) live_trade_log.txtからもテーゼ/理由を補完
+    # 3) Also supplement thesis/reason from live_trade_log.txt
     log_path = Path(__file__).parent.parent.parent / "logs" / "live_trade_log.txt"
     if log_path.exists():
         log_enriched = _enrich_from_log(conn, session_date, log_path)
         if log_enriched:
             print(f"  log_enriched: {log_enriched} records from live_trade_log.txt")
 
-    # user_calls テーブル
+    # user_calls table
     user_calls = parse_user_calls(notes_text, session_date)
     for uc in user_calls:
         conn.execute(
@@ -550,7 +550,7 @@ def ingest_date(session_date: str, force: bool = False):
     if user_calls:
         print(f"  user_calls: {len(user_calls)} records")
 
-    # market_events テーブル
+    # market_events table
     all_text = trades_text + "\n" + notes_text
     events = parse_market_events(all_text, session_date)
     for ev in events:
@@ -571,7 +571,7 @@ def ingest_date(session_date: str, force: bool = False):
 
 
 def ingest_all(force: bool = False):
-    """daily/ 内の全日付を取り込む"""
+    """Ingest all dates inside daily/"""
     total = 0
     if not DAILY_DIR.exists():
         print("No daily directory found")
@@ -594,5 +594,5 @@ if __name__ == "__main__":
     elif args:
         ingest_date(args[0], force=force)
     else:
-        # デフォルト: 今日
+        # Default: today
         ingest_date(str(date.today()), force=force)

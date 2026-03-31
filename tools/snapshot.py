@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""毎サイクル自動実行: OANDAから現在のポジション・口座を取得してスナップショット保存"""
+"""Auto-run each cycle: fetch current positions and account from OANDA and save snapshot"""
 import json, time, urllib.request, os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,7 +36,7 @@ out = os.path.join(ROOT, 'logs', '.trader_snapshot.json')
 with open(out, 'w') as f:
     json.dump(snapshot, f, ensure_ascii=False, indent=2)
 
-# 簡易表示
+# Brief output
 for t in snapshot['trades']:
     print(f"{t['instrument']} {t['units']}u @{t['price']} PL={t['unrealizedPL']}")
 print(f"NAV:{snapshot['nav']} Bal:{snapshot['balance']} Margin:{snapshot['marginUsed']}/{snapshot['marginAvailable']}")
