@@ -1,82 +1,81 @@
-# 記録ルール — チェック→注文→記録は同一動作
+# Recording Rules — Check → Order → Record is a Single Action
 
-**エントリーの流れ: pretrade_check → 注文 → 4点記録。この5ステップは分割不可。**
-**決済の流れ: preclose_check → 決済 → 4点記録。この流れも分割不可。**
+**Entry flow: pretrade_check → order → 4-point record. These 5 steps are indivisible.**
+**Exit flow: preclose_check → close → 4-point record. This flow is also indivisible.**
 
-## STEP 0a: pretrade_check（エントリー前に必ず実行）
+## STEP 0a: pretrade_check (run before every entry)
 
 ```bash
 cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}
 ```
 
-- 出力はデータと過去の教訓。**判断はお前がしろ**
-- HIGH/MEDIUM/LOWはデータの要約であって指示ではない。状況で判断を変えるのがプロ
-- 結果をtrades.mdのエントリー記録に含める（`pretrade: LOW` 等）
+- Output is data and past lessons. **You make the call.**
+- HIGH/MEDIUM/LOW are summaries of data, not instructions. Adjusting your judgment to the situation is what professionals do.
+- Include the result in the entry record in trades.md (e.g. `pretrade: LOW`)
 
-## STEP 0b-2: profit_check（各セッション開始時に必ず実行）
+## STEP 0b-2: profit_check (run at the start of every session)
 
-**「今、利確すべきか」をデータで問う道具。セッション冒頭で全ポジに対して自動実行。**
+**A tool to ask the data "should I take profit now?". Auto-runs against all positions at session open.**
 
 ```bash
 cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && python3 tools/protection_check.py
 ```
 
-- **profit_check**: ATR比、M5モメンタム、H1構造、7ペア相関、S/R距離、ピーク比較を一括評価
-- **protection_check**: 全ポジのTP/SL/Trailing状態をATRベースで評価。NO PROTECTIONは即対処
-- **デフォルトは利確。** TAKE_PROFIT/HALF_TP推奨が出たら「なぜ持つか」を言語化しろ
-- 言語化できない → 利確。言語化できた → HOLD（根拠をstate.mdに追記）
-- **state.md にピーク記録を残せ**: `ピーク: +3,200円 @1.33620 (03:20Z)`
+- **profit_check**: Evaluates ATR ratio, M5 momentum, H1 structure, 7-pair correlation, S/R distance, and peak comparison all at once
+- **protection_check**: Evaluates TP/SL/Trailing status of all positions on an ATR basis. NO PROTECTION requires immediate action.
+- **Default is take profit.** If TAKE_PROFIT/HALF_TP is recommended, articulate why you're holding. If you can't articulate it → take profit. If you can → HOLD (add the rationale to state.md)
+- **Log the peak in state.md**: `Peak: +3,200 JPY @1.33620 (03:20Z)`
 
-## STEP 0b: preclose_check（決済前に必ず実行）
+## STEP 0b: preclose_check (run before every close)
 
 ```bash
-cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SIDE} {UNITS} {含み損益円}
+cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SIDE} {UNITS} {unrealized_pnl_jpy}
 ```
 
-- 出力はテーゼの再確認と事実の提示。判断を奪わない
-- 答えた上で決済するのはOK。答えずに反射で切るのがNG
-- **決済理由はlive_trade_logに必ず明記**（`reason=H1_DI+逆転` 等）
-- **理由なき決済 = ルール違反**
+- Output re-confirms the thesis and presents facts. It does not take away your judgment.
+- Closing after answering it is OK. Closing reflexively without answering is not.
+- **Always note the close reason in live_trade_log** (e.g. `reason=H1_DI+reversal`)
+- **Closing without a reason = rule violation**
 
-## STEP 1-4: 注文 → 4点記録（後回し禁止）
+## STEP 1-4: Order → 4-point record (no deferring)
 
-| ファイル | 何を書く |
+| File | What to write |
 |----------|---------|
-| `collab_trade/daily/YYYY-MM-DD/trades.md` | エントリー・決済の詳細テーブル |
-| `collab_trade/state.md` | 現在のポジション・テーゼ・確定益（外部記憶） |
-| `logs/live_trade_log.txt` | トレード実行ログ（時系列） |
-| `#qr-trades` (Slack通知) | エントリー/変更/決済をSlackに投稿 |
+| `collab_trade/daily/YYYY-MM-DD/trades.md` | Detailed entry/exit table |
+| `collab_trade/state.md` | Current positions, thesis, realized P&L (external memory) |
+| `logs/live_trade_log.txt` | Trade execution log (chronological) |
+| `#qr-trades` (Slack notification) | Post entries/modifications/closes to Slack |
 
-## Slack通知（4点目）
+## Slack Notification (4th point)
 
-注文実行と同時に `slack_trade_notify.py` で `#qr-trades` に投稿する。
+Post to `#qr-trades` via `slack_trade_notify.py` at the same time as order execution.
 
 ```bash
-# エントリー
-python3 tools/slack_trade_notify.py entry --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} [--sl {SL}] [--thesis "テーゼ"]
+# Entry
+python3 tools/slack_trade_notify.py entry --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} [--sl {SL}] [--thesis "thesis"]
 
-# 変更（半利確、SL移動、ナンピン等）
-python3 tools/slack_trade_notify.py modify --pair {PAIR} --action "TP半利確" --units {UNITS} --price {PRICE} --pl "{PL}" [--note "残units, BE移動等"]
+# Modification (partial TP, SL move, add-on, etc.)
+python3 tools/slack_trade_notify.py modify --pair {PAIR} --action "half TP" --units {UNITS} --price {PRICE} --pl "{PL}" [--note "remaining units, BE move, etc."]
 
-# 全決済
-python3 tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} --pl "{PL}" [--total_pl "確定益合計"]
+# Full close
+python3 tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} --pl "{PL}" [--total_pl "total realized P&L"]
 ```
 
-## state.md はスナップショットじゃない。ストーリーだ
+## state.md is not a snapshot. It's a story.
 
-**悪い例:** `USD_JPY: H1上昇トレンド(ADX32)。押し目買い狙い`
-**良い例:**
+**Bad example:** `USD_JPY: H1 uptrend (ADX32). Looking for dip buys`
+**Good example:**
 ```
-## USD_JPY LONG テーゼ
-- 読み: 円安方向。158.50→159.00を目指す
-- 根拠: Fed hawkish hold + Iran risk-off → USD bid
-- 転換条件: DXY 98.5割れ、米国債利回り急落、または158.30明確割れ
-- 経過: 158.38→ナンピン158.37→半利確158.41
+## USD_JPY LONG Thesis
+- Read: JPY weakness direction. Targeting 158.50 → 159.00
+- Basis: Fed hawkish hold + Iran risk-off → USD bid
+- Invalidation: DXY breaks 98.5, US yields drop sharply, or 158.30 cleanly broken
+- Progress: 158.38 → add-on 158.37 → half TP 158.41
 ```
 
-## ユーザー発言の記録
+## Recording User Remarks
 
-ユーザーが何か言ったら即 `daily/YYYY-MM-DD/notes.md` に**チャート状態込み**で記録。
-`ユーザー: 「上がりそう」— M5で3本連続陰線後に長い下ヒゲ、BB下限タッチ、H1上昇中(ADX=32)、RSI=35`
+If the user says anything, immediately record it in `daily/YYYY-MM-DD/notes.md` **with chart context**.
+`User: "Looks like it'll go up" — 3 consecutive M5 bearish candles followed by long lower wick, BB lower band touch, H1 uptrend (ADX=32), RSI=35`
 
-**「ちゃんと記録してる？」と聞かれた時点で負け。**
+**If you're asked "are you recording properly?", you've already lost.**

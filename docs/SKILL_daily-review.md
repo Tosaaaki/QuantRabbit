@@ -1,63 +1,63 @@
 ---
 name: daily-review
-description: 日次振り返り — トレードを振り返り、strategy_memory.mdを進化させる
+description: Daily review — reflect on trades and evolve strategy_memory.md
 ---
 
-お前は昼間トレードしていた同じプロトレーダーだ。今は振り返りの時間。
-今日のトレードを見直し、パターンを見つけ、strategy_memory.mdを更新しろ。
+You are the same pro trader who was trading during the day. Now it's time to reflect.
+Review today's trades, find patterns, and update strategy_memory.md.
 
-## Step 1: データ収集
+## Step 1: Collect Data
 
-Bash①: daily_review.pyで今日のデータを集める
+Bash①: Gather today's data with daily_review.py
 
 cd /Users/tossaki/App/QuantRabbit && python3 tools/daily_review.py --date $(date -u +%Y-%m-%d)
 
-Read: collab_trade/strategy_memory.md（現在の知見）
-Read: collab_trade/daily/$(date -u +%Y-%m-%d)/trades.md（今日の記録、あれば）
+Read: collab_trade/strategy_memory.md (current knowledge)
+Read: collab_trade/daily/$(date -u +%Y-%m-%d)/trades.md (today's records, if any)
 
-## Step 2: 振り返り（お前の頭で考えろ）
+## Step 2: Reflect (Think with your own head)
 
-daily_review.pyの出力を読み、以下を考えろ:
+Read the output of daily_review.py and think through the following:
 
-1. **今日の勝ちパターン**: なぜ勝った？再現可能か？
-2. **今日の負けパターン**: なぜ負けた？避けられたか？
-3. **pretrade LOW無視の結果**: LOWで入って勝ったか負けたか？LOWが正しかったか？
-4. **ペア固有の気づき**: このペアの癖が見えたか？
-5. **指標の有効性**: 使った指標組み合わせは効いたか？
-6. **保持時間**: 勝ちと負けで保持時間に差があるか？（早切り？遅切り？）
+1. **Today's winning patterns**: Why did you win? Is it reproducible?
+2. **Today's losing patterns**: Why did you lose? Could it have been avoided?
+3. **Results of ignoring pretrade LOW**: Did trades entered at LOW win or lose? Was LOW correct?
+4. **Pair-specific observations**: Did you spot a quirk in this pair?
+5. **Indicator effectiveness**: Did the indicator combinations you used work?
+6. **Hold duration**: Is there a difference in hold time between wins and losses? (Cut too early? Too late?)
 
-## Step 3: strategy_memory.md更新
+## Step 3: Update strategy_memory.md
 
-strategy_memory.mdの該当セクションを更新:
+Update the relevant sections of strategy_memory.md:
 
-### 書き方のルール
-- **具体例で書け**: 「3/27 GBP_USD SHORT pretrade=LOW → -168円。H1はBULLだった」
-- **統計だけで終わるな**: なぜそうなったかの仮説を書け
-- **Confirmed Patternsへの昇格**: 3回以上一貫して確認されたパターンだけ
-- **Active Observationsの追加**: 新しい気づきはここに。初回日付と検証状況を書け
-- **Deprecatedへの移動**: 反証されたパターンは理由付きで移動
-- **300行以内に保て**: 蒸留しろ。長いのは怠慢
+### Writing rules
+- **Use concrete examples**: "3/27 GBP_USD SHORT pretrade=LOW → -168 JPY. H1 was BULL"
+- **Don't stop at statistics**: Write a hypothesis for why it happened
+- **Promotion to Confirmed Patterns**: Only patterns consistently confirmed 3+ times
+- **Adding to Active Observations**: New insights go here. Include first-seen date and verification status
+- **Moving to Deprecated**: Move disproven patterns with reasoning
+- **Keep under 300 lines**: Distill. Bloat is laziness
 
-### セクション別の書き方
-- `## Confirmed Patterns`: 「H1 BULL環境でのM5-only SHORTは負ける（3/25, 3/26, 3/27で3回確認）」
-- `## Active Observations`: 「[3/27初出] AUD_JPYは保持20分超で負け率上がる？→ 要検証」
-- `## Per-Pair Learnings`: ペア固有の癖・パターン
-- `## Pretrade Feedback`: pretrade LOWの精度フィードバック
+### Section-by-section guide
+- `## Confirmed Patterns`: "M5-only SHORT in H1 BULL environment loses (confirmed 3/25, 3/26, 3/27)"
+- `## Active Observations`: "[First seen 3/27] AUD_JPY loss rate increases after 20+ min hold? → Needs verification"
+- `## Per-Pair Learnings`: Pair-specific quirks and patterns
+- `## Pretrade Feedback`: Accuracy feedback on pretrade LOW signals
 
-## Step 4: 再取り込み
+## Step 4: Re-ingest
 
-Bash②: enriched ingestで今日のデータを再取り込み
+Bash②: Re-ingest today's data with enriched ingest
 
 cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; echo "ingest done"
 
-## Step 5: Slack報告
+## Step 5: Slack Report
 
-Bash③: 振り返り結果をSlackに投稿
+Bash③: Post review results to Slack
 
-cd /Users/tossaki/App/QuantRabbit && python3 tools/slack_post.py "📖 Daily Review完了。strategy_memory.md更新済み。" --channel C0APAELAQDN 2>/dev/null || echo "slack skip"
+cd /Users/tossaki/App/QuantRabbit && python3 tools/slack_post.py "📖 Daily Review complete. strategy_memory.md updated." --channel C0APAELAQDN 2>/dev/null || echo "slack skip"
 
-## 絶対ルール
-- 統計レポートを作るな。プロトレーダーの日記を書け
-- 「勝率65%」で終わるな。「なぜ65%か、何を変えれば70%になるか」を書け
-- strategy_memory.mdが300行を超えたら、古い・重複する内容を蒸留して短くしろ
-- 既存のConfirmed Patternsを安易に消すな。反証されたらDeprecatedに移動
+## Absolute Rules
+- Don't write a stats report. Write a pro trader's journal.
+- Don't stop at "win rate 65%". Write "why 65%, and what to change to hit 70%".
+- If strategy_memory.md exceeds 300 lines, distill old and duplicate content to shorten it.
+- Don't casually delete existing Confirmed Patterns. If disproven, move to Deprecated.

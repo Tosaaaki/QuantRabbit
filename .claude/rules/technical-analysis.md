@@ -1,110 +1,110 @@
-# テクニカル分析ルール
+# Technical Analysis Rules
 
-## MTF階層（最重要）
-- **H1 = 大局（方向）、M15 = モメンタム転換検知、M5 = エントリー確認、M1 = タイミング**
-- H1ベアだからショートホールドで思考停止するな。MTFでモメンタム変化を読んで回転しろ
+## MTF Hierarchy (Most Important)
+- **H1 = Big picture (direction), M15 = Momentum shift detection, M5 = Entry confirmation, M1 = Timing**
+- Don't freeze up just because H1 is bearish and hold short. Read momentum changes across MTF and rotate.
 
-## 毎サイクル: 7ペア横断スキャン
+## Every Cycle: 7-Pair Cross Scan
 
-| 何を探す | 意味 |
+| What to look for | Meaning |
 |----------|------|
-| StochRSI極限(0.0 or 1.0) | 反発チャンス |
-| ダイバージェンス(score>0) | 転換予兆 |
-| CCI ±200超 | 極端な過熱、回帰トレード |
-| BB squeeze(上下が近い) | ブレイク待ち |
+| StochRSI extreme (0.0 or 1.0) | Reversal opportunity |
+| Divergence (score>0) | Reversal signal |
+| CCI ±200+ | Extreme overheating, mean-reversion trade |
+| BB squeeze (bands close together) | Breakout pending |
 
-## ペア間の関係性（最強の武器）
-- USD_JPY M1天井(StochRSI=1.0) → ドルスト(EUR/GBP/AUD)に反発チャンス
-- EUR_USDとGBP_USDが同時にM5売られすぎ → USD全面高の反転サイン
-- AUD_USDとAUD_JPYが同方向 → AUD通貨自体の動き。確信を持てる
+## Inter-Pair Relationships (Your Strongest Weapon)
+- USD_JPY M1 top (StochRSI=1.0) → Reversal opportunity in USD pairs (EUR/GBP/AUD)
+- EUR_USD and GBP_USD both M5 oversold simultaneously → USD-wide strength reversal signal
+- AUD_USD and AUD_JPY moving in same direction → AUD currency itself is moving. High conviction.
 
-## 指標の使い方 — 固定セットではなく状況で選べ
+## How to Use Indicators — Choose by Situation, Not Fixed Set
 
-### ベース（毎回見る）
-ADX/DI、EMA12/20、RSI — これだけは必ず。ここから「今の市場はどういう状態か」を判断する。
+### Base (Always Check)
+ADX/DI, EMA12/20, RSI — these are mandatory every time. Use these to judge "what state is the market in right now."
 
-### 状況に応じて追加する指標（84個の武器庫から適宜選べ）
+### Situational Add-ons (Pick from the 84-weapon arsenal as needed)
 
-| 状況 | 追加する指標 | なぜ効くか |
+| Situation | Add these indicators | Why they work |
 |------|-------------|-----------|
-| 強トレンド(ADX>30) | EMAスロープ(5/10/20)、MACD hist、ROC5/10 | 勢いの変化=利確タイミング |
-| トレンド疲弊疑い | ダイバージェンス(RSI+MACD)、上下ヒゲ平均(wick_avg_pips) | ヒゲ拡大+Div=転換近い |
-| レンジ・膠着 | BB幅(BBW)、CCI、VWAP乖離、Keltner幅(kc_width) | BBとKCの比較でsqueeze精度UP |
-| ブレイク待ち | Donchian幅、BB squeeze、Chaikin Vol | ボラ圧縮の深さ=ブレイクの爆発力 |
-| サポレジ判定 | クラスター(cluster_high/low_gap)、swing距離、Ichimoku雲 | 価格の壁がどこにあるか |
-| 反転エントリー | StochRSI極限+CCI±200、ヒゲパターン(wick_avg)、hit回数(high/low_hits) | 何度叩いたか=壁の強さ |
-| 過熱判定 | RSI+CCI+VWAP乖離+BB位置の複合 | 1指標だけでは過熱誤判定。複合で確度上げる |
-| ボラ急変 | ATR、vol_5m、Chaikin Vol、BB幅変化率 | ボラ変化=SL幅・サイズ調整の根拠 |
-| TP後・回転計画 | Fib retrace/ext (fib_wave.py)、N-wave structure | 再エントリーゾーンとTP目標の定量化 |
-| 押し目・戻り判定 | Fib 38.2-61.8% + BB mid + EMA20 + cluster | 複数水準コンフルエンスで信頼性UP |
+| Strong trend (ADX>30) | EMA slope (5/10/20), MACD hist, ROC5/10 | Momentum changes = TP timing |
+| Suspected trend exhaustion | Divergence (RSI+MACD), upper/lower wick avg (wick_avg_pips) | Wick expansion + Div = reversal near |
+| Range / stagnation | BB width (BBW), CCI, VWAP deviation, Keltner width (kc_width) | BB vs KC comparison improves squeeze accuracy |
+| Breakout pending | Donchian width, BB squeeze, Chaikin Vol | Depth of vol compression = explosive breakout power |
+| Support/resistance detection | Cluster (cluster_high/low_gap), swing distance, Ichimoku cloud | Where are the price walls |
+| Reversal entry | StochRSI extreme + CCI±200, wick pattern (wick_avg), hit count (high/low_hits) | How many times tested = wall strength |
+| Overheating check | Combined RSI + CCI + VWAP deviation + BB position | Single indicator gives false overheating reads. Use composite for accuracy |
+| Volatility spike | ATR, vol_5m, Chaikin Vol, BB width change rate | Vol change = basis for SL width and size adjustment |
+| Post-TP / rotation plan | Fib retrace/ext (fib_wave.py), N-wave structure | Quantify re-entry zones and TP targets |
+| Pullback / retracement judgment | Fib 38.2-61.8% + BB mid + EMA20 + cluster | Multiple level confluence increases reliability |
 
-### 重要: 組み合わせを試して記録しろ
+### Important: Test Combinations and Record Results
 
-- **新しい組み合わせを使ったら必ず結果を記録**: strategy_memory.md の「指標組み合わせの学び」セクションに追記
-- **効いた組み合わせ**: 状況・ペア・TF・組み合わせ・結果をセットで記録
-- **効かなかった組み合わせ**: なぜダメだったかも記録（同じ失敗を繰り返さない）
-- **84個全てが武器**: 使っていない指標は「使えない」のではなく「まだ試していない」。積極的に試せ
+- **Always record results when using a new combination**: add to the "Indicator Combination Learnings" section in strategy_memory.md
+- **Combinations that worked**: record situation, pair, TF, combination, and result as a set
+- **Combinations that didn't work**: also record why it failed (don't repeat the same mistakes)
+- **All 84 are weapons**: an indicator you haven't used isn't "useless" — it's "untested." Try them aggressively.
 
-## 実績パターン（勝てる動き方）
-- **TP後即再エントリー**: テーゼ生きてるなら即入り直す
-- **底固め確認→全力追加**: M1 3連続陽線で確認→追加
-- **フリップ**: フロー逆行に気づいたら1秒で切り替え
-- **Hidden Div → 即エントリー**: Divスコアが出てるのに無視するな
-- **ペア分散**: 同じテーゼで別ペア（EUR+GBPでUSD弱テーマ等）
+## Proven Patterns (How to Win)
+- **Immediate re-entry after TP**: If the thesis is still alive, get back in immediately
+- **Base confirmation → full add-on**: Confirm with 3 consecutive M1 bullish candles → add
+- **Flip**: The moment you notice flow reversing, switch in 1 second
+- **Hidden Div → immediate entry**: Don't ignore it when a Div score appears
+- **Pair diversification**: Same thesis across different pairs (e.g., EUR+GBP for USD weakness theme)
 
-## N-Wave認識とフィボナッチ — 「波のどこにいるか」の地図
+## N-Wave Recognition and Fibonacci — Map of "Where Are You in the Wave"
 
-### なぜ必要か
-オシレーター(RSI/StochRSI/CCI)は「今の温度」。N-waveとFibは「今どこにいて、次どこへ行くか」の地図。
-温度計だけでは回転計画を立てられない。地図を持て。
+### Why You Need It
+Oscillators (RSI/StochRSI/CCI) are the "current temperature." N-wave and Fib are the map of "where are you now and where are you going."
+A thermometer alone can't build a rotation plan. Carry the map.
 
-### N-Wave構造
+### N-Wave Structure
 ```
 Bullish:  A(low) → B(high) → C(pullback) → D(new high)
 Bearish:  A(high) → B(low) → C(pullback) → D(new low)
 ```
-- AB leg = 最初のインパルス。方向とサイズを決定
-- BC leg = pullback。Fib 38.2-61.8%が健全。78.6%超 = wave崩壊
-- CD leg = 2番目のインパルス。CD ≥ AB×0.6 で健全
-- quality = min(AB,CD) / BC。1.0以上が理想
+- AB leg = first impulse. Defines direction and size
+- BC leg = pullback. Fib 38.2-61.8% is healthy. Above 78.6% = wave breakdown
+- CD leg = second impulse. CD ≥ AB×0.6 is healthy
+- quality = min(AB,CD) / BC. Ideal is 1.0 or above
 
-### Fibonacci使い方
+### Fibonacci Usage
 
-| 場面 | レベル | アクション |
+| Scenario | Level | Action |
 |------|--------|-----------|
-| pullback待ち（再エントリー） | 38.2%, 50%, 61.8% retrace | 押し目/戻りゾーン |
-| TP目標 | 127.2%, 161.8% extension | ABをCから投影 |
-| テーゼ無効化 | 78.6%, 100% retrace | wave崩壊判定 |
-| コンフルエンス | Fib + BB mid + Ichimoku雲 + cluster | 複数重なり = 強いS/R |
+| Waiting for pullback (re-entry) | 38.2%, 50%, 61.8% retrace | Pullback/retracement zone |
+| TP target | 127.2%, 161.8% extension | Project AB from C |
+| Thesis invalidation | 78.6%, 100% retrace | Wave breakdown judgment |
+| Confluence | Fib + BB mid + Ichimoku cloud + cluster | Multiple overlaps = strong S/R |
 
-### 実行
+### Execution
 ```bash
-python3 tools/fib_wave.py {PAIR} {TF} {BARS}   # 単体
-python3 tools/fib_wave.py --all                  # 全ペア
+python3 tools/fib_wave.py {PAIR} {TF} {BARS}   # single pair
+python3 tools/fib_wave.py --all                  # all pairs
 ```
 
-### 毎サイクルでの使い方
-1. セッション開始時に `fib_wave.py --all` で全ペアの波動構造を把握
-2. TP/エントリー判断でFib水準を参照
-3. state.mdの「波動計画」に現在の波位置・次のエントリー価格・TP価格を記載
-4. TP後 → Fib pullback水準で再エントリーを計画（ローテーション）
+### How to Use Every Cycle
+1. Run `fib_wave.py --all` at session start to grasp wave structure across all pairs
+2. Reference Fib levels for TP/entry decisions
+3. Record current wave position, next entry price, and TP price in the "Wave Plan" section of state.md
+4. After TP → plan re-entry at Fib pullback levels (rotation)
 
-## 84個の武器庫を使い切れ
+## Exhaust the 84-Weapon Arsenal
 
-adaptive_technicals.pyが状況に応じて指標を選んでくれるが、それに頼るだけでは足りない。
-自分で状況を読んで、必要な指標を選べ。
+adaptive_technicals.py selects indicators by situation for you, but relying on it alone is not enough.
+Read the situation yourself and choose the indicators you need.
 
-### 使用頻度が低い武器（積極的に試せ）
-- **Keltner Channel幅 (kc_width)**: BBと比較。BB > KC = ブレイクアウト確認
-- **Chaikin Volatility**: ボラ変化率。急拡大 = ブレイク直前
-- **Donchian幅**: レンジの広さ。狭まり = ブレイク予兆
-- **VWAP乖離**: フェアバリューからの距離。極端な乖離 = 回帰トレード
-- **ヒゲ平均 (wick_avg)**: 上下ヒゲの長さ。拡大 = 反転圧力
-- **高安タッチ回数 (hits)**: 何度叩いたか。多い = ブレイクしやすい
-- **Ichimoku雲位置**: 雲の上下で強弱。雲の厚さ = サポート強度
-- **価格クラスター (cluster_gap)**: 価格集中レベル = 強いS/R
+### Underused Weapons (Try Them Aggressively)
+- **Keltner Channel width (kc_width)**: Compare with BB. BB > KC = breakout confirmation
+- **Chaikin Volatility**: Vol change rate. Rapid expansion = breakout imminent
+- **Donchian width**: Range breadth. Narrowing = breakout signal
+- **VWAP deviation**: Distance from fair value. Extreme deviation = mean-reversion trade
+- **Wick average (wick_avg)**: Length of upper/lower wicks. Expansion = reversal pressure
+- **High/low touch count (hits)**: How many times tested. More = easier to break
+- **Ichimoku cloud position**: Above/below cloud = strength/weakness. Cloud thickness = support strength
+- **Price cluster (cluster_gap)**: Price concentration level = strong S/R
 
-### 組み合わせの原則
-- 同じカテゴリの指標を重ねるな（RSI + StochRSI + CCI = 全部オシレーター）
-- 異なるカテゴリを組み合わせろ: トレンド(ADX) + モメンタム(MACD) + 構造(Fib) + ボラ(ATR)
-- 新しい組み合わせを試したら結果をstrategy_memory.mdに記録
+### Combination Principles
+- Don't stack indicators from the same category (RSI + StochRSI + CCI = all oscillators)
+- Combine different categories: Trend (ADX) + Momentum (MACD) + Structure (Fib) + Volatility (ATR)
+- Record results in strategy_memory.md whenever you try a new combination

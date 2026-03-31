@@ -1,13 +1,13 @@
 ---
 name: daily-slack-summary
-description: 毎朝7:00 JSTにSlack #qr-dailyへ日次トレードサマリーを自動投稿
+description: Auto-post daily trade summary to Slack #qr-daily every morning at 7:00 JST
 ---
 
-日次トレードサマリーをSlackの #qr-daily チャンネルに投稿する。
+Post the daily trade summary to the Slack #qr-daily channel.
 
-手順:
-1. 以下のスクリプトを実行:
+Steps:
+1. Run the following script:
 ```bash
 cd /Users/tossaki/App/QuantRabbit && python3 tools/slack_daily_summary.py
 ```
-2. 成功したら完了。エラーが出たら内容を確認して修正を試みる。
+2. If successful, done. If an error occurs, inspect the output and attempt a fix.

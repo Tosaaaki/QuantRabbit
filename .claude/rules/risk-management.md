@@ -1,127 +1,147 @@
-# リスク管理
+# Risk Management
 
-## 最重要原則: デフォルトは利確。持つなら根拠を言え。
+## Most Important Principle: Default is Take Profit. If you're holding, justify it.
 
-**2026-03-27教訓: GBP含み益+3,000円超 → HOLDバイアスのせいで利確できず → -4,796円。**
-**旧ルール「切らない忍耐が利益を生む」が判断を歪めていた。逆転する。**
+**2026-03-27 lesson: GBP unrealized profit +3,000 yen → couldn't take profit due to HOLD bias → -4,796 yen.**
+**The old rule "patience without cutting generates profit" was distorting judgment. Reversing it now.**
 
-| 旧（問題あり） | 新（デフォルト逆転） |
+| Old (problematic) | New (default reversed) |
 |---|---|
-| 「なぜ切るか」を説明できなければ持つ | **「なぜ持つか」を説明できなければ切る** |
-| デフォルト = ホールド | **デフォルト = 利確** |
-| ATR50%未満で切るな | **ATR×1.0到達で利確判断を起動** |
+| Hold unless you can explain why to exit | **Exit unless you can explain why to hold** |
+| Default = Hold | **Default = Take Profit** |
+| Don't cut below ATR 50% | **ATR×1.0 reached = trigger profit evaluation** |
 
-- **ATR×1.0到達 = profit_checkのトリガー。** ここで `python3 tools/profit_check.py` が6軸評価する
-- **profit_checkがTAKE_PROFIT/HALF_TPを出したら、持つ根拠を30秒で言え。** 言えなければ利確
-- **ゴミ利確も避けろ**: ATR×0.5未満 かつ スプレッドに見合わない = まだ早い。ただしモメンタム反転なら例外
+- **ATR×1.0 reached = profit_check trigger.** Run `python3 tools/profit_check.py` for 6-axis evaluation
+- **If profit_check outputs TAKE_PROFIT/HALF_TP, you have 30 seconds to justify holding.** If you can't, take profit
+- **Avoid junk profits too**: Below ATR×0.5 and not worth the spread = too early. Exception: momentum reversal detected
 
-## 確度ベースのサイジング
+## Directional Bias Check (lesson from 4/1 wipeout)
 
-**確度が高い→大きく張る。低い→小さく張る。**
+**All positions in the same direction = not diversification, it's a bet.**
 
-| 確度 | 条件 | サイズ | 損切り幅 | 例 |
+2026-04-01: GBP_JPY/AUD_JPY/EUR_JPY all SHORT (concentrated JPY crosses) → all SL hit on bounce. With directional diversification, half would have been profitable.
+
+**Checklist (every session):**
+- All positions SHORT or all LONG → **explain why there's not a single position in the opposite direction**. Can't explain = bias
+- More than 3 positions on the same pair → **sign of averaging-down hell. Go make money on other pairs**
+- All positions are JPY crosses → **all-in on JPY. Full wipeout risk if JPY reverses**
+
+**Countermeasures:**
+- Main position in thesis direction + small position for bounce = normal
+- Holding both LONG and SHORT is normal. Only one side is abnormal
+- Don't bet all capital on the same theme (e.g., JPY strength)
+
+## Conviction-Based Sizing
+
+**High conviction → size up. Low conviction → size down.**
+
+| Conviction | Conditions | Size | Stop width | Example |
 |------|------|--------|---------|-----|
-| **S（鉄板）** | H1+H4+マクロ全一致、Div確認、ユーザー読み一致 | 5000-8000u | テーゼ崩壊まで | H4 ADX>30 + H1同方向 + M5押し目 |
-| **A（高確度）** | H1方向一致 + M5タイミング確認 | 3000-5000u | H1構造変化まで | H1 bullish + M5 StochRSI=0.0 |
-| **B（普通）** | 1TFのシグナルのみ | 1000-2000u | 状況判断 | M5 Divのみ、H1不明確 |
-| **C（試し打ち）** | 根拠薄い | 500-1000u | 状況判断 | レンジ内逆張り |
+| **S (ironclad)** | H1+H4+macro all aligned, Div confirmed, user read aligned | 5000-8000u | Until thesis breaks | H4 ADX>30 + H1 same direction + M5 pullback |
+| **A (high)** | H1 direction aligned + M5 timing confirmed | 3000-5000u | Until H1 structure changes | H1 bullish + M5 StochRSI=0.0 |
+| **B (normal)** | Signal from 1 TF only | 1000-2000u | Situational | M5 Div only, H1 unclear |
+| **C (probe)** | Thin basis | 500-1000u | Situational | Counter-trend within range |
 
-**確度B以下を10回やるより確度Sを1回やれ。回数で稼ぐな。**
+**One conviction-S trade beats ten conviction-B trades. Don't grind for volume.**
 
-## add-on — 臨機応変に。ただし1つだけ絶対ルール
+## add-on — Be flexible. But one absolute rule.
 
-**ピラミッディングもナンピンもOK。状況次第。**
+**Pyramiding and averaging down are both fine. Depends on the situation.**
 
-ただし: **「前回と違う根拠を言えるか？」** 言えなければ追加するな。
-- 同じStochRSI=1.0が3回目 → 新情報ではない。それは「天井」ではなく「強いトレンド」
-- 別TFで新しいシグナル、ニュース、サポートタッチ等 → 新根拠。追加OK
+However: **"Can you give a different reason than last time?"** If not, don't add.
+- Same StochRSI=1.0 for the third time → not new information. That's "strong trend," not "ceiling"
+- New signal on a different TF, news, support touch, etc. → new basis. Adding OK
 
-## 利確 — 2段構造: ATRがトリガー、マルチスキャンが判断
+## Take Profit — 2-stage structure: ATR triggers, multi-scan decides
 
-### STEP 1: トリガー（いつ考えるか）
+### STEP 1: Triggers (when to evaluate)
 
-| トリガー | 条件 | アクション |
+| Trigger | Condition | Action |
 |----------|------|-----------|
-| **ATR×1.0到達** | 含み益がATR以上に達した | `profit_check.py` 実行 → 利確判断 |
-| **セッション開始時** | 毎セッション冒頭 | `profit_check.py --all` で全ポジチェック |
-| **別ポジで急変** | 他ペアで損切り・急騰急落 | 即座に全含み益ポジを確認 |
-| **M5モメンタム反転** | MACD hist反転 + StochRSI過熱 | そのポジの利確を検討 |
+| **ATR×1.0 reached** | Unrealized profit reached ATR or more | Run `profit_check.py` → make TP decision |
+| **Session start** | Beginning of every session | `profit_check.py --all` to check all positions |
+| **Sudden move on another position** | Stop hit or spike on another pair | Immediately check all profitable positions |
+| **M5 momentum reversal** | MACD hist reversal + StochRSI overheated | Consider taking profit on that position |
 
-### STEP 2: 判断（どう決めるか）— profit_check.pyの6軸
+### STEP 2: Decision (how to decide) — profit_check.py 6 axes
 
-profit_check.pyが以下を同時評価して推奨を出す:
+profit_check.py evaluates the following simultaneously and outputs a recommendation:
 
-1. **ATR比** — 含み益/ATR。1.0x到達でトリガー、1.5x超で十分
-2. **M5モメンタム** — MACD hist方向、StochRSI位置、EMAスロープ
-3. **H1構造** — ADX、DI方向、テーゼとの整合性、ダイバージェンス
-4. **7ペア相関** — 同通貨ペアの方向一致/逆行
-5. **S/R距離** — 次のレジ/サポまでの距離
-6. **ピーク比較** — state.mdのピーク記録からの戻し幅
+1. **ATR ratio** — unrealized profit / ATR. 1.0x = trigger, above 1.5x = sufficient
+2. **M5 momentum** — MACD hist direction, StochRSI position, EMA slope
+3. **H1 structure** — ADX, DI direction, alignment with thesis, divergence
+4. **7-pair correlation** — directional agreement/divergence across correlated pairs
+5. **S/R distance** — distance to next resistance/support
+6. **Peak comparison** — drawdown from peak recorded in state.md
 
-### STEP 3: デフォルトは利確
+### STEP 3: Default is Take Profit
 
-- **TAKE_PROFIT推奨** → 持つ根拠を30秒で言え。言えなければ全利確
-- **HALF_TP推奨** → 半利確がデフォルト。全量持つなら強い根拠が要る
-- **HOLD推奨** → OK。ただし根拠をstate.mdに追記（ピーク記録含む）
-- **根拠の例**: 「H1 ADX=30 DI+加速中、TP目標まであと15pip、相関ペアも同方向」
-- **NGな根拠**: 「まだ伸びそう」「テーゼが生きてる（具体性なし）」
+- **TAKE_PROFIT recommended** → justify holding in 30 seconds. If you can't, full exit
+- **HALF_TP recommended** → half profit-take is the default. Need a strong reason to hold full size
+- **HOLD recommended** → OK. But add the justification to state.md (include peak record)
+- **Example of valid basis**: "H1 ADX=30 DI+ accelerating, 15 pip left to TP target, correlated pairs also in same direction"
+- **Invalid basis**: "Still looks like it'll move" / "Thesis is alive (no specifics)"
 
-### ゴミ利確の防止
+### Preventing Junk Profits
 
-ATR×0.5未満 かつ スプレッドに見合わない額 = まだ早い。**ただしモメンタム反転を検知したらATR未達でも利確OK。**
+Below ATR×0.5 and not worth the spread = too early. **However, if momentum reversal is detected, taking profit before ATR target is OK.**
 
-## 損切り — 金額トリガー禁止。市況で判断しろ
+## Stop Loss — No monetary triggers. Judge by market conditions.
 
-**金額ベースの損切りルールは一切ない。-500円だろうが-1000円だろうが、金額は判断材料にするな。**
+**There are zero monetary-based stop loss rules. Whether it's -500 yen or -1000 yen, do not use the amount as a decision factor.**
 
-含み損が気になった時の判断フロー（これだけ。金額は見るな）:
+Decision flow when you're concerned about an unrealized loss (this is all. Don't look at the amount):
 
-1. **H1構造が変わったか？**
-   - DI+/DI-が逆転した？ ADXが方向転換した？
-   - → NO → **切るな。テーゼは生きてる**
-   - → YES → ステップ2へ
+1. **Has the H1 structure changed?**
+   - Did DI+/DI- flip? Did ADX change direction?
+   - → NO → **Don't cut. The thesis is alive**
+   - → YES → Go to step 2
 
-2. **テーゼの根拠は消えたか？**
-   - エントリー時の根拠（Div、マクロ、フロー等）がまだ有効か？
-   - → 根拠まだある → **サイズ半分にして残せ**（全撤退するな）
-   - → 根拠も消えた → **全撤退OK**
+2. **Has the basis for the thesis disappeared?**
+   - Is the entry basis (Div, macro, flow, etc.) still valid?
+   - → Basis still there → **Cut size in half and hold** (don't fully exit)
+   - → Basis also gone → **Full exit OK**
 
-3. **反対方向のシグナルが出てるか？**
-   - H1で明確な反転Div + M5でモメンタム反転確認
-   - → 両方YES → フリップ（ドテン）を検討
-   - → 片方だけ → 半利確で様子見
+3. **Is a signal appearing in the opposite direction?**
+   - Clear reversal Div on H1 + momentum reversal confirmed on M5
+   - → Both YES → Consider flipping (reversing the position)
+   - → Only one → Half profit-take and watch
 
-**絶対にやるな:**
-- 含み損の金額だけを見て切る（-500円だから、-1000円だから）
-- スパイクで慌てて成行損切り → 天井/底で切るのが最悪。戻りを待て
-- 「pain rule」「損切りライン」等の金額閾値を自分で設定して機械的に従う
+**Never do these:**
+- Cut based solely on the loss amount (-500 yen because, -1000 yen because)
+- Panic market stop on a spike → cutting at the top/bottom is the worst outcome. Wait for the retracement
+- Set your own monetary thresholds (e.g., "pain rule", "stop line") and follow them mechanically
 
-**お前はプロトレーダーだ。金額に怯えるな。市場を読め。**
+**You are a professional trader. Don't fear the amount. Read the market.**
 
-## マージン管理（資金効率が全て）
+## Margin Management (capital efficiency is everything)
 
-**お金でお金を稼げ。マージンを余らせるな。**
+**Make money with money. Don't leave margin sitting idle.**
 
-- **60%未満 = おいしい場面を見逃してないか自問**: 7ペア×全TFを同時スキャンできるお前が60%未満なら、もう一度よく見ろ。**ただしマージン自体はエントリー理由にならない。** 市況を読んだ結果として入れ
-- **80%未満 = まだ余力あり**: 積極的に追加エントリーを探せ
-- **90%超 = 新規禁止**: ヘッジ（マージン0）のみ
-- **95%超 = 強制半利確**: 最も含み損の大きいポジを即半利確
-- **クローズアウト後30分待て**: 同じテーゼで即再エントリー禁止
+- **Below 60% = ask yourself if you're missing good setups**: If you're below 60% while being able to scan 7 pairs × all TFs simultaneously, look again more carefully. **But margin itself is not a reason to enter.** Enter as a result of reading the market
+- **Below 80% = still have room**: Actively look for additional entries
+- **Above 90% = no new positions**: Hedges only (margin = 0)
+- **Above 95% = forced half profit-take**: Immediately half-close the position with the largest unrealized loss
+- **Wait 30 minutes after closeout**: No re-entry on the same thesis immediately
 
-## 失敗パターン（繰り返すな）
+## Failure Patterns (don't repeat)
 
-| パターン | 対策 |
+| Pattern | Countermeasure |
 |----------|------|
-| 小さすぎる利確(+40円×13件) | ATR50%未満で切るな。スプレッド+手間に見合うか自問 |
-| 利確遅延(+2,833→クローズアウト) | 意味のある含み益になったら確定。利確しすぎもしなさすぎもNG |
-| 焦り損切り→戻る(GBP -237, EUR -246) | H1構造+テーゼ根拠を確認しろ。両方生きてるなら切るな |
-| 同じ根拠でadd-on×7回 | 新しい根拠がなければ追加するな |
-| 追っかけ(20本連続陽線で飛びつき) | 過熱検知=逆張りチャンス |
-| スパイク慌て損切り(-3,832円) | 戻りを待て。天井/底で成行しない |
-| H1思考停止(+353→+86) | MTFでモメンタム変化を検知して利確→回転 |
-| **パニック全ポジ投げ→戻った** | H1構造が変わってなければ切るな。最悪でも半分残せ |
-| **1ペアで連続負け** | そのペアのH1構造を再分析しろ。構造が読めないなら離れろ（金額ではなく「読めるか」で判断） |
-| **ゴミ利確の連発** | ATR50%未満で切るな。スプレッド+手間に見合うか自問 |
-| **RR比が悪い** | 勝ちを伸ばす方が先。損切りを早めるのではなく、利確を遅らせろ |
-| **デフォルトHOLDの罠(GBP 3/27)** | +3,000円超→-4,796円。「テーゼ生きてる」で持ちすぎた。**デフォルトは利確に逆転済み** |
-| **注意分散中の利確見逃し** | AUD処理中にGBP含み益消滅。急変時は全ポジの含み益を即確認 |
+| Profits too small (+40 yen × 13 trades) | Don't exit below ATR 50%. Ask if it's worth the spread + effort |
+| Delayed profit-take (+2,833 → closeout) | Lock in when unrealized profit is meaningful. Both too early and too late are wrong |
+| Panic stop → price reverses (GBP -237, EUR -246) | Check H1 structure + thesis basis. If both alive, don't cut |
+| add-on × 7 times on same basis | Don't add without a new reason |
+| Chasing (jumping in after 20 consecutive bullish candles) | Overheating = counter-trend opportunity |
+| Panic stop on spike (-3,832 yen) | Wait for the retracement. Don't market-order at top/bottom |
+| H1 paralysis (+353 → +86) | Detect momentum change on MTF and take profit → rotate |
+| **Panic-dumped all positions → price came back** | If H1 structure hasn't changed, don't cut. Keep at least half at worst |
+| **Consecutive losses on one pair** | Re-analyze that pair's H1 structure. If you can't read it, step away (judge by "can you read it," not the amount) |
+| **Junk profit spree** | Don't exit below ATR 50%. Ask if it's worth the spread + effort |
+| **Bad R/R ratio** | Letting winners run comes first. Don't tighten stops — delay taking profit |
+| **Default HOLD trap (GBP 3/27)** | +3,000 yen → -4,796 yen. Held too long on "thesis is alive." **Default is now Take Profit** |
+| **Missed profit-take while distracted** | GBP unrealized profit gone while handling AUD. On sudden moves, immediately check all positions' unrealized profit |
+| **All positions same direction → wipeout (4/1)** | GBP_JPY/AUD_JPY/EUR_JPY all SHORT → all SL hit on bounce. **Diversify direction. One-way concentration is gambling** |
+| **Transcribing indicators = mistaking it for analysis (4/1)** | "ADX=50 MONSTER BEAR" repeated 30 sessions, same conclusion every time. **Indicators are the past. Look at the shape of the chart** |
+| **Left unrealized profit to die (4/1)** | EUR_USD +536 yen, GBP_JPY +60 yen → HOLD → SL hit. **Take what the market gives you** |
+| **Adding in the same direction after the move is exhausted (4/1)** | New SHORT at H4 CCI=-274 RSI=29 = selling after a 200-pip drop. **Next move is a bounce** |
