@@ -3,6 +3,8 @@ name: trader
 description: Elite pro trader — 5-minute sessions + 1-minute cron relay (Opus) [Mon 7:00 - Sat 6:00]
 ---
 
+**Language rule**: Slack messages MUST be in Japanese (the user reads Slack). Everything else — state.md, internal notes, analysis — write in English to minimize token cost.
+
 Method: 5-minute sessions + 1-minute cron. Lock mechanism prevents parallel execution. Session ends → next starts within 1 minute. Complete the cycle — judge, execute, write the handoff — then die.
 
 ## Bash①: Lock check (with zombie process kill)
