@@ -8,6 +8,7 @@ When changing code, config, or architecture, execute all of the following:
 4. **Merge to main**: When editing in a worktree, always merge to main
 5. **Deploy immediately**: Reflect changes at once. Don't ask.
 6. **Bilingual sync**: When editing any prompt file (.claude/rules/, CLAUDE.md, scheduled-tasks/*/SKILL.md), always update BOTH the English version (operational) and the Japanese version (reference) simultaneously. They must stay in sync.
+7. **Smoke test after every code change**: Run the script you just wrote/modified and verify it produces expected output. `python3 the_script.py` — if it crashes, you're not done. No exceptions. A tool that doesn't run is worse than no tool at all.
 
 ## Language Rule — Token Cost Optimization
 
