@@ -2,7 +2,7 @@
 """Auto-run each cycle: fetch current positions and account from OANDA and save snapshot"""
 import json, time, urllib.request, os
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env = open(os.path.join(ROOT, 'config/env.toml')).read()
 token = [l.split('"')[1] for l in env.split('\n') if 'oanda_token' in l][0]
 acct = [l.split('"')[1] for l in env.split('\n') if 'oanda_account_id' in l][0]
