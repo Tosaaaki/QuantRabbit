@@ -8,7 +8,13 @@ When changing code, config, or architecture, execute all of the following:
 4. **Merge to main**: When editing in a worktree, always merge to main
 5. **Deploy immediately**: Reflect changes at once. Don't ask.
 6. **Bilingual sync**: When editing any prompt file (.claude/rules/, CLAUDE.md, scheduled-tasks/*/SKILL.md), always update BOTH the English version (operational) and the Japanese version (reference) simultaneously. They must stay in sync.
-7. **Smoke test after every code change**: Run the script you just wrote/modified and verify it produces expected output. `python3 the_script.py` — if it crashes, you're not done. No exceptions. A tool that doesn't run is worse than no tool at all.
+7. **Smoke test after every code change** (2026-04-02 incident: entire memory DB was dead for days because nobody ran the scripts):
+   - Run the script and verify it produces actual output. `python3 the_script.py` — if it crashes, you're not done
+   - Test in **both** `python3` AND `.venv/bin/python` — two environments exist, both must work
+   - New pip dependency → install in both environments immediately
+   - Path calculations (`dirname`, `Path.parent`) → print and verify the resolved path
+   - "Syntax OK" ≠ "works". Import must pass, processing must run, output must appear
+   - When claiming "all fixed", re-run **every** item that was reported broken, one by one. Don't assume
 
 ## Language Rule — Token Cost Optimization
 
