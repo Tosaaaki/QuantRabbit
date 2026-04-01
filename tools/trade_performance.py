@@ -12,6 +12,7 @@ Outputs: win rate, P/L by pair/direction/session/date, trend analysis.
 Usage:
     python tools/trade_performance.py [--json] [--last N] [--days N] [--date YYYY-MM-DD]
 """
+from __future__ import annotations
 
 import argparse
 import json

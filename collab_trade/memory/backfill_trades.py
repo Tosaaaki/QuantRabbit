@@ -11,6 +11,8 @@ Usage:
     python3 backfill_trades.py 2026-03-20   # 指定日以降
     python3 backfill_trades.py --dry-run    # 実行せず件数だけ表示
 """
+from __future__ import annotations
+
 import json
 import sys
 import urllib.request

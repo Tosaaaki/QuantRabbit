@@ -2,6 +2,8 @@
 QuantRabbit Trading Memory — Recall (Search & Retrieve)
 Retrieve past memories via hybrid vector search + keyword search
 """
+from __future__ import annotations
+
 import sys
 from schema import get_conn, serialize_f32, fetchall_dict, fetchone_val
 

@@ -6,6 +6,7 @@ QA chunks → embed with Ruri v3 → save to memory.db
 v2 (2026-03-25): Added feature to fetch today's trades directly from OANDA API.
 trades.md parsing continues to be used as supplementary info (thesis, lessons).
 """
+from __future__ import annotations
 import json
 import re
 import sys

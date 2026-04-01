@@ -9,6 +9,8 @@ Reads technicals_*.json and produces:
 
 Output is 3-5 lines so the trader can grasp the macro picture at a glance.
 """
+from __future__ import annotations
+
 import json
 from pathlib import Path
 

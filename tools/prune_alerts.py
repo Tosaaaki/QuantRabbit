@@ -7,6 +7,7 @@ Keeps DIRECTIVE and FIX alerts regardless of age.
 Usage:
     python tools/prune_alerts.py [--max-age 60] [--dry-run]
 """
+from __future__ import annotations
 
 import json
 import re

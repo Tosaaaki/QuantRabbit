@@ -10,6 +10,8 @@ Output:
 Usage:
   python3 pretrade_check.py GBP_USD SHORT [--adx 38] [--headline "Iran"]
 """
+from __future__ import annotations
+
 import sys
 import json
 from datetime import date

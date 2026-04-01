@@ -9,6 +9,7 @@ Usage:
     python3 tools/profit_check.py --all        # Check all positions including unrealized losses
 """
 from __future__ import annotations
+
 import json
 import os
 import re

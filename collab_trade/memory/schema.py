@@ -1,7 +1,9 @@
 """
 QuantRabbit Trading Memory — DB Schema & Init
-SQLite + sqlite-vec (via APSW) でベクトル検索可能なトレード記憶DB
+SQLite + sqlite-vec (via APSW) for vector-searchable trade memory DB
 """
+from __future__ import annotations
+
 import apsw
 import sqlite_vec
 import struct

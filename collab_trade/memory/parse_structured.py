@@ -2,6 +2,8 @@
 QuantRabbit Trading Memory — Structured Parser
 Extract structured data (trades / user_calls / market_events) from trades.md / notes.md
 """
+from __future__ import annotations
+
 import re
 import json
 
