@@ -1,13 +1,24 @@
 # Changelog
 
-## 2026-04-03 — CLAUDE.md同期修正
+## 2026-04-03 — CLAUDE.md全面同期修正
 
+**Round 1（誤記・欠落）**
 - 誤記修正: 自己改善ループ「毎7分」→「毎1分」
 - 矛盾修正: news_digest.md「15分間隔」→「毎時」
 - Required Rules on Changes に #6バイリンガル同期・#7スモークテストを追加（change-protocol.mdには既存、CLAUDE.mdに欠落していた）
 - メモリシステムUsage・Rulesサブセクションをスリム化（skills/・rules/と重複していた部分を削除）
 - skills一覧を更新（2個→主要4個+「全36スキル」表記）
-- CLAUDE_ja.mdに同期
+
+**Round 2（深い精査）**
+- アーキテクチャ表を拡張: trader/daily-review/qr-news-digestの3タスクのみ → 実在する6タスク全部記載（daily-performance-report/daily-slack-summary/intraday-pl-update追加）
+- タスク定義パス: `~/.claude/scheduled-tasks/trader/SKILL.md` → `~/.claude/scheduled-tasks/`（正本）+ `docs/SKILL_*.md`（参照コピー）に修正
+- Scripts表に重要ツール追加: profit_check.py / protection_check.py / preclose_check.py / fib_wave.py（recording.md・technical-analysis.mdで参照されているのに欠落していた）
+- 運用ドキュメントから `docs/TRADE_LOG_*.md` を削除（旧形式。現在は collab_trade/daily/ を使用）
+- ランタイムファイルに `collab_trade/summary.md` 追加（collab-tradeスキルで参照）
+- `logs/trade_registry.json` 削除（不使用）
+- Key Directories を整理: `indicators/`（低レベルエンジン）と `collab_trade/indicators/`（quick_calc）を区別して明記
+- ユーザーコマンド「トレード開始」に「traderはスケジュールタスク」旨を明記。秘書・共同トレードのスキルトリガーを正確に記述
+- CLAUDE_ja.mdに全変更を同期
 
 ## 2026-04-02 — SLルール修正 + 証拠金警告追加
 
