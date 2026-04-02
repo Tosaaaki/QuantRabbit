@@ -30,13 +30,16 @@ The relationship between a pro trader and their tools:
 
 ## Architecture (v8)
 
-### trader + daily-review. Two tasks drive everything.
+### Scheduled tasks driving everything
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
 | trader | Opus | 1-min cron | Max 5 min | Pro trader. Does analysis, news, and trading all itself |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
 | **qr-news-digest** | **Cowork** | **Hourly** | **~2 min** | **News collection + trader-perspective summary. Comprehensive via WebSearch** |
+| daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
+| daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
+| intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
 
 **Method**: 5-minute short-lived sessions + 1-minute cron relay. Lock mechanism prevents parallel launches. Session ends → next launches within 1 minute max. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
 
@@ -45,7 +48,7 @@ The relationship between a pro trader and their tools:
 - Vector memory: `collab_trade/memory/memory.db` (SQLite + sqlite-vec. Ruri v3 embeddings)
 - Feedback DB: `pretrade_outcomes` table (pretrade_check predictions vs. actual P&L)
 - **News cache**: `logs/news_digest.md` (Cowork updates hourly) + `logs/news_cache.json` (API parser structured data)
-- Task definitions: `~/.claude/scheduled-tasks/trader/SKILL.md`, `daily-review/SKILL.md`
+- Task definitions: `~/.claude/scheduled-tasks/` (authoritative) + `docs/SKILL_*.md` (reference copies)
 
 ### News Pipeline (Cowork → Claude Code)
 ```
@@ -139,7 +142,8 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | File | Contents |
 |------|----------|
 | `docs/CHANGELOG.md` | Chronological log of all changes |
-| `docs/TRADE_LOG_*.md` | Daily trade records |
+| `docs/SKILL_trader.md` | Reference copy of trader task definition |
+| `docs/SKILL_daily-review.md` | Reference copy of daily-review task definition |
 
 ### Runtime Files
 
@@ -147,18 +151,22 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 |------|----------|
 | `collab_trade/state.md` | State handoff across sessions (positions · story · lessons) |
 | `collab_trade/strategy_memory.md` | Long-term learning memory (per-pair tendencies, pattern validity, lessons) |
+| `collab_trade/summary.md` | All-day performance · trend summary (updated at session end) |
 | `logs/live_trade_log.txt` | Trade execution log (chronological) |
 | `logs/news_digest.md` | News summary updated by Cowork hourly |
 | `logs/news_cache.json` | Structured news data from API parser |
 | `logs/technicals_*.json` | H1/H4 technical indicators |
-| `logs/trade_registry.json` | Position management ledger |
 
 ### Scripts
 
 | File | Contents |
 |------|----------|
 | `tools/session_data.py` | Full data fetch at trader session start (technicals + OANDA + macro + Slack + memory, all at once) |
+| `tools/profit_check.py` | **Run at every session start** — 6-axis TP evaluation (ATR ratio, M5 momentum, H1 structure, correlation, S/R, peak) |
+| `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action |
+| `tools/preclose_check.py` | **Run before every close** — re-confirms thesis before exit |
 | `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes) |
+| `tools/fib_wave.py` | N-wave structure + Fibonacci levels. Run at session start for all pairs |
 | `tools/refresh_factor_cache.py` | H1/H4 technical indicator refresh |
 | `tools/trade_performance.py` | Performance aggregation |
 | `tools/slack_trade_notify.py` | Slack notifications |
@@ -167,11 +175,12 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 ## Key Directories
 
-- `collab_trade/` — state.md (external memory), strategy_memory.md (long-term memory), indicators/ (technical calculations)
-- `docs/` — prompts, changelog
-- `tools/` — analysis & notification tools
-- `indicators/` — technical indicator calculation engine
-- `logs/` — trade logs, trade_registry, technical cache
+- `collab_trade/` — state.md, strategy_memory.md, summary.md, daily/, memory/, indicators/
+- `docs/` — prompts, changelog, SKILL_*.md reference copies
+- `tools/` — all analysis, notification, and execution scripts
+- `indicators/` — low-level technical indicator engine (calc_core, divergence, factor_cache)
+- `collab_trade/indicators/` — collab session quick calculation (quick_calc.py)
+- `logs/` — trade log, technical cache, news cache, lock files
 - `config/env.toml` — OANDA API keys etc. (gitignored)
 
 ### Archive (legacy, no need to reference)
@@ -179,9 +188,9 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 ## User Commands
 
-- "トレード開始" (Start Trading) → Launch discretionary trading session
-- "秘書" (Secretary) → Status check / instruction relay
-- "共同トレード" (Collaborative Trading) → **Read `collab_trade/CLAUDE.md` first, then start**
+- "秘書" → triggers `/secretary` skill — live OANDA status + full command hub
+- "共同トレード" → triggers `/collab-trade` skill — reads `collab_trade/CLAUDE.md`, stops scheduled tasks, starts collaborative session
+- "トレード開始" → **trader is a scheduled task** (1-min cron). This phrase in conversation launches a manual collaborative session same as "共同トレード"
 
 ## Context Management
 

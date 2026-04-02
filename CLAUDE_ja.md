@@ -30,13 +30,16 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 
 ## アーキテクチャ (v8)
 
-### trader + daily-review。2本で回る。
+### 全体を駆動するスケジュールタスク
 
 | タスク | モデル | 間隔 | セッション長 | 役割 |
 |--------|--------|------|-------------|------|
 | trader | Opus | 1分cron | 最大5分 | プロトレーダー。分析もニュースもトレードも全部自分でやる |
 | daily-review | Opus | 毎日06:00 UTC | ~5分 | 日次振り返り。strategy_memory.mdを進化させる |
 | **qr-news-digest** | **Cowork** | **1時間間隔** | **~2分** | **ニュース収集+トレーダー目線要約。WebSearchで網羅的に取得** |
+| daily-performance-report | Opus | 毎日10:30 JST | ~2分 | OANDA実現P&L集計→#qr-dailyに投稿 |
+| daily-slack-summary | Opus | 毎日07:00 JST | ~2分 | 日次トレードサマリーをSlack #qr-dailyに自動投稿 |
+| intraday-pl-update | Opus | 3時間毎(9-24時) | ~1分 | 当日実現P&Lを#qr-dailyに投稿 |
 
 **方式**: 5分短命セッション + 1分cronリレー。ロック機構で多重起動防止。セッション終了→最大1分で次が起動。1セッション=1サイクル。判断→実行→引き継ぎ書き切りを完遂して死ぬ。
 
@@ -44,8 +47,8 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 - 長期学習記憶: `collab_trade/strategy_memory.md`（daily-reviewが毎日蒸留）
 - ベクトル記憶: `collab_trade/memory/memory.db`（SQLite + sqlite-vec。Ruri v3 埋め込み）
 - フィードバックDB: `pretrade_outcomes`テーブル（pretrade_checkの予測 vs 実際のP&L）
-- **ニュースキャッシュ**: `logs/news_digest.md`（Coworkが1時間間隔で更新） + `logs/news_cache.json`（APIパーサ構造化データ）
-- タスク定義: `~/.claude/scheduled-tasks/trader/SKILL.md`, `daily-review/SKILL.md`
+- **ニュースキャッシュ**: `logs/news_digest.md`（Coworkが毎時更新） + `logs/news_cache.json`（APIパーサ構造化データ）
+- タスク定義: `~/.claude/scheduled-tasks/`（正本）+ `docs/SKILL_*.md`（参照コピー）
 
 ### ニュースパイプライン（Cowork → Claude Code）
 ```
@@ -139,7 +142,8 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 | ファイル | 内容 |
 |----------|------|
 | `docs/CHANGELOG.md` | 全変更の時系列ログ |
-| `docs/TRADE_LOG_*.md` | 日次トレード記録 |
+| `docs/SKILL_trader.md` | traderタスク定義の参照コピー |
+| `docs/SKILL_daily-review.md` | daily-reviewタスク定義の参照コピー |
 
 ### ランタイムファイル
 
@@ -147,18 +151,22 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 |----------|------|
 | `collab_trade/state.md` | セッション間の状態引き継ぎ（ポジション・ストーリー・教訓） |
 | `collab_trade/strategy_memory.md` | 長期学習記憶（通貨ペア別の癖、パターン有効性、教訓） |
+| `collab_trade/summary.md` | 全日の成績・傾向サマリー（セッション終了時に更新） |
 | `logs/live_trade_log.txt` | トレード実行ログ（時系列） |
-| `logs/news_digest.md` | Coworkが15分間隔で更新するニュース要約 |
+| `logs/news_digest.md` | Coworkが毎時更新するニュース要約 |
 | `logs/news_cache.json` | APIパーサの構造化ニュースデータ |
 | `logs/technicals_*.json` | H1/H4テクニカル指標 |
-| `logs/trade_registry.json` | ポジション管理台帳 |
 
 ### スクリプト
 
 | ファイル | 内容 |
 |----------|------|
 | `tools/session_data.py` | traderセッション開始時の全データ取得（テクニカル+OANDA+macro+Slack+memory一括） |
+| `tools/profit_check.py` | **毎セッション冒頭に実行** — 6軸TP評価（ATR比・M5モメンタム・H1構造・相関・S/R・高値比） |
+| `tools/protection_check.py` | **毎セッション冒頭に実行** — TP/SL/Trail状態をATR基準で確認。NO PROTECTION=即対処 |
+| `tools/preclose_check.py` | **決済前に必ず実行** — テーゼを再確認してから決済 |
 | `tools/close_trade.py` | ポジション決済（PUT /trades/{id}/close。ヘッジ口座ミス防止） |
+| `tools/fib_wave.py` | N波動構造+フィボナッチレベル算出。セッション冒頭に全ペア実行 |
 | `tools/refresh_factor_cache.py` | H1/H4テクニカル指標の更新 |
 | `tools/trade_performance.py` | パフォーマンス集計 |
 | `tools/slack_trade_notify.py` | Slack通知 |
@@ -167,11 +175,12 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 
 ## 主要ディレクトリ
 
-- `collab_trade/` — state.md（外部記憶）、strategy_memory.md（長期記憶）、indicators/（テクニカル計算）
-- `docs/` — プロンプト、変更ログ
-- `tools/` — 分析・通知ツール
-- `indicators/` — テクニカル指標計算エンジン
-- `logs/` — トレードログ、trade_registry、テクニカルキャッシュ
+- `collab_trade/` — state.md、strategy_memory.md、summary.md、daily/、memory/、indicators/
+- `docs/` — プロンプト、変更ログ、SKILL_*.md参照コピー
+- `tools/` — 分析・通知・実行スクリプト全般
+- `indicators/` — 低レベルテクニカル計算エンジン（calc_core、divergence、factor_cache）
+- `collab_trade/indicators/` — 共同トレード用クイック計算（quick_calc.py）
+- `logs/` — トレードログ、テクニカルキャッシュ、ニュースキャッシュ、ロックファイル
 - `config/env.toml` — OANDA APIキー等(gitignore対象)
 
 ### アーカイブ（過去の遺産、参照不要）
@@ -179,9 +188,9 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 
 ## ユーザーコマンド
 
-- 「トレード開始」→ 裁量トレードセッション起動
-- 「秘書」→ 状況確認・指示伝達
-- 「共同トレード」→ **`collab_trade/CLAUDE.md` を読んでから開始**
+- 「秘書」→ `/secretary` スキル起動 — OANDAライブ状態 + コマンドハブ
+- 「共同トレード」→ `/collab-trade` スキル起動 — `collab_trade/CLAUDE.md` 読込→スケジュールタスク停止→共同セッション開始
+- 「トレード開始」→ **traderはスケジュールタスク（1分cron）**。会話中にこのフレーズが出た場合は「共同トレード」と同じ扱いで共同セッションを起動
 
 ## コンテキスト管理
 
