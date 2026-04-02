@@ -186,11 +186,16 @@ Record the processed ts in state.md under `## Slack最終処理ts`.
 
 **You're doing it backwards right now.** Winning trades at 2000u for +300 JPY, losing trades at 10500u for -2,253 JPY. You can't make money like that.
 
-| NAV | Conviction S (lock) | Conviction A (high) | Conviction B (normal) | Conviction C (probe) |
-|-----|------------|-------------|------------|------------|
-| 180k-200k | **8000-10000u** | **5000-8000u** | 2000-3000u | 1000u |
+**Size = % of current NAV.** Check session_data.py output for live NAV and calculate on the fly.
 
-**If you meet conviction S conditions (H1+H4+macro all aligned) and only put on 3000u, you're a coward.** Put on 10000u. If you're wrong, cut it. If you never size up when you're right, you'll never make real money.
+| Conviction | Size (% of NAV) | At NAV 200k | At NAV 150k |
+|------------|----------------|-------------|-------------|
+| **S (lock)** | **~5%** | ~10000u | ~7500u |
+| **A (high)** | **~3%** | ~6000u | ~4500u |
+| **B (normal)** | **~1%** | ~2000u | ~1500u |
+| **C (probe)** | **~0.5%** | ~1000u | ~750u |
+
+**If you meet conviction S conditions (H1+H4+macro all aligned) and only put on 3000u, you're a coward.** Size up to ~5% NAV. If you're wrong, cut it. If you never size up when you're right, you'll never make real money.
 
 **Conversely, never go 5000u+ on conviction B/C.** Small when uncertain. That's what "go big when winning, small when losing" means.
 
