@@ -28,7 +28,7 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 
 ---
 
-## アーキテクチャ (v8)
+## アーキテクチャ (v8.1)
 
 ### 全体を駆動するスケジュールタスク
 
@@ -65,10 +65,12 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 ### 自己改善ループ
 ```
 毎1分: trader session
-  ├── reads: strategy_memory.md（蓄積された知見）
-  ├── runs: pretrade_check.py → pretrade_outcomes に記録
+  ├── reads: strategy_memory.md + state.md
+  ├── profit_check.py --all + protection_check.py  ← 毎セッション冒頭、最優先
+  ├── 相場を読む（M5チャート形状 — 指標より先に）
+  ├── エントリー前: pretrade_check.py → pretrade_outcomes に記録
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END: ingest.py（OANDA + trades.md統合）→ memory.db
+  └── SESSION_END（5分）: trade_performance.py + ingest.py → memory.db
 
 毎日06:00 UTC: daily-review session
   ├── runs: daily_review.py（事実収集 + pretrade結果紐付け）

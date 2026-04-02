@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-04-03 — サイジング更新 + CLAUDE.md v8.1同期
+
+**v8.1サイジング反映（risk-management.md）**
+- Conviction S: 5000-8000u → **8000-10000u**（v8.1で引き上げ済みだったのにrisk-management.mdが未更新だった）
+- Conviction A: 3000-5000u → **5000-8000u**
+- Conviction B: 1000-2000u → **2000-3000u**
+- Conviction C: 500-1000u → **1000u**
+- pretradeスコア(0-10)との対応を明記: S=8+, A=6-7, B=4-5, C=0-3
+- rules-ja/risk-management.mdにも同期
+
+**CLAUDE.md修正**
+- バージョン: "v8" → "v8.1"
+- Self-Improvement Loop: `pretrade_check`が毎セッション実行に見えていた誤解を修正
+  → `profit_check + protection_check`（毎セッション冒頭）と `pretrade_check`（エントリー前のみ）を正確に区別
+  → 「相場を読む（M5チャート形状）」ステップを追加
+  → SESSION_END に `trade_performance.py` が先行することを明記
+
 ## 2026-04-03 — CLAUDE.md全面同期修正
 
 **Round 1（誤記・欠落）**
