@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-04-03 — Slack anti-spam rules: no unsolicited standby messages, duplicate reply prevention
+
+- SKILL_trader.md + scheduled-tasks/trader/SKILL.md: Added "When NOT to post to Slack" section
+- Rule: Never post unsolicited "watching/waiting" status messages
+- Rule: Only post on trade action, user message reply (once per ts), or critical alert
+- Rule: Duplicate reply prevention — check Slack最終処理ts before replying; skip if already replied
+
 ## 2026-04-03 — Doc integrity audit: CLAUDE.md / change-protocol / task table
 
 - CLAUDE.md: Split task table into Claude Code tasks + Cowork tasks. qr-news-digest is a Cowork task, not in scheduled-tasks/

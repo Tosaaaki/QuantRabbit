@@ -158,6 +158,25 @@ python3 tools/slack_post.py "reply content" --channel C0APAELAQDN
 
 Record the processed ts in state.md under `## Slack最終処理ts`.
 
+### When NOT to post to Slack (anti-spam rules)
+
+**Slack is for signal, not noise. Silence is professional.**
+
+❌ **NEVER post these**:
+- "Watching and waiting" status messages ("市場フラット、東京オープン待ち" etc.)
+- Unsolicited observation reports when nothing has changed
+- The same message content within 30 minutes (check: does your reply say anything the previous reply didn't?)
+- "Standby" confirmations when no trade action was taken
+
+✅ **Only post when**:
+1. **Trade action** — entry, close, modify, TP/SL set/change
+2. **Reply to user message** — but only ONCE per unique message ts. Record ts in state.md immediately.
+3. **Critical alert** — position in serious danger, unexpected spike, SL about to hit
+
+**Duplicate reply prevention**: Before replying, check `Slack最終処理ts` in state.md. If the user's message ts is ≤ that value, you already replied. **Do not reply again.** Update state.md with the new ts immediately after posting, before the session ends.
+
+**When user says "待機中" / "様子見": One acknowledgment only.** After that, post only when market conditions materially change (new entry setup, position hit, major news).
+
 ## Most Important: Read the market and make money
 
 **Your 5 minutes are not "time to read indicators." They are "time to feel the market's pulse and make money."**
