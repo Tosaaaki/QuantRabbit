@@ -32,14 +32,21 @@ The relationship between a pro trader and their tools:
 
 ### Scheduled tasks driving everything
 
+**Claude Code tasks** (defined in `~/.claude/scheduled-tasks/`):
+
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
 | trader | Opus | 1-min cron | Max 5 min | Pro trader. Does analysis, news, and trading all itself |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
-| **qr-news-digest** | **Cowork** | **Hourly** | **~2 min** | **News collection + trader-perspective summary. Comprehensive via WebSearch** |
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
+
+**Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
+
+| Task | Model | Interval | Role |
+|------|-------|----------|------|
+| qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
 
 **Method**: 5-minute short-lived sessions + 1-minute cron relay. Lock mechanism prevents parallel launches. Session ends → next launches within 1 minute max. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
 
@@ -47,8 +54,8 @@ The relationship between a pro trader and their tools:
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
 - Vector memory: `collab_trade/memory/memory.db` (SQLite + sqlite-vec. Ruri v3 embeddings)
 - Feedback DB: `pretrade_outcomes` table (pretrade_check predictions vs. actual P&L)
-- **News cache**: `logs/news_digest.md` (Cowork updates hourly) + `logs/news_cache.json` (API parser structured data)
-- Task definitions: `~/.claude/scheduled-tasks/` (authoritative) + `docs/SKILL_*.md` (reference copies)
+- **News cache**: `logs/news_digest.md` (Cowork updates hourly) + `logs/news_cache.json` (API parser structured data + session_data.py fallback)
+- Task definitions: `~/.claude/scheduled-tasks/` (Claude Code) + `docs/SKILL_*.md` (reference copies)
 
 ### News Pipeline (Cowork → Claude Code)
 ```
@@ -110,7 +117,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 │   ├── technical-analysis.md   ← MTF hierarchy · cross-pair scan · indicator selection
 │   ├── oanda-api.md            ← API connection · data fetch tools
 │   └── change-protocol.md     ← Required protocol on changes
-├── skills/                ← Slash commands (36 skills total)
+├── skills/                ← Slash commands (37 skills total)
 │   ├── secretary.md       ← /secretary status report + command hub
 │   ├── collab-trade.md    ← /collab-trade launch collaborative trading
 │   ├── pretrade-check.md  ← /pretrade-check pre-entry 3-layer risk check
@@ -127,7 +134,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 3. **Append to changelog**: Add an entry to `docs/CHANGELOG.md`
 4. **Merge to main**: Always merge to main when editing in a worktree
 5. **Deploy immediately**: Once changed, reflect it right away. Don't ask.
-6. **Bilingual sync**: Prompt files edited → update both English (operational) and Japanese (reference) versions
+6. **English only**: All prompt files are English-only (Japanese reference copies deprecated)
 7. **Smoke test**: Run the script, verify actual output. Both `python3` and `.venv/bin/python`. "Syntax OK" ≠ "works"
 
 ## Document Map

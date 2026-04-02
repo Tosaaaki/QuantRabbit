@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-03 — Doc integrity audit: CLAUDE.md / change-protocol / task table
+
+- CLAUDE.md: Split task table into Claude Code tasks + Cowork tasks. qr-news-digest is a Cowork task, not in scheduled-tasks/
+- CLAUDE.md: Skills count 36 → 37
+- CLAUDE.md + change-protocol.md: Deprecated bilingual sync rule (Japanese reference copies no longer maintained)
+- change-protocol.md: Added news_digest.md must-be-English rule
+- change-protocol.md: Removed rules-ja/CLAUDE_ja.md/SKILL_ja.md references
+
 ## 2026-04-03 — サイジング更新 + CLAUDE.md v8.1同期
 
 **v8.1サイジング反映（risk-management.md）**
