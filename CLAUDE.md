@@ -61,7 +61,7 @@ Every 1 min: trader session
 
 ### Self-Improvement Loop
 ```
-Every 7 min: trader session
+Every 1 min: trader session
   ├── reads: strategy_memory.md (accumulated knowledge)
   ├── runs: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
@@ -81,15 +81,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 - **Vector layer**: Ruri v3-30m (256-dim) QA chunks → narrative search for "similar situations"
 - **Distillation layer**: strategy_memory.md → experiential knowledge updated daily by daily-review
 
-**Usage**:
-- `/pretrade-check` — **Always run before entering**. 3-layer cross-check for risk assessment
-- `/memory-save` — Save at session end
-- `/memory-recall` — Search past memories
-
-### Rules
-- **Margin management**: Below 60%, ask yourself if you're missing opportunities (but margin itself is never an entry reason). Above 90%, no new entries. Above 95%, force half-close
-- **Max 5 trades per pair**: add-ons up to 5
-- **Wait 30 minutes after closeout**: No immediate re-entry on the same thesis
+**Usage**: See `.claude/skills/` — `/pretrade-check`, `/memory-save`, `/memory-recall`
 
 ## Absolute Rules
 
@@ -113,10 +105,12 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 │   ├── technical-analysis.md   ← MTF hierarchy · cross-pair scan · indicator selection
 │   ├── oanda-api.md            ← API connection · data fetch tools
 │   └── change-protocol.md     ← Required protocol on changes
-├── skills/                ← Slash commands
+├── skills/                ← Slash commands (36 skills total)
+│   ├── secretary.md       ← /secretary status report + command hub
 │   ├── collab-trade.md    ← /collab-trade launch collaborative trading
+│   ├── pretrade-check.md  ← /pretrade-check pre-entry 3-layer risk check
 │   ├── market-order.md    ← /market-order market order
-│   └── ...
+│   └── ... (see .claude/skills/ for full list)
 └── projects/              ← Memory
 ```
 
@@ -128,6 +122,8 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 3. **Append to changelog**: Add an entry to `docs/CHANGELOG.md`
 4. **Merge to main**: Always merge to main when editing in a worktree
 5. **Deploy immediately**: Once changed, reflect it right away. Don't ask.
+6. **Bilingual sync**: Prompt files edited → update both English (operational) and Japanese (reference) versions
+7. **Smoke test**: Run the script, verify actual output. Both `python3` and `.venv/bin/python`. "Syntax OK" ≠ "works"
 
 ## Document Map
 
@@ -152,7 +148,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `collab_trade/state.md` | State handoff across sessions (positions · story · lessons) |
 | `collab_trade/strategy_memory.md` | Long-term learning memory (per-pair tendencies, pattern validity, lessons) |
 | `logs/live_trade_log.txt` | Trade execution log (chronological) |
-| `logs/news_digest.md` | News summary updated by Cowork at 15-min intervals |
+| `logs/news_digest.md` | News summary updated by Cowork hourly |
 | `logs/news_cache.json` | Structured news data from API parser |
 | `logs/technicals_*.json` | H1/H4 technical indicators |
 | `logs/trade_registry.json` | Position management ledger |

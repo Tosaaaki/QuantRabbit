@@ -61,7 +61,7 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 
 ### 自己改善ループ
 ```
-毎7分: trader session
+毎1分: trader session
   ├── reads: strategy_memory.md（蓄積された知見）
   ├── runs: pretrade_check.py → pretrade_outcomes に記録
   ├── trades → trades.md + live_trade_log.txt + Slack
@@ -81,15 +81,7 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 - **Vector層**: Ruri v3-30m (256次元) QAチャンク → 「似た状況」のナラティブ検索
 - **蒸留層**: strategy_memory.md → daily-reviewが毎日更新する経験知
 
-**使い方**:
-- `/pretrade-check` — **エントリー前に必ず実行**。3層照合でリスク判定
-- `/memory-save` — セッション終了時に保存
-- `/memory-recall` — 過去の記憶を検索
-
-### ルール
-- **マージン管理**: 60%未満はチャンスを見逃してないか自問（ただしマージン自体はエントリー理由にならない）。90%超で新規禁止。95%超で強制半利確
-- **1ペア最大5本**: add-onは5本まで
-- **クローズアウト後30分待て**: 同じテーゼで即再エントリー禁止
+**使い方**: `.claude/skills/` 参照 — `/pretrade-check`, `/memory-save`, `/memory-recall`
 
 ## 絶対ルール
 
@@ -113,10 +105,12 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 │   ├── technical-analysis.md   ← MTF階層・横断スキャン・指標使い分け
 │   ├── oanda-api.md            ← API接続・データ取得ツール
 │   └── change-protocol.md     ← 変更時の必須プロトコル
-├── skills/                ← スラッシュコマンド
+├── skills/                ← スラッシュコマンド（36スキル）
+│   ├── secretary.md       ← /secretary ステータスレポート + コマンドハブ
 │   ├── collab-trade.md    ← /collab-trade 共同トレード起動
+│   ├── pretrade-check.md  ← /pretrade-check エントリー前3層リスクチェック
 │   ├── market-order.md    ← /market-order 成行注文
-│   └── ...
+│   └── ... (.claude/skills/ で全リスト確認)
 └── projects/              ← メモリ
 ```
 
@@ -128,6 +122,8 @@ registry、スクリプト群も同じ — 全て**Claudeの道具**。
 3. **変更ログ追記**: `docs/CHANGELOG.md` に追記
 4. **mainにマージ**: ワークツリー編集時は必ずmainにマージ
 5. **即デプロイ**: 変更したら即反映。聞くな
+6. **バイリンガル同期**: プロンプトファイル編集時は英語版（運用）と日本語版（参照）を必ず両方更新
+7. **スモークテスト**: スクリプト実行して実際の出力を確認。`python3` と `.venv/bin/python` 両方。「構文OK」≠「動く」
 
 ## ドキュメントマップ
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-03 — CLAUDE.md同期修正
+
+- 誤記修正: 自己改善ループ「毎7分」→「毎1分」
+- 矛盾修正: news_digest.md「15分間隔」→「毎時」
+- Required Rules on Changes に #6バイリンガル同期・#7スモークテストを追加（change-protocol.mdには既存、CLAUDE.mdに欠落していた）
+- メモリシステムUsage・Rulesサブセクションをスリム化（skills/・rules/と重複していた部分を削除）
+- skills一覧を更新（2個→主要4個+「全36スキル」表記）
+- CLAUDE_ja.mdに同期
+
 ## 2026-04-02 — SLルール修正 + 証拠金警告追加
 
 問題: SKILL.mdの「エントリー時SL必須」ルールが4/1の実績（SLなし監視→BE/Trail）と矛盾。session_data.pyが証拠金98%でも無警告のため、traderが90%超で新規エントリーするルール違反を起こした。
