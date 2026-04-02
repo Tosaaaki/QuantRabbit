@@ -35,22 +35,20 @@
 
 **High conviction → size up. Low conviction → size down.**
 
-**Size = % of current NAV. Check session_data.py output for live NAV before sizing.**
+**Size = margin allocation per entry, as % of NAV. Check `NAV`, `marginUsed`, `marginAvailable` from session_data.py before every entry.**
 
-| Conviction | pretrade score | Conditions | Size (% of NAV) | Example |
+| Conviction | pretrade score | Conditions | Margin for this entry | Example |
 |------|------|------|--------|-----|
-| **S (ironclad)** | 8+ | H1+H4+macro all aligned, Div confirmed | **~8-10% NAV** | H4 ADX>30 + H1 same direction + M5 pullback |
-| **A (high)** | 6-7 | H1 direction aligned + M5 timing confirmed | **~3-5% NAV** | H1 bullish + M5 StochRSI=0.0 |
-| **B (normal)** | 4-5 | Signal from 1 TF only | **~1% NAV** | M5 Div only, H1 unclear |
-| **C (probe)** | 0-3 | Thin basis | **~0.5% NAV** | Counter-trend within range |
+| **S (ironclad)** | 8+ | H1+H4+macro all aligned, Div confirmed | **~30% of NAV** | H4 ADX>30 + H1 same direction + M5 pullback |
+| **A (high)** | 6-7 | H1 direction aligned + M5 timing confirmed | **~15% of NAV** | H1 bullish + M5 StochRSI=0.0 |
+| **B (normal)** | 4-5 | Signal from 1 TF only | **~5% of NAV** | M5 Div only, H1 unclear |
+| **C (probe)** | 0-3 | Thin basis | **~2% of NAV** | Counter-trend within range |
 
-NAV 200k example: S≈16000-20000u, A≈6000-10000u, B≈2000u, C≈1000u.
+Units = margin_budget / (price / 25). Example at NAV 200k:
+- S on USD_JPY @150: 60,000 / (150/25) = **10,000u**. S on AUD_JPY @97: 60,000 / (97/25) = **15,500u**
+- A on USD_JPY: 30,000 / 6 = **5,000u**. B on USD_JPY: 10,000 / 6 = **1,667u**
 
-**Sizing process — check current positions before every entry:**
-1. Read `NAV` and `marginUsed` from session_data.py output (or OANDA account summary)
-2. Calculate target units from the table above
-3. **Verify: will this entry keep margin used below 90%?** If (marginUsed + new position margin) > NAV×0.90, reduce size or skip
-4. `marginAvailable` from OANDA tells you directly how much room is left
+**Before every entry: marginUsed + new margin must stay below NAV × 0.90.** `marginAvailable` from OANDA tells you directly.
 
 **One conviction-S trade beats ten conviction-B trades. Don't grind for volume.**
 
