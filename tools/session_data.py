@@ -122,10 +122,15 @@ def main():
         nav = float(summary.get("NAV", 0))
         margin_used = float(summary.get("marginUsed", 0))
         margin_pct = (margin_used / nav * 100) if nav > 0 else 0
+        margin_warn = ""
+        if margin_pct >= 95:
+            margin_warn = " 🚨 CRITICAL — force half-close now (rule: 95%+)"
+        elif margin_pct >= 90:
+            margin_warn = " 🚨 DANGER — no new entries (rule: 90%+)"
         print(
             f"NAV:{summary.get('NAV')} Bal:{summary.get('balance')} "
             f"Margin:{summary.get('marginUsed')}/{summary.get('marginAvailable')} "
-            f"({margin_pct:.1f}%)"
+            f"({margin_pct:.1f}%){margin_warn}"
         )
     except Exception as e:
         print(f"ERROR: {e}")
