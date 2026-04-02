@@ -28,7 +28,7 @@ The relationship between a pro trader and their tools:
 
 ---
 
-## Architecture (v8)
+## Architecture (v8.1)
 
 ### Scheduled tasks driving everything
 
@@ -65,10 +65,12 @@ Every 1 min: trader session
 ### Self-Improvement Loop
 ```
 Every 1 min: trader session
-  ├── reads: strategy_memory.md (accumulated knowledge)
-  ├── runs: pretrade_check.py → records to pretrade_outcomes
+  ├── reads: strategy_memory.md + state.md
+  ├── profit_check.py --all + protection_check.py  ← every session, first thing
+  ├── reads price action (M5 chart shape — before indicators)
+  ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END: ingest.py (OANDA + trades.md merge) → memory.db
+  └── SESSION_END (5 min): trade_performance.py + ingest.py → memory.db
 
 Daily 06:00 UTC: daily-review session
   ├── runs: daily_review.py (fact collection + pretrade result correlation)

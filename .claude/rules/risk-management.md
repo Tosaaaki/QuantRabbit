@@ -35,12 +35,12 @@
 
 **High conviction → size up. Low conviction → size down.**
 
-| Conviction | Conditions | Size | Stop width | Example |
-|------|------|--------|---------|-----|
-| **S (ironclad)** | H1+H4+macro all aligned, Div confirmed, user read aligned | 5000-8000u | Until thesis breaks | H4 ADX>30 + H1 same direction + M5 pullback |
-| **A (high)** | H1 direction aligned + M5 timing confirmed | 3000-5000u | Until H1 structure changes | H1 bullish + M5 StochRSI=0.0 |
-| **B (normal)** | Signal from 1 TF only | 1000-2000u | Situational | M5 Div only, H1 unclear |
-| **C (probe)** | Thin basis | 500-1000u | Situational | Counter-trend within range |
+| Conviction | pretrade score | Conditions | Size (NAV 180k-200k) | Example |
+|------|------|------|--------|-----|
+| **S (ironclad)** | 8+ | H1+H4+macro all aligned, Div confirmed | **8000-10000u** | H4 ADX>30 + H1 same direction + M5 pullback |
+| **A (high)** | 6-7 | H1 direction aligned + M5 timing confirmed | **5000-8000u** | H1 bullish + M5 StochRSI=0.0 |
+| **B (normal)** | 4-5 | Signal from 1 TF only | **2000-3000u** | M5 Div only, H1 unclear |
+| **C (probe)** | 0-3 | Thin basis | **1000u** | Counter-trend within range |
 
 **One conviction-S trade beats ten conviction-B trades. Don't grind for volume.**
 
