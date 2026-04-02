@@ -39,12 +39,18 @@
 
 | Conviction | pretrade score | Conditions | Size (% of NAV) | Example |
 |------|------|------|--------|-----|
-| **S (ironclad)** | 8+ | H1+H4+macro all aligned, Div confirmed | **~5% NAV** | H4 ADX>30 + H1 same direction + M5 pullback |
-| **A (high)** | 6-7 | H1 direction aligned + M5 timing confirmed | **~3% NAV** | H1 bullish + M5 StochRSI=0.0 |
+| **S (ironclad)** | 8+ | H1+H4+macro all aligned, Div confirmed | **~8-10% NAV** | H4 ADX>30 + H1 same direction + M5 pullback |
+| **A (high)** | 6-7 | H1 direction aligned + M5 timing confirmed | **~3-5% NAV** | H1 bullish + M5 StochRSI=0.0 |
 | **B (normal)** | 4-5 | Signal from 1 TF only | **~1% NAV** | M5 Div only, H1 unclear |
 | **C (probe)** | 0-3 | Thin basis | **~0.5% NAV** | Counter-trend within range |
 
-NAV 200k example: S≈10000u, A≈6000u, B≈2000u, C≈1000u. If NAV drops to 150k: S≈7500u, A≈4500u, B≈1500u, C≈750u.
+NAV 200k example: S≈16000-20000u, A≈6000-10000u, B≈2000u, C≈1000u.
+
+**Sizing process — check current positions before every entry:**
+1. Read `NAV` and `marginUsed` from session_data.py output (or OANDA account summary)
+2. Calculate target units from the table above
+3. **Verify: will this entry keep margin used below 90%?** If (marginUsed + new position margin) > NAV×0.90, reduce size or skip
+4. `marginAvailable` from OANDA tells you directly how much room is left
 
 **One conviction-S trade beats ten conviction-B trades. Don't grind for volume.**
 
