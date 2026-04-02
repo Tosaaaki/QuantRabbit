@@ -186,16 +186,22 @@ Record the processed ts in state.md under `## Slack最終処理ts`.
 
 **You're doing it backwards right now.** Winning trades at 2000u for +300 JPY, losing trades at 10500u for -2,253 JPY. You can't make money like that.
 
-**Size = % of current NAV.** Check session_data.py output for live NAV and calculate on the fly.
+**Size = % of current NAV. Check session_data.py output for live NAV and marginUsed before sizing.**
 
-| Conviction | Size (% of NAV) | At NAV 200k | At NAV 150k |
-|------------|----------------|-------------|-------------|
-| **S (lock)** | **~5%** | ~10000u | ~7500u |
-| **A (high)** | **~3%** | ~6000u | ~4500u |
-| **B (normal)** | **~1%** | ~2000u | ~1500u |
-| **C (probe)** | **~0.5%** | ~1000u | ~750u |
+| Conviction | Size (% of NAV) | At NAV 200k |
+|------------|----------------|-------------|
+| **S (lock)** | **~8-10%** | ~16000-20000u |
+| **A (high)** | **~3-5%** | ~6000-10000u |
+| **B (normal)** | **~1%** | ~2000u |
+| **C (probe)** | **~0.5%** | ~1000u |
 
-**If you meet conviction S conditions (H1+H4+macro all aligned) and only put on 3000u, you're a coward.** Size up to ~5% NAV. If you're wrong, cut it. If you never size up when you're right, you'll never make real money.
+**Sizing process — check current positions before every entry:**
+1. Read `NAV` and `marginUsed` from session_data.py output
+2. Calculate target units from the table above
+3. **Verify: (marginUsed + new position margin) < NAV×0.90.** If not, reduce size or skip
+4. `marginAvailable` from OANDA shows remaining room directly
+
+**If you meet conviction S conditions and only put on 3000u, you're a coward.** Size up to ~8-10% NAV. If you're wrong, cut it.
 
 **Conversely, never go 5000u+ on conviction B/C.** Small when uncertain. That's what "go big when winning, small when losing" means.
 
