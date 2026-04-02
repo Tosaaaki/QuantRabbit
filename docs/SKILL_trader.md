@@ -186,22 +186,20 @@ Record the processed ts in state.md under `## Slack最終処理ts`.
 
 **You're doing it backwards right now.** Winning trades at 2000u for +300 JPY, losing trades at 10500u for -2,253 JPY. You can't make money like that.
 
-**Size = % of current NAV. Check session_data.py output for live NAV and marginUsed before sizing.**
+**Size = margin allocation per entry, as % of NAV. Check `NAV`, `marginUsed`, `marginAvailable` from session_data.py before every entry.**
 
-| Conviction | Size (% of NAV) | At NAV 200k |
-|------------|----------------|-------------|
-| **S (lock)** | **~8-10%** | ~16000-20000u |
-| **A (high)** | **~3-5%** | ~6000-10000u |
-| **B (normal)** | **~1%** | ~2000u |
-| **C (probe)** | **~0.5%** | ~1000u |
+| Conviction | Margin for this entry | At NAV 200k, USD_JPY @150 |
+|------------|----------------------|---------------------------|
+| **S (lock)** | **~30% of NAV** | margin 60k = **10,000u** |
+| **A (high)** | **~15% of NAV** | margin 30k = **5,000u** |
+| **B (normal)** | **~5% of NAV** | margin 10k = **1,667u** |
+| **C (probe)** | **~2% of NAV** | margin 4k = **667u** |
 
-**Sizing process — check current positions before every entry:**
-1. Read `NAV` and `marginUsed` from session_data.py output
-2. Calculate target units from the table above
-3. **Verify: (marginUsed + new position margin) < NAV×0.90.** If not, reduce size or skip
-4. `marginAvailable` from OANDA shows remaining room directly
+Units = margin_budget / (price / 25). AUD_JPY @97 → S = 60k/(97/25) = **15,500u** (same margin, more units because cheaper pair).
 
-**If you meet conviction S conditions and only put on 3000u, you're a coward.** Size up to ~8-10% NAV. If you're wrong, cut it.
+**Before every entry: marginUsed + new margin must stay below NAV × 0.90.** `marginAvailable` from OANDA tells you directly.
+
+**If you meet conviction S conditions and only put on 3000u, you're a coward.** Allocate 30% NAV margin. If you're wrong, cut it.
 
 **Conversely, never go 5000u+ on conviction B/C.** Small when uncertain. That's what "go big when winning, small when losing" means.
 
