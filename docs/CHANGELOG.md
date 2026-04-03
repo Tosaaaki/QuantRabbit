@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-03 — Root cause fix: Stop mechanical SL placement
+
+**SKILL.md (trader task)**: Rewrote protection management section. protection_check output is now "data, not orders." Removed "Trailing=NONE is abnormal" rule. Trailing stops are now "for strong trends only, not default." Added hard rules for when NOT to set SL. Trail minimum raised to ATR×1.0 (was ATR×0.6-0.7).
+
+**protection_check.py**: Added `detect_thin_market()` — detects Good Friday, holidays, weekend proximity, low-liquidity hours. During thin market: suppresses Fix Commands, changes "NO PROTECTION" message from warning to "this is correct."
+
+**Root cause**: SKILL.md had rules that forced trader to mechanically attach SL/trail to every position regardless of market conditions. This caused -984 JPY on 4/3 Good Friday when every thesis was correct but every SL got noise-hunted.
+
 ## 2026-04-03 — Hard rule: No tight SL on thin markets / holidays
 
 **risk-management.md**: Added "Thin Market / Holiday SL Rule" section. Holiday/Good Friday = no SL or ATR×2.5+ minimum. Spread > 2× normal = discretionary management only. User "SLいらない" = direct order, don't override. Added two new failure patterns.
