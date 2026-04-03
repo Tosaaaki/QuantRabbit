@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-04-03 — Trader anti-repetition check + daily-review enforcement + task re-enable
+
+**Trader SKILL (anti-repetition gate)**:
+- Added 3-question check before every entry: same pair×direction×thesis 3+ = blocked
+- Added trailing stop width rules: ATR×0.6 minimum, ATR×1.0 for GBP/JPY crosses, ATR×1.2 pre-event
+
+**Daily-review SKILL (strategy_memory enforcement)**:
+- Made strategy_memory.md update mandatory with date verification step
+- Added pretrade score inflation tracking, R/R analysis, repetitive behavior detection
+- "No changes needed" is no longer acceptable output
+
+**Scheduled tasks re-enabled**:
+- daily-review (was disabled since ~3/27 → strategy_memory.md stale)
+- daily-performance-report, intraday-pl-update, daily-slack-summary
+
 ## 2026-04-03 — Slack anti-spam rules: no unsolicited standby messages, duplicate reply prevention
 
 - SKILL_trader.md + scheduled-tasks/trader/SKILL.md: Added "When NOT to post to Slack" section
