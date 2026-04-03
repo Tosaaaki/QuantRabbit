@@ -87,29 +87,28 @@ Action:
 - 2026-04-01 all SHORT: H1 ADX=50 DI-=31 "MONSTER BEAR" → added SHORTs. But the actual M5 chart was bouncing. **Indicators describe the past, charts describe the present. Present wins**
 - **"MONSTER BEAR" is a past fact, not a guarantee of the future.** ADX=50 means "there was strong selling in the past 50 bars." It does not say the next bar will go down
 
-## The Trader's Inner Dialogue (think every cycle)
+## 7-Pair Scan — How to Write It in state.md
 
-**A pro trader's edge is not rules. It's the quality of their thinking.**
+**The scan is not a status report. It's where you decide what to do next.**
 
-Every cycle, before writing your judgment, pause and ask yourself:
+For EACH of the 7 pairs, write these 3 things in the scan table:
 
-### "Am I actually reading the market, or am I reading my own notes?"
+1. **What the chart is doing** (in plain words, not indicator numbers)
+   - ❌ "H1 ADX=34 DI+=23 DI-=10 StRSI=0.44" — this is a data dump, not a read
+   - ✅ "Grinding higher in small bodies, slowing down near 0.692 resistance" — this is reading the chart
 
-state.md is a handoff memo, not a directive. If the previous session wrote "on standby" — that was THEIR judgment in THEIR moment. The market has moved since then. Look at the chart first, then decide. Don't inherit conclusions.
+2. **"I would enter if..."** — a specific condition and price
+   - ❌ "Skip" / "Skip pre-NFP" / "Watch" — these are non-decisions
+   - ✅ "I'd go LONG if M5 closes above 0.6920 with body > 3pip" — this is a trade plan
+   - ✅ "Nothing. H4 overbought + H1 div + spread 3.7pip = genuinely no setup" — this is a real decision with reasons
 
-### "If I had zero positions right now, what would I do?"
+3. **Why not now?** (only if you're not entering)
+   - ❌ "Pre-NFP" — this explains nothing. NFP is hours away.
+   - ✅ "M5 bodies shrinking, no directional conviction yet. Need to see the squeeze resolve first" — this is market-based
 
-This is the most powerful question. If the answer is "I'd enter X" but you're not entering — why? Is there a real reason, or are you anchored to your existing positions?
+**"Skip" is banned from the scan.** Every pair gets a real sentence. If there's truly nothing, say what's missing. If writing the reason feels forced — maybe the reason isn't real and you should actually enter.
 
-### "What is the market doing right now that it wasn't doing 30 minutes ago?"
-
-If you can't answer this, you're not watching the market. You're watching your P&L. The 20 M5 candles you just pulled — what changed? New highs? Shrinking bodies? Wick direction shift? Say it in plain words.
-
-### "Am I waiting for something, or am I hiding behind 'waiting'?"
-
-"Waiting for NFP" 8 hours before NFP is not a trade plan. It's avoidance. Ask: what would change my mind? If nothing would — you've stopped thinking. If something would — why not act on it now?
-
-**These are not rules to check off. They are thinking habits. A bot follows rules. A trader thinks.**
+**Why this matters**: On 4/3, the scan had "Skip pre-NFP" × 5 pairs for 4+ hours. That's not analysis. That's copy-paste. A pro trader scanning 7 pairs always finds something interesting — even if they don't enter, they have a view.
 
 ## Trade Cycle
 
@@ -128,27 +127,15 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 - **C (0-3)**: 1000u or less. Passing may be the right call
 - **If you enter on conviction C, state a clear reason.** "Probe trade" is not a reason
 
-### Before you pull the trigger — think, don't check
+### Before you pull the trigger
 
-**The difference between a pro trader and a bot is what happens in the 10 seconds before the order.**
+Write ONE sentence in live_trade_log.txt with the entry, answering: **"What is different about THIS moment?"**
 
-A bot: "Conditions met → enter." A trader: "Wait. Let me think about this."
+Not "USD is weak" (that's been true for days). Not "H1 bull" (that's been true for hours). What happened in the last 20 minutes that makes NOW the right time? A candle pattern. A level break. A squeeze resolution. A divergence completing.
 
-**Ask yourself these honestly:**
+If you can't write that sentence, you don't have a timing reason. You have a direction bias. Direction is not enough — the market can agree with your direction and still stop you out because your timing was wrong.
 
-**"Am I seeing something new, or am I seeing the same thing again?"**
-If your thesis is "USD weak, H1 bull, pullback buy" — was that also your thesis last time? And the time before? Repeating the same read isn't wrong. But if the market keeps stopping you out on the same thesis, the thesis might be right but your timing is wrong. Or the thesis is stale. Think about which one.
-
-**"Why THIS pair? Why not the other six?"**
-You have 7 pairs. If you keep coming back to EUR_USD, ask why. Is it genuinely the best setup, or is it familiar? Familiarity is not edge. Check if another pair has a cleaner setup you're overlooking.
-
-**"If this trade loses, will I understand why?"**
-If the answer is "because the market went against me" — your thesis is too vague. If it's "because H1 DI flipped and my structure broke" — that's a real thesis with a real invalidation. Enter with clarity.
-
-**"Am I trading the market or trading my bias?"**
-If all your positions point the same direction, ask yourself — honestly — whether you've looked for a reason to go the other way. If you haven't even looked, you're not analyzing. You're confirming.
-
-**Context**: 3/31-4/1 EUR_USD LONG was entered 8+ times on "USD weak" with 43% WR. Each entry felt justified in the moment. In aggregate, it was a coin flip with spread drag. The lesson isn't "don't repeat" — it's "think harder about whether repetition means conviction or autopilot."
+**Context**: 3/31-4/1 EUR_USD LONG entered 8× on "USD weak + H1 bull." Direction was right (USD did weaken). WR was 43% because timing was random — any dip looked like a buy. The ones that worked had specific timing (M5 StRSI=0.0 at Fib 38.2%). The ones that failed were "it dipped, so I bought."
 
 ### Pre-close check (required every time)
 
@@ -177,6 +164,21 @@ python3 tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --un
 python3 tools/close_trade.py {tradeID}         # full close
 python3 tools/close_trade.py {tradeID} {units}  # partial close
 ```
+
+## How to Write state.md — Your Handoff Shapes the Next Trader
+
+**state.md is not a diary. It's a briefing for the next version of you.** The next session has no memory of your thinking — only what you wrote. Write what matters.
+
+### Latest Cycle Judgment — Write what CHANGED, not what IS
+
+- ❌ "HOLD. AUD_JPY at 110.24, UPL -84. Pre-NFP compression. No new entries." — This is a snapshot. The next session reads this and thinks nothing is happening.
+- ✅ "AUD_JPY tested 110.19 three times and held. Buyers stepping in at that level. If it breaks 110.30 with a full-body M5, trail setup. If 110.19 breaks, thesis is dead. NFP in 2.2h — real danger zone starts at 11:30 UTC." — This gives the next session something to ACT on.
+
+### 7-Pair Scan — The "I would enter if..." column is mandatory
+
+The next session will read your scan and decide what to do. If you wrote "Skip" × 7, the next session has no leads. If you wrote "I'd enter AUD_JPY LONG if M5 breaks 110.30" — the next session checks immediately and might act in the first 30 seconds.
+
+**You are writing instructions for a trader who has 5 minutes and no context.** Give them leads, not status.
 
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
