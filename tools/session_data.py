@@ -22,6 +22,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+VENV_PYTHON = str(ROOT / ".venv" / "bin" / "python")
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 
 
@@ -73,7 +74,7 @@ def main():
     # 1. Technical refresh
     section("TECH REFRESH")
     out = run_script(
-        [sys.executable, "tools/refresh_factor_cache.py", "--all", "--quiet"],
+        [VENV_PYTHON, "tools/refresh_factor_cache.py", "--all", "--quiet"],
         timeout=45,
     )
     print(out[:200] if out else "done")
@@ -186,7 +187,7 @@ def main():
 
     # 2e. API parser structured data (re-fetch if cache is stale)
     out = run_script(
-        [sys.executable, "tools/news_fetcher.py", "--if-stale", "60"],
+        [VENV_PYTHON, "tools/news_fetcher.py", "--if-stale", "60"],
         timeout=20,
     )
     if out and "skip" not in out:
@@ -194,24 +195,24 @@ def main():
     # Show summary if cache exists
     news_cache = ROOT / "logs" / "news_cache.json"
     if news_cache.exists():
-        out = run_script([sys.executable, "tools/news_fetcher.py", "--summary"])
+        out = run_script([VENV_PYTHON, "tools/news_fetcher.py", "--summary"])
         if out and "no cache" not in out:
             section("NEWS DATA (structured)")
             print(out)
 
     # 3. Macro view
     section("MACRO VIEW")
-    out = run_script([sys.executable, "tools/macro_view.py"])
+    out = run_script([VENV_PYTHON, "tools/macro_view.py"])
     print(out)
 
     # 4. Adaptive technicals
     section("ADAPTIVE TECHNICALS")
-    out = run_script([sys.executable, "tools/adaptive_technicals.py"])
+    out = run_script([VENV_PYTHON, "tools/adaptive_technicals.py"])
     print(out)
 
     # 4b. Fib Wave Analysis
     section("FIB WAVE ANALYSIS")
-    out = run_script([sys.executable, "tools/fib_wave.py", "--all"])
+    out = run_script([VENV_PYTHON, "tools/fib_wave.py", "--all"])
     if out:
         for line in out.strip().split("\n")[:50]:
             print(line)
@@ -219,7 +220,7 @@ def main():
     # 5. Slack: user messages
     section("SLACK (user messages)")
     slack_args = [
-        sys.executable,
+        VENV_PYTHON,
         "tools/slack_read.py",
         "--channel",
         "C0APAELAQDN",
@@ -239,7 +240,7 @@ def main():
         for pair in sorted(held_pairs):
             try:
                 r = subprocess.run(
-                    [sys.executable, "recall.py", "search", f"{pair} lessons failures", "--top", "2"],
+                    [VENV_PYTHON, "recall.py", "search", f"{pair} lessons failures", "--top", "2"],
                     capture_output=True, text=True, timeout=15, cwd=str(memory_dir),
                 )
                 out = r.stdout.strip()
@@ -253,7 +254,7 @@ def main():
 
     # 7. Today's performance
     section("PERFORMANCE (today)")
-    out = run_script([sys.executable, "tools/trade_performance.py", "--days", "1"])
+    out = run_script([VENV_PYTHON, "tools/trade_performance.py", "--days", "1"])
     if out:
         lines = out.split("\n")[:20]
         print("\n".join(lines))
