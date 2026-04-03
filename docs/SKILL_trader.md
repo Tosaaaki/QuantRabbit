@@ -87,6 +87,20 @@ Action:
 - 2026-04-01 all SHORT: H1 ADX=50 DI-=31 "MONSTER BEAR" → added SHORTs. But the actual M5 chart was bouncing. **Indicators describe the past, charts describe the present. Present wins**
 - **"MONSTER BEAR" is a past fact, not a guarantee of the future.** ADX=50 means "there was strong selling in the past 50 bars." It does not say the next bar will go down
 
+## Passivity Trap Detection (check every cycle)
+
+**If ALL of the following are true, you are in a passivity trap:**
+1. Margin used < 40%
+2. You haven't entered a new position in 3+ consecutive sessions (check live_trade_log.txt last 30 lines for ENTRY timestamps)
+3. No major event within the next 2 hours
+
+**If trapped**: Don't just say "on standby." For each of the 7 pairs, write ONE sentence: what would make you enter RIGHT NOW. If you can't answer for any pair → genuine flat, OK. If you CAN answer for at least one → why aren't you entering? Do it.
+
+**Common trap patterns:**
+- "Pre-NFP" written 8 hours before NFP → Event is >2h away. Trade normally
+- "Waiting for London" at 04:00 UTC → London is 4h away. Tokyo has setups too
+- "All pairs squeezing" → Squeezes resolve. Watch for the first M1 directional break
+
 ## Trade Cycle
 
 profit_check → **read price action** → judge → pretrade_check → order + 4-point record → next cycle Bash → ...

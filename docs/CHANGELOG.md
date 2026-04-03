@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-04-03 — Anti-passivity + small wave trading + event day rules
+
+**Passivity trap detection (SKILL_trader.md)**:
+- Added cycle-level check: margin < 40% + no entry in 3+ sessions + event >2h away = trapped
+- Forces per-pair "what would make me enter NOW" reasoning instead of blanket "on standby"
+
+**Event day trading rules (strategy_memory.md)**:
+- Defined precise time windows: >2h = normal, 1-2h = size down, <1h = no new entries
+- "No new entries pre-NFP" 8 hours before event is now explicitly forbidden
+- state.md must specify cutoff time, not vague bans
+
+**Small wave trading guide (strategy_memory.md)**:
+- BB squeeze resolution trading: M5 squeeze + M1 directional break → B-sized entry
+- TP = opposite BB band, SL = ATR×1.0 fixed (no trailing), 15-60 min duration
+- Captures market rhythm instead of sitting flat for hours
+
+**Daily-review set to Opus**: Opus coaches, Sonnet executes. strategy_memory quality drives trader quality.
+
 ## 2026-04-03 — Trader anti-repetition check + daily-review enforcement + task re-enable
 
 **Trader SKILL (anti-repetition gate)**:
