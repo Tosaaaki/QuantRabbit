@@ -170,4 +170,4 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
 | **Adding in the same direction after the move is exhausted (4/1)** | New SHORT at H4 CCI=-274 RSI=29 = selling after a 200-pip drop. **Next move is a bounce** |
 | **Tight SL on thin market = free money for market makers (4/3)** | Good Friday: trail 11-15pip + SL 10pip → ALL hunted. -984 JPY total. Thesis was right on every trade. **Holiday/thin market = NO SL or ATR×2.5+** |
 | **Closing after user said "hold, no SL" (4/3)** | User removed SL at 13:04. Claude closed AUD_JPY at 13:44 anyway. -338 JPY. User had to re-enter. **User instruction to remove SL = hold. Don't override.** |
-| **Panic close → panic re-entry = double loss (4/3)** | Closed AUD_JPY @110.077 (-338円), re-entered 7min later @110.118 (Sp1.8pip, pretrade=C(1)). Held=損失ゼロ。**Close→即re-entryは禁止。間違えたら30分待て** |
+| **Panic close → panic re-entry = double loss (4/3)** | Closed AUD_JPY @110.077 (-338円), re-entered 7min later @110.118 (Sp1.8pip, pretrade=C(1)). Held=損失ゼロ。**再エントリー前に「クローズ時より良い価格か？新しい根拠はあるか？」両方Noならスプレッド払って同じ物を買い戻してるだけ** |
