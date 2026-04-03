@@ -29,7 +29,7 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 **profit_check**: Default is to take profit. If TAKE_PROFIT/HALF_TP is recommended, verbalize "why you're holding" within 30 seconds. If you can't, take profit.
 
 **protection_check**: Check TP/SL/Trailing status for all positions. **If a warning fires, act immediately. Don't just read it and move on.**
-- `*** NO PROTECTION ***` → **Set SL/TP immediately. Naked positions are not acceptable**
+- `*** NO PROTECTION ***` → **Actively monitoring every 5 min = SL-free entry is acceptable.** Add BE at ATR×0.8 profit, Trailing at ATR×1.0+. If you're NOT watching (overnight, away), set SL first.
 - `SL too wide` (ATR×2.5+) → **Tighten SL to ATR×1.2 immediately.** GBP_JPY SL=ATR×3.2 hit = -6,000 JPY. Unacceptable
 - `TP too wide` (ATR×2.0+) → **Move TP closer to a structural level (ATR×1.0).** TP=ATR×5.0 is praying, not trading
 - `SL too tight` (ATR×0.7 or less) → Widen or remove. SL that gets clipped by noise is useless
@@ -103,6 +103,26 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 - **B (4-5)**: 2000-3000u. Go light
 - **C (0-3)**: 1000u or less. Passing may be the right call
 - **If you enter on conviction C, state a clear reason.** "Probe trade" is not a reason
+
+### Anti-repetition check (required before every entry — answer these 3 questions)
+
+**Before placing ANY order, answer these 3 questions. If you fail any, do NOT enter.**
+
+**Q1: "Have I entered this exact pair × direction × thesis in the last 3 sessions?"**
+- Check live_trade_log.txt last 30 lines. Count entries on this pair in this direction
+- If 3+ entries with the same thesis keyword (e.g., "USD_weak", "H1_bear") → **BLOCKED. Find a different pair or direction**
+- Entering EUR_USD LONG on "USD weakness" for the 5th time is not trading — it's a loop
+
+**Q2: "Is my thesis a DIFFERENT sentence from last time, or the same one rephrased?"**
+- "H1 ADX=59 bull USD weak pullback" and "H1 ADX=57 bull USD weak dip buy" → **SAME thesis. Blocked**
+- "M5 double bottom at Fib 61.8% + H4 DI flip" → **Different thesis. OK**
+- If you can't write a genuinely new reason, you don't have one
+
+**Q3: "Am I entering in the same direction as all my other open positions?"**
+- If YES and you have 2+ other positions → **explain in 1 sentence why you can't find a single position in the opposite direction**
+- If you can't explain → you're controlled by directional bias. **Enter the opposite direction on a different pair, or pass**
+
+**Why this exists**: 3/31-4/1 EUR_USD LONG was entered 8+ times on the same "USD weak" thesis with 43% WR. That's a coin flip with spread drag — negative EV. Repeating the same trade doesn't increase your edge. It increases your exposure to one scenario.
 
 ### Pre-close check (required every time)
 
@@ -280,6 +300,19 @@ req = urllib.request.Request(f'{base}/v3/accounts/{acct}/trades/{tradeID}/orders
     method='PUT')
 ```
 
+**⚠️ Trailing stop width rules (lesson from 4/2-4/3: trail too tight = clipped by noise)**
+
+| Pair type | Minimum trail width | Why |
+|-----------|-------------------|-----|
+| EUR_USD (low spread) | ATR×0.7 = ~11pip | Tight OK because spread is small |
+| USD_JPY | ATR×0.8 = ~13pip | Medium volatility |
+| GBP pairs, JPY crosses | ATR×1.0 = ~20pip | High volatility. 15pip trail gets clipped constantly |
+
+- **Trail < ATR×0.6 = noise stop.** You WILL get clipped on normal wick. Don't set it
+- **Pre-event (NFP/FOMC) trail = ATR×1.2 minimum.** Spikes are 2-3x normal wick size
+- **If trail keeps getting hit before TP → trail is too tight, not "bad luck"**: Widen or don't use trail at all
+- Track record: 4/3 EUR_USD trail=11pip, GBP_USD trail=15pip → both hit on pre-NFP drift. ATR was 16pip for EUR_USD → trail was ATR×0.69, barely above minimum
+
 ### Setting TP/SL correctly — look at market structure, not thesis targets
 
 **Don't place TP at round numbers (210.000, 109.000). That's praying, not trading.**
@@ -306,7 +339,7 @@ protection_check.py outputs a `📍 Structural TP candidates` menu. ATR ratio is
 ### Every-session routine (protection management)
 
 1. **protection_check warning → fix immediately → Slack notification**: `SL too wide` `TP too wide` → PUT /trades/{id}/orders to fix → **after fixing, always send Slack notification with `slack_trade_notify.py modify`**. Even batch fixes require one notification per trade. Fixes without notification don't exist
-2. **On entry**: After a market order, **in the same response**, attach TP/SL. TP = structural level at ATR×1.0, SL = ATR×1.2
+2. **On entry**: After a market order, **in the same response**, attach TP. TP = structural level at ATR×1.0. **SL is optional** — set only when needed (overnight / away / conviction low). Actively monitoring every 5 min = SL-free is fine. Pattern: entry → TP only → BE at ATR×0.8 → Trailing at ATR×1.0+
 3. **Unrealized profit ATR×0.8 → move to BE. ATR×1.0 → set Trailing.** Don't leave Trailing=NONE. **Slack notification required after BE/Trailing setup too**
 4. **Rotation plan**: Place limit orders at Fib levels. Don't just write them — actually POST /orders to place them
 5. **Check pending orders**: Cancel any limit orders that are expired or no longer relevant due to changed conditions
@@ -448,17 +481,34 @@ For each position in order:
 - "I have an SL so it's fine → HOLD" — SL hit = loss confirmed. Better to cut it yourself
 
 ### STEP 2: 7-pair scan (all pairs required — no skipping)
-Write one-line judgment for each pair in state.md:
+
+**Minimum 3 lines per pair. No shallow analysis for unheld pairs.**
+Dismissing unheld pairs with one-line "pass" is confirmation bias — you stare at what you hold and miss the next opportunity.
+
+For each pair, write these 3 points in state.md:
+1. **Structure**: H1/H4 direction, ADX, StRSI (what is happening)
+2. **Timing**: M5 state, distance to entry conditions (now or wait)
+3. **Judgment**: specific action + rationale (if "pass", state what would change your mind)
+
 ```
-USD_JPY: BEAR MTF aligned (H1+M5) → SHORT consideration. Waiting for M5 timing
-EUR_USD: HOLD (LONG held). H1 StRSI=0.93 recovering
-GBP_USD: HOLD (LONG held). M5 bull ADX=40
-AUD_USD: SHORT held. M5 StRSI=1.0 against → considering half close
-EUR_JPY: no position. H4 range, no setup → pass
-GBP_JPY: no position. N-wave BEAR (q=0.84) → waiting for pullback
-AUD_JPY: SHORT held. M5 moving against → check invalidation line
+USD_JPY:
+  Structure: H1 BEAR ADX=38 DI- dominant, H4 StRSI=0.15 approaching oversold
+  Timing: M5 StRSI=0.05 oversold, no bounce signal yet
+  Judgment: SHORT candidate but H4 oversold = reversal risk. If M5 double bottom → skip SHORT, consider LONG flip
+
+EUR_JPY:
+  Structure: H4 range 162.50-163.20, H1 ADX=18 trendless
+  Timing: M5 near range low. Breakout would run but fakeout odds high
+  Judgment: pass. Re-evaluate if H1 ADX>25 + confirmed range break
+
+GBP_JPY:
+  Structure: H4 N-wave BEAR (q=0.84), H1 ADX=29 mild downtrend
+  Timing: M5 retracing to Fib38.2. Not yet at 50% entry zone
+  Judgment: wait for M5 Fib50% + StRSI overbought rejection → SHORT 3000u
 ```
+
 **Don't dismiss all 7 pairs with "waiting for squeeze" or "waiting for London." Look at each pair individually.**
+**Unheld pairs deserve the most attention — that's where the next trade comes from.**
 
 ### STEP 3: Decide on action — read the market's mood and move
 
