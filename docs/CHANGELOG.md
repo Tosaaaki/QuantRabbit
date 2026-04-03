@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-03 — Hard rule: No tight SL on thin markets / holidays
+
+**risk-management.md**: Added "Thin Market / Holiday SL Rule" section. Holiday/Good Friday = no SL or ATR×2.5+ minimum. Spread > 2× normal = discretionary management only. User "SLいらない" = direct order, don't override. Added two new failure patterns.
+
+**strategy_memory.md**: Added to Confirmed Patterns (薄商いのタイトSL=全滅). Added "Thin Market / Holiday Rules" hard rules section.
+
+**Cause**: 4/3 Good Friday — EUR_USD trail 11pip, GBP_USD trail 15pip, AUD_USD SL 10pip all hunted. -984 JPY total. Every thesis was correct. Also Claude closed AUD_JPY after user explicitly removed SL.
+
 ## 2026-04-03 — Display all news times in JST
 
 **news_fetcher.py**: All times in `print_summary()` now displayed in JST (`04/04 21:30 JST`) instead of raw UTC ISO strings. Calendar events, headlines, and upcoming events all converted. User preference: JST is easier to read.

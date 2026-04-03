@@ -31,6 +31,21 @@
 - Holding both LONG and SHORT is normal. Only one side is abnormal
 - Don't bet all capital on the same theme (e.g., JPY strength)
 
+## Thin Market / Holiday SL Rule (4/3 Good Friday lesson: -984 JPY)
+
+**When liquidity is thin (holidays, Good Friday, year-end, early Asian session), DO NOT set tight SLs.**
+
+| Condition | SL Rule |
+|---|---|
+| Spread > 2× normal | **No SL. Discretionary management only.** |
+| Good Friday / bank holidays | **No SL or ATR×2.5+ minimum.** ATR×1.2 gets hunted. |
+| Tokyo session (00:00-06:00Z) holding overnight | **No trailing stop. Fixed SL only if any.** |
+| User says "SLいらない" | **Remove SL. Do not re-add. Do not close on your own judgment.** |
+
+**What happened 4/3**: EUR_USD trail=11pip, GBP_USD trail=15pip, AUD_USD SL=0.69015 — ALL hunted on Good Friday thin liquidity. Total -984 JPY. Every thesis was correct. Every loss was from noise stops.
+
+**When the user explicitly removes SL, that is a direct order.** The trader task must not re-add protection or close the position on its own judgment. The user is managing risk manually.
+
 ## Conviction-Based Sizing
 
 **High conviction → size up. Low conviction → size down.**
@@ -153,3 +168,5 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
 | **Transcribing indicators = mistaking it for analysis (4/1)** | "ADX=50 MONSTER BEAR" repeated 30 sessions, same conclusion every time. **Indicators are the past. Look at the shape of the chart** |
 | **Left unrealized profit to die (4/1)** | EUR_USD +536 yen, GBP_JPY +60 yen → HOLD → SL hit. **Take what the market gives you** |
 | **Adding in the same direction after the move is exhausted (4/1)** | New SHORT at H4 CCI=-274 RSI=29 = selling after a 200-pip drop. **Next move is a bounce** |
+| **Tight SL on thin market = free money for market makers (4/3)** | Good Friday: trail 11-15pip + SL 10pip → ALL hunted. -984 JPY total. Thesis was right on every trade. **Holiday/thin market = NO SL or ATR×2.5+** |
+| **Closing after user said "hold, no SL" (4/3)** | User removed SL at 13:04. Claude closed AUD_JPY at 13:44 anyway. -338 JPY. User had to re-enter. **User instruction to remove SL = hold. Don't override.** |
