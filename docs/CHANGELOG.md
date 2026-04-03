@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-03 — Display all news times in JST
+
+**news_fetcher.py**: All times in `print_summary()` now displayed in JST (`04/04 21:30 JST`) instead of raw UTC ISO strings. Calendar events, headlines, and upcoming events all converted. User preference: JST is easier to read.
+
 ## 2026-04-03 — Add event countdown to news summary
 
 **news_fetcher.py**: Added `_event_countdown()` — calculates remaining time to economic events (NFP etc.) and appends `[in 30min]`, `[in 1h01m]`, `[RELEASED]` etc. to calendar output in `print_summary()`. Prevents Claude from miscalculating event countdown by mental arithmetic (20:29 posted "NFPまで約30分" when it was actually ~61 min away).

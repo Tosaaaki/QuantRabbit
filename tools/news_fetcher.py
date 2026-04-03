@@ -348,6 +348,23 @@ def fetch_all(cfg: dict) -> dict:
     return result
 
 
+JST = timezone(timedelta(hours=9))
+
+
+def _to_jst(time_str: str) -> str:
+    """Convert ISO time string to JST display (HH:MM JST). Returns original[:16] on failure."""
+    if not time_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(time_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        jst_dt = dt.astimezone(JST)
+        return jst_dt.strftime("%m/%d %H:%M JST")
+    except Exception:
+        return time_str[:16]
+
+
 def _event_countdown(time_str: str, now: datetime) -> str:
     """Calculate countdown string for an event. Returns '' if unparseable or past."""
     if not time_str:
@@ -404,12 +421,12 @@ def print_summary():
             actual = f" → {ev['actual']}" if ev.get("actual") else ""
             forecast = f" (forecast:{ev['forecast']})" if ev.get("forecast") else ""
             countdown = _event_countdown(ev.get("time", ""), now)
-            print(f"  {ev.get('time','')[:16]} {ev['country']} {ev['event']}{forecast}{actual}{countdown}")
+            print(f"  {_to_jst(ev.get('time',''))} {ev['country']} {ev['event']}{forecast}{actual}{countdown}")
     else:
         upcoming_high = [e for e in cache.get("calendar", []) if e.get("impact") == "high"]
         if upcoming_high:
             countdown = _event_countdown(upcoming_high[0].get("time", ""), now)
-            print(f"📅 Next HIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({upcoming_high[0].get('time','')}){countdown}")
+            print(f"📅 Next HIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({_to_jst(upcoming_high[0].get('time',''))}){countdown}")
         else:
             print("📅 No upcoming high impact events")
 
@@ -419,8 +436,8 @@ def print_summary():
         print(f"📢 Latest headlines ({len(headlines)} total, top 5):")
         for h in headlines[:5]:
             currencies = ",".join(h.get("related_currencies", []))
-            time_short = h.get("time", "")[:16]
-            print(f"  [{currencies}] {h['headline'][:80]} ({time_short})")
+            time_jst = _to_jst(h.get("time", ""))
+            print(f"  [{currencies}] {h['headline'][:80]} ({time_jst})")
 
     # Sentiment
     scores = cache.get("sentiment", {}).get("scores", {})
