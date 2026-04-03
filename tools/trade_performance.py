@@ -39,7 +39,7 @@ V6_CLOSE = re.compile(
     r"(LONG(?:_HEDGE)?|SHORT(?:_HEDGE)?)\s+"                    # direction
     r"(\d+)u?\s+"                                               # units
     r"@([\d.]+)\s+"                                             # price
-    r".*?PL=([+-]?[\d,.]+)\s*(?:円|JPY|J)?",                    # P/L
+    r".*?P/?L=([+-]?[\d,.]+)\s*(?:円|JPY|J)?",                   # P/L (matches both PL= and P/L=)
     re.IGNORECASE,
 )
 

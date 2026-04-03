@@ -76,10 +76,11 @@ def get_daily_pl_from_log(date_str):
     for line in open(log_path):
         if date_str not in line:
             continue
-        # Extract P/L: PL=+123.45 or PL=-67.89 pattern
-        if 'PL=' in line:
+        # Extract P/L: PL=+123.45 or P/L=-67.89 pattern
+        if 'PL=' in line or 'P/L=' in line:
             try:
-                pl_part = line.split('PL=')[1].split()[0].replace('円', '').replace(',', '')
+                sep = 'P/L=' if 'P/L=' in line else 'PL='
+                pl_part = line.split(sep)[1].split()[0].replace('円', '').replace(',', '').rstrip('JPY').rstrip('J')
                 total_pl += float(pl_part)
             except (ValueError, IndexError):
                 pass
