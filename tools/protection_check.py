@@ -406,6 +406,44 @@ def format_result(r: dict) -> str:
     return "\n".join(lines)
 
 
+def detect_thin_market() -> tuple[bool, str]:
+    """Detect thin liquidity conditions (holidays, weekend proximity, off-hours)."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    weekday = now.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+    hour = now.hour
+    reasons = []
+
+    # Friday after 18:00 UTC or Saturday/Sunday
+    if weekday == 4 and hour >= 18:
+        reasons.append("Friday late session (thin liquidity)")
+    if weekday in (5, 6):
+        reasons.append("Weekend")
+
+    # Check for known holidays (Good Friday, Christmas, New Year, etc.)
+    month_day = (now.month, now.day)
+    holiday_dates = {
+        (1, 1): "New Year",
+        (12, 25): "Christmas",
+        (12, 26): "Boxing Day",
+    }
+    if month_day in holiday_dates:
+        reasons.append(holiday_dates[month_day])
+
+    # Easter/Good Friday: approximate check (varies by year)
+    # For 2026: Good Friday = April 3
+    if now.year == 2026 and now.month == 4 and now.day == 3:
+        reasons.append("Good Friday")
+    if now.year == 2027 and now.month == 3 and now.day == 26:
+        reasons.append("Good Friday")
+
+    # Tokyo dead zone: 03:00-06:00 UTC (after NY close, before London)
+    if 3 <= hour < 6:
+        reasons.append(f"Low-liquidity window ({hour:02d}:00 UTC)")
+
+    return bool(reasons), ", ".join(reasons)
+
+
 def main():
     cfg = load_config()
     token = cfg["oanda_token"]
@@ -422,6 +460,14 @@ def main():
         print("=== PROTECTION CHECK: No open positions ===")
         return
 
+    # Thin market detection
+    is_thin, thin_reason = detect_thin_market()
+    if is_thin:
+        print(f"⚠️  THIN MARKET DETECTED: {thin_reason}")
+        print(f"   → SL/Trail will get noise-clipped. Discretionary management recommended.")
+        print(f"   → Do NOT add tight SL. Do NOT add trailing stops.")
+        print()
+
     all_technicals = {}
     for pair in PAIRS:
         all_technicals[pair] = load_technicals(pair)
@@ -431,7 +477,8 @@ def main():
     for trade in trades:
         r = assess_protection(trade, all_technicals, cfg)
         results.append(r)
-        all_put_commands.extend(r.get("put_commands", []))
+        if not is_thin:  # Don't suggest fix commands during thin market
+            all_put_commands.extend(r.get("put_commands", []))
 
     # Sort: unprotected first, then by UPL descending
     results.sort(key=lambda r: (r["has_any_protection"], -abs(r["upl"])))
@@ -447,16 +494,21 @@ def main():
             unprotected_count += 1
 
     if unprotected_count > 0:
-        print(f"--- ⚠️ {unprotected_count} trades with NO PROTECTION ---")
+        if is_thin:
+            print(f"--- {unprotected_count} trades without SL (THIN MARKET — this is correct. Discretionary management.) ---")
+        else:
+            print(f"--- {unprotected_count} trades with NO PROTECTION (consider adding if you won't be watching) ---")
     else:
         print(f"--- All {len(results)} trades have some form of protection ---")
 
-    # Output immediately executable commands
+    # Output immediately executable commands (suppressed during thin market)
     if all_put_commands:
         print(f"\n=== Fix Commands ({len(all_put_commands)} items) — copy-paste to execute immediately ===")
         for cmd in all_put_commands:
             print()
             print(cmd)
+    elif is_thin and unprotected_count > 0:
+        print(f"\n(Fix commands suppressed — thin market. SL/Trail would get noise-clipped.)")
 
 
 if __name__ == "__main__":
