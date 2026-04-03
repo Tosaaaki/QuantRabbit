@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-03 — Add event countdown to news summary
+
+**news_fetcher.py**: Added `_event_countdown()` — calculates remaining time to economic events (NFP etc.) and appends `[in 30min]`, `[in 1h01m]`, `[RELEASED]` etc. to calendar output in `print_summary()`. Prevents Claude from miscalculating event countdown by mental arithmetic (20:29 posted "NFPまで約30分" when it was actually ~61 min away).
+
 ## 2026-04-03 — Prompt design principle: "Think at the Point of Output"
 
 **CLAUDE.md**: Added core prompt design principle — all prompts must work equally on Opus and Sonnet. The method: embed thinking into output format, not rules or self-questions. Output format forces thinking; rules and preambles don't.

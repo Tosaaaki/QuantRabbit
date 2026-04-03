@@ -348,6 +348,30 @@ def fetch_all(cfg: dict) -> dict:
     return result
 
 
+def _event_countdown(time_str: str, now: datetime) -> str:
+    """Calculate countdown string for an event. Returns '' if unparseable or past."""
+    if not time_str:
+        return ""
+    try:
+        ev_dt = datetime.fromisoformat(time_str)
+        if ev_dt.tzinfo is None:
+            ev_dt = ev_dt.replace(tzinfo=timezone.utc)
+        diff = ev_dt - now
+        minutes = diff.total_seconds() / 60
+        if minutes < 0:
+            return " [RELEASED]"
+        elif minutes < 60:
+            return f" [in {int(minutes)}min]"
+        elif minutes < 1440:
+            h = int(minutes // 60)
+            m = int(minutes % 60)
+            return f" [in {h}h{m:02d}m]"
+        else:
+            return f" [in {int(minutes // 1440)}d]"
+    except Exception:
+        return ""
+
+
 def print_summary():
     """Display cache summary (for trader session)"""
     if not CACHE_FILE.exists():
@@ -369,8 +393,9 @@ def print_summary():
 
     print(f"📰 NEWS ({age_str})")
 
-    # Calendar: today's high impact events
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Calendar: today's high impact events with countdown
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
     high_events = [e for e in cache.get("calendar", [])
                    if e.get("impact") == "high" and today in str(e.get("time", ""))]
     if high_events:
@@ -378,11 +403,13 @@ def print_summary():
         for ev in high_events[:5]:
             actual = f" → {ev['actual']}" if ev.get("actual") else ""
             forecast = f" (forecast:{ev['forecast']})" if ev.get("forecast") else ""
-            print(f"  {ev.get('time','')[:16]} {ev['country']} {ev['event']}{forecast}{actual}")
+            countdown = _event_countdown(ev.get("time", ""), now)
+            print(f"  {ev.get('time','')[:16]} {ev['country']} {ev['event']}{forecast}{actual}{countdown}")
     else:
         upcoming_high = [e for e in cache.get("calendar", []) if e.get("impact") == "high"]
         if upcoming_high:
-            print(f"📅 Next HIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({upcoming_high[0].get('time','')})")
+            countdown = _event_countdown(upcoming_high[0].get("time", ""), now)
+            print(f"📅 Next HIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({upcoming_high[0].get('time','')}){countdown}")
         else:
             print("📅 No upcoming high impact events")
 
