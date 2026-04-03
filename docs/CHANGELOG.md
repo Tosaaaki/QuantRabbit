@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-03 — Prompt design principle: "Think at the Point of Output"
+
+**CLAUDE.md**: Added core prompt design principle — all prompts must work equally on Opus and Sonnet. The method: embed thinking into output format, not rules or self-questions. Output format forces thinking; rules and preambles don't.
+
+**change-protocol.md**: Added "Prompt Editing Rule" — when editing any prompt, don't add rules or self-questions. Change the output format so thinking is required to produce it.
+
 ## 2026-04-03 — Fix Slack notification calculation errors
 
 **trade_performance.py / slack_daily_summary.py — P/L= format fix**:

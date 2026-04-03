@@ -16,6 +16,18 @@ When changing code, config, or architecture, execute all of the following:
    - "Syntax OK" ≠ "works". Import must pass, processing must run, output must appear
    - When claiming "all fixed", re-run **every** item that was reported broken, one by one. Don't assume
 
+## Prompt Editing Rule — Think at the Point of Output
+
+**All prompts must work equally well on Opus and Sonnet.** This is a hard constraint.
+
+When editing SKILL.md, rules, or strategy_memory:
+- **Don't add rules** ("if X then BLOCKED") → Models follow rules mechanically or ignore them. Either way, no thinking.
+- **Don't add self-questions** ("ask yourself why") → Read and forgotten by the time the model writes output.
+- **Change the output format** so thinking is required to produce it → "I would enter if..." forces a trade plan. "Skip" allows copy-paste.
+- **Test**: "Could a model produce this output by copying from last session?" If yes → format is too loose.
+
+See CLAUDE.md "Prompt Design Principle" for the full rationale.
+
 ## Language Rule — Token Cost Optimization
 
 **Everything that enters the context window MUST be in English.** Japanese text consumes 2-3x more tokens than equivalent English.

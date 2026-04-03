@@ -26,6 +26,25 @@ The relationship between a pro trader and their tools:
 **How an elite pro trader thinks:**
 - Read the market → Form a hypothesis → Verify with tools → Adjust tools → Make the call → Evolve the tools
 
+### Prompt Design Principle: Think at the Point of Output
+
+**All prompts (SKILL.md, rules, strategy_memory) must work equally well on Opus and Sonnet.** This is a hard constraint. If a prompt only works on one model, it's a bad prompt.
+
+How to achieve this:
+
+| Approach | Opus | Sonnet | Verdict |
+|---|---|---|---|
+| **Rules / checklists** ("if X then BLOCKED") | Follows but feels constrained. May override with better judgment | Follows mechanically. Becomes a smarter bot | ❌ Model-dependent |
+| **Self-questioning** ("ask yourself why") | Thinks deeply | Reads, agrees, then ignores when writing output | ❌ Model-dependent |
+| **Output format forces thinking** ("write 'I would enter if...' for each pair") | Thinks deeply while writing | Must think to fill in the format. Can't write "Skip" | ✅ Model-independent |
+
+**The principle**: Don't tell Claude what to think. Shape the format of what Claude writes so that thinking is required to produce the output. A bot can follow a rule. A bot can skip a self-question. But a bot cannot fill in "I would enter if..." without forming a trade plan.
+
+**When editing prompts**:
+- Never add a rule that says "don't do X." Instead, change the output format so X is impossible to write
+- Never add a preamble section ("before you begin, consider..."). Instead, embed the consideration into the field the model fills in
+- Test: "Could a model produce this output by copy-pasting from last session?" If yes, the format is too loose
+
 ---
 
 ## Architecture (v8.1)
