@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-03 — Fix Slack notification calculation errors
+
+**trade_performance.py / slack_daily_summary.py — P/L= format fix**:
+- Log entries using `P/L=` (with slash) were silently dropped by parsers that only matched `PL=`
+- 8 entries affected, including large losses (-17,521 / -3,719 / -2,196 JPY)
+- Fixed regex: `PL=` → `P/?L=` (slash optional)
+
+**intraday_pl_update.py — New dedicated script**:
+- `intraday-pl-update` task previously had Claude Code generate OANDA API code on-the-fly each session → unreliable calculations (showed 0 closes when there were 4)
+- New `tools/intraday_pl_update.py` script fetches from OANDA transactions API with proper page pagination
+- Supports `--dry-run` for testing
+- SKILL.md updated to use the script instead of inline code generation
+
 ## 2026-04-03 — From rules to thinking: trader prompt philosophy rewrite
 
 **Core change**: Replaced rule-based guardrails with self-questioning thinking habits. Works for both Opus and Sonnet.
