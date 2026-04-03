@@ -1,22 +1,29 @@
 # Changelog
 
-## 2026-04-03 — Anti-passivity + small wave trading + event day rules
+## 2026-04-03 — From rules to thinking: trader prompt philosophy rewrite
 
-**Passivity trap detection (SKILL_trader.md)**:
-- Added cycle-level check: margin < 40% + no entry in 3+ sessions + event >2h away = trapped
-- Forces per-pair "what would make me enter NOW" reasoning instead of blanket "on standby"
+**Core change**: Replaced rule-based guardrails with self-questioning thinking habits. Works for both Opus and Sonnet.
 
-**Event day trading rules (strategy_memory.md)**:
-- Defined precise time windows: >2h = normal, 1-2h = size down, <1h = no new entries
-- "No new entries pre-NFP" 8 hours before event is now explicitly forbidden
-- state.md must specify cutoff time, not vague bans
+**SKILL_trader.md — "The Trader's Inner Dialogue"** (replaced Passivity Trap Detection):
+- "Am I reading the market or reading my own notes?"
+- "If I had zero positions, what would I do?"
+- "What changed in the last 30 minutes?"
+- "Am I waiting, or hiding behind waiting?"
+→ Not a checklist. A thinking habit that prompts genuine market reading.
 
-**Small wave trading guide (strategy_memory.md)**:
-- BB squeeze resolution trading: M5 squeeze + M1 directional break → B-sized entry
-- TP = opposite BB band, SL = ATR×1.0 fixed (no trailing), 15-60 min duration
-- Captures market rhythm instead of sitting flat for hours
+**SKILL_trader.md — "Before you pull the trigger"** (replaced Anti-repetition hard block):
+- "Am I seeing something new, or the same thing again?"
+- "Why THIS pair, not the other six?"
+- "If this loses, will I understand why?"
+- "Am I trading the market or my bias?"
+→ No more BLOCKED. Context of EUR_USD 8× repetition preserved as a lesson, not a rule.
 
-**Daily-review set to Opus**: Opus coaches, Sonnet executes. strategy_memory quality drives trader quality.
+**strategy_memory.md — Event Day / Small Wave sections**:
+- Rewritten from prescriptive time windows to experience-based observations
+- "Before writing 'no entries pre-event', ask how many hours until the event"
+- Small wave guide preserved as pattern observation, not entry checklist
+
+**Daily-review set to Opus**: Opus as coach, Sonnet as player.
 
 ## 2026-04-03 — Trader anti-repetition check + daily-review enforcement + task re-enable
 

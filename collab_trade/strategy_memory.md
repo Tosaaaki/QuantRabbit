@@ -136,40 +136,27 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 
 ---
 
-## Event Day Trading Rules (NFP, CPI, FOMC etc.)
+## Event Day Experience (NFP, CPI, FOMC etc.)
 
-**"Event day" ≠ "No-trade day." Define the danger zone precisely.**
+**What we've learned about event days:**
+- The market doesn't stop moving 8 hours before an event. Small waves, squeezes, and setups still happen
+- "Pre-NFP" became a 10-hour standby on 4/3. The real danger window is the last hour, not the whole day
+- Thin liquidity (Good Friday, holidays) amplifies spikes on the event candle. The 5-10 min after release are the most dangerous
+- Trailing stops get clipped by pre-event noise. Fixed SL survives better close to events
 
-| Time to event | Sizing | Action |
-|---|---|---|
-| **>2h before** | Normal (B-S conviction sizing) | Trade normally. The market moves for 8 hours before NFP too |
-| **1-2h before** | Size down to B max (2000u) | Enter only with clear setup. Set TP to close before event |
-| **<1h before** | No new entries | Close or set fixed SL on everything. No trailing stops |
-| **Event candle (first 5-10min)** | No action | Watch. Thin liquidity = fake spikes. Don't chase |
-| **10-30min after** | Normal | Direction established. Enter on pullback from spike |
-
-**Anti-passivity**: If margin < 40% AND no entry in 3+ consecutive sessions AND event is >2h away → **you are in a passivity trap.** The previous session's "on standby" note is paralyzing you. Break out: scan all 7 pairs for BB squeeze resolution, div, or StRSI extreme. If nothing → OK, genuinely flat. But say WHY for each pair, not just "pre-event."
-
-**state.md note discipline**: Never write "No new entries pre-NFP" more than 1 hour before the event. Write the specific time: "No new entries after 11:30 UTC (1h pre-NFP)." Future sessions need a precise cutoff, not a vague ban.
+**The thinking**: Before writing "no entries pre-event" in state.md, ask: "How many hours until the event? Is that really a reason to stop trading, or am I just nervous?" Nervousness is not analysis.
 
 ---
 
-## Small Wave Trading (BB Squeeze Resolution)
+## Small Wave Patterns (BB Squeeze Resolution)
 
-**When all pairs are in M5 BB squeeze, the squeeze WILL resolve. Catch the resolution.**
+**Observation**: When all pairs show M5 BB squeeze simultaneously, the squeezes resolve into small moves — usually 5-15 pips. These are tradeable.
 
-Setup:
-1. M5 BBW in bottom 20% of recent range (squeeze confirmed)
-2. M1 shows directional candles (3+ consecutive same-direction bodies)
-3. H1 structure is not against the direction
+**What works**: M5 squeeze + M1 shows 3+ consecutive directional bodies → enter small (1000-2000u). TP at opposite BB band. Fixed SL (no trailing — trail kills small moves before they develop). Typically resolves in 15-60 minutes.
 
-Entry:
-- Size: B conviction (1000-2000u). Small waves = small size
-- TP: Opposite BB band (upper if long, lower if short). Typically ATR×0.5-0.8
-- SL: Fixed, ATR×1.0 from entry. NO trailing stops on small wave trades (trail kills small waves)
-- Duration: 15-60 minutes. If not working in 1 hour, flat out
+**What doesn't work**: Trailing stops on squeeze trades (4/3 EUR_USD, GBP_USD both clipped by trail). Holding for big targets on a squeeze play (it's a rhythm trade, not a conviction trade).
 
-**This is not a high-conviction trade. This is a "market is alive, capture the rhythm" trade.** Better than sitting flat for 8 hours with 19.7% margin.
+**When to use**: When margin is underutilized and you're tempted to write "standby." The market is always moving. The question is whether you're watching.
 
 ---
 

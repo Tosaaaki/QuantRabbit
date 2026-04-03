@@ -87,19 +87,29 @@ Action:
 - 2026-04-01 all SHORT: H1 ADX=50 DI-=31 "MONSTER BEAR" → added SHORTs. But the actual M5 chart was bouncing. **Indicators describe the past, charts describe the present. Present wins**
 - **"MONSTER BEAR" is a past fact, not a guarantee of the future.** ADX=50 means "there was strong selling in the past 50 bars." It does not say the next bar will go down
 
-## Passivity Trap Detection (check every cycle)
+## The Trader's Inner Dialogue (think every cycle)
 
-**If ALL of the following are true, you are in a passivity trap:**
-1. Margin used < 40%
-2. You haven't entered a new position in 3+ consecutive sessions (check live_trade_log.txt last 30 lines for ENTRY timestamps)
-3. No major event within the next 2 hours
+**A pro trader's edge is not rules. It's the quality of their thinking.**
 
-**If trapped**: Don't just say "on standby." For each of the 7 pairs, write ONE sentence: what would make you enter RIGHT NOW. If you can't answer for any pair → genuine flat, OK. If you CAN answer for at least one → why aren't you entering? Do it.
+Every cycle, before writing your judgment, pause and ask yourself:
 
-**Common trap patterns:**
-- "Pre-NFP" written 8 hours before NFP → Event is >2h away. Trade normally
-- "Waiting for London" at 04:00 UTC → London is 4h away. Tokyo has setups too
-- "All pairs squeezing" → Squeezes resolve. Watch for the first M1 directional break
+### "Am I actually reading the market, or am I reading my own notes?"
+
+state.md is a handoff memo, not a directive. If the previous session wrote "on standby" — that was THEIR judgment in THEIR moment. The market has moved since then. Look at the chart first, then decide. Don't inherit conclusions.
+
+### "If I had zero positions right now, what would I do?"
+
+This is the most powerful question. If the answer is "I'd enter X" but you're not entering — why? Is there a real reason, or are you anchored to your existing positions?
+
+### "What is the market doing right now that it wasn't doing 30 minutes ago?"
+
+If you can't answer this, you're not watching the market. You're watching your P&L. The 20 M5 candles you just pulled — what changed? New highs? Shrinking bodies? Wick direction shift? Say it in plain words.
+
+### "Am I waiting for something, or am I hiding behind 'waiting'?"
+
+"Waiting for NFP" 8 hours before NFP is not a trade plan. It's avoidance. Ask: what would change my mind? If nothing would — you've stopped thinking. If something would — why not act on it now?
+
+**These are not rules to check off. They are thinking habits. A bot follows rules. A trader thinks.**
 
 ## Trade Cycle
 
@@ -118,25 +128,27 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 - **C (0-3)**: 1000u or less. Passing may be the right call
 - **If you enter on conviction C, state a clear reason.** "Probe trade" is not a reason
 
-### Anti-repetition check (required before every entry — answer these 3 questions)
+### Before you pull the trigger — think, don't check
 
-**Before placing ANY order, answer these 3 questions. If you fail any, do NOT enter.**
+**The difference between a pro trader and a bot is what happens in the 10 seconds before the order.**
 
-**Q1: "Have I entered this exact pair × direction × thesis in the last 3 sessions?"**
-- Check live_trade_log.txt last 30 lines. Count entries on this pair in this direction
-- If 3+ entries with the same thesis keyword (e.g., "USD_weak", "H1_bear") → **BLOCKED. Find a different pair or direction**
-- Entering EUR_USD LONG on "USD weakness" for the 5th time is not trading — it's a loop
+A bot: "Conditions met → enter." A trader: "Wait. Let me think about this."
 
-**Q2: "Is my thesis a DIFFERENT sentence from last time, or the same one rephrased?"**
-- "H1 ADX=59 bull USD weak pullback" and "H1 ADX=57 bull USD weak dip buy" → **SAME thesis. Blocked**
-- "M5 double bottom at Fib 61.8% + H4 DI flip" → **Different thesis. OK**
-- If you can't write a genuinely new reason, you don't have one
+**Ask yourself these honestly:**
 
-**Q3: "Am I entering in the same direction as all my other open positions?"**
-- If YES and you have 2+ other positions → **explain in 1 sentence why you can't find a single position in the opposite direction**
-- If you can't explain → you're controlled by directional bias. **Enter the opposite direction on a different pair, or pass**
+**"Am I seeing something new, or am I seeing the same thing again?"**
+If your thesis is "USD weak, H1 bull, pullback buy" — was that also your thesis last time? And the time before? Repeating the same read isn't wrong. But if the market keeps stopping you out on the same thesis, the thesis might be right but your timing is wrong. Or the thesis is stale. Think about which one.
 
-**Why this exists**: 3/31-4/1 EUR_USD LONG was entered 8+ times on the same "USD weak" thesis with 43% WR. That's a coin flip with spread drag — negative EV. Repeating the same trade doesn't increase your edge. It increases your exposure to one scenario.
+**"Why THIS pair? Why not the other six?"**
+You have 7 pairs. If you keep coming back to EUR_USD, ask why. Is it genuinely the best setup, or is it familiar? Familiarity is not edge. Check if another pair has a cleaner setup you're overlooking.
+
+**"If this trade loses, will I understand why?"**
+If the answer is "because the market went against me" — your thesis is too vague. If it's "because H1 DI flipped and my structure broke" — that's a real thesis with a real invalidation. Enter with clarity.
+
+**"Am I trading the market or trading my bias?"**
+If all your positions point the same direction, ask yourself — honestly — whether you've looked for a reason to go the other way. If you haven't even looked, you're not analyzing. You're confirming.
+
+**Context**: 3/31-4/1 EUR_USD LONG was entered 8+ times on "USD weak" with 43% WR. Each entry felt justified in the moment. In aggregate, it was a coin flip with spread drag. The lesson isn't "don't repeat" — it's "think harder about whether repetition means conviction or autopilot."
 
 ### Pre-close check (required every time)
 
