@@ -46,26 +46,94 @@
 
 **When the user explicitly removes SL, that is a direct order.** The trader task must not re-add protection or close the position on its own judgment. The user is managing risk manually.
 
-## Conviction-Based Sizing
+## Conviction-Based Sizing — Determined by Depth of Analysis, Not Indicator Count
 
 **High conviction → size up. Low conviction → size down.**
 
 **Size = margin allocation per entry, as % of NAV. Check `NAV`, `marginUsed`, `marginAvailable` from session_data.py before every entry.**
 
-| Conviction | pretrade score | Conditions | Margin for this entry | Example |
-|------|------|------|--------|-----|
-| **S (ironclad)** | 8+ | H1+H4+macro all aligned, Div confirmed | **~30% of NAV** | H4 ADX>30 + H1 same direction + M5 pullback |
-| **A (high)** | 6-7 | H1 direction aligned + M5 timing confirmed | **~15% of NAV** | H1 bullish + M5 StochRSI=0.0 |
-| **B (normal)** | 4-5 | Signal from 1 TF only | **~5% of NAV** | M5 Div only, H1 unclear |
-| **C (probe)** | 0-3 | Thin basis | **~2% of NAV** | Counter-trend within range |
+### Conviction is NOT "how many indicators agree." It's "how deeply have you looked, and does the whole picture cohere?"
 
-Units = margin_budget / (price / 25). Example at NAV 200k:
-- S on USD_JPY @150: 60,000 / (150/25) = **10,000u**. S on AUD_JPY @97: 60,000 / (97/25) = **15,500u**
-- A on USD_JPY: 30,000 / 6 = **5,000u**. B on USD_JPY: 10,000 / 6 = **1,667u**
+**Past data (3/20-4/3): 7 conviction-S opportunities found, 5 were undersized by 70% avg. 6,740-13,140 JPY thrown away. Root cause: trader checked 2-3 familiar indicators, rated B, and stopped looking. Deeper analysis would have revealed S.**
+
+### 6 Indicator Categories (reference — what to check)
+
+| # | Category | Indicators | What it tells you |
+|---|----------|-----------|-------------------|
+| ① | **Direction** | ADX/DI, EMA slope, MACD direction | Where is the market going? |
+| ② | **Timing** | StochRSI, RSI extreme, CCI, BB position | Is now the right moment? |
+| ③ | **Momentum** | MACD hist change, ROC, EMA cross | Is the move accelerating or dying? |
+| ④ | **Structure** | Fib, cluster, swing distance, Ichimoku | Where are the walls? |
+| ⑤ | **Cross-pair** | Correlated pairs, currency strength | Is this currency-wide or pair-specific? |
+| ⑥ | **Macro** | News, events, flow | What's the bigger story? |
+
+### Before every entry — write this block (required)
+
+```
+Thesis: [1 sentence — what trade and why NOW]
+Type: [Scalp / Momentum / Swing]
+FOR:  ___ (category) + ___ (category) + ___ (category)
+Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
+AGAINST: ___ [specific. "nothing" only if you actually checked]
+If I'm wrong: ___ [the scenario where this trade loses, and at what price]
+→ Conviction: [S/A/B/C] | Size: ___u (___% NAV)
+```
+
+**"Different lens" is the key line.** It forces you to look at the trade from an angle you wouldn't normally check. It moves conviction in BOTH directions:
+
+| Different lens result | Effect |
+|----------------------|--------|
+| Supports FOR | Conviction UP — B can become A or S |
+| Neutral | No change — but you know you checked |
+| Contradicts FOR | Conviction DOWN — move to AGAINST, adjust size |
+| Overturns thesis | Abort entry or reverse direction |
+
+**Example — conviction upgrade (B → S):**
+```
+First impression: M5 StochRSI=0.0, H1 unclear → "probably B"
+Different lens: Fib → price at H1 38.2% pullback. Ichimoku → above cloud. Cluster → 5× tested support
+→ Actually S-Scalp. Everything aligns. Size up to 10,000u
+```
+
+**Example — conviction downgrade (S → C):**
+```
+First impression: ADX=50 BEAR, M5 falling, macro JPY strong → "S-Swing SHORT"
+Different lens: CCI → -274 (extreme). Fib → 78.6% reached (exhaustion zone)
+→ Actually C. Next move is a bounce. Abort SHORT
+```
+
+### Conviction = story coherence, not category count
+
+| Conviction | What it means | FOR | Different lens | AGAINST | If I'm wrong |
+|------------|--------------|-----|----------------|---------|-------------|
+| **S** | "Everything points the same way" | 3+ categories, strong | Supports or confirms | Checked, nothing credible | Specific single scenario, not happening now |
+| **A** | "Good setup, one manageable risk" | 2-3 categories | Mostly supports | Specific concern, but has mitigation | Specific, plausible but has a plan |
+| **B** | "See something, but picture incomplete" | 1-2 categories | Mixed or unchecked | Real contradictions or mostly unchecked | Multiple scenarios or vague |
+| **C** | "Don't fully understand this trade" | Thin | Contradicts or unchecked | Strong contradictions | Can't articulate clearly |
+
+### S-Type determines hold time and TP (after conviction is determined)
+
+| S Type | MTF | Hold Time | Target |
+|--------|-----|-----------|--------|
+| **Scalp** | M1→M5→H1 | 5-30 min | ATR×0.5-1.0 |
+| **Momentum** | M5→M15→H1 | 30min-2h | ATR×1.0-2.0 |
+| **Swing** | H1→H4→macro | 2h-1day | ATR×2.0+ |
+
+### Sizing table
+
+| Conviction | Margin for this entry | At NAV 200k, USD_JPY @150 |
+|------------|----------------------|---------------------------|
+| **S (any type)** | **~30% of NAV** | margin 60k = **10,000u** |
+| **A** | **~15% of NAV** | margin 30k = **5,000u** |
+| **B** | **~5% of NAV** | margin 10k = **1,667u** |
+| **C** | **~2% of NAV** | margin 4k = **667u** |
+
+Units = margin_budget / (price / 25). AUD_JPY @97 → S = 60k/(97/25) = **15,500u**.
 
 **Before every entry: marginUsed + new margin must stay below NAV × 0.90.** `marginAvailable` from OANDA tells you directly.
 
 **One conviction-S trade beats ten conviction-B trades. Don't grind for volume.**
+**If Different lens reveals S conditions and you still enter at B-size, you are throwing away money.**
 
 ## add-on — Be flexible. But one absolute rule.
 
@@ -109,9 +177,36 @@ profit_check.py evaluates the following simultaneously and outputs a recommendat
 
 Below ATR×0.5 and not worth the spread = too early. **However, if momentum reversal is detected, taking profit before ATR target is OK.**
 
-## Stop Loss — No monetary triggers. Judge by market conditions.
+## Stop Loss — Structural placement. No ATR-only. No monetary triggers.
 
 **There are zero monetary-based stop loss rules. Whether it's -500 yen or -1000 yen, do not use the amount as a decision factor.**
+
+### SL placement must be structural (4/3 lesson: -984 JPY from ATR×0.6 mechanical SLs)
+
+Every SL must answer: **"What market structure is at this price?"**
+
+```
+❌ SL at ATR×1.2 → "because that's the formula" → bot. Gets hunted by noise
+✅ SL at 110.060 → "NFP spike low 110.082 minus spread buffer" → structural
+✅ SL at 1.3180 → "below Fib 78.6% + Ichimoku cloud base convergence" → structural
+✅ No SL → "Good Friday thin market, discretionary management" → pro judgment
+```
+
+ATR is for **sizing** (how much risk am I taking), not **placement** (where should SL go). Use swing lows, Fib levels, DI reversal points, cluster support, Ichimoku cloud — levels where the market actually reacted.
+
+### Position management — always 3 options, never 2
+
+When conditions change after entry (event approaching, thin market, timeframe shift), evaluate all 3:
+
+| Option | When to choose |
+|--------|---------------|
+| **A. Hold + adjust** | Timeframe changed → widen SL to structural level, extend TP |
+| **B. Cut and re-enter** | Better setup available at a different level/time. In profit + event risk = strong candidate |
+| **C. Hold as-is** | Current protection matches current conditions |
+
+**4/3 example**: EUR_USD/GBP_USD in profit, Good Friday, NFP 10h away. Only option considered was "trail at ATR×0.6." Option B (take profit now, re-enter post-NFP with confirmed direction) was the correct play but was never evaluated.
+
+### Loss management decision flow
 
 Decision flow when you're concerned about an unrealized loss (this is all. Don't look at the amount):
 
@@ -171,3 +266,5 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
 | **Tight SL on thin market = free money for market makers (4/3)** | Good Friday: trail 11-15pip + SL 10pip → ALL hunted. -984 JPY total. Thesis was right on every trade. **Holiday/thin market = NO SL or ATR×2.5+** |
 | **Closing after user said "hold, no SL" (4/3)** | User removed SL at 13:04. Claude closed AUD_JPY at 13:44 anyway. -338 JPY. User had to re-enter. **User instruction to remove SL = hold. Don't override.** |
 | **Panic close → panic re-entry = double loss (4/3)** | Closed AUD_JPY @110.077 (-338円), re-entered 7min later @110.118 (Sp1.8pip, pretrade=C(1)). Held=損失ゼロ。**再エントリー前に「クローズ時より良い価格か？新しい根拠はあるか？」両方Noならスプレッド払って同じ物を買い戻してるだけ** |
+| **ATR×N mechanical SL = bot (4/3)** | EUR_USD trail=ATR×0.6(11pip), GBP_USD trail=ATR×0.7(15pip) on Good Friday → all hunted. -984 JPY. **SL must be at structural levels (swing low, Fib, cluster), not ATR multipliers. If you can't name the structure, don't set the SL** |
+| **Binary position management (4/3)** | Only considered "trail or hold." Never evaluated "take profit now and re-enter post-NFP." In profit + event risk + thin market = cut and re-enter was the best play. **Always evaluate 3 options: adjust / cut-and-re-enter / hold-as-is** |

@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-04-04 — Conviction framework: FOR / Different lens / AGAINST / If I'm wrong
+
+**Context**: Retroactive analysis found 7 conviction-S trades undersized by 70% avg (6,740-13,140 JPY lost). Root cause: trader checked 2-3 familiar indicators, rated B, stopped. Deeper analysis with different indicator categories would have revealed S. Also: 4/1 all-SHORT wipeout (-4,438 JPY) would have been prevented if CCI/Fib (different lens) had been checked — they showed exhaustion.
+
+**Core change**: Conviction is no longer "how many indicators agree" but "how deeply have you looked, and does the whole picture cohere?" New pre-entry format:
+```
+Thesis → Type → FOR (multi-category) → Different lens (unused category) → AGAINST → If I'm wrong → Conviction + Size
+```
+
+**"Different lens" is the key innovation.** Forces checking indicators from categories NOT already used in FOR. Moves conviction BOTH directions:
+- B→S upgrade: initial 2 indicators look like B, but Fib + Ichimoku + cluster all support → actually S. This is where the money is
+- S→C downgrade: ADX says BEAR, but CCI=-274 and Fib 78.6% say exhausted → abort. This prevents wipeouts
+
+**6 indicator categories defined**: Direction, Timing, Momentum, Structure, Cross-pair, Macro. Categories serve as a checklist of what to look at, not a scoring rubric. Conviction is the trader's judgment of story coherence.
+
+**Files changed**: risk-management.md (full conviction framework + 6 categories + pre-entry block + sizing table), SKILL_trader.md (pre-entry format + conviction guide + sizing), collab_trade/CLAUDE.md (Japanese version of entry format), strategy_memory.md (evidence + updated sizing guidance)
+
+## 2026-04-04 — 3-option position management + structural SL enforcement
+
+**Context**: 4/3 post-mortem with user. Key insight: Opus read charts correctly but managed positions in binary (trail or hold). Missed "cut in profit and re-enter post-NFP." SL placement was ATR×N mechanical, not structural. User couldn't understand SL rationale because there was none beyond a formula.
+
+**SKILL_trader.md**: Added "Position management — 3 options, always" section. For each position when conditions change, trader must write 3 options (A: hold+adjust, B: cut-and-re-enter, C: hold-as-is) then pick one with reasoning. Output format forces evaluation of all options — prevents binary thinking. Added structural SL placement requirement.
+
+**risk-management.md**: Renamed SL section to "Structural placement. No ATR-only." Added structural SL examples (swing low, Fib, DI reversal vs. ATR×N). Added 3-option position management framework. Added 2 new failure patterns (ATR mechanical SL, binary position management).
+
+**protection_check.py**: Added 3-option prompt to output. After listing all positions, prints A/B/C blanks for each position that the trader must fill in. Forces structured thinking at point of output.
+
+**strategy_memory.md**: Added 2 Active Observations — binary position management lesson and structural SL lesson from 4/3.
+
 ## 2026-04-03 — Root cause fix: Stop mechanical SL placement
 
 **SKILL.md (trader task)**: Rewrote protection management section. protection_check output is now "data, not orders." Removed "Trailing=NONE is abnormal" rule. Trailing stops are now "for strong trends only, not default." Added hard rules for when NOT to set SL. Trail minimum raised to ATR×1.0 (was ATR×0.6-0.7).

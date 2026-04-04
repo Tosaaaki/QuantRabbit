@@ -501,6 +501,19 @@ def main():
     else:
         print(f"--- All {len(results)} trades have some form of protection ---")
 
+    # 3-option prompt for each position (forces structured thinking)
+    print()
+    print("=== POSITION MANAGEMENT — fill in 3 options for each position ===")
+    for r in results:
+        pair = r["pair"]
+        upl = r["upl"]
+        pip_profit = r["pip_profit"]
+        print(f"\n{pair} {r['side']} {r['units']}u | UPL={upl:+,.0f}JPY ({pip_profit:+.1f}pip)")
+        print(f"  A. Hold + adjust (new SL/TP to match current conditions): ___")
+        print(f"  B. Cut and re-enter (close now, re-enter at better setup): ___")
+        print(f"  C. Hold as-is (current protection is optimal because): ___")
+        print(f"  → Decision: ___")
+
     # Output immediately executable commands (suppressed during thin market)
     if all_put_commands:
         print(f"\n=== Fix Commands ({len(all_put_commands)} items) — copy-paste to execute immediately ===")

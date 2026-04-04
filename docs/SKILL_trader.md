@@ -28,16 +28,23 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 
 **profit_check**: Default is to take profit. If TAKE_PROFIT/HALF_TP is recommended, verbalize "why you're holding" within 30 seconds. If you can't, take profit.
 
-**protection_check**: Check TP/SL/Trailing status for all positions. **If a warning fires, act immediately. Don't just read it and move on.**
-- `*** NO PROTECTION ***` → **Actively monitoring every 5 min = SL-free entry is acceptable.** Add BE at ATR×0.8 profit, Trailing at ATR×1.0+. If you're NOT watching (overnight, away), set SL first.
-- `SL too wide` (ATR×2.5+) → **Tighten SL to ATR×1.2 immediately.** GBP_JPY SL=ATR×3.2 hit = -6,000 JPY. Unacceptable
-- `TP too wide` (ATR×2.0+) → **Move TP closer to a structural level (ATR×1.0).** TP=ATR×5.0 is praying, not trading
-- `SL too tight` (ATR×0.7 or less) → Widen or remove. SL that gets clipped by noise is useless
-- BE recommended → Consider BE when unrealized profit exceeds ATR×0.8; set Trailing at ATR×1.0+
-- **Target SL distance: ATR×1.0–1.5. Calibrate to volatility.** Tighter in Tokyo, wider in London
-- **⚠️ Trailing=NONE is abnormal.** If any position with ATR×1.0+ unrealized profit has no trailing stop, set one immediately
+**protection_check**: Data about current TP/SL/Trailing status. **This is data, not orders. You decide what to do.**
 
-**Track record of ignoring protection_check**: 3/31 — all 9 positions had SL too wide + TP too wide + Trailing=NONE. Never adjusted TP/SL once over 12+ hours. → Could not rotate because TP was unreachable; only 4 entries in 24 hours. **Don't read the warning and call it "confirmed." Fix it with PUT /trades/{id}/orders immediately.**
+How to read protection_check output:
+- `NO PROTECTION` → Position has no TP/SL/Trail. **This is fine if you are actively monitoring.** Only add protection if you won't be watching (overnight, pre-close)
+- `SL too wide` → SL is far from price. Consider if it's still at a meaningful structural level. If not, tighten or remove
+- `SL too tight` → SL is close enough to get noise-clipped. **Widen or remove.** Tight SL = free money for market makers
+- `TP too wide` → TP may be unreachable. Consider partial TP at a closer structural level
+
+**SL is a judgment call, not a requirement.** Ask: "Will this SL get clipped by normal noise before my thesis plays out?" If yes → don't set it.
+
+**When NOT to set SL/Trail (HARD RULES):**
+- Holiday / thin liquidity (Good Friday, year-end, bank holidays) → NO SL. Spread 2× normal = SLs get hunted
+- User said "SLいらない" → NO SL. Don't re-add. Don't close on your own judgment. That's a direct order
+- Tokyo session (00:00-06:00Z) overnight hold → NO trailing stop. Fixed SL only if any
+- Pre-event (NFP/FOMC) → NO trailing stop. Use fixed SL at structural invalidation or nothing
+
+**4/3 lesson (-984 JPY)**: EUR_USD trail 11pip, GBP_USD trail 15pip, AUD_USD SL 10pip — ALL hunted on Good Friday. Every thesis was correct. Every loss was from mechanical SL placement. **Don't be a bot that attaches SL to every position.**
 
 ### Even if profit_check says HOLD, challenge it yourself (required for big-loss positions)
 If profit_check returns HOLD on a position with more than -5,000 JPY unrealized loss:
@@ -120,22 +127,46 @@ Rules are all in `.claude/rules/`. Not repeated here.
 
 cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}
 
-**Conviction (CONFIDENCE) determines sizing:**
-- **S (8+)**: 8000-10000u. Full MTF alignment + macro alignment + strong ADX. Commit with confidence
-- **A (6-7)**: 5000-8000u. High conviction. Size up
-- **B (4-5)**: 2000-3000u. Go light
-- **C (0-3)**: 1000u or less. Passing may be the right call
-- **If you enter on conviction C, state a clear reason.** "Probe trade" is not a reason
+**Conviction determines sizing. Conviction comes from DEPTH of analysis, not indicator count.**
 
-### Before you pull the trigger
+### Before you pull the trigger — write this block (required)
 
-Write ONE sentence in live_trade_log.txt with the entry, answering: **"What is different about THIS moment?"**
+```
+Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
+Type: [Scalp / Momentum / Swing]
+FOR:  ___ (category) + ___ (category) + ___ (category)
+Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
+AGAINST: ___ [specific. "nothing" only if you actually checked]
+If I'm wrong: ___ [the scenario where this trade loses, and at what price]
+→ Conviction: [S/A/B/C] | Size: ___u (___% NAV)
+```
 
-Not "USD is weak" (that's been true for days). Not "H1 bull" (that's been true for hours). What happened in the last 20 minutes that makes NOW the right time? A candle pattern. A level break. A squeeze resolution. A divergence completing.
+**6 indicator categories (pick from these for FOR and Different lens):**
+① Direction (ADX/DI, EMA slope, MACD) ② Timing (StochRSI, RSI, CCI, BB) ③ Momentum (MACD hist, ROC, EMA cross) ④ Structure (Fib, cluster, swing, Ichimoku) ⑤ Cross-pair (correlated pairs, currency strength) ⑥ Macro (news, events, flow)
 
-If you can't write that sentence, you don't have a timing reason. You have a direction bias. Direction is not enough — the market can agree with your direction and still stop you out because your timing was wrong.
+**"Different lens" is the most important line.** Check an indicator from a category you haven't used yet:
+- If it supports → conviction UP (B can become S). **This is how you find hidden S-setups**
+- If it contradicts → conviction DOWN. Move to AGAINST, adjust size
+- If it overturns thesis → abort. You just saved money
 
-**Context**: 3/31-4/1 EUR_USD LONG entered 8× on "USD weak + H1 bull." Direction was right (USD did weaken). WR was 43% because timing was random — any dip looked like a buy. The ones that worked had specific timing (M5 StRSI=0.0 at Fib 38.2%). The ones that failed were "it dipped, so I bought."
+**Example — B→S upgrade**: StochRSI=0.0 + H1 bull → "looks like B." Different lens: Fib=38.2% pullback, Ichimoku=above cloud, cluster=5× tested → actually S-Scalp, size up to 10,000u
+**Example — S→C downgrade**: ADX=50 BEAR + M5 falling → "looks like S." Different lens: CCI=-274, Fib 78.6% reached → actually C, next move is bounce. Abort
+
+**Conviction guide (judgment, not formula):**
+
+| Conviction | Story | Size @NAV 200k |
+|------------|-------|----------------|
+| **S** | FOR from 3+ categories + Different lens supports + AGAINST empty + If I'm wrong is specific and not happening | **10,000u** (30% NAV) |
+| **A** | FOR solid + Different lens mostly supports + AGAINST is specific but manageable | **5,000u** (15% NAV) |
+| **B** | FOR from 1-2 categories + Different lens mixed or unchecked + AGAINST has real concerns | **1,667u** (5% NAV) |
+| **C** | FOR thin + Different lens contradicts + can't articulate If I'm wrong | **667u** (2% NAV) |
+
+**S-Type (after conviction determined) sets hold time and TP:**
+- **Scalp** (M1→M5→H1): 5-30 min, ATR×0.5-1.0
+- **Momentum** (M5→M15→H1): 30min-2h, ATR×1.0-2.0
+- **Swing** (H1→H4→macro): 2h-1day, ATR×2.0+
+
+**Context**: 3/31-4/1 EUR_USD LONG entered 8× on "USD weak + H1 bull." WR 43% — direction was right, timing was random. The winners had specific timing (M5 StRSI=0.0 at Fib 38.2%). The losers were "it dipped, so I bought." **"Thesis" must say what happened NOW, not what's been true for days.**
 
 ### Pre-close check (required every time)
 
@@ -194,8 +225,9 @@ If there's a user message in Slack, handle it before making trade decisions. Ign
 
 ### Message classification (important)
 1. **Clear action directive** (buy/sell/hold/cut/enter/permission etc.) → execute immediately + reply with result on Slack
-2. **Questions, observations, market comments** ("why?", "V-shape", "lots of vol", "why no entry?" etc.) → reply on Slack. **Don't change your entry judgment**
-3. **When in doubt, treat as a question. Don't change behavior**
+2. **"SLいらない" / "持ってろ" / "来週まで" = HOLD order.** Do NOT close the position. Do NOT re-add SL. Do NOT override with your own judgment. The user is managing risk. **If you close after user said hold, you pay spread twice for nothing and enter worse. 4/3: -338 JPY close + 36 JPY re-entry spread = -374 JPY from ignoring user.**
+3. **Questions, observations, market comments** ("why?", "V-shape", "lots of vol", "why no entry?" etc.) → reply on Slack. **Don't change your entry judgment**
+4. **When in doubt, treat as a question. Don't change behavior**
 
 Don't feel pressure to "do something" when you read a user's question or comment. Just answer the question.
 
@@ -255,20 +287,22 @@ Record the processed ts in state.md under `## Slack最終処理ts`.
 
 **Size = margin allocation per entry, as % of NAV. Check `NAV`, `marginUsed`, `marginAvailable` from session_data.py before every entry.**
 
+**Conviction determines size. Conviction comes from the pre-entry block (Thesis/FOR/Different lens/AGAINST/If I'm wrong). See "Pre-entry check" above.**
+
 | Conviction | Margin for this entry | At NAV 200k, USD_JPY @150 |
 |------------|----------------------|---------------------------|
-| **S (lock)** | **~30% of NAV** | margin 60k = **10,000u** |
-| **A (high)** | **~15% of NAV** | margin 30k = **5,000u** |
-| **B (normal)** | **~5% of NAV** | margin 10k = **1,667u** |
-| **C (probe)** | **~2% of NAV** | margin 4k = **667u** |
+| **S** | **~30% of NAV** | margin 60k = **10,000u** |
+| **A** | **~15% of NAV** | margin 30k = **5,000u** |
+| **B** | **~5% of NAV** | margin 10k = **1,667u** |
+| **C** | **~2% of NAV** | margin 4k = **667u** |
 
 Units = margin_budget / (price / 25). AUD_JPY @97 → S = 60k/(97/25) = **15,500u** (same margin, more units because cheaper pair).
 
 **Before every entry: marginUsed + new margin must stay below NAV × 0.90.** `marginAvailable` from OANDA tells you directly.
 
-**If you meet conviction S conditions and only put on 3000u, you're a coward.** Allocate 30% NAV margin. If you're wrong, cut it.
+**If Different lens reveals S and you still enter at B-size, you're throwing away money.** 5 of 7 past S-trades were entered at B-size → 6,740-13,140 JPY lost. Conversely, B→S upgrades are WHERE THE MONEY IS. Look deeper before deciding size.
 
-**Conversely, never go 5000u+ on conviction B/C.** Small when uncertain. That's what "go big when winning, small when losing" means.
+**Never go 5000u+ on conviction B/C.** Small when uncertain. That's what "go big when winning, small when losing" means.
 
 ---
 
@@ -328,18 +362,20 @@ req = urllib.request.Request(f'{base}/v3/accounts/{acct}/trades/{tradeID}/orders
     method='PUT')
 ```
 
-**⚠️ Trailing stop width rules (lesson from 4/2-4/3: trail too tight = clipped by noise)**
+**⚠️ Trailing stop — use sparingly. Most of the time, don't use it.**
 
-| Pair type | Minimum trail width | Why |
-|-----------|-------------------|-----|
-| EUR_USD (low spread) | ATR×0.7 = ~11pip | Tight OK because spread is small |
-| USD_JPY | ATR×0.8 = ~13pip | Medium volatility |
-| GBP pairs, JPY crosses | ATR×1.0 = ~20pip | High volatility. 15pip trail gets clipped constantly |
+Trail is a tool, not a default. Ask: "Is the market environment right for a trailing stop?"
 
-- **Trail < ATR×0.6 = noise stop.** You WILL get clipped on normal wick. Don't set it
-- **Pre-event (NFP/FOMC) trail = ATR×1.2 minimum.** Spikes are 2-3x normal wick size
-- **If trail keeps getting hit before TP → trail is too tight, not "bad luck"**: Widen or don't use trail at all
-- Track record: 4/3 EUR_USD trail=11pip, GBP_USD trail=15pip → both hit on pre-NFP drift. ATR was 16pip for EUR_USD → trail was ATR×0.69, barely above minimum
+| Environment | Trail? | Why |
+|-------------|--------|-----|
+| Strong trend (ADX>30, clean bodies) | Yes, ATR×1.0+ | Trend protects you. Trail locks profit |
+| Range / chop / squeeze | **No** | Noise clips the trail before TP |
+| Thin liquidity (holiday, pre-event) | **No** | Spreads widen, wicks hunt trails |
+| Overnight hold | **No** | Tokyo session noise. Use fixed SL or nothing |
+
+- **Trail < ATR×1.0 = noise stop.** Don't set it. Period.
+- **Pre-event (NFP/FOMC) = NO trail.** Use fixed SL at structural invalidation or nothing
+- **4/3 track record**: EUR_USD trail=ATR×0.69, GBP_USD trail=ATR×0.7 → both clipped. -316 JPY from trails alone
 
 ### Setting TP/SL correctly — look at market structure, not thesis targets
 
@@ -354,23 +390,50 @@ req = urllib.request.Request(f'{base}/v3/accounts/{acct}/trades/{tradeID}/orders
 ```
 protection_check.py outputs a `📍 Structural TP candidates` menu. ATR ratio is shown too so you can gauge distance.
 
-**SL**: ATR×1.0–1.5. Whichever is closer between the structural invalidation line (DI reversal level, Fib 78.6%) and ATR.
+**SL**: Place at structural invalidation (DI reversal level, Fib 78.6%, key S/R). ATR is a size reference, not a rule.
+- If structural invalidation = ATR×1.5 → set there. Makes sense
+- If structural invalidation = ATR×3.0 → either size down so the loss is acceptable, or don't set SL at all and manage discretionally
+- **If it's a holiday/thin market → don't set SL.** Any SL gets hunted when spreads are 2-3× normal
 ```
-❌ GBP_JPY SHORT SL=211.200 (ATR×3.2 = -6,000 JPY on hit. Loss too large)
-✅ GBP_JPY SHORT SL=210.95 (ATR×1.2 = 31pip. -2,300 JPY on hit. Acceptable)
+❌ SL at ATR×1.2 because "that's the rule" → gets hunted by noise = loss from automation, not from market
+✅ SL at 210.95 because "DI reversal point + Fib 78.6% convergence" → loss from structural change = acceptable
+✅ No SL on Good Friday → discretionary management with wider tolerance
 ```
-
-**Mind the RR ratio**: TP=ATR×1.0, SL=ATR×1.2 → RR=0.8:1. Minimum. Works because TP is more likely to hit than SL. TP=ATR×2.5, SL=ATR×3.0 → neither hits. Pointless.
-
-**protection_check.py warns you every session.** When `TP too wide` or `SL too wide` fires, fix it immediately.
 
 ### Every-session routine (protection management)
 
-1. **protection_check warning → fix immediately → Slack notification**: `SL too wide` `TP too wide` → PUT /trades/{id}/orders to fix → **after fixing, always send Slack notification with `slack_trade_notify.py modify`**. Even batch fixes require one notification per trade. Fixes without notification don't exist
-2. **On entry**: After a market order, **in the same response**, attach TP. TP = structural level at ATR×1.0. **SL is optional** — set only when needed (overnight / away / conviction low). Actively monitoring every 5 min = SL-free is fine. Pattern: entry → TP only → BE at ATR×0.8 → Trailing at ATR×1.0+
-3. **Unrealized profit ATR×0.8 → move to BE. ATR×1.0 → set Trailing.** Don't leave Trailing=NONE. **Slack notification required after BE/Trailing setup too**
-4. **Rotation plan**: Place limit orders at Fib levels. Don't just write them — actually POST /orders to place them
-5. **Check pending orders**: Cancel any limit orders that are expired or no longer relevant due to changed conditions
+1. **Read protection_check output as data.** It tells you the current state. It does not tell you what to do. You decide
+2. **On entry**: Attach TP at a structural level. **SL is your judgment call** — consider spread, liquidity, session, and whether you'll be watching. SL-free with active monitoring = normal. SL-free on holiday/thin market = correct
+3. **Trailing is for strong trends only.** ADX>30, clean bodies, no chop. Otherwise trailing gets noise-clipped and converts a winning trade into a loss. When in doubt, don't trail
+4. **If user has removed SL → respect it.** Don't re-add. Don't close on your own judgment
+5. **Rotation plan**: Place limit orders at Fib levels. Don't just write them — actually POST /orders to place them
+6. **Check pending orders**: Cancel any limit orders that are expired or no longer relevant due to changed conditions
+
+### Position management — 3 options, always (4/3 lesson)
+
+**When conditions change after entry (event risk, thin market, timeframe shift, thesis weakening), you always have 3 options — not 2.**
+
+For EACH open position, when protection_check runs or conditions change, write:
+
+| Option | Action | Why this option |
+|--------|--------|----------------|
+| **A. Hold + adjust** | Change SL/TP to match new timeframe/conditions. E.g., widen SL to structural level for longer hold | _(fill in: what level, why that level)_ |
+| **B. Cut and re-enter** | Close now, wait for better setup with higher conviction | _(fill in: what setup you'd wait for, where)_ |
+| **C. Hold as-is** | Keep current protection unchanged | _(fill in: why current setup is still optimal)_ |
+
+Then pick one and state why.
+
+**Why this format exists**: On 4/3, Opus was stuck in binary thinking — "protect with ATR×0.6 trail" or "hold without SL." The missing option was "cut in the profit zone, wait for NFP to resolve, re-enter with confirmed direction." That option would have saved -984 JPY.
+
+```
+❌ Binary: "Set trail at ATR×0.6" (only option considered)
+✅ 3-option: A=widen SL to swing low 1.1510 for NFP hold | B=take +4pip profit now, re-enter post-NFP | C=no protection, discretionary. → Chose B because Good Friday thin market + NFP in 10h = trail will get clipped
+```
+
+**SL placement must be structural, not formulaic:**
+- Every SL must answer: "What market structure is at this price?" If you can only say "ATR×1.2" → the SL is bot-like
+- Acceptable: swing low, Fib 78.6%, DI reversal point, Ichimoku cloud base, cluster support
+- ATR is a size reference (how much risk am I taking), not a placement tool (where should SL go)
 
 ### When to use limit orders, TP, and SL
 
@@ -457,13 +520,15 @@ You only have 5 minutes. But in those 5 minutes, feel the price action.
 "2 minutes ago there was selling momentum, but now it's stalled" — detect that shift.
 Indicators are historical data. M1 candles are what's happening right now.
 
-**TF and target change with wave size. Don't reduce size because the wave is small.**
+**TF and target change with wave size. Don't reduce size because the wave is small. All S-types get the same margin.**
 
-| Wave | TF | Target | Conviction S | Example |
-|----|-----|------|----------|-----|
-| Large wave | H4/H1 | 15-30pip | 10000u → +1,500-3,000 JPY | H4 thesis trend follow |
-| Medium wave | H1/M5 | 10-15pip | 8000u → +800-1,200 JPY | M5 N-wave first leg |
-| Small wave | M5/M1 | 5-10pip | 8000u → +400-800 JPY | M5 bounce, StochRSI rebound |
+| Wave | S Type | TF | Target | Size @NAV200k | Expected P&L |
+|----|--------|-----|------|----------|-----|
+| Large wave | **S-Swing** | H4/H1 | 15-30pip | 10,000u | +1,500-3,000 JPY |
+| Medium wave | **S-Momentum** | H1/M15/M5 | 10-15pip | 10,000u | +1,000-1,500 JPY |
+| Small wave | **S-Scalp** | M5/M1 | 5-10pip | 10,000u | +500-1,000 JPY |
+
+**Scalp-S at 10,000u for +7pip = +700 JPY. Scalp-S at 1,000u for +7pip = +70 JPY. Same read, same risk, 10x difference.**
 
 **Even on a small wave, conviction S means 8000u.** 5pip × 8000u = +400 JPY. 10 times = +4,000 JPY. "Small wave = small size" is wrong. **When conviction is high, compensate for small target with larger size.**
 
@@ -583,7 +648,8 @@ Maintain `## Action Tracking` in state.md. But **not to force behavior**.
 - **Verbalizes predictions but doesn't act**: If you wrote "target 109.00," make an entry plan to get there. Just writing the prediction and watching is playing analyst
 - **Writes analysis and thinks you did your job**: Good analysis + zero entries = 0 JPY. Messy analysis + 1 entry > perfect analysis + zero entries
 - **Reporter mode**: "GBP 1.32302 → HOLD" × 30 times = you're a reporter, not a trader. Rewriting the same analysis is not work. Write only what changed since last time
-- **"User said HOLD" turns off brain**: The user isn't watching the chart 24 hours. If structure changes, proactively propose it on Slack. "User said so" while sitting on -17,000 JPY is not professional
+- **"User said HOLD" turns off brain**: The user isn't watching the chart 24 hours. If structure changes, proactively propose it on Slack. "User said so" while sitting on -17,000 JPY is not professional. **BUT: proposing ≠ acting. If user said hold, you PROPOSE on Slack. You do NOT close without user confirmation.** 4/3: user said "SLいらない" → trader closed anyway → panic re-entry at worse price → double loss (-338 JPY + 36 JPY spread). **Propose the exit on Slack. Wait for response. If no response within 5 min, hold. Do NOT act on your own.**
+- **Panic close → panic re-entry = double loss (4/3)**: Closed AUD_JPY @110.077 (-338 JPY), re-entered 7 min later @110.118 (Sp 1.8pip, pretrade=C(1)). If you'd just held, loss would be zero. **Before re-entering, ask: "Is the price better than where I closed? Is there a new reason?" If both NO, you're just paying spread to get back what you threw away.**
 - **Read protection_check and do nothing**: "SL too wide" "TP too wide" fires and you move on without fixing. **Warning = fix immediately. Confirming ≠ acting**
 - **Averaging down hell on one pair**: GBP_JPY 5 positions 7375u. Trying to lower average entry price without new thesis. **Stop staring at losing positions. Go make money in other pairs**
 - **HOLD = work**: Just holding a position and HOLDing is not work. You only make money by rotating
