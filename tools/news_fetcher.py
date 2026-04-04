@@ -136,11 +136,10 @@ def fetch_finnhub_calendar(token: str) -> list[dict]:
 
 def fetch_alphavantage_sentiment(token: str) -> dict:
     """Alpha Vantage NEWS_SENTIMENT → Sentiment by currency"""
-    # Filter by FX-related tickers
-    tickers = "FOREX:USD,FOREX:JPY,FOREX:EUR,FOREX:GBP,FOREX:AUD"
+    # Use topics filter only (FOREX: tickers not supported on free tier)
     url = (
         f"https://www.alphavantage.co/query?function=NEWS_SENTIMENT"
-        f"&tickers={tickers}&topics=economy_fiscal,economy_monetary,finance"
+        f"&topics=economy_fiscal,economy_monetary,finance"
         f"&sort=LATEST&limit=50&apikey={token}"
     )
     data = api_get(url, timeout=15)

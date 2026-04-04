@@ -1,0 +1,8 @@
+{
+  "taskId": "qr-news-digest",
+  "project": "/Users/tossaki/App/QuantRabbit",
+  "description": "QuantRabbit: FXニュース収集（WebSearch + ブラウザ巡回 + APIパーサ）→ トレーダー目線の要約を作成",
+  "cronExpression": "0 * * * *",
+  "enabled": true,
+  "jitterSeconds": 424
+}
