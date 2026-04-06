@@ -55,7 +55,7 @@ How to achieve this:
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Opus | 1-min cron | Max 5 min | Pro trader. Does analysis, news, and trading all itself |
+| trader | Opus | 1-min cron | Max 10 min | Pro trader. Does analysis, news, and trading all itself |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
@@ -66,22 +66,27 @@ How to achieve this:
 | Task | Model | Interval | Role |
 |------|-------|----------|------|
 | qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
+| qr-news-flow-append | Cowork | Hourly (:15) | Append compact snapshot from news_digest.md → logs/news_flow_log.md |
 
-**Method**: 5-minute short-lived sessions + 1-minute cron relay. Lock mechanism prevents parallel launches. Session ends → next launches within 1 minute max. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
+**Method**: 10-minute short-lived sessions + 1-minute cron relay. Lock mechanism prevents parallel launches. Session ends → next launches within 1 minute max. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
 
 - Memory handoff: `collab_trade/state.md` (external memory across sessions)
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
 - Vector memory: `collab_trade/memory/memory.db` (SQLite + sqlite-vec. Ruri v3 embeddings)
 - Feedback DB: `pretrade_outcomes` table (pretrade_check predictions vs. actual P&L)
 - **News cache**: `logs/news_digest.md` (Cowork updates hourly) + `logs/news_cache.json` (API parser structured data + session_data.py fallback)
+- **News flow log**: `logs/news_flow_log.md` (48h of hourly snapshots — HOT/THEME/WATCH per hour. Cowork appends at :15 via tools/news_flow_append.py. daily-review reads this to track narrative evolution)
 - Task definitions: `~/.claude/scheduled-tasks/` (Claude Code) + `docs/SKILL_*.md` (reference copies)
 
 ### News Pipeline (Cowork → Claude Code)
 ```
-Every 1 hour: Cowork qr-news-digest
+Every 1 hour: Cowork qr-news-digest (:00)
   ├── WebSearch × 3 (breaking news · central banks · economic calendar)
   ├── python3 tools/news_fetcher.py (API structured data: Finnhub+AV+FF)
   └── WRITES: logs/news_digest.md (trader-perspective summary) + logs/news_cache.json
+
+Every 1 hour: Cowork qr-news-flow-append (:15, runs after qr-news-digest)
+  └── python3 tools/news_flow_append.py → APPENDS to logs/news_flow_log.md (HOT/THEME/WATCH snapshot)
 
 Every 1 min: trader session
   ├── session_data.py reads logs/news_digest.md (macro context in 10 seconds)
@@ -96,7 +101,7 @@ Every 1 min: trader session
   ├── reads price action (M5 chart shape — before indicators)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END (5 min): trade_performance.py + ingest.py → memory.db
+  └── SESSION_END (10 min): trade_performance.py + ingest.py → memory.db
 
 Daily 06:00 UTC: daily-review session
   ├── runs: daily_review.py (fact collection + pretrade result correlation)

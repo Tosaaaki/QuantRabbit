@@ -1,5 +1,86 @@
 # Changelog
 
+## 2026-04-06 — Session extended to 10 minutes (lock threshold fix)
+
+**Problem**: Earlier 10-min attempt failed because Bash① lock check (`AGE -lt 300`) and Next Cycle Bash (`ELAPSED -ge 300`) were out of sync — one was changed but the other wasn't. New cron killed running sessions at 5 min (STALE_LOCK), causing 30-second zombie sessions (PID 3292 incident).
+
+**Fix**: Both thresholds changed to 600 (10 min) simultaneously:
+- Bash① lock check: `AGE -lt 300` → `AGE -lt 600`
+- Next Cycle Bash: `ELAPSED -ge 300` → `ELAPSED -ge 600`
+- Updated: SKILL_trader.md, schedule.json description, CLAUDE.md
+
+**Rationale**: Average hold time is long enough that 11-min max monitoring gap is acceptable. 10 min gives time for proper chart reading, Different lens, cross-pair analysis, and Fib — all of which were being skipped under 5-min pressure.
+
+## 2026-04-06 — Trader: chart-first time allocation + strategy_memory lessons
+
+**Problem**: Trader pattern-matched indicators (H1 StRSI=1.0 → "overbought → SHORT") instead of reading chart shape. Skipped pretrade_check, conviction block, and Different lens. AUD_JPY SHORT -203 JPY — H4 was BULL (N-wave q=0.65), pullback bodies shrinking (4.9→2.7→1.7→0.5), limit filled into rising market.
+
+**Attempted 10-min fix → reverted**: Extended session to 10 min, but Claude Code kills processes at ~5 min. Relay mechanism added complexity without adding thinking time. Reverted to 5-min sessions.
+
+**Actual fix**: Restructured 5-minute time allocation to prioritize chart reading over indicator transcription:
+- 0-1min: data fetch + profit/protection check
+- **1-3min: Read chart FIRST → 3 questions → hypothesis → confirm with indicators → conviction block** (was previously 1 min)
+- 3-4min: execute trades
+- 4-5min: state.md update
+- Added: "No entry without Different lens" as explicit time allocation instruction
+- strategy_memory: StRSI context-dependence (breakout vs range) + limit fill direction lessons
+
+**Files changed**: `~/.claude/scheduled-tasks/trader/SKILL.md`, `collab_trade/strategy_memory.md`
+
+## 2026-04-06 — Sizing table: hardcoded units removed, formula-only
+
+**Problem**: Conviction sizing table showed hardcoded unit counts (10,000u / 5,000u / 1,667u / 667u) calibrated for NAV 200k. Current NAV is 104k. Trader was copying these numbers instead of recalculating from actual NAV → B entries at ~10% NAV instead of 5%.
+
+**Fix**: Replaced all hardcoded unit examples in SKILL.md (3 locations) with:
+- Formula: `Units = (NAV × margin%) / (price / 25)`
+- Concrete examples using current NAV (104k) to anchor intuition
+- Explicit note: "Never reuse yesterday's unit count"
+
+**Files changed**: `~/.claude/scheduled-tasks/trader/SKILL.md`, `docs/SKILL_trader.md`
+
+## 2026-04-06 — Slack ts tracking moved from Claude to code
+
+**Problem**: Claude (especially Sonnet) forgets to update `Slack最終処理ts` in state.md → next session reads the same user messages → replies again → duplicate/triplicate responses. Dedup catches identical posts but not different wordings of the same reply.
+
+**Root cause**: Relying on Claude to write a ts value to state.md is unreliable. The ts tracking must be in code, not in prompts.
+
+**Fix**:
+- `tools/slack_read.py` now auto-writes latest user message ts to `logs/.slack_last_read_ts` after every read
+- `tools/session_data.py` reads from this file instead of parsing state.md for `Slack最終処理ts`
+- SKILL_trader.md Bash② and Next Cycle Bash simplified — no more `grep Slack最終処理ts` in the shell command
+- CLI `--state-ts` override still works if needed
+
+**Result**: Once a user message is read by any session, no subsequent session will see it again. Zero Claude dependency.
+
+## 2026-04-06 — M5 candle data integrated into session_data.py
+
+**Problem**: Trader SKILL instructed Claude to fetch M5 candles via inline python one-liner. Sonnet gets stuck generating this one-liner ("Processing..." hang for 10+ min). Repeated issue.
+
+**Fix**: Added M5 PRICE ACTION section to `tools/session_data.py` — fetches last 20 M5 candles for held pairs + major 4 pairs automatically. Updated SKILL_trader.md to reference session_data output instead of requiring a separate fetch. No quality loss — same data, zero model-generated code needed.
+
+## 2026-04-06 — Slack duplicate reply fix: code-level dedup enforcement
+
+**Context**: User reported duplicate Slack replies to the same message, repeatedly. Previous "fix" was prompt-level instruction only (`Slack最終処理ts` in state.md) — Claude sessions could race past it or skip the check entirely.
+
+**Root cause**: Multiple 1-minute cron trader sessions read the same user message. Each independently decided to reply. No code prevented the second reply.
+
+**Changes**:
+- Added `tools/slack_dedup.py` — file-based dedup with `fcntl` lock. Records replied-to message ts in `logs/.slack_replied_ts`. Auto-cleans entries >48h
+- Modified `tools/slack_post.py` — new `--reply-to {ts}` flag. When provided, checks dedup before posting. If already replied → silently skips (exit 0). After posting → atomically marks ts as replied
+- Updated trader SKILL.md — all user message replies now require `--reply-to {USER_MESSAGE_TS}`. Dedup is enforced in code, not by prompt instruction. Removed the manual `Slack最終処理ts` checking requirement
+
+**How it works**: `slack_post.py "reply" --channel C0APAELAQDN --reply-to 1712345678.123456` → if ts is in dedup file → `SKIP_DEDUP` and exit. If not → post → mark ts. File lock prevents race conditions between concurrent sessions.
+
+## 2026-04-05 — News flow logging: narrative evolution tracking
+
+**Context**: news_digest.md was overwritten hourly with no history. Impossible to see whether a macro theme (e.g. "USD strength") was fresh or exhausted. Even for scalps/momentum, knowing "this theme built for 3 hours vs just appeared" changes conviction.
+
+**Changes**:
+- Added `tools/news_flow_append.py` — reads current news_digest.md, appends a compact HOT/THEME/WATCH snapshot to `logs/news_flow_log.md`. Keeps 48 entries (48h). Deduplicates by timestamp.
+- Added Cowork scheduled task `qr-news-flow-append` — runs at :15 every hour, after qr-news-digest (:00) finishes
+- Updated `docs/SKILL_daily-review.md` — Step 1 now reads news_flow_log.md; Step 2 adds question 7 (did macro narrative shift today, and did the trader adapt?)
+- Updated CLAUDE.md architecture section to document the new pipeline
+
 ## 2026-04-04 — Conviction framework: FOR / Different lens / AGAINST / If I'm wrong
 
 **Context**: Retroactive analysis found 7 conviction-S trades undersized by 70% avg (6,740-13,140 JPY lost). Root cause: trader checked 2-3 familiar indicators, rated B, stopped. Deeper analysis with different indicator categories would have revealed S. Also: 4/1 all-SHORT wipeout (-4,438 JPY) would have been prevented if CCI/Fib (different lens) had been checked — they showed exhaustion.
