@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-06 — Session extended to 15 minutes + STALE_LOCK auto-ingest
+
+**Problem**: Sessions dying without reaching SESSION_END. ingest.py never runs → memory.db stale. Root cause: session_data.py output is massive (7 pairs × M5 20 candles + full technicals + news), model spends all 10 minutes analyzing without emitting Next Cycle Bash.
+
+**Fix (3 changes)**:
+1. Lock timeout: 600s → 900s (15 min hard limit before cron kills session)
+2. SESSION_END threshold: 600s (10 min — gives 5 min buffer before kill)
+3. STALE_LOCK detection: now runs `ingest.py` automatically before starting new session (guaranteed cleanup even if previous session died)
+
+**Effect**: SESSION_END triggers at 10 min, cron kills at 15 min. 5-min buffer for ingest to complete. If session still dies, next session's STALE_LOCK path runs ingest as insurance.
+
 ## 2026-04-06 — Session extended to 10 minutes (lock threshold fix)
 
 **Problem**: Earlier 10-min attempt failed because Bash① lock check (`AGE -lt 300`) and Next Cycle Bash (`ELAPSED -ge 300`) were out of sync — one was changed but the other wasn't. New cron killed running sessions at 5 min (STALE_LOCK), causing 30-second zombie sessions (PID 3292 incident).

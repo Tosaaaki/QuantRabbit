@@ -5,13 +5,13 @@ description: Elite pro trader — 10-minute sessions + 1-minute cron relay (Opus
 
 **Language rule**: Slack messages MUST be in Japanese (the user reads Slack). Everything else — state.md, internal notes, analysis — write in English to minimize token cost.
 
-Method: 10-minute sessions + 1-minute cron. Lock mechanism prevents parallel execution. Session ends → next starts within 1 minute. Complete the cycle — judge, execute, write the handoff — then die.
+Method: 15-minute sessions + 1-minute cron. Lock mechanism prevents parallel execution. Session ends → next starts within 1 minute. Complete the cycle — judge, execute, write the handoff — then die.
 
-**Quality over duration**: Use the 10 minutes well — chart reading and conviction analysis FIRST, then trade. Don't rush to action. (4/6 lesson: AUD_JPY SHORT -203 JPY from skipping chart reading and Different lens.)
+**Quality over duration**: Use the 15 minutes well — chart reading and conviction analysis FIRST, then trade. Don't rush to action. (4/6 lesson: AUD_JPY SHORT -203 JPY from skipping chart reading and Different lens.)
 
 ## Bash①: Lock check (with zombie process kill)
 
-cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if { [ "$DOW" = "6" ] && [ "$HOUR" -ge 6 ]; } || { [ "$DOW" = "1" ] && [ "$HOUR" -lt 7 ]; }; then echo "WEEKEND_HALT dow=${DOW} hour=${HOUR}"; exit 0; fi && LOCK=logs/.trader_lock && if [ -f "$LOCK" ]; then LOCK_TIME=$(awk '{print $1}' "$LOCK"); OLD_PID=$(awk '{print $2}' "$LOCK"); NOW=$(date +%s); AGE=$(( NOW - LOCK_TIME )); if [ $AGE -lt 600 ] && kill -0 "$OLD_PID" 2>/dev/null; then echo "ALREADY_RUNNING age=${AGE}s pid=$OLD_PID"; exit 1; else echo "STALE_LOCK age=${AGE}s — 引き継ぎ開始"; if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then kill "$OLD_PID" 2>/dev/null && echo "KILLED_ZOMBIE pid=$OLD_PID"; fi; fi; else echo "NO_LOCK — 新規セッション開始"; fi
+cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if { [ "$DOW" = "6" ] && [ "$HOUR" -ge 6 ]; } || { [ "$DOW" = "1" ] && [ "$HOUR" -lt 7 ]; }; then echo "WEEKEND_HALT dow=${DOW} hour=${HOUR}"; exit 0; fi && LOCK=logs/.trader_lock && if [ -f "$LOCK" ]; then LOCK_TIME=$(awk '{print $1}' "$LOCK"); OLD_PID=$(awk '{print $2}' "$LOCK"); NOW=$(date +%s); AGE=$(( NOW - LOCK_TIME )); if [ $AGE -lt 900 ] && kill -0 "$OLD_PID" 2>/dev/null; then echo "ALREADY_RUNNING age=${AGE}s pid=$OLD_PID"; exit 1; else echo "STALE_LOCK age=${AGE}s — 引き継ぎ開始"; if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then kill "$OLD_PID" 2>/dev/null && echo "KILLED_ZOMBIE pid=$OLD_PID"; fi; echo "STALE_CLEANUP: running ingest for previous session" && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) 2>/dev/null && echo "STALE_INGEST_DONE" && cd /Users/tossaki/App/QuantRabbit; fi; else echo "NO_LOCK — 新規セッション開始"; fi
 
 - ALREADY_RUNNING → do nothing and exit immediately. Write no text.
 - STALE_LOCK / NO_LOCK → start session.
