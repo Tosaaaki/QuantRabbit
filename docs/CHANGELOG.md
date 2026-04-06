@@ -546,3 +546,7 @@ scheduled-tasks/*/SKILL_ja.md ← 日本語版（確認用）
 ## v1-v4 (2026-03-17〜22)
 詳細は `archive/docs_legacy/CHANGELOG_full.md` を参照。
 ボットworker体制 → マルチエージェント → trader一本化への進化の記録。
+
+## 2026-04-06 — Trader session 15min→5min (reliability)
+- Lock threshold: 900s→300s, SESSION_END: 600s→240s
+- Rationale: 10min/15min sessions failed to complete. 5min proven to work. Reliability > depth.
