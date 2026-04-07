@@ -177,6 +177,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `docs/CHANGELOG.md` | Chronological log of all changes |
 | `docs/SKILL_trader.md` | Reference copy of trader task definition |
 | `docs/SKILL_daily-review.md` | Reference copy of daily-review task definition |
+| `docs/TRADER_LESSONS.md` | Historical failure patterns (daily-review reference, not loaded in trader sessions) |
 
 ### Runtime Files
 

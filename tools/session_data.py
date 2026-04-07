@@ -83,6 +83,93 @@ def main():
     )
     print(out[:200] if out else "done")
 
+    # 1b. M5 PRICE ACTION — output FIRST so the model reads chart shape before indicators
+    section("M5 PRICE ACTION (read this FIRST — before indicators)")
+    try:
+        # Fetch M5 candles for all pairs (last 20 bars)
+        for pair in PAIRS:
+            candles_resp = oanda_api(
+                f"/v3/instruments/{pair}/candles?granularity=M5&count=20&price=M",
+                token, acct,
+            )
+            candles = candles_resp.get("candles", [])
+            if not candles:
+                continue
+            # Analyze candle shape
+            bodies = []
+            upper_wicks = []
+            lower_wicks = []
+            pip_factor = 100 if "JPY" in pair else 10000
+            directions = []  # 1=bull, -1=bear, 0=doji
+            for c in candles:
+                mid = c.get("mid", {})
+                o, h, l, cl = float(mid["o"]), float(mid["h"]), float(mid["l"]), float(mid["c"])
+                body = abs(cl - o) * pip_factor
+                bodies.append(body)
+                if cl >= o:  # bull
+                    upper_wicks.append((h - cl) * pip_factor)
+                    lower_wicks.append((o - l) * pip_factor)
+                    directions.append(1)
+                else:  # bear
+                    upper_wicks.append((h - o) * pip_factor)
+                    lower_wicks.append((cl - l) * pip_factor)
+                    directions.append(-1)
+                if body < 0.3:
+                    directions[-1] = 0
+
+            # First half vs second half — momentum change detection
+            half = len(bodies) // 2
+            first_avg = sum(bodies[:half]) / max(half, 1)
+            second_avg = sum(bodies[half:]) / max(len(bodies) - half, 1)
+            if second_avg > first_avg * 1.3:
+                momentum = "accelerating (bodies growing)"
+            elif second_avg < first_avg * 0.7:
+                momentum = "exhausting (bodies shrinking)"
+            else:
+                momentum = "steady"
+
+            # Recent direction (last 5 candles)
+            recent = directions[-5:]
+            bulls = sum(1 for d in recent if d > 0)
+            bears = sum(1 for d in recent if d < 0)
+            if bulls >= 4:
+                bias = "buyers dominant"
+            elif bears >= 4:
+                bias = "sellers dominant"
+            elif bulls >= 3:
+                bias = "buyers leaning"
+            elif bears >= 3:
+                bias = "sellers leaning"
+            else:
+                bias = "contested"
+
+            # Wick analysis (reversal pressure)
+            avg_upper = sum(upper_wicks[-5:]) / 5
+            avg_lower = sum(lower_wicks[-5:]) / 5
+            wick_note = ""
+            if avg_upper > second_avg * 0.5 and avg_upper > avg_lower * 1.5:
+                wick_note = " | upper wicks expanding (selling pressure)"
+            elif avg_lower > second_avg * 0.5 and avg_lower > avg_upper * 1.5:
+                wick_note = " | lower wicks expanding (buying pressure)"
+
+            # High/low update pattern
+            last_c = candles[-1]["mid"]
+            prev_c = candles[-2]["mid"]
+            hh = float(last_c["h"]) > float(prev_c["h"])
+            ll = float(last_c["l"]) < float(prev_c["l"])
+            hl_note = ""
+            if hh and not ll:
+                hl_note = " | making higher highs"
+            elif ll and not hh:
+                hl_note = " | making lower lows"
+            elif hh and ll:
+                hl_note = " | range expanding"
+
+            last_price = float(candles[-1]["mid"]["c"])
+            print(f"{pair} @{last_price:.5g}: {bias}, {momentum}{wick_note}{hl_note}")
+    except Exception as e:
+        print(f"(skip: {e})")
+
     # 2. OANDA: prices, positions, account
     section("PRICES")
     spread_data = {}  # pair -> spread_pips (referenced in other sections)

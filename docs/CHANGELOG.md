@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-07 — Trader prompt overhaul: 5 structural improvements
+
+**Problem**: SKILL_trader.md was 837 lines. 30+ dated failure patterns embedded inline created "don't do X" cognitive overload. Trader spent tokens reading rules instead of reading the market. Output formats didn't force depth — "Checked" step had no output field, 7-pair scan was uniformly shallow, wave position was never explicit, and indicators were output before price action.
+
+**Fix (5 changes)**:
+1. **Prompt halved (837→405 lines)**: All dated lesson/history moved to `docs/TRADER_LESSONS.md`. SKILL retains only flow, formats, and principles. Lessons live in strategy_memory.md (distilled by daily-review)
+2. **"Checked" line in Capital Deployment**: Format now requires `→ Checked: [what I looked at] → Result: [value] → [supports/contradicts]`. Cannot complete the block without actually checking the indicator
+3. **session_data.py outputs M5 PRICE ACTION first**: New section fetches 20 M5 candles per pair, outputs candle shape analysis (buyers/sellers, momentum phase, wick pressure, high/low updates) BEFORE indicator data. Model reads chart shape before forming indicator-based opinions
+4. **7-pair scan Tier 1/Tier 2**: Held positions + best candidates get deep analysis (price action + wave position + entry condition + MTF counter-trade). Remaining pairs get 1-line quick scan. Depth where it matters, coverage everywhere
+5. **Wave position mandatory**: Tier 1 scan requires `Wave position: [Fib X%] / [BB position] / [structural level] [N]pip away`. Prevents "StRSI=1.0 → skip" without knowing the structural context (e.g., "H1 BB upper 3pip away")
+
+**Files changed**: `docs/SKILL_trader.md` (rewrite), `docs/TRADER_LESSONS.md` (new), `tools/session_data.py` (M5 PRICE ACTION section added)
+
 ## 2026-04-07 — "I would enter at price X" → must place LIMIT ORDER
 
 **Problem**: Trader writes "LONG if pulls back to 1.1535" in scan but never places a limit order. Next session, conditions change, writes new "if..." plan. Endless waiting loop. Margin stays idle.
