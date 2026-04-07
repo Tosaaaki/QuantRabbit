@@ -272,11 +272,13 @@ The next session will read your scan and decide what to do. If you wrote "Skip" 
 
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $$" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 240 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25 && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/session_data.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
+cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $$" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 240 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25 && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/session_data.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
 
-- SESSION_END + LOCK_RELEASED → update state.md and finish. Session complete.
+- SESSION_END + LOCK_RELEASED → session complete. But **state.md MUST be updated BEFORE running this Bash.** If state.md is stale (>1 hour old or from a previous day), the next session starts blind — no positions, no thesis, no scan. That's like handing a pilot an empty flight plan.
 - Otherwise → check Slack → trade judgment → next cycle Bash.
 - **NEVER end a session without LOCK_RELEASED.** Keep cycling until SESSION_END fires. If you have nothing new to trade, deepen your 7-pair scan or re-evaluate existing positions with Different lens.
+
+**state.md update is NOT optional.** Every session that touches a position (entry, close, modify, add-on) MUST update state.md before SESSION_END. The minimum update is: current positions with entry/SL/TP/uPL, today's confirmed P&L, and the 7-pair scan. If you skip this, the next session reads stale data and makes wrong decisions — or worse, enters duplicate positions.
 
 ## Slack handling (highest priority)
 

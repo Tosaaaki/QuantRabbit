@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-07 — Fix stale state.md: freshness check + mandatory update enforcement
+
+**Problem**: state.md was stuck on 4/4 data while trader actively traded on 4/7 (17+ trades, add-ons, SL modifications). Next sessions read 3-day-old positions/thesis/scan = blind trading. Root cause: "update state.md" was a rule (ignorable), not enforced in output or tooling.
+
+**Fix**:
+1. SESSION_END Bash now checks state.md age — emits `⚠️ STATE.MD STALE` warning if >1 hour old
+2. Added explicit "state.md update is NOT optional" block with minimum required content
+3. Framed as consequence ("next session starts blind") not rule ("you must update")
+
 ## 2026-04-07 — Capital Deployment Check + cautionary bias antidote
 
 Refined margin < 60% output block: from "best 2 setups, why not entered" (pushes quantity) to "#1 best setup, current conviction, what would upgrade to S, P&L at S-size" (pushes quality + sizing). Goal: fewer trades, bigger size. Added antidote to strategy_memory cautionary bias (30 warnings vs 12 positive patterns → trader becomes too cautious → undersizes).
