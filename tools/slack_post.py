@@ -78,5 +78,14 @@ if __name__ == '__main__':
     if args.reply_to:
         mark_replied(args.reply_to)
         log_post(args.message, channel)
+        # Advance last_read_ts so session_data.py stops showing this message
+        ts_file = os.path.join(os.path.dirname(__file__), '..', 'logs', '.slack_last_read_ts')
+        cur_ts = ""
+        if os.path.exists(ts_file):
+            with open(ts_file) as f:
+                cur_ts = f.read().strip()
+        if not cur_ts or args.reply_to > cur_ts:
+            with open(ts_file, 'w') as f:
+                f.write(args.reply_to)
 
     print(f"OK: posted (ts={ts})")

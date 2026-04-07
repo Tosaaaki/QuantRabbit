@@ -73,6 +73,8 @@ if __name__ == '__main__':
                         help='Exclude bot posts (U0AP9UF8XL0) and show only human posts')
     parser.add_argument('--after', type=str, default=None,
                         help='Only fetch messages after this timestamp (Slack ts format)')
+    parser.add_argument('--no-update-ts', action='store_true', dest='no_update_ts',
+                        help='Do not update last_read_ts (caller manages ts lifecycle)')
     args = parser.parse_args()
 
     messages = read_messages(channel_id=args.channel, limit=args.limit, after=args.after)
@@ -89,5 +91,6 @@ if __name__ == '__main__':
         print(format_messages(messages, show_ts=args.user_only))
 
     # Auto-update last read ts so next session doesn't re-fetch these messages
-    if messages:
+    # (skipped when --no-update-ts: caller updates ts after replying)
+    if messages and not args.no_update_ts:
         update_last_read_ts(messages)

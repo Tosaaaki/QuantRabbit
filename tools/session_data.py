@@ -321,6 +321,7 @@ def main():
         "--channel",
         "C0APAELAQDN",
         "--user-only",
+        "--no-update-ts",
     ]
     if last_slack_ts:
         slack_args += ["--after", last_slack_ts, "--limit", "20"]
