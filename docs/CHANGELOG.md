@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-07 — Counter-trade execution + directional mix + LIMIT deployment
+
+**Problem**: Trader identifies MTF counter-trades in scan ("H4 overbought, M5 SHORT scalp") but never executes them. All positions are same direction (LONG only). Idle margin (34%) sits with no LIMIT orders deployed. Result: missing pullback profits, concentrated directional risk.
+
+**Fix (3 changes)**:
+1. **Directional mix check (output format)**: Required block in state.md — `N LONG / N SHORT | one-sided ⚠️ | Counter-trade candidate: ___`. Can't write "all LONG because thesis is bullish" — must identify a specific counter-trade or explain with numbers why none exists
+2. **MTF counter-trade → Action mandatory**: Tier 1 scan now requires `→ Action: [LIMIT placed / not placing because ___]` after each counter-trade identification. Identifying without acting = analyst, not trader
+3. **Idle margin → LIMIT orders**: New section in Capital Deployment. When margin > 30% idle, deploy LIMITs at structural levels with TP+SL on fill. Event risk ≠ "do nothing" — event risk = "place LIMITs for BOTH outcomes"
+4. **Counter type added**: Conviction block Type field now includes "Counter" (M5 against H1/H4, B-max size, ATR×0.3-0.7 target, tight SL)
+
 ## 2026-04-07 — Trader prompt overhaul: 5 structural improvements
 
 **Problem**: SKILL_trader.md was 837 lines. 30+ dated failure patterns embedded inline created "don't do X" cognitive overload. Trader spent tokens reading rules instead of reading the market. Output formats didn't force depth — "Checked" step had no output field, 7-pair scan was uniformly shallow, wave position was never explicit, and indicators were output before price action.

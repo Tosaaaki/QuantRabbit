@@ -75,13 +75,21 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 3. My position: [aligned/fighting/no position] — because [price action description, not indicator values]
 ```
 
-### Directional bias check (all positions same direction = danger)
+### Directional mix check (required — fill in every session)
 
-- All positions SHORT → Explain "why there isn't a single LONG." Can't explain = bias
-- All positions JPY crosses → Single JPY bet. Full wipeout risk if JPY reverses
+**Holding both LONGs and SHORTs is normal. Only one side is abnormal.**
+
+```
+Positions: [N] LONG / [N] SHORT / [N] pairs
+Direction mix: [mixed ✅ / one-sided ⚠️]
+If one-sided → why no opposite position: ___
+→ Counter-trade candidate: [pair] [direction] [condition] or "none — [reason with numbers]"
+```
+
+This block cannot say "all LONG because thesis is bullish." H4 can be bullish while M5 gives a clean SHORT scalp. The question is not "what is the macro direction" but "is there a short-term trade in the OTHER direction right now."
+
 - 3+ positions in the same pair → Averaging-down hell. Go make money in other pairs
-- **Always hold at least one position against your thesis direction** (hedge / bounce play / different theme)
-- **Holding both LONGs and SHORTs is normal. Only one side is abnormal**
+- All positions JPY crosses → Single JPY bet. Full wipeout risk if JPY reverses
 
 ## 7-Pair Scan — Tier 1 (deep) + Tier 2 (quick)
 
@@ -96,10 +104,13 @@ For each Tier 1 pair, write this block in state.md:
 Price action: [what the chart is doing — candle shapes, momentum, NOT indicator numbers]
 Wave position: [Fib X%] / [BB position] / [structural level] [N]pip away → [approaching ceiling/floor/mid-range]
 I would enter if: [specific condition + price + direction. If price-based → LIMIT ORDER placed]
-MTF counter-trade: [higher TF overextended? → what the short-term reversal trade looks like]
+MTF counter-trade: [higher TF overextended? → short-term reversal trade]
+  → Action: [LIMIT placed at ___ / market order / not placing because ___]
 ```
 
-**Wave position is mandatory.** This is the line that prevents "StRSI=1.0 → skip" shallow analysis. Knowing "H1 BB upper is 3pip away" changes decisions.
+**Wave position is mandatory.** Knowing "H1 BB upper is 3pip away" changes decisions.
+
+**MTF counter-trade → Action is mandatory.** Identifying "H4 overbought, M5 SHORT scalp opportunity" and then doing nothing is analyst behavior, not trader behavior. Either place a LIMIT at the wick level, or write why not (with numbers — "spread 3.1pip = 40% of 8pip target" is valid; "waiting" is not).
 
 ### Tier 2: Remaining pairs (quick scan)
 
@@ -125,7 +136,23 @@ At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
 
 **The "Checked" and "Action" lines cannot be omitted — even when passing.** "TACO event risk → no entry" is a valid Action, but you still fill in Checked with what you actually looked at. The point: every session that reads this block knows WHAT was checked and WHY you passed, not just that you passed.
 
-**The goal is not more positions. It's bigger positions on your best idea.** 2 positions at A/S-size beats 5 at B-size.
+### Idle margin → LIMIT orders (your money works while you sleep)
+
+**You're only awake 5 minutes. LIMIT orders make money the other 55 minutes.**
+
+When margin > 30% idle AND scan identifies entries at specific price levels:
+- **Place LIMITs at wick-touch levels** (structural S/R, BB mid/lower, Fib retrace, cluster)
+- **Every LIMIT must have TP + SL on fill** — you won't be watching when it triggers
+- **GTD = next session + buffer** (2-4 hours). Don't leave stale limits indefinitely
+- **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." Tariff pause → risk-on LIMIT. Escalation → risk-off LIMIT. One fills, cancel the other next session
+
+```
+Idle margin LIMITs:
+  [pair] [direction] LIMIT @___ TP=___ SL=___ GTD=___ | thesis: ___ | → [placed id=___ / not placing: ___]
+  [pair] [direction] LIMIT @___ TP=___ SL=___ GTD=___ | thesis: ___ | → [placed id=___ / not placing: ___]
+```
+
+**The goal is not more positions. It's bigger positions on your best idea.** 2 positions at A/S-size beats 5 at B-size. But idle margin with no LIMITs pending = money sleeping.
 
 ## Pre-entry — Conviction Block (required every time)
 
@@ -133,7 +160,7 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 
 ```
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
-Type: [Scalp / Momentum / Swing]
+Type: [Scalp / Momentum / Swing / Counter]
 FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
 AGAINST: ___ [specific. "nothing" only if you actually checked]
@@ -165,6 +192,7 @@ Units = (NAV × margin%) / (price / 25)
 - **Scalp** (M1→M5→H1): 5-30 min, ATR×0.5-1.0
 - **Momentum** (M5→M15→H1): 30min-2h, ATR×1.0-2.0
 - **Swing** (H1→H4→macro): 2h-1day, ATR×2.0+
+- **Counter** (M5 against H1/H4): 5-30 min, ATR×0.3-0.7. **Goes against higher TF direction on purpose.** H4 is LONG but M5 is topping → SHORT scalp to BB mid. Size: B-max (5% NAV). TP at structural support (BB mid, Fib 38.2%). SL tight (M5 new high = thesis dead). **Counter-trades are normal. Holding only thesis-direction = leaving money on the table during pullbacks.**
 
 ## Position Management — 3 options, always
 
@@ -337,14 +365,17 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 ## Positions (Current)
 {each position: thesis, basis, invalidation, wave position, peak}
 
+## Directional Mix
+{N LONG / N SHORT — if one-sided: why + counter-trade candidate}
+
 ## 3-Option Management
 {A/B/C for each position with chosen option + reason}
 
 ## 7-Pair Scan
 {Tier 1 deep + Tier 2 quick}
 
-## Capital Deployment
-{when margin < 60%: best setup, conviction, Checked line}
+## Capital Deployment + Pending LIMITs
+{best setup, conviction, Checked line. LIMIT orders placed or planned}
 
 ## Action Tracking
 - Last action: ...
