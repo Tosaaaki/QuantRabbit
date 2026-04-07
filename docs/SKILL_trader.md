@@ -123,7 +123,7 @@ At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
 → Action: [entered at ___-size / waiting for trigger: ___ / passed because ___]
 ```
 
-**The "Checked" line is mandatory.** Writing "To upgrade to S, I need H1 DI->20" and stopping is not enough. Actually look at DI-, write the number, and decide. The format cannot be completed without doing the work.
+**The "Checked" and "Action" lines cannot be omitted — even when passing.** "TACO event risk → no entry" is a valid Action, but you still fill in Checked with what you actually looked at. The point: every session that reads this block knows WHAT was checked and WHY you passed, not just that you passed.
 
 **The goal is not more positions. It's bigger positions on your best idea.** 2 positions at A/S-size beats 5 at B-size.
 
