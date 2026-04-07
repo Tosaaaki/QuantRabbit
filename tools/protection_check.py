@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Protection Check — Evaluate and recommend TP/SL/Trailing Stop/BE protection status for all open positions
+Protection Check — Evaluate TP/SL/Trailing Stop/BE protection status for all open positions
 
 For each position:
 - Display current protection status (TP/SL/Trailing presence)
 - TP recommendation based on structural levels (swing/cluster/BB/Ichimoku)
-- ATR-based SL recommended value
+- SL evaluation: structural level menu (NOT ATR formula). ATR shown as size reference only
 - BE move and trailing stop recommendations
-- Output immediately executable PUT commands
+- Output is DATA, not orders. The trader decides
 
 Usage:
     python3 tools/protection_check.py          # Check all trades
@@ -66,7 +66,7 @@ def pips_to_price(pips: float, pair: str) -> float:
 
 def find_structural_levels(pair: str, side: str, current_price: float, tfs: dict) -> list[tuple[float, float, str]]:
     """
-    Collect structural levels (S/R) and sort by distance.
+    Collect structural levels (S/R) in the TP direction and sort by distance.
     Returns: [(price, distance_pips, label), ...]
 
     Returns only levels in the TP direction (LONG → levels above, SHORT → levels below)
@@ -164,6 +164,114 @@ def find_structural_levels(pair: str, side: str, current_price: float, tfs: dict
     return candidates
 
 
+def find_structural_sl_levels(pair: str, side: str, entry_price: float, current_price: float, tfs: dict) -> list[tuple[float, float, str]]:
+    """
+    Collect structural levels in the SL direction (invalidation side) and sort by distance from entry.
+    Returns: [(price, distance_pips, label), ...]
+
+    SL direction is opposite of TP: LONG → levels below entry, SHORT → levels above entry.
+    Levels must be beyond entry price in the loss direction.
+    """
+    pip_mult = PIP_MULT.get(pair, 10000)
+    h1 = tfs.get("H1", {})
+    m5 = tfs.get("M5", {})
+    h4 = tfs.get("H4", {})
+    candidates = []
+
+    def add_candidate(price: float, label: str):
+        if price <= 0:
+            return
+        # Distance from entry in the SL direction (always positive)
+        if side == "LONG":
+            dist_pips = (entry_price - price) * pip_mult  # Below entry = positive
+        else:
+            dist_pips = (price - entry_price) * pip_mult  # Above entry = positive
+        if dist_pips > 2.0:  # Must be at least 2 pip from entry (not noise)
+            candidates.append((price, dist_pips, label))
+
+    # --- H1 structural levels (strongest) ---
+    swing_low = h1.get("swing_dist_low")
+    swing_high = h1.get("swing_dist_high")
+    if side == "LONG" and swing_low and swing_low > 3:
+        # SL below current price at H1 swing low
+        add_candidate(current_price - pips_to_price(swing_low, pair), f"H1 swing low ({swing_low:.0f}pip from current)")
+    elif side == "SHORT" and swing_high and swing_high > 3:
+        add_candidate(current_price + pips_to_price(swing_high, pair), f"H1 swing high ({swing_high:.0f}pip from current)")
+
+    # H1 Cluster (price concentration = strong S/R)
+    cluster_low = h1.get("cluster_low_gap")
+    cluster_high = h1.get("cluster_high_gap")
+    if side == "LONG" and cluster_low and cluster_low > 3:
+        add_candidate(current_price - pips_to_price(cluster_low, pair), f"H1 cluster support ({cluster_low:.0f}pip)")
+    elif side == "SHORT" and cluster_high and cluster_high > 3:
+        add_candidate(current_price + pips_to_price(cluster_high, pair), f"H1 cluster resistance ({cluster_high:.0f}pip)")
+
+    # H1 BB (invalidation side)
+    bb_lower = h1.get("bb_lower")
+    bb_mid = h1.get("bb_mid")
+    bb_upper = h1.get("bb_upper")
+    if side == "LONG":
+        if bb_lower and bb_lower < entry_price:
+            add_candidate(bb_lower, "H1 BB lower")
+        if bb_mid and bb_mid < entry_price:
+            add_candidate(bb_mid, "H1 BB mid")
+    else:
+        if bb_upper and bb_upper > entry_price:
+            add_candidate(bb_upper, "H1 BB upper")
+        if bb_mid and bb_mid > entry_price:
+            add_candidate(bb_mid, "H1 BB mid")
+
+    # H1 Ichimoku cloud edges (invalidation side)
+    ichi_a = h1.get("ichimoku_span_a_gap")
+    ichi_b = h1.get("ichimoku_span_b_gap")
+    if ichi_a is not None and abs(ichi_a) > 3:
+        ichi_a_price = current_price + pips_to_price(ichi_a, pair)
+        if (side == "LONG" and ichi_a_price < entry_price) or (side == "SHORT" and ichi_a_price > entry_price):
+            add_candidate(ichi_a_price, f"H1 Cloud SpanA ({abs(ichi_a):.0f}pip)")
+    if ichi_b is not None and abs(ichi_b) > 3:
+        ichi_b_price = current_price + pips_to_price(ichi_b, pair)
+        if (side == "LONG" and ichi_b_price < entry_price) or (side == "SHORT" and ichi_b_price > entry_price):
+            add_candidate(ichi_b_price, f"H1 Cloud SpanB ({abs(ichi_b):.0f}pip)")
+
+    # --- M5 structural levels (closer, for scalp SL) ---
+    m5_swing_low = m5.get("swing_dist_low")
+    m5_swing_high = m5.get("swing_dist_high")
+    if side == "LONG" and m5_swing_low and m5_swing_low > 3:
+        add_candidate(current_price - pips_to_price(m5_swing_low, pair), f"M5 swing low ({m5_swing_low:.0f}pip)")
+    elif side == "SHORT" and m5_swing_high and m5_swing_high > 3:
+        add_candidate(current_price + pips_to_price(m5_swing_high, pair), f"M5 swing high ({m5_swing_high:.0f}pip)")
+
+    m5_cluster_low = m5.get("cluster_low_gap")
+    m5_cluster_high = m5.get("cluster_high_gap")
+    if side == "LONG" and m5_cluster_low and m5_cluster_low > 3:
+        add_candidate(current_price - pips_to_price(m5_cluster_low, pair), f"M5 cluster ({m5_cluster_low:.0f}pip)")
+    elif side == "SHORT" and m5_cluster_high and m5_cluster_high > 3:
+        add_candidate(current_price + pips_to_price(m5_cluster_high, pair), f"M5 cluster ({m5_cluster_high:.0f}pip)")
+
+    # M5 BB (invalidation side)
+    m5_bb_lower = m5.get("bb_lower")
+    m5_bb_mid = m5.get("bb_mid")
+    m5_bb_upper = m5.get("bb_upper")
+    if side == "LONG":
+        if m5_bb_lower and m5_bb_lower < entry_price:
+            add_candidate(m5_bb_lower, "M5 BB lower")
+    else:
+        if m5_bb_upper and m5_bb_upper > entry_price:
+            add_candidate(m5_bb_upper, "M5 BB upper")
+
+    # --- H4 structural levels (for swing SL) ---
+    h4_swing_low = h4.get("swing_dist_low")
+    h4_swing_high = h4.get("swing_dist_high")
+    if side == "LONG" and h4_swing_low and h4_swing_low > 5:
+        add_candidate(current_price - pips_to_price(h4_swing_low, pair), f"H4 swing low ({h4_swing_low:.0f}pip)")
+    elif side == "SHORT" and h4_swing_high and h4_swing_high > 5:
+        add_candidate(current_price + pips_to_price(h4_swing_high, pair), f"H4 swing high ({h4_swing_high:.0f}pip)")
+
+    # Sort by distance from entry (nearest first)
+    candidates.sort(key=lambda x: x[1])
+    return candidates
+
+
 def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
     """Evaluate protection status of a single position"""
     pair = trade["instrument"]
@@ -219,6 +327,7 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
 
     # --- Structural levels ---
     structural_levels = find_structural_levels(pair, side, current_price, tfs)
+    structural_sl_levels = find_structural_sl_levels(pair, side, entry_price, current_price, tfs)
 
     # --- Build output ---
     current_status = []
@@ -250,38 +359,39 @@ def assess_protection(trade: dict, all_technicals: dict, cfg: dict) -> dict:
     if not has_any_protection:
         warnings.append("NO PROTECTION")
 
-    # --- SL Recommendation ---
+    # --- SL Evaluation (structural level based — NOT ATR formula) ---
     if atr_pips > 0:
-        recommended_sl_pips = atr_pips * 1.2
         if has_sl:
+            # Check if existing SL is at a meaningful structural level
             if sl_atr_ratio is not None and sl_atr_ratio < 0.7:
                 warnings.append(f"SL too tight (ATR x{sl_atr_ratio:.1f}) -- noise stop-out risk")
-                if side == "LONG":
-                    better_sl = entry_price - pips_to_price(recommended_sl_pips, pair)
+                if structural_sl_levels:
+                    recommendations.append("📍 Structural SL candidates (widen to):")
+                    for i, (price, dist, label) in enumerate(structural_sl_levels[:4]):
+                        atr_x = dist / atr_pips
+                        marker = " <- nearest structural" if i == 0 else ""
+                        recommendations.append(f"  {i+1}. {fmt_price(price, pair)} = {label} (ATR x{atr_x:.1f}){marker}")
                 else:
-                    better_sl = entry_price + pips_to_price(recommended_sl_pips, pair)
-                recommendations.append(f"Widen SL recommendation: {fmt_price(better_sl, pair)} (ATR x1.2)")
+                    recommendations.append(f"  No structural levels found. Consider removing SL (discretionary) or widening to ATR x1.0+ ({atr_pips:.0f}pip)")
             elif sl_atr_ratio is not None and sl_atr_ratio > 2.5:
                 warnings.append(f"SL too wide: {sl_dist_pips:.1f}pip (ATR x{sl_atr_ratio:.1f})")
-                if side == "LONG":
-                    better_sl = entry_price - pips_to_price(recommended_sl_pips, pair)
+                if structural_sl_levels:
+                    recommendations.append("📍 Structural SL candidates (tighten to):")
+                    for i, (price, dist, label) in enumerate(structural_sl_levels[:4]):
+                        atr_x = dist / atr_pips
+                        recommendations.append(f"  {i+1}. {fmt_price(price, pair)} = {label} (ATR x{atr_x:.1f})")
                 else:
-                    better_sl = entry_price + pips_to_price(recommended_sl_pips, pair)
-                recommendations.append(f"Tighten SL recommendation: {fmt_price(better_sl, pair)} (ATR x1.2 = {recommended_sl_pips:.1f}pip)")
-                put_commands.append(
-                    f'# SL fix {pair} id={trade_id}\n'
-                    f'python3 -c "import urllib.request,json; '
-                    f"req=urllib.request.Request('https://api-fxtrade.oanda.com/v3/accounts/{acct}/trades/{trade_id}/orders',"
-                    f'data=json.dumps({{"stopLoss":{{"price":"{fmt_price(better_sl, pair)}","timeInForce":"GTC"}}}}).encode(),'
-                    f"headers={{'Authorization':'Bearer '+open('config/env.toml').read().split('oanda_token')[1].split('\"')[1],'Content-Type':'application/json'}},"
-                    f"method='PUT'); urllib.request.urlopen(req)\""
-                )
+                    recommendations.append(f"  SL is wide but no structural levels found. Your call: keep, tighten, or remove")
         else:
-            if side == "LONG":
-                rec_sl = entry_price - pips_to_price(recommended_sl_pips, pair)
+            # No SL — show structural candidates as menu (no auto-recommendation)
+            if structural_sl_levels:
+                recommendations.append("📍 Structural SL candidates (if you want SL):")
+                for i, (price, dist, label) in enumerate(structural_sl_levels[:4]):
+                    atr_x = dist / atr_pips
+                    recommendations.append(f"  {i+1}. {fmt_price(price, pair)} = {label} (ATR x{atr_x:.1f})")
+                recommendations.append(f"  ATR={atr_pips:.0f}pip (size reference only, not placement)")
             else:
-                rec_sl = entry_price + pips_to_price(recommended_sl_pips, pair)
-            recommendations.append(f"SL recommendation: {fmt_price(rec_sl, pair)} (ATR x1.2 = {recommended_sl_pips:.1f}pip)")
+                recommendations.append(f"  SL: no structural levels found. ATR={atr_pips:.0f}pip (size reference). Discretionary management or skip SL")
 
     # --- TP Recommendation (structural level based) ---
     if atr_pips > 0 and structural_levels:
