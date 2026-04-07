@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-08 — Fix: Slack user messages consumed without reply
+
+**Problem**: `session_data.py` called `slack_read.py` which updated `last_read_ts` on read. If the trader session didn't reply, the message was lost — next session wouldn't see it.
+
+**Fix**: `slack_read.py` now accepts `--no-update-ts` (used by session_data.py). `last_read_ts` is only advanced by `slack_post.py --reply-to` after a successful reply. Unread messages keep appearing until replied to.
+
 ## 2026-04-08 — New: quality-audit scheduled task (Sonnet, every 30 min)
 
 **Purpose**: Cross-check trader decisions against rules in near-real-time. Catches issues that previously required manual review (missed S-candidates, undersizing, rule misapplication).
