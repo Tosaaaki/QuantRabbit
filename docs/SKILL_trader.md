@@ -82,11 +82,10 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 ```
 Positions: [N] LONG / [N] SHORT / [N] pairs
 Direction mix: [mixed ✅ / one-sided ⚠️]
-If one-sided → why no opposite position: ___
-→ Counter-trade candidate: [pair] [direction] [condition] or "none — [reason with numbers]"
+If one-sided → counter-trade LIMIT placed: [pair] [dir] @___ id=___ | or: no H4 extreme on any pair (H4 StRSI values: ___)
 ```
 
-This block cannot say "all LONG because thesis is bullish." H4 can be bullish while M5 gives a clean SHORT scalp. The question is not "what is the macro direction" but "is there a short-term trade in the OTHER direction right now."
+H4 can be bullish while M5 gives a clean SHORT scalp. If any pair has H4 StRSI near 0 or 1, a counter-trade LIMIT at the wick level is the fix. If NO pair has H4 extreme, write the H4 StRSI values to prove it — that's the only valid "no counter-trade" answer.
 
 - 3+ positions in the same pair → Averaging-down hell. Go make money in other pairs
 - All positions JPY crosses → Single JPY bet. Full wipeout risk if JPY reverses
@@ -104,13 +103,13 @@ For each Tier 1 pair, write this block in state.md:
 Price action: [what the chart is doing — candle shapes, momentum, NOT indicator numbers]
 Wave position: [Fib X%] / [BB position] / [structural level] [N]pip away → [approaching ceiling/floor/mid-range]
 I would enter if: [specific condition + price + direction. If price-based → LIMIT ORDER placed]
-MTF counter-trade: [higher TF overextended? → short-term reversal trade]
-  → Action: [LIMIT placed at ___ / market order / not placing because ___]
+MTF counter-trade: [higher TF overextended? → short-term reversal trade with price, TP, SL]
+  → LIMIT: [pair] [dir] @___ TP=___ SL=___ GTD=___ id=___ | or: no overextension (H4 StRSI=___)
 ```
 
 **Wave position is mandatory.** Knowing "H1 BB upper is 3pip away" changes decisions.
 
-**MTF counter-trade → Action is mandatory.** Identifying "H4 overbought, M5 SHORT scalp opportunity" and then doing nothing is analyst behavior, not trader behavior. Either place a LIMIT at the wick level, or write why not (with numbers — "spread 3.1pip = 40% of 8pip target" is valid; "waiting" is not).
+**MTF counter-trade → LIMIT is the default.** If a higher TF is overextended (H4 StRSI near 0 or 1, CCI ±200+), the short-term trade in the opposite direction EXISTS. Place a LIMIT at the wick-touch level. The only valid reason to NOT place it is: no overextension on the higher TF (write the H4 StRSI number to prove it).
 
 ### Tier 2: Remaining pairs (quick scan)
 
@@ -140,19 +139,21 @@ At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
 
 **You're only awake 5 minutes. LIMIT orders make money the other 55 minutes.**
 
-When margin > 30% idle AND scan identifies entries at specific price levels:
-- **Place LIMITs at wick-touch levels** (structural S/R, BB mid/lower, Fib retrace, cluster)
-- **Every LIMIT must have TP + SL on fill** — you won't be watching when it triggers
-- **GTD = next session + buffer** (2-4 hours). Don't leave stale limits indefinitely
-- **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." Tariff pause → risk-on LIMIT. Escalation → risk-off LIMIT. One fills, cancel the other next session
+When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
+- Every LIMIT must have **TP + SL on fill** — you won't be watching when it triggers
+- **GTD = 2-4 hours.** Don't leave stale limits indefinitely
+- **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
 
 ```
-Idle margin LIMITs:
-  [pair] [direction] LIMIT @___ TP=___ SL=___ GTD=___ | thesis: ___ | → [placed id=___ / not placing: ___]
-  [pair] [direction] LIMIT @___ TP=___ SL=___ GTD=___ | thesis: ___ | → [placed id=___ / not placing: ___]
+Idle margin LIMITs (placed this session):
+  [pair] [dir] LIMIT @___ TP=___ SL=___ GTD=___ id=___
+  [pair] [dir] LIMIT @___ TP=___ SL=___ GTD=___ id=___
+Pending from previous sessions: [list ids or "none"]
 ```
 
-**The goal is not more positions. It's bigger positions on your best idea.** 2 positions at A/S-size beats 5 at B-size. But idle margin with no LIMITs pending = money sleeping.
+**This block lists LIMITs that are PLACED (with OANDA order IDs).** Not planned, not "would place if." If you can't find a structural level to place a LIMIT, that's fine — write "no structural level within ATR×1.5 on any pair" and the scan proves it. But if the scan shows levels and no LIMITs are placed, the block is empty and that's visible.
+
+**The goal is not more positions. It's bigger positions on your best idea.** But idle margin with zero pending LIMITs = money sleeping.
 
 ## Pre-entry — Conviction Block (required every time)
 
