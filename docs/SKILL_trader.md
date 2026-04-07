@@ -27,7 +27,7 @@ cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $$" > logs/.t
 
 Read (parallel): `collab_trade/state.md` and `collab_trade/strategy_memory.md`
 
-**How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies.
+**How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies. **Caution: strategy_memory is heavy on "don't do X" lessons (30+ warnings vs 12 positive patterns). Don't let cautionary bias shrink your sizing. The lessons say "don't chase, don't panic, don't add without new thesis" — they do NOT say "enter small." When a setup is genuinely good, SIZE UP. The biggest historical loss was undersizing S-conviction trades, not oversizing.**
 
 **How to use MEMORY RECALL** (in session_data output): This section shows past trades and lessons for your held pairs, retrieved from memory.db via vector search. Read it BEFORE making decisions on held positions. If memory says "AUD_JPY SHORT has 42% WR" or "trail 11pip gets hunted on thin market" — factor it into your conviction block and position management.
 
@@ -128,21 +128,25 @@ For EACH of the 7 pairs, write these 4 columns in the scan table:
 
 **Why this matters**: On 4/3, the scan had "Skip pre-NFP" × 5 pairs for 4+ hours. That's not analysis. That's copy-paste. A pro trader scanning 7 pairs always finds something interesting — even if they don't enter, they have a view.
 
-### After the scan — Margin Deployment Check (required when margin < 60%)
+### After the scan — Capital Deployment Check (required when margin < 60%)
 
 **If marginUsed / NAV < 60% after the 7-pair scan, you MUST write this block in state.md:**
 
 ```
 Margin: ___% used. ___% idle.
-Best 2 setups from scan:
-1. [pair] [direction] — why I haven't entered: ___
-2. [pair] [direction] — why I haven't entered: ___
-If I entered both at A-size right now, the worst case is: ___
+#1 best setup right now: [pair] [direction]
+Current conviction: [B/A] — because: ___
+To upgrade to S, I would need to see: [specific indicator/category to check RIGHT NOW]
+At S-size (30% NAV), this trade = ___u, TP target = +___pip = +___ JPY
 ```
 
-**Why this exists**: 35% margin = 65% idle capital earning nothing. You're scanning 7 pairs × 4 timeframes = 28 views. Finding zero entries means either (a) the market is genuinely dead, or (b) you're being too cautious. Writing out "why I haven't entered" on your best 2 forces you to confront whether the reason is real or just fear. Writing "worst case" forces you to quantify the downside — often it's smaller than you assumed.
+**Then actually check that indicator.** If it confirms → enter at S-size. If it contradicts → stay out. Either way, you've done the work.
 
-**60% is the minimum, not the comfort zone.** 70-85% margin used with 2-3 positions across different themes = healthy and aggressive. Below 60% for more than 2 consecutive sessions = you are leaving money on the table.
+**Why this exists**: The biggest silent profit killer is B-sizing what should be S-trades. 5 of 7 past S-setups were entered at B-size → 6,740-13,140 JPY thrown away. The root cause: trader checked 2 familiar indicators, rated B, and stopped looking. This block forces you to identify WHAT would make it S and then GO CHECK IT.
+
+**The goal is not more positions. It's bigger positions on your best idea.** 2 positions at A/S-size (70-85% margin) beats 5 positions at B-size (50% margin). Fewer trades, bigger size, better entries.
+
+**60% is the minimum deployment, not the comfort zone.** 70-85% margin across 2-3 high-conviction positions = target state. Below 60% for 2+ consecutive sessions = you are leaving money on the table.
 
 ## Trade Cycle
 
