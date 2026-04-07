@@ -109,7 +109,9 @@ MTF counter-trade: [higher TF overextended? → short-term reversal trade with p
 
 **Wave position is mandatory.** Knowing "H1 BB upper is 3pip away" changes decisions.
 
-**MTF counter-trade → LIMIT is the default.** If a higher TF is overextended (H4 StRSI near 0 or 1, CCI ±200+), the short-term trade in the opposite direction EXISTS. Place a LIMIT at the wick-touch level. The only valid reason to NOT place it is: no overextension on the higher TF (write the H4 StRSI number to prove it).
+**MTF counter-trade → LIMIT is the default.** If a higher TF is overextended (H4 StRSI near 0 or 1, CCI ±200+), the short-term trade in the opposite direction EXISTS. Place a LIMIT at the wick-touch level with TP+SL. Wrong? Cancel it next session — costs nothing. Right? It makes money while you sleep.
+
+The only valid reason to NOT place it is: no overextension on the higher TF (write the H4 StRSI number to prove it).
 
 ### Tier 2: Remaining pairs (quick scan)
 
@@ -139,10 +141,13 @@ At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
 
 **You're only awake 5 minutes. LIMIT orders make money the other 55 minutes.**
 
+**A wrong LIMIT costs nothing — cancel it next session. A missing LIMIT costs real money — the opportunity is gone forever.** Trust your analysis. If the scan identified a level, place the LIMIT. You can always cancel or modify it in 5 minutes when you wake up. You cannot go back in time to catch a price that already passed through.
+
 When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
 - Every LIMIT must have **TP + SL on fill** — you won't be watching when it triggers
 - **GTD = 2-4 hours.** Don't leave stale limits indefinitely
 - **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
+- **"Screening failed" / "binary risk" / "waiting for confirmation" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong
 
 ```
 Idle margin LIMITs (placed this session):
