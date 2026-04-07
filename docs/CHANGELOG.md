@@ -1,5 +1,84 @@
 # Changelog
 
+## 2026-04-07 — Weekly +25% NAV performance target added to trader prompt
+
+Added performance target to SKILL_trader.md: +25% of NAV per week (~5%/day). Placed in the prompt (not state.md) so it persists across sessions and isn't overwritten. Framed as a self-question ("did I look hard enough?") rather than a rule, per prompt design principles.
+
+## 2026-04-07 — PDCA high-speed loop: instant learning + memory.db integration
+
+**Problem**: Self-improvement loop was too slow (24h feedback delay). Trader noticed mistakes and wrote them to state.md Lessons, but they never reached strategy_memory.md until daily-review ran (once/day, and it was broken). Memory.db had 281 chunks of past trade lessons but recall was only triggered for held pairs, missing recently-lost pairs.
+
+**Fix (3 changes)**:
+1. `docs/SKILL_trader.md`: Added "Learning record" section — when trader notices a pattern/mistake, write to BOTH state.md Lessons AND strategy_memory.md Active Observations immediately. 5-min PDCA instead of 24h. Daily-review distills and promotes, no longer sole writer.
+2. `tools/session_data.py`: MEMORY RECALL now triggers for held pairs AND today's loss pairs. Adds "(HELD)" / "(RECENT LOSS)" tags. Lost on GBP_USD? Past GBP_USD failure lessons auto-surface.
+3. `docs/SKILL_trader.md`: Added "How to use MEMORY RECALL" guidance — read recalled lessons BEFORE making decisions on held positions.
+
+**Design**: strategy_memory.md is a living document that the trader writes to during trading (fast lane) and daily-review distills nightly (cleanup lane). Two writers, one document. daily-review owns promotion (Active→Confirmed) and pruning (300 line limit).
+
+**Files changed**: `docs/SKILL_trader.md`, `tools/session_data.py`, `tools/daily_review.py`, `~/.claude/scheduled-tasks/daily-review/SKILL.md`, `docs/CHANGELOG.md`
+
+## 2026-04-07 — Self-improvement loop fix: daily-review + pretrade matching
+
+**Problem**: PDCA loop was broken. strategy_memory.md hadn't been updated since 4/6. pretrade_outcomes had only 10% match rate (24/240). lesson_from_review was always NULL. The trader kept making the same SL mistakes because lessons weren't persisted across days.
+
+**Root causes**:
+1. `daily_review.py` matched pretrade_outcomes only for `session_date = today` — trades entered on day N but closed on day N+1 were never matched
+2. daily-review SKILL had 4 bash steps + 5 file reads before writing strategy_memory.md — too much work, session timed out before reaching the write step
+3. No feedback path from review back to pretrade_outcomes.lesson_from_review
+
+**Fix (3 changes)**:
+1. `tools/daily_review.py` `match_pretrade_outcomes()`: now matches ALL unmatched outcomes (not just today's) and looks back 3 days for closed trades. Match rate: 10% → 17%
+2. `~/.claude/scheduled-tasks/daily-review/SKILL.md`: simplified from 4 bash steps to 2. Bash① collects ALL data in one command. LLM focuses on thinking and writing. Bash② verifies + ingests + posts
+3. Added explicit "2 bash calls maximum" rule to prevent the session from spending all its time on data collection instead of reflection
+
+**Files changed**: `tools/daily_review.py`, `~/.claude/scheduled-tasks/daily-review/SKILL.md`, `docs/CHANGELOG.md`
+
+## 2026-04-07 — 7-Pair Scan: MTF counter-trade column added
+
+**Problem**: All 7 pairs had LONG-only plans on 4/7 while H4 data showed AUD_JPY StRSI=1.0 + MACD div=-1.0, GBP_JPY MACD div=-1.0. Short-term SHORT scalps were available but invisible because macro direction (USD weak, JPY weakest) biased all analysis toward LONG. The existing "directional bias check" rule was ignored — adding more rules doesn't help.
+
+**Fix**: Added 4th column to 7-Pair Scan table: `MTF counter-trade`. Format: `___TF overextended → ___ if ___`. Forces the model to check H4 StRSI/div for every pair and write the number. When H4 is overextended, the model must articulate the short-term reversal trade. When not overextended, writing "N/A" requires the H4 StRSI number as proof of checking.
+
+**Design principle**: Not a rule ("check for shorts"). An output format that makes bias visible during the act of writing. The model can't fill the column without looking at the higher TF — if H4 StRSI=1.0 is staring at it while writing "LONG if...", the contradiction becomes self-evident.
+
+**Files changed**: `docs/SKILL_trader.md`, `docs/CHANGELOG.md`
+
+## 2026-04-07 — P&L reporting fix: OANDA API as single source of truth
+
+**Problem**: state.md "Today confirmed P&L" was manually tallied by the trader LLM, causing:
+1. Date boundary errors: 4/6 trades mixed into 4/7 totals (state.md claimed +1,851 JPY, OANDA actual was -612 JPY — 2,463 JPY discrepancy)
+2. `slack_daily_summary.py` had path bug (`../..` instead of `..`) — P&L and trade counts always returned 0
+3. `live_trade_log.txt` had recording gaps (log showed +32 JPY for 4/7, OANDA showed -612 JPY — 10 closes missing from log)
+
+**Fix (3 changes)**:
+1. `tools/slack_daily_summary.py` lines 58, 71, 107: fixed `../..` → `..` (path was resolving to `/Users/tossaki/App/` instead of `/Users/tossaki/App/quantrabbit/`)
+2. `tools/session_data.py`: replaced `trade_performance.py --days 1` (log parsing) with `intraday_pl_update.py --dry-run` (OANDA API). Added "NOTE: This is the AUTHORITATIVE P&L" label
+3. `docs/SKILL_trader.md`: added P&L reporting rule — "Use OANDA number from session_data, not manual tallies. Past Closed table is TODAY only (JST). Clear at day boundary."
+
+**Root cause**: The trader LLM was summing P&L from its own trade log in state.md, which accumulated across days and missed trades not recorded in live_trade_log.txt. OANDA transactions API is the only authoritative source.
+
+**Files changed**: `tools/slack_daily_summary.py`, `tools/session_data.py`, `docs/SKILL_trader.md`, `docs/CHANGELOG.md`
+
+## 2026-04-06 — Reverted 10-min → 5-min + mandatory SESSION_END + duplicate instance cleanup
+
+**Problem**: Trader sessions were running ~5 min and completing "healthy" per Claude Desktop, but SESSION_END (performance + ingest + lock release) was not reliably firing. The LLM would self-terminate before reaching the 240s ELAPSED threshold, skipping cleanup. Additionally, trader was registered in 2 Claude Desktop instances (a98d068e + 14227c4c), causing resource waste and potential conflicts. Slack responses were delayed or missing because sessions ran but didn't post.
+
+**Root cause analysis**:
+- Session JSONs showed 0-3s duration — this was misleading. Actual durations from `CCD CycleHealth` logs were 263-401s (all "healthy")
+- `global_limit=3` and `per_task_limit=1` in Claude Desktop prevented concurrent sessions (expected behavior)
+- The LLM completed analysis in 2-3 cycles and exited without running the final Next Cycle Bash that would trigger SESSION_END
+- `codex_trade_supervisor.out` (6.4MB of `/tmp/codex_trade_supervisor.sh: No such file or directory`) was a dead legacy artifact — deleted
+
+**10-min attempt failed**: 2 consecutive sessions hit Claude Desktop's ~600s inactivity timeout (API response stalls when context grows large over multiple cycles). Both ended as "unhealthy" at 1099s. Same failure mode as the previous 10-min attempt (see below). Reverted to 5-min.
+
+**Fix (4 changes)**:
+1. SESSION_END threshold: kept at `ELAPSED >= 240` (5 min sessions)
+2. Stale lock threshold: kept at `AGE -lt 300`
+3. **Mandatory SESSION_END rule added to SKILL**: "NEVER end a session without LOCK_RELEASED. Every response MUST end with Next Cycle Bash." — this is the key fix that ensures cleanup runs
+4. Disabled all 6 tasks in 14227c4c instance (trader + jam-deploy + daily-review + daily-performance-report + intraday-pl-update + daily-slack-summary). Single instance (a98d068e) only.
+
+**Files changed**: `docs/SKILL_trader.md`, `CLAUDE.md`, `docs/CHANGELOG.md`, deleted `logs/codex_trade_supervisor.out`, disabled tasks in `claude-code-sessions/14227c4c/.../scheduled-tasks.json`
+
 ## 2026-04-06 — Session extended to 15 minutes + STALE_LOCK auto-ingest
 
 **Problem**: Sessions dying without reaching SESSION_END. ingest.py never runs → memory.db stale. Root cause: session_data.py output is massive (7 pairs × M5 20 candles + full technicals + news), model spends all 10 minutes analyzing without emitting Next Cycle Bash.
