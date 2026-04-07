@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-04-08 — BE SL ban at ATR×1.0+ / TP spread buffer (AUD_JPY +1,200→+40 postmortem)
+
+**Problem**: AUD_JPY LONG 5000u peaked at +1,200 JPY (bid 111.096). Trader moved SL to breakeven (entry+1pip=110.860) instead of taking profit. Price reversed, BE SL hit, closed at +40 JPY. Two root causes:
+1. **BE SL bypassed profit_check** — ATR×1.0 reached but profit_check was never run. SL→BE was used as a "safe" alternative to profit evaluation, identical pattern to the 3/27 Default HOLD trap
+2. **TP missed by 0.4pip due to spread** — TP=111.100, bid peaked 111.096. Spread=2.4pip. TP didn't account for spread buffer
+
+**Fix (3 changes)**:
+1. **BE SL banned at ATR×1.0+**: Only 3 actions allowed — HALF TP (default) / FULL TP / HOLD+trailing(≥50% profit). Moving SL to entry price gives back 100% of profit — that's not risk management. If trader writes "SL moved to BE", must first state how much profit is being forfeited and why it's better than HALF TP
+2. **profit_check mandatory before SL modification**: When ATR×1.0 reached, profit_check must run FIRST. SL changes without prior profit_check = rule violation
+3. **TP spread buffer**: `TP = structural_level - spread` for LONGs, `+ spread` for SHORTs. Prevents fills missed by fraction of a pip
+
+**Files changed**: `.claude/rules/risk-management.md`, `docs/SKILL_trader.md`
+
+## 2026-04-07 — pretrade_check.py --counter mode: counter-trades no longer structurally blocked
+
+**Problem**: `assess_setup_quality()` scores MTF alignment 0-4 based on DI+/DI- direction agreement across TFs. Counter-trades are by definition against the upper TF → always score 0 on MTF alignment → always grade C → trader never enters counter-trades even when H4 StRSI=1.00 extreme.
+
+**Fix**: New `assess_counter_trade()` function with inverted evaluation axes:
+1. **H4 Extreme (0-3)**: The more extreme the upper TF (StRSI near 0/1, CCI ±200, RSI <30/>70), the HIGHER the score — opposite of normal mode
+2. **H1 Divergence/Fatigue (0-2)**: Divergence + CCI extreme confirms reversal
+3. **M5 Reversal Signal (0-2)**: StRSI + MACD hist timing trigger
+4. **Spread penalty (0 to -1)**: 8pip reference target for counter-trades
+
+Grades capped at B+ max (counter-trades never get S/A sizing — 2000-3000u max). CLI: `pretrade_check.py PAIR DIR --counter`. Format output clearly labeled `🔄 COUNTER-TRADE` with inverted axis explanation.
+
+Also fixed: "pass recommended" → "data suggests caution — you decide" (tool output is data, not orders).
+
+**Files changed**: `collab_trade/memory/pretrade_check.py`, `docs/SKILL_trader.md`, `.claude/skills/pretrade-check.md`
+
 ## 2026-04-07 — Counter-trade execution + directional mix + LIMIT deployment
 
 **Problem**: Trader identifies MTF counter-trades in scan ("H4 overbought, M5 SHORT scalp") but never executes them. All positions are same direction (LONG only). Idle margin (34%) sits with no LIMIT orders deployed. Result: missing pullback profits, concentrated directional risk.

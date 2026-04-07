@@ -177,6 +177,31 @@ profit_check.py evaluates the following simultaneously and outputs a recommendat
 
 Below ATR×0.5 and not worth the spread = too early. **However, if momentum reversal is detected, taking profit before ATR target is OK.**
 
+### BE SL is NOT profit-taking (4/8 AUD_JPY lesson: +1,200 JPY → +40 JPY)
+
+**2026-04-08 lesson: AUD_JPY peaked at +1,200 JPY. Trader moved SL to breakeven (entry+1pip) instead of taking profit. Price reversed. BE SL hit. Result: +40 JPY. Lost 1,160 JPY of unrealized profit.**
+
+**BE SL is the 3/27 Default HOLD trap wearing a different mask.** It lets the trader say "I'm managing risk" while actually holding and hoping. "Zero capital risk" sounds safe but means "I chose +0 over +1,200."
+
+**When ATR×1.0 is reached, these are the ONLY valid actions:**
+
+| Action | What it does | When to use |
+|--------|-------------|-------------|
+| **A. HALF TP** | Close half at market + trailing stop on remainder | Default. Locks in profit while keeping upside |
+| **B. FULL TP** | Close all at market | M5 momentum reversal + H1 weakening |
+| **C. HOLD + trailing** | Keep full size but trailing stop at ≥50% of unrealized profit | H1 ADX>30 strong trend + M5 still making new highs |
+
+**BE SL (fixed SL at entry price) is NOT on this list.** It gives back 100% of unrealized profit if triggered. That's not risk management — it's a lottery ticket.
+
+**If you write "SL moved to BE" in the log, you must also write:**
+```
+BE SL chosen. Current UPL: +___ JPY (+___pip).
+If SL hit: I keep +___ JPY. I am giving back ___ JPY.
+I prefer this over HALF TP at market because: ___
+```
+
+**TP spread buffer**: When setting a fixed TP near a structural level, subtract the current spread from the target price. A TP that misses by 0.4 pip because of spread is the same as no TP. `TP = structural_level - spread` for LONGs, `+ spread` for SHORTs.
+
 ## Stop Loss — Structural placement. No ATR-only. No monetary triggers.
 
 **There are zero monetary-based stop loss rules. Whether it's -500 yen or -1000 yen, do not use the amount as a decision factor.**
@@ -268,3 +293,5 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
 | **Panic close → panic re-entry = double loss (4/3)** | Closed AUD_JPY @110.077 (-338円), re-entered 7min later @110.118 (Sp1.8pip, pretrade=C(1)). Held=損失ゼロ。**再エントリー前に「クローズ時より良い価格か？新しい根拠はあるか？」両方Noならスプレッド払って同じ物を買い戻してるだけ** |
 | **ATR×N mechanical SL = bot (4/3)** | EUR_USD trail=ATR×0.6(11pip), GBP_USD trail=ATR×0.7(15pip) on Good Friday → all hunted. -984 JPY. **SL must be at structural levels (swing low, Fib, cluster), not ATR multipliers. If you can't name the structure, don't set the SL** |
 | **Binary position management (4/3)** | Only considered "trail or hold." Never evaluated "take profit now and re-enter post-NFP." In profit + event risk + thin market = cut and re-enter was the best play. **Always evaluate 3 options: adjust / cut-and-re-enter / hold-as-is** |
+| **BE SL as stealth HOLD (4/8)** | AUD_JPY +1,200 JPY peak → SL moved to BE (entry+1pip) → price reversed → +40 JPY. Skipped profit_check at ATR×1.0. "Zero capital risk" framing hid the real cost: giving back 1,160 JPY. **BE SL is not profit-taking. At ATR×1.0: HALF TP / FULL TP / trailing at ≥50% profit. No BE SL.** |
+| **TP missed by spread (4/8)** | AUD_JPY TP=111.100, bid peaked 111.096 (0.4pip short). Spread=2.4pip ate the fill. **Subtract spread from structural TP level. TP = level - spread for LONGs.** |

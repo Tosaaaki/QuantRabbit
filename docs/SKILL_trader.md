@@ -37,6 +37,15 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 
 **profit_check**: Default is to take profit. If TAKE_PROFIT/HALF_TP is recommended, verbalize "why you're holding" within 30 seconds. If you can't, take profit.
 
+**When ANY position reaches ATR×1.0 unrealized profit, profit_check is MANDATORY before any SL modification.** Moving SL to BE without running profit_check first is a rule violation (4/8 AUD_JPY lesson: skipped profit_check → BE SL → +1,200 JPY became +40 JPY).
+
+**At ATR×1.0, only 3 actions exist:**
+- **A. HALF TP** (close half at market + trailing stop on remainder) — default
+- **B. FULL TP** (close all at market) — M5 momentum reversal
+- **C. HOLD + trailing** (trailing at ≥50% of unrealized profit) — H1 ADX>30 strong trend
+
+**BE SL (SL at entry price) is banned at ATR×1.0+.** It gives back 100% of unrealized profit. That's not risk management — it's the 3/27 Default HOLD trap in disguise. If you write "SL moved to BE", you must first write how much profit you're giving back and why that's better than HALF TP.
+
 **protection_check**: Data about current TP/SL/Trailing status. You decide what to do.
 
 - `NO PROTECTION` → Fine if actively monitoring. Add protection only for unattended holds
@@ -162,7 +171,8 @@ Pending from previous sessions: [list ids or "none"]
 
 ## Pre-entry — Conviction Block (required every time)
 
-cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT}
+cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT} [--counter]
+# Use --counter for Type=Counter entries (M5 against H4/H1). Inverted scoring: H4 extreme = FOR.
 
 ```
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
@@ -216,6 +226,8 @@ Write your choice with a reason. "C because thesis alive" is not a reason. "C be
 
 ```
 TP: swing high/low, cluster, BB mid/lower, Ichimoku cloud edge — NOT round numbers
+    LONG TP = structural_level - spread (4/8: TP missed by 0.4pip because spread ate the fill)
+    SHORT TP = structural_level + spread
 SL: swing low, Fib 78.6%, DI reversal point, cluster — NOT ATR×N without structure
 ```
 
