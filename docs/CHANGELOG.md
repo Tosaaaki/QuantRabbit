@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-04-07 — SL recommendation: ATR×1.2 formula → structural level menu
+
+**Problem**: protection_check.py recommended SL at `ATR×1.2` with copy-paste PUT commands since 3/31. TP was migrated to structural levels on 3/31(6), but SL was never migrated. Despite SKILL.md and risk-management.md repeatedly saying "SL must be structural, not ATR×N," the script output `SL recommendation: 184.380 (ATR x1.2 = 12.1pip)` — and the trader copied it verbatim. This is the root cause of repeated tight-SL hunting losses (4/3 -984 JPY, and continued pattern on 4/7).
+
+**Fix (protection_check.py)**:
+1. **New `find_structural_sl_levels()`**: Collects invalidation-side structural levels (H4/H1/M5 swing, cluster, BB, Ichimoku cloud) sorted by distance from entry. Same approach as the existing `find_structural_levels()` for TP
+2. **SL section rewritten**: No more `recommended_sl_pips = atr_pips * 1.2`. Instead shows `📍 Structural SL candidates` menu with price, label, and ATR ratio for context
+3. **Removed auto-generated SL fix commands**: No more copy-paste PUT commands for SL. The trader must choose a structural level and articulate why
+4. **ATR shown as "size reference only"**: Still displayed for context but explicitly labeled as not-for-placement
+5. **Too tight / too wide warnings**: Still fire (ATR x0.7 / x2.5 thresholds) but recommend structural levels instead of ATR×1.2
+
+**What changed for the trader**: Instead of seeing `SL recommendation: 184.380 (ATR x1.2)` and copying it, the trader now sees a menu like:
+```
+📍 Structural SL candidates (if you want SL):
+  1. 184.366 = M5 BB lower (ATR x1.1)
+  2. 184.353 = H1 BB mid (ATR x1.2)
+  3. 184.300 = M5 cluster (ATR x1.6)
+  ATR=12.3pip (size reference only, not placement)
+```
+This forces choosing based on market structure, not formula.
+
+**Files changed**: `tools/protection_check.py`, `docs/CHANGELOG.md`
+
+## 2026-04-07 — Margin Deployment Check: forced output when margin < 60%
+
+Added required output block to SKILL_trader.md 7-Pair Scan section. When margin < 60%, trader must write: best 2 setups, why not entered, and worst-case if entered both. Forces confrontation with idle capital instead of defaulting to "nothing here." 60% is the minimum, 70-85% is healthy and aggressive.
+
 ## 2026-04-07 — Weekly +25% NAV performance target added to trader prompt
 
 Added performance target to SKILL_trader.md: +25% of NAV per week (~5%/day). Placed in the prompt (not state.md) so it persists across sessions and isn't overwritten. Framed as a self-question ("did I look hard enough?") rather than a rule, per prompt design principles.
