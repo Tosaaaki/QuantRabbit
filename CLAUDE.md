@@ -60,6 +60,7 @@ How to achieve this:
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
+| quality-audit | Sonnet | Every 30 min | ~2 min | Cross-check trader decisions against rules. Flags missed S-candidates, undersizing, rule misapplication → logs/quality_audit.md + Slack |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -96,12 +97,18 @@ Every 1 min: trader session
 ### Self-Improvement Loop
 ```
 Every 1 min: trader session
-  ├── reads: strategy_memory.md + state.md
+  ├── reads: strategy_memory.md + state.md + quality_audit.md (if recent)
   ├── profit_check.py --all + protection_check.py  ← every session, first thing
   ├── reads price action (M5 chart shape — before indicators)
+  ├── if quality_audit.md has issues → address them (re-evaluate missed S-candidates, fix sizing)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
   └── SESSION_END (4 min mark, 5 min hard limit): trade_performance.py + ingest.py → memory.db
+
+Every 30 min: quality-audit session (Sonnet)
+  ├── runs: quality_audit.py (S-scan vs state.md cross-check, sizing audit, rule misapplication)
+  ├── WRITES: logs/quality_audit.md (issues list — read by next trader session)
+  └── if CRITICAL/WARNING → posts summary to #qr-daily via Slack
 
 Daily 06:00 UTC: daily-review session
   ├── runs: daily_review.py (fact collection + pretrade result correlation)
@@ -177,6 +184,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `docs/CHANGELOG.md` | Chronological log of all changes |
 | `docs/SKILL_trader.md` | Reference copy of trader task definition |
 | `docs/SKILL_daily-review.md` | Reference copy of daily-review task definition |
+| `docs/SKILL_quality-audit.md` | Reference copy of quality-audit task definition |
 | `docs/TRADER_LESSONS.md` | Historical failure patterns (daily-review reference, not loaded in trader sessions) |
 
 ### Runtime Files
@@ -190,6 +198,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `logs/news_digest.md` | News summary updated by Cowork hourly |
 | `logs/news_cache.json` | Structured news data from API parser |
 | `logs/technicals_*.json` | H1/H4 technical indicators |
+| `logs/quality_audit.md` | Quality audit results (updated every 30 min by quality-audit task. Trader reads at session start) |
 
 ### Scripts
 
@@ -206,6 +215,8 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/slack_trade_notify.py` | Slack notifications |
 | `tools/news_fetcher.py` | News fetch (Finnhub+AlphaVantage+FF. Called from Cowork task) |
 | `tools/slack_daily_summary.py` | Daily summary |
+| `tools/quality_audit.py` | Quality audit — cross-checks trader decisions against rules and S-conviction data |
+| `tools/s_conviction_scan.py` | S-conviction pattern scanner — auto-detects TF × indicator combinations |
 
 ## Key Directories
 

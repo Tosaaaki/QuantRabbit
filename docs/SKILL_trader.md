@@ -31,6 +31,8 @@ Read (parallel): `collab_trade/state.md` and `collab_trade/strategy_memory.md`
 
 **How to use MEMORY RECALL** (in session_data output): Past trades and lessons for your held pairs. Read BEFORE making decisions on held positions.
 
+**QUALITY AUDIT ISSUES** (in session_data output): If `logs/quality_audit.md` exists and is recent, session_data shows it. These are issues found by the quality-audit task (runs every 30 min). **Read them. Fix them this session.** Common issues: S-candidates missed, undersized entries, circuit breaker misapplied, spread excuse on normal spread. If you see "S-CANDIDATE MISSED" for a pair you wrote "Pass" on — re-evaluate that pair NOW and either enter or write a better reason.
+
 ## Bash②b: Profit Check + Protection Check (run at the top of every session)
 
 cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && python3 tools/protection_check.py

@@ -348,6 +348,16 @@ def main():
                 lines = out.split("\n")[:10]
                 print("\n".join(lines))
 
+    # 6b. Quality Audit (if issues exist from last audit run)
+    audit_path = ROOT / "logs" / "quality_audit.md"
+    if audit_path.exists():
+        age_min = (time.time() - audit_path.stat().st_mtime) / 60
+        if age_min < 60:  # only show if recent (< 1 hour)
+            section("QUALITY AUDIT ISSUES (read and fix)")
+            audit_text = audit_path.read_text().strip()
+            # Print up to 1500 chars — enough for the issues list
+            print(audit_text[:1500])
+
     # 7. Today's performance
     section("PERFORMANCE (today)")
     out = run_script([VENV_PYTHON, "tools/trade_performance.py", "--days", "1"])

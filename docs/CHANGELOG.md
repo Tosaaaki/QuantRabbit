@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-04-08 — New: quality-audit scheduled task (Sonnet, every 30 min)
+
+**Purpose**: Cross-check trader decisions against rules in near-real-time. Catches issues that previously required manual review (missed S-candidates, undersizing, rule misapplication).
+
+**Components**:
+1. `tools/quality_audit.py` — audit script (6 checks: S-candidates missed, sizing discipline, margin utilization, rule misapplication, pass reason quality, directional bias)
+2. `~/.claude/scheduled-tasks/quality-audit/` — task definition (Sonnet, */30 cron)
+3. `docs/SKILL_quality-audit.md` — reference copy
+
+**Integration (導線)**:
+- `tools/session_data.py` → shows `logs/quality_audit.md` in session output if recent (<1h)
+- `SKILL_trader.md` → tells trader to read and act on audit issues
+- `CLAUDE.md` → task table, runtime files, scripts, self-improvement loop diagram all updated
+- Slack `#qr-daily` → CRITICAL/WARNING issues posted automatically
+
+**Files changed**: `tools/quality_audit.py` (new), `tools/session_data.py`, `CLAUDE.md`, `docs/SKILL_trader.md`, `docs/SKILL_quality-audit.md` (new), `docs/CHANGELOG.md`
+
 ## 2026-04-08 — Fix remaining PASS excuses: circuit breaker direction + spread/S-Type mismatch
 
 **Problem**: Despite previous fixes, trader still blocking entries:
