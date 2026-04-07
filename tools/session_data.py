@@ -301,6 +301,11 @@ def main():
     out = run_script([VENV_PYTHON, "tools/adaptive_technicals.py"])
     print(out)
 
+    # 4a. S-Conviction Scan (TF × indicator pattern detection)
+    section("S-CONVICTION CANDIDATES")
+    out = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
+    print(out)
+
     # 4b. Fib Wave Analysis
     section("FIB WAVE ANALYSIS")
     out = run_script([VENV_PYTHON, "tools/fib_wave.py", "--all"])

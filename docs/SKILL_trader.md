@@ -197,10 +197,24 @@ If I'm wrong: ___ [the scenario where this trade loses, and at what price]
 
 **6 indicator categories**: ① Direction (ADX/DI, EMA slope, MACD) ② Timing (StochRSI, RSI, CCI, BB) ③ Momentum (MACD hist, ROC, EMA cross) ④ Structure (Fib, cluster, swing, Ichimoku) ⑤ Cross-pair (correlated pairs, currency strength) ⑥ Macro (news, events, flow)
 
-**"Different lens" is how you find S-setups.** B→S upgrade when deeper analysis reveals alignment. S→C downgrade when alternative perspective reveals contradiction.
+### S-Conviction Recipes — TF × indicator combinations that = S
 
-**Example — B→S upgrade**: StochRSI=0.0 + H1 bull → "looks like B." Different lens: Fib=38.2% pullback, Ichimoku=above cloud, cluster=5× tested → actually S-Scalp, size up to 30% NAV
-**Example — S→C downgrade**: ADX=50 BEAR + M5 falling → "looks like S." Different lens: CCI=-274, Fib 78.6% reached → actually C, next move is bounce. Abort
+**session_data.py outputs `S-CONVICTION CANDIDATES` section automatically.** When 🎯 appears, that's S until proven otherwise. Enter at S-size or write why not.
+
+| Recipe | TF Pattern | Indicators | Direction | Example |
+|--------|-----------|------------|-----------|---------|
+| **Multi-TF Extreme Counter** | H4 extreme + H1 extreme + M5 opposite extreme | H4 StRSI=1.0 + H1 StRSI=1.0 + M5 StRSI=0.0 | Counter (SHORT in this case) | EUR_JPY 4/8: H4+H1=1.0, M5=0.0, +H1 CCI=200 +div |
+| **Trend Dip** | H1 strong trend + M5 extreme | H1 ADX≥25 DI aligned + M5 StRSI=0.0/1.0 | With trend | GBP_JPY 4/8: H1 ADX=34 BULL + M5 StRSI=0.0 |
+| **Multi-TF Divergence** | H4 div + H1 div + extreme | Both TFs show div + H1 StRSI extreme | Reversal | H4+H1 bear div + H1 StRSI=1.0 → SHORT |
+| **Currency Strength Momentum** | CS gap ≥0.5 + H4+H1+M5 aligned | CS(base)-CS(quote)≥0.5 + all 3 TFs DI aligned | With strength | EUR_JPY: EUR(+0.57)-JPY(-0.43)=1.0 + all BULL |
+| **Structural Confluence** | M5 at BB edge + extreme + H1 trend | M5 at BB lower + StRSI=0.0 + H1 BULL | Bounce | GBP_JPY: M5 BB lower + StRSI=0.0 + H1 ADX=34 BULL |
+| **Squeeze Breakout** | M5 squeeze + H1 ADX≥30 + M1 confirmed | M5 BBW<0.002 + H1 strong + M1 DI clear | Breakout dir | M5 squeeze + H1 bear ADX=35 + M1 sellers |
+
+**Key insight: S is not "more indicators agree." S is "the RIGHT indicators across the RIGHT timeframes form a PATTERN."**
+
+2 indicators from the same TF = B at best. 3+ indicators from 2-3 different TFs forming a coherent pattern = S.
+
+**When 🎯 fires and you still write B-conviction, you must explain which part of the recipe fails.**
 
 ### Sizing (conviction determines size — calculate fresh every entry)
 

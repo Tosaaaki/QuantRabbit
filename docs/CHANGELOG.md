@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-08 — S-Conviction Scanner: auto-detect TF × indicator patterns
+
+**Problem**: Trader sees individual indicators (H4 StRSI=1.0, H1 CCI=200, M5 StRSI=0.0) as separate data points and rates B+. But as a CROSS-TF PATTERN, this is textbook S-conviction counter. EUR_JPY had 6 extreme markers and was entered at 700u (0.3% NAV).
+
+**Root cause**: No tool maps TF × indicator combinations to conviction levels. The trader must mentally assemble patterns from raw data every session — and under time pressure, defaults to B.
+
+**Fix**: New `tools/s_conviction_scan.py` with 6 proven recipes:
+1. Multi-TF Extreme Counter (H4+H1 extreme + M5 opposite)
+2. Trend Dip (H1 ADX≥25 + M5 extreme, Confirmed Pattern)
+3. Multi-TF Divergence (H4+H1 div + extreme)
+4. Currency Strength Momentum (CS gap≥0.5 + MTF aligned)
+5. Structural Confluence (M5 BB edge + extreme + H1 trend)
+6. Squeeze Breakout (M5 squeeze + H1 strong + M1 confirmed)
+
+**Integration**: Added to session_data.py as `S-CONVICTION CANDIDATES` section (runs after ADAPTIVE TECHNICALS). When 🎯 fires, trader must enter at S-size or explain which part of the recipe fails.
+
+**Current scan result**: 8 S-candidates found (EUR_USD LONG, EUR_JPY SHORT counter, GBP_JPY LONG dip, AUD_JPY LONG momentum, etc.) while trader had 0 positions and 700u LIMIT.
+
+**Files changed**: `tools/s_conviction_scan.py` (new), `tools/session_data.py`, `docs/SKILL_trader.md`
+
 ## 2026-04-08 — Fix sizing discipline + anti-churn + margin deployment (entry speed postmortem)
 
 **Problem**: 4/1-4/8 performance: 40% WR, -2,765 JPY net, avg size 2,927u. Compare 3/31: 65% WR, +4,591 JPY, avg 4,737u. Three root causes identified:
