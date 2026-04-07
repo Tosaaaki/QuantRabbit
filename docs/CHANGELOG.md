@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-04-08 — Fix sizing discipline + anti-churn + margin deployment (entry speed postmortem)
+
+**Problem**: 4/1-4/8 performance: 40% WR, -2,765 JPY net, avg size 2,927u. Compare 3/31: 65% WR, +4,591 JPY, avg 4,737u. Three root causes identified:
+
+1. **Double-discounting**: S-conviction trades averaged 3,273u (target: 10,000u). Trader rated S in conviction block, then saw pretrade WR=37% and panicked to B-size. Historical WR is already in the pretrade score — counting it twice
+2. **Junk-size entries**: 500u/700u/1000u entries that can't cover spread cost. 4/7: EUR_USD 500u won +32 JPY (meaningless)
+3. **Churn**: 4/7 AUD_JPY closed and re-entered 3× in succession = 9.6pip spread burned for -778 JPY total
+4. **0% margin as default**: 4/7 ended with 0 open positions, 2 pending LIMITs, +40 JPY. Capital sat idle
+5. **strategy_memory.md fear bias**: 18 warnings vs 4 success patterns. Trader reads a minefield map before every session
+
+**Fix (5 changes)**:
+1. **SKILL_trader.md**: Added "Sizing discipline — the 3 rules" (no double-discount, min 2000u, S/A=market order)
+2. **SKILL_trader.md**: Added "0% margin = SESSION_END blocker" with 3 required questions
+3. **SKILL_trader.md**: Added "Anti-churn rule" requiring better price + new reason for same-pair re-entry
+4. **strategy_memory.md**: Rebalanced — added 7 success patterns to Confirmed Patterns. Split mental rules into "攻め" (read first) and "守り" sections
+5. **pretrade-check.md**: Added "二重割引禁止" section — pretrade output changes conviction judgment, NOT size calculation
+
+**Files changed**: `docs/SKILL_trader.md`, `collab_trade/strategy_memory.md`, `.claude/skills/pretrade-check.md`
+
 ## 2026-04-08 — BE SL ban at ATR×1.0+ / TP spread buffer (AUD_JPY +1,200→+40 postmortem)
 
 **Problem**: AUD_JPY LONG 5000u peaked at +1,200 JPY (bid 111.096). Trader moved SL to breakeven (entry+1pip=110.860) instead of taking profit. Price reversed, BE SL hit, closed at +40 JPY. Two root causes:

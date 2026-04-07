@@ -15,6 +15,7 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 ```
 
 ### オプション
+- `--counter` — カウンタートレードモード（M5がH4/H1と逆方向。評価軸が反転: H4 extreme = FOR）
 - `--adx N` — 現在のADX値
 - `--headline TEXT` — アクティブなヘッドライン（"Iran", "FOMC"等）
 - `--regime TYPE` — 現在のレジーム（quiet/trending/headline/thin_liquidity）
@@ -27,6 +28,9 @@ python3 pretrade_check.py GBP_USD SHORT --headline Iran --adx 38
 
 # EUR LONG 通常
 python3 pretrade_check.py EUR_USD LONG --regime trending
+
+# EUR_JPY カウンタートレード（H4 overbought → M5 SHORT）
+python3 pretrade_check.py EUR_JPY SHORT --counter
 ```
 
 ## 判定結果
@@ -34,8 +38,21 @@ python3 pretrade_check.py EUR_USD LONG --regime trending
 | レベル | 意味 | 行動 |
 |--------|------|------|
 | LOW | リスク低 | そのまま実行 |
-| MEDIUM | 注意 | サイズ縮小 or SL必須を検討 |
-| HIGH | 危険 | サイズ半減 + SL必須、または見送り |
+| MEDIUM | 注意 | SL設計を慎重に。**サイズは変えない** |
+| HIGH | 危険 | Conviction Blockを再確認。**それでもSならS-size** |
+
+### 重要: pretrade結果でサイズを変えるな（二重割引禁止）
+
+pretrade_checkのスコアにはhistorical WRがすでに織り込まれている。Conviction Blockで自分がS/A/Bと判定したなら、そのサイズで入る。
+
+```
+❌ pretrade=S(8) hist_WR=37% → sized_down to 2,000u  ← 二重割引。6,740-13,140JPY損失の原因
+✅ pretrade=S(8) hist_WR=37% → S-size 10,000u         ← Conviction = Size
+✅ pretrade=HIGH → Conviction再確認 → やっぱりS → S-size
+✅ pretrade=HIGH → Conviction再確認 → 実はB → B-size  ← 自分の判断を変えたならOK
+```
+
+**pretrade結果が変えるのはConviction判定であってサイズ計算ではない。**
 
 ## チェック内容（3層）
 

@@ -169,6 +169,17 @@ Pending from previous sessions: [list ids or "none"]
 
 **The goal is not more positions. It's bigger positions on your best idea.** But idle margin with zero pending LIMITs = money sleeping.
 
+### 0% margin = something is wrong (SESSION_END blocker)
+
+**You cannot SESSION_END with 0% margin used AND 0 open positions unless you can answer ALL of these:**
+1. Which of the 7 pairs did you analyze deeply? (name them)
+2. For your #1 candidate: what specific price/condition would make you enter?
+3. Why is a LIMIT at that price not placed right now?
+
+If you can't answer all 3, you haven't scanned hard enough. Go back to the 7-pair scan and find something. The market is always moving — 7 pairs × 4 timeframes = 28 views. Finding nothing in all 28 is extremely rare.
+
+**The 3/31 lesson**: 19 entries, avg 4,737u, +4,591 JPY. Capital was deployed aggressively all day. That's the reference, not 4/7 (0% margin, +40 JPY).
+
 ## Pre-entry — Conviction Block (required every time)
 
 cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT} [--counter]
@@ -200,9 +211,27 @@ Units = (NAV × margin%) / (price / 25)
 | **S** | **~30%** |
 | **A** | **~15%** |
 | **B** | **~5%** |
-| **C** | **~2%** |
+| **C** | **Don't enter.** Not worth the spread. Wait for something better. |
 
 **Before every entry: marginUsed + new margin must stay below NAV × 0.90.**
+
+### Sizing discipline — the 3 rules that matter most
+
+**Rule 1: Conviction = Size. No double-discounting.**
+pretrade_check returns LOW/MEDIUM/HIGH and historical WR. These are DATA, not sizing instructions. If YOU rated the setup as S-conviction in the block above, you enter at S-size (30% NAV). Period.
+
+The historical WR is already factored into the pretrade score. If you then separately discount for "WR=37%", you're counting the same risk twice. `pretrade=S(8)→sized_down` is the pattern that cost 6,740-13,140 JPY in 3/20-4/3.
+
+**What pretrade output DOES change:**
+- HIGH risk → recheck your conviction. If still S after re-checking → S-size
+- Pattern warning (e.g., "this pair/direction has 3-loss streak") → acknowledge in AGAINST field, don't change size
+- Headline risk → adjust SL/TP, not size
+
+**Rule 2: Minimum 2,000u per entry.**
+500u/700u/1000u entries lose money after spread. If conviction is too low for 2,000u, the trade isn't worth taking.
+
+**Rule 3: S/A conviction = market order. B = LIMIT.**
+S-conviction means you believe in this trade. Placing a pullback LIMIT "to save 3pip" risks missing a 20-50pip move entirely. S/A → hit the market NOW. B → LIMIT is fine, you're not sure anyway.
 
 ### S-Type determines hold time and TP:
 - **Scalp** (M1→M5→H1): 5-30 min, ATR×0.5-1.0
@@ -211,6 +240,14 @@ Units = (NAV × margin%) / (price / 25)
 - **Counter** (M5 against H1/H4): 5-30 min, ATR×0.3-0.7. **Goes against higher TF direction on purpose.** H4 is LONG but M5 is topping → SHORT scalp to BB mid. Size: B-max (5% NAV). TP at structural support (BB mid, Fib 38.2%). SL tight (M5 new high = thesis dead). **Counter-trades are normal. Holding only thesis-direction = leaving money on the table during pullbacks.**
 
 ## Position Management — 3 options, always
+
+### Anti-churn rule (4/7 lesson: AUD_JPY 3× close-reenter = 9.6pip spread burned for -778 JPY)
+
+**Before re-entering the same pair/direction within 3 sessions:**
+1. Is the new entry price BETTER than the previous close price?
+2. Is there a NEW reason (not the same thesis recycled)?
+
+Both must be YES. If not → you're buying back what you just sold, minus spread. Pick a different pair.
 
 For EACH open position when conditions change:
 
