@@ -134,18 +134,22 @@ def check_sizing(trades: list, nav: float) -> list[str]:
             recent_entries.append(line)
 
     for entry in recent_entries:
-        # Parse conviction and units
-        conv_match = re.search(r"pretrade=(\w+)\((\w)(\d*)\)", entry)
         units_match = re.search(r"(\d+)u", entry)
-        if not conv_match or not units_match:
+        if not units_match:
             continue
 
-        conviction_letter = conv_match.group(2) if conv_match.group(2) in "SABC" else None
-        if not conviction_letter:
-            # Try format like "pretrade=S(9)"
-            conv_match2 = re.search(r"pretrade=([SABC])\((\d+)\)", entry)
-            if conv_match2:
-                conviction_letter = conv_match2.group(1)
+        # Parse conviction letter from various formats:
+        #   pretrade=S(9), pretrade=A(7), pretrade=S(8)LOW, pretrade=HIGH(B), pretrade=LOW(S9)
+        conviction_letter = None
+        # Format 1: pretrade=LETTER(number) — e.g. S(9), A(7), B(5)
+        m = re.search(r"pretrade=([SABC])\(\d+\)", entry)
+        if m:
+            conviction_letter = m.group(1)
+        else:
+            # Format 2: pretrade=WORD(LETTER...) — e.g. HIGH(B), LOW(S9)
+            m = re.search(r"pretrade=\w+\(([SABC])\d*\)", entry)
+            if m:
+                conviction_letter = m.group(1)
         if not conviction_letter:
             continue
 
@@ -164,10 +168,19 @@ def check_sizing(trades: list, nav: float) -> list[str]:
         if not pair_match:
             continue
         pair = pair_match.group(1)
-        # Estimate margin per unit
-        price_est = 150 if "JPY" in pair else 1.2
+        # Estimate margin per unit (JPY terms, leverage=25)
+        # For XXX_JPY: margin = price_JPY / 25
+        # For XXX_USD: margin = price_USD * USD_JPY / 25 ≈ price * 155 / 25
         leverage = 25
-        margin_per_unit = price_est / leverage
+        if "JPY" in pair:
+            price_est = 150  # approximate JPY pair price
+            margin_per_unit = price_est / leverage
+        else:
+            # EUR_USD, GBP_USD, AUD_USD — base currency value in JPY
+            # EUR ≈ 170JPY, GBP ≈ 195JPY, AUD ≈ 100JPY
+            base_jpy = {"EUR_USD": 170, "GBP_USD": 195, "AUD_USD": 100}
+            price_jpy = base_jpy.get(pair, 155)
+            margin_per_unit = price_jpy / leverage
         actual_margin = units * margin_per_unit
         actual_pct = actual_margin / nav if nav > 0 else 0
 
