@@ -156,7 +156,8 @@ When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
 - Every LIMIT must have **TP + SL on fill** — you won't be watching when it triggers
 - **GTD = 2-4 hours.** Don't leave stale limits indefinitely
 - **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
-- **"Screening failed" / "binary risk" / "waiting for confirmation" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong
+- **Thin market / holiday ≠ "no entries."** Thin market affects SL design (wider or none), NOT entry decisions. If you entered EUR_JPY with a market order on Easter Monday, you can enter GBP_JPY too. Thin market = adjust protection, not stop trading.
+- **"Screening failed" / "binary risk" / "waiting for confirmation" / "thin liquidity" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong
 
 ```
 Idle margin LIMITs (placed this session):
@@ -487,13 +488,23 @@ If there's a user message in Slack, handle it before making trade decisions. Ign
 
 ## Watch the spread
 
-| Target | 0.8pip | 1.5pip | 3.0pip |
-|------|--------|--------|--------|
-| 20pip | 4%✅ | 8%✅ | 15%⚠️ |
-| 12pip | 7%✅ | 13%⚠️ | 25%❌ |
-| 7pip | 11%⚠️ | 21%❌ | 43%❌ |
+**Normal spreads per pair (these are NOT "wide" — they're the cost of doing business):**
 
-Over 20% → reduce size or skip. Over 30% → no entry.
+| Pair | Normal Sp | Pair | Normal Sp |
+|------|-----------|------|-----------|
+| USD_JPY | 0.8pip | EUR_JPY | 1.8-2.2pip |
+| EUR_USD | 0.8pip | GBP_JPY | 2.5-3.2pip |
+| GBP_USD | 1.3pip | AUD_JPY | 1.6pip |
+| AUD_USD | 1.4pip | | |
+
+**"Spread too wide" means ABOVE the normal range, not the normal range itself.** GBP_JPY at 2.8pip is normal, not wide. GBP_JPY at 5.0pip is wide.
+
+**Spread check = spread / TP target:**
+- Under 20% → full size
+- 20-30% → reduce size
+- Over 30% → no entry
+
+**S-conviction candidates (🎯) cannot be passed on spread alone** if spread is within the normal range for that pair. The spread is a constant cost — if the setup is S, the expected move covers it.
 
 ## Most Important: Read the market and make money
 

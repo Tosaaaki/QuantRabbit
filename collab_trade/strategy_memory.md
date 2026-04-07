@@ -26,6 +26,7 @@
 - **マージン極限で新規ペア追加 → クローズアウト** (3/26 EUR_JPY追加→全ポジ強制決済)
 - **薄商い(祝日/GoodFriday)のタイトSL = 全部狩られる** (4/3: EUR_USD trail 11pip, GBP_USD trail 15pip, AUD_USD SL 10pip → 全滅 -984円。テーゼは全部正解だった)
 - **S-convictionをB-sizeで入る = 最大の機会損失**: 3/20-4/3で7回。6,740-13,140JPY失った。pretrade WR数字でビビってsized_down。二重割引するな
+- **連敗サーキットブレーカーは同方向のみ**: AUD_JPY SHORT 4連敗 ≠ AUD_JPY LONG禁止。SHORTの連敗はLONGに無関係。方向ごとに判断しろ
 
 ## Active Observations（検証中 — daily-reviewが追記する）
 

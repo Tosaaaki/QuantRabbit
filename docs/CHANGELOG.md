@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-08 — Fix false PASS excuses: spread normalization + thin market ≠ no entry
+
+**Problem**: Trader passed on GBP_JPY Squeeze-S (H1 ADX=33 + M5 squeeze + M1 confirmed) because "spread 2.8pip too wide." But 2.8pip IS GBP_JPY's normal spread. Also passed on AUD_JPY LONG because "4-SHORT-loss circuit breaker" — but S-scan detected LONG, not SHORT. Also wrote "Easter Monday thin liquidity" as reason for zero LIMITs while simultaneously holding a market-ordered EUR_JPY LONG.
+
+**Fix (3 changes)**:
+1. **SKILL_trader.md**: Added normal spread reference table. "Wide" means above normal range, not the normal range itself. S-candidates can't be passed on spread within normal range
+2. **SKILL_trader.md**: Added "Thin market ≠ no entries" — thin market affects SL design, not entry decisions
+3. **strategy_memory.md**: Added "circuit breaker is same-direction only" to Confirmed Patterns
+
+**Files changed**: `docs/SKILL_trader.md`, `collab_trade/strategy_memory.md`, `docs/CHANGELOG.md`
+
 ## 2026-04-08 — S-Conviction Scanner: auto-detect TF × indicator patterns
 
 **Problem**: Trader sees individual indicators (H4 StRSI=1.0, H1 CCI=200, M5 StRSI=0.0) as separate data points and rates B+. But as a CROSS-TF PATTERN, this is textbook S-conviction counter. EUR_JPY had 6 extreme markers and was entered at 700u (0.3% NAV).
