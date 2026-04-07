@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-08 — Fix remaining PASS excuses: circuit breaker direction + spread/S-Type mismatch
+
+**Problem**: Despite previous fixes, trader still blocking entries:
+1. AUD_JPY LONG Momentum-S + Squeeze-S (double S!) blocked by "SHORT circuit breaker" — rule says direction-only but trader applying to both
+2. GBP_JPY Momentum-S blocked by "spread 2.8pip too wide for scalp" — but Momentum-S is NOT a scalp. TP=10-15pip, spread=19-28% = fine
+
+**Fix**:
+1. **SKILL_trader.md**: Added explicit "Circuit breaker is DIRECTION-ONLY" section with example
+2. **SKILL_trader.md**: Added "Match S-Type to spread" — Momentum-S recipe = Momentum hold time/TP, not scalp
+
+**Files changed**: `docs/SKILL_trader.md`, `docs/CHANGELOG.md`
+
 ## 2026-04-08 — Fix false PASS excuses: spread normalization + thin market ≠ no entry
 
 **Problem**: Trader passed on GBP_JPY Squeeze-S (H1 ADX=33 + M5 squeeze + M1 confirmed) because "spread 2.8pip too wide." But 2.8pip IS GBP_JPY's normal spread. Also passed on AUD_JPY LONG because "4-SHORT-loss circuit breaker" — but S-scan detected LONG, not SHORT. Also wrote "Easter Monday thin liquidity" as reason for zero LIMITs while simultaneously holding a market-ordered EUR_JPY LONG.

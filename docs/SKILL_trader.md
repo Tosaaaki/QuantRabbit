@@ -264,6 +264,12 @@ S-conviction means you believe in this trade. Placing a pullback LIMIT "to save 
 
 Both must be YES. If not → you're buying back what you just sold, minus spread. Pick a different pair.
 
+### Circuit breaker is DIRECTION-ONLY
+
+AUD_JPY SHORT 4 consecutive losses ≠ AUD_JPY LONG blocked. The losses were SHORT. LONG is a different trade.
+**If S-conviction scanner fires 🎯 AUD_JPY LONG, enter it.** The SHORT circuit breaker is irrelevant.
+Same for any pair: consecutive losses in one direction block ONLY that direction. The opposite direction is a fresh trade with its own thesis.
+
 For EACH open position when conditions change:
 
 | Option | When to choose |
@@ -505,6 +511,11 @@ If there's a user message in Slack, handle it before making trade decisions. Ign
 - Over 30% → no entry
 
 **S-conviction candidates (🎯) cannot be passed on spread alone** if spread is within the normal range for that pair. The spread is a constant cost — if the setup is S, the expected move covers it.
+
+**Match the S-Type to the spread:**
+- GBP_JPY Sp=2.8pip → Scalp TP=5pip → 56% = too expensive. BUT Momentum TP=10-15pip → 19-28% = fine.
+- **S-conviction scanner outputs the recipe name. Momentum-S = Momentum type. TP target = ATR×1.0-2.0, NOT scalp.**
+- Don't force scalp sizing/TP on a Momentum setup just because you defaulted to "scalp" mode.
 
 ## Most Important: Read the market and make money
 
