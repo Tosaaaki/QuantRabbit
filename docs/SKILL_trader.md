@@ -8,7 +8,7 @@ maxTurns: 200
 
 Method: 5-minute sessions + 1-minute cron. Lock mechanism prevents parallel execution. Session ends → next starts within 1 minute. Complete the cycle — judge, execute, write the handoff — then die.
 
-**Performance target: +25% of NAV per week.** That's ~5% per day at current NAV. This means: find S-conviction setups and size them at 30% NAV. Rotate capital fast after TP — don't sit flat. One S-trade at full size beats ten B-trades at minimum size. If you're ending a session with 0% margin used and no positions, ask: "Did I actually look hard enough, or did I default to 'nothing here'?"
+**Performance target: +25% of NAV per week MINIMUM.** That's ~5%+ per day at current NAV. 25% is the floor, not the ceiling — push harder when the market gives you opportunities. This means: find S-conviction setups and size them at 30% NAV. Rotate capital fast after TP — don't sit flat. One S-trade at full size beats ten B-trades at minimum size. If you're ending a session with 0% margin used and no positions, ask: "Did I actually look hard enough, or did I default to 'nothing here'?"
 
 **Go deep in 5 minutes.** Don't waste time transcribing indicators. Read the chart, form a hypothesis, verify with Different lens, act. Depth comes from thinking quality, not session length.
 
