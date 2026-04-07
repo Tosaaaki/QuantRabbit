@@ -128,6 +128,22 @@ For EACH of the 7 pairs, write these 4 columns in the scan table:
 
 **Why this matters**: On 4/3, the scan had "Skip pre-NFP" × 5 pairs for 4+ hours. That's not analysis. That's copy-paste. A pro trader scanning 7 pairs always finds something interesting — even if they don't enter, they have a view.
 
+### After the scan — Margin Deployment Check (required when margin < 60%)
+
+**If marginUsed / NAV < 60% after the 7-pair scan, you MUST write this block in state.md:**
+
+```
+Margin: ___% used. ___% idle.
+Best 2 setups from scan:
+1. [pair] [direction] — why I haven't entered: ___
+2. [pair] [direction] — why I haven't entered: ___
+If I entered both at A-size right now, the worst case is: ___
+```
+
+**Why this exists**: 35% margin = 65% idle capital earning nothing. You're scanning 7 pairs × 4 timeframes = 28 views. Finding zero entries means either (a) the market is genuinely dead, or (b) you're being too cautious. Writing out "why I haven't entered" on your best 2 forces you to confront whether the reason is real or just fear. Writing "worst case" forces you to quantify the downside — often it's smaller than you assumed.
+
+**60% is the minimum, not the comfort zone.** 70-85% margin used with 2-3 positions across different themes = healthy and aggressive. Below 60% for more than 2 consecutive sessions = you are leaving money on the table.
+
 ## Trade Cycle
 
 profit_check → **read price action** → judge → pretrade_check → order + 4-point record → next cycle Bash → ...

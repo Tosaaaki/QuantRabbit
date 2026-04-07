@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-07 — Margin Deployment Check: forced output when margin < 60%
+
+Added required output block to SKILL_trader.md 7-Pair Scan section. When margin < 60%, trader must write: best 2 setups, why not entered, and worst-case if entered both. Forces confrontation with idle capital instead of defaulting to "nothing here." 60% is the minimum, 70-85% is healthy and aggressive.
+
 ## 2026-04-07 — Weekly +25% NAV performance target added to trader prompt
 
 Added performance target to SKILL_trader.md: +25% of NAV per week (~5%/day). Placed in the prompt (not state.md) so it persists across sessions and isn't overwritten. Framed as a self-question ("did I look hard enough?") rather than a rule, per prompt design principles.
