@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-07 — "I would enter at price X" → must place LIMIT ORDER
+
+**Problem**: Trader writes "LONG if pulls back to 1.1535" in scan but never places a limit order. Next session, conditions change, writes new "if..." plan. Endless waiting loop. Margin stays idle.
+
+**Fix**: In 7-pair scan column 2, if the entry trigger names a price → it's a limit order. Place it now. "Writing a price without placing a limit = leaving money on the table." Added ❌ example of "wish without limit" and ✅ example of "limit placed with id."
+
 ## 2026-04-07 — Fix stale state.md: freshness check + mandatory update enforcement
 
 **Problem**: state.md was stuck on 4/4 data while trader actively traded on 4/7 (17+ trades, add-ons, SL modifications). Next sessions read 3-day-old positions/thesis/scan = blind trading. Root cause: "update state.md" was a rule (ignorable), not enforced in output or tooling.

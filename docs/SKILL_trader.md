@@ -111,10 +111,14 @@ For EACH of the 7 pairs, write these 4 columns in the scan table:
    - ❌ "H1 ADX=34 DI+=23 DI-=10 StRSI=0.44" — this is a data dump, not a read
    - ✅ "Grinding higher in small bodies, slowing down near 0.692 resistance" — this is reading the chart
 
-2. **"I would enter if..."** — a specific condition, direction, and price
+2. **"I would enter if..."** — a specific condition, direction, and price. **If the entry trigger is a price level, place a LIMIT ORDER right now.**
    - ❌ "Skip" / "Skip pre-NFP" / "Watch" — these are non-decisions
-   - ✅ "LONG if M5 closes above 0.6920 with body > 3pip" — this is a trade plan
-   - ✅ "Nothing. H4 overbought + H1 div + spread 3.7pip = genuinely no setup" — this is a real decision with reasons
+   - ❌ "LONG if pulls back to 1.1535" (and then you don't place a limit) — this is a wish, not a plan
+   - ✅ "LONG if M5 closes above 0.6920 with body > 3pip" — condition-based, needs live monitoring (OK to wait)
+   - ✅ "LONG at 1.1535 → **LIMIT PLACED** id=466xxx TP=1.1570 SL=1.1510" — price-based, limit deployed (capital working between sessions)
+   - ✅ "Nothing. H4 overbought + H1 div + spread 3.7pip = genuinely no setup" — real decision with reasons
+
+   **The rule**: If your "I would enter if..." names a price → it's a limit order. Place it. Your session is 5 minutes but the market moves 24 hours. Writing "enter at 1.1535" and NOT placing a limit = leaving money on the table until the next session, when the price may have already passed through and come back.
 
 3. **MTF counter-trade** — check if a higher TF is overextended, and if so, what the short-term reversal trade looks like
    - Format: `___TF is overextended (StRSI/CCI/Div) → ___ if ___`
