@@ -60,12 +60,16 @@ def section(title):
 def main():
     t0 = time.time()
 
-    # Parse args
+    # Parse args — last_slack_ts from CLI or auto-read from file
     last_slack_ts = ""
     if "--state-ts" in sys.argv:
         idx = sys.argv.index("--state-ts")
         if idx + 1 < len(sys.argv):
             last_slack_ts = sys.argv[idx + 1]
+    if not last_slack_ts:
+        ts_file = ROOT / "logs" / ".slack_last_read_ts"
+        if ts_file.exists():
+            last_slack_ts = ts_file.read_text().strip()
 
     cfg = load_config()
     token = cfg["oanda_token"]

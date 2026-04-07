@@ -38,15 +38,30 @@ def read_messages(channel_id=None, limit=10, after=None):
 
     return resp.get('messages', [])
 
-def format_messages(messages):
+def format_messages(messages, show_ts=False):
     from datetime import datetime
     lines = []
     for msg in reversed(messages):
-        ts = datetime.fromtimestamp(float(msg['ts']))
+        ts_val = msg['ts']
+        ts_dt = datetime.fromtimestamp(float(ts_val))
         user = msg.get('user', msg.get('bot_id', 'unknown'))
         text = msg.get('text', '')
-        lines.append(f"[{ts:%H:%M:%S}] {user}: {text}")
+        if show_ts:
+            lines.append(f"[{ts_dt:%H:%M:%S}] (ts={ts_val}) {user}: {text}")
+        else:
+            lines.append(f"[{ts_dt:%H:%M:%S}] {user}: {text}")
     return '\n'.join(lines)
+
+
+def update_last_read_ts(messages):
+    """Write the latest message ts to logs/.slack_last_read_ts for session_data.py."""
+    if not messages:
+        return
+    latest_ts = max(msg['ts'] for msg in messages)
+    ts_file = os.path.join(os.path.dirname(__file__), '..', 'logs', '.slack_last_read_ts')
+    os.makedirs(os.path.dirname(ts_file), exist_ok=True)
+    with open(ts_file, 'w') as f:
+        f.write(latest_ts)
 
 if __name__ == '__main__':
     import argparse
@@ -71,4 +86,8 @@ if __name__ == '__main__':
     if args.json:
         print(json.dumps(messages, ensure_ascii=False, indent=2))
     else:
-        print(format_messages(messages))
+        print(format_messages(messages, show_ts=args.user_only))
+
+    # Auto-update last read ts so next session doesn't re-fetch these messages
+    if messages:
+        update_last_read_ts(messages)

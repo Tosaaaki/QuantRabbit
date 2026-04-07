@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Post a message to a Slack channel (urllib version)
-Usage: python3 tools/slack_post.py "message" [--channel CHANNEL_ID] [--thread TS]
+Usage: python3 tools/slack_post.py "message" [--channel CHANNEL_ID] [--thread TS] [--reply-to TS]
 """
 import urllib.request, json, sys, os
 
@@ -50,8 +50,33 @@ if __name__ == '__main__':
     parser.add_argument('message', type=str, help='Message to post')
     parser.add_argument('--channel', type=str, default=None)
     parser.add_argument('--thread', type=str, default=None, help='Thread ts')
+    parser.add_argument('--reply-to', type=str, default=None, dest='reply_to',
+                        help='User message ts being replied to (dedup: skip if already replied)')
     args = parser.parse_args()
+
+    # --- Dedup gate: skip if we already replied to this user message ---
+    if args.reply_to:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from slack_dedup import is_already_replied, mark_replied, check_recent_post_cooldown, log_post
+        if is_already_replied(args.reply_to):
+            print(f"SKIP_DEDUP: already replied to ts={args.reply_to}")
+            sys.exit(0)
+
+    channel = args.channel or load_config().get('slack_channel_id', '')
+
+    # --- Content cooldown: skip if near-identical message was posted recently ---
+    if args.reply_to:
+        dup_ago = check_recent_post_cooldown(args.message, channel)
+        if dup_ago:
+            print(f"SKIP_COOLDOWN: similar message posted {dup_ago}")
+            sys.exit(0)
 
     result = post_message(args.message, channel_id=args.channel, thread_ts=args.thread)
     ts = result.get('ts', '')
+
+    # --- Record reply so future sessions don't duplicate ---
+    if args.reply_to:
+        mark_replied(args.reply_to)
+        log_post(args.message, channel)
+
     print(f"OK: posted (ts={ts})")
