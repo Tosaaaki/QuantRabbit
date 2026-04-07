@@ -219,6 +219,25 @@ If I'm wrong: ___ [the scenario where this trade loses, and at what price]
 
 **When 🎯 fires and you still write B-conviction, you must explain which part of the recipe fails.**
 
+### Margin gate (BEFORE conviction block — mandatory)
+
+**Calculate margin BEFORE writing the conviction block. Not after.**
+
+```
+Current: marginUsed=___JPY / NAV=___JPY = ___%
+This entry: ___u × (price/25) = ___JPY margin
+After entry: ___JPY / ___JPY = ___% ← must be below 85%
+Pending LIMITs if filled: +___JPY → worst case ___%  ← must be below 90%
+```
+
+| After-entry margin | Rule |
+|-------------------|------|
+| **Below 85%** | OK. Proceed to conviction block |
+| **85-90%** | Only if S-conviction AND no pending LIMITs that could fill |
+| **Above 90%** | **BLOCKED. Do not enter.** Free margin first (TP/cancel LIMIT/half-close) |
+
+**4/8 lesson: EUR_JPY + EUR_USD + GBP_JPY stacked to 97% → forced EUR_JPY close at -319 JPY. The loss was caused by margin mismanagement, not market conditions. Calculate BEFORE entering.**
+
 ### Sizing (conviction determines size — calculate fresh every entry)
 
 Units = (NAV × margin%) / (price / 25)
@@ -229,8 +248,6 @@ Units = (NAV × margin%) / (price / 25)
 | **A** | **~15%** |
 | **B** | **~5%** |
 | **C** | **Don't enter.** Not worth the spread. Wait for something better. |
-
-**Before every entry: marginUsed + new margin must stay below NAV × 0.90.**
 
 ### Sizing discipline — the 3 rules that matter most
 
@@ -247,8 +264,17 @@ The historical WR is already factored into the pretrade score. If you then separ
 **Rule 2: Minimum 2,000u per entry.**
 500u/700u/1000u entries lose money after spread. If conviction is too low for 2,000u, the trade isn't worth taking.
 
-**Rule 3: S/A conviction = market order. B = LIMIT.**
-S-conviction means you believe in this trade. Placing a pullback LIMIT "to save 3pip" risks missing a 20-50pip move entirely. S/A → hit the market NOW. B → LIMIT is fine, you're not sure anyway.
+**Rule 3: Market order vs LIMIT — decide by MARKET CONDITIONS, not just conviction.**
+
+| Condition | Order type | Why |
+|-----------|-----------|-----|
+| S/A conviction + normal liquidity + M5 at extreme NOW | Market order | The setup is here. Missing it costs more than spread |
+| S/A conviction + thin market (holiday/early Asian) | **LIMIT at M5 BB mid or recent wick level** | Thin market = wider spread + slippage. LIMIT saves 3-5pip on a 15pip target |
+| S/A conviction + M5 NOT at extreme (mid-range) | **LIMIT at M5 BB edge / structural support** | Don't chase mid-range. Wait for the dip |
+| B conviction | LIMIT always | Not sure enough to pay market spread |
+
+**4/8 Easter Monday: EUR_USD 4000u and GBP_JPY 3900u entered via market order in thin liquidity. LIMIT at M5 support would have saved 5-10pip of entry cost.**
+**A wrong LIMIT costs nothing (cancel next session). A bad market fill in thin liquidity costs real money.**
 
 ### S-Type determines hold time and TP:
 - **Scalp** (M1→M5→H1): 5-30 min, ATR×0.5-1.0

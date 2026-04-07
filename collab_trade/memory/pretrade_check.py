@@ -452,7 +452,7 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
         "S": "8000-10000u (iron-clad. size up)",
         "A": "5000-8000u (high conviction. trade it properly)",
         "B": "2000-3000u (conservative)",
-        "C": "1000u or less (weak basis. pass recommended)",
+        "C": "1000u or less (weak basis — data suggests caution, you decide)",
     }
 
     return {
@@ -461,7 +461,126 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
         "wave": wave,
         "details": details,
         "sizing": sizing[grade],
+        "counter_note": None,
         "mtf_aligned": aligned_count,
+    }
+
+
+def assess_counter_trade(pair: str, direction: str) -> dict:
+    """
+    Evaluate a COUNTER-TRADE: M5 trade against H4/H1 direction.
+
+    Counter-trades have fundamentally different evaluation axes:
+    - H4 extreme is FOR (not against) — the more extreme, the better
+    - MTF alignment is irrelevant (counter = by definition against upper TF)
+    - M5 reversal signal is the timing trigger
+    - Macro opposition is expected (counter = against macro)
+
+    Score 0-8 → B+ (4+) / B (2-3) / C (0-1)
+    Counter-trades are ALWAYS capped at B-max size (5% NAV).
+    """
+    tfs = _load_technicals(pair)
+    h4 = tfs.get("H4", {})
+    h1 = tfs.get("H1", {})
+    m5 = tfs.get("M5", {})
+
+    score = 0
+    details = []
+    is_long = direction == "LONG"
+
+    # --- 1. H4 Extreme (0-3) — the core of a counter-trade ---
+    if h4:
+        h4_stoch = h4.get("stoch_rsi", 0.5)
+        h4_cci = h4.get("cci", 0)
+        h4_rsi = h4.get("rsi", 50)
+
+        # Counter-LONG needs H4 oversold; Counter-SHORT needs H4 overbought
+        if is_long:
+            extreme = (h4_stoch <= 0.05) or (h4_cci < -200) or (h4_rsi < 30)
+            moderate = (h4_stoch <= 0.15) or (h4_cci < -100) or (h4_rsi < 35)
+        else:
+            extreme = (h4_stoch >= 0.95) or (h4_cci > 200) or (h4_rsi > 70)
+            moderate = (h4_stoch >= 0.85) or (h4_cci > 100) or (h4_rsi > 65)
+
+        if extreme:
+            score += 3
+            details.append(f"H4 extreme (StRSI={h4_stoch:.2f} CCI={h4_cci:.0f} RSI={h4_rsi:.0f}) +3 ← strong counter zone")
+        elif moderate:
+            score += 1
+            details.append(f"H4 moderate (StRSI={h4_stoch:.2f} CCI={h4_cci:.0f}) +1")
+        else:
+            details.append(f"H4 not extreme (StRSI={h4_stoch:.2f}) +0 ← no counter-trade basis")
+    else:
+        details.append("H4 data unavailable +0")
+
+    # --- 2. H1 Divergence or Fatigue (0-2) — confirmation ---
+    if h1:
+        div_rsi = h1.get("div_rsi_score", 0)
+        div_macd = h1.get("div_macd_score", 0)
+        h1_cci = h1.get("cci", 0)
+        has_div = div_rsi > 0 or div_macd > 0
+        has_cci_extreme = (is_long and h1_cci < -200) or (not is_long and h1_cci > 200)
+
+        if has_div and has_cci_extreme:
+            score += 2
+            details.append(f"H1 divergence + CCI extreme ({h1_cci:.0f}) +2 ← reversal confirmed")
+        elif has_div or has_cci_extreme:
+            score += 1
+            details.append(f"H1 {'divergence' if has_div else f'CCI={h1_cci:.0f}'} +1")
+        else:
+            details.append(f"H1 no reversal signal +0")
+
+    # --- 3. M5 Reversal Signal (0-2) — timing ---
+    if m5:
+        m5_stoch = m5.get("stoch_rsi", 0.5)
+        m5_macd_h = m5.get("macd_hist", 0)
+
+        # Counter-LONG: M5 was oversold and MACD turning up
+        # Counter-SHORT: M5 was overbought and MACD turning down
+        if is_long:
+            reversal = m5_stoch < 0.2 or m5_macd_h > 0
+            timing = m5_stoch < 0.3
+        else:
+            reversal = m5_stoch > 0.8 or m5_macd_h < 0
+            timing = m5_stoch > 0.7
+
+        if reversal and timing:
+            score += 2
+            details.append(f"M5 reversal confirmed (StRSI={m5_stoch:.2f} MACD_H={m5_macd_h:.5f}) +2")
+        elif reversal or timing:
+            score += 1
+            details.append(f"M5 partial signal (StRSI={m5_stoch:.2f}) +1")
+        else:
+            details.append(f"M5 no reversal yet (StRSI={m5_stoch:.2f}) +0 ← wait for timing")
+
+    # --- 4. Spread vs counter-trade target (0 to -1) ---
+    spread_pip = _get_current_spread(pair)
+    counter_target = 8  # counter-trades target 5-10pip, use 8 as reference
+    if spread_pip is not None:
+        spread_ratio = spread_pip / counter_target
+        if spread_ratio > 0.25:
+            score -= 1
+            details.append(f"Spread={spread_pip:.1f}pip ({spread_ratio:.0%} of {counter_target}pip) -1 ← too wide for counter")
+        else:
+            details.append(f"Spread={spread_pip:.1f}pip ({spread_ratio:.0%} of {counter_target}pip) OK")
+
+    # --- Grade (counter trades cap at B+) ---
+    score = max(0, score)
+    if score >= 5:
+        grade = "B+"
+        sizing = "2000-3000u (strong counter setup — B-max)"
+    elif score >= 3:
+        grade = "B"
+        sizing = "1500-2000u (valid counter — standard B)"
+    else:
+        grade = "C"
+        sizing = "skip — counter conditions not met"
+
+    return {
+        "grade": grade,
+        "score": score,
+        "details": details,
+        "sizing": sizing,
     }
 
 
@@ -474,6 +593,7 @@ def assess_risk(
     headline: str = None,
     regime: str = None,
     wave: str = "auto",
+    counter: bool = False,
 ) -> dict:
     """Overall risk + setup quality assessment"""
     conn = get_conn()
@@ -553,7 +673,12 @@ def assess_risk(
     past_outcomes = _past_pretrade_outcomes(conn, pair, direction, level)
 
     # 6b. Setup Quality Assessment (forward-looking)
-    setup = assess_setup_quality(pair, direction, wave=wave)
+    if counter:
+        setup = assess_counter_trade(pair, direction)
+        setup["is_counter"] = True
+    else:
+        setup = assess_setup_quality(pair, direction, wave=wave)
+        setup["is_counter"] = False
 
     result = {
         "pair": pair,
@@ -615,21 +740,32 @@ def format_check(result: dict) -> str:
     level = result["risk_level"]
     setup = result.get("setup_quality", {})
     grade = setup.get("grade", "?")
-    q_score = setup.get("quality_score", 0)
+    is_counter = setup.get("is_counter", False)
 
-    grade_icon = {"S": "🔥", "A": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
-    risk_icon = {"HIGH": "🚨", "MEDIUM": "⚠️", "LOW": "✅"}[level]
+    if is_counter:
+        q_score = setup.get("score", 0)
+        grade_icon = {"B+": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
 
-    # Main header: conviction is most important (determines sizing)
-    wave_label = {"big": "big wave", "mid": "mid wave", "small": "small wave"}.get(setup.get("wave", "?"), "?")
-    lines.append(f"{grade_icon} Conviction: {grade} (score={q_score}) | Risk: {level} (score={result['risk_score']}) | Wave: {wave_label}")
-    lines.append(f"   {result['pair']} {result['direction']} → {setup.get('sizing', '?')}")
-    lines.append("")
+        lines.append(f"🔄 COUNTER-TRADE | {grade_icon} Grade: {grade} (score={q_score}/8) | Risk: {level} (score={result['risk_score']})")
+        lines.append(f"   {result['pair']} {result['direction']} (M5 against H4/H1) → {setup.get('sizing', '?')}")
+        lines.append("")
+        lines.append("📐 Counter-trade evaluation (inverted axes — H4 extreme = FOR):")
+        for detail in setup.get("details", []):
+            lines.append(f"  {detail}")
+    else:
+        q_score = setup.get("quality_score", 0)
+        grade_icon = {"S": "🔥", "A": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
 
-    # Setup quality details
-    lines.append("📐 Setup quality:")
-    for detail in setup.get("details", []):
-        lines.append(f"  {detail}")
+        # Main header: conviction is most important (determines sizing)
+        wave_label = {"big": "big wave", "mid": "mid wave", "small": "small wave"}.get(setup.get("wave", "?"), "?")
+        lines.append(f"{grade_icon} Conviction: {grade} (score={q_score}) | Risk: {level} (score={result['risk_score']}) | Wave: {wave_label}")
+        lines.append(f"   {result['pair']} {result['direction']} → {setup.get('sizing', '?')}")
+        lines.append("")
+
+        # Setup quality details
+        lines.append("📐 Setup quality:")
+        for detail in setup.get("details", []):
+            lines.append(f"  {detail}")
     lines.append("")
 
     # Trade statistics
@@ -676,8 +812,10 @@ def format_check(result: dict) -> str:
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
-        print("Usage: python3 pretrade_check.py <PAIR> <LONG|SHORT> [--wave big|mid|small] [--adx N] [--headline TEXT] [--regime TYPE]")
+        print("Usage: python3 pretrade_check.py <PAIR> <LONG|SHORT> [--counter] [--wave big|mid|small] [--adx N] [--headline TEXT] [--regime TYPE]")
         print("Example: python3 pretrade_check.py GBP_USD SHORT --wave big")
+        print("Example: python3 pretrade_check.py EUR_JPY SHORT --counter")
+        print("  --counter: evaluate as counter-trade (M5 against H4/H1 direction)")
         print("  --wave: big=H4/H1 swing, mid=M5 trade, small=M1 scalp, auto=auto-detect (default)")
         sys.exit(1)
 
@@ -688,9 +826,12 @@ if __name__ == "__main__":
     headline = None
     regime = None
     wave = "auto"
+    counter_mode = False
     i = 3
     while i < len(sys.argv):
-        if sys.argv[i] == "--adx" and i + 1 < len(sys.argv):
+        if sys.argv[i] == "--counter":
+            counter_mode = True; i += 1
+        elif sys.argv[i] == "--adx" and i + 1 < len(sys.argv):
             adx = float(sys.argv[i + 1]); i += 2
         elif sys.argv[i] == "--headline" and i + 1 < len(sys.argv):
             headline = sys.argv[i + 1]; i += 2
@@ -701,5 +842,8 @@ if __name__ == "__main__":
         else:
             i += 1
 
-    result = assess_risk(pair, direction, adx=adx, headline=headline, regime=regime, wave=wave)
+    if counter_mode:
+        result = assess_risk(pair, direction, adx=adx, headline=headline, regime=regime, wave=wave, counter=True)
+    else:
+        result = assess_risk(pair, direction, adx=adx, headline=headline, regime=regime, wave=wave)
     print(format_check(result))

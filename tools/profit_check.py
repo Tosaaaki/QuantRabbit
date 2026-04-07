@@ -70,7 +70,7 @@ def get_peak_from_state(pair: str) -> dict | None:
                 m = re.search(r'[+]?([\d,]+)円', line)
                 if m:
                     peak_info["peak_yen"] = float(m.group(1).replace(",", ""))
-                m2 = re.search(r'@([\d.]+)', line)
+                m2 = re.search(r'@([\d]+\.[\d]+)', line)
                 if m2:
                     peak_info["peak_price"] = float(m2.group(1))
     return peak_info if peak_info else None

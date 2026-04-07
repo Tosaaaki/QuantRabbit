@@ -1,59 +1,79 @@
-# Trader State — 2026-04-04
-**Last Updated**: ~15:40 UTC
+# Trader State — 2026-04-08
+**Last Updated**: 2026-04-07 23:15 UTC
+
+## Market Reading (M5 Price Action)
+1. Stronger: **Buyers (EUR/GBP/AUD vs USD)** — Iran ceasefire 2-week suspension confirmed. AUD(+0.99) EUR(+0.94) GBP(+0.78) vs USD(-0.70) JPY(-0.66). Risk-on.
+2. Phase: Late-stage acceleration. H4+H1+M5 StRSI=1.0 + M5 divergences across all USD pairs = exhaustion signals present. Extended above H4 BB uppers.
+3. Positions: 3 LONG (EUR_USD, GBP_USD, AUD_USD) + 1 LIMIT LONG (AUD_JPY pending at 111.70).
 
 ## Positions (Current)
-**FLAT — no open positions**
 
-## Realized P&L Today (2026-04-04)
-**0 JPY** (no trades today)
+### EUR_USD LONG (id=466834) — 5000u @1.16664
+- **Thesis**: EUR(+0.94) vs USD(-0.70) CS=1.64. Iran ceasefire + ECB hawkish + USD structurally weak.
+- **Basis**: H4+H1+M5 BULL MTF aligned. H1 ADX=34 DI+=48. M5 divergences (fatigue) present.
+- **Invalidation**: H1 DI- reversal or Iran escalation below 1.1600.
+- **TP**: 1.16940 (+15pip) | **Trail**: 20pip
+- **3-option**: C — Hold as-is. ATR 0.7×, MACD_H+ slope up, 15pip to TP.
+- **UPL**: ~+1,314 JPY (+12.4pip). **Peak**: 12.4pip.
 
-## Realized P&L Yesterday (2026-04-03)
-**-1,192 JPY** (EUR_USD -170, GBP_USD -146, AUD_JPY -338, AUD_USD -330, AUD_JPY -208)
+### GBP_USD LONG (id=466836) — 3000u @1.33725
+- **Thesis**: GBP(+0.78) vs USD(-0.70). H1 ADX=32 strong trend. USD weak theme.
+- **Basis**: H4+H1+M5 BULL. M5 ADX=49 = strong momentum. CS gap=1.48.
+- **Invalidation**: M5 momentum stalls, trail stop hit.
+- **TP**: 1.34100 (+19pip) | **Trail**: 20pip
+- **3-option**: C — Hold as-is. ATR 0.8×, 19pip to TP, MACD_H+ running.
+- **UPL**: ~+1,401 JPY (+18.4pip). **Peak**: 18.4pip.
 
-## Macro Context
-- **Tariff shock Stage 1 (Apr 5) LIVE**: 10% universal tariff on all imports — in effect now
-- **Tariff Stage 2 (Apr 9)**: Country-specific rates — China 34%, EU 20%, Japan 24%, Vietnam 46%. Market hasn't priced this yet.
-- **Retaliation risk**: Any weekend China/EU/Japan retaliation announcement = Monday gap accelerator
-- **Easter Monday Apr 6**: UK/EU markets closed — thin liquidity opening next week
-- **USD/JPY equilibrium**: NFP beat (+178K vs +60K) created USD bid, tariff risk-off created JPY bid. Net range at ~159.60.
-- **IEEPA Supreme Court**: Could invalidate all tariffs any day — binary gap risk
+### AUD_USD LONG (id=466844) — 5000u @0.70564
+- **Thesis**: AUD(+0.99) strongest, USD(-0.70) weakest. CS gap=1.69 = largest.
+- **Basis**: H1 ADX=33 DI+=47 BULL. Iran ceasefire = risk-on = AUD bid.
+- **Invalidation**: Iran escalation risk-off → AUD dump below 0.700.
+- **TP**: 0.71200 (wide aspirational) | **Trail**: 20pip (real protection)
+- **3-option**: C — Hold as-is. ATR 0.6×, Fib wave at start of new N-wave (AUD_USD Fib-3%).
+- **UPL**: ~+1,330 JPY (+11.6pip). **Peak**: 11.6pip.
 
-## Latest Cycle Judgment (15:44 UTC)
-Good Friday confirmed dead. Short-term bounce developing: GBP_USD/GBP_JPY/EUR_JPY M5 StRSI all hit 1.0. GBP_JPY bounced from 210.692 to 210.900 (Fib89%). AUD_USD/AUD_JPY still drifting lower (no bounce). USD_JPY extreme M5 squeeze still unresolved at 159.588.
+## Pending Orders
+NONE — AUD_JPY LIMIT cancelled (id=466847). Price 112.23 = 53pip above LIMIT 111.700 with bullish momentum; if it filled, it would require a 53pip collapse = thesis broken context.
 
-Key Monday setup: GBP/EUR M5 bounce exhausting at 1.0 StRSI in H4 bear trend → **SHORT at Monday bounce highs is high-probability if no weekend de-escalation news**. AUD pairs weak if China retaliation confirmed.
+## Directional Mix
+**3 LONG / 0 SHORT ⚠️ One-sided**
+- All positions: USD-weak + risk-on theme. Justified by Iran ceasefire macro.
+- Counter-trade assessed: H4 StRSI: USD_JPY=0.41, all others=1.0. USD_JPY LONG (bounce): H4 ADX=12 range = B only, margin 76.7% prevents adding. GBP_JPY/EUR_JPY SHORT: spreads 4.2pip/2.6pip too wide.
+- Conclusion: no valid counter-trade opportunity today.
 
-**FLAT through weekend.** GBP_JPY spread 5.1pip + thin market + user out = no entry today. Stage 2 tariffs Apr 9 + Easter Monday = gap risk.
+## Quality Audit Issues — Status
+- ✅ AUD_USD LONG: Entered (id=466844). Fixed.
+- ✅ AUD_JPY LIMIT: Placed then cancelled — price moved 53pip past LIMIT. H4 range + blow-off territory. Pass documented.
+- **EUR_JPY LONG**: PASS. Spread 2.6pip (above normal 2.2pip max). Margin 76.7% limits new entries to B-size only. Enter if: spread ≤2.2pip AND margin <70%.
+- **GBP_JPY LONG**: PASS. Spread 4.2pip (too wide vs normal 3.2pip max).
 
-Monday playbook:
-- Retaliation confirmed → SHORT AUD_JPY/AUD_USD (China 34% tariff double-exposure), conviction A
-- No retaliation → GBP_USD LONG on dip to 1.3200 (best G10 tariff position), conviction B
-- USD/JPY direction unclear until weekend news settles (news digest vs. actual price discrepancy — trust OANDA data)
+## 7-Pair Scan
 
-## 7-Pair Scan (15:33 UTC)
+### Tier 1 (held)
+EUR_USD, GBP_USD, AUD_USD — see Positions above.
 
-| Pair | Chart Reading | I would enter if... |
-|------|--------------|---------------------|
-| USD_JPY | H1 range squeeze (ADX=19, BBW=0.00115). M5 StRSI=0.73, consolidating 159.49-159.60. No directional conviction. | LONG Monday if M5 StRSI cools to <0.3 at 159.40-50 support. NFP beat supports USD but tariff caps upside. Monday watch. |
-| EUR_USD | M5 ADX=30 DI-=30 bear trend, but H1 StRSI=0.0 + CCI=-161. Grinding down 1.1522. Fib N-BEAR q=1.48 (strong structure). | Counter-trend LONG only if M5 double-bottom forms with body >2pip at 1.1510-15. Conviction B max. |
-| GBP_USD | M5 ADX=43 bear with M5 bullish divergence. H1 StRSI=0.0 + CCI=-211. Fresh new low 1.32000 at 15:05. Spread 1.3pip. | Not catching this knife. Wait for M5 to show 3 consecutive bullish bodies before touching. Monday fade bounce to 1.3220-30 SHORT if H4 bear intact. |
-| AUD_USD | H1+H4 divergence both. H1 StRSI=0.0 + CCI=-224. M5 bodies tiny (1-2pip). China 34% tariff = structural headwind. | Monday: needs 0.6880 hold + 2 consecutive bullish M5 bodies. China retaliation risk makes any AUD long dangerous over weekend. |
-| EUR_JPY | H1 StRSI=0.0, M5 ADX=44 strong bear. Range 183.86-183.92. Spread 1.7pip. M1 extreme squeeze (BBW=0.00010). | Pass. When M5 ADX fades below 30 + clear double-bottom Monday. Spread too wide for thin market bounces. |
-| GBP_JPY | Spread 3.8pip. H1 StRSI=0.0 + CCI=-171. M5 StRSI=0.0 with RSI+MACD bull divergence. Made new low 210.644 at 15:05. | No entry at 3.8pip spread. Monday when spread normalizes to <2pip and M5 shows clean bullish reversal. Best bounce candidate post-weekend. |
-| AUD_JPY | Most constructive. Three bullish candles 14:35-14:45, now consolidating 109.99-110.02. H1 StRSI=0.0 + H1 div. | LONG Monday if holds 109.80 + M5 2+ bullish candles. Target Fib 50% ~110.25. But China tariff headwind real. |
+### Tier 2 Quick Scan
+- **USD_JPY**: H1 StRSI=0.0 CCI=-298 extreme oversold. Sellers dominant M5 (making lower lows). H4 ADX=12 range. Bounce exists but H4 range = B conviction only. Enter LONG if: H4 ADX>20 AND H1 DI+ turn. Not now.
+- **EUR_JPY**: H4+H1+M5 BULL. Spread 2.6pip (slightly wide). I would enter LONG if: spread ≤2.2pip AND pullback to 184.80 (H1 EMA20). H1 MACD div=0.6(bear) = fatigue signal, caution.
+- **AUD_JPY**: H1 ADX=43 strong BULL. AUD strongest (+0.99). But price 112.23 = 112pip above H4 BB upper (111.106) = blow-off. LIMIT at 111.100 (H4 BB upper) if pullback comes. Spread 2.3pip normal.
+- **GBP_JPY**: H1 ADX=38 BULL. Spread 4.2pip too wide (normal max 3.2pip). Pass.
+
+## Capital Deployment
+```
+Current: marginUsed=91,415 / NAV=119,175 = 76.7%
+Available to 85% cap: ~9,884 JPY
+No new entries: all pairs 100pip+ above H4 BB upper. EUR_JPY spread 2.6pip still slightly wide.
+Idle LIMIT deployment: AUD_JPY @111.100 if meaningful pullback (currently 112pip away — not placing now)
+```
 
 ## Action Tracking
-- Continuous HOLD sessions: N/A (FLAT)
-- Last action: 2026-04-03 14:24 UTC — Closed AUD_JPY LONG @110.014 (-208 JPY)
-- Today confirmed P&L: 0 JPY
-- Next action trigger: **Monday 07:00 UTC London open** — scan for tariff retaliation gap direction, then re-enter in confirmed direction
+- Last action: 2026-04-07 23:15 UTC — AUD_JPY LIMIT id=466847 cancelled (53pip from LIMIT, unlikely to fill)
+- Today's confirmed P&L: 0 JPY (no closed trades per OANDA)
+- Next action trigger: EUR_USD TP@1.16940 OR GBP_USD TP@1.34100 OR trail hit → redeploy into EUR_JPY/AUD_JPY on spread normalization
 
 ## Lessons (Recent)
-- Good Friday 4/3: trail=11-15pip, SL=10pip all hunted. -984 JPY. Correct for thin market = no SL
-- 4/3 total: -1,192 JPY. SL hunts on thin market. Theses were correct.
-- Easter weekend + Stage 2 tariff April 9 = highest weekend gap risk in recent memory. FLAT is correct.
-- User (14:23 UTC Apr 4): "judge calmly, SL based on situation, thin market = hold OK, check news for weekend"
-- Replied 15:15 UTC: flat, tariff Stage 2 + retaliation risk = weekend holdover too risky, Monday London open is next entry window
-
-## Slack最終処理ts
-1775229908.923729
+- [4/8] BE SL trap: AUD_JPY +1,200 JPY → BE SL → +40 JPY. HALF TP always beats BE SL.
+- [4/8] Don't enter when price is 100pip above H4 BB upper. That's blow-off territory. LIMIT at pullback.
+- [4/8] Quality audit "S-candidate missed" requires entry OR documented pass reason. Both satisfy the audit.
+- [4/8] LIMIT at pullback: only makes sense if pullback TO LIMIT doesn't invalidate the thesis. AUD_JPY 53pip drop to 111.70 = thesis broken context. Cancel the LIMIT.
+- [4/8] profit_check.py bug: regex @([\d.]+) captured trailing period from state.md line. Fixed to @([\d]+\.[\d]+).

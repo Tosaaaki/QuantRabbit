@@ -259,9 +259,26 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
 
 ## Margin Management (capital efficiency is everything)
 
-**Make money with money. Don't leave margin sitting idle.**
+**Make money with money. Don't leave margin sitting idle. But calculate BEFORE you spend.**
 
-- **Below 60% = ask yourself if you're missing good setups**: If you're below 60% while being able to scan 7 pairs × all TFs simultaneously, look again more carefully. **But margin itself is not a reason to enter.** Enter as a result of reading the market
+### Pre-entry margin check (mandatory — before conviction block)
+
+**Every entry must include this calculation in the conviction block:**
+```
+Current margin: ___% | + this entry: ___JPY | + pending LIMITs: ___JPY | → worst case: ___%
+```
+
+| After-entry margin (incl. pending LIMITs) | Rule |
+|------------------------------------------|------|
+| **Below 85%** | OK |
+| **85-90%** | S-conviction only, no pending LIMITs that could push over 90% |
+| **Above 90%** | **BLOCKED. Free margin first.** |
+
+**4/8 lesson: 3 positions stacked without margin calculation → 97% → forced EUR_JPY close at -319 JPY. Pending AUD_USD LIMIT (31k) was ignored in calculation. Always include pending LIMIT margin in worst-case projection.**
+
+### Margin utilization targets
+
+- **Below 60% = ask yourself if you're missing good setups**: But margin itself is not a reason to enter. Enter as a result of reading the market
 - **Below 80% = still have room**: Actively look for additional entries
 - **Above 90% = no new positions**: Hedges only (margin = 0)
 - **Above 95% = forced half profit-take**: Immediately half-close the position with the largest unrealized loss
@@ -295,3 +312,5 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
 | **Binary position management (4/3)** | Only considered "trail or hold." Never evaluated "take profit now and re-enter post-NFP." In profit + event risk + thin market = cut and re-enter was the best play. **Always evaluate 3 options: adjust / cut-and-re-enter / hold-as-is** |
 | **BE SL as stealth HOLD (4/8)** | AUD_JPY +1,200 JPY peak → SL moved to BE (entry+1pip) → price reversed → +40 JPY. Skipped profit_check at ATR×1.0. "Zero capital risk" framing hid the real cost: giving back 1,160 JPY. **BE SL is not profit-taking. At ATR×1.0: HALF TP / FULL TP / trailing at ≥50% profit. No BE SL.** |
 | **TP missed by spread (4/8)** | AUD_JPY TP=111.100, bid peaked 111.096 (0.4pip short). Spread=2.4pip ate the fill. **Subtract spread from structural TP level. TP = level - spread for LONGs.** |
+| **Margin overflow → forced close = self-inflicted loss (4/8)** | EUR_JPY+EUR_USD+GBP_JPY stacked without margin calculation → 97% → EUR_JPY forced close at -319 JPY. Thesis was alive. **Calculate margin BEFORE entering. Include pending LIMITs in worst-case. Above 85% = stop adding.** |
+| **Market order in thin liquidity = giving away pips (4/8)** | Easter Monday: EUR_USD 4000u + GBP_JPY 3900u entered via market order in thin liquidity. Spread wider, slippage risk. **Thin market (holiday/early Asian) = LIMIT at M5 support, even for S-conviction.** |

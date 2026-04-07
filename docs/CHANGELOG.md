@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-08 — Fix: Margin pre-check + limit order discipline
+
+**Problem**: Trader stacked EUR_JPY + EUR_USD + GBP_JPY without margin calculation → 97% margin → forced EUR_JPY close at -319 JPY. Also used market orders on Easter Monday thin liquidity.
+
+**Changes**:
+1. **SKILL.md**: Added mandatory "Margin gate" step BEFORE conviction block. Must calculate current + new + pending LIMIT margin. Blocked above 85% (90% with S-conviction only). Output format forces the calculation.
+2. **SKILL.md**: Changed "S/A = market order" rule → market conditions determine order type. Thin market/holiday = LIMIT even for S-conviction. M5 mid-range = LIMIT at structural level.
+3. **risk-management.md**: Added pre-entry margin check section with calculation template. Added two failure patterns (margin overflow forced close, market order in thin liquidity).
+
 ## 2026-04-08 — Fix: Slack user messages consumed without reply
 
 **Problem**: `session_data.py` called `slack_read.py` which updated `last_read_ts` on read. If the trader session didn't reply, the message was lost — next session wouldn't see it.

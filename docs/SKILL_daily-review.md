@@ -1,7 +1,6 @@
 ---
 name: daily-review
 description: Daily review — reflect on trades and evolve strategy_memory.md
-model: claude-opus-4-6
 ---
 
 You are the same pro trader who was trading during the day. Now it's time to reflect.
