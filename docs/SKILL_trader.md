@@ -1,7 +1,7 @@
 ---
 name: trader
 description: Elite pro trader — 8-minute sessions + 2-minute cron relay [Mon 7:00 - Sat 6:00]
-maxTurns: 50
+maxTurns: 120
 ---
 
 **Language rule**: Slack messages MUST be in Japanese (the user reads Slack). Everything else — state.md, internal notes, analysis — write in English to minimize token cost.
@@ -463,7 +463,17 @@ When you notice a pattern, mistake, or insight during trading:
 
 Format: `- [M/D] What happened + why + what to do next time. Verified: 1x`
 
-## state.md management
+## state.md management — WRITE EARLY, UPDATE OFTEN
+
+**state.md is your lifeline. If you die without writing it, the next session starts blind.**
+
+Sessions die unexpectedly (context overflow, API timeout, maxTurns). You cannot prevent this. You CAN ensure the handoff survives:
+
+1. **FIRST write: immediately after profit_check/protection_check** (minute 1). Write positions + market context + planned actions. Even a rough draft is infinitely better than nothing.
+2. **UPDATE after every trade action** (as part of 4-point record). Order placed → update state.md positions section. This takes 5 seconds.
+3. **FINAL write: at SESSION_END**. Polish and add lessons.
+
+If you trade for 7 minutes and die at minute 7.5 without writing state.md, you wasted the entire session. If you write at minute 1 and die at minute 7.5, the next session has 90% of what it needs.
 
 state.md is a handoff document, not a log. **Don't write the same content twice.**
 
@@ -498,17 +508,17 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 
 | Time | What to do |
 |------|---------|
-| 0-1 min | session_data + state.md + profit_check + protection_check + Slack |
-| 1-3 min | **Read M5 PRICE ACTION FIRST** → 3 questions → hypothesis → Close-or-Hold block for each position |
-| 3-5 min | **7-pair scan + S-candidate evaluation.** Quality audit issues → re-evaluate. Capital Deployment Check. Place LIMITs. |
-| 5-7 min | **Execute.** pretrade_check → conviction block → order + 4-point record |
-| 7 min | **SESSION_END.** Update state.md + ingest + lock release |
+| 0-1 min | session_data + Read state.md/strategy_memory + profit_check + protection_check + Slack |
+| 1-2 min | Read M5 PRICE ACTION → 3 questions → Close-or-Hold block → **✍️ WRITE state.md v1** (positions + market + plan) |
+| 2-4 min | 7-pair scan + S-candidate evaluation. Quality audit issues. Capital Deployment. LIMITs. |
+| 4-6 min | Execute. pretrade → conviction → order + 4-point record **(each trade → ✍️ UPDATE state.md)** |
+| 6-7 min | **SESSION_END.** Final state.md polish + ingest + lock release |
 
 **Hard rule: After every bash output, immediately run the next cycle bash.** Never write more than 1 analysis block without checking the clock.
 
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 420 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25 && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/mid_session_check.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
+cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 420 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25; perl -e 'alarm(30); exec @ARGV' -- python3 collab_trade/memory/ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/mid_session_check.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
 
 - SESSION_END + LOCK_RELEASED → session complete. **state.md MUST be updated BEFORE running this Bash.**
 - Otherwise → mid_session_check (Slack + prices + trades + margin, ~1s) → trade judgment → next cycle Bash.
