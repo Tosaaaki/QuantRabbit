@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,24 +76,71 @@ def main():
     token = cfg["oanda_token"]
     acct = cfg["oanda_account_id"]
 
-    # 1. Technical refresh
-    section("TECH REFRESH")
-    out = run_script(
-        [VENV_PYTHON, "tools/refresh_factor_cache.py", "--all", "--quiet"],
-        timeout=45,
-    )
-    print(out[:200] if out else "done")
+    # === PARALLEL BLOCK: Start heavy I/O tasks concurrently ===
+    executor = ThreadPoolExecutor(max_workers=4)
 
-    # 1b. M5 PRICE ACTION — output FIRST so the model reads chart shape before indicators
+    def _run_tech_refresh():
+        return run_script(
+            [VENV_PYTHON, "tools/refresh_factor_cache.py", "--all", "--quiet"],
+            timeout=45,
+        )
+
+    def _run_m5_candles():
+        results = {}
+        for pair in PAIRS:
+            try:
+                candles_resp = oanda_api(
+                    f"/v3/instruments/{pair}/candles?granularity=M5&count=20&price=M",
+                    token, acct,
+                )
+                results[pair] = candles_resp.get("candles", [])
+            except Exception as e:
+                results[pair] = []
+        return results
+
+    def _run_memory_recall(pairs_list):
+        recall_results = {}
+        memory_dir = ROOT / "collab_trade" / "memory"
+        for pair in sorted(pairs_list):
+            try:
+                r = subprocess.run(
+                    [VENV_PYTHON, "recall.py", "search", f"{pair} lessons failures", "--top", "2"],
+                    capture_output=True, text=True, timeout=15, cwd=str(memory_dir),
+                )
+                recall_results[pair] = r.stdout.strip()
+            except Exception as e:
+                recall_results[pair] = f"(skip: {e})"
+        return recall_results
+
+    # Submit heavy tasks in parallel
+    future_tech = executor.submit(_run_tech_refresh)
+    future_m5 = executor.submit(_run_m5_candles)
+    # Memory recall needs held_pairs — we'll get that from OANDA first (fast)
+
+    # Quick OANDA calls (< 1s total) to get held_pairs for memory recall
+    held_pairs = set()
+    trades_data = {}
+    try:
+        trades_data = oanda_api(f"/v3/accounts/{acct}/openTrades", token, acct)
+        for t in trades_data.get("trades", []):
+            held_pairs.add(t["instrument"])
+    except Exception:
+        pass
+
+    # Now submit memory recall with held_pairs
+    future_recall = executor.submit(_run_memory_recall, held_pairs) if held_pairs else None
+
+    # Wait for tech refresh (needed before adaptive_technicals)
+    tech_out = future_tech.result()
+    section("TECH REFRESH")
+    print(tech_out[:200] if tech_out else "done")
+
+    # Wait for M5 candles and display
+    m5_candles = future_m5.result()
     section("M5 PRICE ACTION (read this FIRST — before indicators)")
     try:
-        # Fetch M5 candles for all pairs (last 20 bars)
         for pair in PAIRS:
-            candles_resp = oanda_api(
-                f"/v3/instruments/{pair}/candles?granularity=M5&count=20&price=M",
-                token, acct,
-            )
-            candles = candles_resp.get("candles", [])
+            candles = m5_candles.get(pair, [])
             if not candles:
                 continue
             # Analyze candle shape
@@ -192,14 +240,11 @@ def main():
         print(f"ERROR: {e}")
 
     section("TRADES")
-    held_pairs = set()
     try:
-        trades = oanda_api(f"/v3/accounts/{acct}/openTrades", token, acct)
+        trades = trades_data  # already fetched above for held_pairs
         for t in trades.get("trades", []):
-            pair = t["instrument"]
-            held_pairs.add(pair)
             print(
-                f"{pair} {t['currentUnits']}u @{t['price']} PL={t.get('unrealizedPL', 0)} id={t['id']}"
+                f"{t['instrument']} {t['currentUnits']}u @{t['price']} PL={t.get('unrealizedPL', 0)} id={t['id']}"
             )
         if not trades.get("trades"):
             print("(no open trades)")
@@ -330,22 +375,14 @@ def main():
     out = run_script(slack_args)
     print(out if out else "(no user messages)")
 
-    # 6. Memory recall (lessons for held pairs)
-    if held_pairs:
+    # 6. Memory recall (lessons for held pairs) — already fetched in parallel
+    if held_pairs and future_recall is not None:
+        recall_results = future_recall.result()
         section("MEMORY RECALL")
-        memory_dir = ROOT / "collab_trade" / "memory"
         for pair in sorted(held_pairs):
-            try:
-                r = subprocess.run(
-                    [VENV_PYTHON, "recall.py", "search", f"{pair} lessons failures", "--top", "2"],
-                    capture_output=True, text=True, timeout=15, cwd=str(memory_dir),
-                )
-                out = r.stdout.strip()
-            except Exception as e:
-                out = f"(skip: {e})"
+            out = recall_results.get(pair, "")
             if out and "skip" not in out:
                 print(f"--- {pair} ---")
-                # limit to 10 lines
                 lines = out.split("\n")[:10]
                 print("\n".join(lines))
 

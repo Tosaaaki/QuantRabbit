@@ -140,8 +140,8 @@ def _save_pair_technicals(pair: str, data: dict):
         json.dump(data, f, indent=2)
 
 
-async def refresh_pair(token: str, pair: str, update_factor_cache: bool = False, quiet: bool = False):
-    """Fetch candles for one pair, compute technicals, save JSON."""
+def _refresh_pair_sync(token: str, pair: str, update_factor_cache: bool = False, quiet: bool = False):
+    """Fetch candles for one pair, compute technicals, save JSON. (sync, thread-safe)"""
     pair_data = {"pair": pair, "timeframes": {}}
     total = 0
 
@@ -150,15 +150,9 @@ async def refresh_pair(token: str, pair: str, update_factor_cache: bool = False,
         if not candles:
             continue
 
-        # Compute standalone technicals for this pair+tf
         technicals = _compute_technicals(candles)
         if technicals:
             pair_data["timeframes"][tf] = technicals
-
-        # Also feed into factor_cache (overwrites, so only do for primary pair)
-        if update_factor_cache and on_candle is not None:
-            for c in candles:
-                await on_candle(tf, c)
 
         total += len(candles)
 
@@ -171,14 +165,31 @@ async def refresh_pair(token: str, pair: str, update_factor_cache: bool = False,
     return total
 
 
+async def refresh_pair(token: str, pair: str, update_factor_cache: bool = False, quiet: bool = False):
+    """Async wrapper — runs sync fetch in thread pool for true parallelism."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, _refresh_pair_sync, token, pair, update_factor_cache, quiet
+    )
+
+
 async def refresh(pairs: list[str], quiet: bool = False):
     token, _ = _load_config()
-    total = 0
+
+    # Run all pairs concurrently (I/O-bound OANDA API calls)
+    tasks = []
     for pair in pairs:
-        # USD_JPY updates factor_cache (primary), others only save JSON
         update_fc = (pair == "USD_JPY")
-        count = await refresh_pair(token, pair, update_factor_cache=update_fc, quiet=quiet)
-        total += count
+        tasks.append(refresh_pair(token, pair, update_factor_cache=update_fc, quiet=quiet))
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    total = 0
+    for r in results:
+        if isinstance(r, Exception):
+            if not quiet:
+                print(f"  ERROR: {r}", file=sys.stderr)
+        else:
+            total += r
 
     if not quiet:
         print(f"\nDone. {total} candles across {len(pairs)} pairs.")

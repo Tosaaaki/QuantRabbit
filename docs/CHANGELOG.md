@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-08 — Parallelize session_data.py (43s → 27s, -37%)
+
+**Problem**: session_data.py took 43-50s, consuming half of the 8-minute session. Two bottlenecks: refresh_factor_cache (10.6s, sequential 28 API calls) and memory recall (9.4s, model load per pair).
+
+**Changes**:
+1. **refresh_factor_cache.py**: `for pair: await` → `asyncio.gather` + `run_in_executor` for true thread parallelism. 10.6s → 2.8s (-74%).
+2. **session_data.py**: Heavy I/O tasks (tech refresh, M5 candles, memory recall) run concurrently via ThreadPoolExecutor. OANDA trades fetched early to provide held_pairs for memory recall. 43s → 27s (-37%).
+
 ## 2026-04-08 — Trader session 5min → 8min (S-candidate放置対策)
 
 **Problem**: Quality audit flagged 10 S-candidates with 41% margin idle. Trader couldn't evaluate S-candidates AND manage existing positions in 5 minutes. The extra 3 minutes are dedicated to 7-pair scan, S-candidate evaluation, and LIMIT placement — the exact steps being skipped.
