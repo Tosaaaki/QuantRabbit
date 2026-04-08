@@ -15,8 +15,9 @@ PROJECT="/Users/tossaki/App/QuantRabbit"
 LOCK="$PROJECT/logs/.trader_lock"
 STATE="$PROJECT/collab_trade/state.md"
 ALERT_FLAG="/tmp/quantrabbit-trader-dead-alerted"
-MAX_AGE=480       # Kill processes older than 8 minutes
-DEAD_THRESHOLD=600  # Alert if trader dead for >10 minutes
+ORPHAN_AGE=300    # Kill orphan/zombie processes after 5 minutes
+OWNER_AGE=600     # Kill even the active session after 10 minutes (hard backstop)
+DEAD_THRESHOLD=900  # Alert if trader dead for >15 minutes
 COUNT=0
 
 # macOS etime format: [[DD-]HH:]MM:SS → seconds
@@ -36,25 +37,38 @@ etime_to_sec() {
 }
 
 # ── PHASE 1: REAP zombie scheduled-task processes ──
+# Read lock file to identify the active session owner
+LOCK_PID=""
+if [ -f "$LOCK" ]; then
+    LOCK_PID=$(awk '{print $2}' "$LOCK")
+fi
+
 for pid in $(pgrep -f "claude" 2>/dev/null); do
     ETIME=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -z "$ETIME" ] && continue
 
     ELAPSED=$(etime_to_sec "$ETIME")
     [ -z "$ELAPSED" ] && continue
-    [ "$ELAPSED" -lt "$MAX_AGE" ] && continue
 
     CMDLINE=$(ps -o args= -p "$pid" 2>/dev/null)
+    echo "$CMDLINE" | grep -q "bypassPermissions" || continue
 
-    # Only kill scheduled-task sessions (bypassPermissions = all scheduled tasks)
-    if echo "$CMDLINE" | grep -q "bypassPermissions"; then
-        kill "$pid" 2>/dev/null
-        # Give 5s for graceful shutdown, then force kill
-        sleep 2
-        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-        COUNT=$((COUNT + 1))
-        echo "$(date '+%Y-%m-%d %H:%M:%S') REAPED pid=$pid elapsed=${ELAPSED}s"
+    # Determine threshold: lock owner gets more time, orphans get killed faster
+    if [ "$pid" = "$LOCK_PID" ]; then
+        # This process owns the lock — it's the active session
+        [ "$ELAPSED" -lt "$OWNER_AGE" ] && continue
+        REASON="active-session-timeout"
+    else
+        # Orphan: ALREADY_RUNNING zombie or leftover from a previous session
+        [ "$ELAPSED" -lt "$ORPHAN_AGE" ] && continue
+        REASON="orphan"
     fi
+
+    kill "$pid" 2>/dev/null
+    sleep 2
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    COUNT=$((COUNT + 1))
+    echo "$(date '+%Y-%m-%d %H:%M:%S') REAPED pid=$pid elapsed=${ELAPSED}s reason=$REASON"
 done
 
 # ── PHASE 2: CLEAN stale lock ──
