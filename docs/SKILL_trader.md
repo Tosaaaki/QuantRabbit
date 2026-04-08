@@ -94,10 +94,12 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 ```
 Positions: [N] LONG / [N] SHORT / [N] pairs
 Direction mix: [mixed ✅ / one-sided ⚠️]
-If one-sided → counter-trade LIMIT placed: [pair] [dir] @___ id=___ | or: no H4 extreme on any pair (H4 StRSI values: ___)
+If one-sided → best opposite-direction setup across 7 pairs (check M5 depth: StRSI, MACD hist, CCI, BB, div, wicks):
+  [pair]: ①___ ②___ ③___ → [dir] [size]u @___ TP=___ | placed: id=___
+  | or: all 7 pairs M5 checked with 3+ indicators each → genuinely no opposite setup
 ```
 
-H4 can be bullish while M5 gives a clean SHORT scalp. If any pair has H4 StRSI near 0 or 1, a counter-trade LIMIT at the wick level is the fix. If NO pair has H4 extreme, write the H4 StRSI values to prove it — that's the only valid "no counter-trade" answer.
+H4 can be bullish while M5 gives a clean SHORT scalp. Look at M5 across all 7 pairs — StRSI, MACD hist direction, BB position, CCI, divergence, wick patterns. If ANY pair shows 3+ M5 indicators supporting the opposite direction, that's a rotation trade. "No H4 extreme" alone is insufficient — M5 pullbacks exist at any H4 state. Writing "genuinely no setup" requires checking M5 depth for all 7 pairs and listing what you checked.
 
 - 3+ positions in the same pair → Averaging-down hell. Go make money in other pairs
 - All positions JPY crosses → Single JPY bet. Full wipeout risk if JPY reverses
@@ -114,23 +116,24 @@ For each Tier 1 pair, write this block in state.md:
 ## {PAIR} [HELD/CANDIDATE]
 Price action: [what the chart is doing — candle shapes, momentum, NOT indicator numbers]
 Wave position: [Fib X%] / [BB position] / [structural level] [N]pip away → [approaching ceiling/floor/mid-range]
-I would enter if: [specific condition + price + direction. If price-based → LIMIT ORDER placed]
-MTF counter-trade: [higher TF overextended? → short-term reversal trade with price, TP, SL]
-  → LIMIT: [pair] [dir] @___ TP=___ SL=___ GTD=___ id=___ | or: no overextension (H4 StRSI=___)
+LONG case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / possible / none]
+SHORT case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / possible / none]
+→ This session: [LONG / SHORT / BOTH / WAIT] — why this direction wins over the other
+  Order: [LIMIT/MARKET] [dir] @___ TP=___ SL=___ id=___ | or: [why no order]
 ```
 
 **Wave position is mandatory.** Knowing "H1 BB upper is 3pip away" changes decisions.
 
-**MTF counter-trade → LIMIT is the default.** If a higher TF is overextended (H4 StRSI near 0 or 1, CCI ±200+), the short-term trade in the opposite direction EXISTS. Place a LIMIT at the wick-touch level with TP+SL. Wrong? Cancel it next session — costs nothing. Right? It makes money while you sleep.
+**Both directions, every Tier 1 pair.** Check 3+ indicator categories (①Direction ②Timing ③Momentum ④Structure ⑤Cross-pair ⑥Macro) for EACH direction. 5+ total indicators minimum per direction. Shallow scan (ADX+StRSI+CS only) locks you into one direction. Deep scan reveals what the pullback is doing.
 
-The only valid reason to NOT place it is: no overextension on the higher TF (write the H4 StRSI number to prove it).
+**Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
 ### Tier 2: Remaining pairs (quick scan)
 
 For each Tier 2 pair, write ONE structured line:
 
 ```
-{PAIR}: [H1 state] | [M5 state] | Enter if: [condition or "genuinely nothing — {reason}"]
+{PAIR}: [H1 state] | [M5 state] | LONG if: ___ | SHORT if: ___ | or: nothing — [what was checked]
 ```
 
 **"Skip" is banned.** Every pair gets a real sentence. If there's truly nothing, say what's missing.

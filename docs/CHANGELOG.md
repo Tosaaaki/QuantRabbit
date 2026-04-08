@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-09 — Fix LONG-only bias: both-direction scan + rotation trading
+
+**Problem**: 4/8-4/9: 13 entries, 0 SHORTs. Trader used M5 bearish signals (StRSI=1.0, bear div, sellers dominant) defensively only (tighten TP, add SL) — never as SHORT entry signals. USD_JPY in clear H4+H1 downtrend, tried LONG 3x, all lost. Root cause: shallow indicator scan (ADX+StRSI+CS = 3 indicators) locks into one direction. Quality audit flagged "全ポジションLONG" repeatedly but escape hatch ("no H4 extreme") was too easy.
+
+**Changes**:
+1. **SKILL_trader.md Tier 1 format**: Replaced single-direction "I would enter if" with both-direction indicator analysis. Now requires LONG case + SHORT case with 3+ indicator categories each, and explicit comparison to choose direction
+2. **SKILL_trader.md Tier 2 format**: Added "SHORT if" alongside "LONG if" — can't skip opposite direction
+3. **SKILL_trader.md Directional mix check**: Replaced "no H4 extreme" escape hatch with requirement to check M5 depth across all 7 pairs for opposite-direction setups. Writing "no setup" now requires listing what was checked
+4. **Added rotation trade concept**: Rotation SHORT within LONG thesis (2000-3000u, M5 pullback, 15-30min) is distinct from counter-trade (swing size against trend). Clarified in both SKILL and strategy_memory
+5. **strategy_memory.md**: Added 3 new 負けパターン (defensive-only M5 use, macro overriding chart, shallow scan bias), 1 new 勝ちパターン (rotation trading), clarified counter-trade warning, added observations
+
+**Design principle**: Format forces thinking — trader must fill in indicators for BOTH directions. Can't write "LONG" without also evaluating SHORT and explaining why LONG is stronger.
+
 ## 2026-04-08 — Fix reaper killing active sessions (root cause of exit code 143)
 
 **Problem**: Trader sessions dying mid-execution with exit code 143 (SIGTERM). Investigation revealed the LaunchAgent reaper (`reap_stale_agents.sh`) was the killer. ORPHAN_AGE=300s threshold treated non-lock-owner `bypassPermissions` processes as "orphans" and killed them at 5 minutes. But Claude Code's `per_task_limit (active=1, limit=1)` means only one session runs at a time — ALL bypassPermissions processes belong to the current session. The reaper was killing the active session's own processes.
