@@ -9,9 +9,12 @@
 |---|---|
 | Hold unless you can explain why to exit | **Exit unless you can explain why to hold** |
 | Default = Hold | **Default = Take Profit** |
-| Don't cut below ATR 50% | **ATR×1.0 reached = trigger profit evaluation** |
+| Don't cut below ATR 50% | **Every session, every position: justify holding** |
 
-- **ATR×1.0 reached = profit_check trigger.** Run `python3 tools/profit_check.py` for 6-axis evaluation
+**This applies at ALL profit levels, not just ATR×1.0.** ATR×1.0 triggers profit_check for data, but the principle is unconditional: if you have unrealized profit and can't write a specific reason to hold, close.
+
+- **Every session, every position in profit**: Write the "Close or Hold" block (see format below). If "I'm not closing because" is blank or vague, close.
+- **ATR×1.0 reached = profit_check trigger.** Run `python3 tools/profit_check.py` for additional 6-axis data
 - **If profit_check outputs TAKE_PROFIT/HALF_TP, you have 30 seconds to justify holding.** If you can't, take profit
 - **Avoid junk profits too**: Below ATR×0.5 and not worth the spread = too early. Exception: momentum reversal detected
 

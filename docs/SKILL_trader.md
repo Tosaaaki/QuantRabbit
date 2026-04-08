@@ -298,15 +298,19 @@ AUD_JPY SHORT 4 consecutive losses ≠ AUD_JPY LONG blocked. The losses were SHO
 **If S-conviction scanner fires 🎯 AUD_JPY LONG, enter it.** The SHORT circuit breaker is irrelevant.
 Same for any pair: consecutive losses in one direction block ONLY that direction. The opposite direction is a fresh trade with its own thesis.
 
-For EACH open position when conditions change:
+For EACH open position, EVERY session, write this block:
 
-| Option | When to choose |
-|--------|---------------|
-| **A. Hold + adjust** | Timeframe changed → widen/tighten SL to structural level |
-| **B. Cut and re-enter** | In profit + event risk + thin market = cut and wait for clarity |
-| **C. Hold as-is** | Current protection matches current conditions |
+```
+Close now: {+/-}Xpip = {+/-}Y JPY
+Peak this trade: +Zpip = +W JPY at HH:MM (from M5 candle highs since entry)
+I'm not closing because: ___ (specific M5 price action — not "thesis alive")
+This reason disappears if: ___ (what would make you close)
+→ A (adjust) / B (cut+re-enter) / C (hold) — chosen: ___
+```
 
-Write your choice with a reason. "C because thesis alive" is not a reason. "C because H1 ADX=38 DI+ still accelerating, 5pip to structural TP, correlated pairs also running" is a reason.
+- "I'm not closing because" must reference what you SEE on the chart right now (M5 body direction, wick pattern, StRSI position, momentum). "H1 thesis intact" alone is not a reason — it tells you direction, not timing.
+- If the position has NEVER been in profit (peak = 0pip), you still fill in the block. "Close now: -8pip = -500 JPY" makes the cost of holding visible.
+- If you can't fill in "I'm not closing because" with something specific, close.
 
 ### TP/SL must be structural, not formulaic
 
@@ -467,13 +471,10 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 **Last Updated**: {timestamp}
 
 ## Positions (Current)
-{each position: thesis, basis, invalidation, wave position, peak}
+{each position: thesis, basis, invalidation, wave position, Close-or-Hold block}
 
 ## Directional Mix
 {N LONG / N SHORT — if one-sided: why + counter-trade candidate}
-
-## 3-Option Management
-{A/B/C for each position with chosen option + reason}
 
 ## 7-Pair Scan
 {Tier 1 deep + Tier 2 quick}

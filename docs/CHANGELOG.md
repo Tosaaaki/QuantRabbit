@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-08 — Fix: "Default is Take Profit" was gated behind ATR×1.0
+
+**Problem**: "Default is Take Profit" principle existed at the top of risk-management.md, but the execution format only triggered at ATR×1.0. Profits in the ATR×0.5-0.8 range (the most common profit level) were invisible to the trader. Data: 28 winning trades averaged 71% peak capture. 14 losing trades were once in profit — 6,110 JPY wasted. Total left on table: 11,902 JPY.
+
+**Root cause**: The 3-option format ("A/B/C — Hold as-is") could be filled in without reading the market. "C — Hold as-is. H1 thesis intact." is copy-pasteable. The format didn't force thinking.
+
+**Changes**:
+1. **risk-management.md**: "Default is Take Profit" now applies at ALL profit levels, not just ATR×1.0. ATR×1.0 still triggers profit_check for data, but the principle is unconditional.
+2. **SKILL_trader.md**: Replaced 3-option table with "Close or Hold" block that must be written every session for every position. Format: `Close now: +Xpip = +Y JPY / Peak: +Zpip / I'm not closing because: ___ / This reason disappears if: ___`. Can't be filled without reading M5 price action.
+3. **state.md template**: Removed separate "3-Option Management" section — Close-or-Hold block is now part of each position block.
+
 ## 2026-04-08 — Fix: Margin pre-check + limit order discipline
 
 **Problem**: Trader stacked EUR_JPY + EUR_USD + GBP_JPY without margin calculation → 97% margin → forced EUR_JPY close at -319 JPY. Also used market orders on Easter Monday thin liquidity.
