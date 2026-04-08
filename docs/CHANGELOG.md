@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-08 — Mid-session lightweight check (Next Cycle Bash: 27s → 1s)
+
+**Problem**: Next Cycle Bash re-ran full `session_data.py` (27s) on every mid-session cycle. In an 8-min session with 2-3 cycles, this consumed 54-81s on redundant data fetches (technicals, news, macro, S-scan, memory don't change within 8 minutes). Sessions consistently cut off before state.md update.
+
+**Changes**:
+1. **tools/mid_session_check.py**: New lightweight script. Fetches only what changes mid-session: Slack messages, OANDA prices/spreads, open trades with P&L, account margin. Runs in ~1s.
+2. **SKILL_trader.md**: Next Cycle Bash now calls `mid_session_check.py` instead of `session_data.py` when ELAPSED < 420s. Full `session_data.py` runs once at session start (Bash②).
+
+**Impact**: Each mid-session cycle saves ~26s. Sessions now have ~50s more for analysis, execution, and state.md cleanup.
+
 ## 2026-04-08 — Parallelize session_data.py (43s → 27s, -37%)
 
 **Problem**: session_data.py took 43-50s, consuming half of the 8-minute session. Two bottlenecks: refresh_factor_cache (10.6s, sequential 28 API calls) and memory recall (9.4s, model load per pair).

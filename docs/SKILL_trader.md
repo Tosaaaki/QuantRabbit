@@ -507,10 +507,11 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $$" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 420 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25 && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/session_data.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
+cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $$" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 420 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25 && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/mid_session_check.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
 
 - SESSION_END + LOCK_RELEASED → session complete. **state.md MUST be updated BEFORE running this Bash.**
-- Otherwise → check Slack → trade judgment → next cycle Bash.
+- Otherwise → mid_session_check (Slack + prices + trades + margin, ~1s) → trade judgment → next cycle Bash.
+- **Full session_data.py runs ONCE at session start (Bash②). Mid-session cycles use mid_session_check.py (prices + Slack only) to save ~26s per cycle.** Technicals, news, macro, S-scan, memory are stable within an 8-minute session.
 
 ## Slack handling (highest priority)
 

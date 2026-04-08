@@ -205,6 +205,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | File | Contents |
 |------|----------|
 | `tools/session_data.py` | Full data fetch at trader session start (technicals + OANDA + macro + Slack + memory, all at once) |
+| `tools/mid_session_check.py` | Lightweight mid-session check (~1s): Slack + prices + trades + margin only |
 | `tools/profit_check.py` | **Run at every session start** — 6-axis TP evaluation (ATR ratio, M5 momentum, H1 structure, correlation, S/R, peak) |
 | `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action |
 | `tools/preclose_check.py` | **Run before every close** — re-confirms thesis before exit |
