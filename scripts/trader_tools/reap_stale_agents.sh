@@ -17,9 +17,9 @@ STATE="$PROJECT/collab_trade/state.md"
 ALERT_FLAG="/tmp/quantrabbit-trader-dead-alerted"
 # Claude Code per_task_limit already prevents parallel sessions.
 # Only kill processes that are TRULY stuck (survived past self-destruct timer).
-# Session design: 8min active + 540s self-destruct = ~9min max.
-# 660s (11min) gives margin for cleanup. Anything older is genuinely stuck.
-KILL_AGE=660      # Kill ANY bypassPermissions process older than 11 minutes
+# Session design: 8min active + 600s self-destruct = 10min max.
+# 720s (12min) gives margin beyond self-destruct. Anything older is genuinely stuck.
+KILL_AGE=720      # Kill ANY bypassPermissions process older than 12 minutes
 DEAD_THRESHOLD=900  # Alert if trader dead for >15 minutes
 COUNT=0
 
