@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-08 — Zombie process prevention (4-layer fix)
+
+**Problem**: Trader cron (every 1 min) spawned a new Claude process each invocation. 87.5% hit ALREADY_RUNNING but the process never terminated — creating 7+ zombies per 8-min session. Root causes: (1) "write no text" instruction left harness waiting, (2) lock PID was bash shell `$$` not Claude process `$PPID`, (3) no reaper for orphaned processes.
+
+**Changes**:
+1. **Layer 1 — Zombie reaper in Bash①**: Every session start kills ALL `bypassPermissions` processes older than 10 min. Catches both ALREADY_RUNNING zombies and stalled session zombies.
+2. **Layer 2 — PID fix**: `$$` → `$PPID` in lock file writes (Bash②, Next Cycle Bash). Stale lock cleanup now kills the Claude process, not just the bash shell.
+3. **Layer 3 — Cron `*/2`**: 1-min → 2-min interval. Halves zombie creation rate and wasted API cost. Max latency 2 min (acceptable for M5-based analysis).
+4. **Layer 4 — ALREADY_RUNNING output**: "write no text" → "output SKIP". Gives harness a clear completion signal.
+5. **maxTurns 200 → 50**: Prevents runaway sessions from making 200 tool calls.
+
+**Impact**: Zombie accumulation eliminated. API cost ~50% reduction from fewer wasted invocations.
+
 ## 2026-04-08 — Mid-session lightweight check (Next Cycle Bash: 27s → 1s)
 
 **Problem**: Next Cycle Bash re-ran full `session_data.py` (27s) on every mid-session cycle. In an 8-min session with 2-3 cycles, this consumed 54-81s on redundant data fetches (technicals, news, macro, S-scan, memory don't change within 8 minutes). Sessions consistently cut off before state.md update.
