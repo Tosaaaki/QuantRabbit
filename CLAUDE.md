@@ -55,7 +55,7 @@ How to achieve this:
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Opus | 1-min cron | Max 5 min | Pro trader. Does analysis, news, and trading all itself |
+| trader | Opus | 1-min cron | Max 8 min | Pro trader. Does analysis, news, and trading all itself |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
@@ -69,7 +69,7 @@ How to achieve this:
 | qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
 | qr-news-flow-append | Cowork | Hourly (:15) | Append compact snapshot from news_digest.md → logs/news_flow_log.md |
 
-**Method**: 5-minute sessions + 1-minute cron relay. Lock mechanism prevents parallel launches. Session ends → next launches within 1 minute max. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
+**Method**: 8-minute sessions + 1-minute cron relay. Lock mechanism prevents parallel launches. Session ends → next launches within 1 minute max. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
 
 - Memory handoff: `collab_trade/state.md` (external memory across sessions)
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
@@ -103,7 +103,7 @@ Every 1 min: trader session
   ├── if quality_audit.md has issues → address them (re-evaluate missed S-candidates, fix sizing)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END (4 min mark, 5 min hard limit): trade_performance.py + ingest.py → memory.db
+  └── SESSION_END (7 min mark, 8 min hard limit): trade_performance.py + ingest.py → memory.db
 
 Every 30 min: quality-audit session (Sonnet)
   ├── runs: quality_audit.py (S-scan vs state.md cross-check, sizing audit, rule misapplication)

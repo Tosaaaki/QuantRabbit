@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-08 — Trader session 5min → 8min (S-candidate放置対策)
+
+**Problem**: Quality audit flagged 10 S-candidates with 41% margin idle. Trader couldn't evaluate S-candidates AND manage existing positions in 5 minutes. The extra 3 minutes are dedicated to 7-pair scan, S-candidate evaluation, and LIMIT placement — the exact steps being skipped.
+
+**Changes**:
+1. **SKILL_trader.md**: Lock timeout 300s→480s, SESSION_END trigger 240s→420s. Time allocation restructured: 0-1 data, 1-3 positions, 3-5 scan+S-candidates+LIMITs, 5-7 execute, 7 cleanup.
+2. **schedule.json**: Description updated.
+3. **CLAUDE.md**: Architecture table and method description updated.
+
 ## 2026-04-08 — Fix: "Default is Take Profit" was gated behind ATR×1.0
 
 **Problem**: "Default is Take Profit" principle existed at the top of risk-management.md, but the execution format only triggered at ATR×1.0. Profits in the ATR×0.5-0.8 range (the most common profit level) were invisible to the trader. Data: 28 winning trades averaged 71% peak capture. 14 losing trades were once in profit — 6,110 JPY wasted. Total left on table: 11,902 JPY.
