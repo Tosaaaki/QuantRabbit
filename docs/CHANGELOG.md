@@ -1,17 +1,23 @@
 # Changelog
 
-## 2026-04-08 — Zombie process prevention (4-layer fix)
+## 2026-04-08 — Zombie process prevention (6-layer fix)
 
-**Problem**: Trader cron (every 1 min) spawned a new Claude process each invocation. 87.5% hit ALREADY_RUNNING but the process never terminated — creating 7+ zombies per 8-min session. Root causes: (1) "write no text" instruction left harness waiting, (2) lock PID was bash shell `$$` not Claude process `$PPID`, (3) no reaper for orphaned processes.
+**Problem**: Trader cron (every 1 min) spawned a new Claude process each invocation. 87.5% hit ALREADY_RUNNING but the process never terminated — creating 7+ zombies per 8-min session. Root causes: (1) "write no text" instruction left harness waiting, (2) lock PID was bash shell `$$` not Claude process `$PPID`, (3) existing reaper had wrong grep pattern (`disallowedTools` didn't match trader processes), (4) reaper had octal parsing bug (08/09 caused bash errors).
 
 **Changes**:
-1. **Layer 1 — Zombie reaper in Bash①**: Every session start kills ALL `bypassPermissions` processes older than 10 min. Catches both ALREADY_RUNNING zombies and stalled session zombies.
-2. **Layer 2 — PID fix**: `$$` → `$PPID` in lock file writes (Bash②, Next Cycle Bash). Stale lock cleanup now kills the Claude process, not just the bash shell.
-3. **Layer 3 — Cron `*/2`**: 1-min → 2-min interval. Halves zombie creation rate and wasted API cost. Max latency 2 min (acceptable for M5-based analysis).
+1. **Layer 1 — Zombie reaper in Bash①**: Every session start kills ALL `bypassPermissions` processes older than 10 min.
+2. **Layer 2 — PID fix**: `$$` → `$PPID` in lock file writes (Bash②, Next Cycle Bash). Stale lock cleanup now kills Claude, not bash shell.
+3. **Layer 3 — Cron `*/2`**: 1-min → 2-min interval. Halves zombie creation rate and API cost.
 4. **Layer 4 — ALREADY_RUNNING output**: "write no text" → "output SKIP". Gives harness a clear completion signal.
-5. **maxTurns 200 → 50**: Prevents runaway sessions from making 200 tool calls.
+5. **Layer 5 — Reaper → Supervisor upgrade** (`reap_stale_agents.sh`):
+   - Fixed grep: `disallowedTools|scheduled-tasks` → `bypassPermissions` (was matching ZERO trader processes)
+   - Fixed octal bug: `10#$var` prefix prevents bash treating 08/09 as octal
+   - Added Phase 3: detect trader dead (state.md age >10min) → Slack alert with dedup
+   - Graceful shutdown: SIGTERM → 2s → SIGKILL (was: immediate SIGKILL)
+6. **Layer 6 — Self-destruct timer**: Bash② spawns background `(sleep 540; kill $PPID)` — hard kill guarantee even if SESSION_END never reached. PID verified against lock file to prevent misfire on PID reuse.
+7. **maxTurns 200 → 50**: Prevents runaway sessions.
 
-**Impact**: Zombie accumulation eliminated. API cost ~50% reduction from fewer wasted invocations.
+**Impact**: Zombie accumulation eliminated. Stuck sessions killed within 60s (reaper) or 540s (self-destruct). Slack alert if trader dead >10min. API cost ~50% reduction.
 
 ## 2026-04-08 — Mid-session lightweight check (Next Cycle Bash: 27s → 1s)
 
