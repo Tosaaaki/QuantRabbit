@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-08 — Fix reaper killing active sessions (root cause of exit code 143)
+
+**Problem**: Trader sessions dying mid-execution with exit code 143 (SIGTERM). Investigation revealed the LaunchAgent reaper (`reap_stale_agents.sh`) was the killer. ORPHAN_AGE=300s threshold treated non-lock-owner `bypassPermissions` processes as "orphans" and killed them at 5 minutes. But Claude Code's `per_task_limit (active=1, limit=1)` means only one session runs at a time — ALL bypassPermissions processes belong to the current session. The reaper was killing the active session's own processes.
+
+**Changes**:
+1. **Single threshold**: Replaced orphan/owner split (300s/600s) with single `KILL_AGE=660s` (11 min). Session self-destruct timer is 540s, so only truly stuck processes (survived past self-destruct) get killed.
+2. **Removed LOCK_PID distinction**: No more owner vs orphan logic. Every bypassPermissions process gets the same generous threshold.
+
+**Impact**: Sessions no longer killed by reaper during normal 8-minute execution. Only genuinely stuck processes (>11 min) get reaped.
+
 ## 2026-04-08 — Zombie process prevention (6-layer fix)
 
 **Problem**: Trader cron (every 1 min) spawned a new Claude process each invocation. 87.5% hit ALREADY_RUNNING but the process never terminated — creating 7+ zombies per 8-min session. Root causes: (1) "write no text" instruction left harness waiting, (2) lock PID was bash shell `$$` not Claude process `$PPID`, (3) existing reaper had wrong grep pattern (`disallowedTools` didn't match trader processes), (4) reaper had octal parsing bug (08/09 caused bash errors).
