@@ -24,7 +24,7 @@ cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if {
 
 ## Bash②: Acquire lock + fetch all data (single command)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && echo "$NOW" > logs/.trader_start && (CPID=$PPID; sleep 600; grep -q "$CPID" logs/.trader_lock 2>/dev/null && kill $CPID 2>/dev/null && rm -f logs/.trader_lock logs/.trader_start) & python3 tools/session_data.py
+cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && echo "$NOW" > logs/.trader_start && (CPID=$PPID; sleep 900; grep -q "$CPID" logs/.trader_lock 2>/dev/null && kill $CPID 2>/dev/null && rm -f logs/.trader_lock logs/.trader_start) & python3 tools/session_data.py
 
 Read (parallel): `collab_trade/state.md` and `collab_trade/strategy_memory.md`
 
