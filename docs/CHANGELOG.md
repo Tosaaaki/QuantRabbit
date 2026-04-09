@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-10 — Audit→Trader feedback loop: 3 fixes
+
+**Trigger**: User observed audit results weren't being used by trader, and audit accuracy was questionable.
+
+**Root causes found**:
+1. **session_data.py line 488**: Checked `"### "` to detect audit findings, but quality_audit.md uses `"## "` headers. Condition **never matched** → audit findings were invisible to trader in session_data output
+2. **Momentum-S recipe (s_conviction_scan.py)**: CS gap threshold of 0.5 was too low. During macro themes, 5-6 pairs fired Momentum-S simultaneously — describing the regime, not identifying opportunities
+3. **No outcome tracking**: audit_history.jsonl recorded detection prices but never checked if entering would have been profitable
+
+**Changes**:
+- **`session_data.py`**: Fixed `has_issues = "### "` → `has_issues = "## " in text and "CLEAN" not in text`. Audit findings now visible to trader
+- **`s_conviction_scan.py` Recipe 4 (Momentum-S)**: Tightened: CS gap 0.5→0.8, added H1 ADX≥20 requirement, added M5 StochRSI momentum zone filter. Before: 5-6 simultaneous triggers. After: fires only on genuine momentum setups
+- **`daily_review.py`**: New `analyze_s_scan_outcomes()` function. Reads audit_history.jsonl, correlates with OANDA closed trades, checks direction accuracy via current prices. Outputs per-recipe accuracy summary (e.g., "Momentum-S: 83%, Structural-S: 57%")
+
 ## 2026-04-10 — quality_audit.py: detect manual (user-entered) positions
 
 **Trigger**: User entered USD_JPY SHORT via OANDA directly. Trader session adopted it as its own in state.md. Quality audit showed it as "ALREADY_HELD" but never flagged that it had no trade log entry, no pretrade_check, no Slack notification. Invisible to the entire audit pipeline.

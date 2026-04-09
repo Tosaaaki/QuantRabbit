@@ -124,24 +124,31 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
             matches.append(f"🎯 {pair} LONG Div-Reversal-S: H4+H1 bull div + H1 extreme OS")
 
     # ── Recipe 4: Currency Strength Gap + MTF Alignment ──
-    # CS gap > 0.5 between base and quote + H4+H1+M5 aligned = momentum S
+    # CS gap >= 0.8 + H4+H1+M5 DI aligned + H1 ADX>20 + M5 momentum confirmation
+    # v2: tightened from 0.5 to 0.8 CS gap, added ADX+StochRSI to prevent
+    #     5-6 pairs firing simultaneously during macro themes (was just describing
+    #     the regime, not identifying special opportunities)
     base, quote = pair[:3], pair[4:]
     base_cs = cs.get(base, 0)
     quote_cs = cs.get(quote, 0)
     cs_gap = base_cs - quote_cs
 
-    if abs(cs_gap) >= 0.5:
+    if abs(cs_gap) >= 0.8:
         h4_bull = g(h4, "plus_di") > g(h4, "minus_di")
         h1_bull = g(h1, "plus_di") > g(h1, "minus_di")
         m5_bull = g(m5, "plus_di") > g(m5, "minus_di")
+        h1_trending = h1_adx >= 20  # must have real trend, not just DI crossing
+        m5_stoch = g(m5, "stoch_rsi")
+        m5_momentum_bull = 0.3 <= m5_stoch <= 0.85  # not exhausted, in momentum zone
+        m5_momentum_bear = 0.15 <= m5_stoch <= 0.7
 
-        if cs_gap >= 0.5 and h4_bull and h1_bull and m5_bull:
+        if cs_gap >= 0.8 and h4_bull and h1_bull and m5_bull and h1_trending and m5_momentum_bull:
             matches.append(
-                f"🎯 {pair} LONG Momentum-S: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BULL"
+                f"🎯 {pair} LONG Momentum-S: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BULL + ADX={h1_adx:.0f}"
             )
-        elif cs_gap <= -0.5 and not h4_bull and not h1_bull and not m5_bull:
+        elif cs_gap <= -0.8 and not h4_bull and not h1_bull and not m5_bull and h1_trending and m5_momentum_bear:
             matches.append(
-                f"🎯 {pair} SHORT Momentum-S: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BEAR"
+                f"🎯 {pair} SHORT Momentum-S: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BEAR + ADX={h1_adx:.0f}"
             )
 
     # ── Recipe 5: Structural Confluence + Timing ──

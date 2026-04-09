@@ -485,7 +485,7 @@ def main():
         if age_min < 90:  # show if within last 90 min (covers up to 3× 30-min audit cycles)
             audit_text = audit_path.read_text().strip()
             # Only show if there are actual issues (skip if Issues (0))
-            has_issues = "### " in audit_text
+            has_issues = "## " in audit_text and "CLEAN" not in audit_text
             if has_issues:
                 section("QUALITY AUDIT ISSUES (read and fix)")
                 print(audit_text[:1500])

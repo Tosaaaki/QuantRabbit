@@ -205,6 +205,132 @@ def parse_pretrade_from_trades_md(trades_md_path: Path) -> list[dict]:
     return entries
 
 
+def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list[str]:
+    """Analyze S-scan detections from audit_history.jsonl.
+    For each NOT_HELD detection, check:
+    1. Did the trader eventually enter? (matched against oanda_trades)
+    2. Was the direction call correct? (price moved in predicted direction)
+    Returns lines for the report, or empty list if no data."""
+    history_path = ROOT / "logs" / "audit_history.jsonl"
+    if not history_path.exists():
+        return []
+
+    # Collect all NOT_HELD detections for this date
+    detections = []  # {pair, direction, recipe, price, timestamp}
+    try:
+        for line in history_path.read_text().strip().split("\n"):
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            ts = entry.get("timestamp", "")
+            if not ts.startswith(session_date):
+                continue
+            for sc in entry.get("s_scan", []):
+                if isinstance(sc, dict) and sc.get("status") == "NOT_HELD":
+                    detections.append({
+                        "pair": sc.get("pair", "?"),
+                        "direction": sc.get("direction", "?"),
+                        "recipe": sc.get("recipe", "?"),
+                        "price": sc.get("price_at_detection", 0),
+                        "timestamp": ts,
+                    })
+    except Exception:
+        return []
+
+    if not detections:
+        return []
+
+    # Deduplicate: keep first detection per (pair, direction, recipe)
+    seen = set()
+    unique = []
+    for d in detections:
+        key = (d["pair"], d["direction"], d["recipe"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(d)
+
+    # Build closed-trade lookup: (pair, direction) → list of P&L
+    trade_lookup = {}
+    for t in oanda_trades:
+        key = (t["pair"], "LONG" if t["units"] > 0 else "SHORT")
+        trade_lookup.setdefault(key, []).append(t["pl"])
+
+    # Fetch current prices for outcome check
+    current_prices = {}
+    try:
+        cfg = _load_oanda_config()
+        pairs_str = ",".join(set(d["pair"] for d in unique))
+        url = f"https://api-fxtrade.oanda.com/v3/accounts/{cfg['oanda_account_id']}/pricing?instruments={pairs_str}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {cfg['oanda_token']}",
+            "Content-Type": "application/json"
+        })
+        resp = json.loads(urllib.request.urlopen(req, timeout=5).read())
+        for p in resp.get("prices", []):
+            bid = float(p["bids"][0]["price"])
+            ask = float(p["asks"][0]["price"])
+            current_prices[p["instrument"]] = (bid + ask) / 2
+    except Exception:
+        pass
+
+    # Analyze each detection
+    lines = ["## S-Scan Outcome Analysis", ""]
+    recipe_stats = {}  # recipe → {correct: N, wrong: N, entered: N, missed: N}
+
+    for d in unique:
+        pair = d["pair"]
+        direction = d["direction"]
+        recipe = d["recipe"]
+        det_price = d["price"]
+
+        if recipe not in recipe_stats:
+            recipe_stats[recipe] = {"correct": 0, "wrong": 0, "entered": 0, "missed": 0}
+
+        # Did trader enter this setup?
+        key = (pair, direction)
+        entered = key in trade_lookup
+        if entered:
+            recipe_stats[recipe]["entered"] += 1
+            pl = sum(trade_lookup[key])
+            result = "WIN" if pl > 0 else "LOSS"
+            lines.append(f"  {pair} {direction} {recipe} @{det_price} → ENTERED → {result} {pl:+,.0f} JPY")
+            if pl > 0:
+                recipe_stats[recipe]["correct"] += 1
+            else:
+                recipe_stats[recipe]["wrong"] += 1
+        else:
+            recipe_stats[recipe]["missed"] += 1
+            # Check if direction was correct using current price
+            cur = current_prices.get(pair)
+            if cur and det_price > 0:
+                moved_right = (direction == "LONG" and cur > det_price) or \
+                              (direction == "SHORT" and cur < det_price)
+                pip_move = abs(cur - det_price) * (100 if "JPY" in pair else 10000)
+                verdict = "CORRECT" if moved_right else "WRONG"
+                lines.append(f"  {pair} {direction} {recipe} @{det_price} → MISSED → {verdict} ({pip_move:.1f}pip moved)")
+                if moved_right:
+                    recipe_stats[recipe]["correct"] += 1
+                else:
+                    recipe_stats[recipe]["wrong"] += 1
+            else:
+                lines.append(f"  {pair} {direction} {recipe} @{det_price} → MISSED → no price data")
+
+    # Summary per recipe
+    lines.append("")
+    lines.append("### Recipe Accuracy Summary")
+    lines.append("")
+    for recipe, stats in sorted(recipe_stats.items()):
+        total = stats["correct"] + stats["wrong"]
+        acc = stats["correct"] / total * 100 if total > 0 else 0
+        lines.append(
+            f"  {recipe}: {acc:.0f}% accuracy ({stats['correct']}/{total}) "
+            f"| entered: {stats['entered']} missed: {stats['missed']}"
+        )
+    lines.append("")
+
+    return lines
+
+
 def generate_report(session_date: str) -> str:
     """Generate a structured report for the daily review"""
     conn = get_conn()
@@ -306,7 +432,12 @@ def generate_report(session_date: str) -> str:
 
         lines.append("")
 
-    # 6. DB trades stats (comparison against all-time)
+    # 6. S-scan outcome tracking (audit_history.jsonl)
+    s_scan_lines = analyze_s_scan_outcomes(session_date, oanda_trades)
+    if s_scan_lines:
+        lines.extend(s_scan_lines)
+
+    # 7. DB trades stats (comparison against all-time)
     db_stats = fetchall_dict(conn,
         """SELECT pair, direction,
            COUNT(*) as cnt,
