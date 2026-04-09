@@ -516,13 +516,42 @@ def format_result(r: dict) -> str:
     return "\n".join(lines)
 
 
-def detect_thin_market() -> tuple[bool, str]:
-    """Detect thin liquidity conditions (holidays, weekend proximity, off-hours)."""
-    from datetime import datetime, timezone
+def _is_us_dst(dt) -> bool:
+    """Check if a UTC datetime falls within US Daylight Saving Time.
+    DST: 2nd Sunday of March 02:00 ET — 1st Sunday of November 02:00 ET.
+    """
+    year = dt.year
+    # 2nd Sunday of March
+    mar1 = dt.replace(month=3, day=1, hour=0, minute=0, second=0, microsecond=0)
+    # weekday: 0=Mon, 6=Sun
+    days_to_sun = (6 - mar1.weekday()) % 7
+    dst_start = mar1.replace(day=1 + days_to_sun + 7)  # 2nd Sunday
+    dst_start = dst_start.replace(hour=7)  # 02:00 ET = 07:00 UTC
+
+    # 1st Sunday of November
+    nov1 = dt.replace(month=11, day=1, hour=0, minute=0, second=0, microsecond=0)
+    days_to_sun = (6 - nov1.weekday()) % 7
+    dst_end = nov1.replace(day=1 + days_to_sun)  # 1st Sunday
+    dst_end = dst_end.replace(hour=6)  # 02:00 ET(EDT) = 06:00 UTC
+
+    return dst_start <= dt < dst_end
+
+
+def detect_thin_market() -> tuple[bool, str, bool, int]:
+    """Detect thin liquidity conditions (holidays, weekend proximity, off-hours, rollover).
+
+    Returns:
+        (is_thin, reason_str, is_rollover, minutes_to_rollover)
+        - is_rollover: True if within the rollover danger window
+        - minutes_to_rollover: minutes until rollover (negative = past rollover). 999 if not near.
+    """
+    from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
     weekday = now.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
     hour = now.hour
     reasons = []
+    is_rollover = False
+    minutes_to_rollover = 999
 
     # Friday after 18:00 UTC or Saturday/Sunday
     if weekday == 4 and hour >= 18:
@@ -551,7 +580,29 @@ def detect_thin_market() -> tuple[bool, str]:
     if 3 <= hour < 6:
         reasons.append(f"Low-liquidity window ({hour:02d}:00 UTC)")
 
-    return bool(reasons), ", ".join(reasons)
+    # --- OANDA daily rollover detection ---
+    # Rollover at 5 PM ET: 21:00 UTC (summer/EDT) or 22:00 UTC (winter/EST)
+    # Spread spike window: ~20 min before to ~15 min after
+    rollover_hour = 21 if _is_us_dst(now) else 22
+    rollover_time = now.replace(hour=rollover_hour, minute=0, second=0, microsecond=0)
+    delta = (rollover_time - now).total_seconds() / 60  # minutes until rollover
+
+    # If rollover already passed today, check distance from past rollover
+    if delta < -60:
+        # More than 1 hour past rollover — not relevant
+        pass
+    elif -15 <= delta <= 20:
+        # Within danger window: 20 min before to 15 min after
+        is_rollover = True
+        minutes_to_rollover = int(delta)
+        if delta > 0:
+            reasons.append(f"ROLLOVER in {int(delta)} min ({rollover_hour}:00 UTC)")
+        else:
+            reasons.append(f"ROLLOVER window (spread still wide, {rollover_hour}:00 UTC was {int(-delta)} min ago)")
+    elif 0 < delta <= 20:
+        minutes_to_rollover = int(delta)
+
+    return bool(reasons), ", ".join(reasons), is_rollover, minutes_to_rollover
 
 
 def main():
@@ -570,12 +621,24 @@ def main():
         print("=== PROTECTION CHECK: No open positions ===")
         return
 
-    # Thin market detection
-    is_thin, thin_reason = detect_thin_market()
-    if is_thin:
+    # Thin market / rollover detection
+    is_thin, thin_reason, is_rollover, min_to_rollover = detect_thin_market()
+    if is_rollover:
+        print(f"🔴 ROLLOVER WINDOW: {thin_reason}")
+        print(f"   → REMOVE all SL/Trailing NOW. Spreads will spike.")
+        print(f"   → Run: python3 tools/rollover_guard.py remove")
+        print()
+    elif is_thin:
         print(f"⚠️  THIN MARKET DETECTED: {thin_reason}")
         print(f"   → SL/Trail will get noise-clipped. Discretionary management recommended.")
         print(f"   → Do NOT add tight SL. Do NOT add trailing stops.")
+        print()
+
+    # Check if rollover guard has saved SLs waiting to be restored
+    guard_state_file = ROOT / "logs" / "rollover_guard_state.json"
+    if guard_state_file.exists() and not is_rollover:
+        print(f"✅ Rollover passed. Saved SLs waiting to be restored.")
+        print(f"   → Run: python3 tools/rollover_guard.py restore")
         print()
 
     all_technicals = {}
@@ -587,7 +650,7 @@ def main():
     for trade in trades:
         r = assess_protection(trade, all_technicals, cfg)
         results.append(r)
-        if not is_thin:  # Don't suggest fix commands during thin market
+        if not is_thin and not is_rollover:  # Don't suggest fix commands during thin market / rollover
             all_put_commands.extend(r.get("put_commands", []))
 
     # Sort: unprotected first, then by UPL descending

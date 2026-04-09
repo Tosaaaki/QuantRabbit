@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-10 — Rollover Guard: auto-remove SL before daily OANDA maintenance
+
+**Problem**: OANDA daily rollover at 5 PM ET (21:00 UTC summer / 22:00 UTC winter) causes spread spikes every day. Any SL/Trailing set at normal levels gets hunted during this 10-15 min window. Same structure as the 4/3 Good Friday -984 JPY loss, but happening daily.
+
+**Changes**:
+- `tools/protection_check.py`: `detect_thin_market()` now detects rollover approach (20 min before through 15 min after). Includes US DST calculation. Returns rollover-specific flag. Output shows `ROLLOVER WINDOW` warning with actionable command
+- `tools/rollover_guard.py`: **New script**. `remove` strips all SL/Trailing from open trades and saves state to `logs/rollover_guard_state.json`. `restore` re-applies saved SL/Trailing. `status` shows current guard state
+- `.claude/rules/risk-management.md`: Added "Daily Rollover SL Guard" section with the remove→wait→restore flow
+- `CLAUDE.md`: Added rollover_guard.py to scripts table
+
 ## 2026-04-10 — Quality Audit v3: Sonnet becomes independent market analyst
 
 **Trigger**: User observed (1) audit results weren't being used by trader, (2) audit accuracy questionable, (3) Sonnet acting as classification bot (REPORT/NOISE) not a thinking analyst.

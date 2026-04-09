@@ -44,10 +44,22 @@
 | Good Friday / bank holidays | **No SL or ATR×2.5+ minimum.** ATR×1.2 gets hunted. |
 | Tokyo session (00:00-06:00Z) holding overnight | **No trailing stop. Fixed SL only if any.** |
 | User says "SLいらない" | **Remove SL. Do not re-add. Do not close on your own judgment.** |
+| **Daily rollover (5 PM ET)** | **Remove ALL SL/Trailing 20 min before. Restore after spread normalizes.** |
 
 **What happened 4/3**: EUR_USD trail=11pip, GBP_USD trail=15pip, AUD_USD SL=0.69015 — ALL hunted on Good Friday thin liquidity. Total -984 JPY. Every thesis was correct. Every loss was from noise stops.
 
 **When the user explicitly removes SL, that is a direct order.** The trader task must not re-add protection or close the position on its own judgment. The user is managing risk manually.
+
+### Daily Rollover SL Guard (4/10 preventive measure)
+
+**OANDA daily maintenance at 5 PM ET causes spread spikes every day.** Summer: 21:00 UTC (06:00 JST). Winter: 22:00 UTC (07:00 JST). Any SL/Trailing set at normal spread levels WILL get hunted during this window.
+
+**`protection_check.py` detects rollover approach automatically.** When it outputs `ROLLOVER WINDOW`:
+1. Run `python3 tools/rollover_guard.py remove` — removes all SL/Trailing, saves state
+2. Wait for rollover to pass (~15 min)
+3. Run `python3 tools/rollover_guard.py restore` — re-applies saved SL/Trailing
+
+**The trader task runs protection_check at every session start.** If rollover is approaching, the trader MUST run rollover_guard.py remove before doing anything else. If rollover has passed and saved state exists, run restore first.
 
 ## Conviction-Based Sizing — Determined by Depth of Analysis, Not Indicator Count
 
