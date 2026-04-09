@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-04-10 — Session timing overhaul: 8min/2min-cron → 10min/15min-cron
+
+**Trigger**: Data analysis of 3 weeks of trades (3/20-4/8) showed:
+- Most profitable bucket = 1-4h hold (65% WR, +200 JPY avg). <5min scalps = negative avg P&L
+- Winners held 127-334min avg vs losers 13-131min. Patience = profit
+- S-candidates missed due to shallow analysis (audit finding), not cron frequency
+- ~5 of 7 sessions/hour were "profit_check → HOLD → nothing changed" (wasted Opus time)
+
+**Changes**:
+- **schedule.json**: `*/2 * * * *` → `*/15 * * * *` (15-min cron)
+- **SKILL.md session length**: 8min → 10min (+2min for deeper 7-pair scan, fib_wave --all, Different lens)
+- **Zombie reaper**: kill threshold 10min → 14min (session + buffer)
+- **Lock staleness**: 480s → 600s
+- **Hard kill timeout**: sleep 900 → sleep 720 (12min)
+- **SESSION_END trigger**: 420s (7min) → 540s (9min)
+- **Time allocation**: 7+1 → 9+1 (deeper scan window: 2-5min instead of 2-4min)
+
+**Impact**: Opus usage 56min/hr → 24min/hr (57% cost reduction). Worst-case reaction 10min → 25min (covered by TP/SL/trailing protection orders). Structurally eliminates <5min negative-EV scalps.
+
 ## 2026-04-10 — Force multi-angle market reading: chart shape + narrative + cross-pair into output format
 
 **Trigger**: Audit showed trader reads NUMBERS not CHARTS. 96% of entry reasons cite indicators, 2% cite news. M5 price action data generated but never referenced. Narrative evolution (news_flow_log) never cited. Cross-pair validation absent.
