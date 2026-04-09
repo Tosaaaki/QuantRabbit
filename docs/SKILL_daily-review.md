@@ -29,6 +29,23 @@ Read the output of daily_review.py and think through the following:
 5. **Trailing stop effectiveness**: How many positions were closed by trailing stops? Were the trail widths appropriate vs ATR?
 6. **R/R ratio**: Compare average win size vs average loss size. If losses > wins, the sizing or hold duration is wrong
 
+## Step 2.5: Audit Accuracy Review
+
+Read: `logs/audit_history.jsonl` (today's entries — each line is one audit run with S-scan results and prices)
+
+For each S-scan signal that fired today:
+- Was the pair entered? If so, what was the P&L? (cross-reference with live_trade_log.txt)
+- If NOT entered, did the price move in the predicted direction?
+  Compare `price_at_detection` with current price or closing price for that pair.
+  A +5pip move in predicted direction within 1-2h = signal was correct.
+
+Write findings in strategy_memory.md → Active Observations:
+- `[date] S-scan Trend-Dip fired N times. Entered M. Profitable K/M.`
+- `[date] S-scan Structural fired for EUR_USD LONG @1.0920. NOT entered. Price went to 1.0945 (+25pip in 2h). Signal was correct.`
+- `[date] S-scan Counter fired for USD_JPY SHORT. Entered. Lost -200 JPY. H4 extreme persisted. Signal was premature.`
+
+This data drives recipe promotion/deprecation. After 10+ data points for a recipe, move to Confirmed (if >60% accurate) or Deprecated (if <40% accurate).
+
 ## Step 3: Update strategy_memory.md (MANDATORY — every section must be touched)
 
 **You MUST edit strategy_memory.md. "No changes needed" is not acceptable.** At minimum:

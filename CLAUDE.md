@@ -60,7 +60,7 @@ How to achieve this:
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
-| quality-audit | Sonnet | Every 30 min | ~2 min | Cross-check trader decisions against rules. Flags missed S-candidates, undersizing, rule misapplication → logs/quality_audit.md + Slack |
+| quality-audit | Sonnet | Every 30 min | ~2 min | Fact-gathering + discretionary judgment. Presents OANDA-verified data, exit quality, S-scan results → auditor exercises judgment on what to report → logs/quality_audit.md + Slack |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -106,9 +106,10 @@ Every 1 min: trader session
   └── SESSION_END (7 min mark, 8 min hard limit): trade_performance.py + ingest.py → memory.db
 
 Every 30 min: quality-audit session (Sonnet)
-  ├── runs: quality_audit.py (S-scan vs state.md cross-check, sizing audit, rule misapplication)
-  ├── WRITES: logs/quality_audit.md (issues list — read by next trader session)
-  └── if CRITICAL/WARNING → posts summary to #qr-daily via Slack
+  ├── runs: quality_audit.py (OANDA-verified facts: positions, exit quality, S-scan, sizing, rules)
+  ├── WRITES: logs/quality_audit.md (facts — trader reads) + logs/quality_audit.json (machine) + logs/audit_history.jsonl (outcome tracking)
+  ├── Sonnet-auditor exercises JUDGMENT on each finding (REPORT / NOISE)
+  └── if REPORT items → posts summary to #qr-daily via Slack
 
 Daily 06:00 UTC: daily-review session
   ├── runs: daily_review.py (fact collection + pretrade result correlation)
@@ -198,7 +199,9 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `logs/news_digest.md` | News summary updated by Cowork hourly |
 | `logs/news_cache.json` | Structured news data from API parser |
 | `logs/technicals_*.json` | H1/H4 technical indicators |
-| `logs/quality_audit.md` | Quality audit results (updated every 30 min by quality-audit task. Trader reads at session start) |
+| `logs/quality_audit.md` | Quality audit facts (updated every 30 min. Trader reads at session start) |
+| `logs/quality_audit.json` | Quality audit machine-readable output (for daily-review parsing) |
+| `logs/audit_history.jsonl` | Append-only S-scan outcome tracking (prices at detection time. daily-review uses for recipe accuracy) |
 
 ### Scripts
 

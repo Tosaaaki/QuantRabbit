@@ -180,6 +180,26 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
     return matches
 
 
+def deduplicate(matches: list[str]) -> list[str]:
+    """Keep only the strongest recipe per pair+direction."""
+    import re as _re
+    best = {}
+    for line in matches:
+        m = _re.match(r"🎯 (\w+) (LONG|SHORT) (\S+): (.+)", line)
+        if not m:
+            continue
+        key = (m.group(1), m.group(2))  # (pair, direction)
+        if key not in best:
+            best[key] = line
+        else:
+            # More detail = more evidence = stronger
+            existing_detail = best[key].split(": ", 1)[-1] if ": " in best[key] else ""
+            new_detail = m.group(4)
+            if len(new_detail) > len(existing_detail):
+                best[key] = line
+    return list(best.values())
+
+
 def main():
     # Load currency strength
     cs = {}
@@ -220,10 +240,19 @@ def main():
         all_matches.extend(matches)
 
     if all_matches:
-        # Deduplicate (same pair can match multiple recipes — show all)
-        for m in all_matches:
-            print(m)
-        print(f"\n→ {len(all_matches)} S-candidate(s) found. Enter at S-size (30% NAV) or explain why not.")
+        # Deduplicate: same pair + same direction → keep strongest recipe
+        deduped = deduplicate(all_matches)
+        for m in deduped:
+            # Append current price for outcome tracking
+            pair_m = m.split()[1] if len(m.split()) > 1 else ""
+            tfs = load_technicals(pair_m)
+            m5 = tfs.get("M5", {})
+            price = m5.get("close", 0)
+            price_str = f" @{price:.5f}" if price else ""
+            print(f"{m}{price_str}")
+        raw_count = len(all_matches)
+        dup_note = f" (raw {raw_count}, deduplicated)" if raw_count != len(deduped) else ""
+        print(f"\n→ {len(deduped)} S-candidate(s) found{dup_note}.")
     else:
         print("(no S-candidates detected across 7 pairs)")
 

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Quality Audit — cross-checks trader decisions against rules and S-conviction data.
+Quality Audit v2 — Fact-gathering for discretionary auditing.
 
-Designed to run as a separate scheduled task (Sonnet, every 30 min).
-Reads state.md, live_trade_log, S-conviction scan, OANDA positions/margin,
-and flags inconsistencies.
+Design principle: Script presents VERIFIED FACTS. Sonnet-auditor makes judgments.
+Ground truth = OANDA API (not state.md regex parsing).
 
-Output: logs/quality_audit.md (overwritten each run). Only writes when issues found.
-Exit code: 0 = clean, 1 = issues found (for task to decide whether to Slack).
+Output:
+  - logs/quality_audit.md  (human-readable, for trader + auditor)
+  - logs/quality_audit.json (machine-readable, for daily-review)
+  - logs/audit_history.jsonl (append-only, for outcome tracking)
+  - stdout: summary for the task runner
+
+Exit code: 0 = no findings, 1 = findings present (auditor decides severity)
 """
 import json
 import re
@@ -22,10 +26,14 @@ ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = str(ROOT / ".venv" / "bin" / "python")
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 
-# Normal spreads per pair (pip)
 NORMAL_SPREAD = {
     "USD_JPY": 1.2, "EUR_USD": 1.2, "GBP_USD": 1.8,
     "AUD_USD": 1.8, "EUR_JPY": 2.5, "GBP_JPY": 3.5, "AUD_JPY": 2.0,
+}
+
+PIP_MULT = {
+    "USD_JPY": 100, "EUR_JPY": 100, "GBP_JPY": 100, "AUD_JPY": 100,
+    "EUR_USD": 10000, "GBP_USD": 10000, "AUD_USD": 10000,
 }
 
 
@@ -53,225 +61,360 @@ def run_script(args, timeout=30):
         return f"(error: {e})"
 
 
-# ── Check 1: S-candidates missed ──
+def load_technicals(pair: str) -> dict:
+    f = ROOT / f"logs/technicals_{pair}.json"
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text()).get("timeframes", {})
+    except Exception:
+        return {}
 
-def check_s_candidates_missed(state_text: str) -> list[str]:
-    """Run S-conviction scan and compare with state.md Pass reasons."""
-    issues = []
 
-    # Run S-scan
-    scan_out = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
-    if "no S-candidates" in scan_out or "error" in scan_out:
-        return []
+# ──────────────────────────────────────────────
+#  OANDA ground-truth helpers
+# ──────────────────────────────────────────────
 
-    # Parse S-candidates: "🎯 PAIR DIR Recipe: details"
-    s_candidates = []
-    for line in scan_out.split("\n"):
-        if line.startswith("🎯"):
-            m = re.match(r"🎯 (\w+) (LONG|SHORT) (\S+):", line)
-            if m:
-                s_candidates.append({
-                    "pair": m.group(1),
-                    "direction": m.group(2),
-                    "recipe": m.group(3),
-                    "full": line,
-                })
+def build_held_pairs(trades: list) -> dict:
+    """Build held pairs dict from OANDA trades. Returns {pair: {direction, units, upl, id, price}}."""
+    held = {}
+    for t in trades:
+        pair = t["instrument"]
+        units = int(t.get("currentUnits", 0))
+        held[pair] = {
+            "direction": "LONG" if units > 0 else "SHORT",
+            "units": abs(units),
+            "upl_jpy": float(t.get("unrealizedPL", 0)),
+            "id": t.get("id", ""),
+            "entry_price": float(t.get("price", 0)),
+        }
+    return held
 
-    if not s_candidates:
-        return []
 
-    # Parse state.md for held pairs and Pass reasons
-    held_pairs = set()
-    pass_reasons = {}  # pair -> reason text
+def get_trade_orders(trade: dict, token: str, acct: str) -> dict:
+    """Fetch dependent orders (TP/SL/trailing) for a trade."""
+    orders = {"has_tp": False, "has_sl": False, "has_trailing": False,
+              "tp_price": None, "sl_price": None, "trailing_distance": None}
+    if "takeProfitOrder" in trade and trade["takeProfitOrder"]:
+        orders["has_tp"] = True
+        orders["tp_price"] = float(trade["takeProfitOrder"].get("price", 0))
+    if "stopLossOrder" in trade and trade["stopLossOrder"]:
+        orders["has_sl"] = True
+        orders["sl_price"] = float(trade["stopLossOrder"].get("price", 0))
+    if "trailingStopLossOrder" in trade and trade["trailingStopLossOrder"]:
+        orders["has_trailing"] = True
+        orders["trailing_distance"] = float(trade["trailingStopLossOrder"].get("distance", 0))
+    return orders
 
-    # Find held pairs
-    for m in re.finditer(r"### (\w+_\w+) (?:LONG|SHORT) \(id=", state_text):
-        held_pairs.add(m.group(1))
 
-    # Find Tier 2 scan entries with "Pass" or pass-like reasons
-    for line in state_text.split("\n"):
-        for pair in PAIRS:
-            if pair in line and ("Pass" in line or "pass" in line or "Skip" in line):
-                pass_reasons[pair] = line.strip()
+# ──────────────────────────────────────────────
+#  S-scan parsing (runs ONCE, result passed around)
+# ──────────────────────────────────────────────
 
-    # Cross-check: S-candidate exists but pair is not held and has a Pass reason
+def parse_s_scan(scan_output: str) -> list[dict]:
+    """Parse S-conviction scan output into structured data."""
+    candidates = []
+    for line in scan_output.split("\n"):
+        if not line.startswith("🎯"):
+            continue
+        m = re.match(r"🎯 (\w+) (LONG|SHORT) (\S+): (.+)", line)
+        if m:
+            candidates.append({
+                "pair": m.group(1),
+                "direction": m.group(2),
+                "recipe": m.group(3),
+                "details": m.group(4),
+                "full": line,
+            })
+    return candidates
+
+
+def deduplicate_s_candidates(candidates: list) -> list:
+    """Keep only the strongest recipe per pair+direction."""
+    best = {}
+    for c in candidates:
+        key = (c["pair"], c["direction"])
+        if key not in best:
+            best[key] = c
+        else:
+            # More detail characters = more evidence. Simple heuristic.
+            if len(c["details"]) > len(best[key]["details"]):
+                best[key] = c
+    return list(best.values())
+
+
+# ──────────────────────────────────────────────
+#  Fact checks (no judgments — just data)
+# ──────────────────────────────────────────────
+
+def gather_s_scan_facts(s_candidates: list, held: dict, margin_pct: float) -> list[dict]:
+    """Cross-reference S-scan with held positions. Returns fact entries."""
+    facts = []
     for sc in s_candidates:
         pair = sc["pair"]
-        if pair in held_pairs:
-            continue  # Already holding — check sizing instead
-        if pair in pass_reasons:
-            reason = pass_reasons[pair]
-            issues.append(
-                f"**S-CANDIDATE MISSED**: {sc['full']}\n"
-                f"  Trader Pass reason: {reason}\n"
-                f"  → Is this Pass reason valid? S-scan says enter."
-            )
-        elif pair not in held_pairs:
-            # Not held, no explicit Pass — just not entered
-            issues.append(
-                f"**S-CANDIDATE NOT ENTERED**: {sc['full']}\n"
-                f"  No position held. No Pass reason found in state.md."
-            )
+        entry = {
+            "pair": pair,
+            "direction": sc["direction"],
+            "recipe": sc["recipe"],
+            "details": sc["details"],
+        }
+        if pair in held:
+            if held[pair]["direction"] == sc["direction"]:
+                entry["status"] = "ALREADY_HELD"
+                entry["held_units"] = held[pair]["units"]
+                entry["held_upl"] = held[pair]["upl_jpy"]
+            else:
+                entry["status"] = "HELD_OPPOSITE"
+                entry["held_direction"] = held[pair]["direction"]
+                entry["held_units"] = held[pair]["units"]
+        else:
+            entry["status"] = "NOT_HELD"
+            if margin_pct >= 90:
+                entry["margin_note"] = f"margin-blocked at {margin_pct:.0f}%"
+            elif margin_pct >= 85:
+                entry["margin_note"] = f"margin tight at {margin_pct:.0f}%"
+            else:
+                entry["margin_note"] = f"margin available ({100 - margin_pct:.0f}% idle)"
+        facts.append(entry)
+    return facts
 
-    return issues
+
+def gather_exit_quality(trades: list, state_text: str, token: str, acct: str) -> list[dict]:
+    """Check exit quality: peak drawdown, BE SL, ATR×1.0 stall."""
+    findings = []
+
+    for t in trades:
+        pair = t["instrument"]
+        units = int(t.get("currentUnits", 0))
+        side = "LONG" if units > 0 else "SHORT"
+        upl = float(t.get("unrealizedPL", 0))
+        entry_price = float(t.get("price", 0))
+
+        # --- Peak drawdown ---
+        peak_jpy = None
+        # Parse from state.md: "Peak: +588 JPY" or "peak: +727 JPY" or "Peak: +3,200 JPY"
+        in_section = False
+        for line in state_text.split("\n"):
+            if pair in line and "###" in line:
+                in_section = True
+            elif in_section:
+                if line.startswith("##") or line.startswith("---"):
+                    break
+                peak_m = re.search(r"[Pp]eak[:\s]+\+?([\d,]+)\s*(?:JPY|円|yen)", line, re.IGNORECASE)
+                if peak_m:
+                    peak_jpy = float(peak_m.group(1).replace(",", ""))
+
+        if peak_jpy is not None and peak_jpy > 50 and upl < peak_jpy:
+            drawdown_pct = ((peak_jpy - upl) / peak_jpy * 100) if peak_jpy > 0 else 0
+            # If UPL went negative, drawdown exceeds 100% — mark as profit_lost
+            severity = "WATCH" if drawdown_pct >= 60 else "DATA"
+            findings.append({
+                "pair": pair, "type": "peak_drawdown", "severity": severity,
+                "peak_jpy": round(peak_jpy), "current_jpy": round(upl),
+                "drawdown_pct": round(min(drawdown_pct, 100)),
+                "profit_lost": round(peak_jpy - upl),
+                "went_negative": upl < 0,
+            })
+
+        # --- BE SL detection ---
+        orders = get_trade_orders(t, token, acct)
+        if orders["has_sl"] and orders["sl_price"] and entry_price > 0:
+            pip_m = PIP_MULT.get(pair, 100)
+            sl_dist_pips = abs(orders["sl_price"] - entry_price) * pip_m
+            if sl_dist_pips < 2.0 and upl > 100:  # SL within 2 pips of entry AND in profit
+                findings.append({
+                    "pair": pair, "type": "be_sl", "severity": "WATCH",
+                    "entry_price": entry_price, "sl_price": orders["sl_price"],
+                    "sl_dist_pips": round(sl_dist_pips, 1),
+                    "current_upl": round(upl),
+                    "half_tp_value": round(upl / 2),
+                })
+
+        # --- ATR×1.0 reached, no recent action ---
+        tfs = load_technicals(pair)
+        h1 = tfs.get("H1", {})
+        atr = h1.get("atr", 0)
+        if atr > 0 and entry_price > 0:
+            pip_m = PIP_MULT.get(pair, 100)
+            current_price = h1.get("close", entry_price)
+            if side == "LONG":
+                move_pips = (current_price - entry_price) * pip_m
+            else:
+                move_pips = (entry_price - current_price) * pip_m
+            atr_pips = atr * pip_m
+            atr_ratio = move_pips / atr_pips if atr_pips > 0 else 0
+
+            if atr_ratio >= 1.0 and upl > 0:
+                # Check if recent close/half_tp in live_trade_log
+                log_path = ROOT / "logs" / "live_trade_log.txt"
+                recent_action = False
+                if log_path.exists():
+                    for log_line in log_path.read_text().strip().split("\n")[-20:]:
+                        if pair in log_line and any(w in log_line for w in ["HALF_TP", "CLOSE", "profit_check"]):
+                            recent_action = True
+                            break
+
+                if not recent_action:
+                    findings.append({
+                        "pair": pair, "type": "atr_reached_no_action", "severity": "WATCH",
+                        "atr_ratio": round(atr_ratio, 2), "upl_jpy": round(upl),
+                        "atr_pips": round(atr_pips, 1), "move_pips": round(move_pips, 1),
+                    })
+
+    return findings
 
 
-# ── Check 2: Sizing discipline ──
+def gather_position_facts(trades: list, token: str, acct: str) -> list[dict]:
+    """Build position summary with order status."""
+    positions = []
+    for t in trades:
+        pair = t["instrument"]
+        units = int(t.get("currentUnits", 0))
+        orders = get_trade_orders(t, token, acct)
+        positions.append({
+            "pair": pair,
+            "direction": "LONG" if units > 0 else "SHORT",
+            "units": abs(units),
+            "upl_jpy": round(float(t.get("unrealizedPL", 0))),
+            "entry_price": float(t.get("price", 0)),
+            "has_tp": orders["has_tp"],
+            "has_sl": orders["has_sl"],
+            "has_trailing": orders["has_trailing"],
+            "sl_is_be": False,  # set below
+        })
+        # Check BE
+        if orders["has_sl"] and orders["sl_price"]:
+            pip_m = PIP_MULT.get(pair, 100)
+            sl_dist = abs(orders["sl_price"] - float(t.get("price", 0))) * pip_m
+            if sl_dist < 2.0:
+                positions[-1]["sl_is_be"] = True
+    return positions
 
-def check_sizing(trades: list, nav: float) -> list[str]:
-    """Check if recent entries match conviction sizing rules."""
-    issues = []
+
+def gather_directional_mix(trades: list) -> dict:
+    """Directional balance check."""
+    long_count = sum(1 for t in trades if int(t.get("currentUnits", 0)) > 0)
+    short_count = len(trades) - long_count
+    long_pairs = [t["instrument"] for t in trades if int(t.get("currentUnits", 0)) > 0]
+    short_pairs = [t["instrument"] for t in trades if int(t.get("currentUnits", 0)) < 0]
+    if len(trades) >= 3 and (long_count == 0 or short_count == 0):
+        status = f"ALL_{'LONG' if long_count > 0 else 'SHORT'}"
+        severity = "WATCH"
+    else:
+        status = "mixed"
+        severity = "DATA"
+    return {
+        "long": long_count, "short": short_count,
+        "long_pairs": long_pairs, "short_pairs": short_pairs,
+        "status": status, "severity": severity,
+    }
+
+
+def gather_sizing_facts(nav: float) -> list[dict]:
+    """Check today's entries against conviction sizing rules."""
+    findings = []
     log_path = ROOT / "logs" / "live_trade_log.txt"
     if not log_path.exists():
         return []
 
     lines = log_path.read_text().strip().split("\n")
-    # Look at last 20 entries from today
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    recent_entries = []
-    for line in lines[-30:]:
-        if "ENTRY" in line and today in line:
-            recent_entries.append(line)
 
-    for entry in recent_entries:
-        units_match = re.search(r"(\d+)u", entry)
+    for line in lines[-30:]:
+        if "ENTRY" not in line or today not in line:
+            continue
+
+        units_match = re.search(r"(\d+)u", line)
         if not units_match:
             continue
-
-        # Parse conviction letter from various formats:
-        #   pretrade=S(9), pretrade=A(7), pretrade=S(8)LOW, pretrade=HIGH(B), pretrade=LOW(S9)
-        conviction_letter = None
-        # Format 1: pretrade=LETTER(number) — e.g. S(9), A(7), B(5)
-        m = re.search(r"pretrade=([SABC])\(\d+\)", entry)
-        if m:
-            conviction_letter = m.group(1)
-        else:
-            # Format 2: pretrade=WORD(LETTER...) — e.g. HIGH(B), LOW(S9)
-            m = re.search(r"pretrade=\w+\(([SABC])\d*\)", entry)
-            if m:
-                conviction_letter = m.group(1)
-        if not conviction_letter:
-            continue
-
         units = int(units_match.group(1))
 
-        # Expected sizing
-        expected_pct = {"S": 0.30, "A": 0.15, "B": 0.05, "C": 0.02}
-        pct = expected_pct.get(conviction_letter, 0.05)
-        # Rough expected units (assume avg price ~150 for JPY pairs)
-        expected_margin = nav * pct
-        # Don't need exact units — just check if drastically undersized
-        min_expected = expected_margin * 0.4  # allow 60% tolerance
+        # Parse conviction letter
+        conviction = None
+        m = re.search(r"pretrade=([SABC])\(\d+\)", line)
+        if m:
+            conviction = m.group(1)
+        else:
+            m = re.search(r"pretrade=\w+\(([SABC])\d*\)", line)
+            if m:
+                conviction = m.group(1)
+        if not conviction:
+            # Try conviction= field
+            m = re.search(r"conviction=([SABC])", line)
+            if m:
+                conviction = m.group(1)
+        if not conviction:
+            continue
 
-        # Extract pair for price estimation
-        pair_match = re.search(r"(USD_JPY|EUR_USD|GBP_USD|AUD_USD|EUR_JPY|GBP_JPY|AUD_JPY)", entry)
+        # Estimate margin %
+        pair_match = re.search(r"(USD_JPY|EUR_USD|GBP_USD|AUD_USD|EUR_JPY|GBP_JPY|AUD_JPY)", line)
         if not pair_match:
             continue
         pair = pair_match.group(1)
-        # Estimate margin per unit (JPY terms, leverage=25)
-        # For XXX_JPY: margin = price_JPY / 25
-        # For XXX_USD: margin = price_USD * USD_JPY / 25 ≈ price * 155 / 25
         leverage = 25
         if "JPY" in pair:
-            price_est = 150  # approximate JPY pair price
-            margin_per_unit = price_est / leverage
+            margin_per_unit = 150 / leverage
         else:
-            # EUR_USD, GBP_USD, AUD_USD — base currency value in JPY
-            # EUR ≈ 170JPY, GBP ≈ 195JPY, AUD ≈ 100JPY
             base_jpy = {"EUR_USD": 170, "GBP_USD": 195, "AUD_USD": 100}
-            price_jpy = base_jpy.get(pair, 155)
-            margin_per_unit = price_jpy / leverage
-        actual_margin = units * margin_per_unit
-        actual_pct = actual_margin / nav if nav > 0 else 0
+            margin_per_unit = base_jpy.get(pair, 155) / leverage
+        actual_pct = (units * margin_per_unit / nav) if nav > 0 else 0
 
-        if conviction_letter == "S" and actual_pct < 0.15:
-            issues.append(
-                f"**UNDERSIZED S-ENTRY**: {entry[:120]}...\n"
-                f"  Conviction=S → expected ~30% NAV (~{int(expected_margin)}JPY margin).\n"
-                f"  Actual: {units}u = ~{actual_pct*100:.0f}% NAV ({int(actual_margin)}JPY margin).\n"
-                f"  → Double-discount? Historical WR fear? S = S-size."
-            )
-        elif conviction_letter == "A" and actual_pct < 0.07:
-            issues.append(
-                f"**UNDERSIZED A-ENTRY**: {entry[:120]}...\n"
-                f"  Conviction=A → expected ~15% NAV. Actual: {units}u = ~{actual_pct*100:.0f}% NAV."
-            )
+        expected_pct = {"S": 0.30, "A": 0.15, "B": 0.05, "C": 0.02}
+        exp = expected_pct.get(conviction, 0.05)
 
-    # Check minimum 2000u rule
-    for entry in recent_entries:
-        units_match = re.search(r"(\d+)u", entry)
-        if units_match and int(units_match.group(1)) < 2000:
-            issues.append(
-                f"**BELOW MINIMUM 2000u**: {entry[:120]}...\n"
-                f"  Units={units_match.group(1)}u. Minimum is 2000u. Below that, spread eats the profit."
-            )
+        if conviction == "S" and actual_pct < 0.15:
+            findings.append({
+                "type": "undersized", "severity": "WATCH", "conviction": conviction,
+                "pair": pair, "units": units,
+                "actual_pct": round(actual_pct * 100, 1),
+                "expected_pct": round(exp * 100),
+                "entry_line": line[:140],
+            })
+        elif conviction == "A" and actual_pct < 0.07:
+            findings.append({
+                "type": "undersized", "severity": "DATA", "conviction": conviction,
+                "pair": pair, "units": units,
+                "actual_pct": round(actual_pct * 100, 1),
+                "expected_pct": round(exp * 100),
+                "entry_line": line[:140],
+            })
 
-    return issues
+        if units < 2000:
+            findings.append({
+                "type": "below_minimum", "severity": "DATA",
+                "pair": pair, "units": units,
+                "entry_line": line[:140],
+            })
 
-
-# ── Check 3: Margin utilization ──
-
-def check_margin(nav: float, margin_used: float, s_candidate_count: int, position_count: int) -> list[str]:
-    """Flag idle margin when opportunities exist."""
-    issues = []
-    margin_pct = (margin_used / nav * 100) if nav > 0 else 0
-    idle_pct = 100 - margin_pct
-
-    if s_candidate_count >= 3 and idle_pct > 60 and position_count <= 1:
-        issues.append(
-            f"**MARGIN IDLE WITH S-CANDIDATES**: {s_candidate_count} S-candidates detected.\n"
-            f"  Margin: {margin_pct:.0f}% used, {idle_pct:.0f}% idle. {position_count} position(s).\n"
-            f"  → {s_candidate_count} S-setups × 30% NAV each. Why is 60%+ sitting idle?"
-        )
-    elif s_candidate_count >= 1 and idle_pct > 80 and position_count == 0:
-        issues.append(
-            f"**FLAT WITH S-CANDIDATES**: {s_candidate_count} S-candidate(s) but 0 positions.\n"
-            f"  → Market is moving. S-conviction scan found setups. Enter or explain."
-        )
-
-    return issues
+    return findings
 
 
-# ── Check 4: Rule misapplication ──
+def gather_rule_flags(state_text: str, s_candidates: list) -> list[dict]:
+    """Detect rule misapplication patterns from state.md text."""
+    flags = []
 
-def check_rule_misapplication(state_text: str) -> list[str]:
-    """Detect known patterns of rule misapplication."""
-    issues = []
-
-    # Circuit breaker applied to wrong direction
-    # Pattern: "circuit breaker" mentioned for a pair, but S-candidate is opposite direction
+    # Circuit breaker blocking opposite direction
     cb_pairs = {}
     for line in state_text.split("\n"):
         cb_match = re.search(r"(\w+_\w+).*circuit.?breaker", line, re.IGNORECASE)
         if cb_match:
             pair = cb_match.group(1)
-            # Try to find which direction the breaker is for
             if "SHORT" in line.upper() and "LONG" not in line.split("circuit")[0].upper():
                 cb_pairs[pair] = "SHORT"
             elif "LONG" in line.upper():
                 cb_pairs[pair] = "LONG"
-            else:
-                cb_pairs[pair] = "UNKNOWN"
 
-    # Check if circuit breaker is blocking the opposite direction
-    scan_out = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
     for pair, blocked_dir in cb_pairs.items():
-        if blocked_dir == "UNKNOWN":
-            continue
         opposite = "LONG" if blocked_dir == "SHORT" else "SHORT"
-        # Check if S-scan found opposite direction for this pair
-        pattern = f"🎯 {pair} {opposite}"
-        if pattern in scan_out:
-            # Check if state.md blocks it
-            for line in state_text.split("\n"):
-                if pair in line and "circuit" in line.lower() and ("Pass" in line or "pass" in line):
-                    issues.append(
-                        f"**CIRCUIT BREAKER MISAPPLIED**: {pair} {blocked_dir} circuit breaker\n"
-                        f"  is blocking {opposite} entry. S-scan: {pattern} detected.\n"
-                        f"  Rule: circuit breaker is DIRECTION-ONLY. {blocked_dir} losses don't affect {opposite}."
-                    )
+        for sc in s_candidates:
+            if sc["pair"] == pair and sc["direction"] == opposite:
+                flags.append({
+                    "type": "circuit_breaker_misapplied", "severity": "WATCH",
+                    "pair": pair, "blocked_dir": blocked_dir, "s_direction": opposite,
+                    "s_recipe": sc["recipe"],
+                })
 
-    # Spread excuse on normal spread
+    # Normal spread called wide
     for line in state_text.split("\n"):
         spread_match = re.search(
             r"(\w+_\w+).*[Ss]pread[=:]?\s*([\d.]+)\s*pip.*(?:wide|⚠|too)", line
@@ -281,97 +424,237 @@ def check_rule_misapplication(state_text: str) -> list[str]:
             spread_val = float(spread_match.group(2))
             normal = NORMAL_SPREAD.get(pair, 5.0)
             if spread_val <= normal:
-                issues.append(
-                    f"**NORMAL SPREAD CALLED WIDE**: {pair} Sp={spread_val}pip flagged as wide.\n"
-                    f"  Normal range for {pair}: up to {normal}pip.\n"
-                    f"  → This is the cost of doing business, not a reason to pass."
-                )
+                flags.append({
+                    "type": "spread_excuse", "severity": "DATA",
+                    "pair": pair, "spread": spread_val, "normal": normal,
+                })
 
-    # "Thin market" as blanket entry blocker
+    # Thin market blanket block
     thin_count = 0
-    thin_lines = []
     for line in state_text.split("\n"):
         if re.search(r"thin|holiday|Easter|liquidity", line, re.IGNORECASE):
             if re.search(r"Pass|no entry|no new|skip", line, re.IGNORECASE):
                 thin_count += 1
-                thin_lines.append(line.strip()[:100])
-
     if thin_count >= 3:
-        issues.append(
-            f"**THIN MARKET BLANKET BLOCK**: {thin_count} pairs blocked by thin market/holiday.\n"
-            f"  Rule: thin market affects SL design, NOT entry decisions.\n"
-            f"  Examples: {'; '.join(thin_lines[:2])}"
-        )
+        flags.append({
+            "type": "thin_market_blanket", "severity": "DATA",
+            "count": thin_count,
+        })
 
-    return issues
-
-
-# ── Check 5: Pass reason quality ──
-
-def check_pass_reasons(state_text: str) -> list[str]:
-    """Check if Pass reasons in state.md are substantive."""
-    issues = []
-
-    # Find Tier 2 scan lines
-    vague_passes = []
-    for line in state_text.split("\n"):
-        if "Pass" in line or "pass" in line:
-            # Check for vague reasons
-            vague_patterns = [
-                r"Pass\s*$",  # Just "Pass" with nothing after
-                r"Pass\s*\(",  # Pass (reason) where reason is very short
-                r"not now",
-                r"waiting for.*confirmation",
-            ]
-            for vp in vague_patterns:
-                if re.search(vp, line, re.IGNORECASE):
-                    vague_passes.append(line.strip()[:120])
-                    break
-
-    if vague_passes:
-        issues.append(
-            f"**VAGUE PASS REASONS** ({len(vague_passes)}):\n"
-            + "\n".join(f"  - {p}" for p in vague_passes[:3])
-            + "\n  → Every Pass needs a specific, falsifiable reason."
-        )
-
-    return issues
+    return flags
 
 
-# ── Check 6: Consecutive same-direction entries (directional bias) ──
+def self_check(trades: list, state_text: str) -> dict:
+    """Verify OANDA ground truth vs state.md parsed positions."""
+    oanda_pairs = {t["instrument"] for t in trades}
 
-def check_directional_bias(trades: list) -> list[str]:
-    """Check if all open positions are in the same direction."""
-    issues = []
-    if len(trades) < 2:
-        return []
+    # Parse state.md positions (multiple format patterns)
+    parsed_pairs = set()
+    for m in re.finditer(r"###\s+(\w+_\w+)\s+(?:LONG|SHORT)", state_text):
+        parsed_pairs.add(m.group(1))
 
-    directions = set()
-    pairs = []
-    for t in trades:
-        units = int(t.get("currentUnits", 0))
-        if units > 0:
-            directions.add("LONG")
-        else:
-            directions.add("SHORT")
-        pairs.append(t["instrument"])
+    match = oanda_pairs == parsed_pairs
+    result = {
+        "held_pairs_match": match,
+        "oanda_pairs": sorted(oanda_pairs),
+        "parsed_pairs": sorted(parsed_pairs),
+    }
+    if not match:
+        result["note"] = f"OANDA has {sorted(oanda_pairs)}, state.md parsed {sorted(parsed_pairs)}"
+    return result
 
-    if len(directions) == 1 and len(trades) >= 3:
-        d = list(directions)[0]
-        issues.append(
-            f"**ALL POSITIONS {d}**: {len(trades)} positions, all {d}.\n"
-            f"  Pairs: {', '.join(pairs)}\n"
-            f"  → Not diversification, it's a bet. Where's the counter-trade?"
-        )
 
-    return issues
+# ──────────────────────────────────────────────
+#  Output formatters
+# ──────────────────────────────────────────────
 
+def build_json_report(data: dict) -> str:
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def build_markdown_report(data: dict) -> str:
+    """Human-readable report for trader + auditor. Facts, not accusations."""
+    ts = data["timestamp"]
+    acct = data["account"]
+    lines = [
+        f"# Quality Audit — {ts}",
+        "",
+        f"NAV: {acct['nav']:.0f} JPY | Margin: {acct['margin_pct']:.0f}% | "
+        f"Positions: {acct['positions']} | S-candidates: {len(data['s_scan'])}",
+        "",
+    ]
+
+    # Self-check warning
+    sc = data["self_check"]
+    if not sc["held_pairs_match"]:
+        lines.append(f"⚠ **SELF-CHECK**: {sc['note']}")
+        lines.append("")
+
+    # Positions
+    if data["positions"]:
+        lines.append("## Positions (OANDA verified)")
+        lines.append("")
+        for p in data["positions"]:
+            protection = []
+            if p["has_tp"]:
+                protection.append("TP")
+            if p["has_sl"]:
+                protection.append("BE-SL" if p["sl_is_be"] else "SL")
+            if p["has_trailing"]:
+                protection.append("Trail")
+            prot_str = "+".join(protection) if protection else "NO PROTECTION"
+            lines.append(
+                f"- {p['pair']} {p['direction']} {p['units']}u | "
+                f"UPL: {p['upl_jpy']:+.0f} JPY | {prot_str}"
+            )
+        lines.append("")
+
+    # Directional mix
+    dm = data["directional_mix"]
+    if dm["severity"] != "DATA":
+        lines.append(f"## Directional Mix: {dm['status']}")
+        lines.append(f"LONG({dm['long']}): {', '.join(dm['long_pairs'])} / "
+                      f"SHORT({dm['short']}): {', '.join(dm['short_pairs'])}")
+        lines.append("")
+
+    # Exit quality
+    if data["exit_quality"]:
+        lines.append("## Exit Quality")
+        lines.append("")
+        for eq in data["exit_quality"]:
+            if eq["type"] == "peak_drawdown":
+                if eq.get("went_negative"):
+                    lines.append(
+                        f"- {eq['pair']}: Peak {eq['peak_jpy']:+d} JPY → Now {eq['current_jpy']:+d} JPY "
+                        f"(gave back all profit + now in loss. Lost {eq['profit_lost']} JPY from peak)"
+                    )
+                else:
+                    lines.append(
+                        f"- {eq['pair']}: Peak {eq['peak_jpy']:+d} JPY → Now {eq['current_jpy']:+d} JPY "
+                        f"(drawdown {eq['drawdown_pct']}%, lost {eq['profit_lost']} JPY from peak)"
+                    )
+            elif eq["type"] == "be_sl":
+                lines.append(
+                    f"- {eq['pair']}: SL at entry ({eq['sl_price']}, {eq['sl_dist_pips']}pip from entry). "
+                    f"Current UPL: {eq['current_upl']:+d} JPY. "
+                    f"HALF_TP would lock in ~{eq['half_tp_value']:+d} JPY."
+                )
+            elif eq["type"] == "atr_reached_no_action":
+                lines.append(
+                    f"- {eq['pair']}: ATR×{eq['atr_ratio']:.1f} reached "
+                    f"({eq['move_pips']:.0f}/{eq['atr_pips']:.0f}pip). "
+                    f"UPL: {eq['upl_jpy']:+d} JPY. No HALF_TP/CLOSE in recent log."
+                )
+        lines.append("")
+
+    # S-scan facts
+    not_held = [s for s in data["s_scan"] if s["status"] == "NOT_HELD"]
+    already = [s for s in data["s_scan"] if s["status"] == "ALREADY_HELD"]
+    opposite = [s for s in data["s_scan"] if s["status"] == "HELD_OPPOSITE"]
+
+    if not_held or already or opposite:
+        lines.append("## S-Scan Results")
+        lines.append("")
+        if already:
+            for s in already:
+                lines.append(f"- ✅ {s['pair']} {s['direction']} {s['recipe']}: ALREADY HELD")
+        if not_held:
+            for s in not_held:
+                margin_note = s.get("margin_note", "")
+                lines.append(
+                    f"- 📊 {s['pair']} {s['direction']} {s['recipe']}: "
+                    f"NOT HELD ({margin_note})"
+                )
+                lines.append(f"  Details: {s['details']}")
+                # Add the thinking-prompt for trader
+                lines.append(f"  If I would enter: ___ / If I would not: ___")
+        if opposite:
+            for s in opposite:
+                lines.append(
+                    f"- ↕ {s['pair']} {s['direction']} {s['recipe']}: "
+                    f"HELD {s['held_direction']} ({s['held_units']}u)"
+                )
+        lines.append("")
+
+    # Sizing
+    if data["sizing_flags"]:
+        lines.append("## Sizing")
+        lines.append("")
+        for sf in data["sizing_flags"]:
+            if sf["type"] == "undersized":
+                lines.append(
+                    f"- {sf['pair']} {sf['conviction']}-conviction: "
+                    f"{sf['units']}u = {sf['actual_pct']}% NAV "
+                    f"(expected ~{sf['expected_pct']}%)"
+                )
+            elif sf["type"] == "below_minimum":
+                lines.append(f"- {sf['pair']}: {sf['units']}u below 2000u minimum")
+        lines.append("")
+
+    # Rule flags
+    if data["rule_flags"]:
+        lines.append("## Rule Observations")
+        lines.append("")
+        for rf in data["rule_flags"]:
+            if rf["type"] == "circuit_breaker_misapplied":
+                lines.append(
+                    f"- {rf['pair']}: Circuit breaker ({rf['blocked_dir']}) "
+                    f"vs S-scan {rf['s_direction']} {rf['s_recipe']}"
+                )
+            elif rf["type"] == "spread_excuse":
+                lines.append(
+                    f"- {rf['pair']}: Spread {rf['spread']}pip flagged as wide "
+                    f"(normal: {rf['normal']}pip)"
+                )
+            elif rf["type"] == "thin_market_blanket":
+                lines.append(
+                    f"- {rf['count']} pairs blocked by thin market / holiday"
+                )
+        lines.append("")
+
+    # State freshness
+    if data.get("state_age_min") and data["state_age_min"] > 10:
+        lines.append(f"## State.md: last updated {data['state_age_min']:.0f} minutes ago")
+        lines.append("")
+
+    lines.append(f"---")
+    lines.append(f"[audit v2: {data['elapsed']:.1f}s]")
+    return "\n".join(lines)
+
+
+def append_audit_history(data: dict):
+    """Append S-scan results with prices to audit_history.jsonl for outcome tracking."""
+    history_path = ROOT / "logs" / "audit_history.jsonl"
+    entry = {
+        "timestamp": data["timestamp"],
+        "s_scan": [],
+        "positions": len(data["positions"]),
+        "margin_pct": data["account"]["margin_pct"],
+    }
+    for sc in data["s_scan"]:
+        # Get current price from technicals cache
+        tfs = load_technicals(sc["pair"])
+        m5 = tfs.get("M5", {})
+        price = m5.get("close", 0)
+        entry["s_scan"].append({
+            "pair": sc["pair"],
+            "direction": sc["direction"],
+            "recipe": sc["recipe"],
+            "status": sc["status"],
+            "price_at_detection": price,
+        })
+    with open(history_path, "a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+# ──────────────────────────────────────────────
+#  Main
+# ──────────────────────────────────────────────
 
 def main():
     t0 = time.time()
-    all_issues = []
 
-    # Load config and OANDA data
+    # Load config
     try:
         cfg = load_config()
         token = cfg["oanda_token"]
@@ -395,65 +678,113 @@ def main():
     except Exception:
         trades = []
 
+    margin_pct = (margin_used / nav * 100) if nav > 0 else 0
+
     # Read state.md
     state_path = ROOT / "collab_trade" / "state.md"
     state_text = state_path.read_text() if state_path.exists() else ""
-
-    # Check state.md freshness
+    state_age_min = None
     if state_path.exists():
-        age_min = (time.time() - state_path.stat().st_mtime) / 60
-        if age_min > 10:
-            all_issues.append(
-                f"**STATE.MD STALE**: Last updated {age_min:.0f} minutes ago.\n"
-                f"  → Trader may not be running. Check lock file and cron."
-            )
+        state_age_min = (time.time() - state_path.stat().st_mtime) / 60
 
-    # Count S-candidates
-    scan_out = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
-    s_count = scan_out.count("🎯")
+    # Build OANDA ground truth
+    held = build_held_pairs(trades)
 
-    # Run all checks
-    all_issues.extend(check_s_candidates_missed(state_text))
-    all_issues.extend(check_sizing(trades, nav))
-    all_issues.extend(check_margin(nav, margin_used, s_count, len(trades)))
-    all_issues.extend(check_rule_misapplication(state_text))
-    all_issues.extend(check_pass_reasons(state_text))
-    all_issues.extend(check_directional_bias(trades))
+    # Run S-scan ONCE
+    scan_output = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
+    raw_candidates = parse_s_scan(scan_output)
+    s_candidates = deduplicate_s_candidates(raw_candidates)
+
+    # Gather all facts
+    s_scan_facts = gather_s_scan_facts(s_candidates, held, margin_pct)
+    exit_quality = gather_exit_quality(trades, state_text, token, acct)
+    positions = gather_position_facts(trades, token, acct)
+    directional_mix = gather_directional_mix(trades)
+    sizing_flags = gather_sizing_facts(nav)
+    rule_flags = gather_rule_flags(state_text, s_candidates)
+    sc = self_check(trades, state_text)
 
     elapsed = time.time() - t0
-
-    if not all_issues:
-        print(f"CLEAN — no issues ({elapsed:.1f}s)")
-        # Remove stale audit file if exists
-        audit_path = ROOT / "logs" / "quality_audit.md"
-        if audit_path.exists():
-            audit_path.unlink()
-        sys.exit(0)
-
-    # Write audit report
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    report = f"# Quality Audit — {now}\n\n"
-    report += f"NAV: {nav:.0f} JPY | Margin: {margin_used:.0f}/{nav:.0f} ({margin_used/nav*100:.0f}%) | "
-    report += f"Positions: {len(trades)} | S-candidates: {s_count}\n\n"
-    report += f"## Issues ({len(all_issues)})\n\n"
-    for i, issue in enumerate(all_issues, 1):
-        report += f"### {i}. {issue.split(chr(10))[0]}\n\n"
-        rest = "\n".join(issue.split("\n")[1:])
-        if rest.strip():
-            report += f"{rest}\n\n"
 
-    report += f"\n---\n[audit: {elapsed:.1f}s]\n"
+    # Assemble report data
+    data = {
+        "timestamp": now,
+        "account": {
+            "nav": nav, "margin_used": margin_used,
+            "margin_pct": round(margin_pct, 1),
+            "positions": len(trades),
+        },
+        "s_scan": s_scan_facts,
+        "s_scan_dedup_note": f"{len(raw_candidates)} raw → {len(s_candidates)} deduplicated",
+        "exit_quality": exit_quality,
+        "positions": positions,
+        "directional_mix": directional_mix,
+        "sizing_flags": sizing_flags,
+        "rule_flags": rule_flags,
+        "self_check": sc,
+        "state_age_min": state_age_min,
+        "elapsed": round(elapsed, 1),
+    }
 
-    audit_path = ROOT / "logs" / "quality_audit.md"
-    audit_path.write_text(report)
+    # Count actionable findings (for exit code)
+    has_findings = bool(
+        [s for s in s_scan_facts if s["status"] == "NOT_HELD"]
+        or exit_quality
+        or directional_mix["severity"] != "DATA"
+        or sizing_flags
+        or rule_flags
+        or (state_age_min and state_age_min > 10)
+        or not sc["held_pairs_match"]
+    )
 
-    # Print summary for the task
-    print(f"ISSUES FOUND: {len(all_issues)} ({elapsed:.1f}s)")
-    for issue in all_issues:
-        first_line = issue.split("\n")[0]
-        print(f"  • {first_line}")
+    # Write outputs
+    md_report = build_markdown_report(data)
+    json_report = build_json_report(data)
 
-    sys.exit(1)
+    audit_md = ROOT / "logs" / "quality_audit.md"
+    audit_json = ROOT / "logs" / "quality_audit.json"
+
+    if has_findings:
+        audit_md.write_text(md_report)
+        audit_json.write_text(json_report)
+    else:
+        # Clean — write minimal report, remove old files
+        audit_md.write_text(f"# Quality Audit — {now}\n\nCLEAN — no findings ({elapsed:.1f}s)\n")
+        if audit_json.exists():
+            audit_json.unlink()
+
+    # Always append to history (for outcome tracking)
+    if s_scan_facts:
+        append_audit_history(data)
+
+    # Print summary
+    not_held_count = len([s for s in s_scan_facts if s["status"] == "NOT_HELD"])
+    exit_count = len(exit_quality)
+    rule_count = len(rule_flags)
+    sizing_count = len(sizing_flags)
+
+    if has_findings:
+        parts = []
+        if not_held_count:
+            parts.append(f"s-scan:{not_held_count}")
+        if exit_count:
+            parts.append(f"exit:{exit_count}")
+        if directional_mix["severity"] != "DATA":
+            parts.append(f"direction:{directional_mix['status']}")
+        if sizing_count:
+            parts.append(f"sizing:{sizing_count}")
+        if rule_count:
+            parts.append(f"rules:{rule_count}")
+        if not sc["held_pairs_match"]:
+            parts.append("self-check:FAILED")
+        if state_age_min and state_age_min > 10:
+            parts.append(f"stale:{state_age_min:.0f}min")
+        print(f"FINDINGS: {' | '.join(parts)} ({elapsed:.1f}s)")
+        sys.exit(1)
+    else:
+        print(f"CLEAN ({elapsed:.1f}s)")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

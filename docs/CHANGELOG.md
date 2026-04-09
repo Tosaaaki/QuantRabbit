@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-09 — Quality Audit System Overhaul: fact-based + discretionary + exit quality
+
+**Problem**: Quality audit was fundamentally broken and philosophically misaligned:
+1. **Broken regex** (line 88: `\(id=` vs actual `id=`): `held_pairs` always empty → ALL S-candidates flagged as "NOT ENTERED" including pairs already held. 100% false positive rate. Trader noticed ("audit stale or mismatched") and started ignoring all audit output.
+2. **Bot-making machine**: Audit told Sonnet-trader "S-CANDIDATE MISSED → fix it" = mechanical rule-following. Contradicts "conditions met, so enter → NOT OK" philosophy.
+3. **Blind to biggest losses**: Exit failures (3/27 HOLD trap -4,796 JPY, 4/8 BE SL -1,160 JPY) completely unmonitored. Audit only checked entries.
+4. **No self-verification**: S-scan accuracy never measured. No feedback loop. No "audit of the audit."
+5. **S-scan 3x per run**: Redundant subprocess calls.
+6. **Recipe overlap**: Trend-Dip + Structural fire simultaneously on same M5 StRSI extreme, inflating candidate count.
+
+**Changes**:
+1. **quality_audit.py rewrite**: OANDA API as ground truth (not state.md regex). Script presents FACTS, not judgments. Added: exit quality checks (peak drawdown, BE SL detection, ATR×1.0 stall), self-check (OANDA vs state.md verification), audit_history.jsonl (outcome tracking). S-scan runs once, result cached. Output: quality_audit.md (human) + quality_audit.json (machine) + audit_history.jsonl (append-only).
+2. **s_conviction_scan.py**: Added deduplication (same pair+direction → strongest recipe only). Added current price to output for outcome tracking.
+3. **quality-audit SKILL.md**: Rewritten for "Think at the Point of Output". Auditor MUST write judgment for each finding (REPORT/NOISE with reasoning). Self-questioning step added. No more copy-paste relay.
+4. **trader SKILL.md**: "Read and fix" → "Read and respond". Audit is DATA, not instructions. Trader writes "If I would enter: ___ / If I would not: ___" for each S-scan finding.
+5. **daily-review SKILL.md**: Added Step 2.5 (Audit Accuracy Review). Reads audit_history.jsonl, correlates S-scan signals with actual price movement, writes recipe accuracy to strategy_memory.md. Enables recipe promotion/deprecation.
+6. **CLAUDE.md**: Updated architecture table and self-improvement loop description.
+
+**Design principle**: Separate fact-gathering (script) from judgment (Sonnet-auditor). Force thinking at every node: script presents data → auditor judges → trader responds. Every assertion has a verification mechanism.
+
 ## 2026-04-09 — Fix LONG-only bias: both-direction scan + rotation trading
 
 **Problem**: 4/8-4/9: 13 entries, 0 SHORTs. Trader used M5 bearish signals (StRSI=1.0, bear div, sellers dominant) defensively only (tighten TP, add SL) — never as SHORT entry signals. USD_JPY in clear H4+H1 downtrend, tried LONG 3x, all lost. Root cause: shallow indicator scan (ADX+StRSI+CS = 3 indicators) locks into one direction. Quality audit flagged "全ポジションLONG" repeatedly but escape hatch ("no H4 extreme") was too easy.
