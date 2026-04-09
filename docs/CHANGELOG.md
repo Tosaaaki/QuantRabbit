@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-09 — strategy_memory: remove SHORT-biased rules, add sample-period context
+
+**Trigger**: User feedback — SHORT win rate stats are market-regime-dependent, not permanent pair properties. Treating them as rules blocks profit in range/bearish markets.
+
+**Changes to strategy_memory.md**:
+- All per-pair SHORT stats now annotated with "(sample: 3/17-4/9, predominantly bullish period)"
+- Removed "Avoid" / "money pit" / "size down" directives on SHORT side
+- "LONG-only bias" lessons reframed: problem was "not reading chart for both directions," not "SHORTs are bad"
+- Pretrade HIGH-SHORT failures reframed: regime-dependent, applies equally to LONGs in bear market
+- USD_JPY flow rules softened: chart-first, not direction-first
+
+**Principle**: Statistics from a trending sample don't generalize to all market conditions. Read the chart, not the win-rate table.
+
 ## 2026-04-09 — Self-audit: 13 bugs found and fixed across 4 files
 
 **Found by**: Recursive self-questioning ("穴がないか自問熟考繰り返して")
