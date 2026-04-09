@@ -240,10 +240,13 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
     # --- Auto-detect wave size ---
     if wave == "auto":
         # H4+H1 aligned → big wave (swing)
+        # H4+M5 aligned (H1 transitioning) → mid wave (H1 hasn't flipped yet but higher TF supports)
         # H1+M5 aligned but H4 opposite → mid wave (early trend reversal)
-        # M5 only → small wave
+        # M5 only → small wave (rotation / scalp)
         if h4_aligned and h1_aligned:
             wave = "big"
+        elif h4_aligned and m5_aligned:
+            wave = "mid"  # H4 supports direction, H1 still transitioning
         elif h1_aligned and m5_aligned:
             wave = "mid"
         elif m5_aligned:

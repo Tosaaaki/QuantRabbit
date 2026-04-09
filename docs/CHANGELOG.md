@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-04-10 — Fix structural SHORT blindness: pretrade_check wave classification + SKILL output format
+
+**Trigger**: 4/8-4/10: 13+ consecutive LONG entries, 0 SHORTs. USD_JPY SHORT signal identified and analyzed correctly in Slack but never traded — price fell 100+pip.
+
+**Root cause (2 layers)**:
+1. **pretrade_check.py wave classification**: When H4 aligned (DI- > DI+ for SHORT) but H1 not yet flipped, trade was classified as "small wave" (M5 only). Score capped 2-3 points lower than equivalent LONG.
+2. **SKILL_trader.md Tier 2 format**: `LONG if: ___ | SHORT if: ___` allowed writing future conditions without follow-up. Trader wrote "SHORT if M5 resumes lower" then moved to next LONG evaluation.
+
+**Changes**:
+- `pretrade_check.py`: Added `h4_aligned and m5_aligned → wave="mid"` to auto-detect. H4-supported SHORTs no longer auto-penalized.
+- `SKILL_trader.md` Tier 2: Changed from `LONG if / SHORT if` → `Best NOW: {LONG/SHORT} @price` — forces picking direction based on current M5 state, not future conditions.
+- `SKILL_trader.md` Directional mix: Changed from `If NOT entering: what signal?` → `I would enter because: ___ / I would NOT because: ___` — must write trade plan BEFORE deciding to pass.
+- `strategy_memory.md`: Added USD_JPY 4/10 case + "H4-supported SHORT ≠ counter-trade" pattern.
+
+**Smoke test**: USD_JPY SHORT now scores B(4) mid-wave (was C/small-wave). USD_JPY LONG correctly scores C(2). Chart direction reflected in scoring.
+
 ## 2026-04-09 — strategy_memory: remove SHORT-biased rules, add sample-period context
 
 **Trigger**: User feedback — SHORT win rate stats are market-regime-dependent, not permanent pair properties. Treating them as rules blocks profit in range/bearish markets.

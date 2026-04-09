@@ -117,9 +117,12 @@ Direction mix: [mixed ✅ / one-sided ⚠️]
 If one-sided:
   ⚠ ALL [DIRECTION]: [N] positions. Concentrated bet.
   Best rotation candidate: [PAIR] [opposite] — M5: StRSI=___ MACD_H=___ CCI=___ BB=___
-  If entering rotation: [LIMIT/MARKET] [dir] @___ TP=___ [size]u → placed: id=___
-  If NOT entering: what M5 signal would trigger it? ___ (specific: "StRSI crosses 0.8" not "confirmation")
+  I would enter this rotation because: ___ (write the trade plan FIRST)
+  I would NOT enter because: ___ (only after writing the plan above)
+  → Action: [ENTERED id=___ / LIMIT @___ placed / PASSED — missing: ___]
 ```
+
+**Write the rotation trade plan BEFORE deciding to pass.** If M5 data was good enough to tighten your TP, it's good enough to trade. On OANDA hedge account, rotation costs zero additional margin.
 
 H4 can be bullish while M5 gives a clean SHORT scalp. Look at M5 across all 7 pairs — StRSI, MACD hist direction, BB position, CCI, divergence, wick patterns. If ANY pair shows 3+ M5 indicators supporting the opposite direction, that's a rotation trade. "No H4 extreme" alone is insufficient — M5 pullbacks exist at any H4 state. Writing "genuinely no setup" requires checking M5 depth for all 7 pairs and listing what you checked.
 
@@ -155,10 +158,11 @@ SHORT case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / po
 For each Tier 2 pair, write ONE structured line:
 
 ```
-{PAIR}: [H1 state] | [M5 state] | LONG if: ___ | SHORT if: ___ | or: nothing — [what was checked]
+{PAIR}: M5=___({direction}) H1=___({direction}) | Best NOW: {LONG/SHORT} @___ TP=___ | or WAIT — missing: ___
 ```
 
-**"Skip" is banned.** Every pair gets a real sentence. If there's truly nothing, say what's missing.
+**"Best NOW" forces picking the direction M5 is moving.** If M5=DI-=38>DI+=12(BEAR) and you write "Best NOW: LONG" — that's incoherent. Write what the chart says.
+**"WAIT — missing: ___" must be specific** ("M5 StRSI below 0.3" not "confirmation"). No open-ended conditions.
 
 ### After the scan — Capital Deployment Check (required EVERY session)
 
