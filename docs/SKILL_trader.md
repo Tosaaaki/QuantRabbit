@@ -9,7 +9,7 @@ Method: 10-minute sessions + 15-minute cron. Lock mechanism prevents parallel ex
 
 **Performance target: +25% of NAV per week MINIMUM.** That's ~5%+ per day. Find S-conviction setups and size them at 30% NAV. Rotate capital fast after TP — don't sit flat. One S-trade at full size beats ten B-trades at minimum size.
 
-**Go deep in 10 minutes.** You have more time per session than before. Use it for deeper 7-pair scans, thorough Different lens checks, fib_wave --all, and proper LIMIT placement. Don't waste the extra time re-reading what hasn't changed — go deeper on what matters.
+**Use all 10 minutes.** The Next Cycle Bash blocks SESSION_END before 7 minutes. If you get TOO_EARLY, it means you rushed — go back and do deeper analysis: fib_wave --all, thorough Different lens checks on every held position, proper Tier 2 scans with M5 chart reading (not just "pass"), and LIMIT placement at structural levels. The 7-minute minimum exists because past sessions finished in 5 minutes with shallow analysis then fabricated longer end times. Don't waste the time you have — go deeper on what matters.
 
 **SESSION_END is mandatory.** You MUST NOT end a session without seeing LOCK_RELEASED from the Next Cycle Bash. Every response MUST end with the Next Cycle Bash. No exceptions.
 
@@ -554,11 +554,21 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 
 **Hard rule: After every bash output, immediately run the next cycle bash.** Never write more than 1 analysis block without checking the clock.
 
+### Session summary — use REAL timestamps only
+
+**Your session summary MUST use the start/end times printed by the Next Cycle Bash.** The bash outputs `SESSION_END elapsed=Xs (HH:MM→HH:MM UTC)` — copy those exact times. Do NOT calculate or estimate times yourself. Do NOT round to 15-minute boundaries. The file modification timestamps are auditable — fabricating times is a lie that gets caught.
+
+```
+SESSION_END. LOCK_RELEASED.
+Session summary ({start_from_bash}–{end_from_bash} UTC, {elapsed}s):
+```
+
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 540 ]; then echo "SESSION_END elapsed=${ELAPSED}s" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25; perl -e 'alarm(30); exec @ARGV' -- python3 collab_trade/memory/ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; else python3 tools/mid_session_check.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
+cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 540 ]; then START_UTC=$(date -u -r "$START" +%H:%M); END_UTC=$(date -u +%H:%M); echo "SESSION_END elapsed=${ELAPSED}s (${START_UTC}→${END_UTC} UTC)" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25; perl -e 'alarm(30); exec @ARGV' -- python3 collab_trade/memory/ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; elif [ $ELAPSED -lt 420 ]; then echo "TOO_EARLY elapsed=${ELAPSED}s — minimum 7 minutes before SESSION_END. Go deeper: fib_wave --all, Different lens, more Tier 2 pairs, LIMIT placement." && python3 tools/mid_session_check.py 2>/dev/null; else python3 tools/mid_session_check.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
 
 - SESSION_END + LOCK_RELEASED → session complete. **state.md MUST be updated BEFORE running this Bash.**
+- **TOO_EARLY → You tried to end before 7 minutes. Go back and do deeper analysis.** Run fib_wave --all, check Different lens on held positions, scan Tier 2 pairs properly, place LIMITs. Don't waste the time you have.
 - Otherwise → mid_session_check (Slack + prices + trades + margin, ~1s) → trade judgment → next cycle Bash.
 - **Full session_data.py runs ONCE at session start (Bash②). Mid-session cycles use mid_session_check.py (prices + Slack only) to save ~26s per cycle.** Technicals, news, macro, S-scan, memory are stable within a 10-minute session.
 

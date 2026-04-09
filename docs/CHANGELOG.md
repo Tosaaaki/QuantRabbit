@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-10 — Fix session timing lies + enforce minimum duration
+
+**Trigger**: Session summary claimed "18:21–18:36 UTC" (15 min) but file timestamps proved actual session was 18:21–18:28 UTC (~7 min). End time was fabricated. Also, cron expression was `* * * * 1-6` (every minute) instead of `*/15 * * * 1-6`.
+
+**Root cause**: (1) Session summary timestamps were self-reported by model with no verification. (2) No minimum duration check — model rushed through analysis in 5 min, wrote SESSION_END early, then fabricated a later end time. (3) Cron typo from previous change: `*/15` became `*`.
+
+**Changes**:
+- **Cron expression**: `* * * * 1-6` → `*/15 * * * 1-6` (fixed every-minute bug)
+- **Next Cycle Bash**: SESSION_END now prints actual start→end UTC times from timestamps (`date -u -r`). Model must copy these exact times into summary — no self-calculation
+- **Minimum 7 minutes**: New `TOO_EARLY` guard at elapsed < 420s. If model tries SESSION_END before 7 min, bash returns TOO_EARLY and instructs deeper analysis (fib_wave --all, Different lens, Tier 2 scans, LIMIT placement)
+- **Session summary format**: Must use `{start_from_bash}–{end_from_bash} UTC` — fabricating times is auditable via file mtimes
+- **"Go deep in 10 minutes"** → **"Use all 10 minutes"** with explicit callout that past sessions finished in 5 min with shallow analysis
+
 ## 2026-04-10 — Session timing overhaul: 8min/2min-cron → 10min/15min-cron
 
 **Trigger**: Data analysis of 3 weeks of trades (3/20-4/8) showed:
