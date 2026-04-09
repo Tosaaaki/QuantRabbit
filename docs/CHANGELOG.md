@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-10 — quality_audit.py: detect manual (user-entered) positions
+
+**Trigger**: User entered USD_JPY SHORT via OANDA directly. Trader session adopted it as its own in state.md. Quality audit showed it as "ALREADY_HELD" but never flagged that it had no trade log entry, no pretrade_check, no Slack notification. Invisible to the entire audit pipeline.
+
+**Root cause**: quality_audit.py only checked OANDA openTrades. Never cross-referenced with live_trade_log.txt to determine origin.
+
+**Changes**:
+- **`load_logged_trade_ids()`**: New function that extracts all trade IDs from ENTRY/LIMIT_FILL lines in live_trade_log.txt
+- **`gather_position_facts()`**: Now cross-references each OANDA trade ID against logged IDs. Unmatched = `is_manual: true`
+- **Markdown report**: New `⚠ Manual Positions` section at top. `[MANUAL]` tag on position lines
+- **JSON report**: `trade_id` and `is_manual` fields added to each position
+- **FINDINGS summary**: `manual:N` appears first in stdout when manual positions detected
+- **has_findings**: Manual positions now trigger FINDINGS exit code (auditor will report them)
+
 ## 2026-04-10 — session_end.py: structural enforcement of session duration
 
 **Trigger**: Session claimed "18:21–18:36 UTC" (15 min) but file timestamps proved 18:21–18:28 (7 min). End time fabricated. Root cause: model bypassed the Next Cycle Bash time check by running `ingest.py` + `rm logs/.trader_lock` directly, then writing "SESSION_END. LOCK_RELEASED." as text. Bash-only time guards cannot prevent this — the model can see and copy the cleanup commands.

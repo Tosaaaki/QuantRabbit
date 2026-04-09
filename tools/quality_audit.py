@@ -273,13 +273,30 @@ def gather_exit_quality(trades: list, state_text: str, token: str, acct: str) ->
     return findings
 
 
+def load_logged_trade_ids() -> set:
+    """Load all trade IDs that appear in live_trade_log.txt (ENTRY/LIMIT_FILL/LIMIT_FILLED)."""
+    log_path = ROOT / "logs" / "live_trade_log.txt"
+    if not log_path.exists():
+        return set()
+    ids = set()
+    for line in log_path.read_text().split("\n"):
+        # Match id=NNNN patterns in ENTRY/LIMIT_FILL/LIMIT_FILLED lines
+        if any(kw in line for kw in ["ENTRY", "LIMIT_FILL"]):
+            for m in re.finditer(r"id=(\d+)", line):
+                ids.add(m.group(1))
+    return ids
+
+
 def gather_position_facts(trades: list, token: str, acct: str) -> list[dict]:
-    """Build position summary with order status."""
+    """Build position summary with order status + manual position detection."""
+    logged_ids = load_logged_trade_ids()
     positions = []
     for t in trades:
         pair = t["instrument"]
         units = int(t.get("currentUnits", 0))
+        trade_id = t.get("id", "")
         orders = get_trade_orders(t, token, acct)
+        is_manual = trade_id not in logged_ids
         positions.append({
             "pair": pair,
             "direction": "LONG" if units > 0 else "SHORT",
@@ -290,6 +307,8 @@ def gather_position_facts(trades: list, token: str, acct: str) -> list[dict]:
             "has_sl": orders["has_sl"],
             "has_trailing": orders["has_trailing"],
             "sl_is_be": False,  # set below
+            "trade_id": trade_id,
+            "is_manual": is_manual,
         })
         # Check BE
         if orders["has_sl"] and orders["sl_price"]:
@@ -504,6 +523,22 @@ def build_markdown_report(data: dict) -> str:
         lines.append(f"⚠ **SELF-CHECK**: {sc['note']}")
         lines.append("")
 
+    # Manual positions (user-entered, not in trade log)
+    manual_positions = [p for p in data["positions"] if p.get("is_manual")]
+    if manual_positions:
+        lines.append("## ⚠ Manual Positions (not in trade log)")
+        lines.append("")
+        for p in manual_positions:
+            lines.append(
+                f"- **{p['pair']} {p['direction']} {p['units']}u** id={p.get('trade_id','')} "
+                f"@{p['entry_price']} | UPL: {p['upl_jpy']:+.0f} JPY"
+            )
+            lines.append(
+                f"  Entered via OANDA directly (no ENTRY/LIMIT_FILL in live_trade_log.txt). "
+                f"No pretrade_check, no Slack notification, no conviction record."
+            )
+        lines.append("")
+
     # Positions
     if data["positions"]:
         lines.append("## Positions (OANDA verified)")
@@ -517,9 +552,10 @@ def build_markdown_report(data: dict) -> str:
             if p["has_trailing"]:
                 protection.append("Trail")
             prot_str = "+".join(protection) if protection else "NO PROTECTION"
+            manual_tag = " **[MANUAL]**" if p.get("is_manual") else ""
             lines.append(
                 f"- {p['pair']} {p['direction']} {p['units']}u | "
-                f"UPL: {p['upl_jpy']:+.0f} JPY | {prot_str}"
+                f"UPL: {p['upl_jpy']:+.0f} JPY | {prot_str}{manual_tag}"
             )
         lines.append("")
 
@@ -752,12 +788,14 @@ def main():
     }
 
     # Count actionable findings (for exit code)
+    manual_count = len([p for p in positions if p.get("is_manual")])
     has_findings = bool(
         [s for s in s_scan_facts if s["status"] == "NOT_HELD"]
         or exit_quality
         or directional_mix["severity"] != "DATA"
         or sizing_flags
         or rule_flags
+        or manual_count
         or (state_age_min and state_age_min > 10)
         or not sc["held_pairs_match"]
     )
@@ -790,6 +828,8 @@ def main():
 
     if has_findings:
         parts = []
+        if manual_count:
+            parts.append(f"manual:{manual_count}")
         if not_held_count:
             parts.append(f"s-scan:{not_held_count}")
         if exit_count:
