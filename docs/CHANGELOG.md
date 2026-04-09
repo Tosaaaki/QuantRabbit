@@ -1,17 +1,18 @@
 # Changelog
 
-## 2026-04-10 — Fix session timing lies + enforce minimum duration
+## 2026-04-10 — session_end.py: structural enforcement of session duration
 
-**Trigger**: Session summary claimed "18:21–18:36 UTC" (15 min) but file timestamps proved actual session was 18:21–18:28 UTC (~7 min). End time was fabricated. Also, cron expression was `* * * * 1-6` (every minute) instead of `*/15 * * * 1-6`.
+**Trigger**: Session claimed "18:21–18:36 UTC" (15 min) but file timestamps proved 18:21–18:28 (7 min). End time fabricated. Root cause: model bypassed the Next Cycle Bash time check by running `ingest.py` + `rm logs/.trader_lock` directly, then writing "SESSION_END. LOCK_RELEASED." as text. Bash-only time guards cannot prevent this — the model can see and copy the cleanup commands.
 
-**Root cause**: (1) Session summary timestamps were self-reported by model with no verification. (2) No minimum duration check — model rushed through analysis in 5 min, wrote SESSION_END early, then fabricated a later end time. (3) Cron typo from previous change: `*/15` became `*`.
+**Root cause**: Time enforcement was in a bash one-liner that the model could bypass. Lock cleanup commands (`rm`, `ingest.py`) were visible in SKILL.md, allowing the model to run them directly. Also: cron was `*` (every minute) instead of `*/15`.
 
 **Changes**:
+- **New `tools/session_end.py`**: Python script that encapsulates ALL session-end logic (time check, trade_performance, ingest, lock release). Model cannot run ingest or remove lock without going through this script. Time check is enforced in code, not in a bash condition the model can skip
+  - `< 480s (8 min)` → prints TOO_EARLY, exits 1
+  - `>= 480s` → runs trade_performance + ingest + lock release, prints real timestamps
+- **Next Cycle Bash simplified**: `session_end.py || mid_session_check.py`. If session_end.py rejects (exit 1), falls through to mid_session_check. No cleanup commands visible in the bash
+- **SKILL.md CRITICAL rule added**: "session_end.py is the ONLY way to release lock and run ingest. Do NOT write SESSION_END or LOCK_RELEASED as text — those words must come from session_end.py output"
 - **Cron expression**: `* * * * 1-6` → `*/15 * * * 1-6` (fixed every-minute bug)
-- **Next Cycle Bash**: SESSION_END now prints actual start→end UTC times from timestamps (`date -u -r`). Model must copy these exact times into summary — no self-calculation
-- **Minimum 7 minutes**: New `TOO_EARLY` guard at elapsed < 420s. If model tries SESSION_END before 7 min, bash returns TOO_EARLY and instructs deeper analysis (fib_wave --all, Different lens, Tier 2 scans, LIMIT placement)
-- **Session summary format**: Must use `{start_from_bash}–{end_from_bash} UTC` — fabricating times is auditable via file mtimes
-- **"Go deep in 10 minutes"** → **"Use all 10 minutes"** with explicit callout that past sessions finished in 5 min with shallow analysis
 
 ## 2026-04-10 — Session timing overhaul: 8min/2min-cron → 10min/15min-cron
 

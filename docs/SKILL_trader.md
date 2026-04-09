@@ -565,12 +565,16 @@ Session summary ({start_from_bash}–{end_from_bash} UTC, {elapsed}s):
 
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && START=$(cat logs/.trader_start 2>/dev/null || echo "$NOW") && ELAPSED=$(( NOW - START )) && if [ $ELAPSED -ge 540 ]; then START_UTC=$(date -u -r "$START" +%H:%M); END_UTC=$(date -u +%H:%M); echo "SESSION_END elapsed=${ELAPSED}s (${START_UTC}→${END_UTC} UTC)" && STATE_AGE=$(( NOW - $(stat -f %m collab_trade/state.md 2>/dev/null || echo "$NOW") )) && if [ $STATE_AGE -gt 3600 ]; then echo "⚠️ STATE.MD STALE (${STATE_AGE}s old) — UPDATE IT NOW before releasing lock"; fi && python3 tools/trade_performance.py --days 1 2>/dev/null | head -25; perl -e 'alarm(30); exec @ARGV' -- python3 collab_trade/memory/ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; cd /Users/tossaki/App/QuantRabbit && rm -f logs/.trader_lock logs/.trader_start && echo "LOCK_RELEASED"; elif [ $ELAPSED -lt 420 ]; then echo "TOO_EARLY elapsed=${ELAPSED}s — minimum 7 minutes before SESSION_END. Go deeper: fib_wave --all, Different lens, more Tier 2 pairs, LIMIT placement." && python3 tools/mid_session_check.py 2>/dev/null; else python3 tools/mid_session_check.py 2>/dev/null && echo "elapsed=${ELAPSED}s"; fi
+cd /Users/tossaki/App/QuantRabbit && echo "$(date +%s) $PPID" > logs/.trader_lock && python3 tools/session_end.py || python3 tools/mid_session_check.py 2>/dev/null
+
+**How it works**: `session_end.py` checks elapsed time from `.trader_start`. If >= 8 min → runs trade_performance + ingest + lock release + prints SESSION_END with real timestamps. If < 8 min → prints TOO_EARLY and exits with error → the `||` runs mid_session_check instead.
 
 - SESSION_END + LOCK_RELEASED → session complete. **state.md MUST be updated BEFORE running this Bash.**
-- **TOO_EARLY → You tried to end before 7 minutes. Go back and do deeper analysis.** Run fib_wave --all, check Different lens on held positions, scan Tier 2 pairs properly, place LIMITs. Don't waste the time you have.
-- Otherwise → mid_session_check (Slack + prices + trades + margin, ~1s) → trade judgment → next cycle Bash.
+- **TOO_EARLY → session_end.py rejected your request. Go back and do deeper analysis.** Run fib_wave --all, check Different lens on held positions, scan Tier 2 pairs properly, place LIMITs.
+- Otherwise (mid_session_check) → trade judgment → next cycle Bash.
 - **Full session_data.py runs ONCE at session start (Bash②). Mid-session cycles use mid_session_check.py (prices + Slack only) to save ~26s per cycle.** Technicals, news, macro, S-scan, memory are stable within a 10-minute session.
+
+**CRITICAL: session_end.py is the ONLY way to release the lock and run ingest.** Do NOT run `rm -f logs/.trader_lock` or `ingest.py` directly. Do NOT write "SESSION_END" or "LOCK_RELEASED" as text — those words must come from session_end.py output. The script enforces the minimum session duration. Bypassing it = lying about session time.
 
 ## Slack handling (highest priority)
 
