@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-04-10 — Quality Audit v3: Sonnet becomes independent market analyst
+
+**Trigger**: User observed (1) audit results weren't being used by trader, (2) audit accuracy questionable, (3) Sonnet acting as classification bot (REPORT/NOISE) not a thinking analyst.
+
+**Root causes**:
+1. `session_data.py:488` bug: `"### "` check never matched `"## "` headers → audit invisible to trader (fixed in earlier commit)
+2. Momentum-S recipe too loose: CS gap 0.5 fired 5-6 pairs simultaneously (fixed in earlier commit)
+3. Sonnet had no independent data: never ran profit_check/fib_wave/protection_check, never read state.md or strategy_memory.md, reasoning was ephemeral (never saved)
+
+**Changes**:
+- **SKILL.md complete rewrite**: Sonnet now runs 3 parallel tool calls (quality_audit.py + profit_check+protection_check + fib_wave), reads 5 context files (quality_audit.md, state.md, strategy_memory.md, news_digest.md, audit_history.jsonl), then writes structured analysis
+- **Output format forces thinking**: "Trader says: ___" requires quoting state.md. "Against this trade NOW: 3 data points" requires citing tools. "If wrong → specific price" requires scenario construction. Cannot copy-paste from prior sessions
+- **Persistent Auditor's View**: Analysis written to quality_audit.md (appended below script facts). Trader reads it via session_data.py next session
+- **Pattern Alert section**: Cross-references current trader behavior against strategy_memory.md failure patterns
+- **Slack only on DANGER**: No more REPORT/NOISE noise. Slack fires only when data actively contradicts a position or failure pattern matched
+- **maxTurns 15→25**: More headroom for deeper analysis (~3-4 min sessions)
+- **CLAUDE.md**: Updated quality-audit row in scheduled tasks table
+- **docs/SKILL_quality-audit.md**: Reference copy synced
+
 ## 2026-04-10 — Audit→Trader feedback loop: 3 fixes
 
 **Trigger**: User observed audit results weren't being used by trader, and audit accuracy was questionable.
