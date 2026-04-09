@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-04-10 — Force multi-angle market reading: chart shape + narrative + cross-pair into output format
+
+**Trigger**: Audit showed trader reads NUMBERS not CHARTS. 96% of entry reasons cite indicators, 2% cite news. M5 price action data generated but never referenced. Narrative evolution (news_flow_log) never cited. Cross-pair validation absent.
+
+**Root cause**: Output format ALLOWED filling with numbers. "Price action: [NOT indicators]" was written as "M5: neutral (RSI=48, ADX=24)". "3 questions (plain words)" section was separate from state.md → skipped entirely.
+
+**Changes (SKILL_trader.md)**:
+- **Market Narrative**: Added "vs last session: ___ changed" (forces reading news evolution), "M5 verdict: buyers/sellers × accel/exhaust" (chart reading embedded), "My best LONG: ___ / My best SHORT: ___" (both directions before analysis)
+- **Tier 1 block**: "Price action" → "Chart: Last 5 M5 candles — bodies ___. Wicks ___. Momentum ___" + "Why moving: [cite news] — currency-wide or pair-specific? [checked: ___ pair]" (forces narrative + cross-pair)
+- **Tier 2 block**: Added "M5 candles=[shape] momentum=[accel/exhaust/revers]" — chart shape not indicators
+- **state.md template**: Added Market Narrative as first section (was missing)
+- **Removed**: Old "3 questions" section (merged into Market Narrative M5 verdict line)
+
+**Principle**: "Think at the Point of Output." Can't fill "bodies shrinking, lower wicks expanding" with RSI=48.
+
 ## 2026-04-10 — Fix structural SHORT blindness: pretrade_check wave classification + SKILL output format
 
 **Trigger**: 4/8-4/10: 13+ consecutive LONG entries, 0 SHORTs. USD_JPY SHORT signal identified and analyzed correctly in Slack but never traded — price fell 100+pip.

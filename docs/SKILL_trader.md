@@ -87,25 +87,18 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 
 ```
 ## Market Narrative
-Driving force: ___ (e.g., "USD selling on CPI miss 0.2% vs 0.3% expected", "risk-on from Iran ceasefire progress")
-Today's theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
-My best edge right now: ___ pair ___ direction — because: ___
-Session: ___ (Tokyo thin / London / NY — from session_data header)
+Driving force: ___ (cite specific event/data from news_digest — "USD selling on CPI miss" not just "USD weak")
+vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "same — [why still same]")
+M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
+Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
+My best LONG: ___ pair — because: ___
+My best SHORT: ___ pair — because: ___
+Session: ___ (Tokyo thin / London / NY)
 ```
 
-**This can't be copy-pasted from last session.** The market moved. Write what you SEE, not what you ASSUME.
-If you can't fill "Driving force" with something specific, you haven't read the news digest.
-"My best edge" commits you to a primary trade idea BEFORE analysis paralysis sets in.
-
-## Read M5 price action (candle shapes, not indicators)
-
-### 3 questions (answer in plain words, not numbers):
-
-```
-1. Stronger: [buyers/sellers/balanced] — evidence: [candle shapes, wick direction, high/low updates]
-2. Phase: [starting/accelerating/exhausting/reversing] — bodies are [growing/shrinking], wicks [lengthening/shortening]
-3. My position: [aligned/fighting/no position] — because [price action description, not indicator values]
-```
+**"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
+**"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
+**"My best LONG" AND "My best SHORT" — both.** Commits you to candidates in EACH direction before analysis starts. If you can't think of a SHORT candidate, look harder — 7 pairs × 4 TFs = 28 views.
 
 ### Directional mix check (required — fill in every session)
 
@@ -139,15 +132,18 @@ For each Tier 1 pair, write this block in state.md:
 
 ```
 ## {PAIR} [HELD/CANDIDATE]
-Price action: [what the chart is doing — candle shapes, momentum, NOT indicator numbers]
-Wave position: [Fib X%] / [BB position] / [structural level] [N]pip away → [approaching ceiling/floor/mid-range]
+Chart: Last 5 M5 candles — [bodies growing/shrinking/mixed]. [Upper/lower] wicks [expanding/contracting]. Momentum: [accelerating/exhausting/reversing]
+Why moving: [cite news/macro] — currency-wide or pair-specific? [checked: ___ pair shows same / different]
+Wave: [Fib ___% / BB position / structural level ___pip away] → [approaching ceiling/floor/mid-range]
 LONG case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / possible / none]
 SHORT case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / possible / none]
 → This session: [LONG / SHORT / BOTH / WAIT] — why this direction wins over the other
   Order: [LIMIT/MARKET] [dir] @___ TP=___ SL=___ id=___ | or: [why no order]
 ```
 
-**Wave position is mandatory.** Knowing "H1 BB upper is 3pip away" changes decisions.
+**"Chart" line = what you SEE.** "Bodies shrinking, lower wicks expanding" is chart reading. "RSI=48, ADX=24" is not. Describe the candles.
+**"Why moving" line = the narrative.** Forces citing a cause AND checking if it's currency-wide (cross-pair validation). If EUR_JPY is rising, is GBP_JPY also rising? If yes → JPY weakness (currency-wide). If no → EUR-specific.
+**"Wave" line = where you are on the map.** "Fib 38.2% pullback, 5pip to H1 BB mid" changes decisions.
 
 **Both directions, every Tier 1 pair.** Check 3+ indicator categories (①Direction ②Timing ③Momentum ④Structure ⑤Cross-pair ⑥Macro) for EACH direction. 5+ total indicators minimum per direction. Shallow scan (ADX+StRSI+CS only) locks you into one direction. Deep scan reveals what the pullback is doing.
 
@@ -158,10 +154,11 @@ SHORT case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / po
 For each Tier 2 pair, write ONE structured line:
 
 ```
-{PAIR}: M5=___({direction}) H1=___({direction}) | Best NOW: {LONG/SHORT} @___ TP=___ | or WAIT — missing: ___
+{PAIR}: M5 candles=[shape] momentum=[accel/exhaust/revers] | H1=[BULL/BEAR] | Best NOW: {LONG/SHORT} @___ TP=___ | or WAIT — missing: ___
 ```
 
-**"Best NOW" forces picking the direction M5 is moving.** If M5=DI-=38>DI+=12(BEAR) and you write "Best NOW: LONG" — that's incoherent. Write what the chart says.
+**"M5 candles" = chart shape, not indicators.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. Describe what you see.
+**"Best NOW" = the direction M5 is moving.** If M5 candles show sellers exhausting with expanding lower wicks, the best trade is LONG (reversal), not SHORT.
 **"WAIT — missing: ___" must be specific** ("M5 StRSI below 0.3" not "confirmation"). No open-ended conditions.
 
 ### After the scan — Capital Deployment Check (required EVERY session)
@@ -519,11 +516,14 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 # Trader State — {date}
 **Last Updated**: {timestamp}
 
+## Market Narrative
+{Driving force + vs last session + M5 verdict + theme + best LONG + best SHORT}
+
 ## Positions (Current)
 {each position: thesis, basis, invalidation, wave position, Close-or-Hold block}
 
 ## Directional Mix
-{N LONG / N SHORT — if one-sided: why + counter-trade candidate}
+{N LONG / N SHORT — if one-sided: why + rotation plan with trade plan written first}
 
 ## 7-Pair Scan
 {Tier 1 deep + Tier 2 quick}
