@@ -263,8 +263,12 @@ def main():
     if feedback_path.exists():
         try:
             fb = json.loads(feedback_path.read_text())
-            for entry in fb.get("by_pair", []):
-                pair_edge[entry.get("pair", "")] = entry
+            bp = fb.get("by_pair", {})
+            if isinstance(bp, dict):
+                pair_edge = bp  # keys are pair names, values are stat dicts
+            elif isinstance(bp, list):
+                for entry in bp:
+                    pair_edge[entry.get("pair", "")] = entry
         except Exception:
             pass
 
@@ -280,7 +284,7 @@ def main():
             pe = pair_edge.get(pair)
             if pe:
                 wr = pe.get("win_rate", 0)
-                total = pe.get("total_pl", 0)
+                total = pe.get("total_pl_jpy", pe.get("total_pl", 0))
                 edge_str = f" | edge: {wr:.0%} WR, {total:+.0f}JPY total"
             print(
                 f"{pair} {t['currentUnits']}u @{t['price']} PL={t.get('unrealizedPL', 0)} id={t['id']}{edge_str}"
@@ -317,7 +321,7 @@ def main():
         today_str = now_utc.strftime("%Y-%m-%d")
         from collections import Counter
         entry_counts = Counter()
-        for line in log_path.read_text().strip().split("\n")[-50:]:
+        for line in log_path.read_text().strip().split("\n"):
             if "ENTRY" in line and today_str in line:
                 for p in PAIRS:
                     if p in line:
@@ -387,17 +391,17 @@ def main():
         nc = ROOT / "logs" / "news_cache.json"
         if nc.exists():
             ncdata = json.loads(nc.read_text())
-            cal = ncdata.get("economic_calendar", [])
+            cal = ncdata.get("calendar", [])
             if cal:
                 shown = 0
                 for ev in cal[:10]:
-                    title = ev.get("title", ev.get("event", ""))
+                    title = ev.get("event", "")
                     impact = ev.get("impact", "")
-                    currencies = ev.get("currencies", ev.get("currency", ""))
-                    ev_time = ev.get("time", ev.get("datetime", ""))
+                    country = ev.get("country", "")
+                    ev_time = ev.get("time", "")
                     if title:
                         impact_str = f" ({impact} impact)" if impact else ""
-                        ccy_str = f" — {currencies}" if currencies else ""
+                        ccy_str = f" — {country}" if country else ""
                         print(f"{ev_time} {title}{impact_str}{ccy_str}")
                         shown += 1
                 if shown == 0:

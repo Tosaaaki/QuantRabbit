@@ -160,7 +160,7 @@ For each Tier 2 pair, write ONE structured line:
 
 **"Skip" is banned.** Every pair gets a real sentence. If there's truly nothing, say what's missing.
 
-### After the scan — Capital Deployment Check (required when margin < 60%)
+### After the scan — Capital Deployment Check (required EVERY session)
 
 ```
 Margin: ___% used. ___% idle.
@@ -217,7 +217,7 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 ```
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
 Type: [Scalp / Momentum / Swing / Counter]
-Pair edge: ___% WR, avg ___JPY (from strategy_memory / session_data) → [supports / warns against / neutral]
+Pair edge: ___% WR, ___JPY total (copied from session_data TRADES line) → [supports / warns against / neutral]
 FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
 AGAINST: ___ [specific. "nothing" only if you actually checked]
@@ -226,7 +226,7 @@ Margin after: ___% (include pending LIMITs → worst case ___%)
 → Conviction: [S/A/B/C] | Size: ___u (___% NAV)
 ```
 
-**"Pair edge" forces you to look up this pair's all-time stats BEFORE committing conviction.** If you write "AUD_USD LONG: 50% WR, avg -78 JPY → warns against" and then still enter S-conviction, the contradiction is visible. If the edge supports your direction (e.g., "EUR_USD LONG: 53% WR, avg +160 JPY → supports"), that's additional confidence.
+**"Pair edge" forces you to copy the exact numbers from the TRADES section of session_data.** session_data prints `| edge: 70% WR, +612JPY total` next to each trade. Copy that number. If no trade is open for this pair, check strategy_memory.md Per-Pair section. Writing made-up numbers is a lie to yourself — the data is right there in your session_data output.
 
 **"Margin after" moved here from the separate margin gate** — one block, all guard lines visible together.
 
@@ -337,7 +337,7 @@ Close now: {+/-}Xpip = {+/-}Y JPY
 Peak this trade: +Zpip = +W JPY at HH:MM (from M5 candle highs since entry)
 I'm not closing because: ___ (specific M5 price action — not "thesis alive")
 This reason disappears if: ___ (what would make you close)
-If I closed, I would use the freed margin for: ___ (specific pair+direction, or "nothing better available right now")
+If I closed, I would use the freed margin for: ___ pair ___ direction — because: ___ (must name a pair. If truly nothing: "scanned all 7 pairs, best was [PAIR] but [why not]")
 → A (adjust) / B (cut+re-enter) / C (hold) — chosen: ___
 ```
 

@@ -119,11 +119,19 @@ def parse_s_scan(scan_output: str) -> list[dict]:
             continue
         m = re.match(r"🎯 (\w+) (LONG|SHORT) (\S+): (.+)", line)
         if m:
+            details = m.group(4)
+            # Extract @price tag if present (appended by s_conviction_scan.py)
+            price = 0.0
+            price_m = re.search(r"@([\d.]+)$", details)
+            if price_m:
+                price = float(price_m.group(1))
+                details = details[:price_m.start()].rstrip()
             candidates.append({
                 "pair": m.group(1),
                 "direction": m.group(2),
                 "recipe": m.group(3),
-                "details": m.group(4),
+                "details": details,
+                "price": price,
                 "full": line,
             })
     return candidates
@@ -157,6 +165,7 @@ def gather_s_scan_facts(s_candidates: list, held: dict, margin_pct: float) -> li
             "direction": sc["direction"],
             "recipe": sc["recipe"],
             "details": sc["details"],
+            "price": sc.get("price", 0),
         }
         if pair in held:
             if held[pair]["direction"] == sc["direction"]:
@@ -221,7 +230,7 @@ def gather_exit_quality(trades: list, state_text: str, token: str, acct: str) ->
         if orders["has_sl"] and orders["sl_price"] and entry_price > 0:
             pip_m = PIP_MULT.get(pair, 100)
             sl_dist_pips = abs(orders["sl_price"] - entry_price) * pip_m
-            if sl_dist_pips < 2.0 and upl > 100:  # SL within 2 pips of entry AND in profit
+            if sl_dist_pips < 2.0 and upl > 0:  # SL within 2 pips of entry AND in profit
                 findings.append({
                     "pair": pair, "type": "be_sl", "severity": "WATCH",
                     "entry_price": entry_price, "sl_price": orders["sl_price"],
@@ -448,10 +457,15 @@ def self_check(trades: list, state_text: str) -> dict:
     """Verify OANDA ground truth vs state.md parsed positions."""
     oanda_pairs = {t["instrument"] for t in trades}
 
-    # Parse state.md positions (multiple format patterns)
+    # Parse state.md positions (multiple format patterns), excluding LIMIT orders
     parsed_pairs = set()
     for m in re.finditer(r"###\s+(\w+_\w+)\s+(?:LONG|SHORT)", state_text):
-        parsed_pairs.add(m.group(1))
+        # Get the full line to check if it's a LIMIT order
+        line_start = state_text.rfind("\n", 0, m.start()) + 1
+        line_end = state_text.find("\n", m.end())
+        full_line = state_text[line_start:line_end if line_end != -1 else len(state_text)]
+        if "LIMIT" not in full_line:
+            parsed_pairs.add(m.group(1))
 
     match = oanda_pairs == parsed_pairs
     result = {
@@ -625,6 +639,14 @@ def build_markdown_report(data: dict) -> str:
 def append_audit_history(data: dict):
     """Append S-scan results with prices to audit_history.jsonl for outcome tracking."""
     history_path = ROOT / "logs" / "audit_history.jsonl"
+
+    # Rotation: keep last 5000 lines (~6 months at 30min intervals)
+    MAX_LINES = 5000
+    if history_path.exists() and history_path.stat().st_size > 2_000_000:  # 2MB safety
+        lines = history_path.read_text().strip().split("\n")
+        if len(lines) > MAX_LINES:
+            history_path.write_text("\n".join(lines[-MAX_LINES:]) + "\n")
+
     entry = {
         "timestamp": data["timestamp"],
         "s_scan": [],
@@ -632,10 +654,12 @@ def append_audit_history(data: dict):
         "margin_pct": data["account"]["margin_pct"],
     }
     for sc in data["s_scan"]:
-        # Get current price from technicals cache
-        tfs = load_technicals(sc["pair"])
-        m5 = tfs.get("M5", {})
-        price = m5.get("close", 0)
+        # Use price parsed from scan output (@price tag) — more accurate than stale cache
+        price = sc.get("price", 0)
+        if not price:
+            tfs = load_technicals(sc["pair"])
+            m5 = tfs.get("M5", {})
+            price = m5.get("close", 0)
         entry["s_scan"].append({
             "pair": sc["pair"],
             "direction": sc["direction"],

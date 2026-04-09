@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-09 — Self-audit: 13 bugs found and fixed across 4 files
+
+**Found by**: Recursive self-questioning ("穴がないか自問熟考繰り返して")
+
+### CRITICAL bugs (silently failing in production):
+1. **session_data.py**: `by_pair` from strategy_feedback.json is a dict, code iterated as list → **pair edge inline display was always empty** (dead feature since deployment). Fixed dict iteration + field name `total_pl_jpy`.
+2. **session_data.py**: Calendar key `"economic_calendar"` → should be `"calendar"`. Field names wrong: `title`→`event`, `currencies`→`country`. Economic calendar was silently showing nothing.
+3. **quality_audit.py**: `self_check()` regex counted LIMIT orders as held positions → false SELF-CHECK mismatches (AUD_USD LIMIT appearing as "held"). Added LIMIT exclusion.
+4. **quality_audit.py**: `@price` tag from s_conviction_scan output was ignored — `append_audit_history()` re-loaded from stale technicals cache instead. Now parses `@price` from scan output directly.
+
+### HIGH fixes:
+5. **quality_audit.py**: BE SL detection gate `upl > 100` too high → lowered to `upl > 0`. Any profit position with BE SL is now flagged.
+6. **quality_audit.py**: `audit_history.jsonl` grew unbounded. Added rotation (keep last 5000 lines, ~6 months).
+7. **session_data.py**: Churn detection only scanned last 50 lines of live_trade_log → now scans all lines for today's date.
+
+### Prompt design fixes:
+8. **trader SKILL.md**: Close/Hold "freed margin" line allowed "nothing better available" escape → now requires naming a specific pair ("scanned all 7 pairs, best was [PAIR] but [why not]").
+9. **trader SKILL.md**: Capital Deployment Check was conditional (margin < 60% only) → now required EVERY session.
+10. **trader SKILL.md**: Pair edge line referenced vague "strategy_memory / session_data" → now says "copied from session_data TRADES line" with exact format reference.
+11. **daily-review SKILL.md**: audit_history.jsonl format was undocumented → added JSON schema, field descriptions, recipe attribution instructions.
+12. **daily-review SKILL.md**: Recipe scorecard added — running tally per recipe for promotion/deprecation after 10+ data points.
+
+**Files**: `tools/session_data.py`, `tools/quality_audit.py`, `~/.claude/scheduled-tasks/trader/SKILL.md`, `~/.claude/scheduled-tasks/daily-review/SKILL.md`, `docs/CHANGELOG.md`
+
+---
+
 ## 2026-04-09 — Trader Performance: Market Narrative + Knowledge-Action Gap Fix
 
 **Problem**: Trader (Sonnet) knows what to do but doesn't do it. strategy_memory has 260 lines of wisdom that's read at session start and forgotten by output time. Rotation SHORTs identified but never executed (4/8-4/9: 13 entries all LONG, 0 SHORTs). S-conviction undersized 6/7 times. pretrade_check scored EUR_JPY LOW(1) despite 69% WR + 6/6 wins. session_data shows "what candles look like" but not "why the market is moving."

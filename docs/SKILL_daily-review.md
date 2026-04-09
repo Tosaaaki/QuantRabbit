@@ -33,18 +33,34 @@ Read the output of daily_review.py and think through the following:
 
 Read: `logs/audit_history.jsonl` (today's entries — each line is one audit run with S-scan results and prices)
 
-For each S-scan signal that fired today:
-- Was the pair entered? If so, what was the P&L? (cross-reference with live_trade_log.txt)
-- If NOT entered, did the price move in the predicted direction?
-  Compare `price_at_detection` with current price or closing price for that pair.
-  A +5pip move in predicted direction within 1-2h = signal was correct.
+**audit_history.jsonl format** (one JSON object per line):
+```json
+{"timestamp": "2026-04-09T01:33Z", "s_scan": [
+  {"pair": "EUR_USD", "direction": "SHORT", "recipe": "Squeeze-S", "status": "NOT_HELD", "price_at_detection": 1.16518}
+], "positions": 1, "margin_pct": 38.0}
+```
 
-Write findings in strategy_memory.md → Active Observations:
-- `[date] S-scan Trend-Dip fired N times. Entered M. Profitable K/M.`
-- `[date] S-scan Structural fired for EUR_USD LONG @1.0920. NOT entered. Price went to 1.0945 (+25pip in 2h). Signal was correct.`
-- `[date] S-scan Counter fired for USD_JPY SHORT. Entered. Lost -200 JPY. H4 extreme persisted. Signal was premature.`
+Key fields: `recipe` identifies which S-scan recipe fired (Trend-Dip, Multi-TF-Extreme, Squeeze-S, Structural, Counter). `price_at_detection` is the M5 close when the signal fired. `status` is ALREADY_HELD / HELD_OPPOSITE / NOT_HELD.
 
-This data drives recipe promotion/deprecation. After 10+ data points for a recipe, move to Confirmed (if >60% accurate) or Deprecated (if <40% accurate).
+**For each S-scan signal that fired today, grouped by recipe:**
+1. Get current price for that pair from OANDA: `GET /v3/accounts/{acct}/pricing?instruments={PAIR}`
+2. Calculate pip movement from `price_at_detection` to current price
+3. Cross-reference with `live_trade_log.txt` — was the pair entered after this signal? P&L?
+4. Verdict: CORRECT (moved +5pip in predicted direction) / PREMATURE (moved against, then correct) / WRONG (moved against)
+
+**Write findings in strategy_memory.md → Active Observations, grouped by recipe:**
+- `[date] Trend-Dip: fired 3×. Entered 2. Results: +180, -50. Accuracy: 2/3.`
+- `[date] Squeeze-S: EUR_USD SHORT @1.16518. NOT entered. Price→1.16380 (+13.8pip in 4h). CORRECT.`
+- `[date] Counter: USD_JPY SHORT @158.856. Entered. Lost -200 JPY. H4 extreme persisted. PREMATURE.`
+
+**Recipe scorecard** — keep a running tally in strategy_memory.md:
+```
+| Recipe | Fires | Entered | Correct | Accuracy | Status |
+|--------|-------|---------|---------|----------|--------|
+| Trend-Dip | 12 | 8 | 9/12 | 75% | Confirmed |
+| Counter | 6 | 4 | 2/6 | 33% | Watch |
+```
+After 10+ data points: >60% accuracy → Confirmed (size up). <40% accuracy → Deprecated (remove from scan).
 
 ## Step 3: Update strategy_memory.md (MANDATORY — every section must be touched)
 
