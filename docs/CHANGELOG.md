@@ -4,17 +4,22 @@
 
 **Trigger**: 4/8-4/10: 13+ consecutive LONG entries, 0 SHORTs. USD_JPY SHORT signal identified and analyzed correctly in Slack but never traded — price fell 100+pip.
 
-**Root cause (2 layers)**:
-1. **pretrade_check.py wave classification**: When H4 aligned (DI- > DI+ for SHORT) but H1 not yet flipped, trade was classified as "small wave" (M5 only). Score capped 2-3 points lower than equivalent LONG.
-2. **SKILL_trader.md Tier 2 format**: `LONG if: ___ | SHORT if: ___` allowed writing future conditions without follow-up. Trader wrote "SHORT if M5 resumes lower" then moved to next LONG evaluation.
+**Root cause (4 layers)**:
+1. **Wave classification**: H4+M5 aligned (H1 transitioning) classified as "small wave" → score capped low
+2. **Mid-wave scoring**: No H4 bonus when H4 supports direction → +2 instead of +3
+3. **WR hard cap**: All-time WR=33% (biased bullish-period sample) → grade hard-capped at B. Contradicts recording.md ("you make the call") and 4/9 feedback ("stats are regime-dependent")
+4. **SKILL output format**: Tier 2 future conditions never followed up. Capital Deployment one direction only
 
 **Changes**:
-- `pretrade_check.py`: Added `h4_aligned and m5_aligned → wave="mid"` to auto-detect. H4-supported SHORTs no longer auto-penalized.
-- `SKILL_trader.md` Tier 2: Changed from `LONG if / SHORT if` → `Best NOW: {LONG/SHORT} @price` — forces picking direction based on current M5 state, not future conditions.
-- `SKILL_trader.md` Directional mix: Changed from `If NOT entering: what signal?` → `I would enter because: ___ / I would NOT because: ___` — must write trade plan BEFORE deciding to pass.
-- `strategy_memory.md`: Added USD_JPY 4/10 case + "H4-supported SHORT ≠ counter-trade" pattern.
+- `pretrade_check.py`: Added `h4+m5 aligned → wave="mid"` (was falling through to "small")
+- `pretrade_check.py`: Mid-wave M5-aligned branch +3 when H4 supports (was always +2)
+- `pretrade_check.py`: WR < 40% changed from hard grade cap → warning only. Grade preserved
+- `SKILL_trader.md` Tier 2: `LONG if / SHORT if` → `Best NOW: {LONG/SHORT @price}`
+- `SKILL_trader.md` Capital Deployment: `#1 best setup` → `#1 LONG / #1 SHORT` both directions
+- `SKILL_trader.md` Directional mix: Must write trade plan BEFORE deciding to pass
+- `strategy_memory.md`: Added USD_JPY 4/10 + "H4-supported SHORT ≠ counter-trade"
 
-**Smoke test**: USD_JPY SHORT now scores B(4) mid-wave (was C/small-wave). USD_JPY LONG correctly scores C(2). Chart direction reflected in scoring.
+**Result**: USD_JPY SHORT same chart: C(~2, small) → **A(6, mid)**. LONGs unaffected.
 
 ## 2026-04-09 — strategy_memory: remove SHORT-biased rules, add sample-period context
 

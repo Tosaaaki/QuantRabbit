@@ -168,15 +168,17 @@ For each Tier 2 pair, write ONE structured line:
 
 ```
 Margin: ___% used. ___% idle.
-#1 best setup right now: [pair] [direction]
-Current conviction: [B/A] — because: ___
-To upgrade to [A/S], I need: [specific indicator/level to check]
-At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
-→ Checked: [what I actually looked at — ran quick_calc / read Fib / checked H1 BB] → Result: [value] → [supports/contradicts]
-→ Action: [entered at ___-size / waiting for trigger: ___ / passed because ___]
+#1 LONG setup: [pair] — [brief reason]
+#1 SHORT setup: [pair] — [brief reason]
+Entering: [which / both / neither] because ___
+  conviction: [B/A/S] | To upgrade: [what to check]
+  At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
+→ Checked: [what I actually looked at] → Result: [value] → [supports/contradicts]
+→ Action: [entered / LIMIT placed / passed because ___]
 ```
 
-**The "Checked" and "Action" lines cannot be omitted — even when passing.** "TACO event risk → no entry" is a valid Action, but you still fill in Checked with what you actually looked at. The point: every session that reads this block knows WHAT was checked and WHY you passed, not just that you passed.
+**Both directions, every session.** If #1 SHORT is blank, you didn't scan. On OANDA hedge, entering both costs zero extra margin — the only reason to skip one is a bad chart, not "I already have a LONG."
+**The "Checked" and "Action" lines cannot be omitted — even when passing.** The point: every session that reads this block knows WHAT was checked and WHY you passed.
 
 ### Idle margin → LIMIT orders (your money works while you sleep)
 

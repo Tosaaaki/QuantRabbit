@@ -275,14 +275,16 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
             details.append(f"[big wave] no upper TF alignment +0")
 
     elif wave == "mid":
-        # Mid wave: H1+M5 are important. H4 is reference
+        # Mid wave: H1+M5 or H4+M5 are important
         if h1_aligned and m5_aligned:
             quality_score += 4 if h4_aligned else 3
             h4_note = " + H4 aligned" if h4_aligned else ""
             details.append(f"[mid wave] H1+M5 aligned{h4_note} +{4 if h4_aligned else 3}")
         elif m5_aligned:
-            quality_score += 2
-            details.append(f"[mid wave] M5 aligned (H1 opposite) +2")
+            pts = 3 if h4_aligned else 2
+            h4_note = " + H4 supports" if h4_aligned else " (H1 opposite)"
+            quality_score += pts
+            details.append(f"[mid wave] M5 aligned{h4_note} +{pts}")
         else:
             quality_score += 1 if h1_aligned else 0
             details.append(f"[mid wave] M5 not aligned +{1 if h1_aligned else 0}")
@@ -683,21 +685,19 @@ def assess_risk(
         setup = assess_setup_quality(pair, direction, wave=wave)
         setup["is_counter"] = False
 
-    # 6c. Pair-level history adjustment (cap conviction on historically losing pairs)
+    # 6c. Pair-level history context (data, not grade override — recording.md: "you make the call")
     if stats["count"] >= 5 and not counter:
         if stats["win_rate"] < 0.40:
-            # Cap at B — this pair+direction historically loses
-            if setup["grade"] in ("S", "A"):
-                warnings.append(
-                    f"⚠ PAIR HISTORY CAP: {pair} {direction} all-time WR={stats['win_rate']:.0%} "
-                    f"({stats['count']} trades, total {stats['total_pl']:+,.0f}JPY). "
-                    f"Grade {setup['grade']}→B. Prove the edge first."
-                )
-                setup["grade"] = "B"
-                setup["details"].append(
-                    f"Grade capped at B: pair WR={stats['win_rate']:.0%} < 40% ({stats['count']} trades)"
-                )
-                setup["sizing"] = "2000-3000u (conservative)"
+            # Low WR warning — data only, no grade cap
+            # Stats are regime-dependent (4/9 lesson: bullish-period SHORTs inflate loss counts)
+            warnings.append(
+                f"⚠ PAIR HISTORY: {pair} {direction} all-time WR={stats['win_rate']:.0%} "
+                f"({stats['count']} trades, total {stats['total_pl']:+,.0f}JPY). "
+                f"Stats are from sample period — check if current H4 structure matches."
+            )
+            setup["details"].append(
+                f"Low historical WR={stats['win_rate']:.0%} ({stats['count']} trades) — data point, not cap"
+            )
         elif stats["win_rate"] >= 0.60:
             # Trending pair with proven edge: bonus for high-conviction
             tfs = _load_technicals(pair)
