@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-09 — Trader Performance: Market Narrative + Knowledge-Action Gap Fix
+
+**Problem**: Trader (Sonnet) knows what to do but doesn't do it. strategy_memory has 260 lines of wisdom that's read at session start and forgotten by output time. Rotation SHORTs identified but never executed (4/8-4/9: 13 entries all LONG, 0 SHORTs). S-conviction undersized 6/7 times. pretrade_check scored EUR_JPY LOW(1) despite 69% WR + 6/6 wins. session_data shows "what candles look like" but not "why the market is moving."
+
+**Changes**:
+1. **trader SKILL.md — Market Narrative**: New required block BEFORE indicators: "Driving force / Theme / My best edge / Session." Forces WHY before WHAT. Can't copy-paste (market changes).
+2. **trader SKILL.md — Conviction block**: Added "Pair edge: ___% WR, avg ___JPY" and "Margin after: ___%". Forces Sonnet to look up pair history BEFORE committing conviction. AUD_USD LONG (50% WR) can't be rated S when the number is visible.
+3. **trader SKILL.md — Rotation force**: ALL_LONG/SHORT → must name "Best rotation candidate" with M5 indicators OR write specific trigger. "No setup" escape hatch replaced with commitment.
+4. **trader SKILL.md — Close or Hold**: Added "If I closed, I would use freed margin for: ___". Makes opportunity cost visible.
+5. **session_data.py**: Added session time marker (Tokyo/London/NY), per-pair edge stats inline with TRADES, economic calendar events, today's entry count per pair with churn warning.
+6. **pretrade_check.py**: Pair WR <40% caps conviction at B (prevents AUD_USD MEDIUM). WR >60% + ADX>35 + macro aligned → +2 trending bonus (fixes EUR_JPY LOW). Added macro regime conflict warning at CS gap >0.3.
+
+**Design principle**: Don't add rules — embed checks INTO the output format at the point of action. Sonnet can't write the conviction block without first looking up pair history. That's the mechanism, not "remember to check pair history."
+
 ## 2026-04-09 — Quality Audit System Overhaul: fact-based + discretionary + exit quality
 
 **Problem**: Quality audit was fundamentally broken and philosophically misaligned:

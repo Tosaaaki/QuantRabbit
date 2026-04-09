@@ -680,6 +680,67 @@ def assess_risk(
         setup = assess_setup_quality(pair, direction, wave=wave)
         setup["is_counter"] = False
 
+    # 6c. Pair-level history adjustment (cap conviction on historically losing pairs)
+    if stats["count"] >= 5 and not counter:
+        if stats["win_rate"] < 0.40:
+            # Cap at B — this pair+direction historically loses
+            if setup["grade"] in ("S", "A"):
+                warnings.append(
+                    f"⚠ PAIR HISTORY CAP: {pair} {direction} all-time WR={stats['win_rate']:.0%} "
+                    f"({stats['count']} trades, total {stats['total_pl']:+,.0f}JPY). "
+                    f"Grade {setup['grade']}→B. Prove the edge first."
+                )
+                setup["grade"] = "B"
+                setup["details"].append(
+                    f"Grade capped at B: pair WR={stats['win_rate']:.0%} < 40% ({stats['count']} trades)"
+                )
+                setup["sizing"] = "2000-3000u (conservative)"
+        elif stats["win_rate"] >= 0.60:
+            # Trending pair with proven edge: bonus for high-conviction
+            tfs = _load_technicals(pair)
+            h1 = tfs.get("H1", {})
+            h1_adx = h1.get("adx", 0) if h1 else 0
+            cs = _calc_currency_strength()
+            base, quote = PAIR_CURRENCIES.get(pair, ("?", "?"))
+            cs_aligned = (
+                (direction == "LONG" and cs.get(base, 0) > cs.get(quote, 0))
+                or (direction == "SHORT" and cs.get(base, 0) < cs.get(quote, 0))
+            )
+            if h1_adx > 35 and cs_aligned:
+                old_score = setup.get("quality_score", 0)
+                setup["quality_score"] = old_score + 2
+                setup["details"].append(
+                    f"TRENDING BONUS +2: WR={stats['win_rate']:.0%}, H1 ADX={h1_adx:.0f}, macro aligned"
+                )
+                # Re-grade
+                qs = setup["quality_score"]
+                if qs >= 8:
+                    setup["grade"] = "S"
+                    setup["sizing"] = "8000-10000u (iron-clad. size up)"
+                elif qs >= 6:
+                    setup["grade"] = "A"
+                    setup["sizing"] = "5000-8000u (high conviction. trade it properly)"
+
+    # 6d. Macro regime conflict warning
+    try:
+        cs = _calc_currency_strength()
+        base, quote = PAIR_CURRENCIES.get(pair, ("?", "?"))
+        base_str = cs.get(base, 0)
+        quote_str = cs.get(quote, 0)
+        gap = base_str - quote_str
+        if direction == "LONG" and gap < -0.3:
+            warnings.append(
+                f"⚠ AGAINST macro flow: {base}({base_str:+.2f}) vs {quote}({quote_str:+.2f}). "
+                f"CS gap={gap:+.2f} AGAINST LONG."
+            )
+        elif direction == "SHORT" and gap > 0.3:
+            warnings.append(
+                f"⚠ AGAINST macro flow: {base}({base_str:+.2f}) vs {quote}({quote_str:+.2f}). "
+                f"CS gap={gap:+.2f} AGAINST SHORT."
+            )
+    except Exception:
+        pass
+
     result = {
         "pair": pair,
         "direction": direction,

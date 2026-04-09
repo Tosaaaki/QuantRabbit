@@ -81,9 +81,23 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 2. Counter-argument: Rebut each with specifics (not "thesis alive")
 3. Conclusion: If you can rebut all 3 → HOLD. If not → half-close or exit
 
-## Read the market FIRST (before indicators)
+## Market Narrative (write FIRST — before indicators, before scan)
 
-**session_data.py outputs M5 PRICE ACTION at the top.** Read candle shapes before looking at indicator numbers.
+**Read session_data.py: news digest + macro view + M5 price action. Then write this block BEFORE any indicator analysis:**
+
+```
+## Market Narrative
+Driving force: ___ (e.g., "USD selling on CPI miss 0.2% vs 0.3% expected", "risk-on from Iran ceasefire progress")
+Today's theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
+My best edge right now: ___ pair ___ direction — because: ___
+Session: ___ (Tokyo thin / London / NY — from session_data header)
+```
+
+**This can't be copy-pasted from last session.** The market moved. Write what you SEE, not what you ASSUME.
+If you can't fill "Driving force" with something specific, you haven't read the news digest.
+"My best edge" commits you to a primary trade idea BEFORE analysis paralysis sets in.
+
+## Read M5 price action (candle shapes, not indicators)
 
 ### 3 questions (answer in plain words, not numbers):
 
@@ -100,9 +114,11 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 ```
 Positions: [N] LONG / [N] SHORT / [N] pairs
 Direction mix: [mixed ✅ / one-sided ⚠️]
-If one-sided → best opposite-direction setup across 7 pairs (check M5 depth: StRSI, MACD hist, CCI, BB, div, wicks):
-  [pair]: ①___ ②___ ③___ → [dir] [size]u @___ TP=___ | placed: id=___
-  | or: all 7 pairs M5 checked with 3+ indicators each → genuinely no opposite setup
+If one-sided:
+  ⚠ ALL [DIRECTION]: [N] positions. Concentrated bet.
+  Best rotation candidate: [PAIR] [opposite] — M5: StRSI=___ MACD_H=___ CCI=___ BB=___
+  If entering rotation: [LIMIT/MARKET] [dir] @___ TP=___ [size]u → placed: id=___
+  If NOT entering: what M5 signal would trigger it? ___ (specific: "StRSI crosses 0.8" not "confirmation")
 ```
 
 H4 can be bullish while M5 gives a clean SHORT scalp. Look at M5 across all 7 pairs — StRSI, MACD hist direction, BB position, CCI, divergence, wick patterns. If ANY pair shows 3+ M5 indicators supporting the opposite direction, that's a rotation trade. "No H4 extreme" alone is insufficient — M5 pullbacks exist at any H4 state. Writing "genuinely no setup" requires checking M5 depth for all 7 pairs and listing what you checked.
@@ -201,12 +217,18 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 ```
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
 Type: [Scalp / Momentum / Swing / Counter]
+Pair edge: ___% WR, avg ___JPY (from strategy_memory / session_data) → [supports / warns against / neutral]
 FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
+Margin after: ___% (include pending LIMITs → worst case ___%)
 → Conviction: [S/A/B/C] | Size: ___u (___% NAV)
 ```
+
+**"Pair edge" forces you to look up this pair's all-time stats BEFORE committing conviction.** If you write "AUD_USD LONG: 50% WR, avg -78 JPY → warns against" and then still enter S-conviction, the contradiction is visible. If the edge supports your direction (e.g., "EUR_USD LONG: 53% WR, avg +160 JPY → supports"), that's additional confidence.
+
+**"Margin after" moved here from the separate margin gate** — one block, all guard lines visible together.
 
 **6 indicator categories**: ① Direction (ADX/DI, EMA slope, MACD) ② Timing (StochRSI, RSI, CCI, BB) ③ Momentum (MACD hist, ROC, EMA cross) ④ Structure (Fib, cluster, swing, Ichimoku) ⑤ Cross-pair (correlated pairs, currency strength) ⑥ Macro (news, events, flow)
 
@@ -315,6 +337,7 @@ Close now: {+/-}Xpip = {+/-}Y JPY
 Peak this trade: +Zpip = +W JPY at HH:MM (from M5 candle highs since entry)
 I'm not closing because: ___ (specific M5 price action — not "thesis alive")
 This reason disappears if: ___ (what would make you close)
+If I closed, I would use the freed margin for: ___ (specific pair+direction, or "nothing better available right now")
 → A (adjust) / B (cut+re-enter) / C (hold) — chosen: ___
 ```
 

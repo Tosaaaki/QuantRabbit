@@ -76,6 +76,24 @@ def main():
     token = cfg["oanda_token"]
     acct = cfg["oanda_account_id"]
 
+    # === Session time marker (first thing in output) ===
+    from datetime import datetime, timezone
+    now_utc = datetime.now(timezone.utc)
+    hour = now_utc.hour
+    if 0 <= hour < 6:
+        session_label = "Tokyo late (thin liquidity)"
+    elif 6 <= hour < 8:
+        session_label = "Tokyo-London overlap"
+    elif 8 <= hour < 12:
+        session_label = "London"
+    elif 12 <= hour < 16:
+        session_label = "London-NY overlap"
+    elif 16 <= hour < 21:
+        session_label = "NY"
+    else:
+        session_label = "Late session (thin liquidity)"
+    print(f"=== SESSION: {now_utc.strftime('%Y-%m-%d %H:%M UTC')} | {session_label} ===")
+
     # === PARALLEL BLOCK: Start heavy I/O tasks concurrently ===
     executor = ThreadPoolExecutor(max_workers=4)
 
@@ -239,12 +257,33 @@ def main():
     except Exception as e:
         print(f"ERROR: {e}")
 
+    # Load pair edge stats from strategy_feedback.json (written by trade_performance.py)
+    pair_edge = {}
+    feedback_path = ROOT / "logs" / "strategy_feedback.json"
+    if feedback_path.exists():
+        try:
+            fb = json.loads(feedback_path.read_text())
+            for entry in fb.get("by_pair", []):
+                pair_edge[entry.get("pair", "")] = entry
+        except Exception:
+            pass
+
     section("TRADES")
     try:
         trades = trades_data  # already fetched above for held_pairs
         for t in trades.get("trades", []):
+            pair = t['instrument']
+            units = int(t.get('currentUnits', 0))
+            side = "LONG" if units > 0 else "SHORT"
+            # Inline pair edge
+            edge_str = ""
+            pe = pair_edge.get(pair)
+            if pe:
+                wr = pe.get("win_rate", 0)
+                total = pe.get("total_pl", 0)
+                edge_str = f" | edge: {wr:.0%} WR, {total:+.0f}JPY total"
             print(
-                f"{t['instrument']} {t['currentUnits']}u @{t['price']} PL={t.get('unrealizedPL', 0)} id={t['id']}"
+                f"{pair} {t['currentUnits']}u @{t['price']} PL={t.get('unrealizedPL', 0)} id={t['id']}{edge_str}"
             )
         if not trades.get("trades"):
             print("(no open trades)")
@@ -271,6 +310,27 @@ def main():
         )
     except Exception as e:
         print(f"ERROR: {e}")
+
+    # Churn detection: today's entry count per pair
+    log_path = ROOT / "logs" / "live_trade_log.txt"
+    if log_path.exists():
+        today_str = now_utc.strftime("%Y-%m-%d")
+        from collections import Counter
+        entry_counts = Counter()
+        for line in log_path.read_text().strip().split("\n")[-50:]:
+            if "ENTRY" in line and today_str in line:
+                for p in PAIRS:
+                    if p in line:
+                        entry_counts[p] += 1
+                        break
+        if entry_counts:
+            parts = [f"{p}×{c}" for p, c in entry_counts.most_common()]
+            total = sum(entry_counts.values())
+            churn_warn = ""
+            max_pair_count = entry_counts.most_common(1)[0][1] if entry_counts else 0
+            if max_pair_count >= 4:
+                churn_warn = " ⚠️ churn risk — same pair 4+ times"
+            print(f"Today's entries: {' '.join(parts)} | total {total}{churn_warn}")
 
     # 2b. Pending Orders (limit orders, TP/SL check)
     section("PENDING ORDERS")
@@ -320,6 +380,34 @@ def main():
         print(digest_text[:2000])  # max 2000 chars
     else:
         print("(news_digest.md not found — Cowork qr-news-digest task not run)")
+
+    # 2d2. Economic calendar (upcoming events from news_cache)
+    section("UPCOMING EVENTS (next 4h)")
+    try:
+        nc = ROOT / "logs" / "news_cache.json"
+        if nc.exists():
+            ncdata = json.loads(nc.read_text())
+            cal = ncdata.get("economic_calendar", [])
+            if cal:
+                shown = 0
+                for ev in cal[:10]:
+                    title = ev.get("title", ev.get("event", ""))
+                    impact = ev.get("impact", "")
+                    currencies = ev.get("currencies", ev.get("currency", ""))
+                    ev_time = ev.get("time", ev.get("datetime", ""))
+                    if title:
+                        impact_str = f" ({impact} impact)" if impact else ""
+                        ccy_str = f" — {currencies}" if currencies else ""
+                        print(f"{ev_time} {title}{impact_str}{ccy_str}")
+                        shown += 1
+                if shown == 0:
+                    print("(no upcoming events)")
+            else:
+                print("(no calendar data)")
+        else:
+            print("(news_cache.json not found)")
+    except Exception as e:
+        print(f"(skip: {e})")
 
     # 2e. API parser structured data (re-fetch if cache is stale)
     out = run_script(
