@@ -57,6 +57,8 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 
 **protection_check**: Data about current TP/SL/Trailing status. You decide what to do.
 
+- `ROLLOVER WINDOW` → **Immediately run `python3 tools/rollover_guard.py remove`.** This removes all SL/Trailing before the OANDA daily maintenance spread spike. After rollover passes (next session), protection_check will say "Restore SLs" → run `python3 tools/rollover_guard.py restore`.
+- `Rollover passed. Saved SLs waiting` → **Run `python3 tools/rollover_guard.py restore`** to re-apply SL/Trailing that were saved before rollover.
 - `NO PROTECTION` → Fine if actively monitoring. Add protection only for unattended holds
 - `SL too wide` → Is it still at a meaningful structural level? If not, tighten or remove
 - `SL too tight` → Widen or remove. Tight SL = free money for market makers
@@ -65,12 +67,13 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 **SL is a judgment call, not a requirement.** Ask: "Will this SL get clipped by normal noise before my thesis plays out?" If yes → don't set it. Don't be a bot that attaches SL to every position.
 
 **SL decision tree (not a checklist — a decision)**:
-1. Holiday / thin liquidity / spread > 2× normal? → **No SL. Discretionary management.**
-2. User said "SLいらない" / "持ってろ"? → **No SL. Do not re-add. Do not close on own judgment. Direct order.**
-3. Tokyo session (00:00-06:00Z) overnight hold? → **No trailing stop. Fixed SL only if any.**
-4. Pre-event (NFP/FOMC)? → **No trailing stop. Fixed SL at structural invalidation or nothing.**
-5. Structural level within ATR×2.0? → **Set there (swing low, Fib 78.6%, DI reversal, cluster)**
-6. No structural level nearby? → **No SL, manage discretionally. ATR×N without structure = noise stop.**
+1. **ROLLOVER window (protection_check says ROLLOVER)?** → **Run `rollover_guard.py remove` immediately. No new SL/Trail until rollover passes.**
+2. Holiday / thin liquidity / spread > 2× normal? → **No SL. Discretionary management.**
+3. User said "SLいらない" / "持ってろ"? → **No SL. Do not re-add. Do not close on own judgment. Direct order.**
+4. Tokyo session (00:00-06:00Z) overnight hold? → **No trailing stop. Fixed SL only if any.**
+5. Pre-event (NFP/FOMC)? → **No trailing stop. Fixed SL at structural invalidation or nothing.**
+6. Structural level within ATR×2.0? → **Set there (swing low, Fib 78.6%, DI reversal, cluster)**
+7. No structural level nearby? → **No SL, manage discretionally. ATR×N without structure = noise stop.**
 
 **Trailing stop — use sparingly:**
 - Strong trend (ADX>30, clean bodies) → Yes, ATR×1.0+ minimum
