@@ -54,6 +54,20 @@ if __name__ == '__main__':
                         help='User message ts being replied to (dedup: skip if already replied)')
     args = parser.parse_args()
 
+    # --- Guard 1: --reply-to forces channel to #qr-commands ---
+    # reply-to is for replying to user messages in #qr-commands. Never post user replies elsewhere.
+    COMMANDS_CHANNEL = "C0APAELAQDN"
+    if args.reply_to:
+        if args.channel and args.channel != COMMANDS_CHANNEL:
+            print(f"BLOCKED: --reply-to used with wrong channel {args.channel}. Forcing to #qr-commands ({COMMANDS_CHANNEL})")
+        args.channel = COMMANDS_CHANNEL
+
+    # --- Guard 2: Block trivially short/garbage replies ---
+    GARBAGE_REPLIES = {"dummy", "test", "ok", "hello", "hi", ".", "...", "skip", "none", "null", "undefined"}
+    if args.reply_to and args.message.strip().lower() in GARBAGE_REPLIES:
+        print(f"BLOCKED: reply content is garbage: '{args.message.strip()}'. Not posting.")
+        sys.exit(1)
+
     # --- Dedup gate: skip if we already replied to this user message ---
     if args.reply_to:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
