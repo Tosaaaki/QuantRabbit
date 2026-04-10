@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-04-10 — FIX: slack_post.py guards against garbage replies and wrong channel
+
+**Problem**: Trader session replied "dummy" to user's "状況は？" in #qr-commands. Second message "状況教えて" reply was sent to #qr-trades with `--reply-to` flag, marking it as replied in dedup. User got no proper response for 43 minutes.
+
+**Fix**: Two guards added to `tools/slack_post.py`:
+1. `--reply-to` forces channel to #qr-commands (C0APAELAQDN) — user replies can never go to wrong channel
+2. Trivially short/garbage replies ("dummy", "test", etc.) are blocked with exit code 1
+
+**Files changed**: `tools/slack_post.py`
+
+## 2026-04-10 — FIX: Phantom margin from pending LIMITs blocking market orders
+
+**Problem**: Trader calculated "worst case margin = 82%" by including all pending LIMITs as if they were filled positions. OANDA pending LIMITs use ZERO margin until fill. The trader was blocking new market orders based on phantom margin from orders that weren't even close to filling (20-50pip away). Evidence from 4/9 log: "margin=82.1%" with 4 unfilled LIMITs, "margin_freed=17080JPY" by cancelling an unfilled LIMIT (freeing 0 from 0).
+
+**Fix**: All margin gates across 3 files now explicitly state: "Pending LIMITs use 0 margin. Check ACTUAL margin (open positions only)." New sequence: if market opportunity appears → cancel competing LIMITs → market order → re-place gap coverage if margin allows.
+
+**Files changed**: `docs/SKILL_trader.md` (margin gate + conviction blocks + execution receipt), `.claude/rules/risk-management.md` (pre-entry check + failure pattern), `collab_trade/strategy_memory.md` (負けパターン table)
+
+## 2026-04-10 — MAJOR: Kill LIMIT carousel, market order as primary weapon
+
+**Problem**: Trader placed 67 LIMIT/cancel/modify actions over 4/9-4/10 but only 15 actual entries. Entry ratio collapsed from 0.69 (4/7, best day) to 0.22. LIMITs placed at structural levels 20-50pip from market → never fill → cancel → replace → repeat. Analysis was deep but produced plans, not trades. SKILL.md's "0% margin blocker" + "LIMIT costs nothing" framing incentivized distant LIMIT placement as a proxy for trading.
+
+**Data**: 4/7 (+11,014 JPY, 10.5%): 21 market orders, 3 limit fills. 4/10 (-1,027 JPY): 3 market orders, 67 LIMIT churn.
+
+**Root cause**: 5 conflicting SKILL.md incentives created LIMIT carousel: (1) "0% margin = bad" → forces LIMIT placement, (2) "LIMIT costs nothing" → enables distant LIMITs, (3) "structural wick-touch levels" → levels far from market, (4) market order restricted to "M5 at extreme NOW", (5) 10+ field conviction block → heavy per-entry overhead.
+
+**Changes (SKILL_trader.md)**:
+1. Market order is now the default for TREND regime. LIMIT for RANGE/SQUEEZE/events
+2. Added "Anti-LIMIT-carousel rule" — 2 sessions unfilled = market order or abandon
+3. Added "LIMIT fillability check" — will price reach this in GTD window?
+4. "0% margin blocker" → "0 market orders + 0 positions blocker" — distant LIMITs don't count
+5. Added "Quick conviction" format (3 fields) for follow-up entries — breaks the 60sec/entry bottleneck
+6. 7-pair scan: "Analyze AND ACT" per pair, not analyze-all-then-act
+7. Time allocation: execute during analysis (2-6 min), not after (5-8 min)
+8. Held position block: 7 fields → 3 lines
+9. Capital Deployment → "Execution Receipt" with market order count
+10. Idle margin section: "Market orders FIRST, LIMITs for gap coverage"
+
+**Changes (strategy_memory.md)**:
+1. Added "MONEY MAKERS" table at top — 6 highest-edge patterns with conditions, size, expected P&L
+2. 負けパターン: paragraph format → compact table. Added warning: "these teach HOW to enter, not NOT to enter"
+3. Added "LIMITカルーセル" as new 負けパターン
+
+**Files changed**: `docs/SKILL_trader.md`, `collab_trade/strategy_memory.md`, `docs/CHANGELOG.md`
+
 ## 2026-04-10 — Format redesign: examples over rules, embed TP into chart line
 
 **Problem**: Previous format had 9 required lines per Tier 1 pair. Model wrote 3, skipped 6. The critical lines (TP, If ranging, Supports, Warns) were the ones skipped. Band walk TP extension (ATR×2.0+) never happened despite the rule existing. Range both-sides LIMIT never placed despite the instruction existing. R:R today = 0.40.
