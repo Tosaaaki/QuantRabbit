@@ -30,7 +30,7 @@ Read (parallel, batch 2 — charts): `logs/charts/USD_JPY_M5.png`, `logs/charts/
 Read (parallel, batch 3 — charts): `logs/charts/EUR_JPY_M5.png`, `logs/charts/GBP_JPY_M5.png`, `logs/charts/AUD_JPY_M5.png`
 Read (parallel, batch 4 — H1 for held pairs only): `logs/charts/{HELD_PAIR}_H1.png` (one per held pair)
 
-**You are looking at the charts with your own eyes.** quality-audit regenerates these PNGs every 30 minutes. You read the existing files — no regeneration needed. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in "Each pair's story" and the "Chart" line in Tier 1. Your chart reading + the auditor's text summary = two independent views of the same market.
+**You are looking at the charts with your own eyes.** quality-audit regenerates these PNGs every 30 minutes. You read the existing files — no regeneration needed. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in the "Chart tells me" line in Tier 1 and the candle shape in Tier 2. Your chart reading + the auditor's text summary = two independent views of the same market.
 
 **How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies. **Caution: strategy_memory is heavy on "don't do X" lessons (30+ warnings vs 12 positive patterns). Don't let cautionary bias shrink your sizing. The lessons say "don't chase, don't panic" — they do NOT say "enter small." The biggest historical loss was undersizing S-conviction trades, not oversizing. When a setup is genuinely good, SIZE UP.**
 
@@ -126,20 +126,12 @@ vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "sa
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
-Each pair's story (what the chart is DOING — trending/ranging/squeezing/transitioning):
-  USD_JPY: ___  EUR_USD: ___  GBP_USD: ___  AUD_USD: ___
-  EUR_JPY: ___  GBP_JPY: ___  AUD_JPY: ___
-My best setup: ___ pair — I would ___ at ___ because the chart shows ___
-  If ranging: LIMIT LONG @___ + LIMIT SHORT @___ (both sides of the box)
-  If trending: dip/rally entry @___ (Fib/BB/structure)
-  If squeezing: breakout ___ direction, LIMIT @___
 Session: ___ (Tokyo thin / London / NY)
 ```
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
 **"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
-**"Each pair's story" is the most important line.** Describe what the chart is DOING, not what indicators SAY. "Ranging 1.1680-1.1720, third bounce off lower band" is structure. "ADX=18, RSI=45" is numbers. Structure determines whether you trade with trend, fade the range, or wait for breakout — before you look at any indicator.
-**"My best setup" replaces separate TREND/RANGE/SQUEEZE lines.** The structure you wrote above determines the trade type. If 3 pairs are ranging, your best setup might be a range trade. If all are trending, it's a dip buy. The chart decides, not a category.
+**The narrative is WHERE YOU THINK.** The scan below is where you execute. If you can't write "Driving force" and "Theme" without looking at indicators, you haven't read the news yet. Read the news first. Then look at the charts. Then write this block. The scan comes after.
 
 ### Directional mix check (required — fill in every session)
 
@@ -169,59 +161,63 @@ H4 can be bullish while M5 gives a clean SHORT scalp. Look at M5 across all 7 pa
 
 ### Tier 1: Held positions + best 1-2 candidates (deep analysis)
 
-For each Tier 1 pair, write this block in state.md:
+For each Tier 1 pair, write this block. The header determines the format — TREND, RANGE, and SQUEEZE produce different trade lines:
 
 ```
-## {PAIR} [HELD/CANDIDATE]
-Chart: Last 5 M5 candles — [bodies growing/shrinking/mixed]. [Upper/lower] wicks [expanding/contracting]. Momentum: [accelerating/exhausting/reversing]
-Structure: [TREND ___ward — where to buy dips/sell rallies | RANGE ___–___ (Xpip, N bounces) — buy lower sell upper | SQUEEZE — breakout ___ likely | TRANSITIONING ___ → ___]
-Why: [cite news/macro] — currency-wide or pair-specific? [checked: ___ pair shows same / different]
-If I had no position, I would: ___ at ___ because the chart shows ___
-  Supports: ①___ ②___ ③___ (3+ indicator categories)
-  Warns: ___ (Different lens — 1+ indicator from unused category)
-  TP: [TREND + band walk → ATR×2.0-3.0 at ___ | TREND + decelerating → ATR×1.0-1.5 at ___ | RANGE → opposite band at ___ | SQUEEZE → first structural level at ___]
-  If ranging: also ___ at ___ (the other side of the box) — LIMIT both sides. BOTH orders placed, not just one
-→ Order placed: [LIMIT/MARKET details + id] | or: [why no order — must be specific]
+## {PAIR} [HELD/CANDIDATE] — {TREND ↑ / TREND ↓ / RANGE low–high / SQUEEZE / TRANSITION}
+Chart tells me: [candle bodies, wicks, BB position, momentum. NOT indicator values]
+  → [band walk → TP at ATR×2.0-3.0 = ___ / decelerating → TP at ATR×1.0 = ___ / range bounce → TP at opposite band / squeeze → breakout to ___]
+My trade: [action @price TP=price] — [why NOW: news/cross-pair/structure. Currency-wide or pair-specific?]
+  [RANGE: + opposite side — BUY @___ TP=___ + SELL @___ TP=___ always both]
+→ Placed: [LIMIT/MARKET id=___ TP=___ SL=___] or: [not placed — why]
 ```
 
-**"Chart" line = what you SEE.** "Bodies shrinking, lower wicks expanding" is chart reading. "RSI=48, ADX=24" is not. Describe the candles.
-**"Structure" is the most important line.** It determines everything — how you trade, what direction, what TP/SL structure. In a TREND, you trade dips. In a RANGE, you trade both edges. In a SQUEEZE, you wait. In a TRANSITION (trend exhausting into range), you take profit. Write the structure BEFORE looking at indicators.
-**"If I had no position" removes anchoring.** If you're holding a LONG and the chart is now ranging, "no position" thinking naturally says "buy at lower, sell at upper" — not "hold my LONG." This one line breaks the hold bias.
-**"If ranging: also the other side" forces both-direction LIMITs.** In a range, placing only one side is a directional bet. A range trader places both sides and lets the market decide which fills first.
-**"Why" line = the narrative.** Forces citing a cause AND checking if it's currency-wide (cross-pair validation). If EUR_JPY is rising, is GBP_JPY also rising? If yes → JPY weakness (currency-wide). If no → EUR-specific.
+**The chart-to-TP connection is one thought, not two lines.** You see band walk → you write "TP at ATR×2.0." You see deceleration → "TP at ATR×1.0." The chart is WHERE the TP comes from. Separating them lets you forget.
+
+**Filled-in examples (the model mimics these):**
+
+TREND: `Chart tells me: 5 bullish bodies expanding, hugging BB upper, zero counter-wicks — band walk → TP at ATR×2.0 = 214.20. My trade: dip buy @213.70 TP=214.20 — JPY weakest (CS -0.67), GBP/EUR both rising = currency-wide`
+
+RANGE: `Chart tells me: mixed candles bouncing 112.40-112.57, lower wicks defending 112.40, upper wicks capping 112.56 — range bounce → TP at opposite band. My trade: BUY @112.38 TP=112.55 + SELL @112.56 TP=112.40 — hedge account, zero extra margin`
+
+SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction — squeeze building → breakout to 159.50 on volume. My trade: wait for first close outside BB → breakout LONG @159.35 TP=159.50`
+
+**Why examples, not rules**: A rule says "set TP at ATR×2.0 for band walk." You read the rule, then write TP=ATR×0.4 anyway. An example shows "band walk → TP at ATR×2.0 = 214.20" — you see the number and match it. The RANGE example has two prices and two order IDs. You see it and write two prices and two IDs.
 
 **Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
 ### Tier 2: Remaining pairs (quick scan)
 
-For each Tier 2 pair, write ONE structured line:
+For each Tier 2 pair, write ONE line. The format depends on structure:
 
 ```
-{PAIR}: Regime=[TREND/RANGE/SQUEEZE/...] | Chart=[shape] | Best: {dir} @___ TP=___ | or WAIT — missing: ___
-  If RANGE: BUY @___ TP=___ + SELL @___ TP=___ (both LIMITs)
+TREND:   {PAIR}: TREND ↑/↓ | [candle shape — not indicators] | dip/rally @___ TP=___ | or WAIT: [specific condition]
+RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=___ (both sides)
+SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | or watching: [trigger]
 ```
 
-**"Chart" = what you see in the PNG, not indicators.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not.
-**If Regime=RANGE, the second line is mandatory.** Both BUY and SELL levels. One side only = directional bet, not range trade. If you can't find the other side's level, the pair isn't really ranging.
-**"WAIT — missing: ___" must be specific** ("M5 StRSI below 0.3" not "confirmation"). No open-ended conditions.
+**Tier 2 examples:**
+`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 (BB mid pullback)`
+`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060`
+`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: first close outside 159.10–159.35`
+
+**"candle shape" = what you see in the PNG, not indicator values.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. If you haven't looked at the PNG, you can't fill this in.
+**RANGE format has both sides in the same line.** You can't write "RANGE" and only one price. The format won't let you.
 
 ### After the scan — Capital Deployment Check (required EVERY session)
 
 ```
-Margin: ___% used. ___% idle.
-#1 setup: [pair] — [what the chart is doing + what I'd do: "ranging 1.1680-1.1720 → LIMIT both sides" / "trending → dip buy @186.10"]
-#2 setup: [pair] — [same format]
-Ranging pairs (LIMIT both sides): [pair] LONG @___ TP=___ + SHORT @___ TP=___ SL=outside range
-Entering: [which] because ___
-  conviction: [B/A/S] | To upgrade: [what to check]
-  At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
-→ Checked: [what I actually looked at] → Result: [value] → [supports/contradicts]
-→ Action: [entered / LIMIT placed / passed because ___]
+Margin: ___% used → after all pending fill: ___%
+This session I placed:
+  [pair] [dir] [LIMIT/MARKET] @___ TP=___ SL=___ id=___
+  [pair] [dir] [LIMIT/MARKET] @___ TP=___ SL=___ id=___
+  (or: nothing — best candidate was [pair] [direction] @[price] but: [specific reason])
+Day: ___% of target. ___JPY to go. [hunting harder / on track / protecting gains]
 ```
 
-**Structure determines the setup, not direction.** A ranging pair appears as "LIMIT both sides" — not forced into "#1 LONG" or "#1 SHORT." A trending pair appears as a directional entry. The chart decides the format.
-**"Ranging pairs" line exists for every session.** If no pair is ranging, write "none — all trending/squeezing." If a pair IS ranging and this line is empty, you skipped a trade the chart was giving you.
-**The "Checked" and "Action" lines cannot be omitted — even when passing.** The point: every session that reads this block knows WHAT was checked and WHY you passed.
+**This is a receipt, not a plan.** It lists what you ACTUALLY did this session with real order IDs. If you placed nothing, you explain which pair was closest and why you passed. The next session reads this and knows exactly what happened.
+
+**The Tier 1 and Tier 2 scan blocks above already contain both-sides RANGE entries and chart-derived TPs.** This block just collects the result. If the scan said "BUY @112.38 + SELL @112.56" but this receipt only has the LONG, the gap is visible.
 
 ### Idle margin → LIMIT orders (your money works while you sleep)
 
@@ -236,15 +232,6 @@ When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
 - **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
 - **Thin market / holiday ≠ "no entries."** Thin market affects SL design (wider or none), NOT entry decisions. If you entered EUR_JPY with a market order on Easter Monday, you can enter GBP_JPY too. Thin market = adjust protection, not stop trading.
 - **"Screening failed" / "binary risk" / "waiting for confirmation" / "thin liquidity" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong
-
-```
-Idle margin LIMITs (placed this session):
-  [pair] [dir] LIMIT @___ TP=___ SL=___ GTD=___ id=___
-  [pair] [dir] LIMIT @___ TP=___ SL=___ GTD=___ id=___
-Pending from previous sessions: [list ids or "none"]
-```
-
-**This block lists LIMITs that are PLACED (with OANDA order IDs).** Not planned, not "would place if." If you can't find a structural level to place a LIMIT, that's fine — write "no structural level within ATR×1.5 on any pair" and the scan proves it. But if the scan shows levels and no LIMITs are placed, the block is empty and that's visible.
 
 **The goal is not more positions. It's bigger positions on your best idea.** But idle margin with zero pending LIMITs = money sleeping.
 

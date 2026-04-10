@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-04-10 — Format redesign: examples over rules, embed TP into chart line
+
+**Problem**: Previous format had 9 required lines per Tier 1 pair. Model wrote 3, skipped 6. The critical lines (TP, If ranging, Supports, Warns) were the ones skipped. Band walk TP extension (ATR×2.0+) never happened despite the rule existing. Range both-sides LIMIT never placed despite the instruction existing. R:R today = 0.40.
+
+**Root cause**: TP and range were separate lines that could be skipped. Rules say "do X" but the model writes its own condensed format. The prompt had 9 lines but the model's habit was 3 lines.
+
+**Design change**: Examples over rules. Embed critical behaviors INTO lines the model already writes.
+1. **Tier 1**: 9 lines → 4 lines. Structure in header (TREND/RANGE/SQUEEZE). "Chart tells me → [band walk → TP at ATR×2.0]" in one thought. RANGE format inherently has both sides. Three filled-in examples the model mimics.
+2. **Tier 2**: Structure-specific one-liners with examples. RANGE line format has BUY+SELL in the same line.
+3. **Market Narrative**: Removed redundant "Each pair's story" (7 pairs already covered in scan) and "My best setup" (ranking emerges from Tier 1 selection).
+4. **Capital Deployment**: 9-field form → 4-line receipt. Lists what was ACTUALLY placed with order IDs, not what was planned.
+
+**Net result**: -13 lines. Prompt got shorter while embedding all behavioral changes.
+
+**Files changed**: `docs/SKILL_trader.md`
+
 ## 2026-04-10 — Range LIMIT both sides + TP line + Tier 2 range format
 
 **Gap fixes after verifying state.md adoption**:
