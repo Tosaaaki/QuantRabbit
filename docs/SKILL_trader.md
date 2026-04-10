@@ -84,6 +84,25 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 2. Counter-argument: Rebut each with specifics (not "thesis alive")
 3. Conclusion: If you can rebut all 3 → HOLD. If not → half-close or exit
 
+## Bash②c: Chart Snapshot + Regime Detection (run after profit_check)
+
+cd /Users/tossaki/App/QuantRabbit && python3 tools/chart_snapshot.py --all
+
+Generates candlestick charts (PNG) for all 7 pairs × M5+H1 AND detects market regime per pair.
+
+**Regime types and how to trade them:**
+
+| Regime | What it means | How to trade | Size |
+|--------|--------------|-------------|------|
+| **TREND-BULL/BEAR** | ADX>25, EMA separated, clear direction | WITH the trend. Buy dips (BULL) or sell rallies (BEAR). TP at structure | Full (S/A sizing) |
+| **RANGE** | Price bouncing between BB bands, no trend | Buy at BB lower, sell at BB upper. TP = opposite band. SL = outside range | Half (B sizing) — faster rotation |
+| **SQUEEZE** | BB inside KC, volatility compressed | Wait for breakout. First candle closing outside BB = entry direction | Aggressive on breakout (A/S sizing) |
+| **MILD-BULL/BEAR** | Weak trend or transition | Cautious. Small size. Quick TP. Or wait for clarity | B sizing max |
+
+**Read the chart PNGs for Tier 1 pairs.** Use the Read tool on `logs/charts/{PAIR}_{TF}.png` for your held positions and top candidates. The visual chart shows things numbers can't: candle shape, wick patterns, momentum character, whether price is respecting a level or breaking through.
+
+**The regime output replaces guessing.** Don't force a directional trade in a RANGE regime. Don't wait for confirmation in a clear TREND. Match your strategy to the regime.
+
 ## Market Narrative (write FIRST — before indicators, before scan)
 
 **Read session_data.py: news digest + macro view + M5 price action. Then write this block BEFORE any indicator analysis:**
@@ -93,9 +112,11 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 Driving force: ___ (cite specific event/data from news_digest — "USD selling on CPI miss" not just "USD weak")
 vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "same — [why still same]")
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
+Regimes: [copy from chart_snapshot output — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
-My best LONG: ___ pair — because: ___
-My best SHORT: ___ pair — because: ___
+My best TREND trade: ___ pair ___ dir — because: ___ (from TREND-regime pairs)
+My best RANGE trade: ___ pair — buy at ___, sell at ___ (from RANGE-regime pairs)
+My best SQUEEZE watch: ___ pair — breakout direction likely ___ because ___
 Session: ___ (Tokyo thin / London / NY)
 ```
 
@@ -157,7 +178,7 @@ SHORT case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / po
 For each Tier 2 pair, write ONE structured line:
 
 ```
-{PAIR}: M5 candles=[shape] momentum=[accel/exhaust/revers] | H1=[BULL/BEAR] | Best NOW: {LONG/SHORT} @___ TP=___ | or WAIT — missing: ___
+{PAIR}: Regime=[TREND-BULL/RANGE/SQUEEZE/...] | M5 candles=[shape] | Best NOW: {LONG/SHORT/RANGE-BUY/RANGE-SELL} @___ TP=___ | or WAIT — missing: ___
 ```
 
 **"M5 candles" = chart shape, not indicators.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. Describe what you see.
@@ -222,7 +243,8 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 
 ```
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
-Type: [Scalp / Momentum / Swing / Counter]
+Regime: [TREND/RANGE/SQUEEZE] — matches chart_snapshot output. If RANGE: "buy at BB lower / sell at BB upper"
+Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Pair edge: ___% WR, ___JPY total (copied from session_data TRADES line) → [supports / warns against / neutral]
 FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral

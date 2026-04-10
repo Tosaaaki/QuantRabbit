@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-04-10 — chart_snapshot.py: Visual charts + regime detection (Trend/Range/Squeeze)
+
+**Problem**: The trader has never actually seen a chart. It processes indicator numbers (ADX=43, StochRSI=0.0) and infers chart shape from math — but a pro trader reads visual patterns. This blindness causes: (1) can't detect ranges → enters LONG at range top, (2) can't see momentum exhaustion visually, (3) can't distinguish squeeze from range from trend visually.
+
+**Key insight from performance analysis**: The system is TREND-only. When ADX>35 and DI+ dominates (like 4/7: +14,348 JPY in 14h), it wins. When the market is ranging or transitioning, it forces directional trades and loses. 7 pairs × 2 regimes = 14 potential opportunity types. Currently only ~7 (trend on each pair) are traded.
+
+**Changes**:
+- `tools/chart_snapshot.py`: **New script**. Fetches OANDA candle data → generates candlestick PNG with BB, EMA12/20, Keltner Channel overlay + position entry lines. Detects regime: TREND-BULL/BEAR, RANGE, SQUEEZE, MILD. Outputs trade approach per regime. Supports `--all` (7 pairs × M5+H1 = 14 charts) and `--regime-only`. Claude reads PNG via Read tool for actual visual chart perception.
+- `tools/oanda_performance.py`: **New script** (see below).
+- `logs/charts/`: New directory for chart PNG output.
+
+## 2026-04-10 — oanda_performance.py: OANDA API-based performance analysis (replaces log-grep)
+
+**Problem**: Performance analysis using `grep` on `live_trade_log.txt` produces wildly inaccurate numbers. The log file contains 6-second monitoring loops (UPL= lines), inconsistent formats across dates, and non-trade entries that match P/L regex patterns. An agent analysis reported "+632 JPY breakeven" when the actual OANDA-verified total was -15,550 JPY.
+
+**Root cause**: `trade_performance.py` parses `live_trade_log.txt` with regex. The log was never designed for machine parsing — it's a human-readable chronological record. Any regex approach is fragile against format changes and monitoring line contamination.
+
+**Changes**:
+- `tools/oanda_performance.py`: **New script**. Queries OANDA Transaction API directly for ORDER_FILL events. Computes daily P&L, win rate, avg win/loss, R:R ratio, best N-hour windows (streak detection), per-pair breakdown, best/worst trades. Supports `--days N`, `--date YYYY-MM-DD`, `--streak N`, `--json`. Smoke-tested in both `python3` and `.venv/bin/python`.
+- **Rule**: Any performance analysis MUST use `oanda_performance.py` (API source of truth), NOT grep on live_trade_log.txt.
+
 ## 2026-04-10 — Rollover Guard: auto-remove SL before daily OANDA maintenance
 
 **Problem**: OANDA daily rollover at 5 PM ET (21:00 UTC summer / 22:00 UTC winter) causes spread spikes every day. Any SL/Trailing set at normal levels gets hunted during this 10-15 min window. Same structure as the 4/3 Good Friday -984 JPY loss, but happening daily.

@@ -216,7 +216,9 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes) |
 | `tools/fib_wave.py` | N-wave structure + Fibonacci levels. Run at session start for all pairs |
 | `tools/refresh_factor_cache.py` | H1/H4 technical indicator refresh |
-| `tools/trade_performance.py` | Performance aggregation |
+| `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. Claude reads PNG for visual chart perception. `--all` = 7 pairs × M5+H1 |
+| `tools/oanda_performance.py` | **OANDA API-based performance analysis** — ground truth P&L, win rate, R:R, best streak, per-pair breakdown. USE THIS for any performance analysis, not grep on log files |
+| `tools/trade_performance.py` | Performance aggregation (legacy — parses log file. Use oanda_performance.py instead for accurate data) |
 | `tools/slack_trade_notify.py` | Slack notifications |
 | `tools/news_fetcher.py` | News fetch (Finnhub+AlphaVantage+FF. Called from Cowork task) |
 | `tools/slack_daily_summary.py` | Daily summary |
