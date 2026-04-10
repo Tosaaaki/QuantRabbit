@@ -84,11 +84,9 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 2. Counter-argument: Rebut each with specifics (not "thesis alive")
 3. Conclusion: If you can rebut all 3 → HOLD. If not → half-close or exit
 
-## Bash②c: Chart Snapshot + Regime Detection (run after profit_check)
+## Regime + Visual Chart Data (from quality_audit.md)
 
-cd /Users/tossaki/App/QuantRabbit && python3 tools/chart_snapshot.py --all
-
-Generates candlestick charts (PNG) for all 7 pairs × M5+H1 AND detects market regime per pair.
+**The auditor generates charts and reads them every 30 minutes.** You do NOT generate chart PNGs. Read the regime map and visual observations from `logs/quality_audit.md` (already loaded via session_data.py / QUALITY AUDIT section).
 
 **Regime types and how to trade them:**
 
@@ -99,9 +97,9 @@ Generates candlestick charts (PNG) for all 7 pairs × M5+H1 AND detects market r
 | **SQUEEZE** | BB inside KC, volatility compressed | Wait for breakout. First candle closing outside BB = entry direction | Aggressive on breakout (A/S sizing) |
 | **MILD-BULL/BEAR** | Weak trend or transition | Cautious. Small size. Quick TP. Or wait for clarity | B sizing max |
 
-**Read the chart PNGs for Tier 1 pairs.** Use the Read tool on `logs/charts/{PAIR}_{TF}.png` for your held positions and top candidates. The visual chart shows things numbers can't: candle shape, wick patterns, momentum character, whether price is respecting a level or breaking through.
+**The auditor's Regime Map gives you:** regime per pair (M5/H1), visual chart description (candle patterns, BB position, momentum character), and range trade opportunities (buy/sell levels with pip targets).
 
-**The regime output replaces guessing.** Don't force a directional trade in a RANGE regime. Don't wait for confirmation in a clear TREND. Match your strategy to the regime.
+**Match your strategy to the regime.** Don't force a directional trade in a RANGE regime. Don't wait for confirmation in a clear TREND. If the auditor flags a range opportunity, evaluate it as a real trade candidate.
 
 ## Market Narrative (write FIRST — before indicators, before scan)
 
@@ -112,10 +110,10 @@ Generates candlestick charts (PNG) for all 7 pairs × M5+H1 AND detects market r
 Driving force: ___ (cite specific event/data from news_digest — "USD selling on CPI miss" not just "USD weak")
 vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "same — [why still same]")
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
-Regimes: [copy from chart_snapshot output — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
+Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
 My best TREND trade: ___ pair ___ dir — because: ___ (from TREND-regime pairs)
-My best RANGE trade: ___ pair — buy at ___, sell at ___ (from RANGE-regime pairs)
+My best RANGE trade: ___ pair — buy at ___, sell at ___ (from audit Regime Map RANGE pairs + Range Opportunities)
 My best SQUEEZE watch: ___ pair — breakout direction likely ___ because ___
 Session: ___ (Tokyo thin / London / NY)
 ```

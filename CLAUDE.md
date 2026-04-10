@@ -60,7 +60,7 @@ How to achieve this:
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
-| quality-audit | Sonnet | Every 30 min | ~3-4 min | Independent market analyst. Runs profit_check + fib_wave + protection_check, reads state.md + strategy_memory, forms own market view, challenges each position with bear case → persistent Auditor's View in logs/quality_audit.md |
+| quality-audit | Sonnet | Every 30 min | ~3-4 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case → persistent Auditor's View in logs/quality_audit.md (includes Regime Map + Range Opportunities) |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -97,17 +97,19 @@ Every 1 min: trader session
 ### Self-Improvement Loop
 ```
 Every 1 min: trader session
-  ├── reads: strategy_memory.md + state.md + quality_audit.md (if recent)
+  ├── reads: strategy_memory.md + state.md + quality_audit.md (regime map + visual read + range opportunities)
   ├── profit_check.py --all + protection_check.py  ← every session, first thing
-  ├── reads price action (M5 chart shape — before indicators)
+  ├── reads regime + visual chart observations from quality_audit.md (auditor's eyes)
   ├── if quality_audit.md has issues → address them (re-evaluate missed S-candidates, fix sizing)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
   └── SESSION_END (9 min mark, 10 min hard limit): trade_performance.py + ingest.py → memory.db
 
 Every 30 min: quality-audit session (Sonnet)
-  ├── runs: quality_audit.py (OANDA-verified facts: positions, exit quality, S-scan, sizing, rules)
-  ├── WRITES: logs/quality_audit.md (facts — trader reads) + logs/quality_audit.json (machine) + logs/audit_history.jsonl (outcome tracking)
+  ├── runs: quality_audit.py + profit_check + fib_wave + chart_snapshot.py (14 PNGs)
+  ├── READS: chart PNGs visually (candle patterns, BB position, momentum character)
+  ├── WRITES: logs/quality_audit.md (facts + Regime Map + Visual Read + Range Opportunities)
+  ├── WRITES: logs/quality_audit.json (machine) + logs/audit_history.jsonl (outcome tracking)
   ├── Sonnet-auditor exercises JUDGMENT on each finding (REPORT / NOISE)
   └── if REPORT items → posts summary to #qr-daily via Slack
 
@@ -216,7 +218,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes) |
 | `tools/fib_wave.py` | N-wave structure + Fibonacci levels. Run at session start for all pairs |
 | `tools/refresh_factor_cache.py` | H1/H4 technical indicator refresh |
-| `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. Claude reads PNG for visual chart perception. `--all` = 7 pairs × M5+H1 |
+| `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. **Run by quality-audit** (not trader). Auditor reads PNGs visually, writes Regime Map + Range Opportunities to quality_audit.md. `--all` = 7 pairs × M5+H1 |
 | `tools/oanda_performance.py` | **OANDA API-based performance analysis** — ground truth P&L, win rate, R:R, best streak, per-pair breakdown. USE THIS for any performance analysis, not grep on log files |
 | `tools/trade_performance.py` | Performance aggregation (legacy — parses log file. Use oanda_performance.py instead for accurate data) |
 | `tools/slack_trade_notify.py` | Slack notifications |

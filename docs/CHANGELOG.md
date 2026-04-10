@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-10 — Move chart reading from trader to quality-audit (auditor = trader's eyes)
+
+**Problem**: chart_snapshot.py generates 14 PNGs + regime detection, but running it inside the trader's 10-minute session wastes time (15s generation + 14 Read tool calls + massive image token cost). The trader has limited context budget. Meanwhile, the quality-audit (Sonnet, 30-min intervals) already runs profit_check + fib_wave + protection_check and writes persistent analysis to quality_audit.md.
+
+**Change**: Auditor now generates charts, reads them visually (multimodal), and writes Regime Map + Visual Chart Read + Range Opportunities to quality_audit.md. Trader reads this as text (cheap) instead of generating/reading images (expensive).
+
+**Files changed**:
+- `docs/SKILL_quality-audit.md`: Added Bash D (chart_snapshot.py --all), Step 1b (visual chart reading with Read tool), Section E (Regime Map table + Range Opportunities with actionable buy/sell levels)
+- `docs/SKILL_trader.md`: Removed Bash②c (chart_snapshot.py). Regime data now comes from quality_audit.md. Kept regime strategy table for reference
+- `CLAUDE.md`: Updated quality-audit role description, Self-Improvement Loop diagram, chart_snapshot.py script table entry
+
 ## 2026-04-10 — chart_snapshot.py: Visual charts + regime detection (Trend/Range/Squeeze)
 
 **Problem**: The trader has never actually seen a chart. It processes indicator numbers (ADX=43, StochRSI=0.0) and infers chart shape from math — but a pro trader reads visual patterns. This blindness causes: (1) can't detect ranges → enters LONG at range top, (2) can't see momentum exhaustion visually, (3) can't distinguish squeeze from range from trend visually.
