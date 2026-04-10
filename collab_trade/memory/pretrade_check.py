@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import sys
 import json
-from datetime import date
+from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from schema import get_conn, init_db, fetchall_dict, fetchone_val, fetchone_dict, serialize_f32
 
@@ -125,13 +125,16 @@ def user_call_stats(conn, pair: str = None, direction: str = None) -> dict:
     }
 
 
-def latest_user_call(conn, pair: str = None) -> dict | None:
-    """Most recent user call"""
+def latest_user_call(conn, pair: str = None, max_age_days: int = 3) -> dict | None:
+    """Most recent user call within max_age_days. Market conditions change — stale calls are noise."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).strftime("%Y-%m-%d")
     if pair:
         return fetchone_dict(conn,
-            "SELECT * FROM user_calls WHERE pair = ? ORDER BY id DESC LIMIT 1", (pair,))
+            "SELECT * FROM user_calls WHERE pair = ? AND session_date >= ? ORDER BY id DESC LIMIT 1",
+            (pair, cutoff))
     return fetchone_dict(conn,
-        "SELECT * FROM user_calls ORDER BY id DESC LIMIT 1")
+        "SELECT * FROM user_calls WHERE session_date >= ? ORDER BY id DESC LIMIT 1",
+        (cutoff,))
 
 
 # --- Vector Layer ---
@@ -643,18 +646,26 @@ def assess_risk(
                 warnings.append(f"🚨 Historical spike: {e['headline']} → {pair} {e['spike_pips']:.0f}pip ({e['session_date']})")
                 risk_score += 2
 
-    # 4. User call
-    uc = latest_user_call(conn, pair)
+    # 4. User call (only recent — market conditions change fast)
+    uc = latest_user_call(conn, pair, max_age_days=3)
     if uc:
         user_dir = uc.get("direction")
+        verified = uc.get("outcome") is not None
+        call_date = uc.get("session_date", "?")
         if user_dir and user_dir != ("UP" if direction == "LONG" else "DOWN"):
             uc_stats = user_call_stats(conn, pair)
-            if uc_stats["count"] > 0:
+            if verified and uc_stats["count"] > 0:
                 warnings.append(
-                    f"⚠️ Latest user call: \"{uc['call_text']}\" ({user_dir}) "
-                    f"= opposite to {direction} (user accuracy: {uc_stats['accuracy']:.0%})"
+                    f"⚠️ User call ({call_date}): \"{uc['call_text']}\" ({user_dir}) "
+                    f"= opposite to {direction} (verified {uc_stats['accuracy']:.0%}, n={uc_stats['count']})"
                 )
                 risk_score += 2
+            else:
+                # Unverified call — note it but don't add risk score
+                warnings.append(
+                    f"ℹ️ User call ({call_date}): \"{uc['call_text']}\" ({user_dir}) "
+                    f"= opposite to {direction} (unverified — info only, no score impact)"
+                )
 
     # 5. Historical results without SL
     if stats["count"] > 0 and stats["no_sl_count"] == stats["count"]:

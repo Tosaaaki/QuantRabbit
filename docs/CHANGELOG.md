@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-10 — FIX: pretrade_check user call ghost data poisoning decisions
+
+**Problem**: User call "反発始まる" (3/27, 14 days ago) was blocking USD_JPY SHORT entries. The call was never verified (outcome=NULL, price_at_call=NULL) but pretrade_check showed "user accuracy: 100%" (actually from a different call, n=1). Trader tried SHORT 9+ times today — all blocked by ghost data. Meanwhile all TFs showed DI- dominant.
+
+**Root cause**: 3 structural flaws in pretrade_check.py:
+1. `latest_user_call()` had no time limit — 2-week-old calls used as "latest"
+2. Unverified calls (outcome=NULL) displayed alongside verified accuracy stats
+3. Risk score +2 applied even for unverified stale calls
+
+**Fix**:
+1. `latest_user_call()` now takes `max_age_days=3` — calls older than 3 days are ignored (market conditions change)
+2. Verified calls: show `(verified 75%, n=4)` — sample size visible
+3. Unverified calls: show `(unverified — info only, no score impact)` — no risk_score added
+
 ## 2026-04-10 — FIX: slack_post.py guards against garbage replies and wrong channel
 
 **Problem**: Trader session replied "dummy" to user's "状況は？" in #qr-commands. Second message "状況教えて" reply was sent to #qr-trades with `--reply-to` flag, marking it as replied in dedup. User got no proper response for 43 minutes.
