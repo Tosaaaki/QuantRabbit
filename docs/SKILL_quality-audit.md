@@ -179,7 +179,7 @@ Read the current `logs/quality_audit.md` (the script's facts from Step 1). Then 
 
 1. Everything the script wrote (copy it unchanged)
 2. A `---` separator
-3. Your Auditor's View from Step 4
+3. Your Auditor's View from Step 4 (ALL sections: A, E, B, C, D — Section E with Regime Map and Range Opportunities is required)
 
 The trader reads this file at the start of every session via session_data.py. Your analysis is persistent — it survives across sessions.
 

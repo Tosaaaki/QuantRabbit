@@ -8,7 +8,8 @@ When changing code, config, or architecture, execute all of the following:
 4. **Merge to main**: When editing in a worktree, always merge to main
 5. **Deploy immediately**: Reflect changes at once. Don't ask.
 6. **English only**: All prompt files (.claude/rules/, CLAUDE.md, SKILL.md) are English-only. No Japanese reference copies maintained (deprecated).
-7. **Smoke test after every code change** (2026-04-02 incident: entire memory DB was dead for days because nobody ran the scripts):
+7. **Scheduled task SKILLs are symlinks**: `~/.claude/scheduled-tasks/{task}/SKILL.md` → `docs/SKILL_{task}.md`. Edit the docs/ version only. Never create a plain copy — it will silently diverge. (2026-04-10 incident: quality-audit SKILL was a copy, docs version was updated but scheduled task ran the old version. Chart reading never executed.)
+8. **Smoke test after every code change** (2026-04-02 incident: entire memory DB was dead for days because nobody ran the scripts):
    - Run the script and verify it produces actual output. `python3 the_script.py` — if it crashes, you're not done
    - Test in **both** `python3` AND `.venv/bin/python` — two environments exist, both must work
    - New pip dependency → install in both environments immediately

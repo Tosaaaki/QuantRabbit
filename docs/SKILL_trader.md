@@ -241,7 +241,7 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 
 ```
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
-Regime: [TREND/RANGE/SQUEEZE] — matches chart_snapshot output. If RANGE: "buy at BB lower / sell at BB upper"
+Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map. If RANGE: "buy at BB lower / sell at BB upper"
 Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Pair edge: ___% WR, ___JPY total (copied from session_data TRADES line) → [supports / warns against / neutral]
 FOR:  ___ (category) + ___ (category) + ___ (category)

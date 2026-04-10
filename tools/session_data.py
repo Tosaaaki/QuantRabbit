@@ -478,17 +478,15 @@ def main():
                 lines = out.split("\n")[:10]
                 print("\n".join(lines))
 
-    # 6b. Quality Audit (if issues exist from last audit run)
+    # 6b. Quality Audit (always show if recent — includes Regime Map + Range Opportunities)
     audit_path = ROOT / "logs" / "quality_audit.md"
     if audit_path.exists():
         age_min = (time.time() - audit_path.stat().st_mtime) / 60
         if age_min < 90:  # show if within last 90 min (covers up to 3× 30-min audit cycles)
             audit_text = audit_path.read_text().strip()
-            # Only show if there are actual issues (skip if Issues (0))
-            has_issues = "## " in audit_text and "CLEAN" not in audit_text
-            if has_issues:
-                section("QUALITY AUDIT ISSUES (read and fix)")
-                print(audit_text[:1500])
+            if "CLEAN" not in audit_text:
+                section(f"QUALITY AUDIT ({age_min:.0f}min ago — regime + analysis)")
+                print(audit_text[:3000])
 
     # 7. Today's performance
     section("PERFORMANCE (today)")
