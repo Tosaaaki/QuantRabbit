@@ -14,6 +14,13 @@ Bash①: Gather today's data with daily_review.py
 
 cd /Users/tossaki/App/QuantRabbit && python3 tools/daily_review.py --date $(date -u +%Y-%m-%d)
 
+Bash②: Verify user market calls (compare predicted direction vs actual price movement)
+
+cd /Users/tossaki/App/QuantRabbit && python3 tools/verify_user_calls.py
+
+This verifies all unverified user calls (outcome=NULL, >2h old) by fetching actual prices from OANDA.
+Results feed directly into pretrade_check accuracy stats. Include any notable findings in Step 2.
+
 Read: collab_trade/strategy_memory.md (current knowledge)
 Read: collab_trade/daily/$(date -u +%Y-%m-%d)/trades.md (today's records, if any)
 Read: logs/live_trade_log.txt (last 100 lines — for details daily_review.py might miss)

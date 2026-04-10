@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-10 — NEW: verify_user_calls.py + daily-review integration
+
+User market calls ("反発始まる", "あがるよ" etc.) were recorded but never verified. outcome stayed NULL forever, making pretrade_check accuracy stats unreliable.
+
+**New script**: `tools/verify_user_calls.py` — fetches OANDA price at call time and 4h later, compares with predicted direction, marks correct/incorrect/neutral in DB. Also backfills price_at_call, price_after_30m, price_after_1h.
+
+**Integration**: Added as Bash② in daily-review Step 1. Runs automatically every daily-review cycle.
+
+**Initial backfill result**: 6/7 calls verified — 83% accuracy (5 correct, 1 incorrect). The "反発始まる" call was actually correct (+44.4pip in 4h), but stale (14 days old) and should not influence current decisions.
+
 ## 2026-04-10 — FIX: pretrade_check user call ghost data poisoning decisions
 
 **Problem**: User call "反発始まる" (3/27, 14 days ago) was blocking USD_JPY SHORT entries. The call was never verified (outcome=NULL, price_at_call=NULL) but pretrade_check showed "user accuracy: 100%" (actually from a different call, n=1). Trader tried SHORT 9+ times today — all blocked by ghost data. Meanwhile all TFs showed DI- dominant.
