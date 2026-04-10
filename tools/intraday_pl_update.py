@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SOD_NAV_FILE = ROOT / "logs" / "sod_nav.json"
 
 JST = timezone(timedelta(hours=9))
 UTC = timezone.utc
@@ -129,23 +130,45 @@ def post_slack(text, channel_id, token):
     return resp
 
 
-def build_message(acct_summary, open_trades, realized_pl, close_count):
+def load_sod_nav():
+    """Load start-of-day NAV. Returns (nav, date_str) or (None, None)."""
+    if not SOD_NAV_FILE.exists():
+        return None, None
+    try:
+        data = json.loads(SOD_NAV_FILE.read_text())
+        return data.get("nav"), data.get("date")
+    except Exception:
+        return None, None
+
+
+def save_sod_nav(nav):
+    """Save current NAV as start-of-day NAV (first call of the day wins)."""
+    today_str = datetime.now(JST).strftime("%Y-%m-%d")
+    saved_nav, saved_date = load_sod_nav()
+    if saved_date == today_str:
+        return saved_nav  # already recorded today
+    data = {"nav": nav, "date": today_str}
+    SOD_NAV_FILE.write_text(json.dumps(data))
+    return nav
+
+
+def build_message(acct_summary, open_trades, realized_pl, close_count, sod_nav):
     now_jst = datetime.now(JST)
     date_str = now_jst.strftime("%m/%d")
     time_str = now_jst.strftime("%H:%M")
 
     icon = "\U0001f4c8" if realized_pl >= 0 else "\U0001f4c9"
     nav = acct_summary["nav"]
-    balance = acct_summary["balance"]
     margin_used = acct_summary["margin_used"]
     margin_pct = (margin_used / nav * 100) if nav > 0 else 0
     upl = acct_summary["unrealized_pl"]
     trade_count = acct_summary["open_trade_count"]
 
-    # Daily return %: (realized + unrealized) / start-of-day balance
-    start_balance = balance - realized_pl
-    daily_change = realized_pl + upl
-    daily_pct = (daily_change / start_balance * 100) if start_balance > 0 else 0
+    # Daily return %: actual NAV change from start of day
+    if sod_nav and sod_nav > 0:
+        daily_pct = (nav - sod_nav) / sod_nav * 100
+    else:
+        daily_pct = 0.0
 
     lines = []
     lines.append(f"{icon} *Intraday Update* {date_str} {time_str} JST")
@@ -173,7 +196,10 @@ def main():
     open_trades = get_open_trades(token, acct)
     realized_pl, close_count = get_realized_pl_today(token, acct)
 
-    message = build_message(acct_summary, open_trades, realized_pl, close_count)
+    # Record SOD NAV on first run of the day; use it for accurate daily %
+    sod_nav = save_sod_nav(acct_summary["nav"])
+
+    message = build_message(acct_summary, open_trades, realized_pl, close_count, sod_nav)
 
     if dry_run:
         print(message)
