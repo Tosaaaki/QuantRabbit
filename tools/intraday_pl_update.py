@@ -136,17 +136,23 @@ def build_message(acct_summary, open_trades, realized_pl, close_count):
 
     icon = "\U0001f4c8" if realized_pl >= 0 else "\U0001f4c9"
     nav = acct_summary["nav"]
+    balance = acct_summary["balance"]
     margin_used = acct_summary["margin_used"]
     margin_pct = (margin_used / nav * 100) if nav > 0 else 0
     upl = acct_summary["unrealized_pl"]
     trade_count = acct_summary["open_trade_count"]
+
+    # Daily return %: (realized + unrealized) / start-of-day balance
+    start_balance = balance - realized_pl
+    daily_change = realized_pl + upl
+    daily_pct = (daily_change / start_balance * 100) if start_balance > 0 else 0
 
     lines = []
     lines.append(f"{icon} *Intraday Update* {date_str} {time_str} JST")
     lines.append("")
     lines.append(f"*Realized P&L*: {realized_pl:+,.0f} JPY ({close_count} closes)")
     lines.append(f"*Unrealized P&L*: {upl:+,.0f} JPY ({trade_count} open trades)")
-    lines.append(f"*NAV*: {nav:,.0f} JPY | *Margin*: {margin_pct:.1f}%")
+    lines.append(f"*NAV*: {nav:,.0f} JPY (*{daily_pct:+.2f}%*) | *Margin*: {margin_pct:.1f}%")
 
     if open_trades:
         lines.append("")
