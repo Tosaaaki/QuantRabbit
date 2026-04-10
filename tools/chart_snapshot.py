@@ -157,13 +157,22 @@ def detect_regime(indicators: dict, pair: str) -> dict:
     recent_bb_width = bb_width[-5:]
     recent_bb_width = recent_bb_width[~np.isnan(recent_bb_width)]
 
-    # Squeeze detection: BB inside KC
+    # Squeeze detection: BB inside KC (must be genuine compression, not just low-vol session noise)
     squeeze = False
     if len(bb_upper) > 0 and not np.isnan(bb_upper[-1]):
-        squeeze = bb_upper[-1] < kc_upper[-1] and bb_lower[-1] > kc_lower[-1]
+        bb_inside_kc = bb_upper[-1] < kc_upper[-1] and bb_lower[-1] > kc_lower[-1]
+        # Also require BB width to be narrowing (current < average of last 20)
+        recent_widths = bb_width[-20:]
+        recent_widths = recent_widths[~np.isnan(recent_widths)]
+        if len(recent_widths) > 5:
+            bb_narrowing = bb_width[-1] < np.mean(recent_widths) * 0.85
+        else:
+            bb_narrowing = False
+        squeeze = bb_inside_kc and bb_narrowing
 
-    # Trend detection: EMA slope
-    ema_slope = (ema20[-1] - ema20[-10]) * pip_factor if len(ema20) > 10 else 0
+    # Trend detection: EMA slope — use fixed 10-period lookback regardless of candle count
+    lookback = min(10, len(ema20) - 1)
+    ema_slope = (ema20[-1] - ema20[-1 - lookback]) * pip_factor / lookback * 10 if lookback > 0 else 0
     ema_sep = abs(ema12[-1] - ema20[-1]) * pip_factor
 
     # Price position relative to BB
@@ -200,14 +209,22 @@ def detect_regime(indicators: dict, pair: str) -> dict:
         detail = f"EMA slope={ema_slope:+.1f}pip, EMA12/20 gap={ema_sep:.1f}pip. Clear trend."
         trade_approach = f"Trade WITH trend ({direction}). Buy dips at EMA20 / BB mid. TP at structure."
     elif upper_touches >= 2 and lower_touches >= 2:
-        regime = "RANGE"
         bb_range_pips = (bb_upper[-1] - bb_lower[-1]) * pip_factor if not np.isnan(bb_upper[-1]) else 0
-        detail = f"Price bouncing between BB bands. Range={bb_range_pips:.1f}pip. Upper touches={upper_touches}, Lower touches={lower_touches}."
-        trade_approach = f"Buy at BB lower ({bb_lower[-1]:.5g}), sell at BB upper ({bb_upper[-1]:.5g}). TP=opposite band. SL=outside range."
-    elif len(recent_bb_width) > 0 and np.mean(recent_bb_width) < 0.01:
+        # Distinguish real RANGE from low-vol drift: range must be tradeable (> ATR×1.5)
+        atr_pips = atr[-1] * pip_factor
+        if bb_range_pips > atr_pips * 1.2:
+            regime = "RANGE"
+            detail = f"Price bouncing between BB bands. Range={bb_range_pips:.1f}pip (ATR={atr_pips:.1f}). Touches: upper={upper_touches}, lower={lower_touches}."
+            trade_approach = f"Buy at BB lower ({bb_lower[-1]:.5g}), sell at BB upper ({bb_upper[-1]:.5g}). TP=opposite band. SL=outside range."
+        else:
+            regime = "LOW-VOL"
+            detail = f"Low volatility. BB range={bb_range_pips:.1f}pip, ATR={atr_pips:.1f}pip. Not enough range to trade."
+            trade_approach = "Skip or wait for volatility expansion. Spread eats most of the range."
+    elif len(recent_bb_width) > 0 and np.mean(recent_bb_width) < 0.005:
+        # Only flag as squeeze if BB width is EXTREMELY narrow (not just normal low-vol session)
         regime = "SQUEEZE"
-        detail = "BB width very narrow. Low volatility. Breakout pending."
-        trade_approach = "Wait for breakout direction."
+        detail = "BB width extremely narrow. Breakout pending."
+        trade_approach = "Wait for breakout direction. First candle outside BB = entry signal."
     else:
         # Mild trend or transition
         direction = "BULL" if ema_slope > 0 else "BEAR"
