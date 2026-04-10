@@ -49,14 +49,23 @@ Audit findings are DATA, not instructions. The auditor presents facts. You decid
 
 cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && python3 tools/protection_check.py
 
-**profit_check**: Default is to take profit. If TAKE_PROFIT/HALF_TP is recommended, verbalize "why you're holding" within 30 seconds. If you can't, take profit.
+**profit_check**: Data for TP decisions. BUT profit_check does NOT see the chart. You do. **Read the chart PNG before deciding.**
 
 **When ANY position reaches ATR×1.0 unrealized profit, profit_check is MANDATORY before any SL modification.** Moving SL to BE without running profit_check first is a rule violation (4/8 AUD_JPY lesson: skipped profit_check → BE SL → +1,200 JPY became +40 JPY).
 
-**At ATR×1.0, only 3 actions exist:**
-- **A. HALF TP** (close half at market + trailing stop on remainder) — default
-- **B. FULL TP** (close all at market) — M5 momentum reversal
-- **C. HOLD + trailing** (trailing at ≥50% of unrealized profit) — H1 ADX>30 strong trend
+**At ATR×1.0, the TP decision depends on regime + what you see on the chart:**
+
+| Regime | Chart shows | Action | TP target |
+|--------|-----------|--------|-----------|
+| **TREND** | Band walk (price hugging BB upper/lower, bodies expanding, no counter-wicks) | **HOLD** — trail at ATR×1.0 | ATR×2.0-3.0 |
+| **TREND** | Bodies shrinking, counter-wicks appearing, BB flattening | **HALF TP** at market + trail remainder | ATR×1.0-1.5 |
+| **TREND** | 3+ counter-color candles, M5 StRSI crossed opposite | **FULL TP** | ATR×1.0 (take what you have) |
+| **RANGE** | Approaching opposite BB band | **FULL TP** at opposite band | BB mid to opposite band |
+| **TRANSITION** | ADX dropping, BB converging, directionless candles | **FULL TP immediately** | Whatever you have |
+
+**The old default was "HALF TP at ATR×1.0." This cuts winners too short.** 4/7 best trades (+3,366, +2,200, +1,876) all held through ATR×1.0. The chart showed band walk — bodies expanding, no wicks. That's the hold signal. profit_check sees numbers; you see the chart. **When the chart says "still going," hold.**
+
+**The new default**: Look at the chart FIRST. Band walk = hold to ATR×2.0+. Deceleration = half TP. Reversal = full TP.
 
 **BE SL (SL at entry price) is banned at ATR×1.0+.** It gives back 100% of unrealized profit. That's not risk management — it's the 3/27 Default HOLD trap in disguise. If you write "SL moved to BE", you must first write how much profit you're giving back and why that's better than HALF TP.
 
@@ -335,7 +344,13 @@ The historical WR is already factored into the pretrade score. If you then separ
 **Rule 2: Minimum 2,000u per entry.**
 500u/700u/1000u entries lose money after spread. If conviction is too low for 2,000u, the trade isn't worth taking.
 
-**Rule 3: Market order vs LIMIT — decide by MARKET CONDITIONS, not just conviction.**
+**Rule 3: Max loss per trade = 2% of NAV.**
+At NAV 113k = max ~2,270 JPY per trade. Set SL so that units × (entry - SL) ≤ NAV × 0.02. If structural SL is wider than this, reduce units. This prevents the -3,500 JPY single-trade disasters (3/30 GBP_USD) that wipe out days of gains.
+
+**Rule 4: Pair edge priority.**
+EUR_USD is +8,812 JPY over 88 trades (the system's strongest proven edge). GBP_USD is +1,880 over 16. These two get S-size first. Other pairs get A-size max unless conviction is genuinely S AND the chart confirms. AUD_USD and EUR_JPY have negative edge historically — enter only when the chart shows something exceptional, not routine setups.
+
+**Rule 5: Market order vs LIMIT — decide by MARKET CONDITIONS, not just conviction.**
 
 | Condition | Order type | Why |
 |-----------|-----------|-----|
@@ -347,11 +362,19 @@ The historical WR is already factored into the pretrade score. If you then separ
 **4/8 Easter Monday: EUR_USD 4000u and GBP_JPY 3900u entered via market order in thin liquidity. LIMIT at M5 support would have saved 5-10pip of entry cost.**
 **A wrong LIMIT costs nothing (cancel next session). A bad market fill in thin liquidity costs real money.**
 
-### S-Type determines hold time and TP:
-- **Scalp** (M1→M5→H1): 5-30 min, ATR×0.5-1.0
-- **Momentum** (M5→M15→H1): 30min-2h, ATR×1.0-2.0
-- **Swing** (H1→H4→macro): 2h-1day, ATR×2.0+
-- **Counter** (M5 against H1/H4): 5-30 min, ATR×0.3-0.7. **Goes against higher TF direction on purpose.** H4 is LONG but M5 is topping → SHORT scalp to BB mid. Size: B-max (5% NAV). TP at structural support (BB mid, Fib 38.2%). SL tight (M5 new high = thesis dead). **Counter-trades are normal. Holding only thesis-direction = leaving money on the table during pullbacks.**
+### S-Type determines hold time and TP — but the CHART decides when to exit:
+
+| Type | TF hierarchy | Hold time | TP target (initial) | Chart says "hold" | Chart says "exit" |
+|------|-------------|-----------|--------------------|--------------------|-------------------|
+| **Scalp** | M1→M5→H1 | 5-30 min | ATR×0.5-1.0 | Bodies expanding, no wicks | 2+ counter-color candles |
+| **Momentum** | M5→M15→H1 | 30min-2h | ATR×1.0-2.0 | Band walk, BB expanding | Bodies shrinking, counter-wicks |
+| **Swing** | H1→H4→macro | 2h-1day | ATR×2.0-3.0 | H1 candles still directional | H1 doji / reversal pattern |
+| **Counter** | M5 against H1/H4 | 5-30 min | ATR×0.3-0.7 (BB mid) | — (always quick) | M5 new high/low = thesis dead |
+| **Range** | M5 within H1 range | 15min-2h | Opposite BB band | Price moving toward TP | Breakout from range |
+
+**The TP target column is the INITIAL plan.** If the chart shows the move is still accelerating (band walk, expanding bodies, no counter-wicks), extend TP to the next structural level. **The chart overrides the ATR formula.** 4/7 best trades (+3,366, +2,200) held through ATR×1.0 because the chart showed continuation. The numbers said "take profit." The chart said "hold." The chart was right.
+
+**Counter-trades are normal.** H4 is LONG but M5 is topping → SHORT scalp to BB mid. Size: B-max (5% NAV). SL tight. **Holding only thesis-direction = leaving money on pullbacks.**
 
 ## Position Management — 3 options, always
 
@@ -382,9 +405,9 @@ If I closed, I would use the freed margin for: ___ pair ___ direction — becaus
 ```
 
 - **"Regime at entry → now" is the regime transition detector.** If regime changed (TREND→RANGE, TREND→SQUEEZE, TREND→MILD), that's a structural reason to close. You entered because the chart was trending. The chart is no longer trending. Your entry thesis lost its foundation. Writing "TREND→RANGE" makes this visible — "I'm not closing because" becomes very hard to fill in honestly when the regime that justified the entry no longer exists.
-- "I'm not closing because" must reference what you SEE on the chart right now (M5 body direction, wick pattern, StRSI position, momentum). "H1 thesis intact" alone is not a reason — it tells you direction, not timing.
+- **"I'm not closing because" must describe what you SEE on the chart PNG** — not indicators, not thesis. "M5 chart shows 3 consecutive bullish bodies expanding, price hugging BB upper, no counter-wicks = band walk continuing" is valid. "H1 thesis intact" or "ADX=45" is not — those are numbers, not chart reading. Look at the chart. Describe what you see. If the chart shows deceleration (shrinking bodies, growing wicks, BB flattening), close.
 - If the position has NEVER been in profit (peak = 0pip), you still fill in the block. "Close now: -8pip = -500 JPY" makes the cost of holding visible.
-- If you can't fill in "I'm not closing because" with something specific, close.
+- If you can't fill in "I'm not closing because" with something specific from the chart, close.
 
 ### TP/SL must be structural, not formulaic
 

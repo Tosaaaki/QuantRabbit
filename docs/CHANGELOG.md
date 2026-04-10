@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-04-10 — Chart+indicators+narrative integration for 10% daily target
+
+**Problem**: R:R=0.57. Winners average +302 JPY (cut too early at ATR×1.0), losers average -534 JPY (held too long or catastrophic). Best day (+11,014) held winners through ATR×1.0 because chart showed band walk. System has charts, indicators, and narrative but they operate independently.
+
+**Root cause**: profit_check triggers TP at ATR×1.0 without seeing the chart. Chart shows "bodies expanding, band walk, no counter-wicks" = hold signal, but profit_check says "TAKE_PROFIT." The chart was right on 4/7's best trades (+3,366, +2,200, +1,876).
+
+**Changes to SKILL_trader.md**:
+1. **Regime-based TP**: TREND+band walk = hold to ATR×2.0-3.0. TREND+deceleration = half TP. RANGE = opposite band. TRANSITION = full TP immediately. Chart determines exit, not ATR formula alone.
+2. **Loss cap**: Max 2% of NAV per trade (~2,270 JPY). Prevents -3,500 single-trade disasters (3/30).
+3. **Chart-informed hold decisions**: Close-or-Hold block now requires chart PNG description, not just indicator values. "Bodies expanding, hugging BB upper" is valid. "ADX=45" is not.
+4. **Pair edge priority**: EUR_USD (+8,812) and GBP_USD (+1,880) get S-size first. AUD_USD/EUR_JPY (negative edge) need exceptional chart confirmation.
+5. **S-Type TP table**: Added "Chart says hold" / "Chart says exit" columns. Chart overrides ATR formula when continuation is visible.
+
+**Files changed**: `docs/SKILL_trader.md`
+
 ## 2026-04-10 — Trader reads chart PNGs + daily 10% NAV target
 
 **Chart reading**: Trader now reads the 14 chart PNGs (7 pairs × M5 + H1 for held pairs) that quality-audit generates every 30 min. No regeneration — just Read the existing files. Two independent visual reads of the same market (trader's eyes + auditor's text summary). Added to Bash② session start flow as parallel Read batches.
