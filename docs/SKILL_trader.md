@@ -179,7 +179,8 @@ Why: [cite news/macro] — currency-wide or pair-specific? [checked: ___ pair sh
 If I had no position, I would: ___ at ___ because the chart shows ___
   Supports: ①___ ②___ ③___ (3+ indicator categories)
   Warns: ___ (Different lens — 1+ indicator from unused category)
-  If ranging: also ___ at ___ (the other side of the box) — LIMIT both sides
+  TP: [TREND + band walk → ATR×2.0-3.0 at ___ | TREND + decelerating → ATR×1.0-1.5 at ___ | RANGE → opposite band at ___ | SQUEEZE → first structural level at ___]
+  If ranging: also ___ at ___ (the other side of the box) — LIMIT both sides. BOTH orders placed, not just one
 → Order placed: [LIMIT/MARKET details + id] | or: [why no order — must be specific]
 ```
 
@@ -196,11 +197,12 @@ If I had no position, I would: ___ at ___ because the chart shows ___
 For each Tier 2 pair, write ONE structured line:
 
 ```
-{PAIR}: Regime=[TREND-BULL/RANGE/SQUEEZE/...] | M5 candles=[shape] | Best NOW: {LONG/SHORT/RANGE-BUY/RANGE-SELL} @___ TP=___ | or WAIT — missing: ___
+{PAIR}: Regime=[TREND/RANGE/SQUEEZE/...] | Chart=[shape] | Best: {dir} @___ TP=___ | or WAIT — missing: ___
+  If RANGE: BUY @___ TP=___ + SELL @___ TP=___ (both LIMITs)
 ```
 
-**"M5 candles" = chart shape, not indicators.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. Describe what you see.
-**"Best NOW" = the direction M5 is moving.** If M5 candles show sellers exhausting with expanding lower wicks, the best trade is LONG (reversal), not SHORT.
+**"Chart" = what you see in the PNG, not indicators.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not.
+**If Regime=RANGE, the second line is mandatory.** Both BUY and SELL levels. One side only = directional bet, not range trade. If you can't find the other side's level, the pair isn't really ranging.
 **"WAIT — missing: ___" must be specific** ("M5 StRSI below 0.3" not "confirmation"). No open-ended conditions.
 
 ### After the scan — Capital Deployment Check (required EVERY session)
@@ -230,6 +232,7 @@ Entering: [which] because ___
 When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
 - Every LIMIT must have **TP + SL on fill** — you won't be watching when it triggers
 - **GTD = 2-4 hours.** Don't leave stale limits indefinitely
+- **RANGE pairs = LIMIT LONG at lower band + LIMIT SHORT at upper band.** Always both. Placing one side only is a directional bet disguised as a range trade. On OANDA hedge, both cost zero extra margin. Example: AUD_JPY range 112.40-112.57 → LONG @112.38 TP=112.55 + SHORT @112.56 TP=112.40
 - **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
 - **Thin market / holiday ≠ "no entries."** Thin market affects SL design (wider or none), NOT entry decisions. If you entered EUR_JPY with a market order on Easter Monday, you can enter GBP_JPY too. Thin market = adjust protection, not stop trading.
 - **"Screening failed" / "binary risk" / "waiting for confirmation" / "thin liquidity" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-10 — Range LIMIT both sides + TP line + Tier 2 range format
+
+**Gap fixes after verifying state.md adoption**:
+1. **Tier 1 TP line**: Added mandatory TP line tied to structure — band walk→ATR×2.0-3.0, deceleration→ATR×1.0-1.5, range→opposite band, squeeze→first structural level. Forces TP decision at scan time, not exit time.
+2. **Tier 2 range mandatory 2nd line**: When Regime=RANGE, second line with BUY @___ + SELL @___ is required. One side only = directional bet, not range trade.
+3. **LIMIT section range guidance**: Explicit "RANGE = LIMIT LONG at lower band + SHORT at upper band, always both" with AUD_JPY example. OANDA hedge = zero extra margin.
+
+**Files changed**: `docs/SKILL_trader.md`
+
 ## 2026-04-10 — Chart+indicators+narrative integration for 10% daily target
 
 **Problem**: R:R=0.57. Winners average +302 JPY (cut too early at ATR×1.0), losers average -534 JPY (held too long or catastrophic). Best day (+11,014) held winners through ATR×1.0 because chart showed band walk. System has charts, indicators, and narrative but they operate independently.
