@@ -70,15 +70,15 @@ def get_open_trades(token, acct):
 def get_realized_pl_today(token, acct):
     """Fetch today's realized P&L from OANDA transactions API.
 
-    'Today' is defined as the current JST date (00:00-23:59 JST).
+    'Today' = current UTC date (00:00-23:59 UTC = 09:00-08:59 JST).
+    Matches trader task day boundary.
     """
-    now_jst = datetime.now(JST)
-    today_start_jst = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_start_jst = today_start_jst + timedelta(days=1)
+    now_utc = datetime.now(UTC)
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
 
-    # Convert to UTC for OANDA API
-    from_utc = today_start_jst.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-    to_utc = tomorrow_start_jst.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+    from_utc = today_start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+    to_utc = tomorrow_start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
 
     total_pl = 0.0
     close_count = 0
@@ -142,8 +142,8 @@ def load_sod_nav():
 
 
 def save_sod_nav(nav):
-    """Save current NAV as start-of-day NAV (first call of the day wins)."""
-    today_str = datetime.now(JST).strftime("%Y-%m-%d")
+    """Save current NAV as start-of-day NAV (first call of the UTC day wins)."""
+    today_str = datetime.now(UTC).strftime("%Y-%m-%d")
     saved_nav, saved_date = load_sod_nav()
     if saved_date == today_str:
         return saved_nav  # already recorded today
