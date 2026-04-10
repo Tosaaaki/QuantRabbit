@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-10 — Trader reads chart PNGs + daily 10% NAV target
+
+**Chart reading**: Trader now reads the 14 chart PNGs (7 pairs × M5 + H1 for held pairs) that quality-audit generates every 30 min. No regeneration — just Read the existing files. Two independent visual reads of the same market (trader's eyes + auditor's text summary). Added to Bash② session start flow as parallel Read batches.
+
+**Daily target**: Changed from "+25% per week (~5%/day)" to "+10% of day-start NAV per day (minimum 5%)". Day starts at 0:00 UTC (9:00 JST). Day-start NAV captured in state.md Action Tracking section (first session after 0:00 UTC). Every session tracks progress vs target: behind → hunt harder, exceeded → protect gains.
+
+**Files changed**: `docs/SKILL_trader.md`
+
 ## 2026-04-10 — Structure-first trading: fix range weakness through output format redesign
 
 **Problem**: 21-day data: -8,958 JPY, 441 trades, R:R=0.57. This week: 85 trades, only 5 SHORT. Trader holds trend positions through regime transitions (TREND→RANGE), giving back profits. S-scan has 6 recipes — ALL require trending conditions (ADX≥20-30). When range is detected, no recipe fires, no entry is generated, but existing LONGs are held. Result: 2h+ holds = -1,949 JPY (57% WR but large losses).

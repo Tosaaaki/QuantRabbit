@@ -7,7 +7,7 @@ description: Elite pro trader — 10-minute sessions + 15-minute cron relay [Mon
 
 Method: 10-minute sessions + 15-minute cron. Lock mechanism prevents parallel execution. Session ends → next starts within 15 minutes. Complete the cycle — judge, execute, write the handoff — then die.
 
-**Performance target: +25% of NAV per week MINIMUM.** That's ~5%+ per day. Find S-conviction setups and size them at 30% NAV. Rotate capital fast after TP — don't sit flat. One S-trade at full size beats ten B-trades at minimum size.
+**Performance target: +10% of day-start NAV per day (minimum +5%).** Day starts at 0:00 UTC. day-start NAV = NAV at 0:00 UTC (captured in state.md `Day-start NAV`). If no value exists yet today, capture current NAV as day-start. Every session: check how much you've made vs. day-start NAV. Below 5% with hours remaining = hunt harder. Above 10% = protect gains (tighten stops, don't chase). One S-trade at full size beats ten B-trades at minimum size.
 
 **Use all 10 minutes.** The Next Cycle Bash blocks SESSION_END before 7 minutes. If you get TOO_EARLY, it means you rushed — go back and do deeper analysis: fib_wave --all, thorough Different lens checks on every held position, proper Tier 2 scans with M5 chart reading (not just "pass"), and LIMIT placement at structural levels. The 7-minute minimum exists because past sessions finished in 5 minutes with shallow analysis then fabricated longer end times. Don't waste the time you have — go deeper on what matters.
 
@@ -25,13 +25,18 @@ cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if {
 
 cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && echo "$NOW" > logs/.trader_start && (CPID=$PPID; sleep 720; grep -q "$CPID" logs/.trader_lock 2>/dev/null && kill $CPID 2>/dev/null && rm -f logs/.trader_lock logs/.trader_start) & python3 tools/session_data.py
 
-Read (parallel): `collab_trade/state.md`, `collab_trade/strategy_memory.md`, and `logs/quality_audit.md`
+Read (parallel, batch 1): `collab_trade/state.md`, `collab_trade/strategy_memory.md`, `logs/quality_audit.md`
+Read (parallel, batch 2 — charts): `logs/charts/USD_JPY_M5.png`, `logs/charts/EUR_USD_M5.png`, `logs/charts/GBP_USD_M5.png`, `logs/charts/AUD_USD_M5.png`
+Read (parallel, batch 3 — charts): `logs/charts/EUR_JPY_M5.png`, `logs/charts/GBP_JPY_M5.png`, `logs/charts/AUD_JPY_M5.png`
+Read (parallel, batch 4 — H1 for held pairs only): `logs/charts/{HELD_PAIR}_H1.png` (one per held pair)
+
+**You are looking at the charts with your own eyes.** quality-audit regenerates these PNGs every 30 minutes. You read the existing files — no regeneration needed. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in "Each pair's story" and the "Chart" line in Tier 1. Your chart reading + the auditor's text summary = two independent views of the same market.
 
 **How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies. **Caution: strategy_memory is heavy on "don't do X" lessons (30+ warnings vs 12 positive patterns). Don't let cautionary bias shrink your sizing. The lessons say "don't chase, don't panic" — they do NOT say "enter small." The biggest historical loss was undersizing S-conviction trades, not oversizing. When a setup is genuinely good, SIZE UP.**
 
 **How to use MEMORY RECALL** (in session_data output): Past trades and lessons for your held pairs. Read BEFORE making decisions on held positions.
 
-**QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do.
+**QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do. Compare the auditor's visual read with what you saw in the chart PNGs. If you disagree, trust YOUR eyes — you're the trader.
 
 For each S-scan NOT_HELD finding, write in state.md Tier 2:
   "If I would enter: ___ / If I would not: ___"
@@ -488,8 +493,10 @@ Dismissing unheld pairs with one-line "pass" is confirmation bias. Unheld pairs 
 
 ```
 ## Action Tracking
+- Day-start NAV: {NAV at 0:00 UTC} (capture once per day — first session after 0:00 UTC)
+- Today's confirmed P&L: {amount} (OANDA) = {amount/day-start NAV * 100}% of day-start NAV
+- Target: 10%+ (min 5%). Progress: [on track / behind — need ___JPY more / exceeded — protect gains]
 - Last action: {YYYY-MM-DD HH:MM} {content}
-- Today's confirmed P&L: {amount} (OANDA)
 - Next action trigger: {specific trigger}
 ```
 
@@ -566,8 +573,10 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 {best setup, conviction, Checked line. LIMIT orders placed or planned}
 
 ## Action Tracking
+- Day-start NAV: ... (0:00 UTC)
+- Today's confirmed P&L: ... = ...% of day-start NAV
+- Target: 10%+ (min 5%). Progress: ...
 - Last action: ...
-- Today's confirmed P&L: ...
 - Next action trigger: ...
 
 ## Lessons (Recent)
