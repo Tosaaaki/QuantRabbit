@@ -1267,3 +1267,9 @@ scheduled-tasks/*/SKILL_ja.md ← 日本語版（確認用）
 ## 2026-04-06 — Trader session 15min→5min (reliability)
 - Lock threshold: 900s→300s, SESSION_END: 600s→240s
 - Rationale: 10min/15min sessions failed to complete. 5min proven to work. Reliability > depth.
+
+## 2026-04-11
+
+### Fix: intraday_pl_update.py daily return % calculation
+- **Bug**: Old formula `(realized_pl + upl) / (balance - realized_pl)` assumed UPL=0 at start of day. Overnight positions with pre-existing UPL caused wildly inaccurate daily return percentages (e.g. +0.50% when actual NAV change was ~0%)
+- **Fix**: Store SOD NAV in `logs/sod_nav.json` on first run of each day. Calculate daily return as `(current_NAV - SOD_NAV) / SOD_NAV`. Falls back to 0% if no SOD data available
