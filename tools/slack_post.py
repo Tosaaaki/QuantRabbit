@@ -68,6 +68,18 @@ if __name__ == '__main__':
         print(f"BLOCKED: reply content is garbage: '{args.message.strip()}'. Not posting.")
         sys.exit(1)
 
+    # --- Guard 3: Validate reply-to ts is a sane Slack timestamp ---
+    if args.reply_to:
+        try:
+            reply_epoch = float(args.reply_to.split('.')[0])
+            now_epoch = __import__('time').time()
+            if reply_epoch > now_epoch + 86400:
+                print(f"BLOCKED: --reply-to ts {args.reply_to} is in the future. Refusing to poison last_read_ts.")
+                sys.exit(1)
+        except ValueError:
+            print(f"BLOCKED: --reply-to ts {args.reply_to} is not a valid timestamp.")
+            sys.exit(1)
+
     # --- Dedup gate: skip if we already replied to this user message ---
     if args.reply_to:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
