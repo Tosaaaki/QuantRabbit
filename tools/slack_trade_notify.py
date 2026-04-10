@@ -56,9 +56,49 @@ def format_modify(args):
     return f"\U0001f504 {args.pair} {args.action} {args.units}units @{args.price} ({args.pl})  [{now}]{note_text}"
 
 
+def get_today_realized_pl():
+    """Fetch today's realized P&L from OANDA Transaction API (ground truth)."""
+    try:
+        cfg_path = os.path.join(os.path.dirname(__file__), '..', 'config', 'env.toml')
+        cfg_lines = open(cfg_path).read().split('\n')
+        token = [l.split('=')[1].strip().strip('"') for l in cfg_lines if l.startswith('oanda_token')][0]
+        acct = [l.split('=')[1].strip().strip('"') for l in cfg_lines if l.startswith('oanda_account_id')][0]
+
+        # OANDA day boundary: 5 PM ET (21:00 UTC summer, 22:00 UTC winter)
+        from datetime import timezone, timedelta
+        now_utc = datetime.now(timezone.utc)
+        # Use 21:00 UTC as boundary (summer time). If before 21:00, start from yesterday 21:00
+        boundary = now_utc.replace(hour=21, minute=0, second=0, microsecond=0)
+        if now_utc.hour < 21:
+            boundary -= timedelta(days=1)
+        from_time = boundary.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
+
+        url = f'https://api-fxtrade.oanda.com/v3/accounts/{acct}/transactions?from={from_time}'
+        req = urllib.request.Request(url, headers={'Authorization': f'Bearer {token}'})
+        data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+
+        total_pl = 0.0
+        for page_url in data.get('pages', []):
+            req2 = urllib.request.Request(page_url, headers={'Authorization': f'Bearer {token}'})
+            txns = json.loads(urllib.request.urlopen(req2, timeout=10).read()).get('transactions', [])
+            for t in txns:
+                if t.get('type') == 'ORDER_FILL':
+                    total_pl += float(t.get('pl', '0'))
+        return total_pl
+    except Exception:
+        return None
+
+
 def format_close(args):
     now = datetime.now().strftime('%H:%M')
-    total = f"\n  Total realized P&L: {args.total_pl}" if args.total_pl else ""
+    # Auto-fetch today's realized P&L from OANDA (ignore --total_pl from caller)
+    today_pl = get_today_realized_pl()
+    if today_pl is not None:
+        total = f"\n  Total realized P&L: Today: {today_pl:+.1f} JPY realized"
+    elif args.total_pl:
+        total = f"\n  Total realized P&L: {args.total_pl}"
+    else:
+        total = ""
     return f"\u2B1B {args.pair} {args.side} FULL CLOSE {args.units}units @{args.price} ({args.pl})  [{now}]{total}"
 
 
