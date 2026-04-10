@@ -25,13 +25,13 @@ cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if {
 
 cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && echo "$NOW" > logs/.trader_start && (CPID=$PPID; sleep 720; grep -q "$CPID" logs/.trader_lock 2>/dev/null && kill $CPID 2>/dev/null && rm -f logs/.trader_lock logs/.trader_start) & python3 tools/session_data.py
 
-Read (parallel): `collab_trade/state.md` and `collab_trade/strategy_memory.md`
+Read (parallel): `collab_trade/state.md`, `collab_trade/strategy_memory.md`, and `logs/quality_audit.md`
 
 **How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies. **Caution: strategy_memory is heavy on "don't do X" lessons (30+ warnings vs 12 positive patterns). Don't let cautionary bias shrink your sizing. The lessons say "don't chase, don't panic" — they do NOT say "enter small." The biggest historical loss was undersizing S-conviction trades, not oversizing. When a setup is genuinely good, SIZE UP.**
 
 **How to use MEMORY RECALL** (in session_data output): Past trades and lessons for your held pairs. Read BEFORE making decisions on held positions.
 
-**QUALITY AUDIT** (in session_data output): If `logs/quality_audit.md` exists and is recent (<30 min), read it. The audit presents FACTS — S-scan data, exit quality observations, position status. It does NOT tell you what to do.
+**QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do.
 
 For each S-scan NOT_HELD finding, write in state.md Tier 2:
   "If I would enter: ___ / If I would not: ___"
