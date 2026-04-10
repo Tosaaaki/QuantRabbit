@@ -93,7 +93,7 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 | Regime | What it means | How to trade | Size |
 |--------|--------------|-------------|------|
 | **TREND-BULL/BEAR** | ADX>25, EMA separated, clear direction | WITH the trend. Buy dips (BULL) or sell rallies (BEAR). TP at structure | Full (S/A sizing) |
-| **RANGE** | Price bouncing between BB bands, no trend | Buy at BB lower, sell at BB upper. TP = opposite band. SL = outside range | Half (B sizing) — faster rotation |
+| **RANGE** | Price bouncing between BB bands, no trend | LIMIT both sides: LONG @BB lower, SHORT @BB upper. TP = BB mid or opposite band. SL = outside range | Conviction-based (clear box with 3+ bounces = A). Fast rotation |
 | **SQUEEZE** | BB inside KC, volatility compressed | Wait for breakout. First candle closing outside BB = entry direction | Aggressive on breakout (A/S sizing) |
 | **MILD-BULL/BEAR** | Weak trend or transition | Cautious. Small size. Quick TP. Or wait for clarity | B sizing max |
 
@@ -112,15 +112,20 @@ vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "sa
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
-My best TREND trade: ___ pair ___ dir — because: ___ (from TREND-regime pairs)
-My best RANGE trade: ___ pair — buy at ___, sell at ___ (from audit Regime Map RANGE pairs + Range Opportunities)
-My best SQUEEZE watch: ___ pair — breakout direction likely ___ because ___
+Each pair's story (what the chart is DOING — trending/ranging/squeezing/transitioning):
+  USD_JPY: ___  EUR_USD: ___  GBP_USD: ___  AUD_USD: ___
+  EUR_JPY: ___  GBP_JPY: ___  AUD_JPY: ___
+My best setup: ___ pair — I would ___ at ___ because the chart shows ___
+  If ranging: LIMIT LONG @___ + LIMIT SHORT @___ (both sides of the box)
+  If trending: dip/rally entry @___ (Fib/BB/structure)
+  If squeezing: breakout ___ direction, LIMIT @___
 Session: ___ (Tokyo thin / London / NY)
 ```
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
 **"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
-**"My best LONG" AND "My best SHORT" — both.** Commits you to candidates in EACH direction before analysis starts. If you can't think of a SHORT candidate, look harder — 7 pairs × 4 TFs = 28 views.
+**"Each pair's story" is the most important line.** Describe what the chart is DOING, not what indicators SAY. "Ranging 1.1680-1.1720, third bounce off lower band" is structure. "ADX=18, RSI=45" is numbers. Structure determines whether you trade with trend, fade the range, or wait for breakout — before you look at any indicator.
+**"My best setup" replaces separate TREND/RANGE/SQUEEZE lines.** The structure you wrote above determines the trade type. If 3 pairs are ranging, your best setup might be a range trade. If all are trending, it's a dip buy. The chart decides, not a category.
 
 ### Directional mix check (required — fill in every session)
 
@@ -155,19 +160,20 @@ For each Tier 1 pair, write this block in state.md:
 ```
 ## {PAIR} [HELD/CANDIDATE]
 Chart: Last 5 M5 candles — [bodies growing/shrinking/mixed]. [Upper/lower] wicks [expanding/contracting]. Momentum: [accelerating/exhausting/reversing]
-Why moving: [cite news/macro] — currency-wide or pair-specific? [checked: ___ pair shows same / different]
-Wave: [Fib ___% / BB position / structural level ___pip away] → [approaching ceiling/floor/mid-range]
-LONG case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / possible / none]
-SHORT case: ①___ ②___ ③___ (3+ categories, 5+ indicators) → [strong / possible / none]
-→ This session: [LONG / SHORT / BOTH / WAIT] — why this direction wins over the other
-  Order: [LIMIT/MARKET] [dir] @___ TP=___ SL=___ id=___ | or: [why no order]
+Structure: [TREND ___ward — where to buy dips/sell rallies | RANGE ___–___ (Xpip, N bounces) — buy lower sell upper | SQUEEZE — breakout ___ likely | TRANSITIONING ___ → ___]
+Why: [cite news/macro] — currency-wide or pair-specific? [checked: ___ pair shows same / different]
+If I had no position, I would: ___ at ___ because the chart shows ___
+  Supports: ①___ ②___ ③___ (3+ indicator categories)
+  Warns: ___ (Different lens — 1+ indicator from unused category)
+  If ranging: also ___ at ___ (the other side of the box) — LIMIT both sides
+→ Order placed: [LIMIT/MARKET details + id] | or: [why no order — must be specific]
 ```
 
 **"Chart" line = what you SEE.** "Bodies shrinking, lower wicks expanding" is chart reading. "RSI=48, ADX=24" is not. Describe the candles.
-**"Why moving" line = the narrative.** Forces citing a cause AND checking if it's currency-wide (cross-pair validation). If EUR_JPY is rising, is GBP_JPY also rising? If yes → JPY weakness (currency-wide). If no → EUR-specific.
-**"Wave" line = where you are on the map.** "Fib 38.2% pullback, 5pip to H1 BB mid" changes decisions.
-
-**Both directions, every Tier 1 pair.** Check 3+ indicator categories (①Direction ②Timing ③Momentum ④Structure ⑤Cross-pair ⑥Macro) for EACH direction. 5+ total indicators minimum per direction. Shallow scan (ADX+StRSI+CS only) locks you into one direction. Deep scan reveals what the pullback is doing.
+**"Structure" is the most important line.** It determines everything — how you trade, what direction, what TP/SL structure. In a TREND, you trade dips. In a RANGE, you trade both edges. In a SQUEEZE, you wait. In a TRANSITION (trend exhausting into range), you take profit. Write the structure BEFORE looking at indicators.
+**"If I had no position" removes anchoring.** If you're holding a LONG and the chart is now ranging, "no position" thinking naturally says "buy at lower, sell at upper" — not "hold my LONG." This one line breaks the hold bias.
+**"If ranging: also the other side" forces both-direction LIMITs.** In a range, placing only one side is a directional bet. A range trader places both sides and lets the market decide which fills first.
+**"Why" line = the narrative.** Forces citing a cause AND checking if it's currency-wide (cross-pair validation). If EUR_JPY is rising, is GBP_JPY also rising? If yes → JPY weakness (currency-wide). If no → EUR-specific.
 
 **Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
@@ -187,16 +193,18 @@ For each Tier 2 pair, write ONE structured line:
 
 ```
 Margin: ___% used. ___% idle.
-#1 LONG setup: [pair] — [brief reason]
-#1 SHORT setup: [pair] — [brief reason]
-Entering: [which / both / neither] because ___
+#1 setup: [pair] — [what the chart is doing + what I'd do: "ranging 1.1680-1.1720 → LIMIT both sides" / "trending → dip buy @186.10"]
+#2 setup: [pair] — [same format]
+Ranging pairs (LIMIT both sides): [pair] LONG @___ TP=___ + SHORT @___ TP=___ SL=outside range
+Entering: [which] because ___
   conviction: [B/A/S] | To upgrade: [what to check]
   At S-size (30% NAV): ___u, TP target = +___pip = +___ JPY
 → Checked: [what I actually looked at] → Result: [value] → [supports/contradicts]
 → Action: [entered / LIMIT placed / passed because ___]
 ```
 
-**Both directions, every session.** If #1 SHORT is blank, you didn't scan. On OANDA hedge, entering both costs zero extra margin — the only reason to skip one is a bad chart, not "I already have a LONG."
+**Structure determines the setup, not direction.** A ranging pair appears as "LIMIT both sides" — not forced into "#1 LONG" or "#1 SHORT." A trending pair appears as a directional entry. The chart decides the format.
+**"Ranging pairs" line exists for every session.** If no pair is ranging, write "none — all trending/squeezing." If a pair IS ranging and this line is empty, you skipped a trade the chart was giving you.
 **The "Checked" and "Action" lines cannot be omitted — even when passing.** The point: every session that reads this block knows WHAT was checked and WHY you passed.
 
 ### Idle margin → LIMIT orders (your money works while you sleep)
@@ -361,12 +369,14 @@ For EACH open position, EVERY session, write this block:
 ```
 Close now: {+/-}Xpip = {+/-}Y JPY
 Peak this trade: +Zpip = +W JPY at HH:MM (from M5 candle highs since entry)
+Regime at entry: ___ → Regime now: ___ [same / changed to ___]
 I'm not closing because: ___ (specific M5 price action — not "thesis alive")
 This reason disappears if: ___ (what would make you close)
 If I closed, I would use the freed margin for: ___ pair ___ direction — because: ___ (must name a pair. If truly nothing: "scanned all 7 pairs, best was [PAIR] but [why not]")
 → A (adjust) / B (cut+re-enter) / C (hold) — chosen: ___
 ```
 
+- **"Regime at entry → now" is the regime transition detector.** If regime changed (TREND→RANGE, TREND→SQUEEZE, TREND→MILD), that's a structural reason to close. You entered because the chart was trending. The chart is no longer trending. Your entry thesis lost its foundation. Writing "TREND→RANGE" makes this visible — "I'm not closing because" becomes very hard to fill in honestly when the regime that justified the entry no longer exists.
 - "I'm not closing because" must reference what you SEE on the chart right now (M5 body direction, wick pattern, StRSI position, momentum). "H1 thesis intact" alone is not a reason — it tells you direction, not timing.
 - If the position has NEVER been in profit (peak = 0pip), you still fill in the block. "Close now: -8pip = -500 JPY" makes the cost of holding visible.
 - If you can't fill in "I'm not closing because" with something specific, close.
@@ -452,10 +462,11 @@ trailing = {"trailingStopLoss": {"distance": "0.150", "timeInForce": "GTC"}}
 
 ### STEP 1: Evaluate held positions — default is "close"
 
-1. Read M5 PRICE ACTION: Is momentum in your direction, against, or sideways?
-2. Unrealized profit → taking profit is first option. "Thesis alive" is not a hold reason. "M5 still making new highs, 5pip to structural level" is
-3. Unrealized loss → "Would I enter this right now?" If NO → close
-4. Check indicators last. Don't override price action with indicators
+1. **Check regime transition first**: Did the regime change since entry? TREND→RANGE = take profit is default. TREND→SQUEEZE = tighten and wait. The regime that justified the entry must still exist.
+2. Read M5 PRICE ACTION: Is momentum in your direction, against, or sideways?
+3. Unrealized profit → taking profit is first option. "Thesis alive" is not a hold reason. "M5 still making new highs, 5pip to structural level" is
+4. Unrealized loss → "Would I enter this right now?" If NO → close
+5. Check indicators last. Don't override price action with indicators
 
 ### STEP 2: 7-pair scan (Tier 1 deep + Tier 2 quick — no pair skipped)
 

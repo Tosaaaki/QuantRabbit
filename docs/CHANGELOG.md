@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-04-10 — Structure-first trading: fix range weakness through output format redesign
+
+**Problem**: 21-day data: -8,958 JPY, 441 trades, R:R=0.57. This week: 85 trades, only 5 SHORT. Trader holds trend positions through regime transitions (TREND→RANGE), giving back profits. S-scan has 6 recipes — ALL require trending conditions (ADX≥20-30). When range is detected, no recipe fires, no entry is generated, but existing LONGs are held. Result: 2h+ holds = -1,949 JPY (57% WR but large losses).
+
+**Root cause**: Not missing recipes — missing structural narrative. The execution flow was S-scan→action (bot-like), not chart structure→action (pro-like). Claude could see ranges but had no output format to ACT on them. "My best RANGE trade" was written and forgotten.
+
+**Fix — 6 output format changes in SKILL_trader.md** (no new rules, no new recipes):
+1. **Market Narrative**: "My best TREND/RANGE/SQUEEZE" → "Each pair's story" (structure-first 7-pair description) + "My best setup" (regime-agnostic)
+2. **Regime table**: RANGE sizing from "Half (B)" → "Conviction-based (clear box 3+ bounces = A)"
+3. **Tier 1 scan**: "LONG case / SHORT case" → "Structure → If I had no position → Supports/Warns" (removes anchoring + direction bias)
+4. **Close-or-Hold block**: Added "Regime at entry → Regime now" line (makes trend→range transition visible, forces honest hold justification)
+5. **Capital Deployment**: "#1 LONG / #1 SHORT" → "#1 setup / #2 setup + Ranging pairs (LIMIT both sides)" (structure determines format, not direction)
+6. **Decision flow STEP 1**: Added regime transition check as first evaluation step
+
+**Design principle**: Don't add rules ("if RANGE then do X"). Change the format so range thinking is required to produce the output. A bot can follow a rule. A bot cannot fill in "Structure: RANGE 1.1680-1.1720" without forming a range trade plan.
+
+**Files changed**: `docs/SKILL_trader.md`
+
 ## 2026-04-10 — Move chart reading from trader to quality-audit (auditor = trader's eyes)
 
 **Problem**: chart_snapshot.py generates 14 PNGs + regime detection, but running it inside the trader's 10-minute session wastes time (15s generation + 14 Read tool calls + massive image token cost). The trader has limited context budget. Meanwhile, the quality-audit (Sonnet, 30-min intervals) already runs profit_check + fib_wave + protection_check and writes persistent analysis to quality_audit.md.
