@@ -363,6 +363,10 @@ def format_result(r: dict) -> str:
 def main():
     show_all = "--all" in sys.argv
 
+    # --- Market state check (time-based only) ---
+    from market_state import get_market_state
+    mkt_state, mkt_reason = get_market_state()
+
     cfg = load_config()
     token = cfg["oanda_token"]
     acct = cfg["oanda_account_id"]
@@ -377,6 +381,24 @@ def main():
 
     if not trades:
         print("=== PROFIT CHECK: no open positions ===")
+        return
+
+    # If market is CLOSED or ROLLOVER, suppress TP recommendations
+    if mkt_state in ("CLOSED", "ROLLOVER"):
+        print(f"=== PROFIT CHECK — MARKET {mkt_state} ===")
+        print(f"  {mkt_reason}")
+        print(f"  Spread is unreliable. TP recommendations SUSPENDED.")
+        print(f"  DO NOT execute market orders. Wait for market to reopen.")
+        print()
+        # Still list positions for reference (info only)
+        for trade in trades:
+            pair = trade["instrument"]
+            upl = float(trade.get("unrealizedPL", 0))
+            units = int(trade["currentUnits"])
+            side = "LONG" if units > 0 else "SHORT"
+            print(f"  {pair} {side} {abs(units)}u | UPL: {upl:+,.0f} JPY | HOLD(MARKET {mkt_state})")
+        print()
+        print(f"--- All recommendations suspended until market reopens. ---")
         return
 
     # Load all technicals

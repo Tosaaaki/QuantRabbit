@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-11 — NEW: market_state.py — prevent panic trades during market close/maintenance
+
+**Problem**: profit_check.py and quality_audit.py had no awareness of market state (weekend, daily OANDA maintenance). During these periods, spreads widen 10-20x but positions are fine — the wide spread is illiquidity, not danger. Tools would recommend TAKE_PROFIT based on distorted bid/ask, potentially causing the trader to panic-close and eat massive spread costs (10-19 pip loss from spread alone).
+
+**Design principle**: Detection is TIME-BASED ONLY, never spread-based. Wide spreads from news events or intervention are trading opportunities, not illiquidity. Blocking on spread would miss the best trades.
+
+**New module**: `tools/market_state.py` — shared market tradeability detection:
+- `CLOSED` — Weekend (Fri 5 PM ET → Sun 5 PM ET). No orders.
+- `ROLLOVER` — Daily OANDA maintenance (5 PM ET ±20 min). No orders.
+- `OPEN` — All other times, including volatile/wide-spread periods.
+
+**Changes to profit_check.py**: When CLOSED/ROLLOVER, all TP recommendations suppressed. Positions listed for reference only with `HOLD(MARKET CLOSED)` tag. Prevents panic market orders during untradeable conditions.
+
+**Changes to quality_audit.py**: When CLOSED/ROLLOVER:
+- Report header shows `⛔ MARKET CLOSED — All findings are INFORMATIONAL ONLY`
+- Exit code forced to 0 (no Slack alert triggered)
+- Findings still recorded for reference but won't cause panic actions
+
+**What stays the same**: protection_check.py already handles rollover well (time-based SL removal). No changes needed there. Rollover guard (rollover_guard.py remove/restore) continues to work as before.
+
 ## 2026-04-10 — NEW: verify_user_calls.py + daily-review integration
 
 User market calls ("反発始まる", "あがるよ" etc.) were recorded but never verified. outcome stayed NULL forever, making pretrade_check accuracy stats unreliable.

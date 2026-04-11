@@ -509,13 +509,26 @@ def build_markdown_report(data: dict) -> str:
     """Human-readable report for trader + auditor. Facts, not accusations."""
     ts = data["timestamp"]
     acct = data["account"]
+    mkt_state = data.get("market_state", "OPEN")
+    mkt_reason = data.get("market_reason", "")
+
     lines = [
         f"# Quality Audit — {ts}",
         "",
-        f"NAV: {acct['nav']:.0f} JPY | Margin: {acct['margin_pct']:.0f}% | "
-        f"Positions: {acct['positions']} | S-candidates: {len(data['s_scan'])}",
-        "",
     ]
+
+    # Market state banner — prevents panic actions on stale/distorted data
+    if mkt_state in ("CLOSED", "ROLLOVER"):
+        lines.append(f"## ⛔ MARKET {mkt_state}")
+        lines.append(f"{mkt_reason}")
+        lines.append("**All findings below are INFORMATIONAL ONLY. DO NOT act on them until market reopens.**")
+        lines.append("")
+
+    lines.append(
+        f"NAV: {acct['nav']:.0f} JPY | Margin: {acct['margin_pct']:.0f}% | "
+        f"Positions: {acct['positions']} | S-candidates: {len(data['s_scan'])}"
+    )
+    lines.append("")
 
     # Self-check warning
     sc = data["self_check"]
@@ -767,9 +780,15 @@ def main():
     elapsed = time.time() - t0
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
+    # Market state (time-based: OPEN/ROLLOVER/CLOSED)
+    from market_state import get_market_state
+    mkt_state, mkt_reason = get_market_state()
+
     # Assemble report data
     data = {
         "timestamp": now,
+        "market_state": mkt_state,
+        "market_reason": mkt_reason,
         "account": {
             "nav": nav, "margin_used": margin_used,
             "margin_pct": round(margin_pct, 1),
@@ -825,6 +844,15 @@ def main():
     exit_count = len(exit_quality)
     rule_count = len(rule_flags)
     sizing_count = len(sizing_flags)
+
+    # When market is CLOSED/ROLLOVER, findings are informational only — exit 0 (no alert)
+    if mkt_state in ("CLOSED", "ROLLOVER"):
+        label = f"MARKET {mkt_state}"
+        if has_findings:
+            print(f"{label} — {not_held_count+exit_count+rule_count+sizing_count} finding(s) recorded as informational ({elapsed:.1f}s)")
+        else:
+            print(f"{label} — CLEAN ({elapsed:.1f}s)")
+        sys.exit(0)
 
     if has_findings:
         parts = []
