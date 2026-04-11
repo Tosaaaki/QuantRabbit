@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-04-11 — FIX: slack_daily_summary.py day boundary alignment
+
+**Problem**: `slack_daily_summary.py` used local time `datetime.now() - timedelta(days=1)` and parsed `live_trade_log.txt` by date string match. Trader task and `intraday_pl_update.py` use UTC 00:00 as day boundary and OANDA transactions API. The mismatch caused daily summary to show +0 JPY when trades existed.
+
+**Fix**: Rewrote `slack_daily_summary.py` to use OANDA transactions API with UTC day boundary, matching trader and intraday_pl_update. Removed log file parsing entirely. Entry/close counts now come from OANDA ORDER_FILL transactions.
+
 ## 2026-04-10 — NEW: verify_user_calls.py + daily-review integration
 
 User market calls ("反発始まる", "あがるよ" etc.) were recorded but never verified. outcome stayed NULL forever, making pretrade_check accuracy stats unreliable.

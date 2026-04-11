@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Post daily summary to #qr-daily
-Usage: python3 tools/slack_daily_summary.py [--date YYYY-MM-DD]
+"""Post daily summary to #qr-daily.
+
+Uses OANDA transactions API for realized P&L (not log file parsing).
+Day boundary = UTC 00:00-23:59 (= JST 09:00-08:59), matching trader task.
+
+Usage:
+    python3 tools/slack_daily_summary.py [--date YYYY-MM-DD]
+        --date: UTC date to summarize (default: previous UTC day)
 """
-import urllib.request, json, sys, os, argparse, glob
-from datetime import datetime, timedelta
+import urllib.request, json, sys, os, argparse
+from datetime import datetime, timedelta, timezone
+
+UTC = timezone.utc
 
 
 def load_config():
@@ -15,6 +23,12 @@ def load_config():
             k, v = line.split('=', 1)
             cfg[k.strip()] = v.strip().strip('"')
     return cfg
+
+
+def oanda_get(path, token):
+    url = f"https://api-fxtrade.oanda.com{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    return json.loads(urllib.request.urlopen(req, timeout=15).read())
 
 
 def post(text, channel_id, token):
@@ -38,99 +52,75 @@ def post(text, channel_id, token):
 def get_account_summary(cfg):
     token = cfg['oanda_token']
     acct = cfg['oanda_account_id']
-    req = urllib.request.Request(
-        f"https://api-fxtrade.oanda.com/v3/accounts/{acct}/summary",
-        headers={"Authorization": f"Bearer {token}"}
-    )
-    data = json.loads(urllib.request.urlopen(req).read())['account']
+    data = oanda_get(f"/v3/accounts/{acct}/summary", token)['account']
     return {
         'balance': float(data['balance']),
         'nav': float(data['NAV']),
         'unrealized_pl': float(data['unrealizedPL']),
-        'margin_used': float(data['marginUsed']),
         'open_positions': int(data['openPositionCount']),
         'open_trades': int(data['openTradeCount']),
     }
 
 
-def get_daily_trades(date_str):
-    """Aggregate entries/closes for the day from trades.md"""
-    base = os.path.join(os.path.dirname(__file__), '..', '..', 'collab_trade', 'daily', date_str)
-    trades_path = os.path.join(base, 'trades.md')
-    if not os.path.exists(trades_path):
-        return None
+def get_realized_pl_for_date(token, acct, date_str):
+    """Fetch realized P&L for a UTC date from OANDA transactions API.
 
-    content = open(trades_path).read()
-    entries = content.count('ENTRY') + content.count('entry') + content.count('Entry')
-    closes = content.count('CLOSE') + content.count('close') + content.count('Close') + content.count('決済')
-    return {'entries': entries, 'closes': closes, 'has_data': True}
-
-
-def get_daily_pl_from_log(date_str):
-    """Aggregate realized P&L for the day from live_trade_log.txt"""
-    log_path = os.path.join(os.path.dirname(__file__), '..', '..', 'logs', 'live_trade_log.txt')
-    if not os.path.exists(log_path):
-        return 0.0
+    date_str: YYYY-MM-DD (UTC date).
+    Day boundary: UTC 00:00:00 to 23:59:59.
+    """
+    from_utc = f"{date_str}T00:00:00.000000000Z"
+    next_day = (datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+    to_utc = f"{next_day}T00:00:00.000000000Z"
 
     total_pl = 0.0
-    for line in open(log_path):
-        if date_str not in line:
-            continue
-        # Extract P/L: PL=+123.45 or P/L=-67.89 pattern
-        if 'PL=' in line or 'P/L=' in line:
-            try:
-                sep = 'P/L=' if 'P/L=' in line else 'PL='
-                pl_part = line.split(sep)[1].split()[0].replace('円', '').replace(',', '').rstrip('JPY').rstrip('J')
-                total_pl += float(pl_part)
-            except (ValueError, IndexError):
-                pass
-        # realized_pl pattern
-        elif 'realized_pl' in line:
-            try:
-                import re
-                m = re.search(r'realized_pl["\s:=]+([+-]?[\d.]+)', line)
-                if m:
-                    total_pl += float(m.group(1))
-            except (ValueError, AttributeError):
-                pass
-    return total_pl
+    close_count = 0
+    entry_count = 0
 
-
-def get_performance_summary():
-    """Get win rate etc. from trade_performance.py results"""
-    import subprocess
-    perf_path = os.path.join(os.path.dirname(__file__), 'trade_performance.py')
+    path = f"/v3/accounts/{acct}/transactions?from={from_utc}&to={to_utc}&type=ORDER_FILL"
     try:
-        result = subprocess.run(
-            [sys.executable, perf_path],
-            capture_output=True, text=True, timeout=30,
-            cwd=os.path.join(os.path.dirname(__file__), '..', '..')
-        )
-        output = result.stdout
-        # Find the Overall line
-        for line in output.split('\n'):
-            if 'Overall' in line and 'WR=' in line:
-                return line.strip()
-        return None
-    except Exception:
-        return None
+        data = oanda_get(path, token)
+    except Exception as e:
+        print(f"WARN: transactions API error: {e}", file=sys.stderr)
+        return total_pl, entry_count, close_count
+
+    pages = data.get("pages", [])
+    for page_url in pages:
+        try:
+            req = urllib.request.Request(page_url, headers={"Authorization": f"Bearer {token}"})
+            page_data = json.loads(urllib.request.urlopen(req, timeout=15).read())
+        except Exception as e:
+            print(f"WARN: page fetch error: {e}", file=sys.stderr)
+            continue
+
+        for tx in page_data.get("transactions", []):
+            if tx.get("type") != "ORDER_FILL":
+                continue
+            pl = float(tx.get("pl", "0"))
+            if pl != 0:
+                total_pl += pl
+                close_count += 1
+            else:
+                entry_count += 1
+
+    return total_pl, entry_count, close_count
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--date', default=None, help='YYYY-MM-DD (default: yesterday)')
+    parser.add_argument('--date', default=None, help='UTC date YYYY-MM-DD (default: previous UTC day)')
     args = parser.parse_args()
 
     if args.date:
         target_date = args.date
     else:
-        target_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Previous UTC day (this script runs at 07:00 JST = 22:00 UTC previous day)
+        target_date = (datetime.now(UTC) - timedelta(days=1)).strftime('%Y-%m-%d')
 
     cfg = load_config()
-    acct = get_account_summary(cfg)
-    daily_pl = get_daily_pl_from_log(target_date)
-    trades_info = get_daily_trades(target_date)
-    perf_line = get_performance_summary()
+    acct_summary = get_account_summary(cfg)
+    realized_pl, entry_count, close_count = get_realized_pl_for_date(
+        cfg['oanda_token'], cfg['oanda_account_id'], target_date
+    )
 
     # Build summary
     lines = []
@@ -138,12 +128,12 @@ def main():
     lines.append("")
 
     # Daily P&L
-    pl_icon = "\U0001f7e2" if daily_pl >= 0 else "\U0001f534"
-    lines.append(f"{pl_icon} *Daily Realized P&L: {daily_pl:+,.0f}JPY*")
+    pl_icon = "\U0001f7e2" if realized_pl >= 0 else "\U0001f534"
+    lines.append(f"{pl_icon} *Daily Realized P&L: {realized_pl:+,.0f}JPY*")
 
     # Trade count
-    if trades_info and trades_info['has_data']:
-        lines.append(f"\U0001f4dd Entries: {trades_info['entries']} | Closes: {trades_info['closes']}")
+    if entry_count > 0 or close_count > 0:
+        lines.append(f"\U0001f4dd Entries: {entry_count} | Closes: {close_count}")
     else:
         lines.append(f"\U0001f4dd No trade records")
 
@@ -151,15 +141,10 @@ def main():
 
     # Account status
     lines.append("*Account Status:*")
-    lines.append(f"  Balance: {acct['balance']:,.0f}JPY")
-    lines.append(f"  NAV: {acct['nav']:,.0f}JPY")
-    lines.append(f"  Unrealized P&L: {acct['unrealized_pl']:+,.0f}JPY")
-    lines.append(f"  Open: {acct['open_trades']} trades ({acct['open_positions']} pairs)")
-
-    # Performance
-    if perf_line:
-        lines.append("")
-        lines.append(f"*Overall:* {perf_line}")
+    lines.append(f"  Balance: {acct_summary['balance']:,.0f}JPY")
+    lines.append(f"  NAV: {acct_summary['nav']:,.0f}JPY")
+    lines.append(f"  Unrealized P&L: {acct_summary['unrealized_pl']:+,.0f}JPY")
+    lines.append(f"  Open: {acct_summary['open_trades']} trades ({acct_summary['open_positions']} pairs)")
 
     message = "\n".join(lines)
     channel = cfg.get('slack_channel_daily', cfg.get('slack_channel_id', ''))
