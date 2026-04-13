@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-04-14 — BUGFIX: rollover guard restoring SLs while spreads still wide
+
+**Problem**: `protection_check.py` determined rollover end purely by time (15 min after 5 PM ET). In reality, spreads can stay 2-3x+ wider for 30+ minutes after rollover. This caused:
+1. `protection_check.py` declaring "rollover passed" and suggesting SL restore
+2. `rollover_guard.py restore` restoring SLs into still-wide spreads
+3. Restored SLs getting immediately hunted by spread spikes → unnecessary losses
+
+**Fix — spread-aware rollover detection**:
+- `protection_check.py`: Added `_check_spreads_wide()` — fetches live pricing from OANDA, checks if any pair's spread exceeds 2x normal. After the initial 20-min pre-rollover window, the post-rollover window now checks actual spreads: if spreads > 2x normal, `is_rollover` stays True regardless of time elapsed (up to 60 min). Time-based window extended from 15 → 30 min as baseline.
+- `rollover_guard.py restore`: Now checks live spreads before restoring. If any pair's spread is still wide, restore is BLOCKED with a clear message. Added `--force` flag to bypass the check when needed.
+
+**Result**: SLs stay removed until spreads actually normalize, not just until the clock says so.
+
+## 2026-04-13 — BUGFIX: market_state.py type hint Python 3.9 incompatibility
+
+**Problem**: `tools/market_state.py` used Python 3.10+ union type syntax (`datetime | None`) in function signatures. System runs `python3` = Python 3.9.6, causing `TypeError: unsupported operand type(s) for |` on import. This silently broke `profit_check.py` and `protection_check.py` at session start.
+
+**Fix**: Replaced `datetime | None` with bare `= None` (untyped default). Two functions patched: `get_market_state()` and `is_tradeable()`. Both Python 3.9 and 3.10 environments now work.
+
 ## 2026-04-11 — NEW: market_state.py — prevent panic trades during market close/maintenance
 
 **Problem**: profit_check.py and quality_audit.py had no awareness of market state (weekend, daily OANDA maintenance). During these periods, spreads widen 10-20x but positions are fine — the wide spread is illiquidity, not danger. Tools would recommend TAKE_PROFIT based on distorted bid/ask, potentially causing the trader to panic-close and eat massive spread costs (10-19 pip loss from spread alone).

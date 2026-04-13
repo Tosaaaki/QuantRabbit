@@ -537,6 +537,46 @@ def _is_us_dst(dt) -> bool:
     return dst_start <= dt < dst_end
 
 
+def _check_spreads_wide() -> tuple[bool, float]:
+    """Check if current spreads are abnormally wide (rollover/thin market indicator).
+
+    Returns:
+        (is_wide, max_spread_ratio) — max_spread_ratio is the highest
+        current_spread / normal_spread across all pairs.
+    """
+    # Normal spread baselines (pip) — conservative estimates for live account
+    NORMAL_SPREAD = {
+        "USD_JPY": 0.4, "EUR_USD": 0.5, "GBP_USD": 0.9,
+        "AUD_USD": 0.5, "EUR_JPY": 0.8, "GBP_JPY": 1.5, "AUD_JPY": 0.8,
+    }
+    pip_factor = {
+        "USD_JPY": 100, "EUR_JPY": 100, "GBP_JPY": 100, "AUD_JPY": 100,
+        "EUR_USD": 10000, "GBP_USD": 10000, "AUD_USD": 10000,
+    }
+    try:
+        cfg = load_config()
+        token = cfg["oanda_token"]
+        acct = cfg["oanda_account_id"]
+        pairs_str = ",".join(NORMAL_SPREAD.keys())
+        resp = oanda_api(f"/v3/accounts/{acct}/pricing?instruments={pairs_str}", token, acct)
+        max_ratio = 0.0
+        for p in resp.get("prices", []):
+            pair = p["instrument"]
+            if pair not in NORMAL_SPREAD:
+                continue
+            bid = float(p["bids"][0]["price"])
+            ask = float(p["asks"][0]["price"])
+            spread_pip = (ask - bid) * pip_factor.get(pair, 10000)
+            ratio = spread_pip / NORMAL_SPREAD[pair]
+            if ratio > max_ratio:
+                max_ratio = ratio
+        # Spread > 2x normal = still wide
+        return max_ratio >= 2.0, max_ratio
+    except Exception:
+        # If pricing fails, assume wide (safer to keep SLs removed)
+        return True, 999.0
+
+
 def detect_thin_market() -> tuple[bool, str, bool, int]:
     """Detect thin liquidity conditions (holidays, weekend proximity, off-hours, rollover).
 
@@ -582,7 +622,7 @@ def detect_thin_market() -> tuple[bool, str, bool, int]:
 
     # --- OANDA daily rollover detection ---
     # Rollover at 5 PM ET: 21:00 UTC (summer/EDT) or 22:00 UTC (winter/EST)
-    # Spread spike window: ~20 min before to ~15 min after
+    # Spread spike window: ~20 min before to ~30 min after (spreads can stay wide 30+ min)
     rollover_hour = 21 if _is_us_dst(now) else 22
     rollover_time = now.replace(hour=rollover_hour, minute=0, second=0, microsecond=0)
     delta = (rollover_time - now).total_seconds() / 60  # minutes until rollover
@@ -591,14 +631,36 @@ def detect_thin_market() -> tuple[bool, str, bool, int]:
     if delta < -60:
         # More than 1 hour past rollover — not relevant
         pass
-    elif -15 <= delta <= 20:
-        # Within danger window: 20 min before to 15 min after
-        is_rollover = True
-        minutes_to_rollover = int(delta)
-        if delta > 0:
+    elif -30 <= delta <= 20:
+        # Within time-based danger window: 20 min before to 30 min after
+        if delta >= 0:
+            # Before rollover — always dangerous
+            is_rollover = True
+            minutes_to_rollover = int(delta)
             reasons.append(f"ROLLOVER in {int(delta)} min ({rollover_hour}:00 UTC)")
         else:
-            reasons.append(f"ROLLOVER window (spread still wide, {rollover_hour}:00 UTC was {int(-delta)} min ago)")
+            # After rollover — check actual spreads before declaring safe
+            spreads_wide, spread_ratio = _check_spreads_wide()
+            if spreads_wide:
+                is_rollover = True
+                minutes_to_rollover = int(delta)
+                reasons.append(
+                    f"ROLLOVER window (spreads still {spread_ratio:.1f}x normal, "
+                    f"{rollover_hour}:00 UTC was {int(-delta)} min ago)"
+                )
+            else:
+                # Spreads normalized — rollover is over
+                minutes_to_rollover = int(delta)
+    elif -60 <= delta < -30:
+        # 30-60 min after rollover — only flag if spreads are still abnormally wide
+        spreads_wide, spread_ratio = _check_spreads_wide()
+        if spreads_wide:
+            is_rollover = True
+            minutes_to_rollover = int(delta)
+            reasons.append(
+                f"ROLLOVER extended (spreads still {spread_ratio:.1f}x normal, "
+                f"{rollover_hour}:00 UTC was {int(-delta)} min ago)"
+            )
     elif 0 < delta <= 20:
         minutes_to_rollover = int(delta)
 

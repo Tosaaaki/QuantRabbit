@@ -124,7 +124,42 @@ def remove_sls(token: str, acct: str):
         print("No SL/Trailing orders found on any trade.")
 
 
-def restore_sls(token: str, acct: str):
+def check_spreads_safe(token: str, acct: str) -> tuple[bool, str]:
+    """Check if spreads have normalized enough to safely restore SLs.
+
+    Returns:
+        (is_safe, detail_str)
+    """
+    NORMAL_SPREAD = {
+        "USD_JPY": 0.4, "EUR_USD": 0.5, "GBP_USD": 0.9,
+        "AUD_USD": 0.5, "EUR_JPY": 0.8, "GBP_JPY": 1.5, "AUD_JPY": 0.8,
+    }
+    pip_factor = {
+        "USD_JPY": 100, "EUR_JPY": 100, "GBP_JPY": 100, "AUD_JPY": 100,
+        "EUR_USD": 10000, "GBP_USD": 10000, "AUD_USD": 10000,
+    }
+    try:
+        pairs_str = ",".join(NORMAL_SPREAD.keys())
+        resp = oanda_api(f"/v3/accounts/{acct}/pricing?instruments={pairs_str}", token, acct)
+        wide_pairs = []
+        for p in resp.get("prices", []):
+            pair = p["instrument"]
+            if pair not in NORMAL_SPREAD:
+                continue
+            bid = float(p["bids"][0]["price"])
+            ask = float(p["asks"][0]["price"])
+            spread_pip = (ask - bid) * pip_factor.get(pair, 10000)
+            ratio = spread_pip / NORMAL_SPREAD[pair]
+            if ratio >= 2.0:
+                wide_pairs.append(f"{pair} Sp={spread_pip:.1f}pip ({ratio:.1f}x)")
+        if wide_pairs:
+            return False, "Spreads still wide: " + ", ".join(wide_pairs)
+        return True, "Spreads normalized"
+    except Exception as e:
+        return False, f"Could not check spreads: {e}"
+
+
+def restore_sls(token: str, acct: str, force: bool = False):
     """Restore SL/Trailing from saved state."""
     if not STATE_FILE.exists():
         print("No saved rollover guard state. Nothing to restore.")
@@ -133,6 +168,17 @@ def restore_sls(token: str, acct: str):
     state = json.loads(STATE_FILE.read_text())
     saved_trades = state.get("trades", [])
     removed_at = state.get("removed_at", "unknown")
+
+    # Check if spreads have normalized before restoring
+    if not force:
+        spreads_safe, detail = check_spreads_safe(token, acct)
+        if not spreads_safe:
+            print(f"⚠️  BLOCKED: {detail}")
+            print(f"   SLs removed at {removed_at} — NOT restoring yet.")
+            print(f"   Restoring now would risk immediate stop-out on wide spreads.")
+            print(f"   → Wait for spreads to normalize, then run restore again.")
+            print(f"   → Or run: python3 tools/rollover_guard.py restore --force")
+            return
 
     print(f"Restoring SLs removed at {removed_at}")
     print()
@@ -217,6 +263,7 @@ def show_status():
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in ("remove", "restore", "status"):
         print("Usage: python3 tools/rollover_guard.py [remove|restore|status]")
+        print("       python3 tools/rollover_guard.py restore --force  (skip spread check)")
         sys.exit(1)
 
     action = sys.argv[1]
@@ -237,7 +284,8 @@ def main():
             return
         remove_sls(token, acct)
     elif action == "restore":
-        restore_sls(token, acct)
+        force = "--force" in sys.argv
+        restore_sls(token, acct, force=force)
 
 
 if __name__ == "__main__":
