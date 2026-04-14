@@ -69,29 +69,31 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 
 **BE SL (SL at entry price) is banned at ATR×1.0+.** It gives back 100% of unrealized profit. That's not risk management — it's the 3/27 Default HOLD trap in disguise. If you write "SL moved to BE", you must first write how much profit you're giving back and why that's better than HALF TP.
 
-### S/A-conviction TP — Pullback Quality で判断を分岐
+### S/A-conviction — Reading the Pullback (not following a label)
 
-profit_check outputs a `Pullback Quality` section for positions at ATR×0.8+. It uses 12 indicators (ema_slope, chaikin_vol, bbw/kc ratio, wick patterns, cluster gaps, ROC, divergence, cross-pair) to classify the current M5 state. **For S/A-conviction trades only**, use it to override the default:
+profit_check outputs a `Pullback Data` panel for positions at ATR×0.8+. It shows 12 indicators the trader rarely checks. **No verdict. No recommendation. You read it.**
 
-| Pullback Quality | Conviction S | Conviction A | Conviction B/C |
-|------------------|-------------|-------------|----------------|
-| **NOISE** (healthy pullback) | trail ATR×1.5. No TP tightening | trail ATR×1.0 | Existing rules |
-| **SQUEEZE** (BB<KC, breakout loading) | Remove trail. Remove TP. Wait for BB breakout | trail ATR×1.0, hold | Existing rules |
-| **DISTRIBUTION** (div+vol expanding) | HALF TP + consider rotation SHORT | HALF TP | Existing rules |
-| **MIXED** | Use regime+chart table above | Use regime+chart table above | Existing rules |
+**What each indicator tells you** (knowledge, not rules):
+- **H1 ema_slope_20**: Positive and rising = institutional flow still one-directional. Flat or adverse = flow drying up
+- **H1 macd_hist**: Expanding with your position = momentum healthy. Contracting = deceleration
+- **H1 div_score**: >0 means price made new high but momentum didn't. The most reliable reversal warning
+- **M5 chaikin_vol**: Negative = pullback on declining volume (weak sellers). Positive = pullback on rising volume (real selling)
+- **M5 bbw vs kc_width**: BB < KC = volatility squeeze. Breakout imminent. Trail/TP before breakout = giving away the move
+- **Candle wicks**: Lower wicks longer than upper = buyers stepping in. Opposite = sellers rejecting
+- **cluster_gap**: Large gap = open road ahead, no structural wall. Small gap = resistance/support nearby
+- **ROC5 vs ROC10**: Short-term dip (roc5 negative) within longer uptrend (roc10 positive) = pullback in trend. Both negative = real weakness
+- **Cross-pair alignment**: 3/4+ aligned = currency-level move, your pair will follow. 0-1 aligned = pair-specific, less reliable
 
-B/C conviction → ignore Pullback Quality entirely. Use the regime+chart table above (no change).
+**After reading the data panel, write this block** (required for S/A conviction at ATR×0.8+):
 
-**Why this matters**: 4/7 best day: S-entries captured 25-30pip with trail ATR×1.5. Recent S-entries captured 12-14pip with trail ATR×0.6. Same conviction, half the profit. The difference: 4/7 had macro clarity (Iran ceasefire = hold everything). Without macro clarity, Pullback Quality provides the same "noise vs real" filter using indicators.
+```
+## [PAIR] — Pullback read
+I see: [what the 12 indicators actually show — not just values, what they MEAN for buyers/sellers]
+This tells me: [is this pullback weak noise, a squeeze charging up, or real distribution?]
+So I'm doing: [specific action — trail width in pip, hold, half TP, full TP — and WHY this action fits what you see]
+```
 
-### Trail width — determined by H1 state, not a fixed ATR multiple
-
-| H1 state | Trail width | Rationale |
-|----------|-------------|-----------|
-| ema_slope_20 rising + chaikin_vol negative | ATR×1.5 | Trend accelerating + weak pullback |
-| ema_slope_20 positive but decelerating + chaikin_vol ≈ 0 | ATR×1.0 | Trend healthy, standard |
-| ema_slope_20 flat + chaikin_vol positive | ATR×0.6 | Pullback has volume. Prepare to exit |
-| div_score > 0 + upper_wick_avg increasing | Remove trail → half TP at market | Reversal signal |
+**4/7 lesson**: S-entries captured 25-30pip (trail 20pip = ATR×1.5). Recent S-entries captured 12-14pip (trail 8pip = ATR×0.6). Same conviction, half the profit. The difference: 4/7 the trader READ the trend (macro clarity + band walk). Recently the trader FOLLOWED a formula (ATR×0.6 because "that's the ratio"). The data panel exists so you can read, not follow.
 
 **protection_check**: Data about current TP/SL/Trailing status. You decide what to do.
 

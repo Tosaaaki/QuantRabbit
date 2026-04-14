@@ -1,14 +1,29 @@
 # Changelog
 
-## 2026-04-14 — Pullback Quality Check in profit_check.py
+## 2026-04-15 — De-botify: Pullback Quality verdict → data panel + forced thinking format
+
+**Problem**: 4/14 Pullback Quality Check added NOISE/SQUEEZE/DISTRIBUTION scoring with rule tables ("if NOISE → ATR×1.5"). This is the same bot pattern as profit_check's verdict-following: tool classifies → rule table maps → trader follows. No thinking.
+
+**Broader pattern identified**: profit_check TAKE_PROFIT → action, trail width table → ATR×N lookup, regime+chart → TP target. All "label → rule → action" with no trader judgment.
+
+**Change**:
+- `profit_check.py`: Removed scoring/verdict from `assess_pullback_quality()`. Now outputs raw data panel (6 panels: H1 trend health, M5 vol/volatility, candle character, structure, ROC, cross-pair). No NOISE/SQUEEZE/DISTRIBUTION labels. No scores.
+- `SKILL_trader.md`: Replaced rule table with indicator knowledge guide (what each indicator MEANS for buyers/sellers) + required output format: "I see / This tells me / So I'm doing". Trader must write own interpretation — can't copy a verdict.
+- `risk-management.md`: Removed STEP 3b (was "S+NOISE → hold even if TAKE_PROFIT"). No more verdict-based override rules.
+
+**Design principle applied**: "Don't tell Claude what to think. Shape the format so thinking is required to produce the output." A bot can follow "NOISE → ATR×1.5". A bot cannot fill in "I see [observations] / This tells me [interpretation]" without reading the data.
+
+**Estimated impact**: +1,500-2,000 JPY/day on S-conviction trades (based on 4/14 GBP_USD case: trail 8pip captured 13.8pip; data-reading approach would have held for 46+ pip).
+
+**Files**: `tools/profit_check.py`, `docs/SKILL_trader.md`, `.claude/rules/risk-management.md`.
+
+## 2026-04-14 — Pullback Quality Check in profit_check.py (superseded by 4/15 de-botify)
 
 **Root cause**: S-conviction trades captured 12-14pip (trail ATR×0.6) vs 4/7 best day 25-30pip (trail ATR×1.5). Same conviction, half the profit. Trader used StRSI alone to judge pullbacks, ignoring 12 other relevant indicators in the cache.
 
-**Change**: Added `assess_pullback_quality()` to `profit_check.py`. For positions at ATR×0.8+, outputs NOISE/SQUEEZE/DISTRIBUTION verdict using 12 indicators: ema_slope_20, chaikin_vol, bbw/kc ratio, wick patterns, cluster gaps, ROC, div_score, cross-pair alignment.
+**Change**: Added `assess_pullback_quality()` to `profit_check.py`. Originally output NOISE/SQUEEZE/DISTRIBUTION verdict with scoring. Superseded same day — verdict removed, converted to raw data panel (see 4/15 entry above).
 
-**Impact on existing logic**: Zero. Existing recommendation (TAKE_PROFIT/HALF_TP/HOLD) scoring unchanged. Pullback Quality is additive output. B/C conviction trades ignore it entirely.
-
-**Files**: `tools/profit_check.py` (function added), `docs/SKILL_trader.md` (S-conviction TP table + trail width guide added), `.claude/rules/risk-management.md` (STEP 3b added), `collab_trade/strategy_memory.md` (observation added).
+**Files**: `tools/profit_check.py`, `docs/SKILL_trader.md`, `.claude/rules/risk-management.md`, `collab_trade/strategy_memory.md`.
 
 ## 2026-04-14 — Daily summary: dedup guard + show P&L as % of balance
 
