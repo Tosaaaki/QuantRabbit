@@ -689,6 +689,9 @@ def main():
         print(f"🔴 ROLLOVER WINDOW: {thin_reason}")
         print(f"   → REMOVE all SL/Trailing NOW. Spreads will spike.")
         print(f"   → Run: python3 tools/rollover_guard.py remove")
+        print(f"   ⛔ NO MANUAL CLOSES until spreads normalize.")
+        print(f"   ⛔ NO NEW ENTRIES. NO SL MODIFICATIONS.")
+        print(f"   ⛔ Prices during rollover are NOISE, not signal. WAIT.")
         print()
     elif is_thin:
         print(f"⚠️  THIN MARKET DETECTED: {thin_reason}")

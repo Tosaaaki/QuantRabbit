@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-04-15 — Rollover window: ban ALL actions including manual closes
+
+**Problem**: 4/14 AUD_JPY 8000u LONG closed manually at Sp=10.8pip during rollover, citing "thesis invalidation." Price returned to entry (113.168) within hours. -856 JPY self-inflicted. Rollover guard removed SLs correctly, but trader overrode with manual close — defeating the entire purpose of the guard.
+
+**Fix**:
+- `risk-management.md`: Added "Rollover Window = NO MANUAL CLOSES" section. From `rollover_guard.py remove` until `restore`, only permitted actions are: wait, cancel pending LIMITs. No closes, no entries, no SL modifications.
+- `protection_check.py`: Added ⛔ NO MANUAL CLOSES / NO NEW ENTRIES / WAIT warnings to ROLLOVER WINDOW output
+- `risk-management.md`: Added failure pattern entry for "Manual close during rollover"
+
 ## 2026-04-15 — Fix state.md UTC date bug causing quality-audit false alarms
 
 **Problem**: Trader Opus session was writing JST date with UTC label in state.md (e.g., "2026-04-15 16:32 UTC" when actual UTC was 2026-04-14 16:32). During UTC 15:00-23:59 (JST 0:00-8:59), the date is 1 day ahead. Quality-audit Sonnet reads this as a future timestamp → "15 hours stale" false alarm.

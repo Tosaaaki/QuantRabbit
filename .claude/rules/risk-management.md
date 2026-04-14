@@ -61,6 +61,26 @@
 
 **The trader task runs protection_check at every session start.** If rollover is approaching, the trader MUST run rollover_guard.py remove before doing anything else. If rollover has passed and saved state exists, run restore first.
 
+### Rollover Window = NO MANUAL CLOSES (4/14 lesson: AUD_JPY -856 JPY)
+
+**2026-04-14 lesson: AUD_JPY 8000u LONG, entry 113.166. Rollover guard correctly removed SLs. Then trader manually closed at 113.059 with spread 10.8pip, citing "thesis invalidation." Price returned to 113.168 within hours. -856 JPY was entirely self-inflicted.**
+
+**While rollover guard is active (SLs removed, spreads not yet normalized), ALL closes are prohibited — including manual/discretionary closes.**
+
+| What you see during rollover | What it actually is |
+|---|---|
+| "Price broke below support" | Spread spike showing phantom bid |
+| "Thesis invalidation" | You're reading noise, not signal |
+| "Divergence confirmed" | Indicator computed on spread-distorted candles |
+
+**The rule**: From `rollover_guard.py remove` until `rollover_guard.py restore`, the ONLY permitted actions are:
+1. Wait
+2. Cancel pending LIMITs that would fill during the window
+
+**No closes. No new entries. No SL modifications. No "I see a reversal." Wait for spreads to normalize, THEN judge.**
+
+Exception: User explicitly instructs a close during rollover.
+
 ## Conviction-Based Sizing — Determined by Depth of Analysis, Not Indicator Count
 
 **High conviction → size up. Low conviction → size down.**
@@ -329,3 +349,4 @@ Current margin: ___% | + this entry: ___JPY | + pending LIMITs: ___JPY | → wor
 | **TP missed by spread (4/8)** | AUD_JPY TP=111.100, bid peaked 111.096 (0.4pip short). Spread=2.4pip ate the fill. **Subtract spread from structural TP level. TP = level - spread for LONGs.** |
 | **Margin overflow → forced close = self-inflicted loss (4/8)** | EUR_JPY+EUR_USD+GBP_JPY stacked without margin calculation → 97% → EUR_JPY forced close at -319 JPY. Thesis was alive. **Calculate margin BEFORE entering. Include pending LIMITs in worst-case. Above 85% = stop adding.** |
 | **Market order in thin liquidity = giving away pips (4/8)** | Easter Monday: EUR_USD 4000u + GBP_JPY 3900u entered via market order in thin liquidity. Spread wider, slippage risk. **Thin market (holiday/early Asian) = LIMIT at M5 support, even for S-conviction.** |
+| **Manual close during rollover = self-inflicted loss (4/14)** | AUD_JPY 8000u closed at Sp=10.8pip citing "thesis invalidation." Price returned to entry within hours. -856 JPY. **Rollover guard active = NO manual closes. Prices are noise. WAIT for spreads to normalize, THEN judge.** |
