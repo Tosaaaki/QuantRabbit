@@ -10,6 +10,12 @@
 3. **Audit Response in state.md**: Trader writes structured responses to audit S/A predictions. Audit reads these next cycle and evaluates whether trader was right. Closes the feedback loop.
 4. **Tier 2 examples**: Category names ("H1+M5+CS aligned") → chart-specific ("band walk + GBP strongest CS, missing: Fib 38.2% untested"). Models mimic examples.
 
+## 2026-04-15 — "If nothing by" conviction block field
+
+**Problem**: 41 NY entries held overnight without exit plan, dumped in Tokyo thin liquidity = -14,094 JPY total drag. "If I'm wrong" covered loss scenario but not the "move never comes" orphan scenario.
+
+**Fix**: Added `If nothing by: ___` to conviction block (SKILL_trader.md + risk-management.md). Format forces trader to write exit timeline at entry, naturally embedding session awareness. Not a rule — a thinking prompt.
+
 ## 2026-04-15 — Session Dynamics: Tokyo positioning edge discovered
 
 **Analysis**: 500-trade OANDA history analyzed by ENTRY time (not close time). Key findings:
