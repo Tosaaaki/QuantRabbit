@@ -38,12 +38,17 @@ Read (parallel, batch 4 — H1 for held pairs only): `logs/charts/{HELD_PAIR}_H1
 
 **QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do. Compare the auditor's visual read with what you saw in the chart PNGs. If you disagree, trust YOUR eyes — you're the trader.
 
-For each S-scan NOT_HELD finding, write in state.md Tier 2:
-  "If I would enter: ___ / If I would not: ___"
+**AUDIT CONVICTION MAP** (Section C of quality_audit.md — "My Best Trades Right Now"):
+The auditor assessed all 7 pairs with own conviction ratings based on chart reading + data. This is the auditor's INDEPENDENT market view — not scanner output.
+
+For each audit conviction **S or A** that you DON'T hold:
+  "Auditor says [S/A] on {PAIR} {DIR} because: ___ | I [agree/disagree]: ___ | Action: [ENTERING id=___ / LIMIT @___ / PASSED — {what specifically in auditor's story I think is wrong}]"
+
+**If you disagree with an auditor S-rating, explain which part of their story is wrong.** "I don't see it" is not a disagreement — name the specific data point or chart observation that contradicts the auditor's thesis. If you can't name one, you agree.
 
 For each exit quality finding (peak drawdown, BE SL, ATR stall), write the Close or Hold block if not already present.
 
-Audit findings are DATA, not instructions. The auditor presents facts. You decide.
+Audit findings are DATA, not instructions. The auditor presents their market view. You decide. But ignoring an S-rating without explanation = the biggest silent profit killer (confirmed pattern: 7 S-setups undersized, 6,740-13,140 JPY lost).
 
 ## Bash②b: Profit Check + Protection Check (run at the top of every session)
 
@@ -212,23 +217,40 @@ SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction 
 
 **Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
-### Tier 2: Remaining pairs (quick scan)
+### Tier 2: Remaining pairs (quick scan + conviction)
 
-For each Tier 2 pair, write ONE line. The format depends on structure:
+For each Tier 2 pair, write ONE line. **Every line ends with conviction.**
 
 ```
-TREND:   {PAIR}: TREND ↑/↓ | [candle shape — not indicators] | dip/rally @___ TP=___ | or WAIT: [specific condition]
-RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=___ (both sides)
-SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | or watching: [trigger]
+TREND:   {PAIR}: TREND ↑/↓ | [candle shape] | dip/rally @___ TP=___ | [S/A/B/C] — [1 sentence: what categories align]
+RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=___ | [S/A/B/C] — [1 sentence]
+SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | [S/A/B/C] — [1 sentence]
 ```
 
 **Tier 2 examples:**
-`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 (BB mid pullback)`
-`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060`
-`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: first close outside 159.10–159.35`
+`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 | A — H1+M5+CS aligned, missing Fib confirmation`
+`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060 | B — range clear but no cross-pair theme`
+`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: close outside 159.10–159.35 | C — no direction signal yet`
+`EUR_JPY: TREND ↓ | 5 bearish bodies, band walk, BB expanding | sell rally @186.00 TP=185.40 | S — Direction+Timing+Momentum+Cross-pair+Macro all BEAR`
+
+**The conviction suffix forces you to assess every pair.** S-conviction doesn't hide in Tier 2 anymore — it's visible the moment you write it.
 
 **"candle shape" = what you see in the PNG, not indicator values.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. If you haven't looked at the PNG, you can't fill this in.
 **RANGE format has both sides in the same line.** You can't write "RANGE" and only one price. The format won't let you.
+
+### Tier 2 → Tier 1 promotion (any S or A above?)
+
+**If you wrote S or A conviction for any Tier 2 pair, write its full Tier 1 block here:**
+
+```
+## {PAIR} [PROMOTED from Tier 2] — {REGIME}
+Chart tells me: [full chart reading — candle bodies, wicks, BB, momentum]
+  → [chart-to-TP connection: band walk → ATR×2.0 / deceleration → ATR×1.0 / range → opposite band]
+My trade: [action @price TP=price] — [why NOW: news/cross-pair/structure]
+→ Placed: [LIMIT/MARKET id=___ TP=___ SL=___] or: [not placed — why]
+```
+
+**S/A conviction in Tier 2 without a Tier 1 block = you found gold and walked past it.** The promotion block is how you pick it up.
 
 ### After the scan — Capital Deployment Check (required EVERY session)
 
@@ -296,24 +318,26 @@ Margin after: ___% (include pending LIMITs → worst case ___%)
 
 **6 indicator categories**: ① Direction (ADX/DI, EMA slope, MACD) ② Timing (StochRSI, RSI, CCI, BB) ③ Momentum (MACD hist, ROC, EMA cross) ④ Structure (Fib, cluster, swing, Ichimoku) ⑤ Cross-pair (correlated pairs, currency strength) ⑥ Macro (news, events, flow)
 
-### S-Conviction Recipes — TF × indicator combinations that = S
+### S-Conviction — two paths to discovery
 
-**session_data.py outputs `S-CONVICTION CANDIDATES` section automatically.** When 🎯 appears, that's S until proven otherwise. Enter at S-size or write why not.
+**Path 1: Your own narrative analysis (PRIMARY).** The Tier 1/Tier 2 scan above forces you to write conviction for every pair. S emerges when 3+ categories align + different lens supports + the chart story is clear. This is how most S-setups are found — by reading the market, not by matching a recipe.
 
-| Recipe | TF Pattern | Indicators | Direction | Example |
-|--------|-----------|------------|-----------|---------|
-| **Multi-TF Extreme Counter** | H4 extreme + H1 extreme + M5 opposite extreme | H4 StRSI=1.0 + H1 StRSI=1.0 + M5 StRSI=0.0 | Counter (SHORT in this case) | EUR_JPY 4/8: H4+H1=1.0, M5=0.0, +H1 CCI=200 +div |
-| **Trend Dip** | H1 strong trend + M5 extreme | H1 ADX≥25 DI aligned + M5 StRSI=0.0/1.0 | With trend | GBP_JPY 4/8: H1 ADX=34 BULL + M5 StRSI=0.0 |
-| **Multi-TF Divergence** | H4 div + H1 div + extreme | Both TFs show div + H1 StRSI extreme | Reversal | H4+H1 bear div + H1 StRSI=1.0 → SHORT |
-| **Currency Strength Momentum** | CS gap ≥0.5 + H4+H1+M5 aligned | CS(base)-CS(quote)≥0.5 + all 3 TFs DI aligned | With strength | EUR_JPY: EUR(+0.57)-JPY(-0.43)=1.0 + all BULL |
-| **Structural Confluence** | M5 at BB edge + extreme + H1 trend | M5 at BB lower + StRSI=0.0 + H1 BULL | Bounce | GBP_JPY: M5 BB lower + StRSI=0.0 + H1 ADX=34 BULL |
-| **Squeeze Breakout** | M5 squeeze + H1 ADX≥30 + M1 confirmed | M5 BBW<0.002 + H1 strong + M1 DI clear | Breakout dir | M5 squeeze + H1 bear ADX=35 + M1 sellers |
+**Path 2: Scanner recipes (SUPPLEMENT).** session_data.py outputs `S-CONVICTION CANDIDATES` from s_conviction_scan.py. These fire on specific TF × indicator patterns. Accuracy varies:
 
-**Key insight: S is not "more indicators agree." S is "the RIGHT indicators across the RIGHT timeframes form a PATTERN."**
+| Recipe | Accuracy | TF Pattern | Direction |
+|--------|----------|-----------|-----------|
+| **Structural Confluence** | **proven 3/3** | M5 at BB edge + StRSI extreme + H1 trend | Bounce |
+| **Multi-TF Extreme Counter** | **proven 4/5** | H4+H1 extreme + M5 opposite extreme | Counter |
+| **Currency Strength Momentum** | tracking | CS gap ≥0.8 + H4+H1+M5 aligned + ADX>20 | With strength |
+| **Multi-TF Divergence** | tracking | H4 div + H1 div + H1 extreme | Reversal |
+| **Trend Dip** | **noisy 3/12** | H1 ADX≥25 + M5 StRSI extreme | With trend |
+| ~~Squeeze Breakout~~ | **disabled 0/4** | ~~M5 squeeze + H1 ADX≥30 + M1 dir~~ | ~~Breakout~~ |
 
-2 indicators from the same TF = B at best. 3+ indicators from 2-3 different TFs forming a coherent pattern = S.
+**When 🎯 fires**: Check the accuracy tier. Proven recipes = strong confirmation of your narrative. Noisy recipes = supplementary data, don't rely on it alone.
 
-**When 🎯 fires and you still write B-conviction, you must explain which part of the recipe fails.**
+**The scanner has narrow thresholds (StRSI ≤0.05 / ≥0.95).** Most S-conviction setups DON'T fire the scanner because the pullback is shallow (StRSI=0.10-0.20 in a strong trend). That's why your narrative assessment in Tier 1/Tier 2 is the primary path. The scanner catches extremes; you see the whole picture.
+
+**Key insight: S is not "more indicators agree." S is "the RIGHT indicators across the RIGHT timeframes form a COHERENT STORY."** 2 indicators from the same TF = B at best. 3+ indicators from 2-3 different TFs telling the same story = S.
 
 ### Margin gate (BEFORE conviction block — mandatory)
 

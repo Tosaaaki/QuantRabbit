@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-04-15 — S-Conviction Discovery Overhaul: narrative assessment replaces scanner gating
+
+**Problem**: S-conviction trades are the system's biggest profit driver, but neither trader nor audit finds them. Root cause: S-conviction discovery was bottlenecked through `s_conviction_scan.py` — a pattern matcher with 6 fixed recipes and binary thresholds (StochRSI ≤0.05 / ≥0.95). Real S-conviction comes from story coherence ("everything points the same way"), not hitting exact indicator values. A strong trend pullback at StochRSI=0.15 IS S-conviction but the scanner doesn't fire. Result: ~0-1 S-setups found per day when 3-5 exist at any given time.
+
+**Fix** (applied "think at the point of output" principle — format forces thinking, not rules):
+
+1. **Quality Audit SKILL** (`docs/SKILL_quality-audit.md`): Replaced Section C "Missed Opportunities" (scanner relay) with "My Best Trades Right Now" — 7-pair conviction assessment. Auditor now writes trade plan + FOR/Different lens/AGAINST + conviction for ALL 7 pairs based on chart reading + data. S-conviction surfaces naturally from story coherence. Scanner becomes supplementary data.
+
+2. **Trader SKILL** (`docs/SKILL_trader.md`):
+   - Tier 2 format now includes `| [S/A/B/C] — [reason]` suffix → conviction assessment for every pair
+   - Added "Tier 2 → Tier 1 promotion" section: any S/A in Tier 2 MUST get full Tier 1 analysis
+   - Audit response changed from "S-scan NOT_HELD" to "Audit Conviction Map" — trader must respond to auditor's S/A ratings with agree/disagree + specific reasoning
+   - S-Conviction Recipes section restructured: narrative assessment is PRIMARY path, scanner is SUPPLEMENT with accuracy tiers
+
+3. **s_conviction_scan.py** (`tools/s_conviction_scan.py`):
+   - Disabled Squeeze-S recipe (0/4 accuracy — all signals wrong direction)
+   - Added accuracy tiers to output: `[proven 3/3]`, `[proven 4/5]`, `[noisy 3/12]`, `[tracking]`
+   - Updated dedup regex to handle new format
+
+4. **CLAUDE.md**: Updated quality-audit description to mention 7-pair conviction assessment
+
 ## 2026-04-15 — Trade type awareness: time_held + entry thesis recall in evaluation
 
 **Problem**: GBP_USD 8000u S-Momentum entry (PPI miss) held 5h40m, cut at -2,583 JPY. Momentum thesis died within 30min, but trader checked H1 (ADX=55 BULL = "thesis intact") instead of M5 (entry timeframe). Same root cause: trail 8pip on Momentum = too tight (profit side), hold 6h on Momentum = too long (loss side). Both from managing trades on the wrong timeframe.
