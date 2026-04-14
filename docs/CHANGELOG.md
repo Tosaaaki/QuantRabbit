@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-14 — Daily summary: dedup guard + show P&L as % of balance
+
+`slack_daily_summary.py`: Added dedup guard — writes `logs/daily_summary_last.txt` with the posted date, skips if already posted for that date. Prevents duplicate posts when task is re-triggered. `--date` manual runs bypass the guard.
+
 ## 2026-04-14 — Daily summary: show P&L as % of balance
 
 `slack_daily_summary.py`: Added percentage change (realized P&L / previous day balance) to the daily P&L line. Example: `+5,871JPY (+4.89%)`.

@@ -116,6 +116,17 @@ def main():
         # Previous UTC day (this script runs at 07:00 JST = 22:00 UTC previous day)
         target_date = (datetime.now(UTC) - timedelta(days=1)).strftime('%Y-%m-%d')
 
+    # Dedup guard: skip if already posted for this date
+    lock_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+    lock_file = os.path.join(lock_dir, 'daily_summary_last.txt')
+    if not args.date:  # only guard auto-runs, not manual --date runs
+        try:
+            if os.path.exists(lock_file) and open(lock_file).read().strip() == target_date:
+                print(f"Already posted for {target_date}, skipping")
+                return
+        except Exception:
+            pass
+
     cfg = load_config()
     acct_summary = get_account_summary(cfg)
     realized_pl, entry_count, close_count = get_realized_pl_for_date(
@@ -153,6 +164,14 @@ def main():
 
     post(message, channel, cfg['slack_bot_token'])
     print(f"Posted daily summary for {target_date} to #{channel}")
+
+    # Record posted date to prevent duplicates
+    if not args.date:
+        try:
+            with open(lock_file, 'w') as f:
+                f.write(target_date)
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
