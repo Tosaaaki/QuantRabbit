@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-15 — Trade type awareness: time_held + entry thesis recall in evaluation
+
+**Problem**: GBP_USD 8000u S-Momentum entry (PPI miss) held 5h40m, cut at -2,583 JPY. Momentum thesis died within 30min, but trader checked H1 (ADX=55 BULL = "thesis intact") instead of M5 (entry timeframe). Same root cause: trail 8pip on Momentum = too tight (profit side), hold 6h on Momentum = too long (loss side). Both from managing trades on the wrong timeframe.
+
+**Changes**:
+- `profit_check.py`: Added `time_held` to output (calculated from OANDA openTime). Every position now shows "held: Xh Ym" — pure data, no rules.
+- `SKILL_trader.md`: Added `Entry type`, `Entry thesis was`, `Held vs expected` to the per-position evaluation block. Added `Is my entry thesis still why I'm here?` question. Forces trader to confront thesis drift (Momentum held as Swing) and timeframe mismatch.
+- `risk-management.md`: Loss management step 1 changed from "Has the H1 structure changed?" to "Has the structure changed on the timeframe you entered on?" with 4/14 lesson. Removes H1 as hardcoded evaluation timeframe.
+
+**Design**: No rules, no time limits, no automatic actions. Format forces the trader to write their own assessment against their own entry plan. "Held: 5h40m vs expected 30min-2h" is data that makes thesis drift self-evident.
+
+**Files**: `tools/profit_check.py`, `docs/SKILL_trader.md`, `.claude/rules/risk-management.md`.
+
 ## 2026-04-15 — Rollover window: ban ALL actions including manual closes
 
 **Problem**: 4/14 AUD_JPY 8000u LONG closed manually at Sp=10.8pip during rollover, citing "thesis invalidation." Price returned to entry (113.168) within hours. -856 JPY self-inflicted. Rollover guard removed SLs correctly, but trader overrode with manual close — defeating the entire purpose of the guard.

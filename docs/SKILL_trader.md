@@ -411,17 +411,23 @@ Same for any pair: consecutive losses in one direction block ONLY that direction
 For EACH open position, EVERY session, write this block:
 
 ```
+Entry type: [Scalp/Momentum/Swing] (expected [5-30min / 30min-2h / 2h-1day])
+Entry thesis was: [1 sentence — the ORIGINAL reason from conviction block]
+Held: [from profit_check] vs expected [time range above]
 Close now: {+/-}Xpip = {+/-}Y JPY
 Peak this trade: +Zpip = +W JPY at HH:MM (from M5 candle highs since entry)
 Regime at entry: ___ → Regime now: ___ [same / changed to ___]
-I'm not closing because: ___ (specific M5 price action — not "thesis alive")
+Is my entry thesis still why I'm here? ___ (if NO: what changed? New thesis = new conviction assessment)
+I'm not closing because: ___ (specific price action on your ENTRY TIMEFRAME — not "H1 thesis intact")
 This reason disappears if: ___ (what would make you close)
 If I closed, I would use the freed margin for: ___ pair ___ direction — because: ___ (must name a pair. If truly nothing: "scanned all 7 pairs, best was [PAIR] but [why not]")
 → A (adjust) / B (cut+re-enter) / C (hold) — chosen: ___
 ```
 
-- **"Regime at entry → now" is the regime transition detector.** If regime changed (TREND→RANGE, TREND→SQUEEZE, TREND→MILD), that's a structural reason to close. You entered because the chart was trending. The chart is no longer trending. Your entry thesis lost its foundation. Writing "TREND→RANGE" makes this visible — "I'm not closing because" becomes very hard to fill in honestly when the regime that justified the entry no longer exists.
-- **"I'm not closing because" must describe what you SEE on the chart PNG** — not indicators, not thesis. "M5 chart shows 3 consecutive bullish bodies expanding, price hugging BB upper, no counter-wicks = band walk continuing" is valid. "H1 thesis intact" or "ADX=45" is not — those are numbers, not chart reading. Look at the chart. Describe what you see. If the chart shows deceleration (shrinking bodies, growing wicks, BB flattening), close.
+- **"Entry type + Held" is the thesis drift detector.** If you entered as Momentum (30min-2h) and you've been holding 5h40m, you are no longer in a momentum trade. Either you changed your thesis (requires new conviction assessment — is this now a Swing? What conviction? Is S-size still justified?) or you're holding a dead thesis. Writing "Held: 5h40m vs expected 30min-2h" makes this impossible to ignore.
+- **"Is my entry thesis still why I'm here?"** prevents thesis substitution. "PPI miss momentum" is a different thesis from "H1 ADX=55 BULL trend." If your original thesis died and you're holding for a NEW reason, say so — but then re-assess conviction and size. An 8000u S-Momentum position that became an H1 Swing hold might only be B-conviction at that size.
+- **"Regime at entry → now" is the regime transition detector.** If regime changed (TREND→RANGE, TREND→SQUEEZE, TREND→MILD), that's a structural reason to close.
+- **"I'm not closing because" must describe what you SEE on the chart on your ENTRY TIMEFRAME** — not a higher timeframe that's more convenient. Momentum entry → describe M5 price action. Swing entry → describe H1 price action. "H1 thesis intact" is not valid for a momentum trade.
 - If the position has NEVER been in profit (peak = 0pip), you still fill in the block. "Close now: -8pip = -500 JPY" makes the cost of holding visible.
 - If you can't fill in "I'm not closing because" with something specific from the chart, close.
 

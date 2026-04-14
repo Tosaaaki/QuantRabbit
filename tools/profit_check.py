@@ -269,6 +269,24 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
     entry_price = float(trade["price"])
     trade_id = trade["id"]
 
+    # Time held calculation
+    from datetime import datetime, timezone
+    open_time_str = trade.get("openTime", "")
+    time_held_str = ""
+    if open_time_str:
+        try:
+            open_time = datetime.fromisoformat(open_time_str.replace("Z", "+00:00").split(".")[0] + "+00:00")
+            now = datetime.now(timezone.utc)
+            elapsed = now - open_time
+            hours = int(elapsed.total_seconds() // 3600)
+            mins = int((elapsed.total_seconds() % 3600) // 60)
+            if hours > 0:
+                time_held_str = f"{hours}h{mins:02d}m"
+            else:
+                time_held_str = f"{mins}m"
+        except Exception:
+            time_held_str = "?"
+
     tfs = all_technicals.get(pair, {})
     h1 = tfs.get("H1", {})
     m5 = tfs.get("M5", {})
@@ -300,6 +318,7 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
         "atr_pips": atr_pips,
         "atr_ratio": atr_ratio,
         "trade_id": trade_id,
+        "time_held": time_held_str,
         "signals": [],
         "recommendation": "HOLD",
     }
@@ -449,10 +468,11 @@ def format_result(r: dict) -> str:
     }.get(r["recommendation"], "⚪")
 
     lines = []
+    time_str = f" | held: {r['time_held']}" if r.get("time_held") else ""
     lines.append(
         f"{icon} {r['pair']} {r['side']} {r['units']}u | "
         f"UPL: {r['upl']:+,.0f} JPY ({r['pip_distance']:+.1f}pip) | "
-        f"ATR ratio: {r['atr_ratio']:.1f}x (ATR={r['atr_pips']:.1f}pip) | "
+        f"ATR ratio: {r['atr_ratio']:.1f}x (ATR={r['atr_pips']:.1f}pip){time_str} | "
         f"→ {r['recommendation']}"
     )
     for sig in r["signals"]:

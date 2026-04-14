@@ -270,10 +270,12 @@ When conditions change after entry (event approaching, thin market, timeframe sh
 
 Decision flow when you're concerned about an unrealized loss (this is all. Don't look at the amount):
 
-1. **Has the H1 structure changed?**
-   - Did DI+/DI- flip? Did ADX change direction?
-   - → NO → **Don't cut. The thesis is alive**
+1. **Has the structure changed on the timeframe you entered on?**
+   - You entered as Scalp → check M1/M5. Momentum → check M5/M15. Swing → check H1.
+   - Did DI+/DI- flip? Did ADX change direction? Did your entry setup disappear?
+   - → NO on your entry TF → **Don't cut. The thesis is alive on the timeframe that matters**
    - → YES → Go to step 2
+   - ⚠ **4/14 lesson**: GBP_USD entered as Momentum (PPI miss), held 5h40m, cut at -2,583 JPY. H1 never changed (ADX=55 BULL) — but M5 momentum died within 30 minutes of entry. Checking H1 for a Momentum trade gave false "thesis intact" for 5 hours.
 
 2. **Has the basis for the thesis disappeared?**
    - Is the entry basis (Div, macro, flow, etc.) still valid?
@@ -281,7 +283,7 @@ Decision flow when you're concerned about an unrealized loss (this is all. Don't
    - → Basis also gone → **Full exit OK**
 
 3. **Is a signal appearing in the opposite direction?**
-   - Clear reversal Div on H1 + momentum reversal confirmed on M5
+   - Clear reversal Div + momentum reversal confirmed on the next TF up
    - → Both YES → Consider flipping (reversing the position)
    - → Only one → Half profit-take and watch
 
