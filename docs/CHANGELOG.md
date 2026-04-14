@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-14 — Daily summary: show P&L as % of balance
+
+`slack_daily_summary.py`: Added percentage change (realized P&L / previous day balance) to the daily P&L line. Example: `+5,871JPY (+4.89%)`.
+
 ## 2026-04-14 — BUGFIX: rollover guard restoring SLs while spreads still wide
 
 **Problem**: `protection_check.py` determined rollover end purely by time (15 min after 5 PM ET). In reality, spreads can stay 2-3x+ wider for 30+ minutes after rollover. This caused:

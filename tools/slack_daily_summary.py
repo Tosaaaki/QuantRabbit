@@ -127,9 +127,11 @@ def main():
     lines.append(f"\U0001f4ca *Daily Summary: {target_date}*")
     lines.append("")
 
-    # Daily P&L
+    # Daily P&L with % change
     pl_icon = "\U0001f7e2" if realized_pl >= 0 else "\U0001f534"
-    lines.append(f"{pl_icon} *Daily Realized P&L: {realized_pl:+,.0f}JPY*")
+    prev_balance = acct_summary['balance'] - realized_pl
+    pct_change = (realized_pl / prev_balance * 100) if prev_balance > 0 else 0
+    lines.append(f"{pl_icon} *Daily Realized P&L: {realized_pl:+,.0f}JPY ({pct_change:+.2f}%)*")
 
     # Trade count
     if entry_count > 0 or close_count > 0:
