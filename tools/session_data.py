@@ -92,7 +92,9 @@ def main():
         session_label = "NY"
     else:
         session_label = "Late session (thin liquidity)"
-    print(f"=== SESSION: {now_utc.strftime('%Y-%m-%d %H:%M UTC')} | {session_label} ===")
+    utc_stamp = now_utc.strftime('%Y-%m-%d %H:%M UTC')
+    print(f"=== SESSION: {utc_stamp} | {session_label} ===")
+    print(f"state.md timestamp: **Last Updated**: {utc_stamp}")
 
     # === PARALLEL BLOCK: Start heavy I/O tasks concurrently ===
     executor = ThreadPoolExecutor(max_workers=4)

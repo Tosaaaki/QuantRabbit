@@ -592,9 +592,11 @@ If you trade for 7 minutes and die at minute 7.5 without writing state.md, you w
 
 state.md is a handoff document, not a log. **Don't write the same content twice.**
 
+**CRITICAL: Copy the UTC timestamp from session_data.py output (`=== SESSION: YYYY-MM-DD HH:MM UTC ===`). Do NOT compute the date yourself — JST/UTC date mismatch causes quality-audit false alarms.**
+
 ```
-# Trader State — {date}
-**Last Updated**: {timestamp}
+# Trader State — {date from SESSION line}
+**Last Updated**: {copy YYYY-MM-DD HH:MM UTC from SESSION line exactly}
 
 ## Market Narrative
 {Driving force + vs last session + M5 verdict + theme + best LONG + best SHORT}

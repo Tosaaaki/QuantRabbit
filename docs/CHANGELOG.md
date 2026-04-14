@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-04-15 — Fix state.md UTC date bug causing quality-audit false alarms
+
+**Problem**: Trader Opus session was writing JST date with UTC label in state.md (e.g., "2026-04-15 16:32 UTC" when actual UTC was 2026-04-14 16:32). During UTC 15:00-23:59 (JST 0:00-8:59), the date is 1 day ahead. Quality-audit Sonnet reads this as a future timestamp → "15 hours stale" false alarm.
+
+**Fix**:
+- `session_data.py`: Added copy-paste ready `state.md timestamp:` line with correct UTC date
+- `SKILL_trader.md`: Added CRITICAL note to copy UTC timestamp from session_data.py output, not compute manually
+
 ## 2026-04-15 — De-botify: Pullback Quality verdict → data panel + forced thinking format
 
 **Problem**: 4/14 Pullback Quality Check added NOISE/SQUEEZE/DISTRIBUTION scoring with rule tables ("if NOISE → ATR×1.5"). This is the same bot pattern as profit_check's verdict-following: tool classifies → rule table maps → trader follows. No thinking.
