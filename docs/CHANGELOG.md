@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-15 — Session Dynamics: Tokyo positioning edge discovered
+
+**Analysis**: 500-trade OANDA history analyzed by ENTRY time (not close time). Key findings:
+- Tokyo entries are net +4,997 JPY (119t, 56%WR). Previous belief that "Tokyo loses" was caused by measuring CLOSE time, which includes NY overnight losers being dumped during Tokyo morning
+- Tokyo entry → London close = avg +347/trade (29t). 7× the system average. Asian range → London breakout positioning
+- Momentum trades (30m-2h) are the system's edge across ALL sessions. Scalps (<30m) lose in Tokyo AND London
+- Late NY (21-00 UTC) is the system's worst session: -11,898 JPY, 36%WR. GBP_USD alone -9,601 from 8 entries
+- NY is highest volume (171 entries) for zero return (-103 JPY)
+
+**Changes**: Added to strategy_memory.md:
+- Session dynamics in Confirmed Patterns (entry-time P&L, momentum vs scalp, Tokyo→London positioning)
+- NY overnight orphan pattern in Active Observations
+- Per-pair: AUD_JPY Tokyo natural home, EUR_USD Tokyo→London play, GBP_USD Late NY death zone
+
 ## 2026-04-15 — S-Conviction Discovery Overhaul: narrative assessment replaces scanner gating
 
 **Problem**: S-conviction trades are the system's biggest profit driver, but neither trader nor audit finds them. Root cause: S-conviction discovery was bottlenecked through `s_conviction_scan.py` — a pattern matcher with 6 fixed recipes and binary thresholds (StochRSI ≤0.05 / ≥0.95). Real S-conviction comes from story coherence ("everything points the same way"), not hitting exact indicator values. A strong trend pullback at StochRSI=0.15 IS S-conviction but the scanner doesn't fire. Result: ~0-1 S-setups found per day when 3-5 exist at any given time.

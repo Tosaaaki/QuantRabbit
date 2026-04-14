@@ -2,7 +2,7 @@
 
 **daily-reviewが毎日更新。traderが毎セッション冒頭で読む。**
 
-最終更新: 2026-04-14 21:00 UTC (daily-review)
+最終更新: 2026-04-15 (manual update — session dynamics added)
 
 ---
 
@@ -10,6 +10,13 @@
 
 ### ✦ 勝ちパターン（これが金を生む — 恐怖より先に読め）
 
+- **Session dynamics — where the edge actually lives (500-trade analysis, 3/20-4/14)**:
+  - **By ENTRY time**: Tokyo +4,997 (119t, 56%WR, avg+42) | London +8,130 (166t, 65%WR, avg+49) | NY -103 (171t, 50%WR, avg-1) | Late NY -11,898 (44t, 36%WR, avg-270)
+  - **Tokyo looks bad by CLOSE time (-8,868)** because NY overnight losers get dumped during Tokyo morning. That's an NY position-management problem, not a Tokyo problem
+  - **Tokyo entry → London close = avg +347/trade (29t)**: 7× the system average. Tokyo builds the range, London breaks it. If you can read which side the range breaks, positioning in Tokyo before London is the highest-edge play in the system
+  - **Late NY (21-00 UTC / 06-09 JST) is the system's worst session**: GBP_USD alone -9,601 from 8 entries (25%WR). Rollover spread + thin liquidity. If the setup is real it'll still be there at Tokyo proper
+  - **NY is highest volume (171 entries) for zero return**: The trader is most active here and making no money. Activity ≠ edge
+  - **Momentum (30m-2h) is the system's real edge**: Tokyo +4,927(67%WR), London +10,994(75%WR), NY +7,994(61%WR) — profitable in every session. Scalps (<30m) lose in Tokyo(-1,504) AND London(-6,503). The system makes money from reading a 30m-2h directional move correctly, not from 5-minute timing. This isn't about "don't scalp" — it's about recognizing that the edge comes from depth of read, not speed of execution
 - **S-conviction discovery = narrative, not scanner**: S-conviction comes from STORY COHERENCE (3+ categories align + chart tells same story + macro confirms), NOT from s_conviction_scan.py recipe matches. Scanner has narrow thresholds (StochRSI ≤0.05/≥0.95) — most S-setups have StochRSI=0.10-0.20 (shallow pullback in strong trend). At any time, 3-5 S-setups exist across 7 pairs. Discovery method: write "I would [DIR] because [story]" for every pair → S emerges when the story coheres. Auditor writes 7-pair conviction map; trader reads and responds. Scanner is supplementary confirmation (Structural-S proven 3/3, Counter-S 4/5, rest noisy or broken)
 - **EUR_USD LONGはシステム最強エッジ**: 全期間55%WR, avg+192JPY, total+15,763JPY。迷ったらEUR_USD LONG。H1 ADX>25+EUR strongest+M5 StRSI=0.0は鉄板 (3/31-4/1: 6回連続利確, 4/8: 2/2 wins +4,575JPY, 4/10: +434JPY+228JPY)
 - **AUD_JPY両方向で利益**: LONG 64%WR avg+26JPY, SHORT 59%WR avg+54JPY。両方向プラスの安定ペアだが、チャーン(close→re-enter繰返し)で利益を食い潰すリスクあり
@@ -73,6 +80,7 @@
 - [4/14] **Always_C_hold culminated in GBP_JPY SL hit (-876 JPY)**: 5+ consecutive audit HALF_TP recommendations. Each time held (spread 12-20pip argument). Position SL hit at 214.900. **Auditor was right.** "Spread too wide" was valid short-term but became infinite hold excuse. **If TP doesn't fill within 3 sessions after spread normalizes → close at market.** Verified: 1x (outcome of 5-session pattern)
 - [4/14] **Tokyo thin LIMIT fill → instant SL hunt**: GBP_JPY 4000u LIMIT @215.119 filled 01:35Z, SL @214.900 hit 20min later = -876 JPY. SL was 21.9pip = ATR×1.1, too tight for Tokyo. Same pattern as 4/3 Good Friday. **LIMIT in Tokyo thin (00:00-06:00Z) must have SL ≥ ATR×1.5.** Verified: 2x (4/3 + 4/14)
 - [4/14] **Counter-S recipe: first entered → WIN +460 JPY**: USD_JPY LONG Counter-S @159.096. Validates Counter-S as entry-worthy at H4 extreme + chart supports counter direction. Cumulative 5 fires, 4 correct = 80%
+- [4/15] **NY overnight orphan = worst execution pattern**: 41 trades entered during NY, held overnight, closed during Tokyo morning = -14,094 JPY. The trader enters during NY, doesn't decide at entry whether to hold as swing or cut before NY close, then dumps losers at 10 JST into thin Tokyo liquidity (worst possible time to exit). This is the #1 drag on Tokyo-session P&L and makes Tokyo LOOK unprofitable when it isn't. Fix is at entry: "Am I holding through Tokyo? If yes, structural SL and swing mindset. If no, close before NY end. No orphaning"
 - [4/15] **De-botified Pullback Quality**: Removed NOISE/SQUEEZE/DISTRIBUTION scoring + rule tables. Now raw data panel. Trader writes "I see / This tells me / So I'm doing" — forces reading, not label-following
 - [4/15] **Trade type awareness — the R:R killer**: GBP_USD 8000u S-Momentum(PPI miss) held 5h40m → -2,583 JPY. Momentum thesis died in 30min but trader checked H1 (ADX=55="intact") instead of M5 (entry TF). Same disease as trail 8pip: managing trades on wrong timeframe. profit_check now shows `held: Xh Ym`. Evaluation block requires `Entry type + Held vs expected + Is thesis still why I'm here?`. Loss management changed from "H1 structure?" to "structure on entry TF?". Track: (1) Momentum trades held past expected window, (2) R:R improvement (currently 0.91, target >1.2)
 
@@ -98,6 +106,7 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 - **All-time LONG: 56% WR avg +25 JPY total +966 JPY** — modestly profitable but requires patience (avg winner hold >100 min)
 - Tokyo session trailing stop trap same as EUR_USD: 15pip trail = ATR×0.7 got clipped (4/3 lesson)
 - **4/7: repeated entries after failures compound losses.** 4 entries in one day, -1,006 JPY net. 5000u entry after 2 prior losses = chasing. After 2 GBP_USD losses, move to another pair
+- **Late NY (21-00 UTC) GBP_USD entries = system's worst combination**: 8 entries, -9,601 JPY, 25%WR. GBP has zero institutional flow during this window — spreads eat any setup. This single pair × session combination accounts for more loss than any full pair's all-time record
 
 ### EUR_USD
 - スプレッド最小。スキャルプに最適
@@ -106,6 +115,7 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 - **All-time LONG 53%WR avg +160 JPY total +11,980 JPY** — best total P&L of any pair/direction by far. EUR_USD LONG is the strongest edge in the system. 4/8: +4,575 JPY (2/2 wins) further confirms.
 - **SHORT 51%WR avg -156 JPY total -7,015 JPY (sample: 3/17-4/9, EUR bullish period)** — WR is fine, avg loss is large. Sample biased by EUR strength period. In EUR-weak regime, SHORT edge may appear. Chart-dependent, not pair-property.
 - Trailing stop in Tokyo session (00:00-06:00Z): ATR×0.7 clips positions. Use ATR×1.2 minimum or hard SL only (4/3 lesson)
+- **Tokyo entry → London close is EUR_USD's highest-edge play**: EUR_USD entered 00-07 UTC, closed in London = +4,570 JPY (7t). Position for London's EUR flow during quiet Tokyo hours, let London volume carry the trade
 
 ### AUD_USD
 - フロー分析が特に効く。STRONG_SHORTで+889円実績 (3/20)
@@ -122,6 +132,7 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 - **Weekend gap SL slippage**: 4/13 SL=112.550 filled at 112.380 (-17pip through SL). Treat weekend holding risk as SL×1.5.
 - 方向転換(LONG↔SHORT)のタイミングに注意。転換直後は負けやすい (3/27: LONG+514→SHORT-792)
 - **4/7 churn = profit killer**: 4 trades, 3 round-trips, net -738 JPY + 9.6pip spread. LONG 3500u cut in 6 min (-217), then 5000u held 170 min for +40 (BE SL). Close→re-enter same thesis burns spread. First exit should be final for 30 min
+- **Tokyo session = AUD_JPY's natural home**: +3,717 JPY in Tokyo (44t). Sydney+Tokyo overlap provides real directional flow — not a dead market. Momentum trades (30m-2h) work here because AUD has actual institutional flow during Asian hours, unlike GBP/EUR which are range-bound noise until London
 
 ### GBP_JPY
 - 30-50pipスウィングが普通。痛み上限-40pip
