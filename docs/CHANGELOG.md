@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-15 — S-Conviction v2: prediction format + follow-up loop (anti-bot refinement)
+
+**Problem with v1**: The 7-pair conviction assessment used FOR/Different lens/AGAINST format = category-checking. "FOR: Direction + Timing + Momentum" can be copy-pasted every cycle without thinking. Also: audit-trader loop was one-way (audit writes → trader reads → no follow-up). No accountability for predictions.
+
+**Fix**:
+1. **Audit Section C**: FOR/AGAINST category-checking → prediction format. Each pair now requires: specific chart observation → specific price target + timeframe → "wrong if" condition → conviction. "Price will reach 1.1835 in 1h because band walk + ECB hawkish" forces chart-specific thinking. "Direction + Timing" doesn't.
+2. **Audit Follow-up**: New sub-section at top of Section C. Audit checks its own previous predictions vs actual price movement. "Predicted 186.00, actual 185.87, 4/7 correct direction." Anti-bot: facts change every cycle. Pattern awareness: "I keep getting JPY crosses wrong."
+3. **Audit Response in state.md**: Trader writes structured responses to audit S/A predictions. Audit reads these next cycle and evaluates whether trader was right. Closes the feedback loop.
+4. **Tier 2 examples**: Category names ("H1+M5+CS aligned") → chart-specific ("band walk + GBP strongest CS, missing: Fib 38.2% untested"). Models mimic examples.
+
 ## 2026-04-15 — Session Dynamics: Tokyo positioning edge discovered
 
 **Analysis**: 500-trade OANDA history analyzed by ENTRY time (not close time). Key findings:

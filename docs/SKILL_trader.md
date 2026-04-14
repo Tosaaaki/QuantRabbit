@@ -38,17 +38,20 @@ Read (parallel, batch 4 — H1 for held pairs only): `logs/charts/{HELD_PAIR}_H1
 
 **QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do. Compare the auditor's visual read with what you saw in the chart PNGs. If you disagree, trust YOUR eyes — you're the trader.
 
-**AUDIT CONVICTION MAP** (Section C of quality_audit.md — "My Best Trades Right Now"):
-The auditor assessed all 7 pairs with own conviction ratings based on chart reading + data. This is the auditor's INDEPENDENT market view — not scanner output.
+**AUDIT PREDICTIONS** (Section C of quality_audit.md — "7-Pair Predictions + Follow-up"):
+The auditor made specific price predictions for all 7 pairs with conviction ratings. The auditor also checked its OWN previous predictions (follow-up accuracy). This is a real market view, not scanner output.
 
-For each audit conviction **S or A** that you DON'T hold:
-  "Auditor says [S/A] on {PAIR} {DIR} because: ___ | I [agree/disagree]: ___ | Action: [ENTERING id=___ / LIMIT @___ / PASSED — {what specifically in auditor's story I think is wrong}]"
+For each audit prediction rated **S or A** that you DON'T hold, write in state.md's "Audit Response" section:
+```
+## Audit Response
+{PAIR}: Audit predicted [price] [DIR] (S). I [agree/disagree]: [cite specific chart observation or data that supports or contradicts]. Action: [ENTERING/LIMIT/PASSED — reason]
+```
 
-**If you disagree with an auditor S-rating, explain which part of their story is wrong.** "I don't see it" is not a disagreement — name the specific data point or chart observation that contradicts the auditor's thesis. If you can't name one, you agree.
+**The audit checks your response next cycle.** If you disagreed and were right, the audit learns. If you disagreed and were wrong, that's visible too. This is a conversation, not a one-way report.
+
+**If you can't name a specific contradiction to an S-prediction, you agree.** "I don't see it" or "waiting for confirmation" is not a disagreement — it's avoidance. The audit cited chart evidence + data + macro. Disagree with the EVIDENCE, not the conclusion.
 
 For each exit quality finding (peak drawdown, BE SL, ATR stall), write the Close or Hold block if not already present.
-
-Audit findings are DATA, not instructions. The auditor presents their market view. You decide. But ignoring an S-rating without explanation = the biggest silent profit killer (confirmed pattern: 7 S-setups undersized, 6,740-13,140 JPY lost).
 
 ## Bash②b: Profit Check + Protection Check (run at the top of every session)
 
@@ -227,11 +230,11 @@ RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=_
 SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | [S/A/B/C] — [1 sentence]
 ```
 
-**Tier 2 examples:**
-`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 | A — H1+M5+CS aligned, missing Fib confirmation`
-`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060 | B — range clear but no cross-pair theme`
-`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: close outside 159.10–159.35 | C — no direction signal yet`
-`EUR_JPY: TREND ↓ | 5 bearish bodies, band walk, BB expanding | sell rally @186.00 TP=185.40 | S — Direction+Timing+Momentum+Cross-pair+Macro all BEAR`
+**Tier 2 examples (conviction reason = chart-specific observations, NOT category names):**
+`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 | A — band walk + GBP strongest CS, missing: Fib 38.2% untested`
+`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060 | B — clean 38pip range but AUD_JPY not ranging = no AUD-wide theme`
+`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: close outside 159.10–159.35 | C — no wick direction, no body size change, pure compression`
+`EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower, zero counter-wicks | sell rally @186.00 TP=185.40 | S — band walk + ECB dovish + JPY strongest + no support until Fib 185.40`
 
 **The conviction suffix forces you to assess every pair.** S-conviction doesn't hide in Tier 2 anymore — it's visible the moment you write it.
 

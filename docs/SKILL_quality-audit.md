@@ -154,45 +154,69 @@ If wrong → ___ (specific scenario + price level where this trade loses money i
 - **WATCH** = one or two data points against, but thesis still plausible
 - **SOUND** = your data confirms the trader's thesis. Say so and move on
 
-### Section C: My Best Trades Right Now (7-Pair Conviction Assessment)
+### Section C: 7-Pair Predictions + Follow-up
 
-**This is where S-conviction gets discovered.** The scanner catches fixed patterns. You see the FULL picture — charts + data + macro + cross-pair. Write what YOU would trade on every pair, not what the scanner found.
+**This is where S-conviction gets discovered AND where you hold yourself accountable.** Two parts: (1) check last cycle's predictions, (2) write new predictions.
 
-For ALL 7 pairs, write this block. You already have: chart PNGs (visual), profit_check (data), fib_wave (structure), news_digest (macro), Regime Map (your own read). Connect them into a trade story.
+#### Part 1: Follow-up (check your last predictions)
+
+Read the previous `logs/quality_audit.md` (loaded in Step 2). Find your last cycle's predictions. For each pair you predicted, check the current price from Step 1 data and write:
 
 ```
-### My Best Trades Right Now
+### Follow-up (vs last cycle)
+EUR_USD: Predicted [price] [DIR]. Actual: [current price] ([+/-N]pip [toward/against]). [RIGHT/WRONG/PARTIAL].
+GBP_JPY: Predicted [price] [DIR]. Actual: [current price] ([+/-N]pip [toward/against]). [RIGHT/WRONG/PARTIAL].
+(all 7 pairs)
 
-USD_JPY: [LONG/SHORT] @___ because [what the chart shows + why NOW — cite candle pattern, BB position, momentum from PNG]
-  FOR: [category] + [category] + [category] (from profit_check, fib_wave, regime, macro, cross-pair)
-  Different lens: [1 category NOT in FOR — check it] → [supports / contradicts / neutral]
-  AGAINST: [specific risk — "nothing" only if you checked all 6 categories]
-  → Conviction: [S/A/B/C] — [story coherence: how many pieces point the same way]
+Trader responses (from state.md "Audit Response" section):
+- {PAIR}: Trader [agreed/disagreed] because "___". Result: trader was [right/wrong] — [1 sentence what happened]
 
-EUR_USD: [LONG/SHORT] @___ because ___
-  FOR: ___
-  Different lens: ___ → ___
-  AGAINST: ___
-  → Conviction: [S/A/B/C] — ___
-
-GBP_USD: (same format)
-AUD_USD: (same format)
-EUR_JPY: (same format)
-GBP_JPY: (same format)
-AUD_JPY: (same format)
-
-Scanner supplement: [s_conviction_scan results if any — note recipe name + accuracy tier]
-
-🔥 Strongest NOT held by trader: {PAIR} {DIR} — conviction [S/A] because [full rationale]
-   Trader's state.md says: "___" (why they don't hold this — quote or summarize)
-   My counter: [why the trader should reconsider — what data/chart they're not seeing]
+My accuracy this cycle: _/7 correct direction. Pattern: [what I keep getting right/wrong — e.g. "JPY crosses unreliable", "EUR trend calls solid"]
 ```
 
-**S-conviction = story coherence.** 3+ categories in FOR + Different lens supports + no credible AGAINST = S. You don't need the scanner to tell you this — you have the charts and data. The scanner is a supplement that adds confidence when it agrees.
+**This follow-up is the anti-bot mechanism.** "Predicted 186.00, actual 185.87" is a FACT that changes every cycle. You can't template it. And "my accuracy: 4/7" forces you to see where your judgment is strong and weak.
 
-**If no pair reaches S or A**: Write it honestly. But check: did you really look at cross-pair alignment? Currency-wide moves (3+ pairs same direction) often push B → S. Did you check macro? A clear news catalyst + chart alignment = S even without perfect indicators.
+**First cycle (no previous predictions):** Write `First audit cycle — no follow-up yet.` and skip to Part 2.
 
-**"🔥 Strongest NOT held"** is the trader's action item. If nothing reaches S/A conviction, write: `No S/A candidates. Strongest is {PAIR} at B — missing: {what would make it A or S}`
+#### Part 2: New Predictions (all 7 pairs)
+
+For each pair, write what you see and what will happen next. You have: chart PNGs (visual read from Section E), profit_check data, fib_wave structure, news_digest macro, Regime Map. Connect them into a prediction.
+
+```
+### 7-Pair Predictions
+
+USD_JPY: [what the M5 chart shows RIGHT NOW — specific candles, specific price levels, specific pattern]
+  → Price [will/should/might] reach [specific price] in next [30min/1h/2h] because [evidence from chart + data + macro]
+  Wrong if: [specific price level or event that kills this prediction]
+  Conviction: [S/A/B/C] | [LONG/SHORT] @___ TP=___
+
+EUR_USD: [chart observation] → [prediction with price + timeframe] because [evidence]. Wrong if: ___. Conviction: ___
+GBP_USD: (same)
+AUD_USD: (same)
+EUR_JPY: (same)
+GBP_JPY: (same)
+AUD_JPY: (same)
+
+Scanner supplement: [s_conviction_scan matches, if any — note accuracy tier]
+```
+
+**Examples that force thinking (model mimics these):**
+
+S-conviction: `EUR_USD: 5 bull bodies expanding along BB upper, zero counter-wicks, GBP_USD doing same = USD-wide. → Price will reach 1.1835 in next 1h because band walk + ECB hawkish + no resistance until Fib 161.8% at 1.1840. Wrong if: 1.1790 body close (20EMA break). Conviction: S | LONG @1.1800 TP=1.1835`
+
+B-conviction: `AUD_JPY: Mixed small candles mid-range, wicks both sides, no directional body. → Price might drift toward 112.60 but could reverse to 112.30. Wrong if: either band breaks with volume. Conviction: B | BUY @112.32 TP=112.58`
+
+C-conviction: `USD_JPY: Tight 8-pip band, tiny bodies, no wick direction, squeeze. → No directional call until breakout. Watching BB expansion. Wrong if: N/A (no prediction). Conviction: C | WAIT`
+
+**S-conviction is obvious in the prediction language.** "Will reach 1.1835" = the story is clear, everything points the same way. "Might drift" = mixed evidence. "No directional call" = can't read it. The confidence of your prediction IS your conviction.
+
+```
+🔥 Strongest NOT held by trader: {PAIR} {DIR} — [S/A] because [full prediction rationale]
+   Trader's state.md says: "___" (why they skip this)
+   My counter: [what data/chart they're missing]
+```
+
+**If no pair reaches S or A**: `No S/A candidates. Best: {PAIR} at B — would become S if: [specific missing piece]`
 
 ### Section D: Pattern Alert
 
