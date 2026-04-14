@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-15 — S-Conviction v2: prediction format + follow-up loop (anti-bot refinement)
+
+**Problem with v1**: The 7-pair conviction assessment used FOR/Different lens/AGAINST format = category-checking. "FOR: Direction + Timing + Momentum" can be copy-pasted every cycle without thinking. Also: audit-trader loop was one-way (audit writes → trader reads → no follow-up). No accountability for predictions.
+
+**Fix**:
+1. **Audit Section C**: FOR/AGAINST category-checking → prediction format. Each pair now requires: specific chart observation → specific price target + timeframe → "wrong if" condition → conviction. "Price will reach 1.1835 in 1h because band walk + ECB hawkish" forces chart-specific thinking. "Direction + Timing" doesn't.
+2. **Audit Follow-up**: New sub-section at top of Section C. Audit checks its own previous predictions vs actual price movement. "Predicted 186.00, actual 185.87, 4/7 correct direction." Anti-bot: facts change every cycle. Pattern awareness: "I keep getting JPY crosses wrong."
+3. **Audit Response in state.md**: Trader writes structured responses to audit S/A predictions. Audit reads these next cycle and evaluates whether trader was right. Closes the feedback loop.
+4. **Tier 2 examples**: Category names ("H1+M5+CS aligned") → chart-specific ("band walk + GBP strongest CS, missing: Fib 38.2% untested"). Models mimic examples.
+
 ## 2026-04-15 — S-Conviction Discovery Overhaul: narrative assessment replaces scanner gating
 
 **Problem**: S-conviction trades are the system's biggest profit driver, but neither trader nor audit finds them. Root cause: S-conviction discovery was bottlenecked through `s_conviction_scan.py` — a pattern matcher with 6 fixed recipes and binary thresholds (StochRSI ≤0.05 / ≥0.95). Real S-conviction comes from story coherence ("everything points the same way"), not hitting exact indicator values. A strong trend pullback at StochRSI=0.15 IS S-conviction but the scanner doesn't fire. Result: ~0-1 S-setups found per day when 3-5 exist at any given time.
