@@ -188,6 +188,15 @@ profit_check.py evaluates the following simultaneously and outputs a recommendat
 - **Example of valid basis**: "H1 ADX=30 DI+ accelerating, 15 pip left to TP target, correlated pairs also in same direction"
 - **Invalid basis**: "Still looks like it'll move" / "Thesis is alive (no specifics)"
 
+### STEP 3b: S-conviction override (when profit_check outputs Pullback Quality)
+
+When profit_check includes a `Pullback Quality` section (positions at ATR×0.8+):
+- **S-conviction + NOISE/SQUEEZE** → Even if profit_check recommends TAKE_PROFIT/HALF_TP, consider holding or widening trail. The 12-indicator analysis says the pullback is healthy or a squeeze is loading.
+- **S-conviction + DISTRIBUTION** → Even if profit_check recommends HOLD, consider half TP. The indicators show real reversal signals.
+- **B/C conviction** → Ignore Pullback Quality entirely. Follow STEP 3 as usual.
+
+This does NOT override STEP 3 for B/C trades. It only applies to S/A conviction.
+
 ### Preventing Junk Profits
 
 Below ATR×0.5 and not worth the spread = too early. **However, if momentum reversal is detected, taking profit before ATR target is OK.**

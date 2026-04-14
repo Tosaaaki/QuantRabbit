@@ -166,6 +166,199 @@ def check_sr_distance(d: dict) -> str:
     return " | ".join(parts) if parts else "no S/R data"
 
 
+def assess_pullback_quality(pair: str, side: str, all_technicals: dict) -> dict:
+    """Pullback Quality Check — Is the current M5 pullback NOISE, SQUEEZE, or DISTRIBUTION?
+
+    Uses 12 underused indicators to classify pullback quality for S/A-conviction trades.
+    This is ADDITIONAL data — does not replace the existing recommendation.
+    """
+    tfs = all_technicals.get(pair, {})
+    h1 = tfs.get("H1", {})
+    m5 = tfs.get("M5", {})
+    h4 = tfs.get("H4", {})
+
+    if not h1 or not m5:
+        return {"verdict": "NO_DATA", "evidence": [], "details": {}}
+
+    evidence = []
+    noise_score = 0
+    squeeze_score = 0
+    dist_score = 0
+
+    # --- H1 Trend Health ---
+    h1_ema_slope_20 = h1.get("ema_slope_20", 0)
+    h1_macd_hist = h1.get("macd_hist", 0)
+    h1_div_score = h1.get("div_score", 0)
+    h1_chaikin = h1.get("chaikin_vol", 0)
+
+    # EMA slope direction
+    if side == "LONG":
+        slope_healthy = h1_ema_slope_20 > 0.0001
+        slope_accel = h1_ema_slope_20 > 0.0003
+    else:
+        slope_healthy = h1_ema_slope_20 < -0.0001
+        slope_accel = h1_ema_slope_20 < -0.0003
+
+    if slope_accel:
+        evidence.append(f"H1 ema_slope_20={h1_ema_slope_20:+.4f}(accelerating)")
+        noise_score += 2
+    elif slope_healthy:
+        evidence.append(f"H1 ema_slope_20={h1_ema_slope_20:+.4f}(healthy)")
+        noise_score += 1
+    else:
+        evidence.append(f"H1 ema_slope_20={h1_ema_slope_20:+.4f}(flat/adverse)")
+        dist_score += 2
+
+    # MACD histogram direction (expanding = trend healthy)
+    if side == "LONG":
+        macd_expanding = h1_macd_hist > 0
+    else:
+        macd_expanding = h1_macd_hist < 0
+    if macd_expanding:
+        evidence.append(f"H1 macd_hist={h1_macd_hist:+.5f}(aligned)")
+        noise_score += 1
+    else:
+        evidence.append(f"H1 macd_hist={h1_macd_hist:+.5f}(adverse)")
+        dist_score += 1
+
+    # Divergence = real concern
+    if h1_div_score > 0:
+        evidence.append(f"H1 div_score={h1_div_score:.1f}(DIVERGENCE)")
+        dist_score += 3
+    else:
+        evidence.append("H1 div=none")
+        noise_score += 1
+
+    # --- M5 Volume Character ---
+    m5_chaikin = m5.get("chaikin_vol", 0)
+    if m5_chaikin < -0.03:
+        evidence.append(f"M5 chaikin_vol={m5_chaikin:.3f}(vol_dying=weak_pullback)")
+        noise_score += 2
+    elif m5_chaikin > 0.03:
+        evidence.append(f"M5 chaikin_vol={m5_chaikin:.3f}(vol_expanding=real_selling)")
+        dist_score += 2
+    else:
+        evidence.append(f"M5 chaikin_vol={m5_chaikin:.3f}(neutral)")
+
+    # --- BB / KC Squeeze Detection ---
+    m5_bbw = m5.get("bbw", 0)
+    m5_kc = m5.get("kc_width", 0)
+    m5_donchian = m5.get("donchian_width", 0)
+
+    if m5_kc > 0 and m5_bbw > 0:
+        if m5_bbw < m5_kc:
+            evidence.append(f"M5 bbw={m5_bbw:.5f} < kc={m5_kc:.5f}(SQUEEZE)")
+            squeeze_score += 3
+        else:
+            evidence.append(f"M5 bbw={m5_bbw:.5f} >= kc={m5_kc:.5f}(no squeeze)")
+
+    # --- Candle Character ---
+    m5_lower_wick = m5.get("lower_wick_avg_pips", 0)
+    m5_upper_wick = m5.get("upper_wick_avg_pips", 0)
+
+    if side == "LONG":
+        if m5_lower_wick > m5_upper_wick * 1.5 and m5_lower_wick > 0.3:
+            evidence.append(f"M5 wicks: lower={m5_lower_wick:.2f} > upper={m5_upper_wick:.2f}(buyers_active)")
+            noise_score += 1
+        elif m5_upper_wick > m5_lower_wick * 1.5 and m5_upper_wick > 0.3:
+            evidence.append(f"M5 wicks: upper={m5_upper_wick:.2f} > lower={m5_lower_wick:.2f}(sellers_rejecting)")
+            dist_score += 1
+        else:
+            evidence.append(f"M5 wicks: lower={m5_lower_wick:.2f} upper={m5_upper_wick:.2f}(balanced)")
+    else:  # SHORT
+        if m5_upper_wick > m5_lower_wick * 1.5 and m5_upper_wick > 0.3:
+            evidence.append(f"M5 wicks: upper={m5_upper_wick:.2f} > lower={m5_lower_wick:.2f}(sellers_active)")
+            noise_score += 1
+        elif m5_lower_wick > m5_upper_wick * 1.5 and m5_lower_wick > 0.3:
+            evidence.append(f"M5 wicks: lower={m5_lower_wick:.2f} > upper={m5_upper_wick:.2f}(buyers_rejecting)")
+            dist_score += 1
+        else:
+            evidence.append(f"M5 wicks: lower={m5_lower_wick:.2f} upper={m5_upper_wick:.2f}(balanced)")
+
+    # --- Structure: Room to Run ---
+    if side == "LONG":
+        cluster_gap = m5.get("cluster_high_gap", h1.get("cluster_high_gap", 0))
+        swing_dist = m5.get("swing_dist_high", h1.get("swing_dist_high", 0))
+    else:
+        cluster_gap = m5.get("cluster_low_gap", h1.get("cluster_low_gap", 0))
+        swing_dist = m5.get("swing_dist_low", h1.get("swing_dist_low", 0))
+
+    if cluster_gap is not None and cluster_gap > 15:
+        evidence.append(f"cluster_gap={cluster_gap:.1f}pip(open_road)")
+        noise_score += 1
+    elif cluster_gap is not None and cluster_gap < 5:
+        evidence.append(f"cluster_gap={cluster_gap:.1f}pip(wall_ahead)")
+        dist_score += 1
+    elif cluster_gap is not None:
+        evidence.append(f"cluster_gap={cluster_gap:.1f}pip")
+
+    # --- ROC (rate of change) ---
+    m5_roc5 = m5.get("roc5", 0)
+    m5_roc10 = m5.get("roc10", 0)
+    if side == "LONG":
+        if m5_roc5 < 0 and m5_roc10 > 0:
+            evidence.append(f"M5 roc5={m5_roc5:.3f}(dip) roc10={m5_roc10:.3f}(trend_ok)")
+            noise_score += 1
+        elif m5_roc5 < 0 and m5_roc10 < 0:
+            evidence.append(f"M5 roc5={m5_roc5:.3f} roc10={m5_roc10:.3f}(both_negative)")
+            dist_score += 1
+    else:
+        if m5_roc5 > 0 and m5_roc10 < 0:
+            evidence.append(f"M5 roc5={m5_roc5:+.3f}(bounce) roc10={m5_roc10:+.3f}(trend_ok)")
+            noise_score += 1
+        elif m5_roc5 > 0 and m5_roc10 > 0:
+            evidence.append(f"M5 roc5={m5_roc5:+.3f} roc10={m5_roc10:+.3f}(both_positive)")
+            dist_score += 1
+
+    # --- Cross-pair alignment count ---
+    base, quote = pair.split("_")
+    aligned = 0
+    total_related = 0
+    for other_pair in PAIRS:
+        if other_pair == pair:
+            continue
+        other_base, other_quote = other_pair.split("_")
+        if other_base != base and other_quote != quote:
+            continue
+        total_related += 1
+        other_m5 = all_technicals.get(other_pair, {}).get("M5", {})
+        other_slope = other_m5.get("ema_slope_5", 0)
+        if other_base == base:
+            if (side == "LONG" and other_slope > 0.0001) or (side == "SHORT" and other_slope < -0.0001):
+                aligned += 1
+        elif other_quote == quote:
+            if (side == "LONG" and other_slope > 0.0001) or (side == "SHORT" and other_slope < -0.0001):
+                aligned += 1
+
+    if total_related > 0:
+        evidence.append(f"cross-pair: {aligned}/{total_related} aligned")
+        if aligned >= total_related * 0.6:
+            noise_score += 2
+        elif aligned <= total_related * 0.3:
+            dist_score += 1
+
+    # --- Verdict ---
+    if squeeze_score >= 3 and noise_score > dist_score:
+        verdict = "SQUEEZE"
+        desc = "breakout loading. Trail/TP premature."
+    elif dist_score > noise_score and dist_score >= 3:
+        verdict = "DISTRIBUTION"
+        desc = "reversal signals emerging. Consider HALF TP."
+    elif noise_score > dist_score:
+        verdict = "NOISE"
+        desc = "healthy pullback in intact trend. Hold."
+    else:
+        verdict = "MIXED"
+        desc = "signals inconclusive. Use chart + regime table."
+
+    return {
+        "verdict": verdict,
+        "description": desc,
+        "evidence": evidence,
+        "scores": {"noise": noise_score, "squeeze": squeeze_score, "distribution": dist_score},
+    }
+
+
 def assess_position(trade: dict, all_technicals: dict) -> dict:
     """Take profit assessment for a single position"""
     pair = trade["instrument"]
@@ -333,6 +526,13 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
     result["take_signals"] = take_signals
     result["hold_signals"] = hold_signals
 
+    # --- Pullback Quality Check (for profitable positions at ATR×0.8+) ---
+    if upl > 0 and atr_ratio >= 0.8:
+        pq = assess_pullback_quality(pair, side, all_technicals)
+        result["pullback_quality"] = pq
+    else:
+        result["pullback_quality"] = None
+
     return result
 
 
@@ -356,6 +556,17 @@ def format_result(r: dict) -> str:
     )
     for sig in r["signals"]:
         lines.append(f"  {sig}")
+
+    # Pullback Quality section (if available)
+    pq = r.get("pullback_quality")
+    if pq and pq.get("verdict") != "NO_DATA":
+        lines.append("  ── Pullback Quality ──")
+        for ev in pq["evidence"]:
+            lines.append(f"  {ev}")
+        scores = pq["scores"]
+        v = pq["verdict"]
+        v_icon = {"NOISE": "🟢", "SQUEEZE": "🔵", "DISTRIBUTION": "🔴", "MIXED": "🟡"}.get(v, "⚪")
+        lines.append(f"  → PULLBACK = {v_icon} {v} (N:{scores['noise']} S:{scores['squeeze']} D:{scores['distribution']}) — {pq['description']}")
 
     return "\n".join(lines)
 

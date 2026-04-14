@@ -69,6 +69,30 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 
 **BE SL (SL at entry price) is banned at ATR×1.0+.** It gives back 100% of unrealized profit. That's not risk management — it's the 3/27 Default HOLD trap in disguise. If you write "SL moved to BE", you must first write how much profit you're giving back and why that's better than HALF TP.
 
+### S/A-conviction TP — Pullback Quality で判断を分岐
+
+profit_check outputs a `Pullback Quality` section for positions at ATR×0.8+. It uses 12 indicators (ema_slope, chaikin_vol, bbw/kc ratio, wick patterns, cluster gaps, ROC, divergence, cross-pair) to classify the current M5 state. **For S/A-conviction trades only**, use it to override the default:
+
+| Pullback Quality | Conviction S | Conviction A | Conviction B/C |
+|------------------|-------------|-------------|----------------|
+| **NOISE** (healthy pullback) | trail ATR×1.5. No TP tightening | trail ATR×1.0 | Existing rules |
+| **SQUEEZE** (BB<KC, breakout loading) | Remove trail. Remove TP. Wait for BB breakout | trail ATR×1.0, hold | Existing rules |
+| **DISTRIBUTION** (div+vol expanding) | HALF TP + consider rotation SHORT | HALF TP | Existing rules |
+| **MIXED** | Use regime+chart table above | Use regime+chart table above | Existing rules |
+
+B/C conviction → ignore Pullback Quality entirely. Use the regime+chart table above (no change).
+
+**Why this matters**: 4/7 best day: S-entries captured 25-30pip with trail ATR×1.5. Recent S-entries captured 12-14pip with trail ATR×0.6. Same conviction, half the profit. The difference: 4/7 had macro clarity (Iran ceasefire = hold everything). Without macro clarity, Pullback Quality provides the same "noise vs real" filter using indicators.
+
+### Trail width — determined by H1 state, not a fixed ATR multiple
+
+| H1 state | Trail width | Rationale |
+|----------|-------------|-----------|
+| ema_slope_20 rising + chaikin_vol negative | ATR×1.5 | Trend accelerating + weak pullback |
+| ema_slope_20 positive but decelerating + chaikin_vol ≈ 0 | ATR×1.0 | Trend healthy, standard |
+| ema_slope_20 flat + chaikin_vol positive | ATR×0.6 | Pullback has volume. Prepare to exit |
+| div_score > 0 + upper_wick_avg increasing | Remove trail → half TP at market | Reversal signal |
+
 **protection_check**: Data about current TP/SL/Trailing status. You decide what to do.
 
 - `ROLLOVER WINDOW` → **Immediately run `python3 tools/rollover_guard.py remove`.** This removes all SL/Trailing before the OANDA daily maintenance spread spike. After rollover passes (next session), protection_check will say "Restore SLs" → run `python3 tools/rollover_guard.py restore`.

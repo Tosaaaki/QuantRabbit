@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-14 — Pullback Quality Check in profit_check.py
+
+**Root cause**: S-conviction trades captured 12-14pip (trail ATR×0.6) vs 4/7 best day 25-30pip (trail ATR×1.5). Same conviction, half the profit. Trader used StRSI alone to judge pullbacks, ignoring 12 other relevant indicators in the cache.
+
+**Change**: Added `assess_pullback_quality()` to `profit_check.py`. For positions at ATR×0.8+, outputs NOISE/SQUEEZE/DISTRIBUTION verdict using 12 indicators: ema_slope_20, chaikin_vol, bbw/kc ratio, wick patterns, cluster gaps, ROC, div_score, cross-pair alignment.
+
+**Impact on existing logic**: Zero. Existing recommendation (TAKE_PROFIT/HALF_TP/HOLD) scoring unchanged. Pullback Quality is additive output. B/C conviction trades ignore it entirely.
+
+**Files**: `tools/profit_check.py` (function added), `docs/SKILL_trader.md` (S-conviction TP table + trail width guide added), `.claude/rules/risk-management.md` (STEP 3b added), `collab_trade/strategy_memory.md` (observation added).
+
 ## 2026-04-14 — Daily summary: dedup guard + show P&L as % of balance
 
 `slack_daily_summary.py`: Added dedup guard — writes `logs/daily_summary_last.txt` with the posted date, skips if already posted for that date. Prevents duplicate posts when task is re-triggered. `--date` manual runs bypass the guard.
