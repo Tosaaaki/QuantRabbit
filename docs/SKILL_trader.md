@@ -311,11 +311,14 @@ FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
+If nothing by: ___ [when the expected move should have started + what you do. "2h → close at market" / "London open → re-evaluate as Swing"]
 Margin after: ___% (include pending LIMITs → worst case ___%)
 → Conviction: [S/A/B/C] | Size: ___u (___% NAV)
 ```
 
 **"Pair edge" forces you to copy the exact numbers from the TRADES section of session_data.** session_data prints `| edge: 70% WR, +612JPY total` next to each trade. Copy that number. If no trade is open for this pair, check strategy_memory.md Per-Pair section. Writing made-up numbers is a lie to yourself — the data is right there in your session_data output.
+
+**"If nothing by" is the orphan killer.** "If I'm wrong" covers the loss scenario. But trades also die by doing nothing — the move never comes, you hold past your window, and close in thin liquidity at the worst time. 41 NY entries held overnight and dumped in Tokyo morning = -14,094 JPY. Every one of those would have been avoided if the trader had written "If nothing by 2h: close before Tokyo" at entry. Writing this line forces you to think: when does my expected move happen, and what session will I be in if it doesn't?
 
 **"Margin after" moved here from the separate margin gate** — one block, all guard lines visible together.
 

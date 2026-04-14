@@ -111,6 +111,7 @@ FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
+If nothing by: ___ [when the expected move should have started + what you do]
 → Conviction: [S/A/B/C] | Size: ___u (___% NAV)
 ```
 
