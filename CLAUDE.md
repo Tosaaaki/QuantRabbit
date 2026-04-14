@@ -60,7 +60,7 @@ How to achieve this:
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
-| quality-audit | Sonnet | Every 30 min | ~3-4 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case → persistent Auditor's View in logs/quality_audit.md (includes Regime Map + Range Opportunities) |
+| quality-audit | Sonnet | Every 30 min | ~3-4 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction assessment** (own trade plan + S/A/B/C rating for every pair based on chart + data — primary S-conviction discovery mechanism) → persistent Auditor's View in logs/quality_audit.md (includes Regime Map + Range Opportunities + Conviction Map) |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 

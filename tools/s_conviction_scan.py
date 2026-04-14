@@ -71,7 +71,7 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         if g(h1, "rsi") >= 75:
             extra.append(f"H1 RSI={g(h1, 'rsi'):.0f}")
         div_str = f" + {'+'.join(extra)}" if extra else ""
-        matches.append(f"🎯 {pair} SHORT Counter-S: H4+H1 StRSI=1.0 + M5 StRSI=0.0{div_str}")
+        matches.append(f"🎯 {pair} SHORT Counter-S [proven 4/5]: H4+H1 StRSI=1.0 + M5 StRSI=0.0{div_str}")
 
     if h4_os and h1_os and m5_ob:
         extra = []
@@ -82,7 +82,7 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         if abs(g(h1, "cci")) >= 200:
             extra.append(f"H1 CCI={g(h1, 'cci'):.0f}")
         div_str = f" + {'+'.join(extra)}" if extra else ""
-        matches.append(f"🎯 {pair} LONG Counter-S: H4+H1 StRSI=0.0 + M5 StRSI=1.0{div_str}")
+        matches.append(f"🎯 {pair} LONG Counter-S [proven 4/5]: H4+H1 StRSI=0.0 + M5 StRSI=1.0{div_str}")
 
     # ── Recipe 2: H1 Trend + M5 Dip (Confirmed Pattern) ──
     # H1 ADX>25 + DI aligned + M5 StRSI extreme = dip buy/sell in trend
@@ -97,7 +97,7 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         if abs(g(m5, "cci")) >= 100:
             extra.append(f"M5 CCI={g(m5, 'cci'):.0f}")
         al_str = f" + {'+'.join(extra)}" if extra else ""
-        matches.append(f"🎯 {pair} LONG Trend-Dip-S: H1 ADX={h1_adx:.0f} BULL + M5 StRSI=0.0{al_str}")
+        matches.append(f"🎯 {pair} LONG Trend-Dip-S [noisy 3/12]: H1 ADX={h1_adx:.0f} BULL + M5 StRSI=0.0{al_str}")
 
     if h1_adx >= 25 and h1_dim > h1_dip and m5_ob:
         extra = []
@@ -106,7 +106,7 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         if abs(g(m5, "cci")) >= 100:
             extra.append(f"M5 CCI={g(m5, 'cci'):.0f}")
         al_str = f" + {'+'.join(extra)}" if extra else ""
-        matches.append(f"🎯 {pair} SHORT Trend-Dip-S: H1 ADX={h1_adx:.0f} BEAR + M5 StRSI=1.0{al_str}")
+        matches.append(f"🎯 {pair} SHORT Trend-Dip-S [noisy 3/12]: H1 ADX={h1_adx:.0f} BEAR + M5 StRSI=1.0{al_str}")
 
     # ── Recipe 3: Multi-TF Divergence + Extreme ──
     # H4 div + H1 div + (H1 or M5 extreme) = reversal S
@@ -119,9 +119,9 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         h4_bear_div = g(h4, "div_rsi_kind") in [2, 4] or g(h4, "div_macd_kind") in [2, 4]
         h4_bull_div = g(h4, "div_rsi_kind") in [1, 3] or g(h4, "div_macd_kind") in [1, 3]
         if h4_bear_div and h1_ob:
-            matches.append(f"🎯 {pair} SHORT Div-Reversal-S: H4+H1 bear div + H1 extreme OB")
+            matches.append(f"🎯 {pair} SHORT Div-Reversal-S [tracking]: H4+H1 bear div + H1 extreme OB")
         elif h4_bull_div and h1_os:
-            matches.append(f"🎯 {pair} LONG Div-Reversal-S: H4+H1 bull div + H1 extreme OS")
+            matches.append(f"🎯 {pair} LONG Div-Reversal-S [tracking]: H4+H1 bull div + H1 extreme OS")
 
     # ── Recipe 4: Currency Strength Gap + MTF Alignment ──
     # CS gap >= 0.8 + H4+H1+M5 DI aligned + H1 ADX>20 + M5 momentum confirmation
@@ -144,11 +144,11 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
 
         if cs_gap >= 0.8 and h4_bull and h1_bull and m5_bull and h1_trending and m5_momentum_bull:
             matches.append(
-                f"🎯 {pair} LONG Momentum-S: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BULL + ADX={h1_adx:.0f}"
+                f"🎯 {pair} LONG Momentum-S [tracking]: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BULL + ADX={h1_adx:.0f}"
             )
         elif cs_gap <= -0.8 and not h4_bull and not h1_bull and not m5_bull and h1_trending and m5_momentum_bear:
             matches.append(
-                f"🎯 {pair} SHORT Momentum-S: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BEAR + ADX={h1_adx:.0f}"
+                f"🎯 {pair} SHORT Momentum-S [tracking]: CS {base}({base_cs:+.2f}) vs {quote}({quote_cs:+.2f}) gap={cs_gap:.2f} + H4+H1+M5 BEAR + ADX={h1_adx:.0f}"
             )
 
     # ── Recipe 5: Structural Confluence + Timing ──
@@ -166,23 +166,24 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         if at_bb_lower and m5_os and h1_dip > h1_dim:
             ichi = g(m5, "ichimoku_cloud_pos")
             ichi_str = f" + Ichi={ichi:.0f}pip above cloud" if ichi > 0 else ""
-            matches.append(f"🎯 {pair} LONG Structural-S: M5 at BB lower + StRSI=0.0 + H1 BULL{ichi_str}")
+            matches.append(f"🎯 {pair} LONG Structural-S [proven 3/3]: M5 at BB lower + StRSI=0.0 + H1 BULL{ichi_str}")
 
         if at_bb_upper and m5_ob and h1_dim > h1_dip:
-            matches.append(f"🎯 {pair} SHORT Structural-S: M5 at BB upper + StRSI=1.0 + H1 BEAR")
+            matches.append(f"🎯 {pair} SHORT Structural-S [proven 3/3]: M5 at BB upper + StRSI=1.0 + H1 BEAR")
 
     # ── Recipe 6: Squeeze Breakout + Trend ──
-    # M5 squeeze + H1 strong trend (ADX>30) + M1 directional = breakout S
-    m5_squeeze = m5_bbw < 0.002
-    h1_strong = h1_adx >= 30
-    m1_dir_bull = g(m1, "plus_di") > g(m1, "minus_di") + 10  # clear directional
-    m1_dir_bear = g(m1, "minus_di") > g(m1, "plus_di") + 10
-
-    if m5_squeeze and h1_strong:
-        if h1_dip > h1_dim and m1_dir_bull:
-            matches.append(f"🎯 {pair} LONG Squeeze-S: M5 squeeze + H1 ADX={h1_adx:.0f} BULL + M1 buyers confirmed")
-        elif h1_dim > h1_dip and m1_dir_bear:
-            matches.append(f"🎯 {pair} SHORT Squeeze-S: M5 squeeze + H1 ADX={h1_adx:.0f} BEAR + M1 sellers confirmed")
+    # DISABLED: 0/4 accuracy (4/9 audit). All 4 signals were wrong direction.
+    # EUR_USD SHORT @1.16518 → price went UP +9.8pip. USD_JPY LONG @158.86 → stayed flat.
+    # Kept as code for potential future refinement but does not fire.
+    # m5_squeeze = m5_bbw < 0.002
+    # h1_strong = h1_adx >= 30
+    # m1_dir_bull = g(m1, "plus_di") > g(m1, "minus_di") + 10
+    # m1_dir_bear = g(m1, "minus_di") > g(m1, "plus_di") + 10
+    # if m5_squeeze and h1_strong:
+    #     if h1_dip > h1_dim and m1_dir_bull:
+    #         matches.append(f"🎯 {pair} LONG Squeeze-S: ...")
+    #     elif h1_dim > h1_dip and m1_dir_bear:
+    #         matches.append(f"🎯 {pair} SHORT Squeeze-S: ...")
 
     return matches
 
@@ -192,7 +193,7 @@ def deduplicate(matches: list[str]) -> list[str]:
     import re as _re
     best = {}
     for line in matches:
-        m = _re.match(r"🎯 (\w+) (LONG|SHORT) (\S+): (.+)", line)
+        m = _re.match(r"🎯 (\w+) (LONG|SHORT) (\S+) \[.*?\]: (.+)", line)
         if not m:
             continue
         key = (m.group(1), m.group(2))  # (pair, direction)

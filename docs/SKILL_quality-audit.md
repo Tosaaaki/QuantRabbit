@@ -154,16 +154,45 @@ If wrong → ___ (specific scenario + price level where this trade loses money i
 - **WATCH** = one or two data points against, but thesis still plausible
 - **SOUND** = your data confirms the trader's thesis. Say so and move on
 
-### Section C: Missed Opportunities
+### Section C: My Best Trades Right Now (7-Pair Conviction Assessment)
+
+**This is where S-conviction gets discovered.** The scanner catches fixed patterns. You see the FULL picture — charts + data + macro + cross-pair. Write what YOU would trade on every pair, not what the scanner found.
+
+For ALL 7 pairs, write this block. You already have: chart PNGs (visual), profit_check (data), fib_wave (structure), news_digest (macro), Regime Map (your own read). Connect them into a trade story.
 
 ```
-### Missed Opportunities
-Strongest S-scan NOT_HELD: {PAIR} {DIR} ({recipe})
-I would enter this because: ___ (cite the S-scan recipe data + supporting evidence from fib_wave/profit_check)
-Trader likely skipped because: ___ (check state.md Tier 2 scan or 7-pair scan section for their reasoning)
+### My Best Trades Right Now
+
+USD_JPY: [LONG/SHORT] @___ because [what the chart shows + why NOW — cite candle pattern, BB position, momentum from PNG]
+  FOR: [category] + [category] + [category] (from profit_check, fib_wave, regime, macro, cross-pair)
+  Different lens: [1 category NOT in FOR — check it] → [supports / contradicts / neutral]
+  AGAINST: [specific risk — "nothing" only if you checked all 6 categories]
+  → Conviction: [S/A/B/C] — [story coherence: how many pieces point the same way]
+
+EUR_USD: [LONG/SHORT] @___ because ___
+  FOR: ___
+  Different lens: ___ → ___
+  AGAINST: ___
+  → Conviction: [S/A/B/C] — ___
+
+GBP_USD: (same format)
+AUD_USD: (same format)
+EUR_JPY: (same format)
+GBP_JPY: (same format)
+AUD_JPY: (same format)
+
+Scanner supplement: [s_conviction_scan results if any — note recipe name + accuracy tier]
+
+🔥 Strongest NOT held by trader: {PAIR} {DIR} — conviction [S/A] because [full rationale]
+   Trader's state.md says: "___" (why they don't hold this — quote or summarize)
+   My counter: [why the trader should reconsider — what data/chart they're not seeing]
 ```
 
-If no NOT_HELD S-candidates exist, write: `No S-candidates missed. Scanner found: {list what was found or "no candidates"}`
+**S-conviction = story coherence.** 3+ categories in FOR + Different lens supports + no credible AGAINST = S. You don't need the scanner to tell you this — you have the charts and data. The scanner is a supplement that adds confidence when it agrees.
+
+**If no pair reaches S or A**: Write it honestly. But check: did you really look at cross-pair alignment? Currency-wide moves (3+ pairs same direction) often push B → S. Did you check macro? A clear news catalyst + chart alignment = S even without perfect indicators.
+
+**"🔥 Strongest NOT held"** is the trader's action item. If nothing reaches S/A conviction, write: `No S/A candidates. Strongest is {PAIR} at B — missing: {what would make it A or S}`
 
 ### Section D: Pattern Alert
 

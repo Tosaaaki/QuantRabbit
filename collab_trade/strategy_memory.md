@@ -10,6 +10,7 @@
 
 ### ✦ 勝ちパターン（これが金を生む — 恐怖より先に読め）
 
+- **S-conviction discovery = narrative, not scanner**: S-conviction comes from STORY COHERENCE (3+ categories align + chart tells same story + macro confirms), NOT from s_conviction_scan.py recipe matches. Scanner has narrow thresholds (StochRSI ≤0.05/≥0.95) — most S-setups have StochRSI=0.10-0.20 (shallow pullback in strong trend). At any time, 3-5 S-setups exist across 7 pairs. Discovery method: write "I would [DIR] because [story]" for every pair → S emerges when the story coheres. Auditor writes 7-pair conviction map; trader reads and responds. Scanner is supplementary confirmation (Structural-S proven 3/3, Counter-S 4/5, rest noisy or broken)
 - **EUR_USD LONGはシステム最強エッジ**: 全期間55%WR, avg+192JPY, total+15,763JPY。迷ったらEUR_USD LONG。H1 ADX>25+EUR strongest+M5 StRSI=0.0は鉄板 (3/31-4/1: 6回連続利確, 4/8: 2/2 wins +4,575JPY, 4/10: +434JPY+228JPY)
 - **AUD_JPY両方向で利益**: LONG 64%WR avg+26JPY, SHORT 59%WR avg+54JPY。両方向プラスの安定ペアだが、チャーン(close→re-enter繰返し)で利益を食い潰すリスクあり
 - **M5 StochRSI=0.0 + H1 BULL構造不変 → 高確率反発** (3/23 GBP V字+653円, 3/23 EUR BB Mid, 3/26-27複数回, 4/1 EUR_USD 5回連続成功)
