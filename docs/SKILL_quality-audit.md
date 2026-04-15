@@ -22,9 +22,9 @@ Bash B — Your own TP/SL assessment:
 cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all 2>&1; echo "---PROTECTION---"; python3 tools/protection_check.py 2>&1
 ```
 
-Bash C — Structural analysis:
+Bash C — Structural analysis (M5 + H1 for multi-TF confluence):
 ```
-cd /Users/tossaki/App/QuantRabbit && python3 tools/fib_wave.py --all 2>&1
+cd /Users/tossaki/App/QuantRabbit && python3 tools/fib_wave.py --all 2>&1 && echo "---H1 FIB---" && python3 tools/fib_wave.py --all H1 100 2>&1
 ```
 
 Bash D — Chart snapshot + regime detection (generates 14 PNGs + regime labels):
@@ -94,7 +94,8 @@ Trader says: "___ " (quote from state.md Market Narrative — their exact words)
 I [agree/disagree]: ___ (cite specific data from profit_check or fib_wave that supports or contradicts)
 Trader's Theme confidence: [proving/confirmed/late] — [CORRECT: because ___ / WRONG: should be ___ because ___]
 Trader's Top 2: [___] and [___] — [AGREE / DISAGREE: I would pick ___ because ___]
-Trader is not looking at: ___ (specific signal state.md doesn't mention. Include regime mismatches between M5 and H1)
+Trader's Currency Pulse: Best vehicle=___ — [CORRECT / WRONG: should be ___ because ___]
+Trader is not looking at: ___ (specific signal state.md doesn't mention. Include: M15 momentum conflicts, M1 currency synchrony, regime mismatches between M5/M15/H1, H4 lifecycle exhaustion)
 ```
 
 ### Section E: Regime Map + Visual Chart Read + Range Opportunities
@@ -104,16 +105,18 @@ Trader is not looking at: ___ (specific signal state.md doesn't mention. Include
 ```
 ### Regime Map (from chart_snapshot + visual confirmation)
 
-| Pair | M5 Regime | H1 Regime | M5 Visual | Range Tradeable? |
-|------|-----------|-----------|-----------|-----------------|
-| USD_JPY | [regime] | [regime] | [what you SEE: candle shape, BB position, momentum] | [YES: buy@___ sell@___ / NO: why] |
-| EUR_USD | ... | ... | ... | ... |
-| GBP_USD | ... | ... | ... | ... |
-| AUD_USD | ... | ... | ... | ... |
-| EUR_JPY | ... | ... | ... | ... |
-| GBP_JPY | ... | ... | ... | ... |
-| AUD_JPY | ... | ... | ... | ... |
+| Pair | M5 Regime | M15 Regime | H1 Regime | M5 Visual | Range Tradeable? |
+|------|-----------|------------|-----------|-----------|-----------------|
+| USD_JPY | [regime] | [regime] | [regime] | [what you SEE: candle shape, BB position, momentum] | [YES: buy@___ sell@___ / NO: why] |
+| EUR_USD | ... | ... | ... | ... | ... |
+| GBP_USD | ... | ... | ... | ... | ... |
+| AUD_USD | ... | ... | ... | ... | ... |
+| EUR_JPY | ... | ... | ... | ... | ... |
+| GBP_JPY | ... | ... | ... | ... | ... |
+| AUD_JPY | ... | ... | ... | ... | ... |
 ```
+
+**M15 Regime column**: Read from the technicals JSON (M15 ADX + BB width). M15 is the momentum shift TF — if M5=SQUEEZE and M15=TREND, the squeeze is within a trending M15 (different from M5=SQUEEZE + M15=RANGE). Flag M5↔M15 regime mismatches.
 
 **"M5 Visual" column = what the chart shows that numbers can't capture.** Write the candle story: "4 doji at BB lower, wicks rejected 0.70650 3x, bodies shrinking = exhaustion" is chart reading. "StRSI=0.3, ADX=22" is not — the trader already has those numbers.
 
@@ -148,7 +151,10 @@ Entry type: ___ | Held: ___m | Expected: ___m | Zombie at: ___Z
 Against this trade NOW:
   - [candle filter]: Last 5 M5 candles show ___ (from YOUR chart read). Buyers/sellers defending? ___
   - [indicator]: ___ (from profit_check — ATR ratio, momentum, recommendation)
-  - [structure]: ___ (from fib_wave — Fib level, N-wave direction)
+  - [M15 momentum]: M15 DI gap=___ MACD hist=[expanding/shrinking] → [with/against] trader's position
+  - [M1 currency pulse]: [base/quote currency] on M1 across [N] crosses = [bid/offered] → [supports/threatens]
+  - [H4 position]: StRSI=___ → [early/mid/late/exhausting]. Room to run? [YES/NO]
+  - [structure]: ___ (from fib_wave M5+H1 — Fib level, N-wave direction, multi-TF confluence)
   - [macro/cross]: ___ (from news_digest or S-scan — event risk, CS shift)
 If wrong → ___ (specific scenario + price + timeframe)
 → [SOUND / WATCH / DANGER]
@@ -220,6 +226,20 @@ C-conviction: `USD_JPY: Tight 8-pip band, tiny bodies, no wick direction, squeez
 **S-conviction is obvious in the prediction language.** "Will reach 1.1835" = the story is clear, everything points the same way. "Might drift" = mixed evidence. "No directional call" = can't read it. The confidence of your prediction IS your conviction.
 
 ```
+
+**Currency dynamics check (verify trader's Currency Pulse):**
+```
+### Currency Dynamics (my independent read)
+USD: H4=[bid/offered] M15=[bid/offered/neutral] → [story]
+JPY: H4=___ M15=___ → ___
+EUR: H4=___ M15=___ → ___
+GBP: H4=___ M15=___ → ___
+AUD: H4=___ M15=___ → ___
+Strongest: ___ | Weakest: ___ → Best vehicle: ___ [DIR]
+Trader's Currency Pulse says: "___" → [AGREE / DISAGREE: ___]
+```
+
+```
 🔥 Strongest NOT held by trader: {PAIR} {DIR} — [S/A] because [full prediction rationale]
    Trader's state.md says: "___" (why they skip this)
    My counter: [what data/chart they're missing]
@@ -235,19 +255,25 @@ Checked strategy_memory.md failure patterns:
 - "___" (name a specific failure pattern) → [MATCH / CLEAR]
 - "___" (name a second pattern) → [MATCH / CLEAR]
 
-### v8.3 Compliance Check
+### v8.4 Compliance Check
 Theme confidence: Trader wrote [proving/confirmed/late] → Sizing matches? [YES / NO: trader sized ___u but should be ___u]
 Top 2 pairs: Trader named ___ and ___ → Margin allocated: ___% to top 2, ___% to others → [CONCENTRATED / DILUTED]
 Candle filter: Entries this cycle have "Last 5 candles" description? [YES / NO: entry ___ has indicator-only thesis]
 Rotation: After last TP, did trader write re-entry plan? [YES / NO / N/A]
 Regime consistency: Entry regime matches current regime for each position? [YES / NO: ___ entered as RANGE, now SQUEEZE]
+Currency Pulse: Trader wrote Currency Pulse block? [YES / NO] → Best vehicle matches trader's Top 2? [YES / NO: best=___ but trader holds ___]
+Self-check: Trader wrote Self-check (entries count, fixation, bias)? [YES / NO]
+Event positioning: Trader wrote event asymmetry? [YES / NO] → Asymmetry [favorable/unfavorable] for held positions?
+Position Mgmt C block: If holding, trader included M15 + M1 + H4 position? [YES: all 4 items / NO: missing ___]
 ```
 
-You MUST check at least 2 failure patterns AND all 5 v8.3 compliance items. This is how the audit enforces the new system — the trader may slip back to old patterns. The audit catches it.
+You MUST check at least 2 failure patterns AND all 9 v8.4 compliance items. This is how the audit enforces the new system — the trader may slip back to old patterns. The audit catches it.
 
 **When Theme confidence = "proving" but trader entered S-size → DANGER.** This is the "size up before proving" pattern that blows up on bad days. The 4/7 pattern was 500u→5,000u PROGRESSIVE. Not 5,000u from the start.
 
 **When DILUTED (top 2 < 60% of margin) → WATCH.** Best days have 41-47% from top 1 pair. Spreading across 4+ pairs = +1,291/day average (middle). Concentration is the engine.
+
+**When Currency Pulse says best vehicle ≠ trader's position → WATCH.** The trader may have a valid reason (already in the position, structural entry better). But if the reason is just "I've been trading this pair all day" = fixation bias.
 
 ---
 
