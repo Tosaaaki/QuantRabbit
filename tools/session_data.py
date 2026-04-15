@@ -736,6 +736,109 @@ def main():
         lines = out.split("\n")[:20]
         print("\n".join(lines))
 
+    # 8. Pre-filled templates (v8.4 — model fills blanks, can't skip fields)
+    section("WRITE TEMPLATES (copy to state.md, fill ALL blanks)")
+
+    # Self-check template with pre-filled entry count
+    entry_count_str = ""
+    try:
+        today_str = time.strftime("%Y-%m-%d", time.gmtime())
+        log_path = ROOT / "logs" / "live_trade_log.txt"
+        if log_path.exists():
+            from collections import Counter as _C
+            _ec = _C()
+            for _line in log_path.read_text().strip().split("\n"):
+                if "ENTRY" in _line and today_str in _line:
+                    for _p in PAIRS:
+                        if _p in _line:
+                            _ec[_p] += 1
+                            break
+            if _ec:
+                _top = _ec.most_common(1)[0]
+                entry_count_str = f"{sum(_ec.values())} total. Most: {_top[0]} ×{_top[1]}"
+            else:
+                entry_count_str = "0 today"
+    except Exception:
+        entry_count_str = "? (check log)"
+
+    print(f"""
+## Self-check
+Entries today: {entry_count_str}. Fixated? [YES: why / NO]
+Last 3 closed: [W/L/W]. Streak: [hot/cold/neutral]. If 2+L → B max, don't chase
+Bias: Am I holding ___ because thesis alive, or because cutting = admitting wrong?""")
+
+    # Position management template per held trade
+    held_trades = trades.get("trades", []) if trades else []
+    if held_trades:
+        print("\n## Position Management (fill ALL 4 for each C)")
+        for t in held_trades:
+            pair = t.get("instrument", "?").replace("/", "_")
+            tid = t.get("id", "?")
+            units = t.get("currentUnits", "?")
+            upl = t.get("unrealizedPL", "0")
+            # Load M15 data for this pair
+            m15_hint = ""
+            m1_hint = ""
+            h4_hint = ""
+            try:
+                tech = _load_technicals(ROOT, pair)
+                m15 = tech.get("M15", {})
+                m1_data = tech.get("M1", {})
+                h4 = tech.get("H4", {})
+                if m15:
+                    di_gap = m15.get("plus_di", 0) - m15.get("minus_di", 0)
+                    hist = m15.get("macd_hist", 0)
+                    hist_dir = "expanding" if abs(hist) > 0.0001 else "shrinking"
+                    m15_hint = f"DI gap={di_gap:+.0f} MACD hist={hist_dir}"
+                if h4:
+                    sr = h4.get("stoch_rsi", 0.5)
+                    zone = "ceiling!" if sr >= 0.9 else "upper" if sr >= 0.7 else "mid" if sr >= 0.4 else "lower" if sr >= 0.15 else "floor"
+                    h4_hint = f"StRSI={sr:.2f}({zone})"
+                # M1 currency pulse for base currency
+                base_ccy = pair[:3]
+                m1_sigs = []
+                for p2, (b2, q2) in PAIR_CURRENCIES.items():
+                    m1d = _load_technicals(ROOT, p2).get("M1", {})
+                    if m1d:
+                        gap = m1d.get("plus_di", 0) - m1d.get("minus_di", 0)
+                        if b2 == base_ccy:
+                            m1_sigs.append(gap)
+                        elif q2 == base_ccy:
+                            m1_sigs.append(-gap)
+                if m1_sigs:
+                    avg = sum(m1_sigs) / len(m1_sigs)
+                    m1_label = "BID" if avg > 3 else "offered" if avg < -3 else "neutral"
+                    m1_hint = f"{base_ccy} M1={m1_label}({avg:+.0f}) across {len(m1_sigs)} crosses"
+            except Exception:
+                pass
+
+            print(f"""
+### {pair} {units}u id={tid} UPL={upl}
+  A — Close now: {upl} JPY
+  B — Half TP: close ___u, trail ___pip
+  C — Hold REQUIRES all 4:
+    (1) Changed since last session: ___
+    (2) Entry TF: ___
+        M15: {m15_hint} → [with/against] ___
+        M1: {m1_hint} → [supports/threatens] ___
+    (3) H4: {h4_hint} → Room? [YES/NO]
+    (4) Enter NOW @current? [YES/NO]
+  → Chosen: [A/B/C]""")
+
+    # Conviction template (for new entries)
+    print(f"""
+## New Entry Template (v8.4 — fill ALL fields)
+  Thesis: [CHART story, not indicators]
+  Last 5 M5: bodies [___] × [___], wicks [___] → Buyers defending? [YES @___ / NO → PASS]
+  Regime: [___] | Type: [___] | Expected: [___] → Zombie: [___Z]
+  Theme confidence: [proving/confirmed/late] → size: [B/A/S]
+  AGAINST: ___
+  If wrong: ___
+  H4 position: {h4_hint if held_trades else "StRSI=___ →"} [early/mid/late/exhausting]
+  Cross-currency: [currency] M15 [bid/offered] across [N] pairs → [currency-wide/pair-specific] → conviction [UP/DOWN]
+  Event asymmetry: [event] at [time]. Positioned for [___]. [favorable/unfavorable]
+  Margin: ___% → worst case ___% | → Conviction: [S/A/B/C] Size: ___u""")
+
     elapsed = time.time() - t0
     print(f"\n[session_data: {elapsed:.1f}s]")
 
