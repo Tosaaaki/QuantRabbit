@@ -55,12 +55,12 @@ How to achieve this:
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Opus | 20-min cron | Max 15 min | Pro trader. Does analysis, news, and trading all itself |
+| trader | Sonnet (default) | 20-min cron | Max 15 min | Pro trader. Does analysis, news, and trading all itself |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
-| daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
-| daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
-| intraday-pl-update | Opus | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
-| quality-audit | Sonnet | Every 30 min | ~3-4 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction assessment** (own trade plan + S/A/B/C rating for every pair based on chart + data — primary S-conviction discovery mechanism) → persistent Auditor's View in logs/quality_audit.md (includes Regime Map + Range Opportunities + Conviction Map) |
+| daily-performance-report | Sonnet (default) | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
+| daily-slack-summary | Sonnet (default) | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
+| intraday-pl-update | Sonnet (default) | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
+| quality-audit | Sonnet | Every 45 min | ~5-10 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction map EVERY cycle** (own chart read + trade plan + S/A/B/C rating for every pair — primary S-conviction discovery mechanism). No early exit — Regime Map + 7-pair predictions are mandatory. Persistent Auditor's View in logs/quality_audit.md. Posts to Slack on DANGER or S-conviction found |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -105,13 +105,14 @@ Every 1 min: trader session
   ├── trades → trades.md + live_trade_log.txt + Slack
   └── SESSION_END (9 min mark, 10 min hard limit): trade_performance.py + ingest.py → memory.db
 
-Every 30 min: quality-audit session (Sonnet)
+Every 45 min: quality-audit session (Sonnet)
   ├── runs: quality_audit.py + profit_check + fib_wave + chart_snapshot.py (14 PNGs)
   ├── READS: chart PNGs visually (candle patterns, BB position, momentum character)
   ├── WRITES: logs/quality_audit.md (facts + Regime Map + Visual Read + Range Opportunities)
   ├── WRITES: logs/quality_audit.json (machine) + logs/audit_history.jsonl (outcome tracking)
-  ├── Sonnet-auditor exercises JUDGMENT on each finding (REPORT / NOISE)
-  └── if REPORT items → posts summary to #qr-daily via Slack
+  ├── NO EARLY EXIT: Section E (Regime Map) + Section C (7-pair conviction map) are mandatory every cycle
+  ├── Sonnet fills in structured format per pair ("Chart tells me / Story / Price target / Wrong if / Conviction")
+  └── if DANGER or S-conviction found → posts to #qr-daily via Slack (not just DANGER)
 
 Daily 06:00 UTC: daily-review session
   ├── runs: daily_review.py (fact collection + pretrade result correlation)
