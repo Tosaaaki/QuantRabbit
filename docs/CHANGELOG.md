@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-04-15 — v8.3b: Quality audit aligned with v8.2/8.3 trader changes
+
+**Problem**: Trader SKILL was overhauled (v8.2: Close/Hold flip, zombie detection; v8.3: theme confidence, candle filter, concentration, rotation) but quality-audit SKILL still referenced old formats. Audit couldn't catch v8.3 violations (sizing without theme confirmation, indicator-only theses, regime mismatches).
+
+**Changes to SKILL_quality-audit.md:**
+1. **Position Challenge updated**: Now checks regime at entry vs now (regime mismatch = first-class finding), zombie time, entry type + held time ratio, and candle filter compliance from chart PNGs
+2. **v8.3 Compliance Check added**: 5 items checked every cycle:
+   - Theme confidence: is sizing consistent with proving/confirmed/late?
+   - Top 2 concentration: is margin concentrated (>60%) or diluted?
+   - Candle filter: do entries have "Last 5 candles" or indicator-only?
+   - Rotation: after TP, was re-entry plan written?
+   - Regime consistency: entry regime matches current regime?
+3. **Market read section**: Now validates trader's Theme confidence and Top 2 pair selection, proposes alternatives when disagreeing
+4. **DANGER criteria updated**: Regime changed + data contradicts + profit_check recommends TP = DANGER
+
 ## 2026-04-15 — v8.3: 10%+ daily system — concentration, rotation, candle filter
 
 **Goal**: Consistent 10%+ daily returns. 4/7 did +14,186 (13%) — reverse-engineer and systematize.

@@ -91,8 +91,10 @@ For each section below, write the analysis by filling in every field. Every fiel
 ### Market: My Read vs Trader's Read
 Macro now: ___ (cite news_digest.md — what's the driving theme right now)
 Trader says: "___ " (quote from state.md Market Narrative — their exact words)
-I [agree/disagree]: ___ (cite specific data from profit_check or fib_wave that supports or contradicts the trader's read)
-Trader is not looking at: ___ (check all 7 pairs in S-scan results + fib_wave. Name a specific signal the trader's state.md doesn't mention)
+I [agree/disagree]: ___ (cite specific data from profit_check or fib_wave that supports or contradicts)
+Trader's Theme confidence: [proving/confirmed/late] — [CORRECT: because ___ / WRONG: should be ___ because ___]
+Trader's Top 2: [___] and [___] — [AGREE / DISAGREE: I would pick ___ because ___]
+Trader is not looking at: ___ (specific signal state.md doesn't mention. Include regime mismatches between M5 and H1)
 ```
 
 ### Section E: Regime Map + Visual Chart Read + Range Opportunities
@@ -140,19 +142,26 @@ For EACH position the trader holds, write this block:
 
 ```
 ### {PAIR} {DIR} — The Case Against
-Trader's thesis: "___" (quote the "I'm NOT closing because" or thesis line from state.md)
+Trader's thesis: "___" (quote from state.md — the Thesis line or the C(1)/C(2) fields from the Close/Hold block)
+Regime at entry: ___ → Regime now: ___ [same / CHANGED → trader should know]
+Entry type: ___ | Held: ___m | Expected: ___m | Zombie at: ___Z
 Against this trade NOW:
-  - [indicator]: ___ (from profit_check — cite ATR ratio, momentum signal, or recommendation)
-  - [structure]: ___ (from fib_wave — cite Fib level, wave quality, or N-wave position)
-  - [macro/cross]: ___ (from news_digest or S-scan — cross-pair divergence, event risk, or CS shift)
-If wrong → ___ (specific scenario + price level where this trade loses money in next 30 min)
+  - [candle filter]: Last 5 M5 candles show ___ (from YOUR chart read). Buyers/sellers defending? ___
+  - [indicator]: ___ (from profit_check — ATR ratio, momentum, recommendation)
+  - [structure]: ___ (from fib_wave — Fib level, N-wave direction)
+  - [macro/cross]: ___ (from news_digest or S-scan — event risk, CS shift)
+If wrong → ___ (specific scenario + price + timeframe)
 → [SOUND / WATCH / DANGER]
 ```
 
+**Regime mismatch is now a first-class finding.** If the trader entered on a RANGE thesis but the regime changed to SQUEEZE or TREND, flag it. This was the EUR_USD problem on 4/15 — entered as "range oscillation" but regime shifted to SQUEEZE. The range floor lost its meaning.
+
+**Candle filter check:** You have the chart PNGs. The trader's entry format requires "Last 5 candles → Buyers defending?" Check if this matches what YOU see. If the trader wrote "YES, lower wicks at 215.35" but your chart shows clean bearish bodies with no wicks, flag it.
+
 **Rules for verdicts:**
-- **DANGER** = data actively contradicts the thesis right now (profit_check says TAKE_PROFIT, structure shows exhaustion, AND macro shifted)
-- **WATCH** = one or two data points against, but thesis still plausible
-- **SOUND** = your data confirms the trader's thesis. Say so and move on
+- **DANGER** = regime changed AND data contradicts thesis AND profit_check recommends TP/HALF_TP
+- **WATCH** = one or two data points against, or regime shifting, or zombie approaching
+- **SOUND** = your chart read + data + regime all confirm the trader's thesis
 
 ### Section C: 7-Pair Predictions + Follow-up
 
@@ -218,16 +227,27 @@ C-conviction: `USD_JPY: Tight 8-pip band, tiny bodies, no wick direction, squeez
 
 **If no pair reaches S or A**: `No S/A candidates. Best: {PAIR} at B — would become S if: [specific missing piece]`
 
-### Section D: Pattern Alert
+### Section D: Pattern Alert + v8.3 Compliance
 
 ```
 ### Pattern Alert
 Checked strategy_memory.md failure patterns:
-- "___" (name a specific failure pattern from strategy_memory) → [MATCH: current behavior ___ matches because ___ / CLEAR]
+- "___" (name a specific failure pattern) → [MATCH / CLEAR]
 - "___" (name a second pattern) → [MATCH / CLEAR]
+
+### v8.3 Compliance Check
+Theme confidence: Trader wrote [proving/confirmed/late] → Sizing matches? [YES / NO: trader sized ___u but should be ___u]
+Top 2 pairs: Trader named ___ and ___ → Margin allocated: ___% to top 2, ___% to others → [CONCENTRATED / DILUTED]
+Candle filter: Entries this cycle have "Last 5 candles" description? [YES / NO: entry ___ has indicator-only thesis]
+Rotation: After last TP, did trader write re-entry plan? [YES / NO / N/A]
+Regime consistency: Entry regime matches current regime for each position? [YES / NO: ___ entered as RANGE, now SQUEEZE]
 ```
 
-You MUST check at least 2 patterns. If writing CLEAR, no explanation needed. If writing MATCH, cite what the trader is doing that matches.
+You MUST check at least 2 failure patterns AND all 5 v8.3 compliance items. This is how the audit enforces the new system — the trader may slip back to old patterns. The audit catches it.
+
+**When Theme confidence = "proving" but trader entered S-size → DANGER.** This is the "size up before proving" pattern that blows up on bad days. The 4/7 pattern was 500u→5,000u PROGRESSIVE. Not 5,000u from the start.
+
+**When DILUTED (top 2 < 60% of margin) → WATCH.** Best days have 41-47% from top 1 pair. Spreading across 4+ pairs = +1,291/day average (middle). Concentration is the engine.
 
 ---
 

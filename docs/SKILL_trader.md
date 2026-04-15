@@ -283,7 +283,6 @@ My trade: [action @price TP=price] — [why NOW: news/cross-pair/structure]
 Margin: ___% used → after all pending fill: ___%
 This session I placed:
   [pair] [dir] [LIMIT/MARKET] @___ TP=___ SL=___ id=___
-  [pair] [dir] [LIMIT/MARKET] @___ TP=___ SL=___ id=___
   (or: nothing — best candidate was [pair] [direction] @[price] but: [specific reason])
 Day: ___% of target. ___JPY to go. [hunting harder / on track / protecting gains]
 ```
