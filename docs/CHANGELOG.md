@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-04-15 — v8.2: Kill the always-C hold bias (structural overhaul)
+
+**Problem**: 30-day data shows trader chooses C (hold) on virtually every position, every session. Result: 14 trades held 8h+ = -14,246 JPY (14% WR). Losers held 296m avg vs winners 156m avg (disposition effect). The system generates +53k from 136 normal trades but 24 big losers eat -32.5k.
+
+**Root causes identified (3 structural, not behavioral)**:
+
+1. **profit_check.py was structurally biased toward HOLD**: H1 ADX>25 alignment gave hold_signals += 2. One correlated pair gave +1 more. Total hold_signals = 3 → HALF_TP condition (`take >= 2 AND hold < 3`) was physically unreachable for any trending pair with correlation. Tool always output "All positions HOLD", giving the trader false confidence to write "→ C".
+
+2. **Close/Hold format asked "why hold?" (always answerable)**: Format required "I'm not closing because: ___" — trivially satisfiable for any trending pair ("H1 ADX=46 intact"). The "Default = Take Profit" principle existed as text but the output structure contradicted it.
+
+3. **Closing cost 6× more time than holding**: HOLD = 30 seconds (write 3 lines). CLOSE = 3-4 minutes (preclose_check + close_trade.py + manual log + manual Slack + state.md update). In a 10-minute session with 3 positions, closing one consumed 30-40% of available time. Rational time optimization, wrong outcome.
+
+**Fixes**:
+
+1. **profit_check.py overhaul**:
+   - H1 alignment → context display only (no hold_signals). H1 doesn't change for hours — it's background, not a hold reason
+   - Cross-pair correlation → context display only (no hold_signals)
+   - HALF_TP gate removed: `take >= 2` triggers HALF_TP regardless of hold count
+   - New: M5 active momentum (MACD positive + StRSI mid + slope positive) = only real hold signal
+   - New: Time-held penalty: 4h+ → take_signals += 1, 8h+ → take_signals += 2 (ZOMBIE warning)
+
+2. **Close/Hold format flipped (Default = Close)**:
+   - A (close) shown FIRST with JPY amount — see the number before justifying hold
+   - C (hold) requires ALL 3: (1) new info since last session, (2) entry TF chart description, (3) "would I enter NOW?"
+   - "nothing changed" → forced to A. "H1 thesis intact" not valid for momentum trades
+   - Zombie ratio (held/expected) displayed — ratio > 2.0 triggers warning
+
+3. **close_trade.py upgraded**: `--auto-log --auto-slack` flags handle log entry + Slack notification automatically. Single command reduces close cost from 3-4 min to ~30 sec. Time parity with HOLD removes the structural incentive to avoid closing.
+
+4. **Entry format additions**:
+   - "Expected hold → Zombie at: HH:MMZ" — forces writing when the trade dies
+   - "Session: NY_PM" triggers explicit penalty block (April WR=25%, avg_size=4,625u — sizing UP during worst session)
+
+**Counterfactual**: Removing 8h+ holds + NY PM long entries + AUD_USD from April → 120 trades, +31,058 JPY (72% WR), vs actual +20,563 JPY. Improvement: +10,495 JPY.
+
 ## 2026-04-15 — Fix "B only. Pass" passivity: conviction → action in Tier 2
 
 **Problem**: Trader sees setups, writes entry levels and TPs in Tier 2 scan, then adds "B only. Pass." and doesn't place the LIMIT. 52% margin idle, 0 closes today, while GBP_JPY moved 27.9pip and AUD_JPY 21.2pip during Tokyo. The conviction framework says B = LIMIT at B-size (1,667u), but the format allowed Pass as a B-action.

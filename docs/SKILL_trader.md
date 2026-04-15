@@ -321,6 +321,7 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
 Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map. If RANGE: "buy at BB lower / sell at BB upper"
 Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
+Expected hold: [5-30m / 30m-2h / 2h-1day] → Zombie at: [HH:MMZ = entry + 2× max expected]
 Pair edge: ___% WR, ___JPY total (copied from session_data TRADES line) → [supports / warns against / neutral]
 FOR:  ___ (category) + ___ (category) + ___ (category)
 Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
@@ -328,7 +329,19 @@ AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
 If nothing by: ___ [when the expected move should have started + what you do. "2h → close at market" / "London open → re-evaluate as Swing"]
 Margin after: ___% (include pending LIMITs → worst case ___%)
+Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
 → Conviction: [S/A/B/C] | Size: ___u (___% NAV)
+```
+
+**"Expected hold → Zombie at"** is the orphan killer. A Momentum trade entered at 12:38Z expects 30m-2h → zombie at 16:38Z. When the next session checks this position at 17:00Z, it sees "Zombie at 16:38Z — PAST." The position management block forces justification or closure. This alone would have prevented the 4/14 GBP_USD -2,583 JPY loss (Momentum entry, held 5h40m past zombie time).
+
+**"Session"** makes the entry hour visible. NY_PM entries (17:00-24:00 UTC) have 25% WR in April. Writing "Session: NY_PM" forces acknowledgment of the base rate.
+
+**"Session: NY_PM" triggers a hard question.** April data: NY_PM (17-24 UTC) entries have 25% WR, avg size 4,625u. The trader sizes UP during the WORST session. If Session = NY_PM, you must also write:
+```
+NY PM penalty: April WR=25%, avg_size=4625u. My size is ___u.
+If this setup appeared at 08:00 UTC London, would I size it the same? [yes/no]
+→ If no: reduce to ___u or LIMIT (don't pay market spread in thin liquidity)
 ```
 
 **"Pair edge" forces you to copy the exact numbers from the TRADES section of session_data.** session_data prints `| edge: 70% WR, +612JPY total` next to each trade. Copy that number. If no trade is open for this pair, check strategy_memory.md Per-Pair section. Writing made-up numbers is a lie to yourself — the data is right there in your session_data output.
@@ -453,28 +466,37 @@ AUD_JPY SHORT 4 consecutive losses ≠ AUD_JPY LONG blocked. The losses were SHO
 **If S-conviction scanner fires 🎯 AUD_JPY LONG, enter it.** The SHORT circuit breaker is irrelevant.
 Same for any pair: consecutive losses in one direction block ONLY that direction. The opposite direction is a fresh trade with its own thesis.
 
-For EACH open position, EVERY session, write this block:
+For EACH open position, EVERY session, write this block.
+
+**Default is CLOSE. C (hold) requires earning its place.**
 
 ```
 Entry type: [Scalp/Momentum/Swing] (expected [5-30min / 30min-2h / 2h-1day])
-Entry thesis was: [1 sentence — the ORIGINAL reason from conviction block]
-Held: [from profit_check] vs expected [time range above]
-Close now: {+/-}Xpip = {+/-}Y JPY
-Peak this trade: +Zpip = +W JPY at HH:MM (from M5 candle highs since entry)
-Regime at entry: ___ → Regime now: ___ [same / changed to ___]
-Is my entry thesis still why I'm here? ___ (if NO: what changed? New thesis = new conviction assessment)
-I'm not closing because: ___ (specific price action on your ENTRY TIMEFRAME — not "H1 thesis intact")
-This reason disappears if: ___ (what would make you close)
-If I closed, I would use the freed margin for: ___ pair ___ direction — because: ___ (must name a pair. If truly nothing: "scanned all 7 pairs, best was [PAIR] but [why not]")
-→ A (adjust) / B (cut+re-enter) / C (hold) — chosen: ___
+Held: [time] vs expected [range] → ratio: [held/max_expected]x
+  [ratio > 2.0 → ⚠ ZOMBIE. Must justify below or close]
+
+A — Close now: {+/-}Xpip = {+/-}Y JPY. This is what I keep.
+B — Half TP: close ___u, trail remainder at ___pip
+C — Hold: REQUIRES all 3 below ↓
+
+If C:
+  (1) What changed since last session? ___ ["nothing" → A. Must be NEW info]
+  (2) Entry TF [M5/H1] right now shows: ___ [describe what you SEE — not "thesis intact"]
+  (3) If I entered NOW at current price, would I? [YES: why / NO: → then close]
+→ Chosen: [A/B/C]
 ```
 
-- **"Entry type + Held" is the thesis drift detector.** If you entered as Momentum (30min-2h) and you've been holding 5h40m, you are no longer in a momentum trade. Either you changed your thesis (requires new conviction assessment — is this now a Swing? What conviction? Is S-size still justified?) or you're holding a dead thesis. Writing "Held: 5h40m vs expected 30min-2h" makes this impossible to ignore.
-- **"Is my entry thesis still why I'm here?"** prevents thesis substitution. "PPI miss momentum" is a different thesis from "H1 ADX=55 BULL trend." If your original thesis died and you're holding for a NEW reason, say so — but then re-assess conviction and size. An 8000u S-Momentum position that became an H1 Swing hold might only be B-conviction at that size.
-- **"Regime at entry → now" is the regime transition detector.** If regime changed (TREND→RANGE, TREND→SQUEEZE, TREND→MILD), that's a structural reason to close.
-- **"I'm not closing because" must describe what you SEE on the chart on your ENTRY TIMEFRAME** — not a higher timeframe that's more convenient. Momentum entry → describe M5 price action. Swing entry → describe H1 price action. "H1 thesis intact" is not valid for a momentum trade.
-- If the position has NEVER been in profit (peak = 0pip), you still fill in the block. "Close now: -8pip = -500 JPY" makes the cost of holding visible.
-- If you can't fill in "I'm not closing because" with something specific from the chart, close.
+**Why this format works — each line blocks a different failure mode:**
+
+- **"Held vs expected → ratio"** — the zombie detector. Momentum trade held 5h40m = ratio 2.8×. Writing "2.8×" makes it impossible to pretend this is still the same trade. Ratio > 2.0 triggers a ZOMBIE warning from profit_check.py too.
+- **"A — Close now: +60 JPY"** — forces you to see the number FIRST. Before you justify holding, you see what you'd keep. +60 JPY on a 15-hour hold. Is that worth the continued risk? You decide AFTER seeing the number, not before.
+- **C(1) "What changed since last session?"** — kills the "thesis intact" loop. H1 ADX=46 was also 46 last session. That's not new. "M5 printed 3 bullish bodies above EMA20 = sellers exhausted" IS new. If literally nothing changed, you're holding the same stale thesis — close.
+- **C(2) "Entry TF right now shows"** — forces you onto the RIGHT timeframe. Momentum entry (M5) can't be justified with H1 data. Swing entry (H1) can't hide behind M5 noise. You must read YOUR timeframe.
+- **C(3) "If I entered NOW"** — the strongest filter. A 15-hour GBP_USD position at +60 JPY. Would you open a new LONG right here at 1.35640? If NO — and you probably wouldn't, because M5 is flat and you'd wait for a dip — then you're holding something you wouldn't buy. That's not conviction, it's inertia.
+
+**profit_check.py now gives HALF_TP recommendations more often.** H1 trend and cross-pair correlation are displayed as context but no longer block HALF_TP. If profit_check says HALF_TP or TAKE_PROFIT, start from A or B, not C.
+
+**If profit_check says HOLD, you still fill in the block.** HOLD from profit_check means "no strong take signals" — it does NOT mean "holding is correct." The tool shows data. You make the call.
 
 ### TP/SL must be structural, not formulaic
 
@@ -513,9 +535,15 @@ python3 tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --un
 ### Close command (prevents hedge account mistakes)
 
 ```
-python3 tools/close_trade.py {tradeID}         # full close
-python3 tools/close_trade.py {tradeID} {units}  # partial close
+python3 tools/close_trade.py {tradeID}         # full close (manual log/slack)
+python3 tools/close_trade.py {tradeID} {units}  # partial close (manual log/slack)
+
+# ONE-COMMAND close: log + Slack notification handled automatically
+python3 tools/close_trade.py {tradeID} --reason zombie_hold --auto-log --auto-slack
+python3 tools/close_trade.py {tradeID} {units} --reason half_tp --auto-log --auto-slack
 ```
+
+**Use `--auto-log --auto-slack` for routine closes.** This reduces close cost from 3-4 minutes (close + manual log + manual Slack) to ~30 seconds. The time saved goes to analysis. Only skip auto-log for complex closes that need custom log entries.
 
 ### Slack reply to user — ALWAYS use `--reply-to`
 

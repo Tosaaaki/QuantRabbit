@@ -324,8 +324,11 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
     }
 
     # --- Signal collection ---
-    take_signals = 0  # positive = take profit signals
-    hold_signals = 0  # positive = hold signals
+    # Design: take_signals = reasons to exit. hold_signals = reasons the position is ACTIVELY working.
+    # H1 alignment and cross-pair correlation are CONTEXT (displayed, not counted).
+    # Only M5 active momentum counts as a hold signal — "the move is still happening NOW."
+    take_signals = 0
+    hold_signals = 0
 
     # 1. ATR ratio
     if atr_ratio >= 1.5:
@@ -338,7 +341,7 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
         result["signals"].append(f"ATR ratio {atr_ratio:.1f}x ← room to run")
     else:
         result["signals"].append(f"ATR ratio {atr_ratio:.1f}x ← below ATR")
-        hold_signals += 1
+        hold_signals += 1  # Too early to take profit
 
     # 2. M5 Momentum
     if m5:
@@ -347,8 +350,9 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
 
         macd_hist = m5.get("macd_hist", 0)
         stoch_rsi = m5.get("stoch_rsi", 0.5)
+        ema_slope = m5.get("ema_slope_5", 0)
 
-        # Momentum fading for longs
+        # Momentum fading → take signal
         if side == "LONG":
             if macd_hist < 0 and stoch_rsi > 0.8:
                 result["signals"].append("⚠ M5 MACD reversal+overbought = momentum fading")
@@ -356,6 +360,10 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
             elif stoch_rsi > 0.9:
                 result["signals"].append("⚠ M5 StochRSI>0.9 = overbought zone")
                 take_signals += 1
+            # M5 ACTIVELY strong → hold signal (the only real hold signal)
+            if macd_hist > 0 and 0.2 < stoch_rsi < 0.8 and ema_slope > 0.0001:
+                result["signals"].append("M5 momentum active (MACD+, StRSI mid, slope↑)")
+                hold_signals += 1
         else:  # SHORT
             if macd_hist > 0 and stoch_rsi < 0.2:
                 result["signals"].append("⚠ M5 MACD reversal+oversold = momentum fading")
@@ -363,26 +371,29 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
             elif stoch_rsi < 0.1:
                 result["signals"].append("⚠ M5 StochRSI<0.1 = oversold")
                 take_signals += 1
+            # M5 ACTIVELY strong SHORT
+            if macd_hist < 0 and 0.2 < stoch_rsi < 0.8 and ema_slope < -0.0001:
+                result["signals"].append("M5 momentum active (MACD-, StRSI mid, slope↓)")
+                hold_signals += 1
 
-    # 3. H1 structure
+    # 3. H1 structure — CONTEXT ONLY (displayed, NOT counted in hold_signals)
+    #    H1 trend doesn't change for hours. It's not a reason to HOLD — it's background.
+    #    Only H1 ADVERSE counts (as a take signal) because that means thesis is dead.
     if h1:
         adx = h1.get("adx", 0)
         plus_di = h1.get("plus_di", 0)
         minus_di = h1.get("minus_di", 0)
         h1_trend = "DI+ dominant" if plus_di > minus_di else "DI- dominant"
 
-        # Is H1 aligned with position?
         h1_aligned = (side == "LONG" and plus_di > minus_di) or \
                      (side == "SHORT" and minus_di > plus_di)
 
         if h1_aligned and adx > 25:
-            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} thesis intact")
-            hold_signals += 2
+            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} (context — not a hold signal)")
         elif h1_aligned:
-            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} thesis direction aligned (weak)")
-            hold_signals += 1
+            result["signals"].append(f"H1 ADX={adx:.0f} {h1_trend} weak (context)")
         else:
-            result["signals"].append(f"⚠ H1 ADX={adx:.0f} {h1_trend} thesis adverse")
+            result["signals"].append(f"⚠ H1 ADX={adx:.0f} {h1_trend} THESIS ADVERSE")
             take_signals += 2
 
         # H1 divergence against position
@@ -400,15 +411,16 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
                     result["signals"].append(f"⚠ H1 range (ADX<20) + BB mid {bb_dist:.1f}pip away = natural TP")
                     take_signals += 2
 
-    # 4. Cross-pair correlation
+    # 4. Cross-pair correlation — CONTEXT ONLY (displayed, not counted as hold)
+    #    Adverse correlation is still a take signal.
     corr_notes = check_cross_pair_correlation(pair, side, all_technicals)
     if corr_notes:
         for note in corr_notes:
-            result["signals"].append(note)
             if "adverse" in note:
+                result["signals"].append(note)
                 take_signals += 1
-            elif "aligned" in note or "direction" in note:
-                hold_signals += 1
+            else:
+                result["signals"].append(f"{note} (context)")
 
     # 5. S/R distance
     if h1:
@@ -429,17 +441,34 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
                 result["signals"].append(f"⚠ Peak {peak_yen:+,.0f} JPY, pulled back {drawdown:,.0f} JPY ({drawdown/peak_yen*100:.0f}%)")
                 take_signals += 2
 
+    # 7. Time-held penalty (NEW — zombie detection)
+    #    Trades held too long decay in quality. The thesis had an expected timeframe.
+    if time_held_str and time_held_str != "?":
+        try:
+            open_time = datetime.fromisoformat(open_time_str.replace("Z", "+00:00").split(".")[0] + "+00:00")
+            now = datetime.now(timezone.utc)
+            elapsed_min = (now - open_time).total_seconds() / 60
+            if elapsed_min >= 480:  # 8h+
+                result["signals"].append(f"⚠ ZOMBIE: held {time_held_str} (8h+). Was this supposed to be a swing?")
+                take_signals += 2
+            elif elapsed_min >= 240:  # 4h+
+                result["signals"].append(f"⚠ Extended hold: {time_held_str} (4h+). Check entry TF.")
+                take_signals += 1
+        except Exception:
+            pass
+
     # --- Recommendation ---
+    # Design change (v8.2): HALF_TP no longer gated by hold_signals < 3.
+    # Old: HALF_TP required take >= 2 AND hold < 3 (impossible with H1 trend + correlation).
+    # New: HALF_TP triggers on take >= 2 regardless. H1/correlation are context, not hold votes.
     if upl <= 0:
         result["recommendation"] = "LOSS_POSITION"
     elif take_signals >= 4:
         result["recommendation"] = "TAKE_PROFIT"
-    elif take_signals >= 2 and hold_signals < 3:
+    elif take_signals >= 2:
         result["recommendation"] = "HALF_TP"
-    elif hold_signals >= 3:
+    elif atr_ratio < 0.5 or hold_signals >= 2:
         result["recommendation"] = "HOLD"
-    elif atr_ratio < 0.5:
-        result["recommendation"] = "HOLD(below ATR)"
     else:
         result["recommendation"] = "REVIEW"
 
