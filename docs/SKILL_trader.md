@@ -220,30 +220,42 @@ SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction 
 
 **Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
-### Tier 2: Remaining pairs (quick scan + conviction)
+### Tier 2: Remaining pairs (quick scan + conviction → action)
 
-For each Tier 2 pair, write ONE line. **Every line ends with conviction.**
+For each Tier 2 pair, write ONE line. **Every line ends with conviction AND action.**
 
 ```
-TREND:   {PAIR}: TREND ↑/↓ | [candle shape] | dip/rally @___ TP=___ | [S/A/B/C] — [1 sentence: what categories align]
-RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=___ | [S/A/B/C] — [1 sentence]
-SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | [S/A/B/C] — [1 sentence]
+TREND:   {PAIR}: TREND ↑/↓ | [candle shape] | dip/rally @___ TP=___ | [S/A/B/C] → [action] — [1 sentence]
+RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=___ | [S/A/B/C] → [action] — [1 sentence]
+SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | [S/A/B/C] → [action] — [1 sentence]
 ```
 
-**Tier 2 examples (conviction reason = chart-specific observations, NOT category names):**
-`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 | A — band walk + GBP strongest CS, missing: Fib 38.2% untested`
-`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060 | B — clean 38pip range but AUD_JPY not ranging = no AUD-wide theme`
-`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: close outside 159.10–159.35 | C — no wick direction, no body size change, pure compression`
-`EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower, zero counter-wicks | sell rally @186.00 TP=185.40 | S — band walk + ECB dovish + JPY strongest + no support until Fib 185.40`
+**Actions by conviction:**
 
-**The conviction suffix forces you to assess every pair.** S-conviction doesn't hide in Tier 2 anymore — it's visible the moment you write it.
+| Conviction | Action | "Pass" allowed? |
+|------------|--------|----------------|
+| **S/A** | → Tier 1 promoted (full block below) | No. You found gold. Pick it up |
+| **B** | → LIMIT posted (B-size 1,667u) | No. B = LIMIT, not Pass. If you won't LIMIT it, rate C honestly |
+| **C** | → watching [trigger] or pass | Yes. Only C can pass |
+
+**Tier 2 examples:**
+`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 | A → Tier 1 — band walk + GBP strongest CS`
+`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060 | B → LIMIT both sides — clean 38pip range but AUD_JPY not ranging`
+`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: close outside 159.10–159.35 | C → watching — no wick direction, no body size change, pure compression`
+`EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower, zero counter-wicks | sell rally @186.00 TP=185.40 | S → Tier 1 — band walk + ECB dovish + JPY strongest + no support until Fib 185.40`
+
+**B → LIMIT is not optional.** You wrote the entry level. You wrote the TP. The setup met at least 1-2 categories. Place it at B-size (1,667u) with SL. A wrong LIMIT costs nothing — cancel it next session. Writing "B → pass" means you don't actually believe it's B. Rate C and explain what's missing.
+
+**The conviction suffix forces you to assess every pair AND take action.** S-conviction doesn't hide in Tier 2 anymore — it's visible the moment you write it.
 
 **"candle shape" = what you see in the PNG, not indicator values.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. If you haven't looked at the PNG, you can't fill this in.
 **RANGE format has both sides in the same line.** You can't write "RANGE" and only one price. The format won't let you.
 
-### Tier 2 → Tier 1 promotion (any S or A above?)
+### Tier 2 → Tier 1 promotion (any S or A above? Any B worth upgrading?)
 
-**If you wrote S or A conviction for any Tier 2 pair, write its full Tier 1 block here:**
+**If you wrote S or A conviction for any Tier 2 pair, write its full Tier 1 block here.**
+
+**If you wrote B with a strong FOR but one specific AGAINST — check one more lens.** If the Different Lens supports, B upgrades to A. This is where the money hides: pairs the trader rates B because of one unchecked fear that turns out to be manageable. The B-to-A upgrade is worth 3× the size (5% → 15% NAV).
 
 ```
 ## {PAIR} [PROMOTED from Tier 2] — {REGIME}
@@ -613,7 +625,12 @@ When you notice a pattern, mistake, or insight during trading:
 1. Write it to `state.md` Lessons section (for session handoff)
 2. **ALSO append 1 line to `collab_trade/strategy_memory.md` Active Observations section** — this persists across days. This is the fastest PDCA loop: you notice → you write → the next session (15 min later) reads it
 
-Format: `- [M/D] What happened + why + what to do next time. Verified: 1x`
+Format: `- [M/D] What happened + why + what the data showed. Verified: Nx`
+
+**Write observations, not commands.** Lessons are hypotheses from 1 data point, not permanent rules.
+- ✅ `H4 StRSI=0.05 + RSI=74: 4/14 entry at this condition → SL hit -876 JPY. Exhaustion risk after big move`
+- ❌ `H4 StRSI=0.05 = after the move. Wait for reset.` ← this is a COMMAND that blocks future entries unconditionally
+If a lesson says "Wait for X" or "Don't enter when Y" — you just wrote a rule, not an observation. Rewrite it as what happened and why. The next session decides, based on the CURRENT chart, whether the observation applies today.
 
 ## state.md management — WRITE EARLY, UPDATE OFTEN
 
