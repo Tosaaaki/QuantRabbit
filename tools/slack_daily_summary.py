@@ -2,16 +2,17 @@
 """Post daily summary to #qr-daily.
 
 Uses OANDA transactions API for realized P&L (not log file parsing).
-Day boundary = UTC 00:00-23:59 (= JST 09:00-08:59), matching trader task.
+Day boundary = JST 00:00-23:59 (= UTC 15:00 prev day to UTC 14:59 same day).
 
 Usage:
     python3 tools/slack_daily_summary.py [--date YYYY-MM-DD]
-        --date: UTC date to summarize (default: previous UTC day)
+        --date: JST date to summarize (default: previous JST day)
 """
 import urllib.request, json, sys, os, argparse
 from datetime import datetime, timedelta, timezone
 
 UTC = timezone.utc
+JST = timezone(timedelta(hours=9))
 
 
 def load_config():
@@ -62,26 +63,43 @@ def get_account_summary(cfg):
     }
 
 
-def get_realized_pl_for_date(token, acct, date_str):
-    """Fetch realized P&L for a UTC date from OANDA transactions API.
+def jst_day_to_utc_range(date_str):
+    """Convert a JST date (YYYY-MM-DD) to UTC time range.
 
-    date_str: YYYY-MM-DD (UTC date).
-    Day boundary: UTC 00:00:00 to 23:59:59.
+    JST 00:00 = UTC 15:00 previous day.
+    Returns (from_utc, to_utc) strings for OANDA API.
     """
-    from_utc = f"{date_str}T00:00:00.000000000Z"
-    next_day = (datetime.strptime(date_str, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-    to_utc = f"{next_day}T00:00:00.000000000Z"
+    target = datetime.strptime(date_str, "%Y-%m-%d")
+    start = target - timedelta(hours=9)  # JST 00:00 in UTC
+    end = target + timedelta(days=1) - timedelta(hours=9)  # next JST 00:00 in UTC
+    return (
+        start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z"),
+        end.strftime("%Y-%m-%dT%H:%M:%S.000000000Z"),
+    )
+
+
+def get_realized_pl_for_date(token, acct, date_str):
+    """Fetch realized P&L for a JST date from OANDA transactions API.
+
+    date_str: YYYY-MM-DD (JST date).
+    Day boundary: JST 00:00-23:59 (= UTC 15:00 prev day to UTC 14:59 same day).
+
+    Returns (total_pl, entry_count, close_count, day_start_balance).
+    day_start_balance is the account balance right before the first fill of the day.
+    """
+    from_utc, to_utc = jst_day_to_utc_range(date_str)
 
     total_pl = 0.0
     close_count = 0
     entry_count = 0
+    day_start_balance = None
 
     path = f"/v3/accounts/{acct}/transactions?from={from_utc}&to={to_utc}&type=ORDER_FILL"
     try:
         data = oanda_get(path, token)
     except Exception as e:
         print(f"WARN: transactions API error: {e}", file=sys.stderr)
-        return total_pl, entry_count, close_count
+        return total_pl, entry_count, close_count, day_start_balance
 
     pages = data.get("pages", [])
     for page_url in pages:
@@ -96,25 +114,29 @@ def get_realized_pl_for_date(token, acct, date_str):
             if tx.get("type") != "ORDER_FILL":
                 continue
             pl = float(tx.get("pl", "0"))
+            # Capture day-start balance from the first transaction
+            if day_start_balance is None:
+                acct_bal = float(tx.get("accountBalance", "0"))
+                day_start_balance = acct_bal - pl
             if pl != 0:
                 total_pl += pl
                 close_count += 1
             else:
                 entry_count += 1
 
-    return total_pl, entry_count, close_count
+    return total_pl, entry_count, close_count, day_start_balance
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--date', default=None, help='UTC date YYYY-MM-DD (default: previous UTC day)')
+    parser.add_argument('--date', default=None, help='JST date YYYY-MM-DD (default: previous JST day)')
     args = parser.parse_args()
 
     if args.date:
         target_date = args.date
     else:
-        # Previous UTC day (this script runs at 07:00 JST = 22:00 UTC previous day)
-        target_date = (datetime.now(UTC) - timedelta(days=1)).strftime('%Y-%m-%d')
+        # Previous JST day
+        target_date = (datetime.now(JST) - timedelta(days=1)).strftime('%Y-%m-%d')
 
     # Dedup guard: skip if already posted for this date
     lock_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
@@ -129,7 +151,7 @@ def main():
 
     cfg = load_config()
     acct_summary = get_account_summary(cfg)
-    realized_pl, entry_count, close_count = get_realized_pl_for_date(
+    realized_pl, entry_count, close_count, day_start_balance = get_realized_pl_for_date(
         cfg['oanda_token'], cfg['oanda_account_id'], target_date
     )
 
@@ -138,10 +160,12 @@ def main():
     lines.append(f"\U0001f4ca *Daily Summary: {target_date}*")
     lines.append("")
 
-    # Daily P&L with % change
+    # Daily P&L with % change (use day-start balance for accurate %)
     pl_icon = "\U0001f7e2" if realized_pl >= 0 else "\U0001f534"
-    prev_balance = acct_summary['balance'] - realized_pl
-    pct_change = (realized_pl / prev_balance * 100) if prev_balance > 0 else 0
+    if day_start_balance and day_start_balance > 0:
+        pct_change = realized_pl / day_start_balance * 100
+    else:
+        pct_change = 0
     lines.append(f"{pl_icon} *Daily Realized P&L: {realized_pl:+,.0f}JPY ({pct_change:+.2f}%)*")
 
     # Trade count

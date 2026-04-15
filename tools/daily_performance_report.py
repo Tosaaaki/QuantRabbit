@@ -49,11 +49,18 @@ def fetch_fills(token: str, acct: str, from_date: str) -> list[dict]:
             if tx.get("type") == "ORDER_FILL":
                 pl = float(tx.get("pl", 0))
                 if pl != 0:
+                    # Store UTC time; JST conversion done at grouping time
                     fills.append({
                         "time": tx["time"][:19],
                         "pl": pl,
                     })
     return fills
+
+
+def utc_to_jst_date(utc_time_str: str) -> str:
+    """Convert UTC time string (YYYY-MM-DDTHH:MM:SS) to JST date string (YYYY-MM-DD)."""
+    utc_dt = datetime.fromisoformat(utc_time_str).replace(tzinfo=UTC)
+    return utc_dt.astimezone(JST).strftime("%Y-%m-%d")
 
 
 def get_account_summary(cfg):
@@ -70,10 +77,10 @@ def get_account_summary(cfg):
 
 
 def aggregate(fills: list[dict]) -> dict:
-    """Aggregate fills into daily buckets (UTC date)."""
+    """Aggregate fills into daily buckets (JST date)."""
     daily = defaultdict(lambda: {"pl": 0, "closes": 0})
     for f in fills:
-        day = f["time"][:10]
+        day = utc_to_jst_date(f["time"])
         daily[day]["pl"] += f["pl"]
         daily[day]["closes"] += 1
     # Round
@@ -84,18 +91,17 @@ def aggregate(fills: list[dict]) -> dict:
 
 def build_report(daily: dict, acct: dict) -> str:
     now_jst = datetime.now(JST)
-    today_utc = datetime.now(UTC).strftime("%Y-%m-%d")
+    today_jst = now_jst.strftime("%Y-%m-%d")
 
-    # Today
-    today_data = daily.get(today_utc, {"pl": 0, "closes": 0})
+    # Today (JST)
+    today_data = daily.get(today_jst, {"pl": 0, "closes": 0})
 
-    # This week (Monday to today, UTC dates)
-    now_utc = datetime.now(UTC)
-    monday = now_utc - timedelta(days=now_utc.weekday())
+    # This week (Monday to today, JST dates)
+    monday = now_jst - timedelta(days=now_jst.weekday())
     week_start = monday.strftime("%Y-%m-%d")
     week_days = []
     d = monday
-    while d.strftime("%Y-%m-%d") <= today_utc:
+    while d.strftime("%Y-%m-%d") <= today_jst:
         ds = d.strftime("%Y-%m-%d")
         if ds in daily:
             week_days.append((ds, daily[ds]))
@@ -115,11 +121,11 @@ def build_report(daily: dict, acct: dict) -> str:
     lines.append("")
 
     # Today
-    lines.append(f"*[Today {today_utc}]* {today_data['pl']:+,} JPY ({today_data['closes']} closes)")
+    lines.append(f"*[Today {today_jst}]* {today_data['pl']:+,} JPY ({today_data['closes']} closes)")
     lines.append("")
 
     # This week
-    lines.append(f"*[This week {week_start}~{today_utc}]* {week_total:+,} JPY")
+    lines.append(f"*[This week {week_start}~{today_jst}]* {week_total:+,} JPY")
     for i, (ds, wd) in enumerate(week_days):
         prefix = "\u2514" if i == len(week_days) - 1 else "\u251c"
         lines.append(f"{prefix} {ds}: {wd['pl']:+,} JPY ({wd['closes']} closes)")

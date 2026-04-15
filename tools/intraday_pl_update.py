@@ -70,15 +70,15 @@ def get_open_trades(token, acct):
 def get_realized_pl_today(token, acct):
     """Fetch today's realized P&L from OANDA transactions API.
 
-    'Today' = current UTC date (00:00-23:59 UTC = 09:00-08:59 JST).
-    Matches trader task day boundary.
+    'Today' = current JST date (00:00-23:59 JST = 15:00 UTC prev day to 14:59 UTC).
     """
-    now_utc = datetime.now(UTC)
-    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    tomorrow_start = today_start + timedelta(days=1)
+    now_jst = datetime.now(JST)
+    today_jst = now_jst.replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_jst = today_jst + timedelta(days=1)
 
-    from_utc = today_start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
-    to_utc = tomorrow_start.strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+    # Convert JST boundaries to UTC for OANDA API
+    from_utc = today_jst.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
+    to_utc = tomorrow_jst.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000000000Z")
 
     total_pl = 0.0
     close_count = 0

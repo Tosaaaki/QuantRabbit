@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-15 — Fix: All summary tasks using wrong day boundary (UTC→JST)
+
+**Problem**: All 4 summary/reporting scripts grouped trades by UTC date (00:00-23:59 UTC) instead of JST date (00:00-23:59 JST). Trades between 00:00-08:59 JST were attributed to the previous day. April 14 showed +1,580 JPY (UTC) instead of the actual +6,745 JPY (JST) — a 5,165 JPY discrepancy.
+
+**Additional bug**: `slack_daily_summary.py` calculated daily return % using current balance (which already includes subsequent days' P&L) instead of the actual day-start balance from OANDA transaction history.
+
+**Fixed scripts**:
+- `tools/slack_daily_summary.py` — JST day boundary + accurate % from `accountBalance` field
+- `tools/daily_performance_report.py` — JST day grouping in aggregate + report
+- `tools/intraday_pl_update.py` — JST day boundary for "today" query
+- `tools/oanda_performance.py` — JST day grouping in daily P&L analysis
+
+**Also noted**: `daily-performance-report` and `intraday-pl-update` tasks are disabled (`enabled: false`).
+
 ## 2026-04-15 — v8.4: Comprehensive Market Analysis Upgrade
 
 **Problem**: Trader task was missing critical analysis dimensions — M15 timeframe entirely absent from pipeline, no cross-currency triangulation, no M1 synchrony detection, no H4 lifecycle positioning, no momentum quality analysis, no event positioning analysis. Result: suboptimal vehicle selection (EUR_USD instead of GBP_USD), blind to M15 corrections, unable to detect currency-specific flows.

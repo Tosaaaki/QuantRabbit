@@ -27,6 +27,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = BASE_DIR / "config" / "env.toml"
+JST = timezone(timedelta(hours=9))
 
 
 def load_config():
@@ -68,7 +69,7 @@ def analyze(fills: list[dict], streak_hours: int = 12) -> dict:
     if not fills:
         return {"error": "No fills found"}
 
-    # Daily P&L
+    # Daily P&L (grouped by JST date)
     daily = defaultdict(lambda: {"pl": 0, "wins": 0, "losses": 0, "trades": 0, "win_pls": [], "loss_pls": []})
     pair_stats = defaultdict(lambda: {"pl": 0, "wins": 0, "losses": 0, "trades": 0})
 
@@ -76,7 +77,8 @@ def analyze(fills: list[dict], streak_hours: int = 12) -> dict:
     all_losses = []
 
     for f in fills:
-        day = f["time"][:10]
+        utc_dt = datetime.fromisoformat(f["time"]).replace(tzinfo=timezone.utc)
+        day = utc_dt.astimezone(JST).strftime("%Y-%m-%d")
         d = daily[day]
         d["pl"] += f["pl"]
         d["trades"] += 1
