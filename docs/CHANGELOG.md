@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-15 — v8.3c: Range Scalp Scanner — range markets as profit engine
+
+**Problem**: System was optimized for trend/momentum. Range markets (5/7 pairs often in SQUEEZE/RANGE) treated as "wait for breakout" instead of profit opportunities. 10% daily target unreachable without range scalping.
+
+**Key Insight**: Range = bounded risk = size up. BB lower→mid = 70%+ probability. Rotation (BUY low→TP mid→SELL high→TP mid) generates base income. Trend plays become bonus.
+
+**New tool: `tools/range_scalp_scanner.py`**:
+- Scans all 7 pairs on M5 + H1 for RANGE regime
+- Classifies: CLEAN_RANGE / SEMI_RANGE / FORMING_RANGE / SQUEEZE
+- Detects entry signals: BB position × StochRSI × CCI × RSI × wick patterns
+- Outputs ready-to-trade plans: entry/TP/SL levels, R:R, sizing, rotation plan
+- Spread coverage ratio (range÷spread, must be >5× to trade)
+- Range health: touch symmetry, BB width trend, DI balance, squeeze proximity
+- MTF confirmation: M5+H1 both range = higher confidence
+- Signal strength scoring: BUY/SELL NOW vs WATCH vs MID_ZONE
+
+**Enhanced `chart_snapshot.py`**:
+- RANGE regime now includes: BB position (zone), touch symmetry, scalp rotation plan
+- New field: `bb_width_trend_pct` (negative = narrowing = squeeze forming)
+- New field: `range_scalp` dict with BB levels and zone when RANGE detected
+
+**Updated `docs/TRADER_PROMPT.md`**:
+- Added full range scalping section with execution flow, conviction framework, sizing table
+- Range scalp = explicit trade type alongside Scalp/Momentum/Swing
+- Math: how range rotation reaches 10% daily target
+
 ## 2026-04-15 — v8.3b: Quality audit aligned with v8.2/8.3 trader changes
 
 **Problem**: Trader SKILL was overhauled (v8.2: Close/Hold flip, zombie detection; v8.3: theme confidence, candle filter, concentration, rotation) but quality-audit SKILL still referenced old formats. Audit couldn't catch v8.3 violations (sizing without theme confirmation, indicator-only theses, regime mismatches).

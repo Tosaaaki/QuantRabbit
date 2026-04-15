@@ -214,8 +214,16 @@ def detect_regime(indicators: dict, pair: str) -> dict:
         atr_pips = atr[-1] * pip_factor
         if bb_range_pips > atr_pips * 1.2:
             regime = "RANGE"
-            detail = f"Price bouncing between BB bands. Range={bb_range_pips:.1f}pip (ATR={atr_pips:.1f}). Touches: upper={upper_touches}, lower={lower_touches}."
-            trade_approach = f"Buy at BB lower ({bb_lower[-1]:.5g}), sell at BB upper ({bb_upper[-1]:.5g}). TP=opposite band. SL=outside range."
+            bb_mid_val = (bb_upper[-1] + bb_lower[-1]) / 2
+            touch_symmetry = min(upper_touches, lower_touches) / max(upper_touches, lower_touches)
+            zone = "LOWER" if bb_pos < 0.25 else "UPPER" if bb_pos > 0.75 else "MID"
+            detail = (f"Price bouncing between BB bands. Range={bb_range_pips:.1f}pip (ATR={atr_pips:.1f}). "
+                      f"Touches: upper={upper_touches}, lower={lower_touches}. "
+                      f"BB pos={bb_pos:.0%} ({zone}). Symmetry={touch_symmetry:.0%}.")
+            trade_approach = (f"RANGE SCALP: Buy @{bb_lower[-1]:.5g} → TP1 @{bb_mid_val:.5g} (mid, +{bb_range_pips/2:.1f}pip) "
+                              f"→ TP2 @{bb_upper[-1]:.5g} (+{bb_range_pips:.1f}pip). "
+                              f"Sell @{bb_upper[-1]:.5g} → TP1 @{bb_mid_val:.5g} (mid). "
+                              f"SL=outside range. Rotation: BUY low→TP mid→SELL high→TP mid→repeat.")
         else:
             regime = "LOW-VOL"
             detail = f"Low volatility. BB range={bb_range_pips:.1f}pip, ATR={atr_pips:.1f}pip. Not enough range to trade."
@@ -232,7 +240,14 @@ def detect_regime(indicators: dict, pair: str) -> dict:
         detail = f"Weak trend or transition. EMA slope={ema_slope:+.1f}pip. Not strongly directional."
         trade_approach = f"Cautious {direction} bias. Small size. Quick TP."
 
-    return {
+    # BB width trend (narrowing → squeeze forming)
+    bb_widths_20 = bb_width[-20:]
+    bb_widths_20 = bb_widths_20[~np.isnan(bb_widths_20)]
+    bb_width_trend = 0.0
+    if len(bb_widths_20) > 5 and np.mean(bb_widths_20) > 0:
+        bb_width_trend = (bb_width[-1] - np.mean(bb_widths_20)) / np.mean(bb_widths_20) * 100
+
+    result = {
         "regime": regime,
         "detail": detail,
         "trade_approach": trade_approach,
@@ -244,7 +259,22 @@ def detect_regime(indicators: dict, pair: str) -> dict:
         "bb_range_pip": round((bb_upper[-1] - bb_lower[-1]) * pip_factor, 1) if not np.isnan(bb_upper[-1]) else 0,
         "upper_touches": upper_touches,
         "lower_touches": lower_touches,
+        "bb_width_trend_pct": round(bb_width_trend, 1),
     }
+
+    # Add range scalp levels when RANGE detected
+    if regime == "RANGE":
+        bb_mid_val = (bb_upper[-1] + bb_lower[-1]) / 2
+        result["range_scalp"] = {
+            "bb_upper": round(float(bb_upper[-1]), 5),
+            "bb_mid": round(float(bb_mid_val), 5),
+            "bb_lower": round(float(bb_lower[-1]), 5),
+            "range_pips": round(bb_range_pips, 1),
+            "zone": "LOWER" if bb_pos < 0.25 else "UPPER" if bb_pos > 0.75 else "MID",
+            "touch_symmetry": round(min(upper_touches, lower_touches) / max(upper_touches, lower_touches, 1), 2),
+        }
+
+    return result
 
 
 def generate_chart(pair: str, candles: list[dict], indicators: dict,

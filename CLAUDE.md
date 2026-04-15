@@ -226,6 +226,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/slack_daily_summary.py` | Daily summary |
 | `tools/quality_audit.py` | Quality audit — cross-checks trader decisions against rules and S-conviction data |
 | `tools/s_conviction_scan.py` | S-conviction pattern scanner — auto-detects TF × indicator combinations |
+| `tools/range_scalp_scanner.py` | **Range scalp scanner** — detects RANGE across 7 pairs, outputs ready-to-trade plans with BB levels, signal strength, sizing, R:R. Run at session start when ranges detected in regime map. `--json` for programmatic use |
 
 ## Key Directories
 
