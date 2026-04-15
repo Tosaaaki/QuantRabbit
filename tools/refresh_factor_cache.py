@@ -102,6 +102,7 @@ def _fetch_candles(token: str, instrument: str, granularity: str, count: int) ->
 TF_MAP = {
     "M1": 200,
     "M5": 200,
+    "M15": 200,
     "H1": 100,
     "H4": 50,
 }

@@ -415,8 +415,18 @@ def main():
     except Exception:
         positions = {}
 
+    # Load previous regimes for transition detection
+    regime_history_path = ROOT / "logs" / "regime_history.json"
+    prev_regimes = {}
+    if regime_history_path.exists():
+        try:
+            prev_regimes = json.loads(regime_history_path.read_text())
+        except Exception:
+            pass
+
     print("=== REGIME DETECTION ===")
     chart_paths = []
+    current_regimes = {}
 
     for pair in pairs:
         for tf in timeframes:
@@ -429,11 +439,21 @@ def main():
                 indicators = compute_indicators(candles)
                 regime = detect_regime(indicators, pair)
 
-                # Print regime
+                # Track regime for history
+                key = f"{pair}_{tf}"
                 r = regime["regime"]
+                current_regimes[key] = r
+
+                # Detect transition
+                prev_r = prev_regimes.get(key, "")
+                transition = ""
+                if prev_r and prev_r != r:
+                    transition = f" [was {prev_r}]"
+
+                # Print regime
                 emoji = {"TREND-BULL": "📈", "TREND-BEAR": "📉", "RANGE": "↔️",
                          "SQUEEZE": "🔸", "MILD-BULL": "↗️", "MILD-BEAR": "↘️"}.get(r, "❓")
-                print(f"{emoji} {pair} {tf}: {r} | {regime['detail']}")
+                print(f"{emoji} {pair} {tf}: {r}{transition} | {regime['detail']}")
                 print(f"   → {regime['trade_approach']}")
                 if regime["regime"] == "RANGE":
                     print(f"   BB pos={regime['bb_position']} | upper_touches={regime['upper_touches']} lower_touches={regime['lower_touches']}")
@@ -447,6 +467,12 @@ def main():
 
             except Exception as e:
                 print(f"{pair} {tf}: ERROR {e}")
+
+    # Save current regimes for next run's transition detection
+    try:
+        regime_history_path.write_text(json.dumps(current_regimes, indent=2))
+    except Exception:
+        pass
 
     if chart_paths:
         print(f"\n=== {len(chart_paths)} charts saved to {CHART_DIR}/ ===")

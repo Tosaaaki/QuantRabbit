@@ -55,7 +55,7 @@ How to achieve this:
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Opus | 15-min cron | Max 10 min | Pro trader. Does analysis, news, and trading all itself |
+| trader | Opus | 20-min cron | Max 15 min | Pro trader. Does analysis, news, and trading all itself |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
 | daily-performance-report | Opus | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Opus | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
@@ -69,7 +69,7 @@ How to achieve this:
 | qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
 | qr-news-flow-append | Cowork | Hourly (:15) | Append compact snapshot from news_digest.md → logs/news_flow_log.md |
 
-**Method**: 10-minute sessions + 15-minute cron. Lock mechanism prevents parallel launches. Session ends → next launches within 15 minutes. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
+**Method**: 15-minute sessions + 20-minute cron. Lock mechanism prevents parallel launches. Session ends → next launches within 20 minutes. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
 
 - Memory handoff: `collab_trade/state.md` (external memory across sessions)
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
@@ -209,7 +209,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 | File | Contents |
 |------|----------|
-| `tools/session_data.py` | Full data fetch at trader session start (technicals + OANDA + macro + Slack + memory, all at once) |
+| `tools/session_data.py` | Full data fetch at trader session start (technicals M1/M5/M15/H1/H4 + OANDA + macro + **Currency Pulse** (cross-currency triangulation) + **H4 Position** (lifecycle) + Fib M5+H1 + Slack + memory, all at once) |
 | `tools/mid_session_check.py` | Lightweight mid-session check (~1s): Slack + prices + trades + margin only |
 | `tools/profit_check.py` | **Run at every session start** — 6-axis TP evaluation (ATR ratio, M5 momentum, H1 structure, correlation, S/R, peak) |
 | `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action. Detects rollover window |

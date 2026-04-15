@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-15 — v8.4: Comprehensive Market Analysis Upgrade
+
+**Problem**: Trader task was missing critical analysis dimensions — M15 timeframe entirely absent from pipeline, no cross-currency triangulation, no M1 synchrony detection, no H4 lifecycle positioning, no momentum quality analysis, no event positioning analysis. Result: suboptimal vehicle selection (EUR_USD instead of GBP_USD), blind to M15 corrections, unable to detect currency-specific flows.
+
+**Session time**: 10 min → 15 min (20-min cron) to accommodate deeper analysis.
+
+**Data pipeline changes (session_data.py ecosystem)**:
+- `refresh_factor_cache.py`: Added M15 to TF_MAP (200 candles). Now M1/M5/M15/H1/H4
+- `adaptive_technicals.py`: M15 row displayed. Momentum quality tags: [FRESH]/[MATURE]/[EXHAUSTING]/[REVERSING] on TREND situations
+- `session_data.py`: 3 new sections:
+  - **CURRENCY PULSE**: Cross-currency triangulation at H4/M15/M1. Per-currency BID/OFFERED/neutral. MTF conflict detection. M1 synchrony (all crosses same direction). Correlation break detection. Best vehicle recommendation
+  - **H4 POSITION**: Lifecycle label per pair (EARLY/MID/LATE/EXHAUSTING + BULL/BEAR). StRSI zone, EMA slope acceleration, VWAP deviation
+  - **H1 FIB WAVE**: Multi-TF Fib confluence (M5 + H1 levels)
+- `chart_snapshot.py`: Regime transition tracking via `logs/regime_history.json`. Shows `[was RANGE]` when regime changes between runs
+- `macro_view.py`: (correlation break logic co-located in session_data Currency Pulse)
+
+**SKILL prompt changes (SKILL_trader.md)**:
+- **New: Currency Pulse block** — forces cross-currency synthesis BEFORE pair scan. 5 currencies × 3 TFs. MTF conflict, M1 synchrony, correlation breaks, best vehicle, position match check
+- **New: Self-check block** — 30-second bias detection. Entry count, pair fixation, cold streak, holding bias
+- **Enhanced Market Narrative** — event positioning (asymmetry analysis) + macro chain (per-currency effects)
+- **Enhanced Position Management** — C block requires 4 items (was 3): added M15 momentum, M1 currency pulse, H4 position/room
+- **Enhanced Conviction Block** — added H4 position (StRSI lifecycle), cross-currency M15 check, event asymmetry
+- **Session timing** — 15-min sessions, 10-min minimum (was 8), 13-min normal end (was 9), 17-min hard kill (was 12), 900s stale lock (was 600)
+
+**Files changed**: refresh_factor_cache.py, adaptive_technicals.py, session_data.py, chart_snapshot.py, session_end.py, SKILL_trader.md, CHANGELOG.md, CLAUDE.md
+
 ## 2026-04-15 — v8.3c: Range Scalp Scanner — range markets as profit engine
 
 **Problem**: System was optimized for trend/momentum. Range markets (5/7 pairs often in SQUEEZE/RANGE) treated as "wait for breakout" instead of profit opportunities. 10% daily target unreachable without range scalping.

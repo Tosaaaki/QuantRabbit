@@ -58,6 +58,222 @@ def section(title):
     print(f"\n=== {title} ===")
 
 
+PAIR_CURRENCIES = {
+    "USD_JPY": ("USD", "JPY"),
+    "EUR_USD": ("EUR", "USD"),
+    "GBP_USD": ("GBP", "USD"),
+    "AUD_USD": ("AUD", "USD"),
+    "EUR_JPY": ("EUR", "JPY"),
+    "GBP_JPY": ("GBP", "JPY"),
+    "AUD_JPY": ("AUD", "JPY"),
+}
+
+CORRELATED_PAIRS = [
+    ("EUR_USD", "GBP_USD", "anti-USD"),
+    ("EUR_JPY", "GBP_JPY", "anti-JPY"),
+    ("AUD_USD", "AUD_JPY", "pro-AUD"),
+]
+
+
+def _load_technicals(root, pair):
+    f = root / f"logs/technicals_{pair}.json"
+    if not f.exists():
+        return {}
+    return json.loads(f.read_text()).get("timeframes", {})
+
+
+def _print_currency_pulse(root):
+    """Cross-currency triangulation at H4, M15, M1."""
+    # Gather DI signals per currency per TF
+    ccy_signals = {c: {tf: [] for tf in ["H4", "M15", "M1"]} for c in ["USD", "JPY", "EUR", "GBP", "AUD"]}
+
+    all_tech = {}
+    for pair in PAIRS:
+        all_tech[pair] = _load_technicals(root, pair)
+
+    for pair, (base, quote) in PAIR_CURRENCIES.items():
+        tech = all_tech.get(pair, {})
+        for tf in ["H4", "M15", "M1"]:
+            d = tech.get(tf, {})
+            di_p = d.get("plus_di", 0)
+            di_m = d.get("minus_di", 0)
+            adx = d.get("adx", 0)
+            if adx < 5:
+                continue
+            gap = (di_p - di_m) * min(adx / 25.0, 1.5)
+            ccy_signals[base][tf].append((pair, gap))
+            ccy_signals[quote][tf].append((pair, -gap))
+
+    # Print per currency
+    strongest_h4 = ("", -999)
+    weakest_h4 = ("", 999)
+
+    for ccy in ["USD", "JPY", "EUR", "GBP", "AUD"]:
+        parts = []
+        for tf in ["H4", "M15", "M1"]:
+            sigs = ccy_signals[ccy][tf]
+            if not sigs:
+                parts.append(f"{tf}=?")
+                continue
+            avg = sum(g for _, g in sigs) / len(sigs)
+            if avg > 3:
+                label = f"BID(+{avg:.0f})"
+            elif avg < -3:
+                label = f"offered({avg:.0f})"
+            else:
+                label = f"neutral({avg:+.0f})"
+            parts.append(f"{tf}={label}")
+
+            if tf == "H4":
+                if avg > strongest_h4[1]:
+                    strongest_h4 = (ccy, avg)
+                if avg < weakest_h4[1]:
+                    weakest_h4 = (ccy, avg)
+
+        # Detect H4↔M15 conflict
+        h4_sigs = ccy_signals[ccy]["H4"]
+        m15_sigs = ccy_signals[ccy]["M15"]
+        h4_avg = sum(g for _, g in h4_sigs) / len(h4_sigs) if h4_sigs else 0
+        m15_avg = sum(g for _, g in m15_sigs) / len(m15_sigs) if m15_sigs else 0
+
+        conflict = ""
+        if h4_avg > 3 and m15_avg < -3:
+            conflict = " → H4↔M15 CONFLICT (H4 bid but M15 selling)"
+        elif h4_avg < -3 and m15_avg > 3:
+            conflict = " → H4↔M15 CONFLICT (H4 offered but M15 buying)"
+        elif abs(h4_avg) <= 3 and abs(m15_avg) <= 3:
+            conflict = " → No direction"
+        else:
+            conflict = ""
+
+        print(f"{ccy}: {' | '.join(parts)}{conflict}")
+
+    # M1 synchrony detection
+    for ccy in ["USD", "JPY", "EUR", "GBP", "AUD"]:
+        m1_sigs = ccy_signals[ccy]["M1"]
+        if len(m1_sigs) >= 3:
+            all_pos = all(g > 0 for _, g in m1_sigs)
+            all_neg = all(g < 0 for _, g in m1_sigs)
+            if all_pos:
+                print(f"⚠ M1 synchrony: {ccy} BID across {len(m1_sigs)}/{len(m1_sigs)} crosses")
+            elif all_neg:
+                print(f"⚠ M1 synchrony: {ccy} OFFERED across {len(m1_sigs)}/{len(m1_sigs)} crosses")
+
+    # Correlation break detection
+    for pair_a, pair_b, label in CORRELATED_PAIRS:
+        tech_a = all_tech.get(pair_a, {}).get("M15", {})
+        tech_b = all_tech.get(pair_b, {}).get("M15", {})
+        di_a = tech_a.get("plus_di", 0) - tech_a.get("minus_di", 0)
+        di_b = tech_b.get("plus_di", 0) - tech_b.get("minus_di", 0)
+        adx_a = tech_a.get("adx", 0)
+        adx_b = tech_b.get("adx", 0)
+        # Break = one clearly directional (ADX>15, |DI gap|>5) and other flat or opposite
+        if adx_a > 15 and abs(di_a) > 5 and (adx_b < 12 or di_a * di_b < 0):
+            dir_a = "bull" if di_a > 0 else "bear"
+            dir_b = "flat" if adx_b < 12 else ("bull" if di_b > 0 else "bear")
+            print(f"⚠ Correlation break ({label}): {pair_a} M15={dir_a}(ADX={adx_a:.0f}) vs {pair_b} M15={dir_b}(ADX={adx_b:.0f})")
+        elif adx_b > 15 and abs(di_b) > 5 and (adx_a < 12 or di_a * di_b < 0):
+            dir_a = "flat" if adx_a < 12 else ("bull" if di_a > 0 else "bear")
+            dir_b = "bull" if di_b > 0 else "bear"
+            print(f"⚠ Correlation break ({label}): {pair_a} M15={dir_a}(ADX={adx_a:.0f}) vs {pair_b} M15={dir_b}(ADX={adx_b:.0f})")
+
+    # Best vehicle
+    if strongest_h4[0] and weakest_h4[0] and strongest_h4[0] != weakest_h4[0]:
+        # Find the pair that matches strongest vs weakest
+        best_pair = None
+        best_dir = None
+        for pair, (base, quote) in PAIR_CURRENCIES.items():
+            if base == strongest_h4[0] and quote == weakest_h4[0]:
+                best_pair = pair
+                best_dir = "LONG"
+            elif base == weakest_h4[0] and quote == strongest_h4[0]:
+                best_pair = pair
+                best_dir = "SHORT"
+        if best_pair:
+            print(f"Best vehicle: {strongest_h4[0]}(+{strongest_h4[1]:.0f}) vs {weakest_h4[0]}({weakest_h4[1]:.0f}) → {best_pair} {best_dir}")
+        else:
+            print(f"Best vehicle: {strongest_h4[0]}(+{strongest_h4[1]:.0f}) vs {weakest_h4[0]}({weakest_h4[1]:.0f}) → no direct pair")
+
+
+def _print_h4_position(root):
+    """Where in the H4 wave — lifecycle label for each pair."""
+    for pair in PAIRS:
+        tech = _load_technicals(root, pair)
+        h4 = tech.get("H4", {})
+        if not h4:
+            print(f"{pair}: NO H4 DATA")
+            continue
+
+        stoch_rsi = h4.get("stoch_rsi", 0.5)
+        s5 = h4.get("ema_slope_5", 0)
+        s10 = h4.get("ema_slope_10", 0)
+        adx = h4.get("adx", 0)
+        di_p = h4.get("plus_di", 0)
+        di_m = h4.get("minus_di", 0)
+        vwap_gap = h4.get("vwap_gap", 0)
+        cci = h4.get("cci", 0)
+
+        # Direction
+        bull = di_p > di_m
+        direction = "BULL" if bull else "BEAR"
+        if adx < 20:
+            direction = "NEUTRAL"
+
+        # StRSI zone
+        if stoch_rsi >= 0.9:
+            zone = "ceiling!"
+        elif stoch_rsi >= 0.7:
+            zone = "upper"
+        elif stoch_rsi >= 0.4:
+            zone = "mid"
+        elif stoch_rsi >= 0.15:
+            zone = "lower"
+        else:
+            zone = "floor"
+
+        # Momentum quality (slope comparison)
+        abs_s5 = abs(s5)
+        abs_s10 = abs(s10)
+        if abs_s10 > 1e-8:
+            ratio = abs_s5 / abs_s10
+        else:
+            ratio = 1.0
+
+        if ratio > 1.15:
+            accel = "accelerating"
+        elif ratio < 0.75:
+            accel = "decelerating"
+        else:
+            accel = "steady"
+
+        # Lifecycle label
+        if direction == "NEUTRAL":
+            label = "NO TREND"
+        elif stoch_rsi >= 0.9 and bull:
+            label = "EXHAUSTING BULL" if accel != "accelerating" else "LATE BULL (accel)"
+        elif stoch_rsi <= 0.1 and not bull:
+            label = "EXHAUSTING BEAR" if accel != "accelerating" else "LATE BEAR (accel)"
+        elif stoch_rsi >= 0.9 and not bull:
+            label = "EARLY BEAR" if adx > 25 else "BEAR SETUP"
+        elif stoch_rsi <= 0.1 and bull:
+            label = "EARLY BULL" if adx > 25 else "BULL SETUP"
+        elif stoch_rsi >= 0.6:
+            label = f"LATE {direction}" if accel == "decelerating" else f"MID {direction}"
+        elif stoch_rsi <= 0.3:
+            label = f"EARLY {direction}" if accel != "decelerating" else f"BOTTOM {direction}"
+        else:
+            label = f"MID {direction}"
+
+        room = "room" if 0.15 < stoch_rsi < 0.85 else "limited" if 0.85 <= stoch_rsi or stoch_rsi <= 0.15 else "mid"
+
+        print(
+            f"{pair}: StRSI={stoch_rsi:.2f}({zone}) "
+            f"slope={accel} "
+            f"VWAP={vwap_gap:+.0f}pip "
+            f"→ {label} [{room}]"
+        )
+
+
 def main():
     t0 = time.time()
 
@@ -437,6 +653,20 @@ def main():
     out = run_script([VENV_PYTHON, "tools/macro_view.py"])
     print(out)
 
+    # 3b. Currency Pulse (cross-currency × 3 TFs)
+    section("CURRENCY PULSE (cross-currency × H4/M15/M1)")
+    try:
+        _print_currency_pulse(ROOT)
+    except Exception as e:
+        print(f"(currency pulse error: {e})")
+
+    # 3c. H4 Position (where in the wave)
+    section("H4 POSITION (where in the wave)")
+    try:
+        _print_h4_position(ROOT)
+    except Exception as e:
+        print(f"(h4 position error: {e})")
+
     # 4. Adaptive technicals
     section("ADAPTIVE TECHNICALS")
     out = run_script([VENV_PYTHON, "tools/adaptive_technicals.py"])
@@ -447,9 +677,16 @@ def main():
     out = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
     print(out)
 
-    # 4b. Fib Wave Analysis
-    section("FIB WAVE ANALYSIS")
+    # 4b. Fib Wave Analysis (M5)
+    section("FIB WAVE ANALYSIS (M5)")
     out = run_script([VENV_PYTHON, "tools/fib_wave.py", "--all"])
+    if out:
+        for line in out.strip().split("\n")[:50]:
+            print(line)
+
+    # 4c. Fib Wave Analysis (H1) — multi-TF confluence
+    section("FIB WAVE ANALYSIS (H1)")
+    out = run_script([VENV_PYTHON, "tools/fib_wave.py", "--all", "H1", "100"])
     if out:
         for line in out.strip().split("\n")[:50]:
             print(line)

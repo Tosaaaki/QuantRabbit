@@ -67,13 +67,49 @@ def format_base(d: dict) -> str:
     )
 
 
+def momentum_quality_tag(d: dict) -> str:
+    """Classify trend momentum as FRESH/MATURE/EXHAUSTING/REVERSING."""
+    s5 = d.get("ema_slope_5", 0)
+    s10 = d.get("ema_slope_10", 0)
+    hist = d.get("macd_hist", 0)
+    macd = d.get("macd", 0)
+    roc5 = d.get("roc5", 0)
+    roc10 = d.get("roc10", 0)
+    di_p = d.get("plus_di", 0)
+    di_m = d.get("minus_di", 0)
+    bull = di_p > di_m
+
+    # Reversing: MACD hist sign opposite to trend direction
+    if bull and hist < 0:
+        return "REVERSING"
+    if not bull and hist > 0:
+        return "REVERSING"
+
+    # Compare absolute slopes (direction-independent)
+    abs_s5 = abs(s5)
+    abs_s10 = abs(s10)
+
+    if abs_s10 < 1e-8:
+        return "MATURE"
+
+    ratio = abs_s5 / abs_s10 if abs_s10 > 0 else 1.0
+
+    if ratio > 1.15:
+        return "FRESH"
+    elif ratio < 0.75:
+        return "EXHAUSTING"
+    else:
+        return "MATURE"
+
+
 def format_adaptive(d: dict, situations: list[str]) -> str:
     """Additional indicators selected for the current situation."""
     parts = []
 
     if "strong_trend" in situations:
+        mtag = momentum_quality_tag(d)
         parts.append(
-            f"[TREND] EMAslope5={d.get('ema_slope_5', 0):.4f} "
+            f"[TREND {mtag}] EMAslope5={d.get('ema_slope_5', 0):.4f} "
             f"slope10={d.get('ema_slope_10', 0):.4f} "
             f"MACD_H={d.get('macd_hist', 0):.5f} "
             f"ROC5={d.get('roc5', 0):.3f} ROC10={d.get('roc10', 0):.3f}"
@@ -162,7 +198,7 @@ def main():
             print()
 
         # Per-TF display
-        for tf_name in ["H4", "H1", "M5", "M1"]:
+        for tf_name in ["H4", "H1", "M15", "M5", "M1"]:
             d = tfs.get(tf_name)
             if not d:
                 continue

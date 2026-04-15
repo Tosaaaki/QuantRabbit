@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 LOCK = ROOT / "logs" / ".trader_lock"
 START_FILE = ROOT / "logs" / ".trader_start"
 
-MIN_ELAPSED = 480   # 8 min minimum — below this, SESSION_END is blocked
-SESSION_END_AT = 540  # 9 min — normal SESSION_END threshold
+MIN_ELAPSED = 600   # 10 min minimum — below this, SESSION_END is blocked
+SESSION_END_AT = 780  # 13 min — normal SESSION_END threshold
 
 def main():
     now = int(time.time())
