@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-15 — Fix "B only. Pass" passivity: conviction → action in Tier 2
+
+**Problem**: Trader sees setups, writes entry levels and TPs in Tier 2 scan, then adds "B only. Pass." and doesn't place the LIMIT. 52% margin idle, 0 closes today, while GBP_JPY moved 27.9pip and AUD_JPY 21.2pip during Tokyo. The conviction framework says B = LIMIT at B-size (1,667u), but the format allowed Pass as a B-action.
+
+**Root causes**: (1) Tier 2 format had no action field → B was a dead end. (2) B treated as disqualification when it's a sizing instruction. (3) Lessons written as commands ("Wait for reset") blocked future entries like rules.
+
+**Fixes**:
+1. Tier 2 format: `[S/A/B/C] — reason` → `[S/A/B/C] → [action] — reason`. B → LIMIT posted. Only C can pass
+2. B→A upgrade path: "check one more lens" on promising Bs. Different Lens that supports = 3× size upgrade
+3. Lesson format: commands ("Wait for X") → observations ("X happened, Y was the result"). Next session decides
+
 ## 2026-04-15 — Fix daily-performance-report: use script instead of in-session API calls
 
 **Problem**: daily-performance-report SKILL had Claude fetch and aggregate OANDA transactions API in-session. With 888+ trades (thousands of transactions), pagination + 2-min session limit caused data loss. Report showed only 3/18 data (-1,197 JPY) instead of actual cumulative (-4,074 JPY).
