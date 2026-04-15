@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-15 — Fix daily-performance-report: use script instead of in-session API calls
+
+**Problem**: daily-performance-report SKILL had Claude fetch and aggregate OANDA transactions API in-session. With 888+ trades (thousands of transactions), pagination + 2-min session limit caused data loss. Report showed only 3/18 data (-1,197 JPY) instead of actual cumulative (-4,074 JPY).
+
+**Fix**:
+1. Created `tools/daily_performance_report.py` — dedicated script that handles full pagination, aggregates by today/week/all-time, and posts to Slack
+2. Updated SKILL.md to just run the script instead of doing API calls in-session
+
+**Principle**: Heavy data processing belongs in scripts, not in Claude session prompts.
+
 ## 2026-04-15 — Remove Tokyo "thin liquidity" passivity bias
 
 **Problem**: Trader sits idle during Tokyo saying "wait for London" while 20+ pip moves happen on GBP_JPY and AUD_JPY. Root cause: session_data.py labels ALL of 00-06 UTC as "Tokyo late (thin liquidity)" regardless of actual volatility. SKILL format has "Tokyo thin" as the only option. Trader writes "Session: Tokyo thin" → anchors on "thin" → waits.
