@@ -160,9 +160,18 @@ vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "sa
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (what the market IS doing — "USD weakness across the board", not "waiting for UK data")
+Theme confidence: [proving / confirmed / late]
+  proving = first 1-2 trades today testing the thesis. Size: B (2,000u)
+  confirmed = TP hit at least once on this theme today. Size: A→S (4,000-6,000u)
+  late = theme running 6h+, most of the move captured. Size: reduce, protect gains
+Top 2 pairs: ___ and ___ (these get 80% of margin. Others get B-size max or pass)
 Next event: ___ [name + time + what you do WHEN it hits, not UNTIL it hits]
 Session: ___ (Tokyo / London / NY / Late NY)
 ```
+
+**"Theme confidence" is the progressive sizing engine.** 4/7 made +14,186 because EUR_USD started at 500u and scaled to 5,000u as the theme proved itself. The SAME StRSI=0.0 signal means different sizes depending on whether the theme is proving or confirmed. This is NOT "add because it dipped again" — it's "the macro is confirmed, I'm sizing up on the next rotation."
+
+**"Top 2 pairs" forces concentration.** Best days have 41-47% of P&L from ONE pair. Spreading across 4-5 pairs dilutes returns to +1,291/day (1%). Pick the 2 pairs where Theme + CS + regime align best. Everything else is B-size scouting or pass.
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
 **"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
@@ -340,20 +349,33 @@ cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.
 # Use --counter for Type=Counter entries (M5 against H4/H1). Inverted scoring: H4 extreme = FOR.
 
 ```
-Thesis: [1 sentence — what trade and why NOW, not "USD weak" but what happened in last 20 min]
-Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map. If RANGE: "buy at BB lower / sell at BB upper"
+Thesis: [what the CHART shows → why that means entry NOW]
+  ❌ "StRSI=0.0 + ADX=61 + BB lower dip buy" — indicator list, not a thesis
+  ✅ "Sellers made a 40-pip staircase but lower wicks at 215.35 are growing — buyers absorbing. H4 ADX=61 hasn't broken → buying the absorption"
+Last 5 M5 candles: bodies [growing/shrinking/same] × [bull/bear/mixed], wicks [lower/upper/both/none]
+  → Buyers defending? [YES: at what price ___ / NO: clean sell-through, no defense → PASS]
+Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map
 Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Expected hold: [5-30m / 30m-2h / 2h-1day] → Zombie at: [HH:MMZ = entry + 2× max expected]
-Pair edge: ___% WR, ___JPY total (copied from session_data TRADES line) → [supports / warns against / neutral]
-FOR:  ___ (category) + ___ (category) + ___ (category)
-Different lens: [check 1+ indicator from a category NOT in FOR] → supports / contradicts / neutral
+First confirmation by: [entry + 15m]. If no movement in my direction → close. Max loss: ___JPY (units × SL_pip)
+Theme confidence: [proving / confirmed / late] → size accordingly (B / A-S / reduce)
+Is this a Top 2 pair? [YES → full size / NO → B-size max 2,000u]
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
-If nothing by: ___ [when the expected move should have started + what you do. "2h → close at market" / "London open → re-evaluate as Swing"]
 Margin after: ___% (include pending LIMITs → worst case ___%)
 Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
-→ Conviction: [S/A/B/C] | Size: ___u (___% NAV)
+→ Conviction: [S/A/B/C] | Size: ___u
 ```
+
+**"Thesis" is now a STORY, not an indicator list.** "StRSI=0.0 + ADX=61" is what indicators say. "Sellers made a staircase but buyers are absorbing at 215.35" is what the CHART says. Both can be true at the same time, but only the chart tells you IF this particular StRSI=0.0 is a trap or a real bounce. The indicators are the same in both cases — the candle shapes aren't.
+
+**"Last 5 candles → Buyers defending?"** is the trap filter. April data: formula entries win 73%. But the 25% big losers (-2,583, -1,413, -876) all entered at StRSI=0.0 where there was NO defense (clean bearish bodies, no lower wicks). 15 seconds to check. Saves -1,000+ on traps.
+
+**"First confirmation by: entry + 15m"** forces an exit clock. April data: losers cut in <30m average -354/trade. Losers held >2h average -818/trade. 39 slow-cut losers cost -31,890 (75% of all losses). If the trade doesn't start moving your direction within 15 minutes, the entry thesis was wrong. Cut, don't wait for SL.
+
+**"Theme confidence" links to Market Narrative.** If theme = "proving" → B-size only. If "confirmed" → A/S size. This IS the 4/7 pattern: 500u→5,000u as EUR_USD proved the USD-weakness thesis. Writing "confirmed" at entry means you've already had a winning rotation today.
+
+**"Is this a Top 2 pair?"** prevents dilution. If not Top 2 → max B-size (2,000u). This captures the 4/7 pattern where 76% of P&L came from 2 pairs (EUR_USD + AUD_USD). The other 5 pairs contributed 24% — B-size scouting is fine for them.
 
 **"Expected hold → Zombie at"** is the orphan killer. A Momentum trade entered at 12:38Z expects 30m-2h → zombie at 16:38Z. When the next session checks this position at 17:00Z, it sees "Zombie at 16:38Z — PAST." The position management block forces justification or closure. This alone would have prevented the 4/14 GBP_USD -2,583 JPY loss (Momentum entry, held 5h40m past zombie time).
 
@@ -425,20 +447,37 @@ Units = (NAV × margin%) / (price / 25)
 | **B** | **~5%** |
 | **C** | **Don't enter.** Not worth the spread. Wait for something better. |
 
-### Sizing discipline — the 3 rules that matter most
+### Sizing discipline — Theme confidence determines size
 
-**Rule 1: Conviction = Size. No double-discounting.**
-pretrade_check returns LOW/MEDIUM/HIGH and historical WR. These are DATA, not sizing instructions. If YOU rated the setup as S-conviction in the block above, you enter at S-size (30% NAV). Period.
+**Theme confidence (from Market Narrative) overrides static conviction sizing:**
 
-The historical WR is already factored into the pretrade score. If you then separately discount for "WR=37%", you're counting the same risk twice. `pretrade=S(8)→sized_down` is the pattern that cost 6,740-13,140 JPY in 3/20-4/3.
+| Theme confidence | What it means | Sizing |
+|-----------------|---------------|--------|
+| **proving** | First 1-2 entries of the day on this thesis. Untested. | B-size (2,000u) regardless of conviction |
+| **confirmed** | At least 1 TP hit on this theme today. Thesis works. | Conviction-based: S=6,000u A=4,000u |
+| **late** | Theme running 6h+, most of move captured | Reduce to B. Protect. No new S-entries |
 
-**What pretrade output DOES change:**
-- HIGH risk → recheck your conviction. If still S after re-checking → S-size
-- Pattern warning (e.g., "this pair/direction has 3-loss streak") → acknowledge in AGAINST field, don't change size
-- Headline risk → adjust SL/TP, not size
+**4/7 blueprint**: EUR_USD started at 500u (proving). After first TP (+402 at entry #3), scaled to 4,000u (confirmed). By entry #7, 5,000u. The same signal (StRSI=0.0) gets B-size when proving and S-size when confirmed. Not because the indicator changed — because the THEME proved itself.
 
-**Rule 2: Minimum 2,000u per entry.**
-500u/700u/1000u entries lose money after spread. If conviction is too low for 2,000u, the trade isn't worth taking.
+**Top 2 pairs get full theme-confidence sizing. Others get B-size max.**
+
+**Minimum 2,000u per entry.** Below 2,000u = spread kills the edge. If conviction is too low for 2,000u, don't enter.
+
+**Max loss per trade: 500 JPY.** Calculate: units × SL_distance ÷ pip_multiplier. If > 500 JPY → reduce units or widen SL to structural level and reduce units. April data: good days have worst trade around -350. Bad days have -2,000+. The 500 cap prevents bad days.
+
+### After every TP: Rotation plan (the compound engine)
+
+**4/7 made +5,880 on EUR_USD from 7 rotations. TP → immediate re-entry at the next dip is the compound engine.**
+
+After every TP or trailing stop close, write:
+```
+TP/Trail hit: [PAIR] +___JPY. Theme still alive? [YES/NO]
+If YES → re-entry plan: LIMIT @___ (next M5 dip / Fib pullback / BB mid)
+Theme confidence: proving → confirmed (first TP hit!)
+Next size: ___u (upgrade from B→A or A→S on confirmation)
+```
+
+**The rotation plan turns one +400 trade into a +5,880 day.** The difference between +1,291/day (middle) and +7,762/day (good) is rotation — NOT better entries, NOT better indicators. Just re-entering after TP.
 
 **Rule 3: Max loss per trade = 2% of NAV.**
 At NAV 113k = max ~2,270 JPY per trade. Set SL so that units × (entry - SL) ≤ NAV × 0.02. If structural SL is wider than this, reduce units. This prevents the -3,500 JPY single-trade disasters (3/30 GBP_USD) that wipe out days of gains.

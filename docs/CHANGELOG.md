@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-04-15 — v8.3: 10%+ daily system — concentration, rotation, candle filter
+
+**Goal**: Consistent 10%+ daily returns. 4/7 did +14,186 (13%) — reverse-engineer and systematize.
+
+**What makes 10%+ days (data-driven)**:
+- Top 1 pair = 41-47% of P&L (concentration, not diversification)
+- 4/7 EUR_USD: 7 rotations, 500u→5,000u progressive sizing = +5,880 from ONE pair
+- Good days: avg size 5,327u, avg hold 140m, WR 84%, worst trade +1,048
+- Bad days: avg size 2,993u, avg hold 201m, WR 39%, worst trade -2,273
+- Losers cut <30m = avg -354. Losers held >2h = avg -818 (2.3× worse, 75% of ALL losses)
+
+**Changes**:
+
+1. **Theme confidence tracker**: "proving / confirmed / late" in Market Narrative
+   - proving (untested thesis) → B-size 2,000u only
+   - confirmed (at least 1 TP today) → A/S-size 4,000-6,000u
+   - late (6h+ into theme) → reduce, protect gains
+   → Forces the 4/7 progressive sizing pattern: start small, prove, scale up
+
+2. **Top 2 pairs concentration**: Market Narrative must name top 2 pairs → 80% of margin. Others = B-size scouting max. Prevents dilution across 4-5 pairs
+
+3. **Candle filter on entries**: Thesis must be a STORY ("sellers made staircase, buyers absorbing at 215.35") not indicator list ("StRSI=0.0 ADX=61"). "Last 5 candles → Buyers defending? YES/NO" — if NO, pass. Same StRSI=0.0 can be a real bounce or a trap; only candle shapes distinguish them
+
+4. **15-minute first confirmation**: "If no movement in my direction by entry+15m → close." Based on data: quick-cut losers cost -354 avg vs slow-cut -818. Pre-commits the exit clock at entry
+
+5. **Rotation mandate**: After every TP, write re-entry plan. Theme confidence upgrades from "proving" → "confirmed" on first TP, unlocking S-sizing. This IS the compound engine that turned +400 into +5,880 on 4/7
+
+6. **profit_check time penalties tightened**: 2h+ losing position → warning (+1 take_signal if UPL<0). 4h+ → +2. 8h+ ZOMBIE → +3
+
+7. **Max loss per trade: 500 JPY**: units × SL_distance capped. Good days have worst trade ~-350. Bad days have -2,000+. The cap prevents bad days from forming
+
 ## 2026-04-15 — v8.2b: Kill LIMIT churn (156 placed, 14 filled, 75 cancelled)
 
 **Problem**: April data: 156 LIMITs placed, 14 filled (9% fill rate), 75 cancelled (48%), 128 modified. 53 cancel→re-place cycles on same pair. Each cycle wastes analysis time, log entries, state.md updates. EUR_USD alone: 18 cancel→re-place cycles.

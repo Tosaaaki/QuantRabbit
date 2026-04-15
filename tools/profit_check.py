@@ -441,19 +441,24 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
                 result["signals"].append(f"⚠ Peak {peak_yen:+,.0f} JPY, pulled back {drawdown:,.0f} JPY ({drawdown/peak_yen*100:.0f}%)")
                 take_signals += 2
 
-    # 7. Time-held penalty (NEW — zombie detection)
-    #    Trades held too long decay in quality. The thesis had an expected timeframe.
+    # 7. Time-held penalty — based on April data:
+    #    Losers cut <30m: avg -354/trade. Losers held >2h: avg -818/trade (2.3× worse).
+    #    39 slow-cut losers (>2h) cost -31,890 JPY = 75% of ALL losses.
     if time_held_str and time_held_str != "?":
         try:
             open_time = datetime.fromisoformat(open_time_str.replace("Z", "+00:00").split(".")[0] + "+00:00")
             now = datetime.now(timezone.utc)
             elapsed_min = (now - open_time).total_seconds() / 60
             if elapsed_min >= 480:  # 8h+
-                result["signals"].append(f"⚠ ZOMBIE: held {time_held_str} (8h+). Was this supposed to be a swing?")
-                take_signals += 2
+                result["signals"].append(f"⚠ ZOMBIE: held {time_held_str} (8h+). Close unless this is a deliberate swing.")
+                take_signals += 3
             elif elapsed_min >= 240:  # 4h+
-                result["signals"].append(f"⚠ Extended hold: {time_held_str} (4h+). Check entry TF.")
-                take_signals += 1
+                result["signals"].append(f"⚠ Extended hold: {time_held_str} (4h+). Losers held >2h avg -818/trade.")
+                take_signals += 2
+            elif elapsed_min >= 120:  # 2h+
+                result["signals"].append(f"⚠ Held {time_held_str} (2h+). If losing, cut now — slow cuts cost 2.3× more.")
+                if upl <= 0:
+                    take_signals += 1  # Only penalize if losing
         except Exception:
             pass
 
