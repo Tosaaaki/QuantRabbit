@@ -159,7 +159,8 @@ Driving force: ___ (cite specific event/data from news_digest — "USD selling o
 vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "same — [why still same]")
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
-Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
+Theme: ___ (what the market IS doing — "USD weakness across the board", not "waiting for UK data")
+Next event: ___ [name + time + what you do WHEN it hits, not UNTIL it hits]
 Session: ___ (Tokyo / London / NY / Late NY)
 ```
 
@@ -292,6 +293,7 @@ When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
 - Every LIMIT must have **TP + SL on fill** — you won't be watching when it triggers
 - **GTD = 2-4 hours.** Don't leave stale limits indefinitely
 - **RANGE pairs = LIMIT LONG at lower band + LIMIT SHORT at upper band.** Always both. Placing one side only is a directional bet disguised as a range trade. On OANDA hedge, both cost zero extra margin. Example: AUD_JPY range 112.40-112.57 → LONG @112.38 TP=112.55 + SHORT @112.56 TP=112.40
+- **Event 2+ hours away ≠ "wait."** An event in 3 hours does not change what you do NOW. The market moves before events — that's positioning, and it's tradeable. Trade the current market. Adjust (tighten stops, reduce size) 30 minutes before the event, not 3 hours. "All profit will come from UK data" written at 02:00Z when UK data is at 06:00Z = 4 hours of not trading while M5 prints 5-12pip candles. That's not patience, it's inaction.
 - **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
 - **Tokyo ≠ "wait for London."** Tokyo entries are net +4,997 JPY (119t). Tokyo entry → London close = avg +347/trade (7× system avg). AUD_JPY's natural home is Tokyo. TODAY's Tokyo: GBP_JPY 27.9pip range, AUD_JPY 21.2pip = both above H1 ATR. "Thin" is a label, not a fact — check actual spreads and M5 candle sizes. If M5 bodies are 3-5pip, the market is MOVING. Trade it.
 - **Holiday / spread > 2× ≠ "no entries."** Wide spread affects SL design (wider or none), NOT entry decisions. Adjust protection, not stop trading.
