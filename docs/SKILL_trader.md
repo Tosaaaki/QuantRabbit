@@ -118,14 +118,14 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 1. **ROLLOVER window (protection_check says ROLLOVER)?** → **Run `rollover_guard.py remove` immediately. No new SL/Trail until rollover passes.**
 2. Holiday / thin liquidity / spread > 2× normal? → **No SL. Discretionary management.**
 3. User said "SLいらない" / "持ってろ"? → **No SL. Do not re-add. Do not close on own judgment. Direct order.**
-4. Tokyo session (00:00-06:00Z) overnight hold? → **No trailing stop. Fixed SL only if any.**
+4. Spread > 1.5× normal for this pair? → **No trailing stop. Fixed SL only if any. (Check actual spread, not session label)**
 5. Pre-event (NFP/FOMC)? → **No trailing stop. Fixed SL at structural invalidation or nothing.**
 6. Structural level within ATR×2.0? → **Set there (swing low, Fib 78.6%, DI reversal, cluster)**
 7. No structural level nearby? → **No SL, manage discretionally. ATR×N without structure = noise stop.**
 
 **Trailing stop — use sparingly:**
 - Strong trend (ADX>30, clean bodies) → Yes, ATR×1.0+ minimum
-- Range / chop / squeeze / thin liquidity / pre-event / overnight → **No trail**
+- Range / chop / squeeze / spread wide / pre-event → **No trail**
 
 **If profit_check says HOLD but position has > -5,000 JPY unrealized loss:**
 1. Devil's Advocate: 3 reasons to close
@@ -160,7 +160,7 @@ vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "sa
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (e.g., "USD weakness across the board", "JPY carry unwind")
-Session: ___ (Tokyo thin / London / NY)
+Session: ___ (Tokyo / London / NY / Late NY)
 ```
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
@@ -281,7 +281,8 @@ When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
 - **GTD = 2-4 hours.** Don't leave stale limits indefinitely
 - **RANGE pairs = LIMIT LONG at lower band + LIMIT SHORT at upper band.** Always both. Placing one side only is a directional bet disguised as a range trade. On OANDA hedge, both cost zero extra margin. Example: AUD_JPY range 112.40-112.57 → LONG @112.38 TP=112.55 + SHORT @112.56 TP=112.40
 - **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
-- **Thin market / holiday ≠ "no entries."** Thin market affects SL design (wider or none), NOT entry decisions. If you entered EUR_JPY with a market order on Easter Monday, you can enter GBP_JPY too. Thin market = adjust protection, not stop trading.
+- **Tokyo ≠ "wait for London."** Tokyo entries are net +4,997 JPY (119t). Tokyo entry → London close = avg +347/trade (7× system avg). AUD_JPY's natural home is Tokyo. TODAY's Tokyo: GBP_JPY 27.9pip range, AUD_JPY 21.2pip = both above H1 ATR. "Thin" is a label, not a fact — check actual spreads and M5 candle sizes. If M5 bodies are 3-5pip, the market is MOVING. Trade it.
+- **Holiday / spread > 2× ≠ "no entries."** Wide spread affects SL design (wider or none), NOT entry decisions. Adjust protection, not stop trading.
 - **"Screening failed" / "binary risk" / "waiting for confirmation" / "thin liquidity" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong
 
 **The goal is not more positions. It's bigger positions on your best idea.** But idle margin with zero pending LIMITs = money sleeping.
@@ -401,7 +402,7 @@ EUR_USD is +8,812 JPY over 88 trades (the system's strongest proven edge). GBP_U
 | Condition | Order type | Why |
 |-----------|-----------|-----|
 | S/A conviction + normal liquidity + M5 at extreme NOW | Market order | The setup is here. Missing it costs more than spread |
-| S/A conviction + thin market (holiday/early Asian) | **LIMIT at M5 BB mid or recent wick level** | Thin market = wider spread + slippage. LIMIT saves 3-5pip on a 15pip target |
+| S/A conviction + spread > 2× normal (holiday/rollover) | **LIMIT at M5 BB mid or recent wick level** | Wide spread = slippage. LIMIT saves 3-5pip on a 15pip target |
 | S/A conviction + M5 NOT at extreme (mid-range) | **LIMIT at M5 BB edge / structural support** | Don't chase mid-range. Wait for the dip |
 | B conviction | LIMIT always | Not sure enough to pay market spread |
 

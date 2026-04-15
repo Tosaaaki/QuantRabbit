@@ -80,8 +80,10 @@ def main():
     from datetime import datetime, timezone
     now_utc = datetime.now(timezone.utc)
     hour = now_utc.hour
-    if 0 <= hour < 6:
-        session_label = "Tokyo late (thin liquidity)"
+    if 0 <= hour < 3:
+        session_label = "Tokyo"
+    elif 3 <= hour < 6:
+        session_label = "Tokyo (pre-London positioning)"
     elif 6 <= hour < 8:
         session_label = "Tokyo-London overlap"
     elif 8 <= hour < 12:
@@ -91,7 +93,7 @@ def main():
     elif 16 <= hour < 21:
         session_label = "NY"
     else:
-        session_label = "Late session (thin liquidity)"
+        session_label = "Late NY (rollover zone)"
     utc_stamp = now_utc.strftime('%Y-%m-%d %H:%M UTC')
     print(f"=== SESSION: {utc_stamp} | {session_label} ===")
     print(f"state.md timestamp: **Last Updated**: {utc_stamp}")
