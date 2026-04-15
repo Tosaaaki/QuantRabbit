@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-15 — v8.2b: Kill LIMIT churn (156 placed, 14 filled, 75 cancelled)
+
+**Problem**: April data: 156 LIMITs placed, 14 filled (9% fill rate), 75 cancelled (48%), 128 modified. 53 cancel→re-place cycles on same pair. Each cycle wastes analysis time, log entries, state.md updates. EUR_USD alone: 18 cancel→re-place cycles.
+
+**Root cause**: LIMIT treated as "my current best guess" → re-evaluated and moved every 15-minute session. Non-structural levels (M5 price, StochRSI) change every candle, triggering constant re-placement. SKILL said "A wrong LIMIT costs nothing — cancel it next session" which encouraged over-placement and churn.
+
+**Fixes**:
+1. **LIMIT must cite structural level** ("H1 BB lower" / "Fib 38.2%" / "cluster 215.52") — structural levels don't move in 15 minutes
+2. **Session review = thesis check only**: "thesis alive? YES → leave / NO → cancel: [reason]". No price re-evaluation
+3. **Invalid cancel reasons codified**: "M5 moved", "StochRSI changed", "slightly better level" = NOT reasons to cancel
+4. **GTD minimum 4-8 hours** (was 2-4). Short GTDs caused premature expiry → re-placement churn
+5. **Max 2 pending LIMITs** — forces quality over quantity. Pick best 2 structural levels, not scatter 5 hoping one fills
+6. **Removed "A wrong LIMIT costs nothing"** — it does cost something: analysis time, log pollution, decision fatigue
+
 ## 2026-04-15 — v8.2: Kill the always-C hold bias (structural overhaul)
 
 **Problem**: 30-day data shows trader chooses C (hold) on virtually every position, every session. Result: 14 trades held 8h+ = -14,246 JPY (14% WR). Losers held 296m avg vs winners 156m avg (disposition effect). The system generates +53k from 136 normal trades but 24 big losers eat -32.5k.

@@ -283,23 +283,45 @@ Day: ___% of target. ___JPY to go. [hunting harder / on track / protecting gains
 
 **The Tier 1 and Tier 2 scan blocks above already contain both-sides RANGE entries and chart-derived TPs.** This block just collects the result. If the scan said "BUY @112.38 + SELL @112.56" but this receipt only has the LONG, the gap is visible.
 
-### Idle margin → LIMIT orders (your money works while you sleep)
+### LIMIT orders — fewer, structural, committed
 
-**You're only awake 10 minutes. LIMIT orders make money the other 5 minutes + the full 15-minute gap between sessions.**
+**April reality: 156 LIMITs placed, 14 filled (9%), 75 cancelled (48%), 128 modified. 53 cancel→re-place cycles on the same pair.** The trader is using LIMITs as "thinking out loud" — analyzing, placing, re-evaluating next session, cancelling, re-placing at a new price. Each cycle costs analysis time, log entries, state.md updates, all thrown away.
 
-**A wrong LIMIT costs nothing — cancel it next session. A missing LIMIT costs real money — the opportunity is gone forever.** Trust your analysis. If the scan identified a level, place the LIMIT. You can always cancel or modify it in 5 minutes when you wake up. You cannot go back in time to catch a price that already passed through.
+**The fix: place LIMITs at STRUCTURAL levels, then leave them alone.**
 
-When margin > 30% idle, deploy LIMITs at structural wick-touch levels:
-- Every LIMIT must have **TP + SL on fill** — you won't be watching when it triggers
-- **GTD = 2-4 hours.** Don't leave stale limits indefinitely
-- **RANGE pairs = LIMIT LONG at lower band + LIMIT SHORT at upper band.** Always both. Placing one side only is a directional bet disguised as a range trade. On OANDA hedge, both cost zero extra margin. Example: AUD_JPY range 112.40-112.57 → LONG @112.38 TP=112.55 + SHORT @112.56 TP=112.40
-- **Event 2+ hours away ≠ "wait."** An event in 3 hours does not change what you do NOW. The market moves before events — that's positioning, and it's tradeable. Trade the current market. Adjust (tighten stops, reduce size) 30 minutes before the event, not 3 hours. "All profit will come from UK data" written at 02:00Z when UK data is at 06:00Z = 4 hours of not trading while M5 prints 5-12pip candles. That's not patience, it's inaction.
-- **Event risk ≠ "do nothing."** Event risk = "place LIMITs for BOTH outcomes." One fills, cancel the other next session
-- **Tokyo ≠ "wait for London."** Tokyo entries are net +4,997 JPY (119t). Tokyo entry → London close = avg +347/trade (7× system avg). AUD_JPY's natural home is Tokyo. TODAY's Tokyo: GBP_JPY 27.9pip range, AUD_JPY 21.2pip = both above H1 ATR. "Thin" is a label, not a fact — check actual spreads and M5 candle sizes. If M5 bodies are 3-5pip, the market is MOVING. Trade it.
-- **Holiday / spread > 2× ≠ "no entries."** Wide spread affects SL design (wider or none), NOT entry decisions. Adjust protection, not stop trading.
-- **"Screening failed" / "binary risk" / "waiting for confirmation" / "thin liquidity" with zero LIMITs placed = not trading.** If you wrote "LIMIT SHORT @1.3262" in the scan and didn't POST it, you don't trust your own analysis. Trust it. Place it. Adjust later if wrong
+**Structural level** = Fib retracement, H1 BB band, cluster support/resistance, swing low/high, Ichimoku cloud edge. These don't move in 15 minutes.
+**Non-structural level** = "M5 is at this price right now", "StochRSI says oversold so entry here", current bid minus a few pips. These change every candle.
 
-**The goal is not more positions. It's bigger positions on your best idea.** But idle margin with zero pending LIMITs = money sleeping.
+**When placing a LIMIT, write this line in the conviction block:**
+```
+LIMIT @___ = [structural level name: "H1 BB lower" / "Fib 38.2%" / "cluster 215.52"]
+```
+
+**When reviewing pending LIMITs at session start (in Capital Deployment section):**
+```
+Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cancel: ___]
+```
+**That's it.** Thesis alive = leave the LIMIT alone. Don't re-evaluate the price. The structural level is the structural level. Thesis dead (H1 structure flipped, news event invalidated direction) = cancel with one-sentence reason.
+
+**What is NOT a cancel reason:**
+- "M5 moved away" — that's why you placed a LIMIT instead of a market order
+- "StochRSI changed" — StochRSI changes every 5 minutes
+- "Price is X pip away, unlikely to fill" — you placed it at a structural level for a reason
+- "Found a slightly better level" — if it's 2-3 pip different, that's noise, not a better level
+- "GTD is about to expire" — extend GTD, don't cancel and re-place
+
+**What IS a cancel reason:**
+- H1 structure changed (DI flip, ADX collapsed, regime changed)
+- News event invalidated the thesis
+- Margin constraint (would exceed 90% if filled)
+- Direction changed based on new data (not M5 noise)
+
+**Rules:**
+- Every LIMIT must have **TP + SL on fill**
+- **GTD = 4-8 hours minimum.** Short GTDs (1-2h) cause premature expiry → re-placement churn. If the structural level is valid for 1 hour, it's valid for 8
+- **Max 2 pending LIMITs at a time.** Forces you to pick your best levels, not scatter 5 orders hoping one fills. Quality over quantity
+- **RANGE pairs = both sides.** LONG @BB lower + SHORT @BB upper. One price, both directions, zero extra margin on hedge account
+- **Tokyo and holidays are fine for LIMITs** — wide spread affects SL design, not LIMIT placement
 
 ### 0% margin = something is wrong (SESSION_END blocker)
 
@@ -694,8 +716,11 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 ## 7-Pair Scan
 {Tier 1 deep + Tier 2 quick}
 
-## Capital Deployment + Pending LIMITs
-{best setup, conviction, Checked line. LIMIT orders placed or planned}
+## Pending LIMITs (review — thesis alive?)
+{For each pending: PAIR @PRICE id=ID — thesis alive? YES→leave / NO→cancel: reason}
+
+## Capital Deployment
+{margin %, best setup, new LIMITs placed this session (max 2 pending total)}
 
 ## Action Tracking
 - Day-start NAV: ... (0:00 UTC)
