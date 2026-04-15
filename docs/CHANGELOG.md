@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-15 — Remove Tokyo "thin liquidity" passivity bias
+
+**Problem**: Trader sits idle during Tokyo saying "wait for London" while 20+ pip moves happen on GBP_JPY and AUD_JPY. Root cause: session_data.py labels ALL of 00-06 UTC as "Tokyo late (thin liquidity)" regardless of actual volatility. SKILL format has "Tokyo thin" as the only option. Trader writes "Session: Tokyo thin" → anchors on "thin" → waits.
+
+**Fix**:
+1. **session_data.py**: Removed "(thin liquidity)" from Tokyo label. Now shows "Tokyo" or "Tokyo (pre-London positioning)". Late NY shows "Late NY (rollover zone)" (the actually dangerous session)
+2. **SKILL narrative format**: "Tokyo thin / London / NY" → "Tokyo / London / NY / Late NY"
+3. **SKILL SL/trail rules**: Replaced time-based triggers ("Tokyo session") with condition-based ("Spread > 1.5× normal"). Judge by measurement, not label
+4. **SKILL scan discipline**: Replaced generic "thin market ≠ no entries" with specific Tokyo edge data (+4,997 JPY, +347/trade for Tokyo→London positioning)
+
+**Principle**: Liquidity is a measurement (spread, M5 body size), not a session label. If M5 bodies are 3-5pip, the market is moving — trade it.
+
 ## 2026-04-15 — S-Conviction v2: prediction format + follow-up loop (anti-bot refinement)
 
 **Problem with v1**: The 7-pair conviction assessment used FOR/Different lens/AGAINST format = category-checking. "FOR: Direction + Timing + Momentum" can be copy-pasted every cycle without thinking. Also: audit-trader loop was one-way (audit writes → trader reads → no follow-up). No accountability for predictions.
