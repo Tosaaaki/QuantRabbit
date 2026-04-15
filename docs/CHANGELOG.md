@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-16 — Quality Audit v3: Deep analysis rewrite + model correction
+
+**Problem**: Quality audit was completing only 3% of cycles with full analysis (7-pair predictions). 41% of cycles were abandoned (script ran but Sonnet wrote nothing). 48% were partial (position challenges only, no independent market view). Root cause: SKILL design allowed early exit, didn't force structured output, and lacked the "output format forces thinking" principle that makes the trader SKILL effective.
+
+**SKILL_quality-audit.md rewrite**:
+- **Removed early exit** (Step 3 old → Step 3 new "minimum output gate"). Section E (Regime Map) + Section C (7-pair conviction map) are now mandatory every cycle, even with 0 positions
+- **Structured fill-in format for predictions**: Each pair gets "Chart tells me / Story / Price target / Wrong if / Conviction" — same design principle as trader SKILL's Tier 1/Tier 2 blocks. Sonnet can't skip without leaving visible blanks
+- **Completion gate** (Step 5): Checklist that must be satisfied before saving. Same pattern as trader's SESSION_END blocker
+- **Removed maxTurns: 30** — trader has no maxTurns limit; audit shouldn't either
+- **S-conviction Slack notification**: Now posts to Slack when S-conviction found on unheld pair (not just DANGER). Ensures trader sees opportunities even if they don't read quality_audit.md thoroughly
+- **Chart PNG fallback**: Explicit instructions for when PNGs are unavailable
+- **5 filled-in examples** for M5 Visual (TREND/RANGE/SQUEEZE/EXHAUSTION/REVERSAL) — Sonnet mimics examples
+
+**Schedule change**: 30-min cron → 45-min cron (`3,48 * * * 1-6`). Deeper analysis per cycle, fewer shallow cycles. Each audit has more time to read all 7 chart PNGs and write meaningful predictions.
+
+**CLAUDE.md corrections**:
+- trader model: Opus → Sonnet (default) — was always Sonnet (no model field in schedule.json), CLAUDE.md was wrong
+- daily-performance-report, daily-slack-summary, intraday-pl-update: Opus → Sonnet (default) — same reason
+- quality-audit interval: 30 min → 45 min, description updated to reflect mandatory output + S-conviction Slack
+
 ## 2026-04-15 — Fix: All summary tasks using wrong day boundary (UTC→JST)
 
 **Problem**: All 4 summary/reporting scripts grouped trades by UTC date (00:00-23:59 UTC) instead of JST date (00:00-23:59 JST). Trades between 00:00-08:59 JST were attributed to the previous day. April 14 showed +1,580 JPY (UTC) instead of the actual +6,745 JPY (JST) — a 5,165 JPY discrepancy.
