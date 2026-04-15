@@ -737,7 +737,7 @@ def main():
         print("\n".join(lines))
 
     # 8. Pre-filled templates (v8.4 — model fills blanks, can't skip fields)
-    section("WRITE TEMPLATES (copy to state.md, fill ALL blanks)")
+    section("⚠ MANDATORY TEMPLATES — write ALL of these to state.md FIRST, before any analysis")
 
     # Self-check template with pre-filled entry count
     entry_count_str = ""
@@ -762,10 +762,12 @@ def main():
         entry_count_str = "? (check log)"
 
     print(f"""
-## Self-check
-Entries today: {entry_count_str}. Fixated? [YES: why / NO]
-Last 3 closed: [W/L/W]. Streak: [hot/cold/neutral]. If 2+L → B max, don't chase
-Bias: Am I holding ___ because thesis alive, or because cutting = admitting wrong?""")
+## Self-check ← WRITE THIS FIRST (before Market Narrative)
+Entries today: {entry_count_str}. Fixated on one pair? [YES: why / NO: justified because ___]
+Last 3 closed trades: [W/L/W]. Streak: [hot/cold/neutral]. If 2+L → B max only, don't chase
+Bias: Am I holding ___ because thesis is alive, or because cutting = admitting I was wrong?
+Macro chain: How does the current theme affect EACH currency?
+  USD: ___ | EUR: ___ | GBP: ___ | JPY: ___ | AUD: ___""")
 
     # Position management template per held trade
     held_trades = trades.get("trades", []) if trades else []

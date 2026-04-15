@@ -792,11 +792,17 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 # Trader State — {date from SESSION line}
 **Last Updated**: {copy YYYY-MM-DD HH:MM UTC from SESSION line exactly}
 
+## Self-check ← WRITE FIRST (from MANDATORY TEMPLATES in session_data)
+{copy the Self-check template from session_data output, fill ALL blanks}
+
 ## Market Narrative
-{Driving force + vs last session + M5 verdict + theme + best LONG + best SHORT}
+{Driving force + vs last session + M5 verdict + theme + event positioning + macro chain}
+
+## Currency Pulse
+{copy from session_data CURRENCY PULSE, add your stories + MTF conflict + best vehicle}
 
 ## Positions (Current)
-{each position: thesis, basis, invalidation, wave position, Close-or-Hold block}
+{each position: thesis, basis, invalidation, wave position, Close-or-Hold block with ALL 4 C items}
 
 ## Directional Mix
 {N LONG / N SHORT — if one-sided: why + rotation plan with trade plan written first}
