@@ -61,6 +61,7 @@ How to achieve this:
 | daily-slack-summary | Sonnet (default) | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Sonnet (default) | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
 | quality-audit | Sonnet | Every 45 min | ~5-10 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction map EVERY cycle** (own chart read + trade plan + S/A/B/C rating for every pair — primary S-conviction discovery mechanism). No early exit — Regime Map + 7-pair predictions are mandatory. Persistent Auditor's View in logs/quality_audit.md. Posts to Slack on DANGER or S-conviction found |
+| range-bot | Sonnet (default) | 20-min cron | ~1 min | **Automated range scalp entry bot.** Detects ranges via range_scalp_scanner, places LIMIT orders at BB extremes with TP (BB mid) + SL (structural). Entries only — exits handled by trader task. Margin capped at 30% NAV. Skips 19-23 UTC (poison hours), rollover, pairs with existing positions. Tags orders with clientExtensions "range_bot" for lifecycle management |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -228,6 +229,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/quality_audit.py` | Quality audit — cross-checks trader decisions against rules and S-conviction data |
 | `tools/s_conviction_scan.py` | S-conviction pattern scanner — auto-detects TF × indicator combinations |
 | `tools/range_scalp_scanner.py` | **Range scalp scanner** — detects RANGE across 7 pairs, outputs ready-to-trade plans with BB levels, signal strength, sizing, R:R. Run at session start when ranges detected in regime map. `--json` for programmatic use |
+| `tools/range_bot.py` | **Range scalp entry bot** — automated LIMIT placement at BB extremes. Imports range_scalp_scanner logic, applies margin cap (30% NAV), time filters (skip 19-23 UTC), deconfliction (skip held pairs). Tags orders "range_bot". Entries only — exits by trader. `--dry-run` for testing |
 
 ## Key Directories
 

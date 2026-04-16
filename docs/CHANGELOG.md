@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-16 — Range Bot: Automated range scalp entry bot
+
+**Problem**: Trader task drought — 18 LIMITs cancelled vs 24 entries on 4/15-16. 12 layers of rules collectively block all entries despite 0% margin. 5 S-scan signals missed.
+
+**Solution**: `tools/range_bot.py` — separate scheduled task (20-min cron) that detects ranges via range_scalp_scanner and places LIMIT orders at BB extremes automatically. Entries only — exits handled by trader task's profit_check.py.
+
+**Key design**:
+- LIMIT orders at BB lower (BUY) / BB upper (SELL) with TP at BB mid + SL outside range
+- 10 safety layers: market state, poison hours (19-23 UTC), margin cap (30% NAV), min 3k/max 5k units, conviction B+ filter, pair deconfliction, GTD 4h auto-expiry, mandatory SL, tag isolation (clientExtensions "range_bot")
+- Cancel-then-replace: every cycle cancels stale bot LIMITs and places fresh ones at current BB levels
+- Zero changes to trader task: discovers bot positions via profit_check.py --all (already runs every session)
+
+**Files**: `tools/range_bot.py` (new), `docs/SKILL_range-bot.md` (new), CLAUDE.md (updated architecture table + scripts table)
+
 ## 2026-04-16 — Acceleration Engine: Hero Pair + Mandatory Rotation + Momentum-S
 
 **Problem**: 28 days of trading = -755 JPY total. System has zero growth. But 5 good days averaged +5,385 JPY each. The good days had a clear recipe that wasn't being replicated.
