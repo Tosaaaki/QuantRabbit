@@ -1,5 +1,898 @@
 # Changelog
 
+## 2026-04-17 — High-speed bot tuning: FAST/MICRO thresholds loosened
+
+**Goal**: Enable FAST and MICRO tempos to fire more readily so the worker layer produces more round-trips per session.
+
+**Changes**:
+- `tools/trend_bot.py`
+  - `TREND_FAST_ALLOWED_M1_STATES` now `{"aligned", "reload"}` (was `"aligned"` only). FAST entries were blocked whenever M1 was in "reload" state — doubled the blocked window.
+  - `TREND_MICRO_MAX_SPREAD_MULTIPLE` 1.20 → 1.25
+  - `TREND_MICRO_TP_M5_ATR` 1.35 → 1.20 and `TREND_MICRO_TP_H1_ATR` 0.45 → 0.40 (tighter TP = faster MICRO exits)
+- `tools/range_bot.py`
+  - `MICRO_MARKET_MAX_SPREAD_MULTIPLE` 1.20 → 1.25 (consistent with trend_bot)
+  - `MICRO_RANGE_MIN_SPREAD_MULTIPLE` 3.0 → 2.5 (more MICRO range market shots)
+  - `REENTRY_COOLDOWN_BY_TEMPO["MICRO"]` 2 → 1 min
+- `tools/bot_trade_manager.py`
+  - MICRO MARKET: stale 6→4 min, full-close 10→7 min
+  - FAST MARKET: stale 10→8 min, full-close 16→13 min
+  - MICRO PASSIVE: stale 10→8 min, full-close 16→13 min
+  - FAST PASSIVE: stale 14→12 min, full-close 22→19 min
+- `docs/SKILL_trader.md`
+  - FAST tempo: BALANCED is no longer the default for active lanes. FAST is now the explicit default for trend/range harvest seats.
+  - FAST M1 requirement updated to match code: "aligned or reload" (was "clearly aligned")
+
+## 2026-04-17 — Rebalance trader prompts away from forced-action churn
+
+**Problem**: The trader prompt stack had over-corrected against passivity. In practice it was rewarding "do something" behavior even when the live tape was late, dirty, pre-event, or already paid.
+
+- `docs/SKILL_trader.md` still told the trader to hunt harder when behind, treated drought as worse than a bad trade, blocked session end on an empty book, and framed the hero pair as a day-long concentration quota.
+- `docs/TRADER_PROMPT.md` still pushed the same bias in Japanese with "PASSで終わるな", margin-max language, and a pass format that did not require a concrete next trigger.
+- `collab_trade/strategy_memory.md` still front-loaded "don't wait, just enter" without the newer lesson that forced anti-drought action can destroy expectancy.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Reframed the +10% / +5% numbers as benchmarks, not permission to lower the quality bar.
+  - Replaced `Hero pair` with `Primary vehicle` / `Backup vehicle` so concentration follows the live tape instead of becoming fixation.
+  - Replaced forced drought-entry logic with an explicit no-trade accountability block that requires `best untraded seat + trigger + invalidation`.
+  - Changed flat-book handling from action-forced to output-forced: empty book is allowed only when the trigger map is concrete.
+  - Softened Tier 2 and Momentum-S language so the prompt exposes avoidance without mechanically forcing an order.
+- `docs/TRADER_PROMPT.md`
+  - Aligned the Japanese operator prompt with the same principle: pass is allowed only with a concrete next trigger and invalidation.
+  - Removed language that equated being behind with mandatory action or high margin usage.
+- `collab_trade/strategy_memory.md`
+  - Added the new memory that opportunity cost is real, but forced anti-drought action is also a repeatable loss pattern.
+
+**Why**: The repo philosophy is correct: shape the output so the model has to think. "Enter something" is a rule. "If you stay flat, write the exact trigger and invalidation" is a thinking format. The latter should produce better trader behavior on both stronger and weaker models.
+
+## 2026-04-17 — Recast the worker layer as small-wave harvest + inventory cleanup
+
+**Problem**: The local worker layer still behaved too much like a cautious single-shot assistant.
+
+- `FAST` / `MICRO` entries were documented as quick bites, but the runtime still treated `MICRO` like `BALANCED` on cleanup timing.
+- Range `FAST` market bites could still be blocked by a final hard `R:R >= 1.0` gate even though the earlier planner already allowed the lower-RR fast-bite posture.
+- Worker stops were still acting like thesis stops instead of disaster backstops, which kept recreating the "tight SL gets clipped before the small wave pays" pattern.
+- Prompting still left too much room for trader/bot role drift: the trader could think in one-seat hero-pair terms while the user wanted a joint structure of trader thesis + bot harvest + inventory cleanup.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Switched worker sizing to a small-lot ladder by `order_type × tempo × conviction` so `FAST` / `MICRO` can take more shots with less size per shot.
+  - Raised the worker margin budget ceiling so smaller per-shot sizing can keep more seats alive.
+  - Added tempo-aware re-entry cooldowns (`BALANCED > FAST > MICRO`) instead of a single 10-minute blanket cooldown.
+  - Separated `thesis line` from broker `disaster SL`, and now places the wider disaster stop on OANDA while keeping the tighter thesis line for entry-quality judgment.
+  - Fixed the final RR gate so `FAST` market bites can actually use their intended lower RR floor instead of being re-blocked at submit time.
+- `tools/trend_bot.py`
+  - Same thesis-line vs disaster-stop split for continuation entries.
+  - Prints both lines explicitly in the dry-run output.
+  - Uses the tempo-aware worker re-entry cooldown path.
+- `tools/bot_trade_manager.py`
+  - Added real `MICRO` timeout profiles instead of treating `MICRO` as `BALANCED`.
+  - Tightened worker timeout cleanup so stranded small-wave seats are handled as inventory issues sooner.
+- `docs/SKILL_trader.md`, `docs/SKILL_range-bot.md`, `docs/SKILL_trend-bot.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`
+  - Reframed the worker contract around `small-lot harvest + disaster stop + fast cleanup`.
+  - Added explicit trader/bot split output requirements so the trader must name the structural seat, harvest lanes, and inventory owner every session.
+- `collab_trade/strategy_memory.md`
+  - Updated sizing memory so the old 3k floor remains true for trader-owned seats, while worker `FAST` / `MICRO` lanes are explicitly allowed to go smaller.
+
+**Why**: The user's requested posture is not "bot goes reckless." It is "bot takes many small waves, trader keeps the structural thesis, and inventory management handles the misses." This change moves that posture into both the runtime and the prompts.
+
+## 2026-04-17 — Cap unrealistic passive LIMIT distance so the worker stops parking wish orders
+
+**Problem**: The range worker could still leave passive LIMIT orders far from the live price simply because the Bollinger edge itself was structurally valid. In practice that produced low-fill orders that sat far away, then got canceled later for "unlikely to fill" / "too far below" style reasons. The issue was not the pair; it was the market state: price was still too far from the edge for that passive order to be a real deployment path.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added a passive-limit distance cap based on current spread and M5 ATR.
+  - If the desired passive entry is too far from live price, the bot now either:
+    - caps the reload closer to live price while preserving acceptable R:R, or
+    - skips the order entirely if a closer reload would no longer make economic sense.
+  - Existing worker pending LIMITs are now re-checked against that same live-gap rule, so stale far-away wish orders get canceled earlier instead of aging into later cleanup churn.
+- `docs/SKILL_trader.md`, `docs/SKILL_range-bot.md`
+  - Documented the same principle for discretionary and worker behavior: structural is necessary, but not enough. New passive orders also need realistic fill distance.
+
+**Why**: A structural level that is still one full pullback away is analysis, not deployment. The worker should either leave a realistic reload or stay ready for the live-now / second-shot path instead of clogging the book with distant orders.
+
+## 2026-04-17 — Fix trader/worker collaboration leaks and late-session overblocking
+
+**Problem**: The local layer had three live-profit killers.
+
+1. `range_bot.py` hard-skipped the entire `19:00-23:59 UTC` band. That stopped not only bad market chasing, but also clean passive trap placement in late-NY / pre-Tokyo tape. Result: flat book even when the market still offered passive range seats.
+2. `range_bot_market` could inherit stops that were only a few pips wide after upgrading a limit idea to a live market fill. Those stops were often narrower than current spread + micro noise, which is exactly the "SL hunted" behavior the user complained about.
+3. `close_trade.py` still allowed routine trader-side worker exits after the first 10 minutes. That meant trader/worker collaboration could collapse back into manual churn under vague reasons like `trader_worker_inventory`.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Replaced the blanket `19:00-23:59 UTC` full stop with `LIMIT-only` behavior in that window. Passive worker entries remain allowed; only market chasing is suppressed.
+  - Added a live-entry stop floor for `MARKET` upgrades based on current spread and M5 ATR. If the inherited stop is too tight, it is widened to a minimum safe distance; if that makes the live fill no longer worth it, the market upgrade is skipped.
+- `tools/close_trade.py`
+  - Worker-tagged trades are now worker-owned for their entire lifecycle, not just the first 10 minutes.
+  - Routine trader closes on worker inventory are blocked outright. Only bot-managed reasons (`bot_*`) or explicit emergency `--force-worker-close` reasons are permitted.
+- `docs/SKILL_range-bot.md`
+  - Updated the operating note so the documented late-session behavior matches runtime: passive-only, not full skip.
+
+**Why**: The trader and worker are supposed to collaborate by role. The worker should keep harvesting passive range seats and manage its own scalp lifecycle; the trader should steer policy and only override in real emergencies. Flat-book starvation, 2-3 pip live-entry stops, and discretionary worker flattening are all violations of that contract.
+
+## 2026-04-17 — Make fresh worker-close protection use OANDA transaction truth
+
+**Problem**: The anti-churn contract around worker trades still had two holes in live trading.
+
+1. `close_trade.py` checked the current trade payload for the worker tag, but OANDA can omit that tag on the trade object even when the opening `ORDER_FILL` transaction still has `tradeOpened.clientExtensions.tag`. In practice that meant fresh `range_bot_market` / `trend_bot_market` trades could still be flattened with routine trader reasons because the guard failed to recognize them as worker inventory.
+2. Even when the tag was present, the first-10-minute guard only blocked a narrow set of routine reasons. Any other discretionary reason string could still bypass the intended worker-owned window and turn a fresh bot fill into spread churn.
+
+**Fix**:
+- `tools/oanda_trade_tags.py`
+  - New helper module that recovers worker tags/comments from the opening OANDA transaction and can enrich open-trade payloads when the trade endpoint omits extensions.
+- `tools/range_bot.py`
+  - `fetch_open_trades()` now enriches open trade payloads from OANDA transaction truth before any worker/trader conflict logic runs.
+- `tools/bot_trade_manager.py`
+  - `fetch_open_trades()` now uses the same enrichment path so worker inventory is identified consistently in the manager.
+  - Worker-owned close reasons are now normalized to `bot_*` for normal lifecycle actions.
+  - Margin/deadlock relief closes now use explicit emergency reasons with `--force-worker-close` so they stay aligned with the runtime contract.
+- `tools/close_trade.py`
+  - `fetch_trade()` now falls back to the opening transaction to recover worker tags before enforcing the worker guard.
+  - The first 10 minutes of a worker trade are now treated as worker-owned by default: only bot-managed reasons (`bot_*`) or explicit emergency `--force-worker-close` reasons may close it.
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`
+  - Updated the worker-close language to match the stricter runtime behavior.
+
+**Why**: Repeated small closes on fresh worker fills are not risk management; they are spread payments. If the worker seat is supposed to own the first scalp window, that ownership must be enforced from OANDA transaction truth, not assumed from a best-effort tag on the current trade object.
+
+## 2026-04-17 — Force regime-first thinking before pair selection
+
+**Problem**: Recent losses were being analyzed too easily as "bad pair choice" when the deeper failure was upstream: the trader could still jump from pair scan to entry without first writing what the market regime was paying, which vehicle expressed it cleanly, and which tempting expressions were actually traps. That left room for stale H4-story dip-buys and dirty cross expressions to slip through.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Expanded `Market Narrative` to require `Execution Regime`, `Best Expression NOW`, `Second-best expression`, `Expressions to avoid`, and an explicit `H4-memory trap check`
+  - Added `Expression fit` / `Cleaner or dirtier alternative` / `Memory trap check` to Tier 1 and promoted Tier 1 scan blocks
+  - Added an `EXPRESSION` line to Tier 2 so every pair is judged as a vehicle for the regime, not just as a standalone setup
+  - Expanded the pre-entry conviction block so every trade must explain why this pair is the best expression of the regime and why the obvious alternative is worse
+  - Updated the `state.md` handoff template so the next session inherits regime/expression context, not just pair notes
+- `collab_trade/strategy_memory.md`
+  - Recorded the new lesson that regime and expression must be named before pair selection
+
+**Why**: "GBP_USD long" is a pair idea. "Corrective USD bid with dirty JPY crosses; direct USD pair is the clean expression" is a market read. The prompt now forces the second kind of thinking before the first kind of action.
+
+## 2026-04-17 — Surface realized expectancy so payoff quality stops hiding behind nominal R:R
+
+**Problem**: The system already knew many losing days came from "wins too small / losses too large" rather than from raw direction accuracy, but the runtime summaries still foregrounded win rate and nominal `R:R`. That made it too easy to miss the actual question: "with this win rate and these realized payouts, is the trade distribution making money at all?"
+
+**Fix**:
+- `collab_trade/memory/pretrade_check.py`
+  - Added realized payoff metrics to historical pair stats: `avg_win`, `avg_loss`, `rr_ratio`, `expectancy`, `profit_factor`, `break_even_win_rate`
+  - Added backward-looking warnings when pair history is negative-EV or when actual WR sits meaningfully below the break-even WR implied by realized payout shape
+  - Expanded the CLI output so pretrade history now shows `EV/trade`, `avg win/loss`, `R:R`, and break-even WR instead of only WR + avg P&L
+- `tools/oanda_performance.py`
+  - Added realized expectancy, profit factor, and break-even WR to overall, daily, and by-pair performance summaries
+  - Human-readable output now surfaces payoff quality explicitly instead of making `R:R` the only payout lens
+- `tools/daily_review.py`
+  - Daily report top-line now includes expectancy and break-even WR
+  - Pair/day summaries and LOW-entry review now expose `EV` and `R:R`
+- `tools/trade_guard.py`
+  - Replaced the narrow `RR < 0.7` warning with a realized payoff-quality alert centered on `WR vs break-even WR` and `EV/trade`
+- `docs/SKILL_daily-review.md`
+  - Tightened the review instruction so the journal must state whether expectancy was actually positive, not just whether win rate looked good
+
+**Why**: Planned `R:R` is only a hypothesis. In live FX trading, spread, execution price, partial exits, and wrong-timeframe management can all destroy the payout shape even when the original diagram looked acceptable. The system needs to keep asking the harder question: does the realized distribution have positive expectancy after repetition?
+
+## 2026-04-17 — Add deterministic bot-policy guard so flat-book coverage cannot be starved by narrow policy
+
+**Problem**: The local worker loop was healthy and scanning every minute, but it could still stay empty for long stretches when the human/LLM policy map came back too narrow. In practice the worker would find live `A/B` seats and then skip them with lines like `policy PAUSE blocks SELL` or `policy market disabled`, even though `Target Active Worker Pairs` still said the flat book should keep one live seat.
+
+**Fix**:
+- `tools/bot_policy.py`
+  - Added canonical policy markdown rendering and full policy normalization helpers so runtime tools can rewrite the human policy into one stable contract.
+- `tools/bot_policy_guard.py`
+  - New deterministic guard that runs before the worker bots.
+  - Recovers policy from markdown if JSON is missing/corrupt.
+  - Detects `coverage target > live worker coverage` plus `all live current lanes blocked only by policy`.
+  - Reopens exactly one minimal repair lane on a short TTL.
+    Range repair first as passive `LIMIT`; trend continuation second if no usable range seat exists.
+  - Rewrites `logs/bot_inventory_policy.md/json` into canonical form so the human-readable and machine policy stay aligned.
+- `tools/local_bot_cycle.sh`
+  - Now runs `bot_policy_guard.py` immediately after factor-cache refresh and before `bot_trade_manager.py` / `trend_bot.py` / `range_bot.py`.
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`
+  - Documented the deterministic safety net so trader and backup repair flows understand the new ownership boundary.
+- `collab_trade/strategy_memory.md`
+  - Recorded the lesson that coverage-seat intent needs runtime enforcement, not prompt obedience alone.
+
+**Why**: A coverage target is an execution contract, not a suggestion. If the policy says the worker book should not stay empty, the deterministic local layer must stop stale/narrow policy from starving every current seat while still keeping the repair minimal and time-bounded.
+
+## 2026-04-17 — Re-check policy immediately before worker submit
+
+**Problem**: The new local bot layer could still act in lanes that the trader intended to reserve or pause.
+
+- `range_bot.py` and `trend_bot.py` only evaluated `ACTIVE` at startup, so a mid-cycle policy flip could still leave a small race window before submit.
+- `range_bot.py` could keep stale worker pending orders even after the lane had been flipped to `PAUSE` / `CANCEL`.
+
+**Fix**:
+- `tools/bot_policy.py`
+  - Added explicit helpers for `ACTIVE` gating and lane-level block reasons (`mode`, `allow_market`, `pending`, `max_pending`).
+- `tools/range_bot.py`
+  - Uses the centralized lane gate before placing any passive or market order.
+  - Re-loads policy immediately before submit so a fresh `PAUSE_ALL` / `REDUCE_ONLY` / ownership change aborts the order.
+  - Cancels stale worker pending orders when the lane has already been moved to `PAUSE` / `CANCEL`.
+  - Counts only truly lane-eligible worker seats when sizing the bot budget.
+- `tools/trend_bot.py`
+  - Uses the same centralized lane gate.
+  - Re-loads policy immediately before submit so a fresh policy change aborts the market order.
+
+**Why**: Worker/trader collaboration is intentional, but `PAUSE_ALL`, `REDUCE_ONLY`, and lane-level `PAUSE` / `CANCEL` still need to bite immediately. The local worker layer must respect the latest live policy instead of sneaking an order through a one-cycle race.
+
+## 2026-04-17 — Tighten MICRO so it stops paying spread and praying for TP
+
+**Problem**: The worker layer had good MTF structure, but the newest `MICRO` lane was still too tolerant of noise. In practice that meant:
+- trend `MICRO` could accept sub-1R style bites,
+- range `MICRO` could accept weak `M1` triggers and average spreads,
+- and the result was a design that sometimes looked like "pay spread and hope for immediate follow-through."
+
+**Fix**:
+- `tools/trend_bot.py`
+  - Tightened `MICRO` payout floors and RR floor to roughly `1.05R`
+  - Added a stricter spread gate for `MICRO`
+- `tools/range_bot.py`
+  - Raised the `MICRO` market RR floor to `1.0`
+  - Raised `MICRO` TP floors (spread multiple + ATR fraction)
+  - Added a stronger `M1` score requirement for `MICRO`
+  - Added a stricter spread gate for `MICRO`
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`
+  - Updated the prompt contract so `MICRO` explicitly means clean spread + stronger trigger + roughly 1R after costs
+
+**Why**: MTF structure should stay. What needed to change was the payoff quality. A fine-wave lane is useful only if it still has real expectancy after spread and slippage, not if it relies on immediate luck.
+
+## 2026-04-17 — Add flat-book repair lanes and H1 range promotion for the worker layer
+
+**Problem**: Missed participation was still coming from structure, not just judgment.
+
+1. `range_bot.py` dropped any higher-timeframe range seat that started at scanner conviction `C`, even when the `H1` box was clean, signal strength was high, and `M1` was already offering a usable live trigger.
+2. Worker policy had no explicit way to say "if the whole book is flat, this pair may be the first live seat." The choice was either the normal quality bar or a full pause, which left the book empty while audits were still pointing at live A/B lanes.
+
+**Fix**:
+- `tools/bot_policy.py`
+  - Added `target_active_worker_pairs`
+  - Added per-pair `entry_bias` (`PASSIVE` / `BALANCED` / `EARLY`)
+  - Extended active-policy grace from 60 to 120 minutes so one missed trader cycle does not immediately starve the worker map
+- `tools/render_bot_inventory_policy.py`
+  - Added backward-compatible parsing/rendering for `Target Active Worker Pairs` and `EntryBias`
+- `tools/range_bot.py`
+  - Promotes strong `H1` range seats from base `C` to executable `B` when structure plus live trigger support it
+  - Uses `target_active_worker_pairs` and `entry_bias` to allow flat-book repair scouts only when the book is under-covered and the pair is explicitly allowed to act early
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`
+  - Updated the worker-policy contract and operating language to include coverage target + entry bias
+- `collab_trade/strategy_memory.md`
+  - Recorded the flat-book repair lesson for later review
+
+**Why**: The goal is not "force a position at all times." The goal is "do not stay empty when the market is already offering a clean first seat." This change moves that behavior into the policy contract and deterministic worker code.
+
+## 2026-04-17 — Add target-race partials so worker trades can pay TP1 and still keep TP2 alive
+
+**Problem**: The worker layer still treated every trade as a single static `TP/SL` outcome. That meant conflicting multi-timeframe reads could not be expressed correctly. A pair could have a valid short-term counter move and a valid higher-timeframe continuation at the same time, but the local bots had no way to ask "which target is likely first?" or "where can the remainder stay alive after the fast target pays?"
+
+**Fix**:
+- `tools/range_bot.py`
+  - Range entries now build a target-race plan with `TP1`, `TP2`, and `hold_boundary`
+  - The worker still uses `TP1` to judge entry quality, but broker `takeProfitOnFill` is now set to `TP2` so the manager can partial at `TP1` instead of letting OANDA flatten the full seat there
+- `tools/trend_bot.py`
+  - Continuation entries now build the same target-race plan
+  - Balanced seats scale at a nearer `TP1` and keep the old continuation target as `TP2`; `FAST` / `MICRO` seats now extend into a controlled second target instead of dying at the first bite
+- `tools/worker_target_race.py`
+  - Added shared plan encoding/decoding plus persistent execution state for worker runners
+- `tools/bot_trade_manager.py`
+  - Added `TP1 -> half-close -> runner` promotion
+  - After TP1, the manager moves the remaining half to `TP2` with a new `hold_boundary` stop instead of applying normal stale-scalar cleanup immediately
+- `tools/close_trade.py`
+  - Partial closes now notify Slack as `modify` events instead of incorrectly posting `FULL CLOSE`
+- `docs/SKILL_trader.md`, `AGENTS.md`, `collab_trade/strategy_memory.md`
+  - Updated the operating contract and recorded the lesson so the worker layer is explicitly allowed to express "fast target first, higher-timeframe target later"
+
+**Why**: The right question is not "long or short?" but "which objective is likely first, and where can the rest survive?" This change moves that logic out of human-only judgment and into the worker stack itself.
+
+## 2026-04-17 — Stop routine trader closes from overriding fresh worker trades
+
+**Problem**: Even after adding the first worker-close guard, `qr-trader` could still flatten fresh worker trades by passing `--force-worker-close` with the routine reason `trader_worker_inventory`. In live operation that meant a narrow trader session could still crush a just-opened bot trade within minutes, even though the intended contract was "policy steering first, emergency override only."
+
+**Fix**:
+- `tools/close_trade.py`
+  - Added explicit emergency-only force reasons: `worker_emergency_override`, `panic_margin`, `deadlock_relief`, `worker_policy_breach`, `rollover_emergency`
+  - Fresh worker trades can no longer be closed in the first 10 minutes with routine reasons like `trader_worker_inventory` or `inventory_director_backup`, even if `--force-worker-close` is passed
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`
+  - Updated the close command examples and worker-close guard language to match the stricter contract
+
+**Why**: Broad collaboration cannot rely on prompt obedience alone. The runtime must also prevent routine trader taste from killing the fast worker layer before the scalp window has had a chance to play out.
+
+## 2026-04-17 — Force trader worker policy to use a broad 7-pair view
+
+**Problem**: The worker layer had already become capable of `MICRO` / `FAST` / `BALANCED` scalp lanes, but the `trader` policy-writing prompt still made it too easy to collapse the live worker map into a single hero-pair view. In practice that left valid lanes like live `GBP_USD` continuation setups paused simply because another pair or another discretionary thesis was receiving attention.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Added an explicit breadth contract: worker policy must represent the 7-pair opportunity map, not just the discretionary hero pair
+  - Added a required `## Worker Breadth` reasoning block before each worker policy rewrite so trader must name the best trend lane, second trend lane, best range lane, and the real blocker to broader deployment
+- `docs/SKILL_inventory-director.md`
+  - Added the same repair principle for backup policy rewrites so stale one-pair bias is not preserved
+
+**Why**: The hero pair is a discretionary concentration concept, not a valid reason to starve the local worker layer. Worker policy should be narrow only when the market is narrow, not when the operator's attention is narrow.
+
+## 2026-04-17 — Add MICRO tempo so the local bot layer can harvest finer waves
+
+**Problem**: The local worker layer still behaved like a two-speed system. `BALANCED` was too slow for tiny scalp windows, and `FAST` was intentionally tightened to `M1 aligned` only after the recent stop-loss churn. That fixed late-chase entries, but it also left no explicit lane for the smaller waves that still appear inside a live trend or clean range extreme.
+
+**Fix**:
+- `tools/bot_policy.py`
+  - Added `MICRO` as a first-class tempo in the worker policy contract
+- `tools/trend_bot.py`
+  - Added a `MICRO` execution profile with shorter TP / lower RR floor
+  - `MICRO` is allowed only when `M1` is `aligned` or `reload`
+  - Candidate scanning no longer filters only through the `BALANCED` plan, so micro-only seats can survive discovery
+- `tools/range_bot.py`
+  - Added a `MICRO` range TP profile and smaller market sizing
+  - `MICRO` can take strong `B` range edges with MARKET when the live micro trigger is there, instead of forcing them all to stay passive
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`, `CLAUDE.md`, `collab_trade/state.md`
+  - Updated the policy language so trader / backup LLM can deliberately choose `MICRO`
+
+**Why**: Speed should come from a distinct fine-wave lane, not from diluting the safety rules on `FAST`. `MICRO` keeps the fast layer fast without turning every noisy continuation into another stop-loss chase.
+
+## 2026-04-17 — Let range-bot trade the best M5/H1 range lens instead of M5 only
+
+**Problem**: `tools/range_scalp_scanner.py` could already see real range opportunities on both `M5` and `H1`, but `tools/range_bot.py` only built live worker candidates from `M5`. In practice that meant clean `H1` range seats such as `AUD_USD` and `USD_JPY` could show up in the scanner while the local worker reported `Ranges found: 0` and never even evaluated them as executable fade views.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Scans both `M5` and `H1` range opportunities per pair
+  - Scores the surviving views, keeps the best primary lens, and carries the non-selected views as `alternate_views` for dry-run visibility
+  - Prints the chosen setup timeframe in trade plans so it is obvious whether the worker is acting on an `M5` or `H1` range
+- `AGENTS.md`, `CLAUDE.md`
+  - Updated the operating description so the worker contract reflects the real multi-timeframe range selection logic
+- `collab_trade/strategy_memory.md`
+  - Recorded the lesson that collapsing range reads to `M5` only hides valid higher-timeframe seats
+
+**Why**: The market rarely offers only one valid lens per pair. If the scanner can already see the `H1` box, the worker should not erase that edge just because the `M5` tape is noisy or mid-zone.
+
+## 2026-04-17 — Make the local bot layer scalp-only and push horizon ownership back to trader
+
+**Problem**: The prior collaboration work solved churn, but the horizon contract was still muddy.
+
+1. The local worker layer could still linger long enough to behave like a pseudo-swing book because `bot_trade_manager.py` only intervened on panic / deadlock paths.
+2. `Tempo` described exit speed, but not the deeper contract that the worker is a scalp layer while the trader owns the full discretionary ladder from scalp through swing.
+3. The trader prompt still logged only `scalp/swing`, which was too coarse to distinguish tactical scalp, rotation, and real swing ownership.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Replaced the old fixed worker budget with a dynamic scalp budget profile that can expand roughly 18-34% of NAV when the live tape and conviction justify it, while still leaving the longer seat to the trader layer
+- `tools/bot_trade_manager.py`
+  - Added tag + tempo-aware scalp timeout profiles
+  - Worker trades now get flattened when they overstay their scalp window even if panic margin is not yet elevated
+  - Preserved the existing margin / deadlock emergency-relief path on top of the new timeout cleanup
+- `tools/bot_inventory_snapshot.py`
+  - Snapshot output now surfaces worker tag, tempo, scalp state, and timeout window so the trader can see when a bot seat is aging out of scope
+- `docs/TRADER_PROMPT.md`
+  - Upgraded discretionary tags from generic `scalp/swing` to `trader_scalp`, `trader_rotation`, `trader_swing`
+  - Added explicit horizon fields to the registry/log contract: expected hold, first confirmation, promotion trigger, and must-flat boundary
+- `docs/SKILL_trader.md`, `docs/SKILL_bot-trade-manager.md`, `docs/SKILL_range-bot.md`, `docs/SKILL_trend-bot.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`, `collab_trade/state.md`
+  - Updated the operating contract so the worker layer is scalp-only and the trader owns all discretionary horizon changes
+
+**Why**: The right split is not "bot trades first, trader promotes later." The right split is "bot harvests speed, trader owns time." That keeps the fast layer fast, preserves swing capital for the trader, and makes the book easier to reason about.
+
+## 2026-04-17 — Require aligned M1 for FAST trend-bot entries
+
+**Problem**: The first `FAST` collaboration pass let trend-bot enter when the micro tape was only `mixed` or `reload`. In live trading that produced late continuation shorts like `GBP_USD 468314`, where higher timeframes were bearish but the immediate `M1` tape had already turned counter and the worker still fired a short-TP market entry.
+
+**Fix**:
+- `tools/trend_bot.py`
+  - Added an explicit `FAST` gate: the pair policy may say `Tempo=FAST`, but the bot now refuses the trade unless `M1` state is `aligned`
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`, `CLAUDE.md`
+  - Updated the policy contract so `FAST` is documented as valid only when the live `M1` micro state is aligned
+
+**Why**: `FAST` is for clean immediate participation, not for fading a micro pullback late in the move. If the micro tape is mixed, the worker should either wait or fall back to the balanced profile instead of paying spread for a weak bite.
+
+## 2026-04-17 — Make worker re-entry cooldown see real OANDA stop-loss fills
+
+**Problem**: The first anti-churn pass only read `logs/live_trade_log.txt`. That caught trader-forced worker closes, but it missed OANDA-native stop-loss fills because those exits were never written to the local log. Result: a worker trade could stop out and the next local cycle would still think no recent close had happened, then immediately re-enter the same pair/direction.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added `fetch_recent_worker_close_events()` which inspects recent OANDA transactions via `transactions/idrange`
+  - Maps worker `tradeOpened.tradeID` records to later `ORDER_FILL` close events, so `STOP_LOSS_ORDER` and `MARKET_ORDER_TRADE_CLOSE` are recognized as worker exits even when the local log has no matching line
+  - `recent_close_cooldown()` now combines local close-log evidence with recent OANDA transaction evidence
+- `tools/trend_bot.py`
+  - Reuses the same transaction-backed recent-close cooldown
+
+**Why**: The cooldown must follow the broker’s truth, not only the local text log. Otherwise fast workers will keep re-entering right after real stop-losses and turn one bad read into repeated spread burn.
+
+## 2026-04-17 — Refresh stale trader charts automatically and widen trend-bot continuation exits
+
+**Problem**: Two accuracy failures were live at the same time.
+
+1. Trader sessions were reading `logs/charts/*.png` as if they were fresh, but the local chart set could go stale for hours when `quality-audit` missed a cycle. That meant the trader could be looking at old tape while believing it was current.
+2. `tools/chart_snapshot.py` printed a wrong bearish plan string (`TREND-BEAR` still said "Buy dips"), and `tools/trend_bot.py` was sizing continuation stops like a micro scalp. A live EUR_USD `trend_bot_market` short printed `TP 6.6pip / SL 3.9pip`, and `protection_check.py` immediately flagged the stop as noise-tight.
+
+**Fix**:
+- `tools/session_data.py`
+  - Added chart-freshness checks for the full 14-PNG set
+  - Auto-runs `.venv/bin/python tools/chart_snapshot.py --all` when the oldest chart is older than 40 minutes or files are missing
+  - Added explicit `CHART SNAPSHOTS` and `QUALITY AUDIT STATUS` sections so the trader can see whether the local visual view is fresh and whether `quality_audit.md` is stale
+- `tools/chart_snapshot.py`
+  - Fixed bearish regime guidance text so `TREND-BEAR` / `MILD-BEAR` no longer tell the trader to "Buy dips"
+- `tools/trend_bot.py`
+  - Raised continuation stop floors to clear spread, M5 ATR, and H1 ATR noise
+  - Raised TP floors to match the wider stop and force continuation trades to target real follow-through instead of 5-7pip scalp scraps
+- `docs/SKILL_trader.md`, `AGENTS.md`
+  - Updated the operating contract: quality-audit remains the primary chart writer on a 45-minute cadence, but trader startup now refreshes stale/missing PNGs automatically and treats stale audit prose as historical context only
+- `collab_trade/strategy_memory.md`
+  - Recorded the continuation-stop lesson so daily-review does not regress back to sub-H1-ATR noise stops
+
+**Why**: Visual chart reading is only useful if the pictures are current, and continuation entries are only worth taking if the stop can survive normal H1 noise. This change closes both gaps in code instead of relying on the prompt to remember them.
+
+## 2026-04-17 — Add explicit collaboration tempo for trader + worker co-trading
+
+**Problem**: The anti-churn fix stopped the trader from flattening fresh worker fills, but the system was still too binary.
+
+1. Same-pair cooperation was incomplete because any same-direction discretionary pending entry still blocked the worker, even when the trader actually wanted a shared seat.
+2. Worker exits were tuned for balanced swings only. That made the system safer, but slower than the user's intended "trader keeps the thesis, bot takes quick bites" style.
+
+**Fix**:
+- `tools/bot_policy.py`
+  - Added pair-level `tempo` with two explicit modes: `BALANCED` and `FAST`
+- `tools/render_bot_inventory_policy.py`
+  - Extended the markdown contract to include a `Tempo` column while staying backward compatible with older 7-column policy rows
+- `tools/range_bot.py`
+  - Added ownership-aware pending deconfliction so same-direction trader pending orders no longer block the worker when policy explicitly allows sharing
+  - Added `FAST` tempo handling that shortens the range bot TP into a quicker bite profile
+  - Lowered the required market RR floor for `FAST` tempo so quick worker scalps can execute intentionally instead of being silently filtered out
+- `tools/trend_bot.py`
+  - Reused the same ownership-aware pending deconfliction
+  - Added `FAST` tempo handling for shorter continuation TP targets so the worker can scalp band-walk follow-through while the trader keeps the broader seat
+- `tools/bot_inventory_snapshot.py`
+  - Now surfaces `tempo` in the human-readable bot snapshot
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`, `CLAUDE.md`, `collab_trade/state.md`
+  - Updated the operating contract from simple ownership-only steering to `Ownership + Tempo`
+
+**Why**: The user does not want "trader or bot"; they want a deliberate stack. The trader owns the bigger thesis and failure path, while the worker can harvest shorter intraday bites on the same pair when policy explicitly says that coexistence is allowed and fast exits are desired.
+
+## 2026-04-17 — Stop trader-vs-worker churn on fresh bot fills
+
+**Problem**: The worker layer was not just losing to tight stops. A more expensive failure mode had emerged in live trading: `qr-trader` could close a fresh bot trade with `reason=trader_worker_inventory`, and then the 60-second worker immediately re-entered the same pair/direction. That turned one weak idea into repeated spread payments and made the trader layer look like it was "crushing" the bot instead of steering it.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added a recent-close cooldown that reads `logs/live_trade_log.txt` and blocks same-pair same-direction re-entry for 10 minutes after fresh `trader_worker_inventory` or stop-loss exits
+- `tools/trend_bot.py`
+  - Reused the same recent-close cooldown, so trend MARKET continuation cannot immediately refill a seat the trader or stop just killed
+- `tools/close_trade.py`
+  - Added a worker-trade guard: routine closes with `reason=trader_worker_inventory` or `inventory_director_backup` are rejected during the first 10 minutes unless `--force-worker-close` is explicitly passed
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`
+  - Changed the ownership contract from "trader routine owner" to "worker-owned lifecycle, trader policy steering"
+  - Restricted worker close commands to emergency overrides and documented the new `--force-worker-close` requirement
+- `AGENTS.md`, `CLAUDE.md`, `collab_trade/state.md`
+  - Updated runtime descriptions and handoff memory so the new anti-churn boundary is explicit
+
+**Why**: The trader layer should steer worker permissions, not repeatedly flatten fresh worker inventory and invite the bot to re-enter the same idea one minute later. By moving this boundary into code, the system stays robust even if a future prompt regresses.
+
+## 2026-04-17 — Add explicit worker ownership contract and enforce MaxPending in code
+
+**Problem**: The first deconfliction pass fixed trader pending-entry collisions, but the worker layer still had two design holes.
+
+1. Same-pair coexistence with live discretionary trades was still implicit and inconsistent. `range_bot.py` blocked any live position on the pair, while `trend_bot.py` could still add in some same-direction cases. The system had no explicit contract saying whether a trader-owned seat could be shared with passive worker reloads, market worker adds, or neither.
+2. The policy schema exposed `MaxPending`, but the local bot code did not actually enforce that cap. Prompt and runtime could drift apart, and duplicate pending orders could still persist until manually cleaned.
+
+**Fix**:
+- `tools/bot_policy.py`
+  - Added pair-level `ownership` normalization with three explicit modes: `TRADER_ONLY`, `SHARED_PASSIVE`, `SHARED_MARKET`
+  - Added `ownership_allows_worker()` so worker code can make the same seat-sharing decision deterministically
+- `tools/render_bot_inventory_policy.py`
+  - Extended the markdown contract to include an `Ownership` column
+  - Kept backward compatibility with the older 6-column table so old policy files still render safely during migration
+- `tools/range_bot.py`
+  - Added shared helpers for open-trade conflict detection and direction parsing
+  - Range bot now distinguishes discretionary open trades from worker trades instead of blanket-skipping any open pair
+  - Enforces `Ownership` by order type: passive LIMITs may coexist only when policy says so; market-style adds require `SHARED_MARKET`
+  - Enforces `MaxPending` while keeping, replacing, placing, and cleaning pending range orders
+- `tools/trend_bot.py`
+  - Reused the same ownership-aware open-trade deconfliction helpers
+  - Trend bot now only shares a pair with discretionary live inventory when policy explicitly says `SHARED_MARKET`
+- `tools/bot_inventory_snapshot.py` and `tools/bot_trade_manager.py`
+  - Count only entry pending orders for snapshot / projected-margin views
+  - Surface `ownership` + `max_pending` in the trader-facing bot snapshot
+- `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `AGENTS.md`, `CLAUDE.md`
+  - Updated the canonical policy format and runtime docs to include `Ownership`
+
+**Why**: `PAUSE` should express market judgment, not be abused as duplicate-execution bookkeeping. With an explicit ownership contract, trader and worker can intentionally share a pair when desired, and stay out of each other’s way when not. With `MaxPending` enforced in code, the policy schema finally means what it says.
+
+## 2026-04-17 — Repair audit handoff persistence and pretrade outcome matching
+
+**Problem**: Two feedback loops were still decaying in production.
+
+1. `tools/quality_audit.py` rewrote `logs/quality_audit.md` from scratch every cycle. On a `CLEAN` run it replaced the whole file with a 3-line stub, so the next audit lost the previous `## Auditor's View`, and trader sessions saw either nothing or only the stub.
+2. `tools/daily_review.py` had regressed to same-day-only `pretrade_outcomes` matching and could reuse the same `trade_id` for multiple pretrade rows. Cross-day closes were missed, duplicate labels accumulated, and audit opportunity scoring also misread closed-trade direction because it inferred side from absolute units.
+3. `collab_trade/memory/pretrade_check.py` still left `pretrade_outcomes.thesis` blank, so downstream review had no compact record of what setup was actually being evaluated.
+
+**Fix**:
+- `tools/quality_audit.py`
+  - Added `extract_auditor_view()` + `merge_previous_auditor_view()`
+  - Script facts now preserve the previous `## Auditor's View` block until the current cycle writes a new one
+  - Always writes `logs/quality_audit.json`, even on clean cycles, instead of deleting it
+- `docs/SKILL_quality-audit.md`
+  - Switched Bash D to `.venv/bin/python tools/chart_snapshot.py --all` so the visual chart pass keeps working when host `python3` lacks `matplotlib`
+- `tools/session_data.py`
+  - Always shows the recent `quality_audit.md` block instead of suppressing it on `CLEAN`
+  - Expanded the displayed snippet so the preserved auditor narrative is visible to the trader
+- `tools/daily_review.py`
+  - Restored recent-unmatched matching across the last 3 days
+  - Matches the nearest pretrade check before the trade entry/fill time instead of pop-by-key
+  - Repairs duplicate `trade_id` links by keeping only the newest linked pretrade row
+  - Carries `entry_time` / `close_time` through closed-trade parsing
+  - Uses explicit `direction` for audit opportunity outcome analysis instead of guessing from absolute units
+  - Daily review output now includes carry-over pretrade matches when a prior-day setup closes today
+- `collab_trade/memory/pretrade_check.py`
+  - Added compact thesis logging (`edge / allocation / wave / top details`) into `pretrade_outcomes.thesis`
+
+**Verification**:
+- `python3 tools/quality_audit.py` → `CLEAN (0.5s)`
+- `.venv/bin/python tools/quality_audit.py` → `CLEAN (0.6s)`
+- `python3 tools/chart_snapshot.py --all` → fails on this host with `ModuleNotFoundError: matplotlib`
+- `.venv/bin/python tools/chart_snapshot.py --all` → generated 14 charts successfully
+- `python3 tools/daily_review.py --date 2026-04-16` → report generated with deduped pretrade links
+- `.venv/bin/python tools/daily_review.py --date 2026-04-16` → report generated with deduped pretrade links
+- `python3 tools/session_data.py` → recent `QUALITY AUDIT` section rendered from the persisted file
+- `.venv/bin/python tools/session_data.py` → recent `QUALITY AUDIT` section rendered from the persisted file
+- `python3 collab_trade/memory/pretrade_check.py GBP_USD SHORT`
+- `.venv/bin/python collab_trade/memory/pretrade_check.py GBP_USD SHORT`
+- `sqlite3 collab_trade/memory/memory.db "SELECT ... thesis ..."` → latest rows include thesis text
+
+## 2026-04-17 — Worker deconfliction now reads discretionary pending entries
+
+**Problem**: The worker layer already skipped same-pair live positions, but it still could not see discretionary pending entry orders. That forced the trader to `PAUSE` pairs in policy just to avoid duplicate limits such as the AUD_JPY floor-defense thesis. The result was the wrong abstraction: policy was doing pair-ownership bookkeeping that the code itself should have handled.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added generic pending-order helpers that distinguish entry orders from protective orders
+  - Range bot now skips same-pair, same-direction discretionary pending entries in code
+- `tools/trend_bot.py`
+  - Reused the same pending-entry deconfliction helpers
+  - Trend bot now also skips same-pair, same-direction discretionary pending entries in code
+- `AGENTS.md`
+  - Documented that worker deconfliction now includes trader pending entries, not just live positions
+
+**Why**: Market permission and ownership are different. Policy should say whether a market is worth trading. Code should prevent duplicate execution against the trader's existing live or pending book. Moving duplicate-limit avoidance into code keeps the worker fast without using `PAUSE` as a blunt workaround.
+
+## 2026-04-17 — Fix live-vs-state drift visibility for quality-audit and trader sessions
+
+**Problem**: `tools/quality_audit.py` self-check still parsed only the legacy `### EUR_USD LONG ...` state format. The live trader handoff now writes open positions under `## Positions (Current)` as plain lines like `GBP_USD SHORT 3000u id=...`, so audit runs were raising false `state.md parsed []` failures even when the handoff was correct. Even when a real mismatch existed, the output only said `FAILED` without telling the trader whether the problem was a live orphan, a missing state update, or both.
+
+**Fix**:
+- `tools/quality_audit.py`
+  - Added a dedicated `parse_state_positions()` helper
+  - Parse the current `## Positions (Current)` block first, matching plain `PAIR LONG/SHORT 3000u` lines
+  - Keep the old `### ...` header parser as a fallback for older state snapshots
+  - Continue excluding `LIMIT` lines so pending orders are not misread as held inventory
+  - Self-check now reports concrete `OANDA only` vs `state.md only` positions, including trade IDs and manual/no-log context for live orphan candidates
+- `tools/session_data.py`
+  - Added a `STATE POSITION SYNC` block at session start
+  - Warns when live OANDA positions and `## Positions (Current)` disagree, without auto-editing `state.md`
+  - Prints both sides of the mismatch so the trader can repair the handoff before analysis
+
+**Verification**:
+- `python3 tools/quality_audit.py` → `EXIT:0`, `CLEAN`
+- `.venv/bin/python tools/quality_audit.py` → `EXIT:0`, `CLEAN`
+- `python3 tools/session_data.py` → `STATE POSITION SYNC` block rendered with actual sync status
+- `.venv/bin/python tools/session_data.py` → `STATE POSITION SYNC` block rendered with actual sync status
+
+## 2026-04-16 — Trader now owns routine worker policy; inventory-director demoted to daily backup
+
+**Problem**: The system had three different cadences touching the worker book: a 60-second deterministic emergency brake, a 5-minute LLM inventory task, and the 20-minute discretionary trader. That was the wrong split. The fast risk was already covered by `bot_trade_manager.py`, while the 5-minute LLM layer duplicated judgment, created ownership blur, and still let stale policy files become a separate failure mode. Routine worker inventory decisions belong with the trader who already reads the whole market every 20 minutes.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Promoted `qr-trader` from worker-book awareness to routine worker-book ownership
+  - Added mandatory worker-policy rewrite + JSON render every session
+  - Added direct worker cleanup commands and updated the `## Bot Layer` handoff block
+- `docs/SKILL_inventory-director.md`
+  - Reframed `inventory-director` as a daily backup repair task
+  - Limited it to stale/missing/corrupt policy repair and low-frequency stranded-book cleanup
+- `AGENTS.md`
+  - Updated cadence, ownership, and runtime descriptions so the repo agrees that trader owns intraday worker policy
+- `tools/bot_policy.py`, `tools/render_bot_inventory_policy.py`
+  - Updated helper text so the live policy is no longer described as inventory-director-owned by default
+
+**Why**: One fast deterministic brake plus one trader brain is coherent. A separate 5-minute LLM manager was neither fast enough to be the brake nor authoritative enough to be the trader. Making `qr-trader` the routine worker owner removes duplicate judgment and leaves `inventory-director` as the recovery layer it should be.
+
+## 2026-04-16 — Split edge from allocation and persist audit narrative picks
+
+**Problem**: The trading loop was collapsing too much into one `S/A/B/C` letter. Strong execution-time reads could be demoted just because allocation needed to stay smaller, counter-trades were structurally capped at `B`, and `audit_history.jsonl` only preserved scanner fires, not the auditor's actual A/S market view. That made `S` look artificially scarce and taught daily-review the wrong lesson.
+
+**Fix**:
+- `collab_trade/memory/pretrade_check.py`
+  - Split setup output into `edge_grade` and `allocation_grade`
+  - Normal setups default to `edge = allocation`
+  - Counter-trades can now reach `Edge S/A`; allocation is still smaller when fighting upper-TF flow, but no longer hard-capped at `B`
+  - CLI output now prints `Edge` and `Allocation` separately
+- `tools/session_data.py`
+  - Updated the new-entry template so theme confidence changes allocation, not edge
+- `tools/record_audit_narrative.py`
+  - New helper that parses the final auditor-written `logs/quality_audit.md`
+  - Appends `narrative_picks` and `strongest_unheld` into `logs/audit_history.jsonl`
+- `tools/quality_audit.py`, `tools/daily_review.py`
+  - Scanner history now tags itself with `source=s_scan`
+  - Daily review now analyzes both scanner detections and final narrative A/S picks
+- Docs / prompts
+  - Updated trader + quality-audit + daily-review prompts, plus `AGENTS.md` / `CLAUDE.md`, to use the two-axis language and to persist explicit unheld narrative opportunities
+
+**Why**: A setup can be locally dominant without deserving max size. Edge and allocation answer different questions. Once they were separated, the system could stop pretending that only "global all-clear" setups count as `S`, and the audit learning loop could finally remember what the auditor actually saw.
+
+## 2026-04-16 — Bot inventory ownership split: trader aware, inventory-director owns worker book
+
+**Problem**: The prompts still blurred ownership between discretionary trading and worker inventory. `qr-trader` was being told to actively manage bot-tagged positions, while `inventory-director` already existed as the dedicated worker-book owner. That overlap invites double management, conflicting closes, and accountability drift. The inverse risk is just as bad: an inventory task should never touch discretionary `trader` inventory.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Changed bot inventory handling from direct management to awareness-first
+  - Trader now requests bot changes via `state.md` and only uses direct close/cancel on bot tags for emergency override
+  - Updated the `## Bot Layer` handoff block so ownership stays with `inventory-director`
+- `docs/SKILL_inventory-director.md`
+  - Explicitly states that `inventory-director` owns all worker tags
+  - Explicitly forbids it from managing discretionary `trader` inventory
+- `AGENTS.md`, `CLAUDE.md`
+  - Updated tag-ownership language so trader awareness and inventory-director ownership are aligned repo-wide
+
+**Why**: Fast worker inventory and discretionary trader inventory are different books. If both tasks can manage both books by default, the system will eventually fight itself. Awareness should be shared; ownership should not.
+
+## 2026-04-16 — Trend bot added; stale policy no longer kills fast entry after one missed heartbeat
+
+**Problem**: The local layer could now correctly refuse range fades during band-walks, but that still left a major hole: trend continuation itself was not being traded by the worker at all. At the same time, one missed `inventory-director` update could still drop the whole fast layer into `REDUCE_ONLY`, which turned scheduler drift into pure opportunity loss.
+
+**Fix**:
+- `tools/trend_bot.py`
+  - Added a new deterministic trend-continuation worker
+  - Requires aligned `H1/M15` trend, `M5` band-walk or follow-through continuation, supportive `M1` momentum, and 7-pair currency-pulse confirmation
+  - Fires MARKET-only continuation orders tagged `trend_bot_market`
+  - Can add one worker trend position alongside an existing same-direction discretionary trade, while still refusing opposite-side conflict
+- `tools/local_bot_cycle.sh`
+  - Now runs `bot_trade_manager.py` -> `trend_bot.py` -> `range_bot.py` every minute
+- `tools/bot_trade_manager.py`, `tools/bot_inventory_snapshot.py`
+  - Added `trend_bot_market` to the worker tag set / legend so the manager and inventory director see the trend book as first-class inventory
+- `tools/bot_policy.py`
+  - Extended ACTIVE stale-policy grace from 15 minutes to 60 minutes so one missed inventory-director heartbeat does not instantly shut off fast entry
+- Docs
+  - Updated `AGENTS.md`, `CLAUDE.md`, `docs/SKILL_trader.md`, `docs/SKILL_inventory-director.md`, `docs/SKILL_trend-bot.md`, and `collab_trade/state.md`
+
+**Why**: If the worker is fast enough to detect band-walks, it also needs a way to trade them. Range veto without trend follow just replaces one form of opportunity loss with another. And if the local layer dies after one stale policy file, the system is still too brittle for a 60-second engine.
+
+## 2026-04-16 — Fix local automation lock path for quality-audit
+
+**Problem**: `quality-audit` automation could start, but its preflight failed before lock acquisition because `tools/task_lock.py` resolved the repo root one directory too high. It tried to create lock files under `/Users/tossaki/App/logs/locks/...` instead of `/Users/tossaki/App/QuantRabbit/logs/locks/...`, which broke local automation runs under sandboxed writable roots.
+
+**Fix**:
+- `tools/task_lock.py`
+  - Fixed repo-root resolution from `parents[2]` to the actual repo root (`parent.parent`)
+  - Lock files now write under the project `logs/locks/` directory as intended
+- `tools/market_monitor.py`
+  - Fixed the same repo-root resolution bug so its logs/config paths also resolve inside the QuantRabbit workspace
+
+**Why**: Local automations only work if every runtime helper resolves paths inside the real workspace. A one-level path error is enough to make the task look alive while the actual playbook never starts.
+
+## 2026-04-16 — Range bot stops fading band-walks and reads cross-currency pulse
+
+**Problem**: The local range worker had become faster and deeper, but it could still misread a band-walk as a fadeable Bollinger extreme. It was also still too pair-local: even with a 60-second cadence, it was not yet using `M15` or the 7-pair currency map to tell "healthy range edge" from "real directional expansion," which meant both false fades and opportunity loss.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added explicit `M5` band-walk veto so the bot does not fade a wall-hugging move just because BB position is extreme
+  - Added `M15` context checks for fast breakout / band-walk / squeeze pressure
+  - Added 7-pair currency-pulse scoring so each setup is filtered by base-vs-quote pressure across the whole basket
+  - Conviction / signal strength / MARKET readiness now incorporate `M15`, `H1`, `M1`, and cross-currency alignment instead of a single-pair `M5` read
+- `tools/local_bot_cycle.sh`
+  - Expanded local refresh from `M1/M5/H1` to `M1/M5/M15/H1`
+- Docs
+  - Updated `AGENTS.md`, `CLAUDE.md`, `docs/SKILL_range-bot.md`, and `collab_trade/state.md` to reflect the new band-walk veto and currency-pulse logic
+
+**Why**: A range bot should fade exhaustion, not momentum. The extra minute is best spent reading one more timeframe and the whole currency board, so the worker can take more real range chances while refusing the moves that are actually breaking out.
+
+## 2026-04-16 — Trader prompt aware of live bot layer + tag ownership
+
+**Problem**: `qr-trader` could still behave as if the local worker book were invisible. That is a serious ownership bug: worker orders/trades are real inventory, and without explicit tag semantics the trader can duplicate, conflict with, or ignore them.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Added mandatory `bot_inventory_snapshot.py` read every session
+  - Added explicit tag ownership for `trader`, `range_bot`, and `range_bot_market`
+  - Added required `## Bot Layer` state block whenever bot-tagged inventory exists
+- `tools/bot_inventory_snapshot.py`
+  - Added a tag legend in the human-readable snapshot output
+- `AGENTS.md`, `CLAUDE.md`, `docs/SKILL_inventory-director.md`
+  - Added shared tag taxonomy and responsibility language so trader/inventory-director agree on who owns what
+
+**Why**: Tags are not bookkeeping trivia. They are the boundary between discretionary inventory and worker inventory. If the trader does not read that boundary every session, the system will eventually manage the same exposure twice or not at all.
+
+## 2026-04-16 — Range bot MTF depth: H1 regime + M1 trigger, still 1-minute fast
+
+**Problem**: The local worker had been fixed for freshness, but the actual entry logic was still too shallow: `range_bot.py` scanned `M5` only, so it could fade into an `H1` breakout or use MARKET without a real `M1` trigger. That is fast, but not deep enough for stranded-book risk.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added `H1` context checks for breakout-risk / squeeze-risk before any range fade is accepted
+  - Added `M1` micro-timing checks (StochRSI / CCI / wick pressure / divergence / short momentum state)
+  - MARKET fallback now requires aligned `M1` timing; otherwise S/A setups stay passive as LIMITs
+  - Conviction is now adjusted by MTF context instead of `M5` alone
+- `tools/local_bot_cycle.sh`
+  - Expanded local refresh from `M5/H1` to `M1/M5/H1` before protection and entry
+- `tools/refresh_factor_cache.py`
+  - Added automatic re-exec under `.venv/bin/python` when `python3` lacks `pandas`, so technical refresh works from both invocation paths
+- `tools/bot_policy.py`
+  - Added a short ACTIVE grace window after policy expiry so the local bot does not fall into instant `REDUCE_ONLY` just because one inventory-director heartbeat is late
+- Docs
+  - Updated `AGENTS.md`, `docs/SKILL_range-bot.md`, and `collab_trade/state.md` to reflect the new MTF worker logic
+
+**Why**: Fast is only useful if the bot is reading the right layers of the market. `M5` finds the range edge, `H1` says whether that edge still belongs to a range, and `M1` says whether the entry is actually ready now.
+
+## 2026-04-16 — Trader prompt: kill one-limit-and-done deployment
+
+**Problem**: The trader prompt made under-deployment look acceptable. Tier 1 had a single `My trade` line, Tier 2 only required one `LONG if / SHORT if` pair then often defaulted to a single pullback LIMIT, and the flat-book blocker could be bypassed by leaving one orphan order. Net effect: the trader often saw a live move, posted one passive LIMIT, and finished the session flat.
+
+**Fix**:
+- `docs/SKILL_trader.md`
+  - Replaced single-trade Tier 1 / promotion blocks with a required execution ladder:
+    - `NOW`
+    - `RELOAD`
+    - `SECOND SHOT / OTHER SIDE`
+  - Reworked Tier 2 from `LONG if / SHORT if` into `NOW / RELOAD / OTHER SIDE` so each pair must name:
+    - immediate live execution
+    - pullback reload level
+    - failure / opposite-side contingency
+  - Updated examples so trend candidates can no longer be expressed as one pullback-only LIMIT
+  - Tightened the flat-book blocker to reject fake deployment states:
+    - no live action
+    - only one same-side pullback LIMIT
+    - no fallback path for active setups
+  - Changed market-vs-limit guidance so live S/A moves require `market now + reload LIMIT`, and B setups require two executable paths instead of `LIMIT always`
+  - Raised pending LIMIT cap from 2 to 3 so the trader can leave reload + second-shot coverage without spraying orders
+
+**Why**: The problem was not lack of analysis; it was a prompt format that allowed "one LIMIT and done." The new format forces explicit participation in the live move, the pullback, and the miss/failure case. If the trader stays flat now, the missing deployment path is visible.
+
+## 2026-04-16 — Local bot layer + LLM inventory director
+
+**Problem**: The fast edge belongs to deterministic local entry, not to an LLM loop. But the old local bot failed because no one owned the inventory book as a book: when range fades got stranded on both sides, pending worst-case fills and deadlocked exposure drifted into closeout. Running `range-bot` / `bot-trade-manager` as Codex automations also created interference risk with the real trader.
+
+**Fix**:
+- Local deterministic bot layer
+  - `tools/range_bot.py` now reads `logs/bot_inventory_policy.json`
+  - New `tools/local_bot_cycle.sh` runs `bot_trade_manager.py` then `range_bot.py` under one short lock-protected local cycle
+  - `tools/local_bot_cycle.sh` now refreshes OANDA-backed `M5/H1` technical cache before protection/entry, so the worker no longer waits on trader sessions for candle freshness
+  - New `scripts/install_local_bot_launchd.sh` / `scripts/uninstall_local_bot_launchd.sh` install/remove `com.quantrabbit.local-bot-cycle`
+- LLM inventory control layer
+  - New `docs/SKILL_inventory-director.md` + `docs/codex_automations/inventory-director.md`
+  - New `tools/bot_inventory_snapshot.py` gives a stable view of bot pending/trades/projected margin/deadlock
+  - New `tools/render_bot_inventory_policy.py` converts the human policy markdown into deterministic JSON
+  - New `tools/cancel_order.py` lets the inventory director cancel pending bot orders with proper logging
+- Emergency-only local guard
+  - `tools/bot_trade_manager.py` is narrowed to a deterministic emergency brake: policy pause, panic margin, rollover, or deadlock pressure
+  - Normal stranded inventory judgment moves to `inventory-director`
+- Runtime / docs
+  - `tools/task_runtime.py` now supports `inventory-director` preflight/release
+  - `AGENTS.md`, `CLAUDE.md`, and range-bot docs now describe the system as:
+    - local bot = fast entry + emergency brake
+    - inventory-director = LLM inventory owner
+    - trader = upper discretionary manager
+
+**Why**: Speed should stay local. Inventory judgment should stay with the LLM. Closeout prevention still needs a deterministic brake because closeout happens faster than a deliberative loop.
+
+## 2026-04-16 — Fast Bot Layer: 1-minute entry + 1-minute protection manager
+
+**Problem**: The old fast bot edge was real, but the failure mode was always the same: fast entry accumulated exposure much faster than the 20-minute trader cadence could unwind it. Archive history and current strategy memory both point to the same tail risk: pending orders stacked into trapped long/short books, then `MARKET_ORDER_MARGIN_CLOSEOUT` or forced close cleaned up the damage. The previous `range_bot` also was not safe to run every minute because it cancelled/repriced too aggressively.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Removed blanket cancel-and-replace behavior
+  - Keeps fresh pending bot LIMITs when direction and edge are still valid
+  - Reprices only when age/drift exceeds tolerance or a live setup upgrades to MARKET
+  - Becomes safe to run on a 1-minute heartbeat as the fast entry layer
+- `tools/bot_trade_manager.py`
+  - New 1-minute protection manager for `range_bot` / `range_bot_market`
+  - Cancels stale or dangerous pending bot orders
+  - Detects projected-margin stress and deadlocked bot books
+  - Partially/full closes trapped bot trades before closeout pressure escalates
+- Prompt / task sync
+  - Added canonical prompt + Codex wrapper for `bot-trade-manager`
+  - Updated task registry and architecture docs to define the split clearly:
+    - `range-bot` = fast entry
+    - `bot-trade-manager` = fast protection
+    - `trader` = discretionary override and broader account management
+
+**Why**: Fast entry without fast relief is not a trading edge, it's a delayed closeout. The profitable part of the old bot came from speed; the fatal part came from stranded inventory. This change keeps the speed while giving the fast book its own risk owner.
+
+## 2026-04-16 — Memory DB: actionable recall + current-format ingest fix
+
+**Problem**: `memory.db` was being written, but the trader was not using it as a real decision aid. Three concrete issues were blocking it:
+- `session_data.py` only showed memory recall for held pairs, so pending orders and fresh scanner candidates got no DB context
+- `recall.py` keyword search used the whole query as one LIKE string, making retrieval mostly vector-only and noisy
+- `ingest.py` / `parse_structured.py` still assumed many `trades.md` sections started with `###`, while current logs use `##` heavily, so fresh trade narrative chunks were being missed or weakly parsed
+
+**Fix**:
+- `tools/session_data.py`
+  - Replaced held-only memory recall with **ACTIONABLE MEMORY**
+  - Pulls memory for held positions, pending orders, and top scanner candidates
+  - Uses pair-filtered hybrid search and prints concise, decision-ready hits instead of raw dumps
+  - De-prioritizes `state.md` self-echoes so current-day theses do not masquerade as historical memory
+- `collab_trade/memory/recall.py`
+  - Switched keyword search from whole-string LIKE to token-based scoring
+  - Orders hits by match score, recency, and pair filter so pair/direction/regime terms actually matter
+- `collab_trade/memory/pretrade_check.py`
+  - Pair-filters similar-memory lookup, enriches the query with direction/wave/lesson context, and prefers real trade/lesson chunks over `state.md` theses
+- `collab_trade/memory/ingest.py`
+  - Added `##` + `###` markdown section splitting for current trade log format
+  - Better detects trade-table sections so fresh narrative chunks enter `memory.db`
+- `collab_trade/memory/parse_structured.py`
+  - Added support for current English-table trade records (`Pair`, `Direction`, `Reason`, `Lesson`, `P/L`, `id`)
+  - Accepts `JPY` P/L notation and newer `##` trade headers
+
+**Why**: A memory system that only archives is not a brain. These changes make the DB visible at the moment of decision and keep the latest trade narrative flowing into retrieval, so Codex can actually use past outcomes and similar setups when managing or initiating trades.
+
+## 2026-04-16 — Range Bot: avoid OANDA immediate cancel on crossed passive limits
+
+**Problem**: Order `468224` (`USD_JPY` short LIMIT by `range_bot`) was cancelled by OANDA immediately with transaction reason `STOP_LOSS_ON_FILL_LOSS`. The order was effectively marketable at placement, while the stop-loss trigger side was already through the SL.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added guard for marketable LIMIT detection at live quotes
+  - Added guard for "stop trigger already through SL" before placement
+  - Passive `B` setups now `SKIP` instead of sending crossed LIMITs that OANDA will auto-cancel
+  - Wide-spread or over-progressed crossed limits also `SKIP` instead of chasing
+
+**Why**: If a passive LIMIT is already crossed, it is no longer passive. Sending it just hands validation to OANDA and creates fake "placed" logs. The bot now rejects that state locally.
+
+## 2026-04-16 — Range Bot: S/A market fallback for live edge
+
+**Problem**: LIMIT-only range entries were too slow when a clean range touched the BB edge and immediately bounced. The trader playbook already allows MARKET on S/A extremes under normal liquidity, but `range_bot.py` could only wait passively.
+
+**Fix**:
+- `tools/range_bot.py`
+  - Added live LIMIT vs MARKET routing
+  - S/A conviction only: use MARKET when price is still at the BB edge or has only bounced a small distance off it
+  - Keeps LIMIT as the default for B setups, wide spreads, or moves that already traveled too far toward TP
+  - Uses reduced size for MARKET fills and separate tag `range_bot_market`
+- `docs/SKILL_range-bot.md`, `AGENTS.md`, `CLAUDE.md`
+  - Updated docs to reflect the new live-entry behavior
+- `docs/codex_automations/range-bot.md`, `tools/check_task_sync.py`
+  - Added the missing Codex wrapper and sync guard for `range-bot`
+
+**Why**: A range edge that is live now should be hit now. A range that already ran halfway to target should still wait on LIMIT. This keeps the bot aggressive only where the edge is still present.
+
+## 2026-04-16 — Trader automation moved back to 20-minute heartbeat
+
+**Problem**: The Codex app UI showed `QR Trader` as `毎週 0:00` / `Next run: Tomorrow at 0:00` even though the automation TOML used a dense weekly RRULE with `BYMINUTE=0,20,40`. That made the 20-minute trader cadence untrustworthy in practice.
+
+**Fix**:
+- Created a dedicated heartbeat automation `qr-trader-20m` with `FREQ=MINUTELY;INTERVAL=20`
+- Paused the fallback cron automation `qr-trader` to prevent duplicate runs
+- Updated `AGENTS.md` to reflect the real trader runtime again: heartbeat every 20 minutes
+
+**Why**: Minute-based cadence is what the trader session actually needs. The heartbeat form matches the app's supported 20-minute scheduling model directly, instead of relying on a weekly RRULE that the UI/scheduler may flatten incorrectly.
+
+## 2026-04-16 — Codex migration scaffolding: canonical prompts + shared runtime + automation wrappers
+
+**Problem**: The live trading playbooks were effectively tied to Claude scheduled-task plumbing. `docs/SKILL_trader.md` embedded Claude-specific process matching (`pgrep -f "bypassPermissions"`), Codex had no repo-tracked wrapper prompts, and there was no guard to keep Claude compatibility links and Codex prompts pointing at the same canonical playbooks. Migrating to Codex risked prompt drift and unsafe overlap.
+
+**What changed**:
+- Added `tools/task_runtime.py` — host-neutral runtime helper for shared prompts
+  - `trader preflight/start/cycle/watchdog` replaces host-specific shell glue while preserving `.trader_lock`, `.trader_start`, stale handoff ingest, and `session_end.py` gatekeeping
+  - `quality-audit preflight/release` wraps `tools/task_lock.py` so audit runs can skip/release cleanly under either Claude or Codex
+- Added `tools/check_task_sync.py` — verifies the canonical prompt files, Claude compatibility symlinks, and Codex wrapper prompts stay aligned
+- Added `docs/codex_automations/*.md` — thin Codex-only wrapper prompts that reference the canonical `docs/SKILL_*.md` files instead of duplicating task logic
+
+**Canonical prompt changes**:
+- `docs/SKILL_trader.md`
+  - Replaced Claude-specific Bash scaffolding with `python3 tools/task_runtime.py trader preflight/start/cycle`
+  - Preserved the same trading logic, state/logging rules, and `session_end.py`-only release discipline
+- `docs/SKILL_quality-audit.md`
+  - Added Step 0 audit lock acquisition via `task_runtime.py`
+  - Added Step 8 audit lock release via `task_runtime.py`
+
+**Architecture docs**:
+- `AGENTS.md`
+  - Updated scheduled-task architecture to Codex automations
+  - Declared `docs/SKILL_*.md` as the single source of truth, with Claude symlinks and Codex wrappers as compatibility layers
+  - Updated cadence references (trader 20 min, quality-audit 45 min) and documented the new runtime helper/checker
+
+**Safety outcome**: Claude/Codex can now share the same canonical playbooks without embedding host-specific process assumptions in the prompt itself. Codex automation prompts are intentionally thin wrappers, so future trading logic edits only happen once.
+
 ## 2026-04-16 — Range Bot: Automated range scalp entry bot
 
 **Problem**: Trader task drought — 18 LIMITs cancelled vs 24 entries on 4/15-16. 12 layers of rules collectively block all entries despite 0% margin. 5 S-scan signals missed.
@@ -1720,3 +2613,10 @@ scheduled-tasks/*/SKILL_ja.md ← 日本語版（確認用）
 ### Fix: intraday_pl_update.py daily return % calculation
 - **Bug**: Old formula `(realized_pl + upl) / (balance - realized_pl)` assumed UPL=0 at start of day. Overnight positions with pre-existing UPL caused wildly inaccurate daily return percentages (e.g. +0.50% when actual NAV change was ~0%)
 - **Fix**: Store SOD NAV in `logs/sod_nav.json` on first run of each day. Calculate daily return as `(current_NAV - SOD_NAV) / SOD_NAV`. Falls back to 0% if no SOD data available
+
+## 2026-04-17
+
+### Docs: remove current VM/GCP implication
+- Clarified in `README.md` that GCP/VM/Cloud Run/BigQuery/Looker references are archived history only and not part of the current runtime
+- Fixed the legacy runbook reference from `docs/OPS_GCP_RUNBOOK.md` to `archive/docs_legacy/OPS_GCP_RUNBOOK.md`
+- Clarified in `AGENTS.md` and `CLAUDE.md` that `archive/` contains historical VM/GCP artifacts only; current QuantRabbit does not run on VM/GCP

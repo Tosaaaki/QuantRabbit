@@ -7,15 +7,15 @@ description: Elite pro trader — 15-minute sessions + 20-minute cron relay [Mon
 
 Method: 15-minute sessions + 20-minute cron. Lock mechanism prevents parallel execution. Session ends → next starts within 20 minutes. Complete the cycle — judge, execute, write the handoff — then die.
 
-**Performance target: +10% of day-start NAV per day (minimum +5%).** Day starts at 0:00 UTC. day-start NAV = NAV at 0:00 UTC (captured in state.md `Day-start NAV`). If no value exists yet today, capture current NAV as day-start. Every session: check how much you've made vs. day-start NAV. Below 5% with hours remaining = hunt harder. Above 10% = protect gains (tighten stops, don't chase). One S-trade at full size beats ten B-trades at minimum size.
+**Performance benchmark: compare realized P&L vs day-start NAV every session.** Day starts at 0:00 UTC. day-start NAV = NAV at 0:00 UTC (captured in state.md `Day-start NAV`). The +10% / +5% numbers are stretch benchmarks, not permission to lower the bar. Being behind does **not** justify weaker entries, larger size, or late-session chasing. Use the benchmark only to decide whether the tape deserves fresh risk now, or whether patience/protection is the better trade.
 
-**Use all 15 minutes.** The Next Cycle Bash blocks SESSION_END before 10 minutes. If you get TOO_EARLY, it means you rushed — go back and do deeper analysis: Currency Pulse synthesis, fib_wave --all (M5 + H1), thorough Different lens checks on every held position, proper Tier 2 scans with M5 chart reading (not just "pass"), and LIMIT placement at structural levels. The 10-minute minimum exists because past sessions finished in 5 minutes with shallow analysis then fabricated longer end times. Don't waste the time you have — go deeper on what matters.
+**Use all 15 minutes.** The Next Cycle Bash blocks SESSION_END before 10 minutes. If you get TOO_EARLY, it means you rushed — go back and do deeper analysis: Currency Pulse synthesis, fib_wave --all (M5 + H1), thorough Different lens checks on every held position, proper Tier 2 scans with M5 chart reading (not just "pass"), and live-now / reload / second-shot deployment at structural levels. The 10-minute minimum exists because past sessions finished in 5 minutes with shallow analysis then fabricated longer end times. Don't waste the time you have — go deeper on what matters.
 
 **SESSION_END is mandatory.** You MUST NOT end a session without seeing LOCK_RELEASED from the Next Cycle Bash. Every response MUST end with the Next Cycle Bash. No exceptions.
 
-## Bash①: Lock check + zombie reaper
+## Bash①: Lock check + stale handoff
 
-cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if { [ "$DOW" = "6" ] && [ "$HOUR" -ge 6 ]; } || [ "$DOW" = "7" ] || { [ "$DOW" = "1" ] && [ "$HOUR" -lt 7 ]; }; then echo "WEEKEND_HALT dow=${DOW} hour=${HOUR}"; exit 0; fi && for zpid in $(pgrep -f "bypassPermissions" 2>/dev/null); do etime=$(ps -p $zpid -o etime= 2>/dev/null | tr -d ' '); case "$etime" in *-*|*:*:*) kill $zpid 2>/dev/null && echo "REAPED zombie pid=$zpid etime=$etime" ;; *:*) mins=${etime%%:*}; [ "${mins:-0}" -ge 14 ] && kill $zpid 2>/dev/null && echo "REAPED zombie pid=$zpid etime=$etime" ;; esac; done; LOCK=logs/.trader_lock && if [ -f "$LOCK" ]; then LOCK_TIME=$(awk '{print $1}' "$LOCK"); OLD_PID=$(awk '{print $2}' "$LOCK"); NOW=$(date +%s); AGE=$(( NOW - LOCK_TIME )); if [ $AGE -lt 900 ] && kill -0 "$OLD_PID" 2>/dev/null; then echo "ALREADY_RUNNING age=${AGE}s pid=$OLD_PID"; exit 1; else echo "STALE_LOCK age=${AGE}s — 引き継ぎ開始"; if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then kill "$OLD_PID" 2>/dev/null && echo "KILLED_STALE pid=$OLD_PID"; fi; echo "STALE_CLEANUP: running ingest for previous session" && cd collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) 2>/dev/null && echo "STALE_INGEST_DONE" && cd /Users/tossaki/App/QuantRabbit; fi; else echo "NO_LOCK — 新規セッション開始"; fi
+cd /Users/tossaki/App/QuantRabbit && python3 tools/task_runtime.py trader preflight
 
 - ALREADY_RUNNING → output only the word SKIP and nothing else.
 - WEEKEND_HALT → output only the word SKIP and nothing else.
@@ -23,33 +23,197 @@ cd /Users/tossaki/App/QuantRabbit && DOW=$(date +%u) && HOUR=$(date +%H) && if {
 
 ## Bash②: Acquire lock + fetch all data (single command)
 
-cd /Users/tossaki/App/QuantRabbit && NOW=$(date +%s) && echo "$NOW $PPID" > logs/.trader_lock && echo "$NOW" > logs/.trader_start && (CPID=$PPID; sleep 1020; grep -q "$CPID" logs/.trader_lock 2>/dev/null && kill $CPID 2>/dev/null && rm -f logs/.trader_lock logs/.trader_start) & python3 tools/session_data.py
+cd /Users/tossaki/App/QuantRabbit && python3 tools/task_runtime.py trader start --owner-pid $PPID && python3 tools/session_data.py
 
 Read (parallel, batch 1): `collab_trade/state.md`, `collab_trade/strategy_memory.md`, `logs/quality_audit.md`
 Read (parallel, batch 2 — charts): `logs/charts/USD_JPY_M5.png`, `logs/charts/EUR_USD_M5.png`, `logs/charts/GBP_USD_M5.png`, `logs/charts/AUD_USD_M5.png`
 Read (parallel, batch 3 — charts): `logs/charts/EUR_JPY_M5.png`, `logs/charts/GBP_JPY_M5.png`, `logs/charts/AUD_JPY_M5.png`
 Read (parallel, batch 4 — H1 for held pairs only): `logs/charts/{HELD_PAIR}_H1.png` (one per held pair)
 
-**You are looking at the charts with your own eyes.** quality-audit regenerates these PNGs every 30 minutes. You read the existing files — no regeneration needed. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in the "Chart tells me" line in Tier 1 and the candle shape in Tier 2. Your chart reading + the auditor's text summary = two independent views of the same market.
+**You are looking at the charts with your own eyes.** quality-audit is the primary chart writer on a 45-minute cadence, and `session_data.py` now auto-regenerates the full PNG set with `.venv/bin/python tools/chart_snapshot.py --all` whenever the oldest chart is stale (>40 min) or missing. Trust the freshest local PNG timestamp, not the planned audit cadence. If session_data says the audit memo is stale, use the fresh PNGs + raw data first and treat old `quality_audit.md` narrative as historical context only. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in the "Chart tells me" line in Tier 1 and the candle shape in Tier 2. Your chart reading + the auditor's text summary = two independent views of the same market.
 
 **How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies. **Caution: strategy_memory is heavy on "don't do X" lessons (30+ warnings vs 12 positive patterns). Don't let cautionary bias shrink your sizing. The lessons say "don't chase, don't panic" — they do NOT say "enter small." The biggest historical loss was undersizing S-conviction trades, not oversizing. When a setup is genuinely good, SIZE UP.**
 
-**How to use MEMORY RECALL** (in session_data output): Past trades and lessons for your held pairs. Read BEFORE making decisions on held positions.
+**How to use ACTIONABLE MEMORY** (in session_data output): Past trades and lessons for held positions, pending orders, and top scanner candidates. Read it before deciding to hold, add, cancel, or enter. If the memory section is empty for a pair, that means you don't have a strong precedent — size accordingly.
+
+## Bash②a: Bot inventory snapshot (every session)
+
+cd /Users/tossaki/App/QuantRabbit && python3 tools/bot_inventory_snapshot.py
+
+**The local bot layer is live.** It runs every minute via launchd, independently of `qr-trader`. You are not allowed to ignore it just because you did not place the orders yourself. `bot_trade_manager.py` is the 60-second emergency brake; your job is to steer worker policy and deconflict themes, not to micro-close fresh worker fills.
+**Deterministic repair guard is also live.** `bot_policy_guard.py` now runs before the worker bots each minute. If your policy says the book should keep one live worker seat but every current lane is blocked only by stale/narrow policy, the guard may reopen one minimal repair lane on a short TTL. Treat that as a safety net, not as permission to write a narrow map.
+
+**Tag ownership**:
+- `trader`, `trader_scalp`, `trader_rotation`, `trader_swing` = discretionary orders/trades you placed directly
+- `range_bot` = passive range LIMIT inventory placed by the local worker
+- `range_bot_market` = fast MARKET inventory placed by the local worker
+- `trend_bot_market` = fast trend-continuation MARKET inventory placed by the local worker
+
+**Routine ownership split**:
+- `bot_trade_manager.py` = deterministic 60-second worker manager. It still handles scalp timeout + forced relief, but it now also executes worker `TP1 -> half-close -> runner` promotion when a target-race plan is attached to the trade
+- local workers (`range_bot.py` / `trend_bot.py`) = normal lifecycle of worker-tagged entries once placed
+- `qr-trader` = policy steering plus all discretionary horizon choice from scalp through swing
+- `inventory-director` = low-frequency backup only. It repairs stale or missing policy; do not wait for it intraday
+
+**Bot horizon contract**:
+- The worker layer is scalp-only. It is allowed to harvest fast bites, but it is NOT allowed to become an accidental swing holder.
+- `MICRO`, `FAST`, and `BALANCED` now mean three scalp speeds, not "scalp vs swing."
+- Worker hard stops are disaster backstops only. The real worker exit lives in `TP1`, timeout / trap cleanup, and inventory judgment, not in a tight broker stop.
+- `FAST` / `MICRO` are explicitly allowed to use smaller size than the normal trader floor when that buys more repetitions and cleaner book-level diversification.
+- Worker trades may carry `TP1 / TP2 / hold_boundary` so the fast target can pay first while the remainder is allowed to keep the higher-timeframe thesis alive. That runner still belongs to the worker layer only while the encoded hold boundary is intact.
+- If a worker trade is still hanging around after its scalp window, `bot_trade_manager.py` should flatten it. If you want the trade held longer, that longer hold belongs to the trader layer under a discretionary tag.
+
+Read the bot inventory snapshot every session and then actively decide:
+- whether the worker book complements or conflicts with your discretionary book
+- which pairs should stay `LONG_ONLY`, `SHORT_ONLY`, `BOTH`, or `PAUSE`
+- whether worker MARKET entries are still allowed on each pair
+- whether same-pair trader/worker coexistence is `TRADER_ONLY`, `SHARED_PASSIVE`, or `SHARED_MARKET`
+- whether current bot pending should be kept or cancelled now
+- whether any live worker trade truly needs an emergency override now
+
+**Ownership boundary is mandatory.** If the same pair/theme exists in both `trader` and bot tags, say explicitly which layer owns the next action:
+- `worker keeps it`
+- `trader steers policy only`
+- `bot_trade_manager emergency only`
+- `trader force-closes worker book`
+
+**Breadth rule**:
+- Your discretionary `hero pair` is allowed to be narrow. Your worker policy is not.
+- Worker policy must represent the **7-pair opportunity map**, not your favorite pair of the hour.
+- Do not write `PAUSE` just because another pair is the hero. `PAUSE` needs a concrete reason: poor regime quality, bad spread economics, same-theme crowding, intervention/event risk, or true ownership conflict.
+- Same-pair collision belongs to code (`Ownership` + deconfliction helpers). Same-theme crowding belongs to policy. Do not mix them.
+- If the live map offers two clean worker lanes in different roles (for example one trend continuation and one range fade), prefer opening both unless margin structure or same-theme concentration makes that irresponsible.
+
+## Bash②aa: Refresh worker policy (every session)
+
+Before you rewrite the policy markdown, write this reasoning block in your session notes:
+
+```md
+## Worker Breadth
+Best trend lane now: [PAIR DIR tempo] — [why this is the cleanest continuation worker seat]
+Second trend lane now: [PAIR DIR tempo / NONE] — [why open or why not]
+Best range lane now: [PAIR DIR tempo / NONE] — [why open or why not]
+Coverage seat now: [PAIR DIR / NONE] — [if the whole book were flat, which lane deserves the first live seat and why]
+Broad-market blocker: [what actually stops breadth right now: same-theme crowding / spread / regime conflict / intervention / nothing]
+Hero pair separation: [why the discretionary hero pair does or does not also deserve worker permission]
+
+## Trader/Bot Split
+Trader structural seat: [PAIR DIR / NONE] — [why this belongs to trader inventory, not worker inventory]
+Bot harvest lane 1: [PAIR DIR tempo / NONE] — [why this is a repeatable small-wave seat]
+Bot harvest lane 2: [PAIR DIR tempo / NONE] — [second harvest lane or why one lane is enough]
+Inventory catcher: [bot_trade_manager / trader / inventory-director] — [who owns the stranded-seat decision and why]
+```
+
+If you write `NONE`, it must be because the tape truly offers no clean seat in that category right now, not because you did not look.
+
+After the snapshot, rewrite `/Users/tossaki/App/QuantRabbit/logs/bot_inventory_policy.md` in exactly this format:
+
+```md
+# Bot Inventory Policy
+
+Updated: YYYY-MM-DD HH:MM UTC
+Expires: YYYY-MM-DD HH:MM UTC
+Global Status: ACTIVE
+Projected Margin Cap: 0.82
+Panic Margin Cap: 0.90
+Release Margin Cap: 0.78
+Max Pending Age Min: 18
+Target Active Worker Pairs: 2
+Notes: short summary of the current bot book and regime
+
+| Pair | Mode | Market | Pending | MaxPending | Ownership | Tempo | EntryBias | Note |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| USD_JPY | PAUSE | NO | CANCEL | 0 | TRADER_ONLY | BALANCED | PASSIVE | why |
+| EUR_USD | SHORT_ONLY | YES | KEEP | 2 | SHARED_MARKET | FAST | EARLY | why |
+| GBP_USD | SHORT_ONLY | YES | KEEP | 2 | SHARED_MARKET | MICRO | EARLY | why |
+| AUD_USD | PAUSE | NO | CANCEL | 0 | TRADER_ONLY | BALANCED | PASSIVE | why |
+| EUR_JPY | BOTH | NO | KEEP | 1 | SHARED_PASSIVE | BALANCED | BALANCED | why |
+| GBP_JPY | SHORT_ONLY | YES | KEEP | 1 | SHARED_PASSIVE | BALANCED | BALANCED | why |
+| AUD_JPY | PAUSE | NO | CANCEL | 0 | TRADER_ONLY | BALANCED | PASSIVE | why |
+```
+
+Rules:
+- `Expires` should usually be **25-35 minutes after `Updated`** so the next `qr-trader` cycle owns the refresh
+- `Target Active Worker Pairs`:
+  - `0` = no coverage target; flat book is acceptable if that is the correct judgment
+  - `1` = default. If the book is flat and a clean worker lane exists, leave one live seat instead of waiting for perfect A/S only
+  - `2` = preferred joint-trading posture when the tape offers two genuinely different small-wave seats (for example one continuation seat and one range harvest seat)
+  - `2+` = only when the seats are truly different. Do not use this to duplicate one theme
+- `Global Status`:
+  - `ACTIVE` = local bot may add within pair policy
+  - `REDUCE_ONLY` = no new entries; local bot only cleans pending / trapped inventory
+  - `PAUSE_ALL` = cancel bot pending and stop all new entries
+- `Ownership`:
+  - `TRADER_ONLY` = if the trader already has the same pair live, workers must stay out
+  - `SHARED_PASSIVE` = trader may share the pair only with passive worker LIMITs, not worker MARKET adds
+  - `SHARED_MARKET` = trader may share the pair with both passive and market worker adds
+- `Tempo`:
+  - `BALANCED` = slower scalp profile; still must resolve before it becomes a swing hold. **Use only when the pair is in transition or spread is too wide for fast resolution.**
+  - `FAST` = **default tempo for active trend and range harvest lanes.** Shorter TP for quick bites and repeated round-trips. Smaller-than-3k size is fine here if that keeps more shots alive
+  - `FAST` is valid when the worker's `M1` micro state is `aligned` **or `reload`**. Only block FAST when M1 is `mixed` or `against`
+  - `MICRO` = ultra-short worker bite for fine waves; use the smallest worker size, shortest timer, and only when spread economics are still clean
+  - `MICRO` is valid when the worker's `M1` micro state is `aligned` or `reload`, the spread is unusually clean, and the setup still offers at least roughly 1R after costs. If the micro tape is `against` or the spread is merely average/wide, do not use `MICRO`
+  - For both `FAST` and `MICRO`, the worker broker stop is a disaster backstop. The real exit is timeout / trap cleanup or TP1 -> runner promotion
+- `EntryBias`:
+  - `PASSIVE` = this pair should not repair a flat book. Leave it passive or paused
+  - `BALANCED` = default. Let the worker wait for its normal quality bar
+  - `EARLY` = if the whole book is flat and this pair already has a clean B-grade live edge, the worker may take the scout instead of waiting only for A/S perfection
+- `MaxPending`:
+  - `2` is valid on a deliberate `FAST` / `MICRO` harvest lane when you want one live seat plus one reload. It is not permission to spray duplicate wish orders
+- Every pair row is mandatory. No omissions
+- Notes must describe the **market reason** and the **inventory reason** together
+
+Then render machine policy:
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/render_bot_inventory_policy.py --from-md logs/bot_inventory_policy.md --to-json logs/bot_inventory_policy.json
+```
+
+If render fails, fix the markdown and rerun until it succeeds.
+
+When worker inventory must change, do it yourself in this session:
+
+- Cancel a pending order:
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/cancel_order.py ORDER_ID --reason trader_worker_policy --auto-log
+```
+
+- Reduce or close a bot trade in emergency only:
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/close_trade.py TRADE_ID [UNITS] --reason worker_emergency_override --auto-log --auto-slack --force-worker-close
+```
+
+Do not churn. Act only when one of these is true:
+- The pair is now `PAUSE` or the opposite side is no longer allowed
+- The inventory is stranded because range logic is now fighting trend
+- The same theme is already expressed elsewhere and this pair is redundant
+- Margin structure is too heavy for the current book
+- The worker policy from the prior session is stale or obviously wrong for the current tape
+
+Fresh worker-trade protection:
+- `close_trade.py` treats worker-tagged trades as worker-owned by default: only bot-managed reasons (`bot_*`) or explicit emergency `--force-worker-close` reasons may close them
+- `--force-worker-close` is reserved for emergency reasons such as `worker_emergency_override`, `panic_margin`, `deadlock_relief`, `worker_policy_breach`, or `rollover_emergency`
+- Preferred response to bot/trader conflict is policy steering (`Mode`, `Market`, `Ownership`, `Pending`), not flattening the worker seat after the fact
+- The worker broker stop is a disaster line, not the main thesis exit. Judge stranded seats by live tape + timeout state, not by "it still has an SL"
+- If you want true joint trading on the same pair, write it explicitly with `Ownership=SHARED_MARKET` or `SHARED_PASSIVE` and choose `Tempo=MICRO`, `FAST`, or `BALANCED` on purpose
+- If the hold should last beyond the worker scalp window, the seat belongs to `trader_scalp`, `trader_rotation`, or `trader_swing`, not the bot
 
 **QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do. Compare the auditor's visual read with what you saw in the chart PNGs. If you disagree, trust YOUR eyes — you're the trader.
 
-**AUDIT PREDICTIONS** (Section C of quality_audit.md — "7-Pair Predictions + Follow-up"):
-The auditor made specific price predictions for all 7 pairs with conviction ratings. The auditor also checked its OWN previous predictions (follow-up accuracy). This is a real market view, not scanner output.
+**AUDIT PREDICTIONS** (Section C of quality_audit.md — "7-Pair Conviction Map + Narrative Opportunities"):
+The auditor made specific price predictions for all 7 pairs with separate **Edge** and **Allocation** ratings. The auditor also checked its OWN previous predictions (follow-up accuracy). This is a real market view, not scanner output.
 
-For each audit prediction rated **S or A** that you DON'T hold, write in state.md's "Audit Response" section:
+For each audit **Narrative Opportunity** rated **Edge S or A** that you DON'T hold, write in state.md's "Audit Response" section:
 ```
 ## Audit Response
-{PAIR}: Audit predicted [price] [DIR] (S). I [agree/disagree]: [cite specific chart observation or data that supports or contradicts]. Action: [ENTERING/LIMIT/PASSED — reason]
+{PAIR}: Audit predicted [price] [DIR] (Edge S / Allocation A). I [agree/disagree]: [cite specific chart observation or data that supports or contradicts]. Action: [ENTER NOW / RELOAD LIMIT / PASSED — reason]
 ```
 
 **The audit checks your response next cycle.** If you disagreed and were right, the audit learns. If you disagreed and were wrong, that's visible too. This is a conversation, not a one-way report.
 
-**If you can't name a specific contradiction to an S-prediction, you agree.** "I don't see it" or "waiting for confirmation" is not a disagreement — it's avoidance. The audit cited chart evidence + data + macro. Disagree with the EVIDENCE, not the conclusion.
+**If you can't name a specific contradiction to an Edge S/A prediction, you agree.** "I don't see it" or "waiting for confirmation" is not a disagreement — it's avoidance. The audit cited chart evidence + data + macro. Disagree with the EVIDENCE, not the conclusion.
 
 For each exit quality finding (peak drawdown, BE SL, ATR stall), write the Close or Hold block if not already present.
 
@@ -134,7 +298,7 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 
 ## Regime + Visual Chart Data (from quality_audit.md)
 
-**The auditor generates charts and reads them every 30 minutes.** You do NOT generate chart PNGs. Read the regime map and visual observations from `logs/quality_audit.md` (already loaded via session_data.py / QUALITY AUDIT section).
+**The auditor is the primary chart generator on a 45-minute cadence.** Normally you do NOT regenerate chart PNGs manually because `session_data.py` refreshes stale or missing files before you read them. If that refresh fails and the local PNGs are stale/missing, run `.venv/bin/python tools/chart_snapshot.py --all` yourself before trusting any visual read. Read the regime map and visual observations from `logs/quality_audit.md` only when the audit memo is still fresh in session_data.
 
 **Regime types and how to trade them:**
 
@@ -160,13 +324,18 @@ vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "sa
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (what the market IS doing — "USD weakness across the board", not "waiting for UK data")
+Execution regime: [trend continuation / corrective retrace / post-event fade / range rotation / squeeze waiting / late cleanup] — the tape is paying ___, punishing ___
 Theme confidence: [proving / confirmed / late]
   proving = first 1-2 trades today testing the thesis. Size: B (3,000u)
   confirmed = TP hit at least once on this theme today. Size: A→S (4,000-6,000u)
   late = theme running 6h+, most of the move captured. Size: reduce, protect gains
-Hero pair: ___ [THE one pair you rotate today. Gets 50%+ of margin and ALL rotations]
-  Why hero: [strongest theme × best regime × best CS alignment. 4/7: EUR_USD was hero → 7 rotations → +5,880]
-  Sidekick: ___ [#2 pair. Gets 20-30% of margin. Trades when hero is between rotations]
+Best expression NOW: ___ [pair + direction] — why this is the cleanest way to express the regime right now
+Second-best expression: ___ — why it is usable but less clean than the best expression
+Expressions to avoid: ___ — what looks tempting but is the wrong vehicle for this tape (dirty cross / late chase / memory dip-buy / duplicate theme)
+H4-memory trap check: The stale higher-TF story tempting me is ___; today's tape confirms/rejects it because ___
+Primary vehicle: ___ [the pair + direction that deserves the NEXT unit of risk right now, not a day-long quota]
+  Why primary: [strongest theme × best regime × best CS alignment. If that changes, the primary changes]
+  Backup vehicle: ___ [#2 expression if the primary becomes late, dirty, or already paid]
 Next event: ___ [name + time + what you do WHEN it hits, not UNTIL it hits]
 Event positioning: Market has been [buying/selling] [direction] for [N days/hours]. Expected=[soft/hot/neutral].
   If expected: ~___pip move (priced in). If surprise: ~___pip move (unwind). Asymmetry: [favorable/unfavorable for held positions]
@@ -177,18 +346,22 @@ Session: ___ (Tokyo / London / NY / Late NY)
 
 **"Theme confidence" is the progressive sizing engine.** 4/7 made +11,014 because EUR_USD started at 500u and scaled to 5,000u as the theme proved itself. The SAME StRSI=0.0 signal means different sizes depending on whether the theme is proving or confirmed. This is NOT "add because it dipped again" — it's "the macro is confirmed, I'm sizing up on the next rotation."
 
-**"Hero pair" is the #1 acceleration lever.** Every good day had 1 pair producing 36-143% of total P&L:
+**"Primary vehicle" is the concentration check, not a fixation rule.** Every good day still had 1 pair producing 36-143% of total P&L:
 - 4/7: EUR_USD → 7 rotations → +5,880 (53% of +11,014)
 - 4/1: EUR_USD → +4,479 (143% of +3,134)
 - 4/13: GBP_USD → +2,229 (38%) + GBP_JPY +2,151 (37%)
 - 4/10: AUD_JPY → +1,431 (43%)
 
-**Spreading across 5+ pairs equally = mediocre day (+1,291 avg).** Concentrating on 1 hero pair + rotating = good day (+5,385 avg). The hero pair is NOT picked by "which pair has the best indicator reading." It's picked by: which pair has Theme + Currency Strength + Regime all aligned? That pair gets rotated all day.
+**Spreading across 5+ pairs equally = mediocre day (+1,291 avg).** But "primary vehicle" does NOT mean forcing one pair after the tape turns late or dirty. Pick the cleanest current vehicle from Theme + Currency Strength + Regime. If a cleaner vehicle appears later, rotate the vehicle, not your excuses.
 
-**The sidekick pair fills gaps.** While the hero is pulling back (waiting for re-entry), the sidekick captures a separate move. 4/7: EUR_USD (hero) + AUD_USD (sidekick, +4,886). But hero always gets priority on margin.
+**The backup vehicle fills gaps.** While the primary is pulling back or already paid, the backup captures a separate move. 4/7: EUR_USD (primary) + AUD_USD (backup, +4,886). Primary gets the next add only while it remains the best expression.
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
 **"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
+**"Execution regime" is the anti-bot layer.** "GBP dip-buy" is a pair idea. "post-event fade with corrective USD bid" is a market read. Write what the tape is paying and what it is punishing before you pick a pair.
+**"Best expression NOW" forces vehicle choice from the regime, not from habit.** If the market is saying "direct USD pair still clean, JPY crosses dirty," the output has to say that before a single pair block is written.
+**"Expressions to avoid" makes the trap visible.** Many bad sessions were not caused by seeing no edge; they were caused by forcing the wrong vehicle for a real theme.
+**"H4-memory trap check" kills stale-story trading.** If the only reason for a dip-buy is "H4 was mega bull earlier," write that sentence and either prove the current tape still supports it or drop the trade.
 **The narrative is WHERE YOU THINK.** The scan below is where you execute. If you can't write "Driving force" and "Theme" without looking at indicators, you haven't read the news yet. Read the news first. Then look at the charts. Then write this block. The scan comes after.
 
 ### Directional mix check (required — fill in every session)
@@ -246,14 +419,17 @@ My position matches best vehicle? [YES / NO — if NO, why am I in this pair ins
 Entries today: [N] total. Sessions elapsed: ~[N]. Margin used: [N]%.
 Last 3 closed trades: [W/L/W]. Streak: [hot/cold/neutral].
 If cold (2+ consecutive L): B-max until next W.
-DROUGHT CHECK: [entries today] entries / [sessions elapsed] sessions = [ratio].
-  If 0 entries after 5+ sessions: DROUGHT. The market moved. You didn't. Find the best of 14 possibilities (7 pairs × 2 directions) and enter it NOW — market order, not LIMIT.
-  If 0 entries + 0% margin: CRITICAL DROUGHT. You are analyzing, not trading. Pick Top 1 pair, enter B-size market order THIS session. Analysis without action = 0 JPY.
+NO-TRADE ACCOUNTABILITY: [entries today] entries / [sessions elapsed] sessions = [ratio].
+  If 0 entries after 5+ sessions:
+    Best untraded seat: [PAIR DIR]
+    Trigger I would take: [NOW / RELOAD / OTHER SIDE with price]
+    Why I stayed flat THIS session: [late / dirty / duplicate / event / no defense / spread / no edge]
+    What would make me trade it next session: [specific trigger + invalidation]
 LIMIT TRAP CHECK: Last [N] sessions placed [N] LIMITs, [N] filled, [N] cancelled.
-  If cancelled > filled for 3+ sessions: you're using LIMITs to avoid risk. Next entry = market order only.
+  If cancelled > filled for 3+ sessions: state whether the next valid expression should be [MARKET / LIMIT] and why. Do not default to market just to prove activity.
 ```
 
-**DROUGHT is worse than a bad trade.** A bad B-size trade costs ~350 JPY avg. A drought costs the entire day's target (+12,569 JPY). The asymmetry is 36:1. Enter something.
+**Flat is acceptable only when this block is concrete.** A real no-trade read still names the best missed seat, the trigger, and the invalidation. Vague flatness is avoidance. Forced entry is not edge.
 
 ### Minimum size: 3,000u (data-driven)
 
@@ -264,9 +440,9 @@ The SAME trader, the SAME setups — the only difference is size. 1-2k loses mon
 - Small size = low conviction = exits too early
 - Wins are too small to offset losses (+212 avg win vs -370 avg loss)
 
-| Conviction | Minimum size | Maximum size |
+| Allocation | Minimum size | Maximum size |
 |------------|-------------|-------------|
-| **S** | 8,000u | 10,000u (S-size trades: 4/4 wins, +5,921 JPY) |
+| **S** | 8,000u | 10,000u (full deployment) |
 | **A** | 4,000u | 6,000u |
 | **B** | 3,000u | 3,000u |
 | **C** | Don't enter | — |
@@ -331,26 +507,39 @@ Why this can't wait until 08:00 UTC: ___
 
 ### Tier 1: Held positions + best 1-2 candidates (deep analysis)
 
+#### Execution ladder — no one-limit-and-done
+
+**A live idea must name three paths:**
+- `NOW` = the trade you can execute immediately if the move is already underway
+- `RELOAD` = the better pullback or retrace level where you add/re-enter
+- `SECOND SHOT / OTHER SIDE` = either the range fade on the opposite side or the failure/continuation level if the first idea misses
+
+**If you only wrote one price, you did not finish the trade plan.** The market only has to miss one pullback for you to stay flat. That is not prudence; that is under-deployment.
+
 For each Tier 1 pair, write this block. The header determines the format — TREND, RANGE, and SQUEEZE produce different trade lines:
 
 ```
 ## {PAIR} [HELD/CANDIDATE] — {TREND ↑ / TREND ↓ / RANGE low–high / SQUEEZE / TRANSITION}
 Chart tells me: [candle bodies, wicks, BB position, momentum. NOT indicator values]
   → [band walk → TP at ATR×2.0-3.0 = ___ / decelerating → TP at ATR×1.0 = ___ / range bounce → TP at opposite band / squeeze → breakout to ___]
-My trade: [action @price TP=price] — [why NOW: news/cross-pair/structure. Currency-wide or pair-specific?]
-  [RANGE: + opposite side — BUY @___ TP=___ + SELL @___ TP=___ always both]
-→ Placed: [LIMIT/MARKET id=___ TP=___ SL=___] or: [not placed — why]
+Expression fit: This pair is the right vehicle for the current regime because ___
+Cleaner / dirtier alternative: I prefer this over ___ because ___
+Memory trap check: If this idea leans on an older H1/H4 story, today's live tape still supports it because ___
+NOW: [MARKET/LIMIT] [direction] @___ TP=___ SL=___ — [why this is live now: news/cross-pair/structure. Currency-wide or pair-specific?]
+RELOAD: [LIMIT] [direction] @___ TP=___ SL=___ — [structural level: Fib / BB edge / cluster / EMA20]
+SECOND SHOT / OTHER SIDE: [LIMIT/MARKET] [direction] @___ TP=___ SL=___ — [continuation / failure / opposite range edge]
+→ Placed this session: [id=___, id=___] or: [not placed — why]
 ```
 
 **The chart-to-TP connection is one thought, not two lines.** You see band walk → you write "TP at ATR×2.0." You see deceleration → "TP at ATR×1.0." The chart is WHERE the TP comes from. Separating them lets you forget.
 
 **Filled-in examples (the model mimics these):**
 
-TREND: `Chart tells me: 5 bullish bodies expanding, hugging BB upper, zero counter-wicks — band walk → TP at ATR×2.0 = 214.20. My trade: dip buy @213.70 TP=214.20 — JPY weakest (CS -0.67), GBP/EUR both rising = currency-wide`
+TREND: `Chart tells me: 5 bullish bodies expanding, hugging BB upper, zero counter-wicks — band walk → TP at ATR×2.0 = 214.20. NOW: MARKET LONG @213.92 TP=214.20 SL=213.58 — GBP broad bid, JPY weakest, move already running. RELOAD: LIMIT LONG @213.70 TP=214.20 SL=213.48 — Fib 38.2% / EMA20 touch. SECOND SHOT / OTHER SIDE: LIMIT LONG @213.54 TP=214.05 SL=213.30 — failure flush into prior breakout shelf`
 
-RANGE: `Chart tells me: mixed candles bouncing 112.40-112.57, lower wicks defending 112.40, upper wicks capping 112.56 — range bounce → TP at opposite band. My trade: BUY @112.38 TP=112.55 + SELL @112.56 TP=112.40 — hedge account, zero extra margin`
+RANGE: `Chart tells me: mixed candles bouncing 112.40-112.57, lower wicks defending 112.40, upper wicks capping 112.56 — range bounce → TP at opposite band. NOW: no market chase inside the middle of the box. RELOAD: LIMIT BUY @112.38 TP=112.55 SL=112.28 — BB lower. SECOND SHOT / OTHER SIDE: LIMIT SELL @112.56 TP=112.40 SL=112.66 — upper cap. Hedge account, zero extra margin`
 
-SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction — squeeze building → breakout to 159.50 on volume. My trade: wait for first close outside BB → breakout LONG @159.35 TP=159.50`
+SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction — squeeze building → breakout to 159.50 on volume. NOW: MARKET LONG @159.36 only after first close outside BB. RELOAD: LIMIT LONG @159.28 TP=159.50 SL=159.18 — breakout candle midpoint. SECOND SHOT / OTHER SIDE: MARKET SHORT @159.09 if squeeze breaks lower first TP=158.88 SL=159.20`
 
 **Why examples, not rules**: A rule says "set TP at ATR×2.0 for band walk." You read the rule, then write TP=ATR×0.4 anyway. An example shows "band walk → TP at ATR×2.0 = 214.20" — you see the number and match it. The RANGE example has two prices and two order IDs. You see it and write two prices and two IDs.
 
@@ -360,58 +549,64 @@ SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction 
 
 **For each Tier 2 pair, write the entry plan BEFORE deciding to skip.**
 
-The old format let you write "C → pass" in 3 seconds. The new format requires you to write how you WOULD enter — both directions — before you can skip. Skipping is expensive. Entering is cheap.
+The old format let you write "C → pass" in 3 seconds. The new format requires you to write how you WOULD enter across the live move, the pullback, and the failure/opposite side before you can skip. Skipping is expensive. Entering is cheap.
 
 ```
 {PAIR}: {REGIME} | [candle shape]
-  LONG if: [specific price + condition — "dip to BB lower 1.3540 + M5 StRSI<0.1"]
-  SHORT if: [specific price + condition]
-  → [S/A/B/C] [MARKET/LIMIT @___/SKIP] — [1 sentence]
+  EXPRESSION: [clean / acceptable / dirty] — why this pair is or is not a good vehicle for the current regime
+  NOW: [direction + price/trigger if the move is live right now]
+  RELOAD: [specific price + condition — "dip to BB lower 1.3540 + M5 StRSI<0.1"]
+  OTHER SIDE: [specific opposite-direction price + condition]
+  → Edge [S/A/B/C] / Allocation [S/A/B/C] [MARKET now / LIMIT reload / LIMIT other side / SKIP] — [1 sentence]
 ```
 
-**You MUST fill LONG if + SHORT if before writing the conviction.** Both lines. Every pair. "Nothing" is not valid — there is ALWAYS a price where you would enter each direction. If you truly can't name a price, you haven't looked at the chart.
+**You MUST fill NOW + RELOAD + OTHER SIDE before writing the conviction.** All three lines. Every pair. "Nothing" is not valid — there is ALWAYS a live trigger, a better pullback, and a failure/other-side level. If you truly can't name them, you haven't looked at the chart.
 
-**Actions by conviction:**
+**Actions by edge:**
 
-| Conviction | Action | "SKIP" allowed? |
+| Edge | Action | "SKIP" allowed? |
 |------------|--------|----------------|
-| **S/A** | → Tier 1 promoted (full block) | No. Pick it up |
-| **B** | → LIMIT posted at the price you just wrote (3,000u) | No. You already named the price. Place it |
-| **C** | → SKIP with reason | Yes — but you already wrote 2 entry plans. Next session checks if either triggered |
+| **S/A** | → Tier 1 promoted (full block) | Only with an explicit contradiction to the live tape |
+| **B** | → Post the live path plus the better level / failure path | Yes — but only if you name why the live expression is late, dirty, or uneconomic right now |
+| **C** | → SKIP with reason | Yes — but you already wrote 3 entry plans. Next session checks if any triggered |
 
 **Tier 2 examples:**
 
 ```
 GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding
-  LONG if: dip to EMA20 1.3420 + M5 StRSI<0.2
-  SHORT if: double top at 1.3490 + M5 div score>0 + H1 ADX rolling
-  → A LIMIT LONG @1.3420 TP=1.3480 — band walk + GBP strongest CS
+  NOW: MARKET LONG @1.3458 if next candle holds above BB mid
+  RELOAD: dip to EMA20 1.3420 + M5 StRSI<0.2
+  OTHER SIDE: SHORT only on double top at 1.3490 + M5 div score>0 + H1 ADX rolling
+  → Edge A / Allocation A MARKET now + LIMIT reload — band walk + GBP strongest CS
 
 AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides
-  LONG if: touch BB lower 0.7055 + lower wick defense
-  SHORT if: touch BB upper 0.7093 + upper wick rejection
-  → B LIMIT both sides @0.7055 + @0.7093 — clean 38pip range
+  NOW: no market order in box center
+  RELOAD: LONG at touch BB lower 0.7055 + lower wick defense
+  OTHER SIDE: SHORT at touch BB upper 0.7093 + upper wick rejection
+  → Edge B / Allocation B LIMIT both sides @0.7055 + @0.7093 — clean 38pip range
 
 USD_JPY: SQUEEZE | tight 10pip band, no direction
-  LONG if: close above 159.35 on volume + M1 3 bull bodies
-  SHORT if: close below 159.10 on volume + M1 3 bear bodies
-  → C SKIP — pure compression, no wick bias, breakout not started
+  NOW: no live edge before break
+  RELOAD: LONG on close above 159.35 on volume + M1 3 bull bodies
+  OTHER SIDE: SHORT on close below 159.10 on volume + M1 3 bear bodies
+  → Edge C / Allocation C SKIP — pure compression, no wick bias, breakout not started
 
 EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower
-  LONG if: Fib 38.2% bounce at 185.80 + M5 StRSI=0.0 + lower wick defense
-  SHORT if: rally to EMA12 186.00 + M5 StRSI>0.8 rejection
-  → S Tier 1 — sell rally @186.00 TP=185.40. Band walk + ECB dovish + JPY strongest
+  NOW: MARKET SHORT @185.88 while BB lower walk is active
+  RELOAD: SHORT on rally to EMA12 186.00 + M5 StRSI>0.8 rejection
+  OTHER SIDE: LONG only on Fib 38.2% bounce at 185.80 + lower wick defense
+  → Edge S / Allocation A Tier 1 — sell now + sell rally. Band walk + ECB dovish + JPY strongest
 ```
 
-**Why "LONG if / SHORT if" kills the pass habit:**
-- You wrote "LONG if dip to 1.3540." Price dips to 1.3540 next session. Did you place the LIMIT? If not, you saw the setup and walked past it
-- You wrote "SHORT if double top at 1.3490." It double-topped. Did you act? The next session's state.md has the receipt
-- Writing both directions forces you to see rotation trades you'd otherwise ignore
+**Why "NOW / RELOAD / OTHER SIDE" kills the pass habit:**
+- You wrote `NOW: MARKET LONG @1.3458 if next candle holds`. If it held and you stayed flat, that is visible avoidance
+- You wrote `RELOAD: 1.3420`. If the pullback tagged it and there was no order, that is also visible avoidance
+- You wrote `OTHER SIDE: short on failure`. If trend failed and you had no second plan, the prompt exposes the gap
 
-**B → LIMIT is automatic.** You already wrote the entry level. Copy that price into a LIMIT order. A wrong LIMIT costs nothing — cancel it next session.
+**B is not one-limit-and-done.** B still needs executable paths. The point is to make avoidance visible, not to force a trade. If `NOW` is late/dirty, say that explicitly and leave the better level or the failure path.
 
 **"candle shape" = what you see in the PNG, not indicator values.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not.
-**RANGE: both "if" lines become LIMITs.** Zero extra margin on hedge account.
+**RANGE: `RELOAD` and `OTHER SIDE` become LIMITs.** Zero extra margin on hedge account.
 
 ### Tier 2 → Tier 1 promotion (any S or A above? Any B worth upgrading?)
 
@@ -423,8 +618,13 @@ EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower
 ## {PAIR} [PROMOTED from Tier 2] — {REGIME}
 Chart tells me: [full chart reading — candle bodies, wicks, BB, momentum]
   → [chart-to-TP connection: band walk → ATR×2.0 / deceleration → ATR×1.0 / range → opposite band]
-My trade: [action @price TP=price] — [why NOW: news/cross-pair/structure]
-→ Placed: [LIMIT/MARKET id=___ TP=___ SL=___] or: [not placed — why]
+Expression fit: This is the cleanest live vehicle because ___
+Cleaner / dirtier alternative: ___
+Memory trap check: ___
+NOW: [MARKET/LIMIT] [direction] @___ TP=___ SL=___ — [why NOW: news/cross-pair/structure]
+RELOAD: [LIMIT] [direction] @___ TP=___ SL=___ — [structural level]
+SECOND SHOT / OTHER SIDE: [LIMIT/MARKET] [direction] @___ TP=___ SL=___ — [continuation / failure / opposite side]
+→ Placed this session: [id=___, id=___] or: [not placed — why]
 ```
 
 **S/A conviction in Tier 2 without a Tier 1 block = you found gold and walked past it.** The promotion block is how you pick it up.
@@ -433,13 +633,17 @@ My trade: [action @price TP=price] — [why NOW: news/cross-pair/structure]
 
 ```
 Margin: ___% used → after all pending fill: ___%
-This session I placed:
+LIVE NOW:
+  [pair] [dir] [MARKET/LIMIT] @___ TP=___ SL=___ id=___
+RELOAD:
+  [pair] [dir] [LIMIT] @___ TP=___ SL=___ id=___
+SECOND SHOT / OTHER SIDE:
   [pair] [dir] [LIMIT/MARKET] @___ TP=___ SL=___ id=___
-  (or: nothing — best candidate was [pair] [direction] @[price] but: [specific reason])
-Day: ___% of target. ___JPY to go. [hunting harder / on track / protecting gains]
+Flat-book status: [not flat / flat but covered by reload + other side / unacceptable flat book — fix before SESSION_END]
+Day: ___% vs benchmark. ___JPY from day-start NAV. [protecting gains / normal quality bar / patient because tape is late or dirty]
 ```
 
-**This is a receipt, not a plan.** It lists what you ACTUALLY did this session with real order IDs. If you placed nothing, you explain which pair was closest and why you passed. The next session reads this and knows exactly what happened.
+**This is a receipt, not a plan.** It lists what you ACTUALLY did this session with real order IDs. If any of the three sections is empty, say why. The next session reads this and knows whether you participated in the live move, covered the pullback, and left a second path.
 
 **The Tier 1 and Tier 2 scan blocks above already contain both-sides RANGE entries and chart-derived TPs.** This block just collects the result. If the scan said "BUY @112.38 + SELL @112.56" but this receipt only has the LONG, the gap is visible.
 
@@ -448,6 +652,8 @@ Day: ___% of target. ___JPY to go. [hunting harder / on track / protecting gains
 **April reality: 156 LIMITs placed, 14 filled (9%), 75 cancelled (48%), 128 modified. 53 cancel→re-place cycles on the same pair.** The trader is using LIMITs as "thinking out loud" — analyzing, placing, re-evaluating next session, cancelling, re-placing at a new price. Each cycle costs analysis time, log entries, state.md updates, all thrown away.
 
 **The fix: place LIMITs at STRUCTURAL levels, then leave them alone.**
+
+**One more filter: structural does not mean infinitely far.** If a new passive LIMIT sits more than roughly one clean pullback away from live price (about `1× M5 ATR` or `4× spread`, whichever is larger), it is not a deployment plan yet — it is a wish. Wait until price gets closer, or choose the live-now / second-shot path instead.
 
 **Structural level** = Fib retracement, H1 BB band, cluster support/resistance, swing low/high, Ichimoku cloud edge. These don't move in 15 minutes.
 **Non-structural level** = "M5 is at this price right now", "StochRSI says oversold so entry here", current bid minus a few pips. These change every candle.
@@ -466,7 +672,7 @@ Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cance
 **What is NOT a cancel reason:**
 - "M5 moved away" — that's why you placed a LIMIT instead of a market order
 - "StochRSI changed" — StochRSI changes every 5 minutes
-- "Price is X pip away, unlikely to fill" — you placed it at a structural level for a reason
+- "Price is X pip away, unlikely to fill" — for an existing structural LIMIT. Do not place a brand-new far-away wish order in the first place
 - "Found a slightly better level" — if it's 2-3 pip different, that's noise, not a better level
 - "GTD is about to expire" — extend GTD, don't cancel and re-place
 
@@ -479,25 +685,28 @@ Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cance
 **Rules:**
 - Every LIMIT must have **TP + SL on fill**
 - **GTD = 4-8 hours minimum.** Short GTDs (1-2h) cause premature expiry → re-placement churn. If the structural level is valid for 1 hour, it's valid for 8
-- **Max 2 pending LIMITs at a time.** Forces you to pick your best levels, not scatter 5 orders hoping one fills. Quality over quantity
+- **Max 3 pending LIMITs at a time.** One reload, one second-shot or other-side, and one extra structural idea. More than that becomes spray-and-pray
 - **RANGE pairs = both sides.** LONG @BB lower + SHORT @BB upper. One price, both directions, zero extra margin on hedge account
 - **Tokyo and holidays are fine for LIMITs** — wide spread affects SL design, not LIMIT placement
 
-### 0% margin + 0 positions = FORCED ACTION (SESSION_END blocker)
+### Flat-book accountability (SESSION_END blocker)
 
-**You cannot SESSION_END with 0% margin used AND 0 open positions AND no new orders placed this session.**
+**You cannot SESSION_END with a fake flat book.** Any of these states is blocked:
+- 0% margin used + 0 open positions + no named trigger / invalidation for the best untraded seat
+- only one same-side pullback LIMIT and no explanation why `NOW` is wrong and why the failure-side path is weaker
+- a trend candidate marked S/A/B with vague "waiting" language instead of a concrete trigger
 
-**If this is a DROUGHT session (0 entries for 5+ sessions), the blocker escalates:**
+**If this is a no-trade session (0 entries for 5+ sessions), the blocker becomes output-based, not action-forced:**
 
-1. Look at the Tier 2 scan you just wrote. You wrote "LONG if" and "SHORT if" for every pair
-2. Pick the ONE pair where your "if" condition is CLOSEST to current price
-3. Enter it. Market order. B-size (3,000u). NOW
-4. If none are close, your "if" conditions are too far from market. Rewrite them at current price ± spread
+1. Look at the Tier 2 scan you just wrote
+2. Pick the single best untraded seat
+3. Choose one of three honest states:
+   - `ENTER NOW` — live tape is still clean enough to pay after costs
+   - `LEAVE STRUCTURAL LIMIT` — the edge is real but price is not there yet
+   - `WAIT WITH TRIGGER` — the edge is incomplete; write the exact trigger + invalidation
+4. Write why the other two choices are wrong for this tape
 
-**A B-size market order at the wrong time costs ~350 JPY avg.** Sitting flat for 5 sessions while the market moves costs the entire day's target. The math is clear: enter something.
-
-**The 3/31 lesson**: 19 entries, avg 4,737u, +4,591 JPY. Capital was deployed all day. That's the reference.
-**The 4/16 anti-lesson**: 0 entries, 0% margin, beautiful analysis, 0 JPY. Analysis earns zero.
+**The blocker is not "be in a trade."** The blocker is "don't hide behind vague flatness." Good flat is explicit. Bad flat is hand-wavy.
 
 ## Pre-entry — Conviction Block (required every time)
 
@@ -511,11 +720,16 @@ Thesis: [what the CHART shows → why that means entry NOW]
 Last 5 M5 candles: bodies [growing/shrinking/same] × [bull/bear/mixed], wicks [lower/upper/both/none]
   → Buyers defending? [YES: at what price ___ / NO: clean sell-through, no defense → PASS]
 Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map
+Execution regime: [trend continuation / corrective retrace / post-event fade / range rotation / squeeze break / late cleanup]
+Why this pair is the best expression of that regime: ___
+Why not the obvious alternative pair: ___
+Expression risk: [dirty JPY cross / late tape / duplicate theme / H4-memory dip-buy / none]
+If this leans on an old higher-TF story, why is it NOT just memory trading? ___
 Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Expected hold: [5-30m / 30m-2h / 2h-1day] → Zombie at: [HH:MMZ = entry + 2× max expected]
 First confirmation by: [entry + 15m]. If no movement in my direction → close. Max loss: ___JPY (units × SL_pip)
-Theme confidence: [proving / confirmed / late] → size accordingly (B=3k / A-S=4-8k / reduce)
-Is this the hero pair? [YES → full size + rotation / SIDEKICK → A-size / OTHER → B-size max 3,000u]
+Theme confidence: [proving / confirmed / late] → allocation lane [B/A/S] (theme confidence changes SIZE, not edge)
+Is this the primary vehicle right now? [YES → can take the next add if tape improves / BACKUP → A-size max / OTHER → B-size or pass]
 Session losses today: [N]W / [N]L. If 3+ consecutive L → STOP (circuit breaker). Direction of losses: ___
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
@@ -525,7 +739,7 @@ Cross-currency: [base currency] M15 = [bid/offered] across [N] pairs → [curren
 Event asymmetry: Next [event] at [time]. Market positioned for [X]. [favorable/unfavorable for this entry]
 Margin after: ___% (include pending LIMITs → worst case ___%)
 Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
-→ Conviction: [S/A/B/C] | Size: ___u
+→ Edge: [S/A/B/C] | Allocation: [S/A/B/C] | Size: ___u
 ```
 
 **"Thesis" is now a STORY, not an indicator list.** "StRSI=0.0 + ADX=61" is what indicators say. "Sellers made a staircase but buyers are absorbing at 215.35" is what the CHART says. Both can be true at the same time, but only the chart tells you IF this particular StRSI=0.0 is a trap or a real bounce. The indicators are the same in both cases — the candle shapes aren't.
@@ -534,9 +748,9 @@ Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
 
 **"First confirmation by: entry + 15m"** forces an exit clock. April data: losers cut in <30m average -354/trade. Losers held >2h average -818/trade. 39 slow-cut losers cost -31,890 (75% of all losses). If the trade doesn't start moving your direction within 15 minutes, the entry thesis was wrong. Cut, don't wait for SL.
 
-**"Theme confidence" links to Market Narrative.** If theme = "proving" → B-size only. If "confirmed" → A/S size. This IS the 4/7 pattern: 500u→5,000u as EUR_USD proved the USD-weakness thesis. Writing "confirmed" at entry means you've already had a winning rotation today.
+**"Theme confidence" links to Market Narrative.** It changes **allocation**, not **edge**. If theme = "proving", your edge can still be S, but allocation may stay at B/A until the theme pays. If "confirmed", allocation can match the edge. This IS the 4/7 pattern: 500u→5,000u as EUR_USD proved the USD-weakness thesis. Writing "confirmed" at entry means you've already had a winning rotation today.
 
-**"Is this the hero pair?"** prevents dilution. Hero pair gets full size + rotation engine. Sidekick gets A-size. Everything else is B-size scouting. 4/7: EUR_USD (hero) + AUD_USD (sidekick) = 98% of +11,014 JPY. The other 4 pairs contributed 2%.
+**"Is this the primary vehicle right now?"** prevents dilution without forcing fixation. Primary gets the next add only while it stays the cleanest expression. Backup gets A-size. Everything else is B-size scouting or a pass. 4/7: EUR_USD (primary) + AUD_USD (backup) = 98% of +11,014 JPY. The label follows the tape; it is not a quota.
 
 **"Expected hold → Zombie at"** is the orphan killer. A Momentum trade entered at 12:38Z expects 30m-2h → zombie at 16:38Z. When the next session checks this position at 17:00Z, it sees "Zombie at 16:38Z — PAST." The position management block forces justification or closure. This alone would have prevented the 4/14 GBP_USD -2,583 JPY loss (Momentum entry, held 5h40m past zombie time).
 
@@ -586,15 +800,15 @@ Momentum-S fires when: CS gap ≥0.8 + H4+H1+M5 all aligned + ADX>20. It fires o
 
 **Why 0 entries**: The trader sees Momentum-S, reads it as "supplementary data," then does a full conviction block, finds one AGAINST item ("H4 late" or "spread 0.3pip above normal"), rates B, places a LIMIT, and cancels it next session. The signal was right. The process killed it.
 
-**Momentum-S forced action (when ≥3 pairs fire same direction):**
+**Momentum-S priority review (when ≥3 pairs fire same direction):**
 
 ```
 MOMENTUM-S ALERT: [N] pairs firing [DIR] — [list pairs]
 This is a CURRENCY-WIDE move. 96% historical accuracy.
-→ REQUIRED: Enter hero pair at A-size (4,000u) market order NOW
-→ Hero pair = [best CS + best regime among the firing pairs]
-→ TP = ATR×1.5 (Momentum type, NOT scalp)
-→ Then: rotation engine activates on this pair
+→ REQUIRED OUTPUT: choose one of [ENTER NOW / LEAVE RELOAD / PASS WITH CONTRADICTION]
+→ Primary vehicle = [best CS + best regime among the firing pairs]
+→ If ENTER NOW: TP = ATR×1.5 (Momentum type, NOT scalp)
+→ If PASS: state the concrete contradiction (session / spread / late tape / event / structure), not a vague hesitation
 ```
 
 **Single pair Momentum-S (1-2 pairs)**: Treat as A-conviction confirmation. Enter if it's your hero or sidekick pair. Otherwise LIMIT.
@@ -620,11 +834,11 @@ Pending LIMITs if filled: +___JPY → worst case ___%  ← must be below 90%
 
 **4/8 lesson: EUR_JPY + EUR_USD + GBP_JPY stacked to 97% → forced EUR_JPY close at -319 JPY. The loss was caused by margin mismanagement, not market conditions. Calculate BEFORE entering.**
 
-### Sizing (conviction determines size — calculate fresh every entry)
+### Sizing (allocation determines size — calculate fresh every entry)
 
 Units = (NAV × margin%) / (price / 25)
 
-| Conviction | Margin % of NAV | Min units | Data basis |
+| Allocation | Margin % of NAV | Min units | Data basis |
 |------------|-----------------|-----------|------------|
 | **S** | **~30%** | 8,000u | 4/4 wins, +5,921 JPY, WR 100% |
 | **A** | **~15%** | 4,000u | Sweet spot for +19k bucket |
@@ -633,15 +847,15 @@ Units = (NAV × margin%) / (price / 25)
 
 ### Sizing discipline — Theme confidence determines size
 
-**Theme confidence (from Market Narrative) overrides static conviction sizing:**
+**Theme confidence (from Market Narrative) sets the allocation lane. Edge stays separate.**
 
 | Theme confidence | What it means | Sizing |
 |-----------------|---------------|--------|
-| **proving** | First 1-2 entries of the day on this thesis. Untested. | B-size (3,000u) regardless of conviction |
-| **confirmed** | At least 1 TP hit on this theme today. Thesis works. | Conviction-based: S=8,000u A=4,000u |
-| **late** | Theme running 6h+, most of move captured | Reduce to B (3,000u). Protect. No new S-entries |
+| **proving** | First 1-2 entries of the day on this thesis. Untested. | Allocation usually starts at B or A even if edge is S |
+| **confirmed** | At least 1 TP hit on this theme today. Thesis works. | Allocation can match edge (S=8,000u A=4,000u) |
+| **late** | Theme running 6h+, most of move captured | Allocation steps down by one lane. Protect late-stage entries |
 
-**4/7 blueprint**: EUR_USD started at 500u (proving). After first TP (+402 at entry #3), scaled to 4,000u (confirmed). By entry #7, 5,000u. The same signal (StRSI=0.0) gets B-size when proving and S-size when confirmed. Not because the indicator changed — because the THEME proved itself.
+**4/7 blueprint**: EUR_USD started at 500u (proving). After first TP (+402 at entry #3), scaled to 4,000u (confirmed). By entry #7, 5,000u. The same signal (StRSI=0.0) kept a strong edge throughout. What changed was the amount of capital it deserved after the theme proved itself.
 
 **Hero pair gets full theme-confidence sizing + rotation. Sidekick gets A-size. Others get B-size max.**
 
@@ -691,16 +905,17 @@ ROTATION [N]: [PAIR] +___JPY closed. Theme alive? [YES — because ___]
 At NAV 113k = max ~2,270 JPY per trade. Set SL so that units × (entry - SL) ≤ NAV × 0.02. If structural SL is wider than this, reduce units. This prevents the -3,500 JPY single-trade disasters (3/30 GBP_USD) that wipe out days of gains.
 
 **Rule 4: Pair edge priority.**
-EUR_USD is +8,812 JPY over 88 trades (the system's strongest proven edge). GBP_USD is +1,880 over 16. These two get S-size first. Other pairs get A-size max unless conviction is genuinely S AND the chart confirms. AUD_USD and EUR_JPY have negative edge historically — enter only when the chart shows something exceptional, not routine setups.
+EUR_USD is +8,812 JPY over 88 trades (the system's strongest proven edge). GBP_USD is +1,880 over 16. These two get first claim on FULL allocation when the edge is there. Other pairs can still be Edge S if the chart says so; they just need a stronger case before they earn the same amount of capital. AUD_USD and EUR_JPY have negative edge historically — enter only when the chart shows something exceptional, not routine setups.
 
 **Rule 5: Market order vs LIMIT — decide by MARKET CONDITIONS, not just conviction.**
 
 | Condition | Order type | Why |
 |-----------|-----------|-----|
-| S/A conviction + normal liquidity + M5 at extreme NOW | Market order | The setup is here. Missing it costs more than spread |
+| S/A conviction + normal liquidity + move live NOW | Market order + reload LIMIT | The setup is here. Missing it costs more than spread, but you still want the pullback |
 | S/A conviction + spread > 2× normal (holiday/rollover) | **LIMIT at M5 BB mid or recent wick level** | Wide spread = slippage. LIMIT saves 3-5pip on a 15pip target |
-| S/A conviction + M5 NOT at extreme (mid-range) | **LIMIT at M5 BB edge / structural support** | Don't chase mid-range. Wait for the dip |
-| B conviction | LIMIT always | Not sure enough to pay market spread |
+| S/A conviction + M5 NOT at extreme (mid-range) | **LIMIT at M5 BB edge / structural support + second-shot level** | Don't chase mid-range. Cover the dip and the failure/continuation |
+| B conviction + live tape leaning one way | 3,000u market scout + one reload LIMIT | Small live participation is better than watching the move go without you |
+| B conviction + no live tape | Reload LIMIT + other-side LIMIT | Not good enough to chase, but still not one-limit-and-done |
 
 **4/8 Easter Monday: EUR_USD 4000u and GBP_JPY 3900u entered via market order in thin liquidity. LIMIT at M5 support would have saved 5-10pip of entry cost.**
 **A wrong LIMIT costs nothing (cancel next session). A bad market fill in thin liquidity costs real money.**
@@ -717,7 +932,7 @@ EUR_USD is +8,812 JPY over 88 trades (the system's strongest proven edge). GBP_U
 
 **The TP target column is the INITIAL plan.** If the chart shows the move is still accelerating (band walk, expanding bodies, no counter-wicks), extend TP to the next structural level. **The chart overrides the ATR formula.** 4/7 best trades (+3,366, +2,200) held through ATR×1.0 because the chart showed continuation. The numbers said "take profit." The chart said "hold." The chart was right.
 
-**Counter-trades are normal.** H4 is LONG but M5 is topping → SHORT scalp to BB mid. Size: B-max (5% NAV). SL tight. **Holding only thesis-direction = leaving money on pullbacks.**
+**Counter-trades are normal.** H4 is LONG but M5 is topping → SHORT scalp to BB mid. They can be **Edge S/A** if the exhaustion + reversal read is clean. Allocation is usually one lane smaller than the edge because you are still fighting the upper-TF flow. **Holding only thesis-direction = leaving money on pullbacks.**
 
 ## Position Management — 3 options, always
 
@@ -846,7 +1061,7 @@ tp_sl = {"takeProfit": {"price": "210.000", "timeInForce": "GTC"},
 trailing = {"trailingStopLoss": {"distance": "0.150", "timeInForce": "GTC"}}
 ```
 
-**If "I would enter if..." names a price → it's a limit order. Place it.** Your session is 10 minutes every 15 minutes. LIMITs work while you're away.
+**If `NOW` says the move is live, hit the market. If `RELOAD` or `OTHER SIDE` names a price, place those orders.** Your session is short. The market does not owe you the perfect one-price pullback.
 
 ## P&L Reporting — Use OANDA numbers, not manual tallies
 
@@ -959,7 +1174,7 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 {copy the Self-check template from session_data output, fill ALL blanks}
 
 ## Market Narrative
-{Driving force + vs last session + M5 verdict + theme + event positioning + macro chain}
+{Driving force + vs last session + M5 verdict + theme + execution regime + best/second-best expression + expressions to avoid + H4-memory trap check + event positioning + macro chain}
 
 ## Currency Pulse
 {copy from session_data CURRENCY PULSE, add your stories + MTF conflict + best vehicle}
@@ -986,6 +1201,28 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 - Last action: ...
 - Next action trigger: ...
 
+## Bot Layer
+{Only if bot-tagged inventory exists or worker policy changed this session.
+Policy: ACTIVE / REDUCE_ONLY / PAUSE_ALL (expires ...)
+Coverage target: ___ live pair(s) | current live pair(s): ___ | flat-book repair lane: ___ / none
+Ownership:
+- range_bot: worker-owned lifecycle / trader policy steering / bot_trade_manager TP1/runner + emergency brake / inventory-director backup
+- range_bot_market: worker-owned lifecycle / trader policy steering / bot_trade_manager TP1/runner + emergency brake / inventory-director backup
+- trend_bot_market: worker-owned lifecycle / trader policy steering / bot_trade_manager TP1/runner + emergency brake / inventory-director backup
+Tempo:
+- FAST = worker takes short-TP bites while trader can still keep the broader seat; sub-3k size is fine if it buys more repetitions
+- BALANCED = worker keeps the default TP / RR profile
+- MICRO = worker takes the finest short-TP bite with the smallest size and the shortest timeout when the micro tape is clean enough
+Hard stop:
+- Worker SL is disaster-only. The real worker exit is TP1 / timeout / trap cleanup / inventory judgment
+EntryBias:
+- PASSIVE = do not use this pair for flat-book repair
+- BALANCED = normal timing discipline
+- EARLY = acceptable first live worker seat if the book is flat and the live edge is already active
+Interaction with discretionary book: complements / duplicates / conflicts
+Trader action on worker book: policy refreshed / pending cancelled / emergency force-close / no change
+Need backup task: yes/no and why}
+
 ## Lessons (Recent)
 ```
 
@@ -996,7 +1233,7 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 
 | Time | What to do |
 |------|---------|
-| 0-2 min | session_data + Read state.md/strategy_memory/quality_audit + profit_check + protection_check + Slack |
+| 0-2 min | session_data + bot_inventory_snapshot + Read state.md/strategy_memory/quality_audit + profit_check + protection_check + Slack |
 | 2-4 min | **Currency Pulse + Market Narrative + Self-check.** Write state.md v1 with currency dynamics, MTF conflicts, macro chain, event positioning. This is WHERE YOU THINK. |
 | 4-8 min | 7-pair scan (Tier 1 deep + Tier 2 quick) + Position management (C with M15/M1/H4 position) + S-candidate evaluation. Quality audit issues. Capital Deployment. LIMITs. |
 | 8-12 min | Execute. pretrade → conviction (with cross-currency, H4 position, event asymmetry) → order + 4-point record **(each trade → ✍️ UPDATE state.md)** |
@@ -1015,9 +1252,9 @@ Session summary ({start_from_bash}–{end_from_bash} UTC, {elapsed}s):
 
 ## Next Cycle Bash (the heartbeat — always emit at the end of every response)
 
-cd /Users/tossaki/App/QuantRabbit && echo "$(date +%s) $PPID" > logs/.trader_lock && python3 tools/session_end.py || python3 tools/mid_session_check.py 2>/dev/null
+cd /Users/tossaki/App/QuantRabbit && python3 tools/task_runtime.py trader cycle --owner-pid $PPID
 
-**How it works**: `session_end.py` checks elapsed time from `.trader_start`. If >= 8 min → runs trade_performance + ingest + lock release + prints SESSION_END with real timestamps. If < 8 min → prints TOO_EARLY and exits with error → the `||` runs mid_session_check instead.
+**How it works**: `task_runtime.py trader cycle` refreshes the shared lock, runs `session_end.py`, and falls back to `mid_session_check.py` if `session_end.py` rejects the request.
 
 - SESSION_END + LOCK_RELEASED → session complete. **state.md MUST be updated BEFORE running this Bash.**
 - **TOO_EARLY → session_end.py rejected your request. Go back and do deeper analysis.** Run fib_wave --all, check Different lens on held positions, scan Tier 2 pairs properly, place LIMITs.
