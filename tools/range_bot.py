@@ -62,6 +62,7 @@ from worker_target_race import (
     remember_trade_plan,
 )
 from oanda_trade_tags import enrich_open_trades
+import brake_gate
 
 # === Constants ===
 BOT_TAG = "range_bot"
@@ -1829,6 +1830,11 @@ def main() -> int:
 
         if not allow_new_entries:
             skipped.append(f"{pair}: policy reduce-only")
+            continue
+
+        gate_blocked, gate_reason = brake_gate.check(pair, direction)
+        if gate_blocked:
+            skipped.append(f"{pair}: brake_gate {gate_reason}")
             continue
 
         tempo = str(pair_policy.get("tempo", "BALANCED")).upper()

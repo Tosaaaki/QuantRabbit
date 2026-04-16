@@ -62,6 +62,7 @@ from range_bot import (
     worker_disaster_stop,
 )
 from range_scalp_scanner import PAIRS, TYPICAL_SPREADS, get_spread, pip_size, to_pips
+import brake_gate
 from worker_target_race import (
     build_plan as build_target_race_plan,
     encode_comment as encode_target_race_comment,
@@ -822,6 +823,10 @@ def main() -> int:
         block_reason = pair_policy_worker_block_reason(pair_policy, direction, "MARKET")
         if block_reason:
             skipped.append(f"{pair}: {block_reason}")
+            continue
+        gate_blocked, gate_reason = brake_gate.check(pair, direction)
+        if gate_blocked:
+            skipped.append(f"{pair}: brake_gate {gate_reason}")
             continue
         if tempo == "FAST" and opp.get("m1_state") not in TREND_FAST_ALLOWED_M1_STATES:
             skipped.append(

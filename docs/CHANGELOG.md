@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-04-17 — Stranded inventory brake: 4-layer safety to prevent closeout death
+
+**Problem**: The bot harvest model (no SL, TP-only) wins fast on the trending side but accumulates a counter-side bag. Past pattern: +15% in hours → counter-side fills margin → OANDA forced closeout at the worst price → all profit returned (or worse). The bot has no exit plan for the half that doesn't TP.
+
+**Change** — four new safety mechanisms wired into `tools/local_bot_cycle.sh`:
+
+1. **`tools/inventory_brake.py`** (runs first):
+   - Per-pair LONG/SHORT units imbalance check. Block adds on heavy stranded side at >= 3:1 ratio.
+   - Account margin staged brake: NORMAL (<60%), CAUTION (60-75%, halt new), EMERGENCY (75-85%, drain mode forced), PANIC (>=85%, force-close 50% of largest stranded bag at market).
+   - Writes `logs/bot_brake_state.json`.
+
+2. **`tools/regime_switch.py`**: Per-pair regime detection (TREND/RANGE/MIXED) from M5+M15+H1 ADX/DI/BBW. Writes `logs/bot_regime_state.json`. When regime=TREND, only entries IN trend direction are allowed.
+
+3. **`tools/stranded_drain.py`** (runs after entry bots): For each pair flagged drain_mode, computes weighted-avg entry of stranded side and sets a TAKE_PROFIT order on each trade at avg_entry +/- 0.5 ATR (close to BE). Gives the counter-side bag a dignified exit on retracement before margin fills.
+
+4. **`tools/brake_gate.py`**: Helper consumed by `range_bot.py` and `trend_bot.py` at entry-decision time. Returns `(blocked, reason)` based on brake_state + regime_state. State files older than 5 min are ignored (fail-safe permissive).
+
+**Wiring**: `local_bot_cycle.sh` runs `inventory_brake` + `regime_switch` BEFORE entry bots; `stranded_drain` AFTER. Existing `bot_policy_guard` and `bot_trade_manager` still run as before.
+
+**Why this is the kill switch for the give-it-all-back pattern**: previous bot loop had no concept of "stranded inventory" or "margin staging". Now (a) you can't add to the heavy side past 3:1, (b) you can't run hot past 60% margin, (c) accumulated counter-side automatically gets a BE exit ladder, and (d) PANIC margin triggers a controlled half-close before OANDA does an uncontrolled full-close.
+
 ## 2026-04-17 — Bot SL reform: MICRO/FAST go SL-free, rely on timeout mechanism
 
 **Problem**: Broker SLs on tight levels were getting hunted by noise before the timeout protection could kick in. For ultra-short scalp bots where the exit lives in TP1 + timeout, a broker SL on a structural level is redundant and counterproductive.
