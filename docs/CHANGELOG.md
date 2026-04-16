@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-04-16 — Remove deprecated Japanese prompt files
+
+Deleted `CLAUDE_ja.md` and `.claude/rules-ja/` (6 files). English versions are the single source of truth since v8. Japanese copies were never updated and just added confusion.
+
 ## 2026-04-16 — Anti-Drought: Entry-First format + drought detector
 
 **Problem**: Trader task produces beautiful analysis (Currency Pulse, Regime Map, 7-pair scan) but exits sessions with 0 entries, 0% margin, 0 JPY. On 4/15-16: 18 LIMITs cancelled vs 24 entries. 7/7 pairs rated "C → no action" despite 0% margin. 5 S-scan signals missed. Root cause: 12 layers of rules (event wait, spread check, theme late, B-max, etc.) each individually valid but collectively creating a situation where NO entry can pass all filters.
