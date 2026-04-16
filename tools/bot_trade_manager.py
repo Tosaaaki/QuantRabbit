@@ -395,7 +395,20 @@ def evaluate_trade(
         and progress < profile["min_progress"]
         and upl <= 0
     )
-    timed_out = hold_min >= profile["full_close_min"]
+    # Vol-aware timeout: don't force-close just because time elapsed.
+    # Require either meaningful adverse move (>= 0.5 ATR against entry)
+    # or non-trivial loss in JPY. Otherwise the trade still has a chance
+    # in a low-volatility tape — closing it is just paying spread for nothing.
+    adverse_pips = 0.0
+    if entry > 0 and current_price > 0:
+        if side == "LONG":
+            adverse_pips = max(0.0, to_pips(entry - current_price, pair))
+        else:
+            adverse_pips = max(0.0, to_pips(current_price - entry, pair))
+    meaningful_adverse = adverse_pips >= atr_pips * 0.5
+    real_loss_jpy = upl <= -100  # ~10 pip loss on small lot
+    timed_out_raw = hold_min >= profile["full_close_min"]
+    timed_out = timed_out_raw and (meaningful_adverse or real_loss_jpy or bool(trap_reason))
     trapped = bool(trap_reason) or (stale and adverse_trend)
     if runner_active:
         stale = False
