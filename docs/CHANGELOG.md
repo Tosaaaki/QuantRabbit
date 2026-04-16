@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-17 — Bot SL reform: MICRO/FAST go SL-free, rely on timeout mechanism
+
+**Problem**: Broker SLs on tight levels were getting hunted by noise before the timeout protection could kick in. For ultra-short scalp bots where the exit lives in TP1 + timeout, a broker SL on a structural level is redundant and counterproductive.
+
+**Change**:
+- `tools/range_bot.py` and `tools/trend_bot.py`:
+  - MICRO/FAST tempo: `broker_sl = None` — no `stopLossOnFill` placed. Primary protection is `bot_trade_manager` timeout (MICRO: 4/7 min, FAST: 8/13 min).
+  - BALANCED tempo: unchanged — keeps wide disaster backstop.
+- `place_limit`, `place_market`, `place_trend_market`, `log_entry`, `slack_notify` all updated to accept `sl: float | None`.
+- Log shows `SL=NO_SL` for no-SL entries; display shows `No-SL (timeout mode)`.
+
 ## 2026-04-17 — High-speed bot tuning: FAST/MICRO thresholds loosened
 
 **Goal**: Enable FAST and MICRO tempos to fire more readily so the worker layer produces more round-trips per session.

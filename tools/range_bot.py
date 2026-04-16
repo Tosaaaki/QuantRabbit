@@ -1071,36 +1071,36 @@ def worker_disaster_stop(
 
 
 def place_limit(token: str, acct: str, pair: str, direction: str,
-                units: int, entry: float, tp: float, sl: float,
+                units: int, entry: float, tp: float, sl: float | None,
                 gtd_time: str, comment: str) -> dict:
-    """Place a LIMIT order with TP/SL on fill and bot tag."""
+    """Place a LIMIT order with TP on fill and bot tag. SL is optional — pass None for MICRO/FAST no-SL mode."""
     signed_units = str(units) if direction == "BUY" else str(-units)
-    payload = {
-        "order": {
-            "type": "LIMIT",
-            "instrument": pair,
-            "units": signed_units,
-            "price": format_price(entry, pair),
-            "timeInForce": "GTD",
-            "gtdTime": gtd_time,
-            "takeProfitOnFill": {
-                "price": format_price(tp, pair),
-                "timeInForce": "GTC",
-            },
-            "stopLossOnFill": {
-                "price": format_price(sl, pair),
-                "timeInForce": "GTC",
-            },
-            "clientExtensions": {
-                "tag": BOT_TAG,
-                "comment": comment,
-            },
-            "tradeClientExtensions": {
-                "tag": BOT_TAG,
-                "comment": comment,
-            },
-        }
+    order: dict = {
+        "type": "LIMIT",
+        "instrument": pair,
+        "units": signed_units,
+        "price": format_price(entry, pair),
+        "timeInForce": "GTD",
+        "gtdTime": gtd_time,
+        "takeProfitOnFill": {
+            "price": format_price(tp, pair),
+            "timeInForce": "GTC",
+        },
+        "clientExtensions": {
+            "tag": BOT_TAG,
+            "comment": comment,
+        },
+        "tradeClientExtensions": {
+            "tag": BOT_TAG,
+            "comment": comment,
+        },
     }
+    if sl is not None:
+        order["stopLossOnFill"] = {
+            "price": format_price(sl, pair),
+            "timeInForce": "GTC",
+        }
+    payload = {"order": order}
     try:
         return oanda_api(
             f"/v3/accounts/{acct}/orders", token, acct,
@@ -1112,33 +1112,33 @@ def place_limit(token: str, acct: str, pair: str, direction: str,
 
 
 def place_market(token: str, acct: str, pair: str, direction: str,
-                 units: int, tp: float, sl: float, comment: str) -> dict:
-    """Place a MARKET order with TP/SL on fill and market tag."""
+                 units: int, tp: float, sl: float | None, comment: str) -> dict:
+    """Place a MARKET order with TP on fill and market tag. SL is optional — pass None for MICRO/FAST no-SL mode."""
     signed_units = str(units) if direction == "BUY" else str(-units)
-    payload = {
-        "order": {
-            "type": "MARKET",
-            "instrument": pair,
-            "units": signed_units,
-            "timeInForce": "FOK",
-            "takeProfitOnFill": {
-                "price": format_price(tp, pair),
-                "timeInForce": "GTC",
-            },
-            "stopLossOnFill": {
-                "price": format_price(sl, pair),
-                "timeInForce": "GTC",
-            },
-            "clientExtensions": {
-                "tag": BOT_MARKET_TAG,
-                "comment": comment,
-            },
-            "tradeClientExtensions": {
-                "tag": BOT_MARKET_TAG,
-                "comment": comment,
-            },
-        }
+    order: dict = {
+        "type": "MARKET",
+        "instrument": pair,
+        "units": signed_units,
+        "timeInForce": "FOK",
+        "takeProfitOnFill": {
+            "price": format_price(tp, pair),
+            "timeInForce": "GTC",
+        },
+        "clientExtensions": {
+            "tag": BOT_MARKET_TAG,
+            "comment": comment,
+        },
+        "tradeClientExtensions": {
+            "tag": BOT_MARKET_TAG,
+            "comment": comment,
+        },
     }
+    if sl is not None:
+        order["stopLossOnFill"] = {
+            "price": format_price(sl, pair),
+            "timeInForce": "GTC",
+        }
+    payload = {"order": order}
     try:
         return oanda_api(
             f"/v3/accounts/{acct}/orders", token, acct,
@@ -1514,13 +1514,14 @@ def build_range_target_race(
 
 
 def log_entry(order_type: str, pair: str, direction: str, units: int,
-              entry: float, tp: float, sl: float, order_id: str, tag: str) -> None:
+              entry: float, tp: float, sl: float | None, order_id: str, tag: str) -> None:
     """Append entry to live_trade_log.txt."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     tif = f"GTD={GTD_HOURS}h " if order_type == "LIMIT" else ""
+    sl_str = str(sl) if sl is not None else "NO_SL"
     line = (
         f"[{now}] RANGE_BOT_{order_type} {pair} {direction} {units}u "
-        f"@{entry} TP={tp} SL={sl} {tif}id={order_id} tag={tag}\n"
+        f"@{entry} TP={tp} SL={sl_str} {tif}id={order_id} tag={tag}\n"
     )
     with open(LOG_FILE, "a") as f:
         f.write(line)
@@ -1539,7 +1540,7 @@ def log_cancel(order_type: str, pair: str, direction: str, units: int,
 
 
 def slack_notify(order_type: str, pair: str, direction: str, units: int,
-                 entry: float, tp: float, sl: float, note: str) -> None:
+                 entry: float, tp: float, sl: float | None, note: str) -> None:
     """Post entry notification to Slack via slack_trade_notify.py."""
     side = "LONG" if direction == "BUY" else "SHORT"
     cmd = [
@@ -1549,7 +1550,7 @@ def slack_notify(order_type: str, pair: str, direction: str, units: int,
         "--side", side,
         "--units", str(units),
         "--price", str(entry),
-        "--sl", str(sl),
+        *(["--sl", str(sl)] if sl is not None else []),
         "--thesis",
         (
             f"Range bot {order_type.lower()}: "
@@ -1887,16 +1888,22 @@ def main() -> int:
 
         race_plan = build_range_target_race(pair, direction, execution_entry, tp1, structural_sl, opp, tempo)
         broker_tp = float(race_plan["tp2"])
-        broker_sl, broker_sl_pips = worker_disaster_stop(
-            pair,
-            direction,
-            execution_entry,
-            structural_sl,
-            tempo=tempo,
-            style="range",
-            atr_pips=max(float(opp.get("atr_pips", 0)), 1.0),
-            spread_pips=max(float(opp.get("spread", 0)), 0.1),
-        )
+        # MICRO/FAST: no broker SL — timeout mechanism in bot_trade_manager is the primary protection.
+        # BALANCED: keep wide disaster backstop to catch gap events.
+        if tempo in ("MICRO", "FAST"):
+            broker_sl = None
+            broker_sl_pips = 0.0
+        else:
+            broker_sl, broker_sl_pips = worker_disaster_stop(
+                pair,
+                direction,
+                execution_entry,
+                structural_sl,
+                tempo=tempo,
+                style="range",
+                atr_pips=max(float(opp.get("atr_pips", 0)), 1.0),
+                spread_pips=max(float(opp.get("spread", 0)), 0.1),
+            )
         runner_comment = encode_target_race_comment(race_plan)
 
         if order_type == "SKIP":
@@ -2099,7 +2106,7 @@ def main() -> int:
         )
         print(
             f"    Thesis line={format_price(structural_sl, pair)} (-{order_plan['sl_pips']:.1f}pip)"
-            f" | Disaster SL={format_price(broker_sl, pair)} (-{broker_sl_pips:.1f}pip)"
+            + (f" | Disaster SL={format_price(broker_sl, pair)} (-{broker_sl_pips:.1f}pip)" if broker_sl is not None else " | No-SL (timeout mode)")
         )
         print(
             f"    R:R={order_plan['rr']:.1f} | {opp.get('setup_tf', 'M5')} {opp['range_type']} "

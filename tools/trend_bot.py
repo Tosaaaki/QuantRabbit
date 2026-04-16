@@ -472,32 +472,33 @@ def conviction_from_scores(h1: dict, m15: dict, m5_setup: dict, m1: dict, curren
 
 
 def place_trend_market(token: str, acct: str, pair: str, direction: str,
-                       units: int, tp: float, sl: float, comment: str) -> dict:
+                       units: int, tp: float, sl: float | None, comment: str) -> dict:
+    """Place trend-bot MARKET order. sl=None = no-SL mode (MICRO/FAST timeout protection only)."""
     signed_units = str(units) if direction == "BUY" else str(-units)
-    payload = {
-        "order": {
-            "type": "MARKET",
-            "instrument": pair,
-            "units": signed_units,
-            "timeInForce": "FOK",
-            "takeProfitOnFill": {
-                "price": format_price(tp, pair),
-                "timeInForce": "GTC",
-            },
-            "stopLossOnFill": {
-                "price": format_price(sl, pair),
-                "timeInForce": "GTC",
-            },
-            "clientExtensions": {
-                "tag": TREND_BOT_MARKET_TAG,
-                "comment": comment,
-            },
-            "tradeClientExtensions": {
-                "tag": TREND_BOT_MARKET_TAG,
-                "comment": comment,
-            },
-        }
+    order: dict = {
+        "type": "MARKET",
+        "instrument": pair,
+        "units": signed_units,
+        "timeInForce": "FOK",
+        "takeProfitOnFill": {
+            "price": format_price(tp, pair),
+            "timeInForce": "GTC",
+        },
+        "clientExtensions": {
+            "tag": TREND_BOT_MARKET_TAG,
+            "comment": comment,
+        },
+        "tradeClientExtensions": {
+            "tag": TREND_BOT_MARKET_TAG,
+            "comment": comment,
+        },
     }
+    if sl is not None:
+        order["stopLossOnFill"] = {
+            "price": format_price(sl, pair),
+            "timeInForce": "GTC",
+        }
+    payload = {"order": order}
     try:
         return oanda_api(
             f"/v3/accounts/{acct}/orders", token, acct,
@@ -508,11 +509,12 @@ def place_trend_market(token: str, acct: str, pair: str, direction: str,
         return {"error": body, "code": e.code}
 
 
-def log_entry(pair: str, direction: str, units: int, entry: float, tp: float, sl: float, order_id: str) -> None:
+def log_entry(pair: str, direction: str, units: int, entry: float, tp: float, sl: float | None, order_id: str) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+    sl_str = str(sl) if sl is not None else "NO_SL"
     line = (
         f"[{now}] TREND_BOT_MARKET {pair} {direction} {units}u "
-        f"@{entry} TP={tp} SL={sl} id={order_id} tag={TREND_BOT_MARKET_TAG}\n"
+        f"@{entry} TP={tp} SL={sl_str} id={order_id} tag={TREND_BOT_MARKET_TAG}\n"
     )
     with open(LOG_FILE, "a") as fh:
         fh.write(line)
@@ -528,7 +530,7 @@ def log_cancel(pair: str, direction: str, units: int, entry: float, order_id: st
         fh.write(line)
 
 
-def slack_notify(pair: str, direction: str, units: int, entry: float, tp: float, sl: float, note: str) -> None:
+def slack_notify(pair: str, direction: str, units: int, entry: float, tp: float, sl: float | None, note: str) -> None:
     side = "LONG" if direction == "BUY" else "SHORT"
     cmd = [
         sys.executable, str(ROOT / "tools" / "slack_trade_notify.py"),
@@ -537,7 +539,7 @@ def slack_notify(pair: str, direction: str, units: int, entry: float, tp: float,
         "--side", side,
         "--units", str(units),
         "--price", str(entry),
-        "--sl", str(sl),
+        *(["--sl", str(sl)] if sl is not None else []),
         "--thesis", f"Trend bot market: {note}",
     ]
     try:
@@ -905,7 +907,8 @@ def main() -> int:
         entry = plan["entry"]
         tp1 = plan["tp1"]
         tp2 = plan["tp2"]
-        sl = plan["sl"]
+        # MICRO/FAST: no broker SL — timeout in bot_trade_manager is the primary protection.
+        sl = None if tempo in ("MICRO", "FAST") else plan["sl"]
         runner_comment = encode_target_race_comment(plan["race_plan"])
         units = calculate_units(opp["conviction"], nav, entry, pair, order_type="MARKET", tempo=tempo)
         est_margin = estimate_margin(units, entry, pair)
@@ -922,7 +925,7 @@ def main() -> int:
         print(
             f"    Thesis line={format_price(plan['structural_sl'], pair)} "
             f"(-{plan['structural_sl_pips']:.1f}pip)"
-            f" | Disaster SL={format_price(sl, pair)} (-{plan['sl_pips']:.1f}pip)"
+            + (f" | Disaster SL={format_price(sl, pair)} (-{plan['sl_pips']:.1f}pip)" if sl is not None else " | No-SL (timeout mode)")
         )
         print(
             f"    R:R1={plan['rr']:.1f} | R:R2={plan['rr_runner']:.1f} "
