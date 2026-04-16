@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-04-16 — Acceleration Engine: Hero Pair + Mandatory Rotation + Momentum-S
+
+**Problem**: 28 days of trading = -755 JPY total. System has zero growth. But 5 good days averaged +5,385 JPY each. The good days had a clear recipe that wasn't being replicated.
+
+**Root cause analysis** (500-trade deep dive):
+- Rotation chains (TP → re-enter <60min) = +72,774 JPY. Everything else = -73,529 JPY
+- Good days: 1 hero pair produces 36-143% of P&L via rotation. WR 71%
+- Bad days: capital spread across 5+ pairs equally. WR 32%. No rotation
+- Momentum-S scanner: 96% accuracy, 55+ fires, ZERO entries. System's biggest leak
+
+**SKILL_trader.md changes**:
+- **Hero Pair system**: Replaces "Top 2 pairs" with Hero (50%+ capital, all rotations) + Sidekick (20-30%). Other pairs get B-size max. Forces concentration that made every good day work
+- **Mandatory Rotation Engine**: After EVERY TP, must place re-entry LIMIT within 30 seconds. Includes size escalation table (3k→4k→6k→8k as theme confirms). Rotation is no longer optional — it's the only thing that makes money
+- **Momentum-S forced entry**: When ≥3 pairs fire same direction, enter hero pair at A-size market order. No LIMIT, no "consider." 96% accuracy can't be optional
+- All "Top 2" references → "Hero pair" throughout
+
+**strategy_memory.md changes**:
+- Added "Good Day Recipe" at top of winning patterns (4 shared traits of 5 best days)
+- Added Momentum-S as proven winning pattern with forced entry rule
+- Updated reference day from 3/31 (+4,591) to 4/7 (+11,014) as the target blueprint
+- Added rotation as mandatory system component (+72,774 data)
+
 ## 2026-04-16 — Data-Driven Sizing: min 3k, sweet spot 30-120min, circuit breaker, time filter
 
 **Problem**: 500-trade deep analysis reveals 3 structural profit killers:

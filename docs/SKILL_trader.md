@@ -164,7 +164,9 @@ Theme confidence: [proving / confirmed / late]
   proving = first 1-2 trades today testing the thesis. Size: B (3,000u)
   confirmed = TP hit at least once on this theme today. Size: A→S (4,000-6,000u)
   late = theme running 6h+, most of the move captured. Size: reduce, protect gains
-Top 2 pairs: ___ and ___ (these get 80% of margin. Others get B-size max or pass)
+Hero pair: ___ [THE one pair you rotate today. Gets 50%+ of margin and ALL rotations]
+  Why hero: [strongest theme × best regime × best CS alignment. 4/7: EUR_USD was hero → 7 rotations → +5,880]
+  Sidekick: ___ [#2 pair. Gets 20-30% of margin. Trades when hero is between rotations]
 Next event: ___ [name + time + what you do WHEN it hits, not UNTIL it hits]
 Event positioning: Market has been [buying/selling] [direction] for [N days/hours]. Expected=[soft/hot/neutral].
   If expected: ~___pip move (priced in). If surprise: ~___pip move (unwind). Asymmetry: [favorable/unfavorable for held positions]
@@ -173,9 +175,17 @@ Macro chain (how this macro theme affects each currency differently):
 Session: ___ (Tokyo / London / NY / Late NY)
 ```
 
-**"Theme confidence" is the progressive sizing engine.** 4/7 made +14,186 because EUR_USD started at 500u and scaled to 5,000u as the theme proved itself. The SAME StRSI=0.0 signal means different sizes depending on whether the theme is proving or confirmed. This is NOT "add because it dipped again" — it's "the macro is confirmed, I'm sizing up on the next rotation."
+**"Theme confidence" is the progressive sizing engine.** 4/7 made +11,014 because EUR_USD started at 500u and scaled to 5,000u as the theme proved itself. The SAME StRSI=0.0 signal means different sizes depending on whether the theme is proving or confirmed. This is NOT "add because it dipped again" — it's "the macro is confirmed, I'm sizing up on the next rotation."
 
-**"Top 2 pairs" forces concentration.** Best days have 41-47% of P&L from ONE pair. Spreading across 4-5 pairs dilutes returns to +1,291/day (1%). Pick the 2 pairs where Theme + CS + regime align best. Everything else is B-size scouting or pass.
+**"Hero pair" is the #1 acceleration lever.** Every good day had 1 pair producing 36-143% of total P&L:
+- 4/7: EUR_USD → 7 rotations → +5,880 (53% of +11,014)
+- 4/1: EUR_USD → +4,479 (143% of +3,134)
+- 4/13: GBP_USD → +2,229 (38%) + GBP_JPY +2,151 (37%)
+- 4/10: AUD_JPY → +1,431 (43%)
+
+**Spreading across 5+ pairs equally = mediocre day (+1,291 avg).** Concentrating on 1 hero pair + rotating = good day (+5,385 avg). The hero pair is NOT picked by "which pair has the best indicator reading." It's picked by: which pair has Theme + Currency Strength + Regime all aligned? That pair gets rotated all day.
+
+**The sidekick pair fills gaps.** While the hero is pulling back (waiting for re-entry), the sidekick captures a separate move. 4/7: EUR_USD (hero) + AUD_USD (sidekick, +4,886). But hero always gets priority on margin.
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
 **"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
@@ -505,7 +515,7 @@ Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Expected hold: [5-30m / 30m-2h / 2h-1day] → Zombie at: [HH:MMZ = entry + 2× max expected]
 First confirmation by: [entry + 15m]. If no movement in my direction → close. Max loss: ___JPY (units × SL_pip)
 Theme confidence: [proving / confirmed / late] → size accordingly (B=3k / A-S=4-8k / reduce)
-Is this a Top 2 pair? [YES → full size / NO → B-size max 3,000u]
+Is this the hero pair? [YES → full size + rotation / SIDEKICK → A-size / OTHER → B-size max 3,000u]
 Session losses today: [N]W / [N]L. If 3+ consecutive L → STOP (circuit breaker). Direction of losses: ___
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
@@ -526,7 +536,7 @@ Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
 
 **"Theme confidence" links to Market Narrative.** If theme = "proving" → B-size only. If "confirmed" → A/S size. This IS the 4/7 pattern: 500u→5,000u as EUR_USD proved the USD-weakness thesis. Writing "confirmed" at entry means you've already had a winning rotation today.
 
-**"Is this a Top 2 pair?"** prevents dilution. If not Top 2 → max B-size (3,000u). This captures the 4/7 pattern where 76% of P&L came from 2 pairs (EUR_USD + AUD_USD). The other 5 pairs contributed 24% — B-size scouting is fine for them.
+**"Is this the hero pair?"** prevents dilution. Hero pair gets full size + rotation engine. Sidekick gets A-size. Everything else is B-size scouting. 4/7: EUR_USD (hero) + AUD_USD (sidekick) = 98% of +11,014 JPY. The other 4 pairs contributed 2%.
 
 **"Expected hold → Zombie at"** is the orphan killer. A Momentum trade entered at 12:38Z expects 30m-2h → zombie at 16:38Z. When the next session checks this position at 17:00Z, it sees "Zombie at 16:38Z — PAST." The position management block forces justification or closure. This alone would have prevented the 4/14 GBP_USD -2,583 JPY loss (Momentum entry, held 5h40m past zombie time).
 
@@ -567,6 +577,29 @@ If this setup appeared at 08:00 UTC London, would I size it the same? [yes/no]
 **The scanner has narrow thresholds (StRSI ≤0.05 / ≥0.95).** Most S-conviction setups DON'T fire the scanner because the pullback is shallow (StRSI=0.10-0.20 in a strong trend). That's why your narrative assessment in Tier 1/Tier 2 is the primary path. The scanner catches extremes; you see the whole picture.
 
 **Key insight: S is not "more indicators agree." S is "the RIGHT indicators across the RIGHT timeframes form a COHERENT STORY."** 2 indicators from the same TF = B at best. 3+ indicators from 2-3 different TFs telling the same story = S.
+
+### Momentum-S: 96% accuracy, 0 entries = the system's biggest leak
+
+**55+ Momentum-S signals fired. ZERO entered. Estimated missed profit: +7,680 JPY minimum.**
+
+Momentum-S fires when: CS gap ≥0.8 + H4+H1+M5 all aligned + ADX>20. It fires on 3-5 pairs simultaneously when a currency-wide move is happening. These are NOT marginal signals — they're the strongest directional alignment the scanner can detect.
+
+**Why 0 entries**: The trader sees Momentum-S, reads it as "supplementary data," then does a full conviction block, finds one AGAINST item ("H4 late" or "spread 0.3pip above normal"), rates B, places a LIMIT, and cancels it next session. The signal was right. The process killed it.
+
+**Momentum-S forced action (when ≥3 pairs fire same direction):**
+
+```
+MOMENTUM-S ALERT: [N] pairs firing [DIR] — [list pairs]
+This is a CURRENCY-WIDE move. 96% historical accuracy.
+→ REQUIRED: Enter hero pair at A-size (4,000u) market order NOW
+→ Hero pair = [best CS + best regime among the firing pairs]
+→ TP = ATR×1.5 (Momentum type, NOT scalp)
+→ Then: rotation engine activates on this pair
+```
+
+**Single pair Momentum-S (1-2 pairs)**: Treat as A-conviction confirmation. Enter if it's your hero or sidekick pair. Otherwise LIMIT.
+
+**The point**: Momentum-S is not "data to consider." At 96% accuracy across 55+ signals, it's the highest-accuracy signal in the system. Treating it as optional is throwing away money.
 
 ### Margin gate (BEFORE conviction block — mandatory)
 
@@ -610,25 +643,49 @@ Units = (NAV × margin%) / (price / 25)
 
 **4/7 blueprint**: EUR_USD started at 500u (proving). After first TP (+402 at entry #3), scaled to 4,000u (confirmed). By entry #7, 5,000u. The same signal (StRSI=0.0) gets B-size when proving and S-size when confirmed. Not because the indicator changed — because the THEME proved itself.
 
-**Top 2 pairs get full theme-confidence sizing. Others get B-size max.**
+**Hero pair gets full theme-confidence sizing + rotation. Sidekick gets A-size. Others get B-size max.**
 
 **Minimum 3,000u per entry.** Below 3,000u = data shows net negative P&L (330 trades at 1-2k = -23,098 JPY). If conviction is too low for 3,000u, don't enter.
 
 **Max loss per trade: 500 JPY.** Calculate: units × SL_distance ÷ pip_multiplier. If > 500 JPY → reduce units or widen SL to structural level and reduce units. April data: good days have worst trade around -350. Bad days have -2,000+. The 500 cap prevents bad days.
 
-### After every TP: Rotation plan (the compound engine)
+### ROTATION ENGINE — the only thing that makes money (MANDATORY after every TP)
 
-**4/7 made +5,880 on EUR_USD from 7 rotations. TP → immediate re-entry at the next dip is the compound engine.**
+**Rotation P&L = +72,774 JPY. Everything else combined = -73,529 JPY. Rotation IS the system.**
 
-After every TP or trailing stop close, write:
+4/7: EUR_USD 7 rotations → +5,880. 4/8: EUR_USD 3 rotations → +7,258. 4/1: EUR_USD 7 rotations → +6,040.
+Every good day is a rotation day. Every bad day is a non-rotation day. There are no exceptions.
+
+**After EVERY TP or trailing stop close, you MUST do this within 30 seconds:**
+
 ```
-TP/Trail hit: [PAIR] +___JPY. Theme still alive? [YES/NO]
-If YES → re-entry plan: LIMIT @___ (next M5 dip / Fib pullback / BB mid)
-Theme confidence: proving → confirmed (first TP hit!)
-Next size: ___u (upgrade from B→A or A→S on confirmation)
+ROTATION [N]: [PAIR] +___JPY closed. Theme alive? [YES — because ___]
+→ Re-entry: LIMIT @___ (M5 pullback / Fib 38.2% / BB mid) TP=___ SL=___
+→ Size: ___u (proving=3k / confirmed=4-8k)
+→ LIMIT placed: id=___
 ```
 
-**The rotation plan turns one +400 trade into a +5,880 day.** The difference between +1,291/day (middle) and +7,762/day (good) is rotation — NOT better entries, NOT better indicators. Just re-entering after TP.
+**If theme is alive and you don't place the re-entry LIMIT, you are breaking the rotation chain.** The difference between +400/day and +5,880/day is rotation count. One trade is a lottery ticket. Seven rotations on the same pair is a compound engine.
+
+**Rotation size escalation (the 4/7 pattern):**
+
+| Rotation # | What happened | Size | Theme confidence |
+|------------|--------------|------|-----------------|
+| 1 | First entry, testing thesis | 3,000u | proving |
+| 2 | **First TP hit** → thesis confirmed | 4,000u | **confirmed** |
+| 3-4 | Rotating on proven theme | 4,000-6,000u | confirmed |
+| 5+ | Theme is printing money | 6,000-8,000u | confirmed → peak |
+
+**4/7 actual**: EUR_USD 500u → 2000u → 4000u → 4000u → 4000u → 5000u → 5000u = +5,880 JPY. The 7th trade made +2,200 at 5x the size of the 1st trade. Same setup. Same pair. Just bigger because the theme was proven.
+
+**Rotation LIMIT placement — where to re-enter:**
+- TREND regime: Fib 38.2% pullback or EMA20 touch
+- RANGE regime: Opposite BB band (you just TP'd at one side → LIMIT at the other)
+- SQUEEZE breakout: First pullback to breakout candle's midpoint
+
+**GTD for rotation LIMITs: 2-4 hours.** These are active rotations, not overnight ambushes. If the pullback doesn't come in 2-4 hours, the wave is done.
+
+**Anti-churn applies ONLY to losses.** TP → re-enter is rotation. SL → re-enter is churn. The difference: rotation starts from profit, churn starts from loss.
 
 **Rule 3: Max loss per trade = 2% of NAV.**
 At NAV 113k = max ~2,270 JPY per trade. Set SL so that units × (entry - SL) ≤ NAV × 0.02. If structural SL is wider than this, reduce units. This prevents the -3,500 JPY single-trade disasters (3/30 GBP_USD) that wipe out days of gains.
