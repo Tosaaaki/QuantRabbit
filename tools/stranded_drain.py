@@ -51,8 +51,8 @@ LOG_FILE = _MAIN_ROOT / "logs" / "live_trade_log.txt"
 
 # Drain target: avg_entry +/- 0.5 ATR
 DRAIN_ATR_FRACTION = 0.5
-# Min ATR pips to trust the drain target
-MIN_ATR_PIPS = 3.0
+# Min ATR pips to trust the drain target (lowered for tight pairs like EUR/USD)
+MIN_ATR_PIPS = 1.0
 # GTD hours
 DRAIN_GTD_HOURS = 6
 

@@ -72,20 +72,20 @@ from worker_target_race import (
 
 
 TREND_BOT_MARKET_TAG = "trend_bot_market"
-TREND_H1_ADX_MIN = 18
-TREND_M15_ADX_MIN = 22
-TREND_M5_ADX_MIN = 17
-TREND_H1_DI_GAP = 5
-TREND_M15_DI_GAP = 6
-TREND_M5_DI_GAP = 4
-TREND_M5_BANDWALK_ADX = 24
-TREND_M5_BANDWALK_DI_GAP = 6
-TREND_PULSE_ALIGN_SCORE = 4.0
-TREND_PULSE_BLOCK_SCORE = 4.0
-TREND_M1_READY_SCORE = 4
+TREND_H1_ADX_MIN = 13          # was 18 — Level 3
+TREND_M15_ADX_MIN = 13         # was 22 — Level 3 (biggest unblocker; was filtering all pairs)
+TREND_M5_ADX_MIN = 13          # was 17
+TREND_H1_DI_GAP = 2            # was 5
+TREND_M15_DI_GAP = 2           # was 6
+TREND_M5_DI_GAP = 2            # was 4
+TREND_M5_BANDWALK_ADX = 18     # was 24
+TREND_M5_BANDWALK_DI_GAP = 4   # was 6
+TREND_PULSE_ALIGN_SCORE = 2.0  # was 4.0
+TREND_PULSE_BLOCK_SCORE = 6.0  # was 4.0 — also relax block (only block on strong contra)
+TREND_M1_READY_SCORE = 2       # was 4
 TREND_MAX_SPREAD_MULTIPLE = 1.50
 TREND_MICRO_MAX_SPREAD_MULTIPLE = 1.25  # was 1.20 — slightly wider for more MICRO shots
-TREND_MIN_RR = 1.25
+TREND_MIN_RR = 0.85  # was 1.25 — Level 3 aggression
 TREND_MIN_SL_SPREAD_MULTIPLE = 5.0
 TREND_MIN_SL_M5_ATR = 1.60
 TREND_MIN_SL_H1_ATR = 0.70
@@ -98,15 +98,15 @@ TREND_MIN_TP_RR_MULTIPLE = 1.35
 TREND_FAST_TP_RR_MULTIPLE = 1.10
 TREND_FAST_TP_M5_ATR = 1.60
 TREND_FAST_TP_H1_ATR = 0.55
-TREND_FAST_MIN_RR = 1.00
-TREND_FAST_ALLOWED_M1_STATES = {"aligned", "reload"}  # was "aligned" only — allow reload for more FAST entries
+TREND_FAST_MIN_RR = 0.65  # was 1.00 — Level 3
+TREND_FAST_ALLOWED_M1_STATES = {"aligned", "reload", "mixed"}  # Level 3: also allow mixed
 TREND_MICRO_TP_RR_MULTIPLE = 1.05
 TREND_MICRO_TP_M5_ATR = 1.20  # was 1.35 — tighter TP for faster MICRO exits
 TREND_MICRO_TP_H1_ATR = 0.40  # was 0.45
-TREND_MICRO_MIN_RR = 1.05
-TREND_MICRO_ALLOWED_M1_STATES = {"aligned", "reload"}
-TREND_MAX_PAIR_TRADES = 2
-TREND_MAX_TAG_TRADES = 1
+TREND_MICRO_MIN_RR = 0.70  # was 1.05 — Level 3
+TREND_MICRO_ALLOWED_M1_STATES = {"aligned", "reload", "mixed"}  # Level 3
+TREND_MAX_PAIR_TRADES = 4  # was 2 — Level 3
+TREND_MAX_TAG_TRADES = 3   # was 1 — Level 3 (more shots per pair)
 TREND_CANCELABLE_PENDING_TAGS = {RANGE_BOT_TAG, RANGE_BOT_MARKET_TAG}
 
 def pending_margin(order: dict, prices: dict) -> float:
@@ -188,7 +188,7 @@ def assess_tf_trend(tf_label: str, tf_data: dict | None, min_adx: float, di_gap:
 
     buy_score = tf_score("BUY", tf_data, di_gap)
     sell_score = tf_score("SELL", tf_data, di_gap)
-    if buy_score >= sell_score + 2 and buy_score >= 6:
+    if buy_score >= sell_score + 1 and buy_score >= 3:  # was +2 / >=6 — Level 3
         result.update(
             status="trend",
             direction="BUY",
@@ -196,7 +196,7 @@ def assess_tf_trend(tf_label: str, tf_data: dict | None, min_adx: float, di_gap:
             aligned=True,
             notes=[f"{tf_label} trend BUY score={buy_score} ADX={adx:.0f}"],
         )
-    elif sell_score >= buy_score + 2 and sell_score >= 6:
+    elif sell_score >= buy_score + 1 and sell_score >= 3:
         result.update(
             status="trend",
             direction="SELL",
@@ -242,41 +242,30 @@ def detect_m5_continuation(direction: str, m5_data: dict | None) -> dict:
         return result
 
     bb_pos = max(0.0, min(1.0, (close - bb_lower) / (bb_upper - bb_lower)))
+    # Level 3: relaxed M5 readiness — DI direction + (momentum OR position) is enough
     if direction == "BUY":
         band_walk = (
-            bb_pos >= 0.78
+            bb_pos >= 0.65  # was 0.78
             and adx >= TREND_M5_BANDWALK_ADX
             and plus_di >= minus_di + TREND_M5_BANDWALK_DI_GAP
-            and ema_5 > 0
-            and ema_10 >= 0
-            and macd_hist >= 0
-            and upper_wick <= max(0.2, lower_wick * 1.15)
+            and (ema_5 > 0 or macd_hist >= 0)  # was AND
         )
         follow_through = (
             adx >= TREND_M5_ADX_MIN
-            and plus_di >= minus_di + TREND_M5_DI_GAP
-            and ema_5 > 0
-            and macd_hist >= 0
-            and close >= bb_mid
-            and bb_pos >= 0.48
+            and plus_di >= minus_di  # was +TREND_M5_DI_GAP
+            and (ema_5 > 0 or macd_hist >= 0 or bb_pos >= 0.45)  # any momentum signal
         )
     else:
         band_walk = (
-            bb_pos <= 0.22
+            bb_pos <= 0.35  # was 0.22
             and adx >= TREND_M5_BANDWALK_ADX
             and minus_di >= plus_di + TREND_M5_BANDWALK_DI_GAP
-            and ema_5 < 0
-            and ema_10 <= 0
-            and macd_hist <= 0
-            and lower_wick <= max(0.2, upper_wick * 1.15)
+            and (ema_5 < 0 or macd_hist <= 0)
         )
         follow_through = (
             adx >= TREND_M5_ADX_MIN
-            and minus_di >= plus_di + TREND_M5_DI_GAP
-            and ema_5 < 0
-            and macd_hist <= 0
-            and close <= bb_mid
-            and bb_pos <= 0.52
+            and minus_di >= plus_di
+            and (ema_5 < 0 or macd_hist <= 0 or bb_pos <= 0.55)
         )
 
     if band_walk:
@@ -448,28 +437,20 @@ def assess_currency_trend_context(pair: str, direction: str, pulse: dict[str, di
 
 
 def conviction_from_scores(h1: dict, m15: dict, m5_setup: dict, m1: dict, currency_ctx: dict) -> str | None:
+    # Level 3 aggression: any aligned MTF setup returns at least B; brake_gate handles risk
     if not (h1["aligned"] and m15["aligned"] and m5_setup["ready"]):
         return None
     if (
-        h1["score"] >= 8
-        and m15["score"] >= 8
+        h1["score"] >= 6
+        and m15["score"] >= 6
         and m5_setup["setup"] == "band_walk"
         and m1["score"] >= TREND_M1_READY_SCORE + 1
         and currency_ctx["aligned"]
     ):
         return "S"
-    if h1["score"] >= 7 and m15["score"] >= 7 and (currency_ctx["aligned"] or m1["score"] >= TREND_M1_READY_SCORE + 1):
+    if h1["score"] >= 5 and m15["score"] >= 5 and (currency_ctx["aligned"] or m1["score"] >= TREND_M1_READY_SCORE):
         return "A"
-    if (
-        h1["score"] >= 8
-        and m15["score"] >= 8
-        and currency_ctx["aligned"]
-        and m1["state"] in {"aligned", "reload", "mixed"}
-    ):
-        return "B"
-    if not m1["market_ready"]:
-        return None
-    return "B"
+    return "B"  # default for any aligned setup — let downstream R:R + brake decide
 
 
 def place_trend_market(token: str, acct: str, pair: str, direction: str,
@@ -693,10 +674,23 @@ def scan_trends(prices: dict) -> list[dict]:
         tfs = all_technicals.get(pair, {})
         h1 = assess_tf_trend("H1", tfs.get("H1"), TREND_H1_ADX_MIN, TREND_H1_DI_GAP)
         m15 = assess_tf_trend("M15", tfs.get("M15"), TREND_M15_ADX_MIN, TREND_M15_DI_GAP)
-        if not h1["aligned"] or not m15["aligned"] or h1["direction"] != m15["direction"]:
+        # Level 3: accept if EITHER H1 or M15 is aligned. On MTF conflict, follow the stronger score.
+        directions = [d for d in (h1.get("direction"), m15.get("direction")) if d]
+        if not directions:
             continue
-
-        direction = h1["direction"]
+        if len(set(directions)) > 1:
+            # MTF conflict: pick the side with the higher score (M15 prevails on tie — fresher)
+            if h1.get("score", 0) > m15.get("score", 0):
+                direction = h1.get("direction")
+            else:
+                direction = m15.get("direction")
+        else:
+            direction = directions[0]
+        # Synthesize aligned=True for downstream conviction logic (any aligned TF qualifies)
+        if not h1["aligned"]:
+            h1 = {**h1, "aligned": True, "direction": direction, "score": max(h1.get("score", 0), 3)}
+        if not m15["aligned"]:
+            m15 = {**m15, "aligned": True, "direction": direction, "score": max(m15.get("score", 0), 3)}
         m5_setup = detect_m5_continuation(direction, tfs.get("M5"))
         if not m5_setup["ready"]:
             continue

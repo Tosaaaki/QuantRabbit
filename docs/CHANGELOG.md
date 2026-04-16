@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-04-17 — Level 3 aggression: kill all entry filters, let brake handle risk
+
+**Problem after the 4-layer brake landed**: bots were placing 0 entries — the OLD layered filters (poison hour, late-session LIMIT-only, M15 ADX>=22, MTF strict alignment, R:R>=1.0, M1 must be aligned) assumed there was no safety net so they were paranoid.
+
+**Now there is one** (inventory_brake + stranded_drain + brake_gate). So:
+
+- `tools/range_bot.py`:
+  - `LATE_SESSION_LIMIT_ONLY_HOURS_UTC = set()` (was 19-23)
+  - `POISON_HOURS_UTC = set()` (was 19-23)
+  - `MIN_MARKET_RR 1.0 -> 0.40`, `FAST_MIN_MARKET_RR 0.85 -> 0.35`, `MICRO_MIN_MARKET_RR 1.0 -> 0.40`
+  - LIMIT R:R floor `1.0 -> 0.35`
+  - reload-cap R:R floor `1.0 -> 0.3`
+- `tools/trend_bot.py`:
+  - `TREND_M15_ADX_MIN 22 -> 13` (was the biggest single blocker — no pair was passing 22)
+  - `TREND_H1_ADX_MIN 18 -> 13`, `TREND_M5_ADX_MIN 17 -> 13`
+  - `TREND_*_DI_GAP` halved across the board
+  - `TREND_M5_BANDWALK_ADX 24 -> 18`, `_DI_GAP 6 -> 4`
+  - `TREND_PULSE_ALIGN_SCORE 4 -> 2`, `TREND_PULSE_BLOCK_SCORE 4 -> 6`
+  - `TREND_M1_READY_SCORE 4 -> 2`
+  - `TREND_FAST/MICRO_ALLOWED_M1_STATES` add `"mixed"`
+  - `TREND_MAX_TAG_TRADES 1 -> 3`, `TREND_MAX_PAIR_TRADES 2 -> 4`
+  - `TREND_MIN_RR 1.25 -> 0.85`, `FAST 1.0 -> 0.65`, `MICRO 1.05 -> 0.70`
+  - `assess_tf_trend` score floor `>=6 / +2 -> >=3 / +1` (most pairs were stuck at score 4-5 with old floor)
+  - MTF conflict (H1 vs M15) no longer blocks: pick the higher-score side instead of skipping
+  - `detect_m5_continuation` band_walk `bb_pos>=0.78 -> 0.65`; follow_through DI gap requirement removed; momentum AND chain became OR chain
+  - `conviction_from_scores` floors lowered, fallback returns "B" without `m1.market_ready` requirement
+- `tools/inventory_brake.py`:
+  - Single fresh trade (units < 6000 OR upl > -150) no longer flagged as "stranded" — was blocking trend bot from adding to its own first entry
+- `tools/stranded_drain.py`:
+  - `MIN_ATR_PIPS 3.0 -> 1.0` (was skipping every drain on tight EUR/USD-style pairs)
+- `logs/bot_inventory_policy.md`:
+  - All 7 pairs `BOTH SHARED_MARKET FAST EARLY MaxPending=2`
+  - `target_active_worker_pairs 1 -> 4`
+
+**Result**: within 3 cycles after the change, EUR_USD trend_bot LONG x2 entered (+2050u each), AUD_USD range_bot LIMIT placed, USD_JPY range entry correctly blocked by regime_gate (TREND SHORT). brake + drain are the safety net, not the entry filters.
+
 ## 2026-04-17 — Stranded inventory brake: 4-layer safety to prevent closeout death
 
 **Problem**: The bot harvest model (no SL, TP-only) wins fast on the trending side but accumulates a counter-side bag. Past pattern: +15% in hours → counter-side fills margin → OANDA forced closeout at the worst price → all profit returned (or worse). The bot has no exit plan for the half that doesn't TP.

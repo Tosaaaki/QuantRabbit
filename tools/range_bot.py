@@ -73,8 +73,8 @@ MIN_BOT_MARGIN_PCT = 0.20
 BASE_BOT_MARGIN_PCT = 0.28
 HIGH_BOT_MARGIN_PCT = 0.36
 MAX_BOT_MARGIN_PCT = 0.42  # smaller per-shot sizing, but allow more simultaneous worker seats
-LATE_SESSION_LIMIT_ONLY_HOURS_UTC = set(range(19, 24))  # 19:00-23:59 UTC = passive only
-POISON_HOURS_UTC = LATE_SESSION_LIMIT_ONLY_HOURS_UTC  # trend_bot remains market-only in this window
+LATE_SESSION_LIMIT_ONLY_HOURS_UTC: set[int] = set()  # disabled — brake_gate handles risk now
+POISON_HOURS_UTC: set[int] = set()  # disabled — 24h aggression mode
 GTD_HOURS = 4
 OANDA_TIME_FMT = "%Y-%m-%dT%H:%M:%S.000000000Z"
 CONVICTION_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
@@ -92,9 +92,9 @@ MARKET_NEAR_ENTRY_PIPS = 1.5
 MARKET_MAX_PROGRESS_TO_TP = 0.35
 MARKET_MAX_DRIFT_SPREAD_MULTIPLE = 3.0
 MARKET_MAX_DRIFT_ATR_FRACTION = 0.35
-MIN_MARKET_RR = 1.0
-FAST_MIN_MARKET_RR = 0.85
-MICRO_MIN_MARKET_RR = 1.00
+MIN_MARKET_RR = 0.40  # was 1.0 — Level 3 max aggression
+FAST_MIN_MARKET_RR = 0.35  # was 0.85
+MICRO_MIN_MARKET_RR = 0.40  # was 1.00
 MICRO_MARKET_MAX_SPREAD_MULTIPLE = 1.25  # was 1.20 — consistent with trend_bot MICRO
 PASSIVE_LIMIT_MAX_SPREAD_MULTIPLE = 4.0
 PASSIVE_LIMIT_MAX_ATR_FRACTION = 0.80
@@ -1212,7 +1212,7 @@ def finalize_passive_limit_plan(plan: dict, pair: str, direction: str, tp: float
     ps = pip_size(pair)
     adjusted_entry = current_price - max_gap_pips * ps if direction == "BUY" else current_price + max_gap_pips * ps
     tp_pips, sl_pips, rr = trade_metrics(direction, adjusted_entry, tp, sl, pair)
-    if tp_pips <= 0 or sl_pips <= 0 or rr < 1.0:
+    if tp_pips <= 0 or sl_pips <= 0 or rr < 0.3:  # was 1.0 — Level 3 (max aggression)
         plan["order_type"] = "SKIP"
         plan["reason"] = (
             f"passive limit {gap_pips:.1f}pip from live; closer reload would kill R:R ({rr:.1f})"
@@ -2094,8 +2094,8 @@ def main() -> int:
             skipped.append(f"{pair}: margin budget exhausted")
             break
 
-        # R:R minimum check
-        rr_floor = min_market_rr if order_type == "MARKET" else 1.0
+        # R:R minimum check (LIMIT floor matches MARKET floor in Level 3)
+        rr_floor = min_market_rr if order_type == "MARKET" else 0.35
         if order_plan["rr"] < rr_floor:
             skipped.append(f"{pair}: {order_type} R:R {order_plan['rr']:.1f} < {rr_floor:.2f}")
             continue

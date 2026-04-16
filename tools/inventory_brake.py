@@ -67,6 +67,9 @@ PANIC_DRAIN_FRACTION = 0.50
 
 # Min absolute units to consider "real" inventory (filter dust)
 MIN_INVENTORY_UNITS = 500
+# Min units + loss on heavy side to flag "stranded" (a fresh single trade isn't a bag)
+MIN_STRANDED_UNITS = 6000
+MIN_STRANDED_LOSS_JPY = -150
 
 
 def append_log(line: str) -> None:
@@ -133,24 +136,28 @@ def compute_pair_brake(pair: str, inv: dict, margin_stage: str) -> dict:
             "drain_mode": False, "reason": "dust",
         }
 
-    # Identify stranded side: bigger units AND in loss (or significantly larger)
+    # Identify stranded side: must be heavy AND losing meaningfully (not fresh single trade)
+    def _is_stranded(units: int, upl: float) -> bool:
+        return units >= MIN_STRANDED_UNITS and upl <= MIN_STRANDED_LOSS_JPY
+
     if long_u == 0 and short_u >= MIN_INVENTORY_UNITS:
-        stranded_side = "SHORT" if short_upl < 0 else None
+        stranded_side = "SHORT" if _is_stranded(short_u, short_upl) else None
         ratio = float("inf")
     elif short_u == 0 and long_u >= MIN_INVENTORY_UNITS:
-        stranded_side = "LONG" if long_upl < 0 else None
+        stranded_side = "LONG" if _is_stranded(long_u, long_upl) else None
         ratio = float("inf")
     else:
         if long_u > short_u:
             ratio = long_u / max(short_u, 1)
             heavy = "LONG"
             heavy_upl = long_upl
+            heavy_units = long_u
         else:
             ratio = short_u / max(long_u, 1)
             heavy = "SHORT"
             heavy_upl = short_upl
-        # Heavy side is "stranded" only if it's losing (otherwise it's a winning conviction)
-        if heavy_upl < 0:
+            heavy_units = short_u
+        if _is_stranded(heavy_units, heavy_upl):
             stranded_side = heavy
 
     # Apply blocks
