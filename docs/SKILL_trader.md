@@ -161,7 +161,7 @@ M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] —
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (what the market IS doing — "USD weakness across the board", not "waiting for UK data")
 Theme confidence: [proving / confirmed / late]
-  proving = first 1-2 trades today testing the thesis. Size: B (2,000u)
+  proving = first 1-2 trades today testing the thesis. Size: B (3,000u)
   confirmed = TP hit at least once on this theme today. Size: A→S (4,000-6,000u)
   late = theme running 6h+, most of the move captured. Size: reduce, protect gains
 Top 2 pairs: ___ and ___ (these get 80% of margin. Others get B-size max or pass)
@@ -245,6 +245,76 @@ LIMIT TRAP CHECK: Last [N] sessions placed [N] LIMITs, [N] filled, [N] cancelled
 
 **DROUGHT is worse than a bad trade.** A bad B-size trade costs ~350 JPY avg. A drought costs the entire day's target (+12,569 JPY). The asymmetry is 36:1. Enter something.
 
+### Minimum size: 3,000u (data-driven)
+
+**500-trade analysis: 1-2k trades = -23,098 JPY (330 trades). 3-5k trades = +19,226 JPY (152 trades).**
+
+The SAME trader, the SAME setups — the only difference is size. 1-2k loses money because:
+- Spread eats a higher % of the move (2pip spread / 8pip target = 25% cost at 1k vs 10% at 3k)
+- Small size = low conviction = exits too early
+- Wins are too small to offset losses (+212 avg win vs -370 avg loss)
+
+| Conviction | Minimum size | Maximum size |
+|------------|-------------|-------------|
+| **S** | 8,000u | 10,000u (S-size trades: 4/4 wins, +5,921 JPY) |
+| **A** | 4,000u | 6,000u |
+| **B** | 3,000u | 3,000u |
+| **C** | Don't enter | — |
+
+**There is no 2,000u entry.** If it's not worth 3,000u, it's not worth entering. Period.
+
+### Sweet spot hold time: 30-120 minutes (data-driven)
+
+**500-trade analysis:**
+
+| Hold time | P&L | WR | Verdict |
+|-----------|-----|-----|---------|
+| <5 min | -803 | 37% | **Noise. Don't scalp sub-5min** |
+| 5-30 min | -5,090 | 48% | **Losing money. Too impatient** |
+| **30-120 min** | **+27,539** | **65%** | **ALL profit comes from here** |
+| 2h+ | -21,593 | 54% | **Zombie holds. Cut or swing-commit** |
+
+**Rules derived from data:**
+- Entry with "Expected hold: <30min" → must have ATR×0.5+ target to justify spread
+- Position held >120min without reaching TP → ZOMBIE. Justify or close. The 30-120min sweet spot means: if your thesis hasn't played out in 2 hours, it's not playing out
+- "First confirmation by: entry + 15m" — if the trade is flat after 15min, you're in the noise zone (5-30min bucket that loses money)
+
+### 3-loss circuit breaker (data-driven)
+
+**500-trade data: max loss streak = 16 consecutive. 4/15: 21 trades, WR 23.8%, -5,226 JPY.**
+
+4/15 breakdown: 18 trades, 13 losses, all LONG. The market was selling and the trader kept buying. After loss 3, the remaining 10 losses cost -3,200 JPY that could have been saved.
+
+**After 3 consecutive losses in the SAME session:**
+1. STOP entering for this session
+2. Write: "3-loss stop. Market direction: ___. My direction: ___. Mismatch? [YES/NO]"
+3. If mismatch = YES → next session can enter the OTHER direction only
+4. If mismatch = NO → next session B-size only until first win
+
+**This is direction-specific.** 3 LONG losses don't block SHORT entries. They block more LONGs.
+
+### Time-of-day filter (data-driven)
+
+**500-trade analysis by entry hour (UTC):**
+
+| Time (UTC/JST) | P&L | Trades | Avg | Action |
+|----------------|-----|--------|-----|--------|
+| **08:00 (17:00)** | **+7,344** | 37 | **+198** | **Best hour. Hunt here** |
+| 03:00 (12:00) | +3,319 | 21 | +158 | Strong Tokyo |
+| 20:00 (05:00) | +3,082 | 19 | +162 | Early Asia reopen |
+| **22:00 (07:00)** | **-9,415** | 19 | **-496** | **WORST. Rollover aftermath** |
+| **23:00 (08:00)** | **-2,776** | 18 | **-154** | **Pre-Tokyo noise** |
+| **19:00 (04:00)** | **-5,161** | 17 | **-304** | **Rollover zone** |
+
+**22:00-23:00 UTC (07:00-08:00 JST) = -12,191 JPY from 37 trades. This 2-hour window alone erased 6 days of profit.**
+
+**If entry hour = 19:00-23:00 UTC (04:00-08:00 JST):**
+```
+Late session penalty: This hour has avg P&L = -___JPY.
+LIMIT only (never market). B-size max (3,000u).
+Why this can't wait until 08:00 UTC: ___
+```
+
 ## 7-Pair Scan — Tier 1 (deep) + Tier 2 (quick)
 
 **Not all 7 pairs need the same depth. Go deep where it matters.**
@@ -296,7 +366,7 @@ The old format let you write "C → pass" in 3 seconds. The new format requires 
 | Conviction | Action | "SKIP" allowed? |
 |------------|--------|----------------|
 | **S/A** | → Tier 1 promoted (full block) | No. Pick it up |
-| **B** | → LIMIT posted at the price you just wrote (2,000u) | No. You already named the price. Place it |
+| **B** | → LIMIT posted at the price you just wrote (3,000u) | No. You already named the price. Place it |
 | **C** | → SKIP with reason | Yes — but you already wrote 2 entry plans. Next session checks if either triggered |
 
 **Tier 2 examples:**
@@ -411,7 +481,7 @@ Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cance
 
 1. Look at the Tier 2 scan you just wrote. You wrote "LONG if" and "SHORT if" for every pair
 2. Pick the ONE pair where your "if" condition is CLOSEST to current price
-3. Enter it. Market order. B-size (2,000u). NOW
+3. Enter it. Market order. B-size (3,000u). NOW
 4. If none are close, your "if" conditions are too far from market. Rewrite them at current price ± spread
 
 **A B-size market order at the wrong time costs ~350 JPY avg.** Sitting flat for 5 sessions while the market moves costs the entire day's target. The math is clear: enter something.
@@ -434,8 +504,9 @@ Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map
 Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Expected hold: [5-30m / 30m-2h / 2h-1day] → Zombie at: [HH:MMZ = entry + 2× max expected]
 First confirmation by: [entry + 15m]. If no movement in my direction → close. Max loss: ___JPY (units × SL_pip)
-Theme confidence: [proving / confirmed / late] → size accordingly (B / A-S / reduce)
-Is this a Top 2 pair? [YES → full size / NO → B-size max 2,000u]
+Theme confidence: [proving / confirmed / late] → size accordingly (B=3k / A-S=4-8k / reduce)
+Is this a Top 2 pair? [YES → full size / NO → B-size max 3,000u]
+Session losses today: [N]W / [N]L. If 3+ consecutive L → STOP (circuit breaker). Direction of losses: ___
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
 H4 position: StRSI=___ → [early/mid/late/exhausting]. Entering [with room / near ceiling / at floor]
@@ -455,7 +526,7 @@ Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
 
 **"Theme confidence" links to Market Narrative.** If theme = "proving" → B-size only. If "confirmed" → A/S size. This IS the 4/7 pattern: 500u→5,000u as EUR_USD proved the USD-weakness thesis. Writing "confirmed" at entry means you've already had a winning rotation today.
 
-**"Is this a Top 2 pair?"** prevents dilution. If not Top 2 → max B-size (2,000u). This captures the 4/7 pattern where 76% of P&L came from 2 pairs (EUR_USD + AUD_USD). The other 5 pairs contributed 24% — B-size scouting is fine for them.
+**"Is this a Top 2 pair?"** prevents dilution. If not Top 2 → max B-size (3,000u). This captures the 4/7 pattern where 76% of P&L came from 2 pairs (EUR_USD + AUD_USD). The other 5 pairs contributed 24% — B-size scouting is fine for them.
 
 **"Expected hold → Zombie at"** is the orphan killer. A Momentum trade entered at 12:38Z expects 30m-2h → zombie at 16:38Z. When the next session checks this position at 17:00Z, it sees "Zombie at 16:38Z — PAST." The position management block forces justification or closure. This alone would have prevented the 4/14 GBP_USD -2,583 JPY loss (Momentum entry, held 5h40m past zombie time).
 
@@ -520,12 +591,12 @@ Pending LIMITs if filled: +___JPY → worst case ___%  ← must be below 90%
 
 Units = (NAV × margin%) / (price / 25)
 
-| Conviction | Margin % of NAV |
-|------------|-----------------|
-| **S** | **~30%** |
-| **A** | **~15%** |
-| **B** | **~5%** |
-| **C** | **Don't enter.** Not worth the spread. Wait for something better. |
+| Conviction | Margin % of NAV | Min units | Data basis |
+|------------|-----------------|-----------|------------|
+| **S** | **~30%** | 8,000u | 4/4 wins, +5,921 JPY, WR 100% |
+| **A** | **~15%** | 4,000u | Sweet spot for +19k bucket |
+| **B** | **~7%** | 3,000u | Min viable (below = net negative) |
+| **C** | **Don't enter.** | — | Not worth spread at any size |
 
 ### Sizing discipline — Theme confidence determines size
 
@@ -533,15 +604,15 @@ Units = (NAV × margin%) / (price / 25)
 
 | Theme confidence | What it means | Sizing |
 |-----------------|---------------|--------|
-| **proving** | First 1-2 entries of the day on this thesis. Untested. | B-size (2,000u) regardless of conviction |
-| **confirmed** | At least 1 TP hit on this theme today. Thesis works. | Conviction-based: S=6,000u A=4,000u |
-| **late** | Theme running 6h+, most of move captured | Reduce to B. Protect. No new S-entries |
+| **proving** | First 1-2 entries of the day on this thesis. Untested. | B-size (3,000u) regardless of conviction |
+| **confirmed** | At least 1 TP hit on this theme today. Thesis works. | Conviction-based: S=8,000u A=4,000u |
+| **late** | Theme running 6h+, most of move captured | Reduce to B (3,000u). Protect. No new S-entries |
 
 **4/7 blueprint**: EUR_USD started at 500u (proving). After first TP (+402 at entry #3), scaled to 4,000u (confirmed). By entry #7, 5,000u. The same signal (StRSI=0.0) gets B-size when proving and S-size when confirmed. Not because the indicator changed — because the THEME proved itself.
 
 **Top 2 pairs get full theme-confidence sizing. Others get B-size max.**
 
-**Minimum 2,000u per entry.** Below 2,000u = spread kills the edge. If conviction is too low for 2,000u, don't enter.
+**Minimum 3,000u per entry.** Below 3,000u = data shows net negative P&L (330 trades at 1-2k = -23,098 JPY). If conviction is too low for 3,000u, don't enter.
 
 **Max loss per trade: 500 JPY.** Calculate: units × SL_distance ÷ pip_multiplier. If > 500 JPY → reduce units or widen SL to structural level and reduce units. April data: good days have worst trade around -350. Bad days have -2,000+. The 500 cap prevents bad days.
 

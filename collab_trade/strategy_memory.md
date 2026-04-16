@@ -2,7 +2,7 @@
 
 **daily-reviewが毎日更新。traderが毎セッション冒頭で読む。**
 
-最終更新: 2026-04-16 (manual update — anti-drought restructure)
+最終更新: 2026-04-16 (daily-review: +303 JPY, 2/5 WR, R:R 2.2:1)
 
 ---
 
@@ -22,6 +22,25 @@
 ## Confirmed Patterns（3回以上検証済み — ルールとして扱え）
 
 ### ✦ 勝ちパターン（これが金を生む — 読んだら入れ）
+
+- **SIZE IS THE #1 LEVER (500-trade analysis, 3/20-4/16)**:
+  - **1-2k units: 330 trades, -23,098 JPY, 52% WR.** Small trades LOSE MONEY in aggregate. Avg win +212 can't offset avg loss -370
+  - **3-5k units: 152 trades, +19,226 JPY, 61% WR.** Same trader, same setups — just bigger. Avg win +583 vs avg loss -574 = break-even R:R but WR carries it
+  - **9k+ units: 4 trades, +5,921 JPY, 100% WR.** S-conviction sizing WORKS. Every single one won. avg +1,480/trade
+  - **Minimum 3,000u enforced.** Below that is proven to be net-negative. If it's not worth 3k, don't enter
+
+- **HOLD TIME: 30-120min = ALL the profit (500-trade analysis)**:
+  - <5min: -803 JPY (37% WR) — noise trading, negative EV
+  - 5-30min: -5,090 JPY (48% WR) — too impatient, cutting winners before they develop
+  - **30-120min: +27,539 JPY (65% WR)** — the ENTIRE system edge lives here
+  - 2h+: -21,593 JPY (54% WR) — zombie holds, thesis dead but position alive
+  - **Implication**: Enter with 30-120min hold expectation. If flat after 15min → wrong entry (noise zone). If held 2h+ without TP → zombie, cut or swing-commit
+
+- **TIME OF DAY: 08:00 UTC is gold, 22:00 UTC is poison (500-trade analysis)**:
+  - Best: 08:00 UTC (17:00 JST) = +7,344 JPY from 37 trades (avg +198)
+  - Worst: 22:00 UTC (07:00 JST) = -9,415 JPY from 19 trades (avg -496)
+  - 22:00-23:00 UTC combined: **-12,191 JPY** from 37 trades. This 2-hour window erased 6 days of profit
+  - 19:00-23:00 UTC = rollover zone, thin liquidity. LIMIT only, B-size max
 
 - **Session dynamics — where the edge actually lives (500-trade analysis, 3/20-4/14)**:
   - **By ENTRY time**: Tokyo +4,997 (119t, 56%WR, avg+42) | London +8,130 (166t, 65%WR, avg+49) | NY -103 (171t, 50%WR, avg-1) | Late NY -11,898 (44t, 36%WR, avg-270)
@@ -49,6 +68,8 @@
 
 **WARNING: This section has 30+ warnings. Reading them all before trading creates paralysis. The avg loss from a bad B-trade is -354 JPY. The cost of not trading for a day is -12,569 JPY (missed target). Fear of these patterns is 36× more expensive than the patterns themselves.**
 
+- **3-LOSS CIRCUIT BREAKER (4/15: -5,226 JPY day, max 16 consecutive losses)**: After 3 consecutive losses in the same direction → STOP entering that direction this session. 4/15: 21 trades, 13 losses, nearly all LONG. After loss #3, the remaining 10 losses cost -3,200 JPY. The market was selling; the trader kept buying. **3 losses = direction is wrong today. Either flip or stop.**
+
 - **フロー逆行エントリーは必ず負ける**: テクニカルだけでフロー逆方向に入ると勝てない (3/20 USD_JPY 4/5負け, 3/23 GBP SHORT全敗)
 - **スパイク慌て損切り = 最大損失源**: 天井/底で成行は最悪。スパイクは戻す確率が高い (3/23 GBP -3,832円, 3/26 パニック-8,041円)
 - **小さすぎる利確が利益を食い潰す**: ATR50%未満の利確はスプレッド+手間に見合わない (3/26 勝率65%でNet-583円, 勝ち平均+84円)
@@ -71,14 +92,12 @@
 - [3/27] **pretrade LOWの警告は概ね正しい** — ただしEUR_JPY/GBP_JPY trending条件ではLOWが系統的に間違う(4/7, 4/9で確認済み)。トレンドペアではoverrideの余地あり
 - [4/3] **Tokyo session trail trap**: ATR×0.7 trail = sub-noise in Tokyo. Hard rules: (1) Tokyo trail min=ATR×1.2. (2) Pre-event=fixed SL only. (3) SL must name structural level. Verified: 1x. Binary "trail or hold" cost 17,844 JPY across 3 incidents.
 - [4/7] **Pretrade LOW massively wrong for trending EUR_JPY LONG**: 4/7 EUR_JPY LONG had 6 entries all pretrade=LOW. Result: 6/6 wins, +1,876 JPY. LOW-scored entries across all pairs today: 16 trades, 69% WR, +680 JPY. **Pretrade's historical WR for the pair+direction penalizes trending pairs whose stats are diluted by range-bound sessions.** When H1 ADX>35 + macro CS alignment (EUR strongest, JPY weakest), pretrade LOW should be overridden to at least MEDIUM. Verified: 1x (4/7 EUR_JPY 6/6)
-- [4/7] **Pretrade HIGH doesn't mean regime-aligned**: GBP_USD SHORT HIGH(8) → -317 JPY. EUR_USD SHORT HIGH(8) → -288 JPY. Both were in a USD-weak week. **Pretrade score is direction-agnostic — it doesn't know the current regime. A high score on either direction doesn't guarantee the market is going that way.** This applies equally to LONGs in a bear market. Verified: 1x (2 trades same day)
-- [4/7] **AUD_JPY churn: 3 round-trips = -778 JPY + 9.6pip spread burned**: LONG 3500u→-217(6min), LONG 5000u→+40(170min BE), SHORT 3500u→-556, SHORT 4500u→-4. Close-and-re-enter on same thesis is spread destruction. First SL should be the final decision. Don't re-enter same pair within 30 min unless thesis genuinely changes. Verified: 1x (matches 4/6 AUD_JPY pattern = 2x total)
-- [4/7] **Winners held 127 min avg, losers held 13 min avg**: Patience = profit. Quick cuts on positions that needed time to develop (GBP_USD LONG held 15-17 min before cutting) vs EUR_JPY LONG held 36-225 min for wins. Don't cut within 15 min unless structural invalidation. Verified: 2x (4/7 + 4/8: winners 334min avg vs losers 131min avg)
+- [4/7] **Pretrade HIGH doesn't mean regime-aligned**: 5/5 HIGH SHORTs lost in bullish regime (4/7+4/9). Pretrade score is direction-agnostic. Same applies to LONGs in bear regime. Verified: 1x
+- [4/7] **Churn = spread destruction**: AUD_JPY 3 round-trips -778 JPY + 9.6pip spread burned. Close→re-enter same thesis = don't. First SL = final. 30min cooldown. Verified: 2x (4/6+4/7)
+- [4/7-16] **Winners held 48min avg (4/16), losers held 15min avg**: Patience = profit. Consistent across 4 days measured. Don't cut within 15 min unless structural invalidation. Verified: 3x
 - [4/8] **Quality audit "S-candidate fix" pressure → oversized loss**: AUD_USD LONG 8000u entered as "quality audit miss fix" → -2,540 JPY. Quality audit flagged AUD_USD as missed S-candidate, trader entered 8000u (~S-size) on a pair with 50%WR LONG all-time. Audit flags are data, not orders. Don't let audit pressure override your own pair-level conviction. AUD_USD LONG avg=-78JPY all-time — this is NOT an S-conviction pair. Verified: 1x
-- [4/8] **Counter-trades against H1 ADX>35 BULL = money pit**: AUD_JPY SHORT 0/2 -200JPY. H4 StRSI=1.0 does NOT override H1 ADX>35 trend. Swing-size counters lose; M5 rotation SHORTs (2000-3000u, 15-30min) are different. Verified: 2x
-- [4/8] **Margin crisis repeat (97%) → forced close**: EUR_JPY -319JPY at 97%. Same as 4/1. **Pending LIMITs MUST be in worst-case calc. Above 85% = STOP.** Verified: 2x
-- [4/9] **Indicator depth = direction visibility**: 3 indicators → one direction locked. 6+ → both visible. 4/8-4/9: 13 LONG 0 SHORT on shallow scans. Scan deeper to see full picture. Verified: 1x
-- [4/9] **Macro narrative overrode chart (USD_JPY)**: H4 BEAR chart, tried LONG 3x → all lost. Trade the chart, not the narrative. Verified: 1x
+- [4/8] **Counter-trades against H1 ADX>35 BULL = money pit**: H4 StRSI=1.0 does NOT override H1 ADX>35 trend. Swing-size counters lose; M5 rotation SHORTs are different. Verified: 2x
+- [4/8-9] **Margin crisis + indicator depth + chart-vs-narrative**: (1) Margin >85% with pending LIMITs → forced close (2x verified). (2) 3 indicators = one-direction blindness, 6+ = both visible (1x). (3) Trade the chart, not the macro narrative (1x). These three combine: shallow scan → one direction → oversize → margin blow. Depth of analysis prevents all three.
 - [4/9] **Momentum-S multi-pair = regime signal**: 50+ fires all LONG, EUR_JPY +59pip, GBP_JPY +56pip, AUD_JPY +59pip. ALL NOT_HELD. When Momentum-S fires ≥3 pairs same direction → enter strongest CS pair A-size minimum. Verified: 1x
 - [4/10-12] **Rollover_guard restore gap**: restore requires trader session but trader halts weekends. 4/10 AUD_JPY -2,864 JPY. **Weekend approaching = MANDATORY structural SL set.** Verified: 2x
 - [4/11] **Weekend Structural-S on JPY crosses = noise**: JPY crosses WRONG on weekends/consolidation (4/11+4/14). Counter-S GBP_JPY ✓. Verified: 2x
@@ -97,6 +116,11 @@
 - [4/15] **Zero-close day = margin-locked opportunity cost**: 4 positions (GBP_USD 4000u + EUR_USD 6000u) consumed 69-89% margin all day. 5 S-scan signals fired, 4 correct. AUD_JPY Structural-S @113.316 moved +16.2pip, AUD_USD Trend-Dip-S @0.71306 moved +11.4pip — combined ~28pip of missed opportunity. **The cost of holding positions isn't just their UPL — it's the S-scan entries you can't take.** When margin is above 70% and positions aren't making money, the opportunity cost of holding exceeds the risk of closing at a small loss. Verified: 1x
 - [4/15] **LIMIT management quality improved**: 7+ LIMITs placed, 5 cancelled proactively — wrong regime (AUD_JPY SHORT in TREND-BULL), fill impossible (EUR_JPY 9pip away in thin Tokyo), margin management (EUR_USD worst-case over 85%). No naked LIMITs left overnight. GTD expiry used consistently. Contrast with 4/14 where GBP_JPY LIMIT filled in Tokyo thin → SL hit -876 JPY. Verified: 1x
 - [4/15] **Trend-Dip-S improving when unidirectional**: 2/2 correct today (USD_JPY SHORT @158.914 +3pip, AUD_USD LONG @0.71306 +11.4pip). Both were clean single-direction signals, no contradictory flip. Historical 31% accuracy was dragged down by contradictory signals (SHORT then LONG within 90min on same pair). **Trend-Dip-S accuracy by signal type**: unidirectional signals may be more reliable than bidirectional. Track separately. Verified: 1x
+- [4/16] **Counter-S EUR_JPY keeps winning at pretrade=LOW**: LONG @187.190 (H4+H1 StRSI=0.00 floor, JPY spike absorbed) → +420 JPY in 32min. pretrade=LOW(1) was wrong again. Counter-S recipe now 5/6 correct (83%). **pretrade LOW + Counter-S recipe = override to at least B.** Verified: 3x (4/7 EUR_JPY 6/6, 4/14 USD_JPY +460, 4/16 EUR_JPY +420)
+- [4/16] **Spike-wide spread re-entry = negative EV**: EUR_JPY 2nd LONG @187.190 at Sp=7pip (normal=1.9pip). Lost -158 JPY in 1 min. The 5.1pip extra spread consumed the entire available range to TP (21pip target, 7pip spread = 14pip net, but R:R degraded from 1.5:1 to ~1.1:1). **When spread is >2× normal: LIMIT only, never market order.** Verified: 1x
+- [4/16] **Pre-event RANGE scalp in SQUEEZE = negative EV**: EUR_USD LONG @1.18090 (M5 RANGE scalp, StRSI=0.0) → -140 JPY. M5 regime shifted to SQUEEZE within 20min of entry. TP was only 9pip in pre-GDP thin market. Zombie close was disciplined but entry shouldn't have happened. **Within 90min of binary event (GDP, NFP, CPI): LIMIT only at structural level, no market-order RANGE scalps.** Verified: 1x (matches 4/3 pre-NFP pattern = 2x total)
+- [4/16] **LIMIT→TP auto-fire = system's best risk-adjusted pattern**: GBP_USD LIMIT @1.35619 filled overnight, TP hit @1.35781 = +513 JPY. No screen time, no decision stress. Cumulative: 3/31 GBP_JPY +906, EUR_USD +1,622. 4/15 GBP_USD +513. All LIMIT→TP. **LIMIT at structural level + TP at ATR×1.0 = best passive income.** Verified: 3x
+- [4/16] **AUD_JPY H4 overbought pretrade warning was valid**: LONG @114.036, pretrade warned H4 CCI=88/RSI=75 overbought. SL hit in 6min = -332 JPY. Downsized from S to A-size for this warning, but entry itself questionable. **When pretrade flags H4 overbought, prefer LIMIT at deeper pullback (Fib50%+) over market entry at EMA20.** Verified: 1x
 
 ## Deprecated（反証済み — 参考のみ）
 
@@ -116,7 +140,7 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 - ホルムズ系ヘッドラインで+40-90pipの巨大スパイク (3/23)
 - N波動targetは信頼できる利確目標
 - H1 ADX=26でH4も同方向BULL = 最もクリーンなトレンドペア
-- **All-time LONG: 63% WR avg +79 JPY total +4,007 JPY** — strongest LONG edge after EUR_USD. 4/14: +876 JPY trail, +643 JPY TP. Requires patience (avg winner hold >100 min)
+- **All-time LONG: 63% WR avg +80 JPY total +4,308 JPY** — strongest LONG edge after EUR_USD. LIMIT→TP auto-fire works well (4/16: +513 JPY overnight). Requires patience (avg winner hold >100 min)
 - **SHORT: 25% WR avg -1,027 JPY total -24,639 JPY (sample: 3/17-4/15, predominantly bullish period)** — poor stats but sample is biased by bull market
 - Tokyo session trailing stop trap same as EUR_USD: 15pip trail = ATR×0.7 got clipped (4/3 lesson)
 - **4/7: repeated entries after failures compound losses.** 4 entries in one day, -1,006 JPY net. After 2 GBP_USD losses, move to another pair
@@ -160,6 +184,7 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 - **LONG 69%WR avg +140 JPY total +1,824 JPY** — highest WR and avg in the system. When EUR strongest + JPY weakest (macro alignment), this pair prints money
 - **4/7: 6/6 LONG wins, +1,876 JPY** in one day. All pretrade=LOW yet all won. H1 ADX=35-43 trending strongly. Pretrade undervalues this pair in trending conditions
 - Spread 1.7-2.3pip is high. Need 20+ pip target to justify entry. Sub-10pip scalps don't work here
+- **Counter-S at H4+H1 StRSI=0.00 floor = high-probability entry**: 4/16 LONG @187.190 +420 JPY (32min hold). JPY spike absorbed, M5 bullish div confirmed. 2nd entry at Sp=7pip lost -158 JPY — **never re-enter Counter-S at spike-wide spread**
 
 ---
 
@@ -171,8 +196,9 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 
 ### LOWが間違っていた場面（pretradeが保守的すぎるケース）
 
-- **EUR_JPY LONG trending override (4/7+4/9)**: 8/8 wins, +2,304 JPY, ALL pretrade=LOW. When H1 ADX>35 + CS alignment, pretrade LOW is systematically wrong. Strongest evidence for trending override
+- **EUR_JPY LONG trending/Counter-S override (4/7+4/9+4/16)**: 9/10 wins, +2,724 JPY, ALL pretrade=LOW. When H1 ADX>35 + CS alignment OR Counter-S recipe at H4 floor, pretrade LOW is systematically wrong. Verified: 3x
 - [4/9] GBP_JPY LONG pretrade=LOW(3) → 2/2 wins +319 JPY: LOWs winning in bull regime across multiple pairs
+- [4/16] EUR_JPY LONG pretrade=LOW(1) → +420 JPY (Counter-S). 2nd entry LOW(1) → -158 JPY (7pip spread killed it, not the thesis)
 
 ### HIGHが外れた場面（スコア過信に注意）
 
@@ -193,10 +219,16 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 - [4/15] AUD_JPY LONG pretrade=B(5) @113.14 LIMIT → cancelled (no fill probability). Score was reasonable for Tokyo thin range-buy
 - [4/15] USD_JPY SHORT pretrade=A(6) @159.050 LIMIT → not filled (GTD expired). Correctly sized B due to historical 33%WR WARNING
 
+### MEDIUM scores — 4/16
+
+- AUD_JPY LONG MEDIUM(7) → -332 JPY. H4 overbought warning was valid. SL hit 6min. **MEDIUM + H4 overbought flag = prefer LIMIT at deeper level**
+- GBP_USD LONG MEDIUM(4) → +513 JPY. LIMIT→TP overnight. Score undervalued — theme confirmed
+- EUR_USD LONG MEDIUM(6) → -140 JPY. Pre-GDP squeeze killed it. Score was reasonable but timing was wrong
+
 ### B-score entries
 
 - **B-score in Tokyo = dangerous**: low conviction + thin liquidity + aggressive trail = noise kill (4/3: -146 JPY)
-- [4/15] Multiple B-conviction LIMITs placed (AUD_JPY 1400u, EUR_JPY 1667u, USD_JPY 1667u, AUD_USD 1667u) — all cancelled/unfilled. B-LIMITs with GTD expiry = zero-cost optionality. Good pattern
+- [4/15-16] B-LIMITs with GTD expiry = zero-cost optionality. Good pattern. 4/16: 10+ LIMITs managed, most cancelled proactively. LIMIT discipline improving
 
 ---
 
@@ -234,13 +266,14 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 | Momentum-S | 55+ | 0 | ~53/55 | ~96% | Confirmed. No fires today. Still 0 entered = chronic missed opportunity. |
 | Trend-Dip-S | 18 | 4 | 7/18 | 39% | **Watch** — 4/15: USD_JPY SHORT +3pip ✓, AUD_USD LONG +11.4pip ✓. 2/2 when unidirectional (no contradictory flip). |
 | Squeeze-S | 9 | 1 | 1/9 | 11% | **Deprecated** — 4/15: USD_JPY SHORT @158.828 WRONG (-5.6pip). 1/9 after 9 fires. Remove from S-scan. |
-| Counter-S | 5 | 1 | 4/5 | 80% | **Confirmed**. No fires today. Awaiting next signal to enter again. |
+| Counter-S | 6 | 2 | 5/6 | 83% | **Confirmed**. 4/16 EUR_JPY LONG @187.19 +420 JPY. Best entry recipe. Enter at A-size minimum. |
 | Post-Catalyst-S | 1 | 0 | 1/1 | 100% | **New** — 4/15: GBP_JPY LONG @215.635 +2.5pip ✓ (marginal). Too small sample. Track. |
 
-**4/15 details**: Structural-S 1/1 (AUD_JPY LONG @113.316 +16.2pip ✓ — JPY cross CORRECT this time, TREND-BULL regime). Trend-Dip-S 2/2 (USD_JPY SHORT @158.914 +3pip ✓, AUD_USD LONG @0.71306 +11.4pip ✓ — both unidirectional, no flip). Squeeze-S 0/1 (USD_JPY SHORT @158.828 WRONG). Post-Catalyst-S 1/1 (GBP_JPY LONG @215.635 +2.5pip, marginal). ALL 5 signals MISSED due to margin lock (69-89%).
-**Key finding**: Margin lock is now the primary S-scan bottleneck. 4/5 signals correct = ~30pip missed. The problem shifted from "not recognizing S" to "can't deploy because margin is consumed by stale positions."
+**4/15 details**: Structural-S 1/1 (AUD_JPY LONG @113.316 +16.2pip ✓). Trend-Dip-S 2/2 unidirectional. Squeeze-S 0/1 WRONG. Post-Catalyst-S 1/1 marginal. ALL 5 missed (margin lock).
+**4/16 details**: No formal s_scan recipe fires in audit_history. But audit flagged AUD_JPY LONG as S_conviction_B_size (04:33Z) — trader entered B-size, audit said should be A/S per 5-category alignment. AUD_JPY went to 114.157 (+22pip from 113.93 LIMIT level). Signal was CORRECT but LIMIT never filled. Counter-S EUR_JPY entered manually → +420 JPY.
+**Key finding**: Counter-S is now the highest-accuracy recipe at 83% (5/6) AND the only one consistently entered. Momentum-S still 0 entries despite ~96% accuracy. System's biggest missed money.
 
-**Next review**: Track Trend-Dip-S unidirectional vs bidirectional accuracy separately. Structural-S JPY cross accuracy may be improving — one data point, need more. Post-Catalyst-S needs 5+ fires before assessment.
+**Next review**: Track Trend-Dip-S unidirectional vs bidirectional separately. Counter-S entering 5th verified win — promote to Confirmed.
 
 ---
 
@@ -248,42 +281,22 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 
 - OANDA v20ヘッジ口座: 大きい方にフルマージン。反対側は追加0
 - H1テーゼLONG維持 + M5 StochRSI=1.0でSHORT回転 → プルバックで利確 → LONGだけ残る
-- ショート側は同量以下。超えたらマージン増加
 
 ---
 
-## Event Day Experience (NFP, CPI, FOMC etc.)
+## Event Day + Squeeze Patterns
 
-**What we've learned about event days:**
-- The market doesn't stop moving 8 hours before an event. Small waves, squeezes, and setups still happen
-- "Pre-NFP" became a 10-hour standby on 4/3. The real danger window is the last hour, not the whole day
-- Thin liquidity (Good Friday, holidays) amplifies spikes on the event candle. The 5-10 min after release are the most dangerous
-- Trailing stops get clipped by pre-event noise. Fixed SL survives better close to events
-
-**The thinking**: Before writing "no entries pre-event" in state.md, ask: "How many hours until the event? Is that really a reason to stop trading, or am I just nervous?" Nervousness is not analysis.
-
----
-
-## Small Wave Patterns (BB Squeeze Resolution)
-
-**Observation**: When all pairs show M5 BB squeeze simultaneously, the squeezes resolve into small moves — usually 5-15 pips. These are tradeable.
-
-**What works**: M5 squeeze + M1 shows 3+ consecutive directional bodies → enter small (1000-2000u). TP at opposite BB band. Fixed SL (no trailing — trail kills small moves before they develop). Typically resolves in 15-60 minutes.
-
-**What doesn't work**: Trailing stops on squeeze trades (4/3 EUR_USD, GBP_USD both clipped by trail). Holding for big targets on a squeeze play (it's a rhythm trade, not a conviction trade).
-
-**When to use**: When margin is underutilized and you're tempted to write "standby." The market is always moving. The question is whether you're watching.
+- **Pre-event window**: Only the last 90min is true danger zone (4/16: EUR_USD -140 JPY in pre-GDP squeeze). Outside that, trade normally. Trailing stops get clipped by pre-event noise → fixed SL or nothing
+- **Pre-event entry**: LIMIT at structural level only. No market-order RANGE scalps within 90min of binary event. Verified: 2x (4/3+4/16)
+- **BB Squeeze resolution**: M5 squeeze + M1 3+ directional bodies → 1000-2000u, TP at opposite BB. Fixed SL (no trail). 15-60min hold. Rhythm trade, not conviction trade
 
 ---
 
 ## Thin Market / Holiday Rules (HARD RULES)
 
-**4/3 Good Friday: -984 JPY. Every single loss was noise stop hunting. Every thesis was correct.**
-
-- **Holiday/thin liquidity → NO SL**. ATR×1.2 gets hunted when spreads are 2-3× normal. Either ATR×2.5+ or discretionary only
-- **User says "SLいらない" → that's a direct order.** Don't re-add. Don't close on your own judgment. The user is managing risk
-- **Pre-event trailing stops are a trap.** Trail added at 00:37Z "for NFP protection" killed EUR_USD and GBP_USD at 02:22Z — 10 hours before NFP. Use fixed SL or nothing
-- **Spread > 2× normal = the market is telling you SLs don't work.** Listen to the market
+- **Holiday/thin → NO SL or ATR×2.5+**. 4/3: -984 JPY from noise hunts, all theses correct. Spread>2× normal = SLs don't work
+- **User "SLいらない" = direct order.** Don't re-add. Don't close on own judgment
+- **Pre-event trailing = trap.** Fixed SL or nothing. Trail kills 10h before events
 
 ## メンタル・行動
 
@@ -296,7 +309,7 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 ### ✦ 攻めの原則
 
 - **Conviction=Size。二重割引するな。** pretrade_checkのWR%でサイズを落とすな。WRはすでにスコアに織り込み済み。Sと判定したなら30%NAV。pretrade=S(8)→sized_down は金をドブに捨てる行為（過去7回で6,740-13,140JPY損失）
-- **最低2,000u。** 500u/700uは勝ってもスプレッドに食われる。入る価値がないなら入るな
+- **最低3,000u。** 1-2kサイズ330本で-23,098 JPY。証明済み。入る価値がないなら入るな
 - **S/A conviction = マーケットオーダー。** LIMIT「3pip節約したい」→ 刺さらず20-50pip逃す
 - **0%マージンはありえない。** 7ペア×4TF=28の視点がある。全部で何もない日はない。ない＝見てない
 - **BがSに昇格するパターンが最重要**: 最初の2指標でB判定→止まるな。別カテゴリの指標を見たらSだった、が過去5回起きてる
@@ -306,20 +319,11 @@ _(まだなし — daily-reviewが反証されたパターンをここに移動�
 
 ### ✦ 守りの原則（知っていればいい。恐れるな）
 
-- 慌てて損切りが最大の敵。テーゼで判断しろ、金額で判断するな
-- 「今フラットだったらここで入るか？」→ Noなら閉じろ
-- 1ペアに固執するな。7ペアある。2連敗したら別ペアを探せ
-- ヘッドライン相場では追加LONG禁止。30分で局面が変わる
-- [4/1] 全ポジ同方向=信者。方向分散しろ
-- [4/1] 指標は過去、チャートは今。チャートの形を見ずに指標の数字で判断するのはボット
-- [4/1] 含み益は取れ。市場がくれたものは受け取れ
-- [4/1] 「動き切った後」に同方向で入るな。次はバウンス
-- [4/3] ユーザー指示無視→パニッククローズ→慌てて入り直し = 最悪パターン。**ユーザーがHOLDと言ったらHOLD**
+- 慌てて損切りが最大の敵。テーゼ判断、金額判断するな。「今フラットならここで入るか？」Noなら閉じろ
+- 2連敗→別ペアへ。全ポジ同方向=信者。指標は過去、チャートは今
+- 含み益は取れ。「動き切った後」に同方向で入るな。ユーザーがHOLDと言ったらHOLD
 
-## Consolidated Observations (4/13-4/14)
-- [4/13] Counter-S SHORT signal vs M5 raw momentum: expanding bullish bodies band-walking BB upper → counter-signals are noise. Chart overrules oscillator extreme. Verified: 1x
-- [4/13] SQUEEZE at top of TREND-BULL: breakout direction = continuation. LIMIT at BB mid (pullback) valid but breakout entry cleaner
-- [4/14] **RANGE R:R formula**: RANGE SL should be just outside range boundary (BB upper + 5pip), not round numbers. BB upper 112.795 → SL=112.85 (5pip) vs TP=BB lower 112.70 (9.5pip) = R:R 1.9:1 viable. Round number SL (113.00=16pip) killed valid trade. Verified: 1x
-- [4/14] **AUD_USD fib N=BEAR override for LIMITs**: AUD_USD fib N=BEAR(q=3.37) = strongest bear signal among 7 pairs. When domestic AUD data already terrible (NAB=-29, Westpac -12.5%) AND fib predicts high-quality bear wave, cancel any pending LONG LIMITs before they fire into a downward squeeze breakout. Risk: LIMIT fills at support then price breaks below = amplified loss. Check fib N before placing LIMITs in squeeze conditions. Verified: 1x (canceled id=467896 at 23:40Z to avoid expected bear breakout)
-- [4/15] **Partial close (HALF_TP) even when units are "small"**: Dismissed HALF_TP as "N/A (1500u, impractical)" — WRONG. OANDA supports partial close at any unit size. 750u close locked +115.5 JPY. When profit_check says HALF_TP + audit pattern-match flag present, execute the partial regardless of position size. Never dismiss Option B without verifying OANDA capability. Verified: 1x
-- [4/15] **Event timing verification essential**: state.md had "Bailey@18:00Z" — actual was Taylor@19:00Z per news_digest. Event timing decays within 1 session. Always verify against current news_digest timestamp before making binary event decisions. Unverified timing = different impact, wrong prep. Verified: 1x (audit caught the discrepancy)
+## Consolidated Observations (4/13-4/16)
+- [4/13-14] **RANGE mechanics**: SL just outside BB boundary (+5pip), not round numbers. Fib N=BEAR overrides LONG LIMITs in squeeze. Chart overrules oscillator extremes during momentum. Verified: 1x each
+- [4/15] **Partial close always available**: OANDA supports any unit size. 750u HALF_TP locked +115.5 JPY. Never dismiss HALF_TP as "impractical." Verified: 1x
+- [4/15] **Event timing verification**: state.md had wrong time (Bailey@18:00Z vs actual Taylor@19:00Z). Always verify against news_digest. Verified: 1x

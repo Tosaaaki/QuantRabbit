@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-16 — Data-Driven Sizing: min 3k, sweet spot 30-120min, circuit breaker, time filter
+
+**Problem**: 500-trade deep analysis reveals 3 structural profit killers:
+1. **Size**: 330 trades at 1-2k units = -23,098 JPY. Same trader at 3-5k = +19,226 JPY. S-size (9k+) = 4/4 wins, +5,921 JPY
+2. **Hold time**: <30min trades = -5,893 JPY. 30-120min = +27,539 JPY. 2h+ = -21,593 JPY
+3. **Time of day**: 22:00-23:00 UTC = -12,191 JPY (37 trades). 08:00 UTC = +7,344 JPY (37 trades)
+4. **No circuit breaker**: 4/15 had 16 consecutive losses, WR 23.8%, -5,226 JPY day
+
+**SKILL_trader.md changes**:
+- **Minimum 3,000u per entry** (was 2,000u). Below 3k is proven net-negative. All B-size references updated
+- **S-size minimum raised to 8,000u** (was ~6,000u effective). S-size has 100% WR (4/4, +5,921)
+- **30-120min sweet spot awareness**: Added hold time data to Self-check. <5min and 2h+ are explicitly flagged
+- **3-loss circuit breaker**: 3 consecutive losses in same direction → STOP that direction this session
+- **Time-of-day filter**: 19:00-23:00 UTC entries require "late session penalty" block — LIMIT only, B-size max
+
+**strategy_memory.md changes**:
+- Added SIZE/HOLD TIME/TIME OF DAY evidence blocks at top of winning patterns (with exact numbers)
+- Added circuit breaker to loss patterns section
+- Updated minimum size reference from 2,000u to 3,000u
+
 ## 2026-04-16 — Remove deprecated Japanese prompt files
 
 Deleted `CLAUDE_ja.md` and `.claude/rules-ja/` (6 files). English versions are the single source of truth since v8. Japanese copies were never updated and just added confusion.
