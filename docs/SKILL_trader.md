@@ -233,13 +233,17 @@ My position matches best vehicle? [YES / NO — if NO, why am I in this pair ins
 ## Self-check (30 sec — write honestly before scanning)
 
 ```
-Entries today: [N] total. Most-entered pair: [pair] × [N]. Fixated? [explain or "no, justified by ___"]
-Last 3 closed trades: [W/L/W]. Streak: [hot/cold/neutral]
-If cold (2+ consecutive L): size down to B max until next W. Don't chase recovery.
-Bias check: Am I holding [pair] because the thesis is alive, or because closing means admitting I was wrong?
+Entries today: [N] total. Sessions elapsed: ~[N]. Margin used: [N]%.
+Last 3 closed trades: [W/L/W]. Streak: [hot/cold/neutral].
+If cold (2+ consecutive L): B-max until next W.
+DROUGHT CHECK: [entries today] entries / [sessions elapsed] sessions = [ratio].
+  If 0 entries after 5+ sessions: DROUGHT. The market moved. You didn't. Find the best of 14 possibilities (7 pairs × 2 directions) and enter it NOW — market order, not LIMIT.
+  If 0 entries + 0% margin: CRITICAL DROUGHT. You are analyzing, not trading. Pick Top 1 pair, enter B-size market order THIS session. Analysis without action = 0 JPY.
+LIMIT TRAP CHECK: Last [N] sessions placed [N] LIMITs, [N] filled, [N] cancelled.
+  If cancelled > filled for 3+ sessions: you're using LIMITs to avoid risk. Next entry = market order only.
 ```
 
-**This takes 30 seconds. It saves thousands of yen.** The trader who enters EUR_JPY 4 times on H1 ADX=14 (no direction) is fixated, not analyzing. The trader who holds -2,583 JPY for 5h40m past zombie time is anchored to entry price, not reading the market. Writing these numbers before scanning forces honest self-assessment.
+**DROUGHT is worse than a bad trade.** A bad B-size trade costs ~350 JPY avg. A drought costs the entire day's target (+12,569 JPY). The asymmetry is 36:1. Enter something.
 
 ## 7-Pair Scan — Tier 1 (deep) + Tier 2 (quick)
 
@@ -272,36 +276,62 @@ SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction 
 
 **Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
-### Tier 2: Remaining pairs (quick scan + conviction → action)
+### Tier 2: Remaining pairs — ENTRY FIRST format (no free pass)
 
-For each Tier 2 pair, write ONE line. **Every line ends with conviction AND action.**
+**For each Tier 2 pair, write the entry plan BEFORE deciding to skip.**
+
+The old format let you write "C → pass" in 3 seconds. The new format requires you to write how you WOULD enter — both directions — before you can skip. Skipping is expensive. Entering is cheap.
 
 ```
-TREND:   {PAIR}: TREND ↑/↓ | [candle shape] | dip/rally @___ TP=___ | [S/A/B/C] → [action] — [1 sentence]
-RANGE:   {PAIR}: RANGE X–Y | [candle shape] | BUY @___ TP=___ + SELL @___ TP=___ | [S/A/B/C] → [action] — [1 sentence]
-SQUEEZE: {PAIR}: SQUEEZE | [candle shape] | breakout ↑/↓ @___ TP=___ | [S/A/B/C] → [action] — [1 sentence]
+{PAIR}: {REGIME} | [candle shape]
+  LONG if: [specific price + condition — "dip to BB lower 1.3540 + M5 StRSI<0.1"]
+  SHORT if: [specific price + condition]
+  → [S/A/B/C] [MARKET/LIMIT @___/SKIP] — [1 sentence]
 ```
+
+**You MUST fill LONG if + SHORT if before writing the conviction.** Both lines. Every pair. "Nothing" is not valid — there is ALWAYS a price where you would enter each direction. If you truly can't name a price, you haven't looked at the chart.
 
 **Actions by conviction:**
 
-| Conviction | Action | "Pass" allowed? |
+| Conviction | Action | "SKIP" allowed? |
 |------------|--------|----------------|
-| **S/A** | → Tier 1 promoted (full block below) | No. You found gold. Pick it up |
-| **B** | → LIMIT posted (B-size 1,667u) | No. B = LIMIT, not Pass. If you won't LIMIT it, rate C honestly |
-| **C** | → watching [trigger] or pass | Yes. Only C can pass |
+| **S/A** | → Tier 1 promoted (full block) | No. Pick it up |
+| **B** | → LIMIT posted at the price you just wrote (2,000u) | No. You already named the price. Place it |
+| **C** | → SKIP with reason | Yes — but you already wrote 2 entry plans. Next session checks if either triggered |
 
 **Tier 2 examples:**
-`GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding | dip buy @1.3420 TP=1.3480 | A → Tier 1 — band walk + GBP strongest CS`
-`AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides | BUY @0.7055 TP=0.7090 + SELL @0.7093 TP=0.7060 | B → LIMIT both sides — clean 38pip range but AUD_JPY not ranging`
-`USD_JPY: SQUEEZE | tight 10pip band, no direction | watching: close outside 159.10–159.35 | C → watching — no wick direction, no body size change, pure compression`
-`EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower, zero counter-wicks | sell rally @186.00 TP=185.40 | S → Tier 1 — band walk + ECB dovish + JPY strongest + no support until Fib 185.40`
 
-**B → LIMIT is not optional.** You wrote the entry level. You wrote the TP. The setup met at least 1-2 categories. Place it at B-size (1,667u) with SL. A wrong LIMIT costs nothing — cancel it next session. Writing "B → pass" means you don't actually believe it's B. Rate C and explain what's missing.
+```
+GBP_USD: TREND ↑ | bodies solid, grinding higher, BB expanding
+  LONG if: dip to EMA20 1.3420 + M5 StRSI<0.2
+  SHORT if: double top at 1.3490 + M5 div score>0 + H1 ADX rolling
+  → A LIMIT LONG @1.3420 TP=1.3480 — band walk + GBP strongest CS
 
-**The conviction suffix forces you to assess every pair AND take action.** S-conviction doesn't hide in Tier 2 anymore — it's visible the moment you write it.
+AUD_USD: RANGE 0.7055–0.7093 | mixed candles, wicks both sides
+  LONG if: touch BB lower 0.7055 + lower wick defense
+  SHORT if: touch BB upper 0.7093 + upper wick rejection
+  → B LIMIT both sides @0.7055 + @0.7093 — clean 38pip range
 
-**"candle shape" = what you see in the PNG, not indicator values.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not. If you haven't looked at the PNG, you can't fill this in.
-**RANGE format has both sides in the same line.** You can't write "RANGE" and only one price. The format won't let you.
+USD_JPY: SQUEEZE | tight 10pip band, no direction
+  LONG if: close above 159.35 on volume + M1 3 bull bodies
+  SHORT if: close below 159.10 on volume + M1 3 bear bodies
+  → C SKIP — pure compression, no wick bias, breakout not started
+
+EUR_JPY: TREND ↓ | 5 bearish bodies band-walking BB lower
+  LONG if: Fib 38.2% bounce at 185.80 + M5 StRSI=0.0 + lower wick defense
+  SHORT if: rally to EMA12 186.00 + M5 StRSI>0.8 rejection
+  → S Tier 1 — sell rally @186.00 TP=185.40. Band walk + ECB dovish + JPY strongest
+```
+
+**Why "LONG if / SHORT if" kills the pass habit:**
+- You wrote "LONG if dip to 1.3540." Price dips to 1.3540 next session. Did you place the LIMIT? If not, you saw the setup and walked past it
+- You wrote "SHORT if double top at 1.3490." It double-topped. Did you act? The next session's state.md has the receipt
+- Writing both directions forces you to see rotation trades you'd otherwise ignore
+
+**B → LIMIT is automatic.** You already wrote the entry level. Copy that price into a LIMIT order. A wrong LIMIT costs nothing — cancel it next session.
+
+**"candle shape" = what you see in the PNG, not indicator values.** "3 bearish bodies shrinking, lower wicks growing" is valid. "DI-=38 StRSI=0.5" is not.
+**RANGE: both "if" lines become LIMITs.** Zero extra margin on hedge account.
 
 ### Tier 2 → Tier 1 promotion (any S or A above? Any B worth upgrading?)
 
@@ -373,16 +403,21 @@ Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cance
 - **RANGE pairs = both sides.** LONG @BB lower + SHORT @BB upper. One price, both directions, zero extra margin on hedge account
 - **Tokyo and holidays are fine for LIMITs** — wide spread affects SL design, not LIMIT placement
 
-### 0% margin = something is wrong (SESSION_END blocker)
+### 0% margin + 0 positions = FORCED ACTION (SESSION_END blocker)
 
-**You cannot SESSION_END with 0% margin used AND 0 open positions unless you can answer ALL of these:**
-1. Which of the 7 pairs did you analyze deeply? (name them)
-2. For your #1 candidate: what specific price/condition would make you enter?
-3. Why is a LIMIT at that price not placed right now?
+**You cannot SESSION_END with 0% margin used AND 0 open positions AND no new orders placed this session.**
 
-If you can't answer all 3, you haven't scanned hard enough. Go back to the 7-pair scan and find something. The market is always moving — 7 pairs × 4 timeframes = 28 views. Finding nothing in all 28 is extremely rare.
+**If this is a DROUGHT session (0 entries for 5+ sessions), the blocker escalates:**
 
-**The 3/31 lesson**: 19 entries, avg 4,737u, +4,591 JPY. Capital was deployed aggressively all day. That's the reference, not 4/8 (41% margin idle, S-candidates ignored).
+1. Look at the Tier 2 scan you just wrote. You wrote "LONG if" and "SHORT if" for every pair
+2. Pick the ONE pair where your "if" condition is CLOSEST to current price
+3. Enter it. Market order. B-size (2,000u). NOW
+4. If none are close, your "if" conditions are too far from market. Rewrite them at current price ± spread
+
+**A B-size market order at the wrong time costs ~350 JPY avg.** Sitting flat for 5 sessions while the market moves costs the entire day's target. The math is clear: enter something.
+
+**The 3/31 lesson**: 19 entries, avg 4,737u, +4,591 JPY. Capital was deployed all day. That's the reference.
+**The 4/16 anti-lesson**: 0 entries, 0% margin, beautiful analysis, 0 JPY. Analysis earns zero.
 
 ## Pre-entry — Conviction Block (required every time)
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-16 — Anti-Drought: Entry-First format + drought detector
+
+**Problem**: Trader task produces beautiful analysis (Currency Pulse, Regime Map, 7-pair scan) but exits sessions with 0 entries, 0% margin, 0 JPY. On 4/15-16: 18 LIMITs cancelled vs 24 entries. 7/7 pairs rated "C → no action" despite 0% margin. 5 S-scan signals missed. Root cause: 12 layers of rules (event wait, spread check, theme late, B-max, etc.) each individually valid but collectively creating a situation where NO entry can pass all filters.
+
+**SKILL_trader.md changes**:
+- **Tier 2 "ENTRY FIRST" format**: Old format allowed "C → pass" in 3 seconds. New format requires writing "LONG if: [price+condition]" and "SHORT if: [price+condition]" for EVERY pair BEFORE allowing conviction/skip. Makes skipping expensive and entering cheap. Next session checks if the "if" conditions triggered
+- **Drought detector in Self-check**: Counts entries vs sessions elapsed. 0 entries after 5+ sessions = DROUGHT → forced B-size market entry. 0 entries + 0% margin = CRITICAL DROUGHT. Includes LIMIT trap detection (cancelled > filled for 3+ sessions = forced market order)
+- **0% margin blocker escalation**: In drought, the blocker now says "pick the closest Tier 2 'if' condition and enter market order NOW" instead of asking 3 philosophical questions
+
+**strategy_memory.md changes**:
+- **Added anti-drought header**: "The #1 profit killer is NOT entering" with asymmetry math (bad trade -354 JPY vs drought day -12,569 JPY = 36:1)
+- **Added fear/courage rebalancing**: Warning before loss patterns section that 30+ warnings create paralysis. Reminder after winning patterns to "go find one and ENTER"
+- **New top principle**: "入らないことが最大のリスク" (not entering is the biggest risk) added as first mental principle, above all other rules
+
 ## 2026-04-16 — Quality Audit v3: Deep analysis rewrite + model correction
 
 **Problem**: Quality audit was completing only 3% of cycles with full analysis (7-pair predictions). 41% of cycles were abandoned (script ran but Sonnet wrote nothing). 48% were partial (position challenges only, no independent market view). Root cause: SKILL design allowed early exit, didn't force structured output, and lacked the "output format forces thinking" principle that makes the trader SKILL effective.
