@@ -55,13 +55,12 @@ How to achieve this:
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Sonnet (default) | 20-min cron | Max 15 min | Pro trader. Does analysis, news, and trading all itself |
+| trader | Sonnet (default) | **10-min cron** | Max 8 min | Pro trader. Does analysis, news, and trading all itself. **Discretionary-only — bots removed 2026-04-17** |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
 | daily-performance-report | Sonnet (default) | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Sonnet (default) | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
 | intraday-pl-update | Sonnet (default) | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
-| quality-audit | Sonnet | Every 45 min | ~5-10 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction map EVERY cycle** (own chart read + trade plan + S/A/B/C rating for every pair — primary S-conviction discovery mechanism). No early exit — Regime Map + 7-pair predictions are mandatory. Persistent Auditor's View in logs/quality_audit.md. Posts to Slack on DANGER or S-conviction found |
-| range-bot | Sonnet (default) | 20-min cron | ~1 min | **Automated range scalp entry bot.** Detects ranges via range_scalp_scanner, places LIMIT orders at BB extremes with TP (BB mid) + SL (structural). Entries only — exits handled by trader task. Margin capped at 30% NAV. Skips 19-23 UTC (poison hours), rollover, pairs with existing positions. Tags orders with clientExtensions "range_bot" for lifecycle management |
+| quality-audit | Sonnet | Every 45 min | ~5-10 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction map EVERY cycle**. Posts to Slack on DANGER or unheld A/S opportunities |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -70,7 +69,11 @@ How to achieve this:
 | qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
 | qr-news-flow-append | Cowork | Hourly (:15) | Append compact snapshot from news_digest.md → logs/news_flow_log.md |
 
-**Method**: 15-minute sessions + 20-minute cron. Lock mechanism prevents parallel launches. Session ends → next launches within 20 minutes. 1 session = 1 cycle. Complete the full loop — decide → execute → write handoff notes — then die.
+**Method**: `trader` runs 8-minute sessions on 10-min cron. Every cycle = full decision loop (read state → analyse → act → write handoff → die). Lock mechanism prevents overlapping sessions.
+
+**Bot architecture removed (2026-04-17)**: 7-day analysis showed bots net-negative — trend_bot EV -82/trade, range_bot EV -99/trade vs trader EV +73/trade. Removed: `local-bot-cycle` launchd (trend_bot / range_bot / bot_trade_manager / inventory_brake / regime_switch / bot_policy_guard / stranded_drain), plus scheduled tasks `range-bot`, `bot-trade-manager`, `inventory-director`. Python sources retained in `tools/` but not invoked. Reaper launchd agent kept (generic stale-agent cleanup, not bot-specific). See [docs/CHANGELOG.md](docs/CHANGELOG.md) 2026-04-17 entry for full rationale.
+
+**Tag taxonomy** (live): All entries now `trader` (discretionary). Legacy `range_bot` / `range_bot_market` / `trend_bot_market` tags may appear in historical logs but are no longer being produced.
 
 - Memory handoff: `collab_trade/state.md` (external memory across sessions)
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
@@ -90,30 +93,30 @@ Every 1 hour: Cowork qr-news-digest (:00)
 Every 1 hour: Cowork qr-news-flow-append (:15, runs after qr-news-digest)
   └── python3 tools/news_flow_append.py → APPENDS to logs/news_flow_log.md (HOT/THEME/WATCH snapshot)
 
-Every 1 min: trader session
+Every 10 min: trader session
   ├── session_data.py reads logs/news_digest.md (macro context in 10 seconds)
   └── Incorporates news into thesis construction (the "why is it moving" evidence)
 ```
 
 ### Self-Improvement Loop
 ```
-Every 1 min: trader session
+Every 10 min: trader session
   ├── reads: strategy_memory.md + state.md + quality_audit.md (regime map + visual read + range opportunities)
   ├── profit_check.py --all + protection_check.py  ← every session, first thing
   ├── reads regime + visual chart observations from quality_audit.md (auditor's eyes)
   ├── if quality_audit.md has issues → address them (re-evaluate missed S-candidates, fix sizing)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END (9 min mark, 10 min hard limit): trade_performance.py + ingest.py → memory.db
+  └── SESSION_END (7 min mark, 8 min hard limit): trade_performance.py + ingest.py → memory.db
 
 Every 45 min: quality-audit session (Sonnet)
   ├── runs: quality_audit.py + profit_check + fib_wave + chart_snapshot.py (14 PNGs)
   ├── READS: chart PNGs visually (candle patterns, BB position, momentum character)
   ├── WRITES: logs/quality_audit.md (facts + Regime Map + Visual Read + Range Opportunities)
-  ├── WRITES: logs/quality_audit.json (machine) + logs/audit_history.jsonl (outcome tracking)
+  ├── WRITES: logs/quality_audit.json (machine) + logs/audit_history.jsonl (scanner facts + final narrative picks)
   ├── NO EARLY EXIT: Section E (Regime Map) + Section C (7-pair conviction map) are mandatory every cycle
-  ├── Sonnet fills in structured format per pair ("Chart tells me / Story / Price target / Wrong if / Conviction")
-  └── if DANGER or S-conviction found → posts to #qr-daily via Slack (not just DANGER)
+  ├── Sonnet fills in structured format per pair ("Chart tells me / Story / Price target / Wrong if / Edge / Allocation")
+  └── if DANGER or unheld A/S opportunity found → posts to #qr-daily via Slack (not just DANGER)
 
 Daily 06:00 UTC: daily-review session
   ├── runs: daily_review.py (fact collection + pretrade result correlation)
@@ -202,10 +205,12 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `logs/live_trade_log.txt` | Trade execution log (chronological) |
 | `logs/news_digest.md` | News summary updated by Cowork hourly |
 | `logs/news_cache.json` | Structured news data from API parser |
+| `logs/bot_inventory_policy.md` | Human-readable LLM inventory policy for the local bot layer (written by trader; repaired by inventory-director backup if needed) |
+| `logs/bot_inventory_policy.json` | Machine policy consumed by the deterministic local bot layer |
 | `logs/technicals_*.json` | H1/H4 technical indicators |
 | `logs/quality_audit.md` | Quality audit facts (updated every 30 min. Trader reads at session start) |
 | `logs/quality_audit.json` | Quality audit machine-readable output (for daily-review parsing) |
-| `logs/audit_history.jsonl` | Append-only S-scan outcome tracking (prices at detection time. daily-review uses for recipe accuracy) |
+| `logs/audit_history.jsonl` | Append-only audit opportunity tracking (scanner fires + final narrative A/S picks. daily-review uses it for recipe and judgment accuracy) |
 
 ### Scripts
 
@@ -217,7 +222,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action. Detects rollover window |
 | `tools/rollover_guard.py` | Rollover SL guard — remove/restore SL/Trailing around daily OANDA maintenance (5 PM ET) |
 | `tools/preclose_check.py` | **Run before every close** — re-confirms thesis before exit |
-| `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes) |
+| `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes). Fresh worker-tagged trades now require `--force-worker-close` for routine trader/inventory-director overrides inside the first 10 minutes |
 | `tools/fib_wave.py` | N-wave structure + Fibonacci levels. Run at session start for all pairs |
 | `tools/refresh_factor_cache.py` | H1/H4 technical indicator refresh |
 | `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. **Run by quality-audit** (not trader). Auditor reads PNGs visually, writes Regime Map + Range Opportunities to quality_audit.md. `--all` = 7 pairs × M5+H1 |
@@ -227,9 +232,17 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/news_fetcher.py` | News fetch (Finnhub+AlphaVantage+FF. Called from Cowork task) |
 | `tools/slack_daily_summary.py` | Daily summary |
 | `tools/quality_audit.py` | Quality audit — cross-checks trader decisions against rules and S-conviction data |
+| `tools/record_audit_narrative.py` | Parses the final Auditor's View from `logs/quality_audit.md` and appends the auditor's unheld A/S narrative picks to `logs/audit_history.jsonl` |
 | `tools/s_conviction_scan.py` | S-conviction pattern scanner — auto-detects TF × indicator combinations |
 | `tools/range_scalp_scanner.py` | **Range scalp scanner** — detects RANGE across 7 pairs, outputs ready-to-trade plans with BB levels, signal strength, sizing, R:R. Run at session start when ranges detected in regime map. `--json` for programmatic use |
-| `tools/range_bot.py` | **Range scalp entry bot** — automated LIMIT placement at BB extremes. Imports range_scalp_scanner logic, applies margin cap (30% NAV), time filters (skip 19-23 UTC), deconfliction (skip held pairs). Tags orders "range_bot". Entries only — exits by trader. `--dry-run` for testing |
+| `tools/trend_bot.py` | **Trend continuation entry bot** — deterministic local trend layer. Reads `logs/bot_inventory_policy.json`, requires aligned `M15/H1` trend + `M5` continuation setup + `M1` momentum + 7-pair currency pulse, and fires MARKET-only continuation entries tagged `trend_bot_market`. Designed to capture band-walks and follow-through moves that the range bot should not fade. It obeys pair-level `Ownership` (`TRADER_ONLY` / `SHARED_PASSIVE` / `SHARED_MARKET`), supports `Tempo` (`BALANCED` / `FAST` / `MICRO`) for slower, fast, or ultra-short collaborative scalps, lets same-direction trader pending coexist when the shared ownership explicitly allows it, requires `M1 aligned` for `FAST`, allows `MICRO` only when `M1` is `aligned` or `reload`, and blocks same-pair re-entry for 10 minutes after fresh `STOP_LOSS` / `trader_worker_inventory` closes to avoid churn |
+| `tools/range_bot.py` | **Range scalp entry bot** — deterministic local entry layer. Reads `logs/bot_inventory_policy.json` from the trader-owned worker policy, evaluates both `M5` and `H1` range views per pair, and picks the best fade lens instead of collapsing everything to `M5` only. Uses M15 for band-walk / fast-break veto, H1 for breakout-risk / regime confirmation, M1 for micro entry timing, and a 7-pair currency pulse for cross-currency context. It refuses to fade band-walks. Picks MARKET only when the live edge and M1 trigger align; otherwise leaves LIMIT at BB extremes. Keeps fresh pending orders instead of blanket cancelling them. Tags LIMITs `range_bot`, MARKET fills `range_bot_market`. It enforces pair-level `Ownership`, `Tempo`, and `MaxPending`, supports short-TP `FAST` collaboration mode plus `MICRO` fine-wave bites for stronger `B/A/S` edges, and blocks same-pair re-entry for 10 minutes after fresh `STOP_LOSS` / `trader_worker_inventory` closes to avoid churn. `--dry-run` for testing |
+| `tools/bot_trade_manager.py` | **Bot emergency brake** — deterministic local guard. Reviews `range_bot` / `range_bot_market` / `trend_bot_market` exposure and intervenes only on policy pause, panic margin, rollover, or deadlock pressure. Normal worker lifecycle stays with the local worker; trader steers policy and only force-overrides in emergencies |
+| `tools/bot_inventory_snapshot.py` | Snapshot helper for `trader` and the backup `inventory-director` — prints bot pending orders, bot trades, projected margin, deadlock profile, pair policy context, and the worker tag legend |
+| `tools/render_bot_inventory_policy.py` | Converts `logs/bot_inventory_policy.md` into `logs/bot_inventory_policy.json` so the local bot layer can consume LLM policy deterministically |
+| `tools/cancel_order.py` | Pending-order cancel helper with optional trade-log append. Used by `trader` for routine bot cleanup and by `inventory-director` only as backup |
+| `tools/local_bot_cycle.sh` | Local bot supervisor script — refreshes OANDA `M1/M5/M15/H1` technical cache, then runs `bot_trade_manager.py`, `trend_bot.py`, and `range_bot.py` under one lock-protected cycle |
+| `scripts/install_local_bot_launchd.sh` | Installs the `com.quantrabbit.local-bot-cycle` launchd agent and seeds a default bot inventory policy |
 
 ## Key Directories
 
@@ -242,7 +255,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 - `config/env.toml` — OANDA API keys etc. (gitignored)
 
 ### Archive (legacy, no need to reference)
-- `archive/` — All legacy from v1-v7 (bot workers, 162 scripts, systemd, GCP infra, old prompts, VM core DB, etc.)
+- `archive/` — Historical artifacts from v1-v7 only (old bot workers, systemd, GCP/VM infra, old prompts, VM core DB, etc.). Current QuantRabbit does not run on VM/GCP.
 
 ## User Commands
 

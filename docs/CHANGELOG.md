@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-04-17 — ALL BOTS REMOVED — discretionary-only architecture
+
+**Decision by user after 7-day P&L analysis**: bots were net-negative. Per-tag breakdown over last 7 days:
+
+| tag | trades | WR | P&L | EV/trade |
+|-----|--------|-----|-----|----------|
+| **trader (discretionary)** | 128 | 51.6% | **+9,325** | **+73** |
+| trend_bot_market | 30 | 17% | -2,458 | -82 |
+| range_bot | 5 | 20% | -494 | -99 |
+| range_bot_market | 1 | 0% | -88 | -88 |
+
+Trader's +9,325 was being partially eaten by bot's -3,040 losses. Removing bots is projected to improve daily EV by ~420 JPY without sacrificing trader-side wins. Speed ("爆速で稼ぐ") is now interpreted as **profit-accumulation speed**, not trade frequency — bots were adding trades while subtracting profit.
+
+**Removed**:
+- **launchd**: `com.quantrabbit.local-bot-cycle` (60-sec cycle running trend_bot, range_bot, bot_trade_manager, inventory_brake, regime_switch, bot_policy_guard, stranded_drain). Uninstalled via `scripts/uninstall_local_bot_launchd.sh`.
+- **Scheduled tasks** (renamed to `*.DISABLED` in `~/.claude/scheduled-tasks/`): `range-bot/`, `bot-trade-manager/`, `inventory-director/`. Can be restored by renaming back if needed.
+- **Not removed**: `com.quantrabbit.reaper` launchd (generic stale-agent cleanup, not bot-specific). Tools in `tools/` are retained but uninvoked (`trend_bot.py`, `range_bot.py`, `bot_trade_manager.py`, `inventory_brake.py`, `regime_switch.py`, `stranded_drain.py`, `bot_policy_guard.py`, `range_scalp_scanner.py`, `bot_inventory_snapshot.py`, `render_bot_inventory_policy.py`).
+
+**Trader optimized for discretionary speed**:
+- Cron `*/20 * * * *` → `*/10 * * * *` (20-min → 10-min).
+- Session budget description: 15 min → 8 min in `schedule.json` + SKILL_trader banner. Actual session_end enforcement governed by `task_runtime.py` (unchanged for this commit).
+- `docs/SKILL_trader.md`: added top-of-file override banner instructing future trader sessions to skip bot-inventory workflow, tag all entries as `trader`, and ignore any bot / worker references below.
+- `CLAUDE.md`: scheduled-task table rewritten. Bot architecture section replaced with removal note. Cycle references 1-min / 15-min → 10-min. Tag taxonomy simplified (all live entries = `trader`; historical bot tags read-only).
+- `collab_trade/state.md`: prominent architecture-change notice so next trader session sees it immediately.
+
+**OANDA state at removal**: 0 bot-tagged open trades, 0 bot-tagged pending orders. Clean handoff.
+
+**Reversibility**: To restore bots, rename `*.DISABLED` dirs back in scheduled-tasks, reinstall launchd plist (plist template still at `scripts/install_local_bot_launchd.sh`), restore the pre-banner SKILL_trader content via git. All tooling and state files retained.
+
 ## 2026-04-17 — bot_trade_manager: stop reaping range_bot LIMITs (the *actual* "nothing fills" cause)
 
 **Forensic dig after user "深掘りして"**: reviewed `logs/live_trade_log.txt` — turns out range_bot WAS firing after the earlier fixes (18 LIMITs placed between 02:39-03:00 UTC: EUR_CHF×15, EUR_GBP×1, NZD_USD×2). Zero filled. All cancelled within 25 minutes by `bot_trade_manager`:
