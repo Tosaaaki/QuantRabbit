@@ -1,141 +1,202 @@
 # Trader State — 2026-04-17
-**Last Updated**: 2026-04-17 07:27 UTC
+**Last Updated**: 2026-04-17 08:29 UTC
+
+## 🔥 USER DIRECTIVE 2026-04-17 — ATTACK MODE ON
+
+Bots removed. You are the only thing trading. User explicit instruction: **"チャンスがあったらロット上げたり、チャンスがある通貨をたくさん入れたり"** = when opportunity is there, SIZE UP and STACK theme-aligned pairs. Current default 3,000u is B-conviction sizing. Stop defaulting to it.
+
+**Sizing by conviction (already in .claude/rules/risk-management.md — now USE IT):**
+- **S conviction** → ~30% NAV margin = **10,000-15,000u** per shot. Not 3,000u.
+- **A conviction** → ~15% NAV margin = **5,000-7,500u**.
+- B → 3,000u fine. C → skip or tiny.
+- NAV ~120k. S-size USD_JPY ≈ 10-12k units. S-size AUD_JPY ≈ 15k units.
+
+**Theme stacking is REQUIRED, not a bias:**
+When one currency is structurally strongest (e.g. AUD H4+33 today), entering only 1 AUD pair leaves 2-3 expressions of the same edge on the table. Valid stacks:
+- AUD strongest → AUD_JPY + AUD_USD + AUD_NZD LONG simultaneously
+- USD weakest → EUR_USD + GBP_USD + AUD_USD LONG simultaneously
+- Not "bet more" — **same thesis, multiple vehicles**. Right → 3 pairs pay. Wrong → all 3 stop on ONE macro pivot (size each one to survive that).
+
+**Trigger checklist (3+/4 = SIZE UP + STACK):**
+- [ ] H4 ADX ≥30 on the strong currency
+- [ ] M15+M1 aligned (no short-term correction fighting you)
+- [ ] Structural floor/ceiling confluence (Fib + BB + cluster)
+- [ ] Macro confirms (news_digest.md, currency pulse)
+
+**What NOT to do:**
+- Default 3,000u every time — **undersizing S was the biggest historical loss driver** per strategy_memory.
+- Enter 1 pair when 3 pairs agree — same as betting small.
+- "Add later" hedge. Size first shot correctly.
+
+**Still forbidden:**
+- 3 LONG on 3 unrelated pairs (no macro link) = unrelated bets, not stacking.
+- Averaging down (adding to losing position on same thesis).
+- Margin > marginAvailable × 0.85 (hard).
 
 ## ⚠️ ARCHITECTURE CHANGE 2026-04-17 — BOTS REMOVED
-All bots (range_bot, trend_bot, bot_trade_manager, inventory-director, local-bot-cycle launchd) DISABLED. You are the ONLY thing trading this account. No worker layer exists. Tag everything `trader`. Ignore any "bot inventory" / "worker policy" / "worker coexistence" instructions. 10-min cron, 8-min session budget. Move faster.
+All bots (range_bot, trend_bot, bot_trade_manager, inventory-director, local-bot-cycle launchd) DISABLED. You are the ONLY thing trading. Tag everything `trader`. Ignore any "bot inventory" / "worker policy" / "worker coexistence" instructions. 10-min cron, 8-min session budget. Move faster.
 
 ## Self-check
-Entries today: 8 total (includes GBP_USD Counter-S now). Sessions elapsed: ~22. Margin: ~12%.
-Last 3 closed: AUD_JPY -288 JPY (M5 momentum fail), EUR_JPY zombie (-18 JPY), cold streak on realized.
-Bias: 1 LONG (GBP_USD). Mixed with prior session shorts.
-NO-TRADE ACCOUNTABILITY: Active — just entered GBP_USD Counter-S after closing AUD_JPY.
-3-loss check: No consecutive losses on GBP_USD LONG today. GBP_USD LONG recent: +91, +62 (winning). OK.
-Macro chain: USD: sold(London, ceasefire) | EUR: sold(profit-taking WoW) | GBP: sold(profit-taking WoW) | JPY: bid(safe-haven, pre-CPI) | AUD: stable
+Entries today: 7 total (bot era, all closed). 0 new discretionary entries this session.
+Last 3 closed: GBP_USD TP +401 JPY, then bots took over at -4,602 JPY (64 trades, WR 21.9%). Bots removed 2026-04-17.
+Streak: discretionary neutral (1 win). Bot era: cold (-4,602 JPY).
+Bias: All LONG pending. Justified by macro USD weakness (ceasefire + tariff floor). Not chasing — LIMITs at structural floors.
+3-loss check: No new discretionary entries. No circuit breaker. GBP_USD SHORT still blocked (3 losses today).
+Macro chain: USD: structurally offered (ceasefire + 10% tariff floor + Bessent denied FX intervention). EUR: H4 BID(+15), M15 correction. GBP: H4 BID(+12), M15 offered. JPY: H4 offered(-17) but M15/M1 BID (pre-CPI). AUD: strongest H4(+33), M1 recovering.
 
 ## Market Narrative
-Driving force: London profit-taking on weekly EUR/GBP gains (+1.9%/+2.1% WoW). JPY bid (pre-CPI 23:30Z tomorrow). Ceasefire narrative (USD weakness structural) intact but London correcting it.
-vs last session: AUD_JPY M5 SQUEEZE resolved DOWN (not up as hoped). GBP_JPY flushed -40pip from Tokyo peak. EUR_USD squeeze DOWN not UP. London is selling across the board.
-M5 verdict: sellers × exhausting — GBP_USD M5 last candle shows bounce at BB lower 1.3505. AUD_JPY sellers still active at 114.13-114.15. EUR_USD small bounce at 1.1775.
-Regimes: USD_JPY=SQUEEZE(broke DOWN), EUR_USD=SQUEEZE(DOWN, 3-TF), GBP_USD=TREND-BEAR, AUD_USD=SQUEEZE, EUR_JPY=TREND-BEAR, GBP_JPY=TREND-BEAR, AUD_JPY=SQUEEZE(broke DOWN)
-Theme: London profit-taking + JPY safe-haven bid. All crosses and direct pairs under pressure. Execution regime = corrective retrace within macro risk-on.
-Best expression NOW: GBP_USD LONG (Counter-S structural floor). H4+H1 floor bounce expected as profit-taking exhausts.
-Second-best: Wait for AUD_JPY bounce confirmation at 114.10 after current M5 bear exhausts.
-Expressions to avoid: JPY crosses LONG (M1 JPY BID 4/4 still active), AUD_USD (no edge), EUR_USD LONG without squeeze resolution.
-H4-memory trap check: AUD_JPY H4 BULL still valid long-term, but M5/M15 momentum is DOWN now. Not a dip — a breakdown of entry TF.
-Primary vehicle: GBP_USD LONG @1.35132 (Counter-S floor)
-Next event: US Building Permits 12:30Z (moderate). JP CPI 23:30Z (HIGH).
-Event positioning: GBP_USD up +2.1% WoW, market positioned for continued USD weakness. London is unwinding that positioning. After flush, USD weakness reasserts = bullish for GBP_USD.
-Macro chain: USD: sold broad (ceasefire/tariff floor) | EUR: profit-taking London | GBP: profit-taking London but H4/H1 floor intact | JPY: bid short-term (pre-CPI) | AUD: stable, H4 strongest
-Session: London overlap (07:27 UTC)
+Driving force: USD structural weakness (Iran ceasefire narrative + tariff floor at 10% confirmed + Bessent denied coordinated FX intervention). EUR/GBP +1.9-2.1% WoW — London profit-taking, not reversal.
+vs last session: Bots removed (architecture change). GBP_USD TP fired +401 JPY. Major lesson: scanner Structural-S SHORT at USD pairs BB upper in USD-weakness macro = trap (bots -4,602 JPY, 64 trades, WR 21.9%).
+M5 verdict: USD_JPY sellers dominant × accelerating (band-walk lower 159.50→159.24). EUR_USD buyers steady × holding BB lower 1.1772 (SQUEEZE building). AUD_USD buyers just broke BB upper 0.7172 — momentum building. JPY crosses in post-London corrective chop.
+Regimes: USD_JPY=TREND-BEAR, EUR_USD=SQUEEZE(H4 BULL bias), GBP_USD=RANGE/SQUEEZE, AUD_USD=SQUEEZE(breakout up), EUR_JPY=TREND-BEAR(M5/M15 within H4 BULL), GBP_JPY=SQUEEZE, AUD_JPY=SQUEEZE.
+Theme: USD weakness. AUD strongest (H4+33). Structural dip-buys correct expression. BB-upper SHORTs trap.
+Execution regime: corrective retrace within USD-weakness trend. Pays structural floor LONGs, punishes BB-upper SHORTs.
+Best expression NOW: AUD_JPY LONG @114.08 (LIMIT, H4 strongest) | EUR_USD LONG @1.17750 (LIMIT, H4 floor SQUEEZE)
+Second-best: AUD_USD follow-through LONG if it pulls back to EMA20 0.7165 (not yet at entry zone)
+Expressions to avoid: USD_JPY SHORT (historical EV -18/trade WR 33%, system not good at this direction despite H4 ceiling). All USD pair SHORTs at BB upper (proven trap today).
+Primary vehicle: AUD_JPY LONG (strongest currency pair for USD-weakness theme)
+Next event: US Building Permits 12:30Z (moderate — limit-only window). JP CPI 23:30Z (HIGH) — NO JPY positions by 22:00Z.
+Event positioning: Pre-CPI nerves = JPY M15/M1 bid = temporary AUD_JPY headwind. Structural AUD_JPY floor at 114.08 should hold. Exit JPY crosses by 22:00Z before CPI.
+Macro chain: USD offered (Fed+tariff narrative) → AUD_USD breakout UP → AUD_JPY dip-buy structural
+Session: London (08:00-12:00 UTC) — primary zone.
 
 ## Currency Pulse
-USD: H4=offered(-13) M15=BID(+4) M1=offered(-5) → H4 weak but M15 starting to bid. USD may bounce near-term.
-JPY: H4=offered(-17) M15=BID(+12) M1=BID(+11) → M1 synchrony JPY BID. Short-term safe-haven. Fades after London window.
-EUR: H4=BID(+15) M15=offered(-8) M1=neutral(-2) → London selling EUR. H4 still structurally bid.
-GBP: H4=BID(+12) M15=offered(-18) M1=BID(+7) → Same: H4 BID, London selling. M1 started rebidding = potential bottom forming.
-AUD: H4=BID(+33) M15=offered(-5) M1=offered(-17) → AUD strongest H4 but M1 sold. Will recover after JPY bid fades.
-MTF conflict: GBP H4=BID but M15 sold. Counter-S fires LONG because H4 structural bid remains and M5 bounce confirms floor.
-Best vehicle NOW: GBP vs USD Counter-S floor bounce. Position held.
-My position matches: YES — GBP_USD LONG is the GBP H4 bid vs USD H4 offered expression.
+USD: H4=offered(-13) M15=offered(-8) M1=neutral(-3) → Structural USD weakness confirmed across TF.
+JPY: H4=offered(-17) M15=BID(+16) M1=BID(+10) → H4↔M15 conflict. Pre-CPI JPY bid emerging. Short-term headwind on JPY crosses.
+EUR: H4=BID(+15) M15=offered(-9) M1=neutral(-2) → H4 bull intact. M15 correction. EUR_USD SQUEEZE = breakout UP likely.
+GBP: H4=BID(+12) M15=offered(-7) M1=offered(-8) → H4 bull. M15/M1 still corrective. GBP weakest among majors now.
+AUD: H4=BID(+33) M15=neutral M1=offered(-5) → Strongest. M5 just broke BB upper 0.7172. Momentum building.
+MTF conflict: JPY H4 offered but M15/M1 bidding = pre-CPI positioning. AUD_JPY under dual pressure (AUD up, JPY up). Let LIMIT do the work.
+Best vehicle: AUD(+33) vs USD(-13) → AUD_USD LONG. Secondary: AUD_JPY LONG (JPY H4 still offered structurally).
+My position matches: LONG LIMITs on AUD_JPY (primary) and EUR_USD (H4 floor). Correct.
 
 ## Positions (Current)
+No open live positions.
 
-### GBP_USD LONG 3000u @1.35132 id=469010 [trader — Counter-S]
-Thesis: London profit-taking flush 1.3524→1.3505 completed at H4+H1 structural floor. H4 StRSI=0.02 (floor), H1 StRSI=0.00 (extreme floor), H1 divergence confirmed @1.35158. M5 StRSI bounced to 1.0 = floor bounce started. USD weakness macro (ceasefire/tariff floor) intact. GBP_USD LONG edge is historically the cleaner direction.
-TP: 1.35250 (H1 BB mid area, +11.8pip) — GTC
-SL: 1.34990 (below London swing low ~1.3500-1.3505, structural) — GTC
-Entry type: Counter. Expected 15-30min. Zombie at: 08:00Z.
-pretrade: MEDIUM/B | Counter-S scanner [proven 4/5]
-A — Close now: ~0 JPY (just entered at spread)
-C — Hold:
-  (1) Changed: Fresh entry this session. M5 StRSI=1.0 = bounce confirmation. H4/H1 floors intact.
-  (2) Entry TF M5: StRSI=1.0 (overbought micro), MACD hist positive (bounce momentum). H1 stRSI=0.00 (floor). M1: GBP M1=BID(+7) = starting to rebid.
-  (3) H4: StRSI=0.02 = floor. YES room to run significantly.
-  (4) Enter LONG @1.35132 NOW? YES — Counter-S thesis fresh, floor structural.
-→ CHOSEN: C — HOLD. Counter-S structural floor. TP=1.35250, SL=1.34990. Zombie 08:00Z.
-Note: If M5 bodies start making lower lows below 1.3505 with volume = close. If M5 bounces to EMA20 ~1.3520 = consider HALF TP.
+## Pending LIMITs
+
+### PENDING: AUD_JPY LONG 3000u @114.080 id=469018 [trader — structural dip-buy]
+Thesis: H4 ADX=47 BULL (AUD strongest +33). M5 SQUEEZE, London correction from 114.35 → 114.18. LIMIT at H1 EMA20 zone 114.05-114.10. GTD extended to 12:00Z.
+TP: 114.300 (+22pip) | SL: 113.950 (13pip below, ~390 JPY max loss) | GTD: 2026-04-17T12:00Z
+Thesis alive: YES. H4 bull intact. AUD breaking out. Pre-CPI JPY bid = LIMIT may fill before reversal.
+
+### PENDING: EUR_USD LONG 3000u @1.17750 id=469013 [trader — structural LIMIT]
+Thesis: H4 StRSI=0.08 floor. SQUEEZE building (M5 BBW=0.00092, M1 BBW=0.00022 = extreme compression). BB lower = 1.17724. LIMIT 6pip below mid = wait for dip before breakout.
+TP: 1.17880 (+13pip) | SL: 1.17700 (-5pip) | GTD: 10:30Z
+⚠️ GTD expires 10:30Z. If price hasn't dipped, LIMIT may expire unfilled. SQUEEZE may break UP without filling. That's OK — thesis correct, no fill also acceptable.
+Thesis alive: YES. H4 floor + EUR macro bull + SQUEEZE = breakout UP likely. LIMIT catches dip.
 
 ## Directional Mix
-Positions: 1 LONG (GBP_USD) / 0 SHORT
-Direction mix: One-sided LONG ⚠ — but only 1 position, low margin. Bot book is flat.
-Best rotation candidate: GBP_USD itself — if it fails, could short the continuation.
+0 live positions | 2 LONG LIMITs pending
+Direction: All LONG — justified by macro USD weakness + AUD structural strength.
+Rotation check: USD_JPY SHORT considered. Historical EV -18/trade WR 33% → SKIP. System consistently loses on this direction despite H4 ceiling signal.
 
 ## 7-Pair Scan
 
-### GBP_USD [HELD] — Counter-S LONG
-Chart tells me: M5 TREND-BEAR with London flush. BUT right edge shows teal bounce from BB lower 1.3505-1.3508. H1 ADX=19 (range-y, not strong bear). H4 massive bull (ADX=42, StRSI=0.02 floor). The flush was profit-taking exhaustion, not structural reversal.
-→ Counter: bounce target BB mid 1.3525-1.3530
-NOW: HELD @1.35132
-RELOAD: LIMIT LONG @1.35040 if price retests the floor (H1 BB lower ~1.351)
-SECOND SHOT: SHORT @1.3535 (BB mid + EMA20 rejection) if bounce fails and starts rolling over
+### USD_JPY — TREND-BEAR
+Chart: Large red bar 07:45 vol=1500 (decisive sell). EMA12 well below EMA20 declining. Price 159.24 at M5 BB lower, M15 StRSI=0.00 = oversold M15 = bounce risk. H4 StRSI=1.00 ceiling with divergence.
+Opportunity: SHORT @EMA20 retest 159.38-159.40. BUT historical WR 33% EV -18/trade = SKIP. Not a good pair to short with this system.
+Note: M15 oversold = bounce incoming. Don't chase SHORT at current 159.24.
 
-### AUD_JPY — CLOSED, watching reload level
-M5 SQUEEZE broke DOWN. H1 TREND-BULL intact. Wait for M5/M15 BEAR to exhaust.
-Reload level: H1 EMA20 ~114.05-114.10 — but ONLY after M5 StRSI exhausts (hits 0.0 + volume dies down) AND M1 JPY bid fades.
-Do NOT re-enter before 08:30Z (London JPY bid window).
+### EUR_USD — SQUEEZE (H4 BULL bias)
+Chart: BB compressed to 10.6pip on M5, 2.2pip on M1. Bounced 1.1772→1.1784. Buyers defending 1.1772 with lower wicks. SQUEEZE about to break.
+LIMIT @1.17750 is structural (BB lower zone). Break UP = unfilled LIMIT + missed profit (acceptable). Break DOWN to 1.17750 = fills into structural support. Correct strategy.
 
-### EUR_USD — SQUEEZE unresolved
-M5 small bounce at BB lower 1.1774. H4 StRSI=0.08 floor. But 3-TF squeeze = can go either way.
-SKIP until resolution. If M5 closes ABOVE 1.1784 with volume = LONG signal for next session.
+### GBP_USD — RANGE/SQUEEZE
+Chart: London flush 1.3526→1.3502, recovery to 1.3523 (EMA20). BB=23.8pip. Mixed small candles. GBP_USD SHORT circuit breaker active (3 losses today). No entry.
 
-### GBP_JPY — TREND-BEAR M5/M15
-M5 flush to 215.28-215.31. H4 mid-bull StRSI=0.31. No Counter-S fired.
-SKIP. Anti-churn cleared but no compelling setup. H4 not at floor.
+### AUD_USD — SQUEEZE → BREAKOUT UP
+Chart: Last candle punched through BB upper 0.7172 with vol surge. H4 ADX=44 DI+=30 BULL. M15 near overbought. Not chasing here (spread 1.4pip vs ATR 2.7pip = 52% cost). RELOAD: LIMIT LONG @EMA20 0.7165 if dip occurs. No entry now.
 
-### USD_JPY, AUD_USD, EUR_JPY
-- USD_JPY: SQUEEZE DOWN. H4 ceiling. No short signal fired specifically. Skip.
-- AUD_USD: SQUEEZE. No edge. Skip.
-- EUR_JPY: M5/M15 BEAR. H4 mid-bull (StRSI=0.68, not at floor). Skip.
+### EUR_JPY — TREND-BEAR M5/M15 within H4 BULL
+Chart: Sharp sell 188.00→187.65, tentative 3 green candles at BB lower then another red bar. Absorption forming but not confirmed. M15 StRSI=0.00 + H1 StRSI=0.06 = extremely oversold.
+Pretrade: C (H4 overbought CCI=151/RSI=75). JPY CPI tomorrow. SKIP. Monitor: if M5 shows 3+ consecutive green bodies above 187.70, reconsider in next session.
+
+### GBP_JPY — SQUEEZE
+Chart: London flush 215.67→215.28, recovery to 215.35 area. Mixed candles. EMA12/20 converging. Not at structural edge. No entry.
+
+### AUD_JPY — SQUEEZE
+Chart: London flush 114.35→114.10, recovery to 114.18-114.22. Small mixed candles at mid-range. LIMIT at 114.08 = H1 EMA20 zone. Let price come to structural level. No chase.
+
+## Tier 2 Scan (full)
+
+USD_JPY: TREND-BEAR | large red bar vol=1500, EMA12 below EMA20 declining, M15 StRSI=0.00 = M15 oversold bounce
+  NOW: SHORT @EMA20 retest 159.38-159.40 if it gets there
+  RELOAD: SHORT @159.40 LIMIT
+  OTHER SIDE: LONG @159.19 (M5 bear wave target) + M1 confirmation
+  → Edge B / Allocation B SKIP — historical EV -18 JPY/trade WR 33% (2382 trades). System consistently loses on this direction. Not entering.
+
+EUR_USD: SQUEEZE | extreme compression M5 BBW=0.00092, M1 BBW=0.00022, buyers holding 1.1772-1.1784
+  NOW: no chase at mid-range. Breakout direction unclear pre-event.
+  RELOAD: LIMIT LONG @1.17750 already placed (id=469013)
+  OTHER SIDE: LIMIT SHORT @1.17880 if SQUEEZE breaks down (thesis would change)
+  → Edge A / Allocation A LIMIT placed ✓
+
+GBP_USD: RANGE | London flush to BB lower 1.35046, recovery to 1.35220. H4 StRSI=0.02 floor.
+  NOW: no chase at 1.35220 (14pip from BB lower, not at structural entry)
+  RELOAD: LIMIT LONG @1.35080 (BB lower zone)
+  OTHER SIDE: SHORT circuit breaker active. LONG pretrade EV -101/trade (avg loss -1,139). Skip LONG LIMIT also.
+  → Edge B / Allocation B SKIP — EV negative, massive avg loss profile despite 66% WR.
+
+AUD_USD: SQUEEZE→BREAKOUT | last candle broke BB upper 0.7172, H4 early bull (StRSI=0.15, strongest +33). Pulled back to 0.71700.
+  NOW: breakout retest but M1 AUD offered. M5 fib N=BEAR on both AUD pairs.
+  RELOAD: LIMIT LONG @EMA20 0.71655 if dip occurs
+  OTHER SIDE: no short (H4 ADX=44 strong bull)
+  → Edge B / Allocation B SKIP — AUD_USD historical negative EV. Fib N=BEAR on M5. Watching for next session.
+
+EUR_JPY: TREND-BEAR M5 | M5 bear wave at 46%, target 187.580. H4 mid-bull (room). M15/H1 StRSI at extreme lows.
+  NOW: LIMIT LONG @187.60 (M5 bear wave target + H1 61.8% Fib zone)
+  RELOAD: LIMIT @187.55 if deeper
+  OTHER SIDE: H4 bull = no short
+  → Edge B / Allocation B SKIP — pretrade C (H4 overbought), JPY M1/M15 bidding pre-CPI, EUR M15 offered. Next session: if M5 shows absorption above 187.70, reconsider.
+
+GBP_JPY: SQUEEZE | mid-range 215.35, BB=25.8pip, spread 2.9pip wide ⚠️.
+  NOW: no entry (not at structural edge, wide spread)
+  RELOAD: LIMIT LONG @215.20 (H1 range lower tested 3x)
+  OTHER SIDE: LIMIT SHORT @215.50 (H1 range upper)
+  → Edge C / Allocation C SKIP — wide spread, mid-range, no edge. Range edges are structural targets.
+
+AUD_JPY: SQUEEZE | London flush to 114.10, recovery to 114.19. LIMIT at 114.08 is H1 Fib 61.8% zone.
+  NOW: no chase at 114.19 (above structural LIMIT)
+  RELOAD: LIMIT LONG @114.080 already placed (id=469018)
+  OTHER SIDE: no short (H4 ADX=47 strongest bull)
+  → Edge A / Allocation A LIMIT placed ✓
+
+## No-trade accountability
+Best untraded express: USD_JPY SHORT @159.40 — SKIP: EV -18 WR 33%, system consistently loses.
+Best missed if LIMITs don't fill: AUD_USD LONG on confirmed H4 breakout (next session if M5 absorption holds)
+Why flat (live): Pre-weekend, pre-CPI (JP 23:30Z), multiple SQUEEZE pairs resolving. LIMITs at structural floors = correct strategy. Not avoidance.
 
 ## Capital Deployment
-Margin: ~12-13% used (GBP_USD 3000u live) + EUR_USD LIMIT pending (3000u @1.17750)
-LIVE NOW:
-  GBP_USD LONG @1.35132 TP=1.35250 SL=1.34990 id=469010 — UPL +124 JPY
-RELOAD:
-  EUR_USD LONG LIMIT @1.17750 TP=1.17880 SL=1.17700 id=469013 GTD=10:30Z — structural H4 floor + SQUEEZE UP
-SECOND SHOT:
-  AUD_JPY: watch 114.05-114.10 for next session reload (structural H1 EMA20, after JPY bid fades)
-Flat-book status: 1 live + 1 reload LIMIT. Active.
-Day: -818 JPY realized + GBP_USD UPL +124 JPY = -694 JPY net. GBP_USD TP fires = -464 JPY day. EUR_USD LIMIT fires + TP = reduces further.
+Margin: 0% live | 2 LONG LIMITs pending ~30% worst case
+LIVE: none
+RELOAD: AUD_JPY LONG @114.080 id=469018 GTD=12:00Z
+SECOND SHOT: EUR_USD LONG @1.17750 id=469013 GTD=10:30Z
+Flat-book: Covered by 2 structural LIMITs at proper levels. Not naked flat.
+Day: -4,602 JPY bot era (-3.7%). Discretionary: +401 JPY. Net: -4,201 JPY.
+Recovery: AUD_JPY fills + rotate (target: +1,500-2,000 JPY from LIMITs). Will not reach 10% day target — protect capital, rotate on fills.
 
 ## Action Tracking
-- Day-start NAV: 123,741.69 JPY (2026-04-17 0:00 UTC)
-- Today's confirmed P&L: -818 JPY (realized) = -0.66%
-- Target: +10% = 12,374 JPY. Currently -818 JPY. Need theme resumption.
-- Last action: 2026-04-17 07:27 UTC — GBP_USD LONG 3000u @1.35132 Counter-S entered
-- Next action trigger:
-  1. GBP_USD TP=1.35250 fires → rotation LIMIT at BB lower reload
-  2. GBP_USD fails below 1.3500 → SL handles or close manually
-  3. Zombie 08:00Z → evaluate hold/close
-  4. AUD_JPY: watch 114.05-114.10 zone for reload after JPY bid fades
-  5. 12:30Z US Building Permits → USD sensitivity moderate
-  6. Tomorrow 23:30Z JP CPI → JPY sensitivity HIGH. No open JPY positions preferred overnight.
-
-## Bot Layer
-Policy: REDUCE_ONLY (expires 08:05Z). 0 bot trades, 0 pending. All pairs PAUSE.
-Coverage target: 0. Book is flat on bot side.
-Trader action: Closed AUD_JPY (-288 JPY), cancelled LIMIT, entered GBP_USD Counter-S manually.
-Next session: evaluate ACTIVE for FAST range lanes on stable pairs if London volatility drops after 08:00Z.
-Need backup task: NO.
-
-## Worker Breadth (reasoning)
-Best trend lane: NONE — all pairs in London flush, no clean trend lane for bot
-Best range lane: EUR_USD (3-TF SQUEEZE may resolve into range after London) — wait for next session
-Coverage seat: NONE — London volatile, all pairs PAUSE
-Broad-market blocker: London volatility + JPY bid synchrony across all crosses
-Hero pair separation: GBP_USD is discretionary Counter-S; bot should not overlap
-
-## Trader/Bot Split
-Trader structural seat: GBP_USD Counter-S LONG (short-horizon tactical bounce)
-Bot harvest lane 1: NONE this session
-Inventory catcher: bot_trade_manager emergency only (bot book is flat, no inventory to catch)
+- Day-start NAV: 123,741.69 JPY (0:00 UTC)
+- Today's confirmed P&L: -4,201 JPY (OANDA) = -3.4% of day-start NAV
+- Current NAV: 120,067 JPY
+- Target: 10%+ = 12,374 JPY. Far behind (bot damage). Focus: clean entries, rotate on fills.
+- Last action: 2026-04-17 08:24 UTC — AUD_JPY LIMIT GTD extended to 12:00Z (new id=469018)
+- Next action triggers:
+  1. AUD_JPY LIMIT @114.08 fills → hold to TP=114.300. If theme confirmed, add second LONG at dip.
+  2. EUR_USD LIMIT @1.17750 fills → hold to TP=1.17880 → rotation LONG reload at 1.17750 again.
+  3. EUR_USD GTD 10:30Z expires if no fill → OK (SQUEEZE broke up without dipping).
+  4. AUD_JPY GTD 12:00Z expires if no fill → extend or re-evaluate.
+  5. US Building Permits 12:30Z → LIMIT-only window near event.
+  6. JP CPI 23:30Z → NO JPY positions by 22:00Z. Close AUD_JPY if open before 21:30Z latest.
+  7. EUR_JPY: Monitor next session. If M5 absorption confirmed (3+ green bodies above 187.70) + M15 StRSI recovered → LIMIT @187.60.
 
 ## Audit Response
-Previous audit predicted EUR_USD LONG @1.1774 dip — agreed structurally but SQUEEZE resolved DOWN not UP at London. Still unresolved. No action yet.
-GBP_USD SHORT (Audit Edge S): Chart confirmed bear at London open. PASSED (base rate fatal; entered LONG Counter-S instead on H4/H1 floor).
-New this session: GBP_USD Counter-S LONG — auditor had marked GBP_USD TREND-BEAR. Disagreeing on near-term: H4+H1 structural floor + profit-taking exhaustion = bounce. Next audit will check.
+Auditor said EUR_JPY BUY @187.65-187.70 (Edge from 07:33Z audit): DISAGREE for now. M15 ADX=41 BEAR still strong. JPY M1/M15 bidding (CPI). Pre-trade C (H4 overbought). Specific contradiction: dual headwind (EUR M15 offered + JPY M15 bid) makes timing poor. Monitor next session.
+Auditor said AUD_JPY BUY @114.05-114.10: AGREE. LIMIT placed at 114.08. ✓
 
 ## Lessons (Recent)
-- AUD_JPY M5 SQUEEZE resolved DOWN (not the anticipated H1 BULL dip): M5/M15 momentum breakdown is the closure trigger. When M15 becomes FRESH BEAR (ADX=36), the Momentum entry has failed regardless of H4/H1 structure.
-- Counter-S GBP_USD: H4+H1 dual floor at structural extreme = valid entry even in TREND-BEAR M5. The key is the H4 StRSI being 0.02 (true floor), not just "oversold."
-- Cancelling AUD_JPY reload LIMIT was correct: M5/M15 BEAR momentum makes reload dangerous without confirmation. Better to re-enter after seeing M5 bounce confirmation.
+- 2026-04-17: CRITICAL — Structural-S SHORT scanner at USD pair BB upper = trap in USD-weakness macro. Bots proved it: 64 trades WR 21.9% -4,602 JPY. Macro > scanner in trending markets.
+- 2026-04-17: USD_JPY SHORT historical EV -18/trade WR 33% (2382 trades). System is NOT good at shorting USD_JPY even with H4 ceiling. Skip unless exceptional macro event.
+- 2026-04-17: Bots removed permanently. All discretionary from here. Architecture change confirmed.
+- 2026-04-17: AUD_JPY LIMIT GTD must be set long enough (originally 09:30Z was too short for a structural level 10pip away).
