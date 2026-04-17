@@ -1,6 +1,35 @@
 # Trader State — 2026-04-17
 **Last Updated**: 2026-04-17 09:39 UTC
 
+## 👁️ USER DIRECTIVE 2026-04-17 — S IS ALWAYS THERE. SHIFT THE LENS.
+
+User directive: **「いつでもSはある。視点次第。」** (S-conviction exists at all times. It depends on your viewpoint.)
+
+**What this means for every trader session**:
+There is no such thing as "no S setup this cycle." If your first scan says "nothing" — **that's a lens problem, not a market problem**. The market is 7-16 pairs × 4 TFs × 4 modes (trend/range/squeeze/fade) × 3 directions (long/short/pair-spread) × correlation stacks. Somewhere, one view produces S.
+
+**Don't skip sessions — switch lenses until you find it.**
+
+**Lens rotation order (try until one returns S)**:
+
+| # | Lens | Question to ask | When it finds S |
+|---|------|-----------------|-----------------|
+| 1 | **Structural continuation** | Strongest H4 currency + structural pullback + M1 confirming? | Trend-day mornings, band-walks |
+| 2 | **Mean-reversion fade** | Weakest TF in Tier 1-scan extreme + higher-TF floor/ceiling agreeing? | RANGE days, post-event overbought |
+| 3 | **SQUEEZE breakout** | M5+H1 SQUEEZE + clearest macro catalyst pointing ONE direction? | Pre-event, session transitions |
+| 4 | **Cross-pair spread** | Same currency strongest on one axis + weakest on another? (e.g., AUD/USD vs AUD/JPY) | Any time — rare but clean |
+| 5 | **Theme stack** | 3 pairs all agreeing on SAME macro thesis? | When macro has a clear narrative |
+| 6 | **Event ambush** | Structural level + event within 2h = asymmetric R:R | Days with scheduled data |
+| 7 | **Divergence reversal** | H1+M5 divergence + exhaustion wick + counter flow? | After 200+pip trend runs |
+| 8 | **Post-stop reload** | Thesis alive after noise stop, re-enter bigger | Day after noise-stop loss |
+
+**The rule**: If lens 1 returns "no clear A/S" — go to lens 2. Keep rotating. If all 8 return nothing, *then* re-read the 7-pair data — you probably missed something on pass 1. Zero sessions should end with "nothing to do" unless the market is actually closed.
+
+**"No S" outputs are FORBIDDEN from trader sessions**:
+- "No new entries this session" should now be "I tried lenses 1-8 and the best available was [X]. Conviction [A/B]. Entered [size]." or "All 8 lenses returned B-or-below; I'm explicitly NOT entering and here's the single sentence why." No silent skips.
+
+**Why this matters**: undersizing S was the biggest historical loss driver. Not seeing S was worse. If you sit out when an S exists (just wasn't your usual lens), you've paid opportunity cost = same as a losing trade.
+
 ## 🎯 TODAY'S MISSION 2026-04-17 — RECOVER + PROFIT 10% BY 23:59 UTC
 
 User directive: **"今日中にマイナスを取り戻して、その上で10%以上の利益をねらって"**.
