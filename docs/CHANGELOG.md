@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-04-17 — range_bot: harvest SQUEEZE via directional-policy + CAUTION-brake bypass
+
+**Problem**: SQUEEZE regime (all 7 pairs compressed) = range_bot's ideal hunting ground, but 6 CLEAN_RANGE opportunities found by `range_scalp_scanner` were being 100% gated off. Three bleeds stacked:
+1. `brake_global_halt` halted all new entries at margin CAUTION (70%), even tight-SL range scalps
+2. `mode_allows_direction` LONG_ONLY / SHORT_ONLY (H4 macro direction guard for trend trades) blocked BB-upper SELLs in H4-bullish pairs, even when range was perfectly oscillating
+3. `mode PAUSE` (director's "LIMIT-only posture" during SQUEEZE) blocked the very strategy that matches SQUEEZE
+
+Result: trend_bot was firing in chop (avg_W +60 JPY, WR 19% today) while the one strategy that belongs in SQUEEZE sat idle.
+
+**Fix**: Surgical bypass on range_bot for confirmed mean-reversion setups. Directional policies were designed for trend trades — they don't apply when the trade itself is symmetric chop harvest.
+
+- `tools/brake_gate.py`: `check(pair, direction, lane="default")` — new `lane` param. `lane="range_scalp"` skips `brake_global_halt` at CAUTION (only PANIC stage halts). Pair-level block and TREND regime block still apply.
+- `tools/range_bot.py`:
+  - Entry loop passes `lane="range_scalp"` to `brake_gate.check`
+  - Added `is_mean_reversion` check: `range_type == CLEAN_RANGE` + `ADX < 25` + `high_hits >= 5` + `low_hits >= 5`. When True, bypasses `LONG_ONLY`/`SHORT_ONLY`/`PAUSE` — but only ever places LIMIT orders, preserving "LIMIT-only posture"
+  - Orphan cancel loop: `range_bot`-tagged LIMITs survive LONG_ONLY/SHORT_ONLY/PAUSE (consistent with entry bypass). Explicit `pending=CANCEL` and PANIC still clear them
+
+**Safety**: PAUSE override is limited to LIMIT orders at BB extremes with structural SL. Explicit director kill (`pending=CANCEL`) still works. TREND regime block still works. Small size, tight SL — loss per shot is bounded.
+
+**Files changed**: `tools/brake_gate.py`, `tools/range_bot.py`
+
+**Test**: `python3 tools/range_bot.py --dry-run` — AUD_USD (previously blocked by `brake_global_halt`) now passes through. EUR_USD S-LONG (previously blocked by PAUSE) now reaches budget check. Both `python3` and `.venv/bin/python` confirmed working.
+
+## 2026-04-16 — bot_policy_guard: respect unexpired trader policies, skip Level3 override
+
+**Bug**: `force_aggression_override()` in `bot_policy_guard.py` was overriding ALL conservative policies (PAUSE/LONG_ONLY/SHORT_ONLY) every 60 seconds whenever margin was NORMAL — including freshly written trader policies that had not yet expired. This caused repeated Level 3 aggression (all 7 pairs BOTH/FAST/EARLY/MaxPending=2) even during worst-hour cold streaks.
+
+**Fix**: Added an expiry check at the start of `force_aggression_override()`. If the policy's `expires_at` is in the future, skip the aggression override entirely. The override now only applies to stale (expired) policies, which was the original design intent.
+
+**Files changed**: `tools/bot_policy_guard.py` (added `datetime` import + expiry check in `force_aggression_override`)
+
+**Test**: `python3 tools/bot_policy_guard.py --dry-run` → "No repair: coverage target already satisfied." Policy stays at trader-intended values.
+
 ## 2026-04-17 — Level 3 aggression: kill all entry filters, let brake handle risk
 
 **Problem after the 4-layer brake landed**: bots were placing 0 entries — the OLD layered filters (poison hour, late-session LIMIT-only, M15 ADX>=22, MTF strict alignment, R:R>=1.0, M1 must be aligned) assumed there was no safety net so they were paranoid.

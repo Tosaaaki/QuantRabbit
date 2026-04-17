@@ -1842,7 +1842,21 @@ def main() -> int:
         else:
             continue
 
-        if not mode_allows_direction(pair_policy["mode"], direction):
+        # Mean-reversion bypass: CLEAN_RANGE + low ADX = symmetric chop harvest.
+        # Directors often set PAUSE / LONG_ONLY in SQUEEZE expecting no trades —
+        # but SQUEEZE is exactly when range_bot earns. Confirmed-clean oscillation
+        # (BB touches 5+ each side, ADX<25) means directional policy is the wrong
+        # frame. Stay LIMIT-only during bypass to respect "LIMIT-only posture".
+        high_hits = float(opp.get("high_hits", 0))
+        low_hits = float(opp.get("low_hits", 0))
+        is_mean_reversion = (
+            opp.get("range_type") == "CLEAN_RANGE"
+            and float(opp.get("adx", 100)) < 25
+            and high_hits >= 5 and low_hits >= 5
+            and pair_policy["mode"] in ("LONG_ONLY", "SHORT_ONLY", "PAUSE")
+        )
+
+        if not mode_allows_direction(pair_policy["mode"], direction) and not is_mean_reversion:
             skipped.append(f"{pair}: policy {pair_policy['mode']} blocks {direction}")
             continue
 
@@ -1850,7 +1864,7 @@ def main() -> int:
             skipped.append(f"{pair}: policy reduce-only")
             continue
 
-        gate_blocked, gate_reason = brake_gate.check(pair, direction)
+        gate_blocked, gate_reason = brake_gate.check(pair, direction, lane="range_scalp")
         if gate_blocked:
             skipped.append(f"{pair}: brake_gate {gate_reason}")
             continue
@@ -2247,6 +2261,11 @@ def main() -> int:
             open_trades, pair, direction, "PASSIVE", pair_policy["ownership"]
         )
         pending_conflicts = discretionary_pending_conflicts(pending_orders, pair, direction)
+        # range_bot-tagged LIMITs may have been placed under the mean-reversion
+        # bypass — don't cancel them for LONG_ONLY/SHORT_ONLY. PAUSE and explicit
+        # pending=CANCEL still apply below.
+        order_tag = get_tag(order)
+        is_range_bot_order = order_tag == BOT_TAG
         if passive_block_reason:
             reason = passive_block_reason
             should_cancel = True
@@ -2259,11 +2278,14 @@ def main() -> int:
         elif pending_conflicts:
             reason = f"discretionary pending entry exists ({describe_pending_conflicts(pending_conflicts)})"
             should_cancel = True
-        elif not mode_allows_direction(pair_policy["mode"], direction):
+        elif not mode_allows_direction(pair_policy["mode"], direction) and not is_range_bot_order:
             reason = f"policy {pair_policy['mode']} blocks {direction}"
             should_cancel = True
-        elif pair_policy["pending"] == "CANCEL" or pair_policy["mode"] == "PAUSE":
-            reason = f"policy {pair_policy['mode']} pending={pair_policy['pending']}"
+        elif pair_policy["pending"] == "CANCEL":
+            reason = f"policy pending=CANCEL"
+            should_cancel = True
+        elif pair_policy["mode"] == "PAUSE" and not is_range_bot_order:
+            reason = f"policy PAUSE pending={pair_policy['pending']}"
             should_cancel = True
         elif pending_slots_used.get(pair, 0) >= pending_cap:
             reason = f"over max_pending {pending_cap}"

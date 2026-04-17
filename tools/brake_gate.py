@@ -80,11 +80,15 @@ def load_regime_state() -> dict | None:
     return _read_state(REGIME_STATE_PATH)
 
 
-def check(pair: str, direction: str) -> tuple[bool, str]:
+def check(pair: str, direction: str, lane: str = "default") -> tuple[bool, str]:
     """Return (blocked, reason). blocked=True means the entry bot must SKIP this entry.
 
+    lane="range_scalp": mean-reversion, tight structural SL, small size.
+      - Ignores global_halt at CAUTION (only PANIC stage halts).
+      - Still respects pair-level block and regime TREND block.
+
     Checked in order:
-      1. brake.global_halt_new — margin >= CAUTION
+      1. brake.global_halt_new — margin >= CAUTION (range_scalp skips unless PANIC)
       2. brake.pair[pair].block_{long|short}_new — imbalance + heavy stranded side
       3. regime.pair[pair].regime == TREND and direction != trend_dir — counter-trend block
     """
@@ -95,7 +99,10 @@ def check(pair: str, direction: str) -> tuple[bool, str]:
     if brake:
         if brake.get("global_halt_new"):
             stage = brake.get("margin_stage", "?")
-            return True, f"brake_global_halt margin_stage={stage}"
+            if lane == "range_scalp" and stage != "PANIC":
+                pass  # range scalp harvests chop at CAUTION — only PANIC halts it
+            else:
+                return True, f"brake_global_halt margin_stage={stage}"
         pair_b = (brake.get("pairs") or {}).get(pair) or {}
         if side == "LONG" and pair_b.get("block_long_new"):
             return True, f"brake_pair {pair_b.get('reason','imbalance')}"
