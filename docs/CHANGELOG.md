@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-17 — range_bot: stop force-closing before TP (the real reason ranges weren't earning)
+
+**Diagnosis after user challenge "レンジで稼げないの？"**: pulled 7-day tag-level P&L. range_bot: 5 trades, WR 20%, **avgW +6 JPY, avgL -137 JPY, R:R 0.04** — wins existed but were microscopic. Hold-time forensics on all 5: 1.4min / 1.5min / 7.2min / 12.6min / 14.9min. None reached TP (BB mid on H1 = typically 60-120 min to fill). 3 of 5 were `MARKET_ORDER_TRADE_CLOSE` (forced close by bot_trade_manager), 2 were SL hits.
+
+**Root cause**: `bot_trade_manager.scalp_timeout_profile` used generic PASSIVE profile for range_bot (FAST: 12/19 min, BALANCED: 20/32 min). Designed for scalp-worker lanes that must turn over fast. range_bot's TP horizon is an order of magnitude longer. **Every range_bot trade was force-closed before its TP became reachable.**
+
+**Fix**: `tools/bot_trade_manager.py` — new range_bot-specific timeout profile. `scalp_timeout_profile()` checks tag first; if tag in {range_bot, range_bot_market}, returns `{stale_min: 75, full_close_min: 150, min_progress: 0.35}`. Matches H1 BB-mid fill horizon. Scalp profiles unchanged for trend_bot.
+
+**Expected effect**: range_bot trades now allowed to reach TP. If the strategy's edge is real (BB extremes mean-revert to BB mid), it should show up in R:R. If it's not, this will prove the strategy is broken (a faster diagnosis than the current noise).
+
+**Files changed**: `tools/bot_trade_manager.py`
+
 ## 2026-04-17 — 3-layer fix for bot-churn spiral (SQUEEZE lockout + safe-harvest + extended S-only)
 
 **Incident**: On 2026-04-17, trend_bot stacked positions in SQUEEZE regime (all 7+ pairs compressed). Extended universe (NZD/AUD_NZD/EUR_CHF/EUR_GBP/NZD_JPY) posted 0% WR. Margin reached 92.8% → `inventory_brake` panic-closed all worker positions. Director set global `REDUCE_ONLY` — which also locked out `range_bot`, the one strategy that belongs in SQUEEZE. Net 2026-04-17: -3,462 JPY, WR 17.1% across 41 trades.

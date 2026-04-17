@@ -82,6 +82,14 @@ MICRO_MIN_PROGRESS = 0.20
 FAST_MIN_PROGRESS = 0.30
 BALANCED_MIN_PROGRESS = 0.25
 
+# range_bot-specific profile: TP = BB mid. H1 range = 60-120 min to fill.
+# Generic PASSIVE timeout (32 min) force-closes before TP reachable. Diagnosis
+# 2026-04-17: 5/5 range_bot trades closed in 1.4-14.9 min, TP reached 0 times.
+# R:R dropped to 0.04 (wins +6 JPY, losses -137 JPY) because wins never realized.
+RANGE_BOT_STALE_MIN = 75
+RANGE_BOT_FULL_CLOSE_MIN = 150
+RANGE_BOT_MIN_PROGRESS = 0.35
+
 
 def append_log(line: str) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
@@ -164,6 +172,13 @@ def trade_margin(trade: dict, prices: dict) -> float:
 
 def scalp_timeout_profile(tag: str, tempo: str) -> dict:
     tempo = str(tempo or "BALANCED").upper()
+    # range_bot: slow mean-reversion to BB mid. Never use scalp timeouts.
+    if tag in {"range_bot", "range_bot_market"}:
+        return {
+            "stale_min": RANGE_BOT_STALE_MIN,
+            "full_close_min": RANGE_BOT_FULL_CLOSE_MIN,
+            "min_progress": RANGE_BOT_MIN_PROGRESS,
+        }
     market_tag = tag in {BOT_MARKET_TAG, "trend_bot_market"}
     if market_tag:
         if tempo == "MICRO":
