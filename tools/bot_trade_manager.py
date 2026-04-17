@@ -596,16 +596,26 @@ def main() -> int:
         pair_policy = get_pair_policy(policy, pair)
         created = parse_oanda_time(order.get("createTime"))
         age_min = (now_utc - created).total_seconds() / 60 if created else 999
+        order_tag = get_tag(order)
+        # range_bot LIMITs sit at BB extremes (far from live price) with
+        # structural SLs 3-5pip wide. Projected-margin panic reaping kills
+        # them before they can be tested — 2026-04-17 incident: 18 range_bot
+        # LIMITs placed, all cancelled in 25min by projected_pct>90%, 0 fills,
+        # 0 realized P&L. Exempt range_bot from projected_pct reaping; other
+        # cancellation paths still apply.
+        is_range_bot_limit = order_tag in {"range_bot", "range_bot_market"}
         reason_note = ""
         if state == "ROLLOVER":
             reason_note = "rollover pending cleanup"
         elif policy["global_status"] == "PAUSE_ALL":
             reason_note = "policy pause-all"
-        elif pair_policy["pending"] == "CANCEL" or pair_policy["mode"] == "PAUSE":
-            reason_note = f"policy {pair_policy['mode']} pending={pair_policy['pending']}"
+        elif pair_policy["pending"] == "CANCEL":
+            reason_note = "policy pending=CANCEL"
+        elif pair_policy["mode"] == "PAUSE" and not is_range_bot_limit:
+            reason_note = f"policy PAUSE pending={pair_policy['pending']}"
         elif age_min > stale_pending_min:
             reason_note = f"stale backup {age_min:.0f}m"
-        elif projected_pct > panic_cap:
+        elif projected_pct > panic_cap and not is_range_bot_limit:
             reason_note = f"projected margin {projected_pct*100:.1f}% > {panic_cap*100:.0f}%"
         elif pair in {trade.get('instrument') for trade in bot_trades}:
             reason_note = "pair already filled by bot"

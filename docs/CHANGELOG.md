@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-17 — bot_trade_manager: stop reaping range_bot LIMITs (the *actual* "nothing fills" cause)
+
+**Forensic dig after user "深掘りして"**: reviewed `logs/live_trade_log.txt` — turns out range_bot WAS firing after the earlier fixes (18 LIMITs placed between 02:39-03:00 UTC: EUR_CHF×15, EUR_GBP×1, NZD_USD×2). Zero filled. All cancelled within 25 minutes by `bot_trade_manager`:
+
+```
+reason=projected margin 93.3% > 90%   ← 2 LIMITs
+reason=policy PAUSE pending=CANCEL    ← many EUR_CHF
+reason=trader_worker_policy           ← early EUR_CHF
+```
+
+**Why this is wrong for range_bot**:
+- range_bot LIMITs sit at BB extremes (far from live price). Low simultaneous-fill probability.
+- Structural SLs 3-5pip wide. Actually-filled risk per LIMIT is small.
+- `projected_pct` treats every pending LIMIT as "will fill immediately" → inflates margin estimate → kills range_bot first.
+- PAUSE cancellation for range_bot contradicts the range_bot.py placement bypass shipped in the earlier commit (which allows CLEAN_RANGE to bypass PAUSE for LIMIT-only). bot_trade_manager was canceling what range_bot had just placed.
+
+**Fix**: `tools/bot_trade_manager.py` pending cleanup:
+- Added `is_range_bot_limit = order_tag in {"range_bot", "range_bot_market"}`.
+- `projected_pct > panic_cap` cancellation: exempt range_bot LIMITs (risk is bounded by their own tight SL).
+- PAUSE mode cancellation: exempt range_bot LIMITs (they're mean-reversion, directional mode doesn't apply). Explicit `pending=CANCEL` director kill still cancels (respects explicit intent).
+- Rollover, staleness, pair-already-filled paths unchanged — those safety properties still apply.
+
+**Expected effect**: range_bot LIMITs now survive long enough to be tested. If the strategy has edge, trades fill and reach TP (now allowed by the earlier timeout fix). If not, SL-based losses will prove the strategy is broken — first real signal possible.
+
+**Files changed**: `tools/bot_trade_manager.py`
+
 ## 2026-04-17 — range_bot: stop force-closing before TP (the real reason ranges weren't earning)
 
 **Diagnosis after user challenge "レンジで稼げないの？"**: pulled 7-day tag-level P&L. range_bot: 5 trades, WR 20%, **avgW +6 JPY, avgL -137 JPY, R:R 0.04** — wins existed but were microscopic. Hold-time forensics on all 5: 1.4min / 1.5min / 7.2min / 12.6min / 14.9min. None reached TP (BB mid on H1 = typically 60-120 min to fill). 3 of 5 were `MARKET_ORDER_TRADE_CLOSE` (forced close by bot_trade_manager), 2 were SL hits.
