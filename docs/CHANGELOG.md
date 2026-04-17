@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-04-17 — 3-layer fix for bot-churn spiral (SQUEEZE lockout + safe-harvest + extended S-only)
+
+**Incident**: On 2026-04-17, trend_bot stacked positions in SQUEEZE regime (all 7+ pairs compressed). Extended universe (NZD/AUD_NZD/EUR_CHF/EUR_GBP/NZD_JPY) posted 0% WR. Margin reached 92.8% → `inventory_brake` panic-closed all worker positions. Director set global `REDUCE_ONLY` — which also locked out `range_bot`, the one strategy that belongs in SQUEEZE. Net 2026-04-17: -3,462 JPY, WR 17.1% across 41 trades.
+
+**Root cause**: trend_bot and range_bot share the same safety gates. trend_bot's self-immolation (entering SQUEEZE false-breakouts it can't win) triggers defenses that disable range_bot. The two strategies fight each other.
+
+**Fix**: 3 surgical layers.
+
+**Layer 1 — trend_bot SQUEEZE lockout** (root-cause block on the bleed source):
+- `tools/trend_bot.py`: new `_is_tf_squeeze()` helper (BB width < KC width × 0.9). `scan_trends()` skips pairs where both M5 AND H1 are in SQUEEZE. These are range_bot's territory — momentum continuation has no signal there.
+- Logged as "Squeeze lockout: ... → range_bot territory" in output.
+
+**Layer 2 — range_bot REDUCE_ONLY safe-harvest** (unlock paralysis after trend_bot blow-ups):
+- `tools/range_bot.py`: new `safe_harvest_mode` flag = (global REDUCE_ONLY AND margin < 60%). When active, `is_mean_reversion` opportunities pass the reduce-only gate. MARKET orders force-downgrade to LIMIT (no chasing under defense).
+- `is_mean_reversion` widened to accept FORMING_RANGE/SEMI_RANGE with A/S conviction + ADX<27 (prior was CLEAN_RANGE only). Captures more chop-harvest opportunities while excluding B-confidence noise.
+
+**Layer 3 — trend_bot extended universe S-only** (stop the bleed at source):
+- `tools/trend_bot.py`: new `STANDARD_7_PAIRS` constant (USD_JPY, EUR_USD, GBP_USD, AUD_USD, EUR_JPY, GBP_JPY, AUD_JPY). For pairs outside this set, require `conviction == "S"` to proceed. B and A rejected. Directly blocks the extended-universe churn (CAD_JPY, NZD_JPY, AUD_NZD, EUR_CHF, EUR_GBP, NZD_USD, USD_CHF) unless signal is overwhelming.
+
+**Smoke tests**:
+- `python3 tools/range_bot.py --dry-run`: 1 EUR_CHF S-LONG LIMIT 4500u @ BB lower placed (first real post-crash placement — previously 100% blocked).
+- `python3 tools/trend_bot.py --dry-run`: "Squeeze lockout: AUD_USD, NZD_USD → range_bot territory". Trends filtered 7→3 after extended S-only gate.
+- Both `python3` and `.venv/bin/python` verified.
+
+**Files changed**: `tools/range_bot.py`, `tools/trend_bot.py`, `tools/brake_gate.py` (earlier commit, rolled into context).
+
 ## 2026-04-17 — range_bot: harvest SQUEEZE via directional-policy + CAUTION-brake bypass
 
 **Problem**: SQUEEZE regime (all 7 pairs compressed) = range_bot's ideal hunting ground, but 6 CLEAN_RANGE opportunities found by `range_scalp_scanner` were being 100% gated off. Three bleeds stacked:

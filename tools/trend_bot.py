@@ -62,6 +62,15 @@ from range_bot import (
     worker_disaster_stop,
 )
 from range_scalp_scanner import PAIRS, TYPICAL_SPREADS, get_spread, pip_size, to_pips
+
+# Core 7 pairs from trader's primary universe. Outside these, trend_bot has no
+# demonstrated edge (extended universe WR=0% on 2026-04-17). Kept here rather
+# than in range_scalp_scanner because trend_bot's universe gate is different
+# from range_bot's (ranges can happen anywhere; trends need liquid pairs).
+STANDARD_7_PAIRS = frozenset({
+    "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD",
+    "EUR_JPY", "GBP_JPY", "AUD_JPY",
+})
 import brake_gate
 import thesis_gate
 from worker_target_race import (
@@ -666,13 +675,38 @@ def build_plan(pair: str, direction: str, prices: dict, m5_data: dict, h1_data: 
     }
 
 
+def _is_tf_squeeze(tf_data: dict | None) -> bool:
+    """BB inside KC (BB width < KC width × 0.9) = volatility compression."""
+    if not tf_data:
+        return False
+    bb_upper = tf_data.get("bb_upper", 0) or 0
+    bb_lower = tf_data.get("bb_lower", 0) or 0
+    kc_width = tf_data.get("kc_width", 0) or 0
+    bbw = bb_upper - bb_lower
+    if bbw <= 0:
+        return False
+    if kc_width > 0:
+        return bbw < kc_width * 0.9
+    return bbw < 0.0015
+
+
 def scan_trends(prices: dict) -> list[dict]:
     results = []
     all_technicals = {pair: load_technicals(pair) for pair in PAIRS}
     pulse = build_currency_pulse(all_technicals)
+    squeeze_skips = []
 
     for pair in PAIRS:
         tfs = all_technicals.get(pair, {})
+        # SQUEEZE LOCKOUT: trend_bot is for momentum continuation. Both M5 AND H1
+        # compressed (BB inside KC) = no trend to continue, only false breakouts.
+        # This is the regime where today's bot-churn (-3,462 JPY, WR 17%) came
+        # from. Let range_bot handle these pairs.
+        m5_sq = _is_tf_squeeze(tfs.get("M5"))
+        h1_sq = _is_tf_squeeze(tfs.get("H1"))
+        if m5_sq and h1_sq:
+            squeeze_skips.append(pair)
+            continue
         h1 = assess_tf_trend("H1", tfs.get("H1"), TREND_H1_ADX_MIN, TREND_H1_DI_GAP)
         m15 = assess_tf_trend("M15", tfs.get("M15"), TREND_M15_ADX_MIN, TREND_M15_DI_GAP)
         # Level 3: accept if EITHER H1 or M15 is aligned. On MTF conflict, follow the stronger score.
@@ -703,6 +737,12 @@ def scan_trends(prices: dict) -> list[dict]:
 
         conviction = conviction_from_scores(h1, m15, m5_setup, m1, currency_ctx)
         if conviction is None:
+            continue
+        # Layer 3: extended universe (non-7-standard) lost 0% WR across NZD/
+        # AUD_NZD/EUR_CHF/EUR_GBP/NZD_JPY on 2026-04-17. Thin liquidity +
+        # weaker correlation reads = trend_bot has no edge there. Require
+        # S-conviction only for non-standard pairs.
+        if pair not in STANDARD_7_PAIRS and conviction != "S":
             continue
 
         balanced_plan = build_plan(
@@ -743,6 +783,8 @@ def scan_trends(prices: dict) -> list[dict]:
             "currency_score": round(currency_ctx["score"], 2),
         })
 
+    if squeeze_skips:
+        print(f"  Squeeze lockout (M5+H1 BB inside KC): {', '.join(squeeze_skips)} → range_bot territory")
     order = {"S": 0, "A": 1, "B": 2}
     results.sort(key=lambda item: (order.get(item["conviction"], 9), -item["signal_strength"]))
     return results

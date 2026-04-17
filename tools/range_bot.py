@@ -1746,6 +1746,16 @@ def main() -> int:
     allow_new_entries = global_status_allows_new_entries(policy)
     max_pending_age_min = int(policy.get("max_pending_age_min", PENDING_KEEP_MAX_AGE_MIN))
 
+    # Safe-harvest: when director went REDUCE_ONLY because trend_bot blew up
+    # (panic_margin), margin has now been force-reduced. Range_bot can still
+    # harvest CLEAN_RANGE mean-reversion at LIMIT-only with tight structural SL
+    # without recreating risk. Only below 60% margin (well clear of panic=90%).
+    safe_harvest_mode = (
+        not allow_new_entries
+        and policy['global_status'] == "REDUCE_ONLY"
+        and margin_pct < 60.0
+    )
+
     print(f"NAV: {nav:,.0f} JPY | Margin: {margin_pct:.1f}%")
     print(
         f"Policy: {policy['global_status']} | projected_cap={policy['projected_margin_cap']:.2f} "
@@ -1754,7 +1764,10 @@ def main() -> int:
     if policy_notes:
         print(f"Policy notes: {'; '.join(policy_notes)}")
     if not allow_new_entries:
-        print("Policy blocks new entries: reduce-only mode")
+        if safe_harvest_mode:
+            print(f"Policy reduce-only; SAFE_HARVEST active (margin {margin_pct:.1f}% < 60) — CLEAN_RANGE LIMITs only")
+        else:
+            print("Policy blocks new entries: reduce-only mode")
 
     open_trades = fetch_open_trades(token, acct)
     open_pairs = {trade.get("instrument", "?") for trade in open_trades}
@@ -1842,17 +1855,27 @@ def main() -> int:
         else:
             continue
 
-        # Mean-reversion bypass: CLEAN_RANGE + low ADX = symmetric chop harvest.
-        # Directors often set PAUSE / LONG_ONLY in SQUEEZE expecting no trades —
-        # but SQUEEZE is exactly when range_bot earns. Confirmed-clean oscillation
-        # (BB touches 5+ each side, ADX<25) means directional policy is the wrong
-        # frame. Stay LIMIT-only during bypass to respect "LIMIT-only posture".
+        # Mean-reversion bypass: range_bot harvests chop while directional policies
+        # (LONG_ONLY / SHORT_ONLY / PAUSE) are really H4-macro trend guards.
+        # Accept CLEAN_RANGE (verified oscillation) or FORMING_RANGE with A/S
+        # conviction (pattern still forming but signal strong). ADX<25 rules out
+        # trending structure in both cases.
         high_hits = float(opp.get("high_hits", 0))
         low_hits = float(opp.get("low_hits", 0))
-        is_mean_reversion = (
-            opp.get("range_type") == "CLEAN_RANGE"
-            and float(opp.get("adx", 100)) < 25
+        rtype = opp.get("range_type")
+        adx_val = float(opp.get("adx", 100))
+        is_clean = (
+            rtype == "CLEAN_RANGE"
+            and adx_val < 25
             and high_hits >= 5 and low_hits >= 5
+        )
+        is_forming_high_conv = (
+            rtype in ("FORMING_RANGE", "SEMI_RANGE")
+            and adx_val < 27
+            and conv in ("S", "A")
+        )
+        is_mean_reversion = (
+            (is_clean or is_forming_high_conv)
             and pair_policy["mode"] in ("LONG_ONLY", "SHORT_ONLY", "PAUSE")
         )
 
@@ -1860,7 +1883,7 @@ def main() -> int:
             skipped.append(f"{pair}: policy {pair_policy['mode']} blocks {direction}")
             continue
 
-        if not allow_new_entries:
+        if not allow_new_entries and not (safe_harvest_mode and is_mean_reversion):
             skipped.append(f"{pair}: policy reduce-only")
             continue
 
@@ -1912,6 +1935,23 @@ def main() -> int:
         execution_entry = order_plan["entry"]
         structural_sl = float(order_plan.get("sl", sl))
         sl = structural_sl
+
+        # Safe-harvest is LIMIT-only — never chase market under REDUCE_ONLY.
+        if order_type == "MARKET" and safe_harvest_mode and is_mean_reversion:
+            fallback_tp_pips, fallback_sl_pips, fallback_rr = trade_metrics(direction, entry, tp1, sl, pair)
+            order_plan = {
+                "order_type": "LIMIT",
+                "entry": entry,
+                "tag": BOT_TAG,
+                "reason": f"safe_harvest LIMIT-only | {order_plan['reason']}",
+                "tp_pips": fallback_tp_pips,
+                "sl_pips": fallback_sl_pips,
+                "rr": fallback_rr,
+                "current_price": order_plan["current_price"],
+                "sl": sl,
+            }
+            order_type = "LIMIT"
+            execution_entry = entry
 
         if order_type == "MARKET" and not pair_policy["allow_market"]:
             fallback_tp_pips, fallback_sl_pips, fallback_rr = trade_metrics(direction, entry, tp1, sl, pair)
