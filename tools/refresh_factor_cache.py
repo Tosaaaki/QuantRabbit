@@ -12,6 +12,7 @@ Usage:
 """
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -26,7 +27,14 @@ except ImportError:
         import tomli  # backport
     except ImportError:
         tomli = None  # fallback to manual parsing
-import pandas as pd
+try:
+    import pandas as pd
+except ModuleNotFoundError:
+    venv_python = ROOT / ".venv" / "bin" / "python"
+    current_python = Path(sys.executable).resolve()
+    if venv_python.exists() and current_python != venv_python.resolve():
+        os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
+    raise
 try:
     from indicators.factor_cache import on_candle, all_factors
 except ImportError:
@@ -35,7 +43,12 @@ except ImportError:
 from indicators.calc_core import IndicatorEngine
 
 OANDA_BASE = "https://api-fxtrade.oanda.com"
-ALL_PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
+ALL_PAIRS = [
+    "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY",
+    "NZD_USD", "USD_CAD", "USD_CHF", "EUR_GBP",
+    "NZD_JPY", "CAD_JPY",
+    "EUR_CHF", "AUD_NZD", "AUD_CAD",
+]
 
 EXPORT_KEYS = [
     "rsi", "atr", "atr_pips", "adx", "plus_di", "minus_di", "bbw",

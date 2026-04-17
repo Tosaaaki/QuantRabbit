@@ -36,7 +36,12 @@ if not (_MAIN_ROOT / "config" / "env.toml").exists():
 
 sys.path.insert(0, str(ROOT / "tools"))
 
-PAIRS = ("USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY")
+PAIRS = (
+    "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY",
+    "NZD_USD", "USD_CAD", "USD_CHF", "EUR_GBP",
+    "NZD_JPY", "CAD_JPY",
+    "EUR_CHF", "AUD_NZD", "AUD_CAD",
+)
 REGIME_STATE_PATH = _MAIN_ROOT / "logs" / "bot_regime_state.json"
 
 # TREND thresholds (must hit ALL on the chosen TF)

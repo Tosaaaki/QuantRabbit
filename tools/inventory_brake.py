@@ -45,7 +45,12 @@ from range_bot import (
     is_entry_pending_order, oanda_api,
 )
 
-PAIRS = ("USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY")
+PAIRS = (
+    "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY",
+    "NZD_USD", "USD_CAD", "USD_CHF", "EUR_GBP",
+    "NZD_JPY", "CAD_JPY",
+    "EUR_CHF", "AUD_NZD", "AUD_CAD",
+)
 BOT_TAGS = {BOT_TAG, BOT_MARKET_TAG, "trend_bot_market"}
 
 BRAKE_STATE_PATH = _MAIN_ROOT / "logs" / "bot_brake_state.json"

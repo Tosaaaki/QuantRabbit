@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from bot_policy import (
@@ -270,7 +270,21 @@ def force_aggression_override(policy: dict) -> tuple[dict, bool]:
 
     Returns (mutated_policy, changed). When margin is past CAUTION, leaves
     policy alone so the trader's defensive writes still apply.
+
+    CRITICAL: If the trader wrote a fresh policy that has not yet expired,
+    respect it unconditionally. The aggression override only applies to stale
+    (expired) policies — it must never fight a live trader write.
     """
+    now = utc_now()
+    expires_str = policy.get("expires_at", "")
+    if expires_str:
+        try:
+            expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+            if expires_at > now:
+                return policy, False  # Policy is fresh — skip aggression override
+        except Exception:
+            pass
+
     brake_path = Path(__file__).resolve().parent.parent / "logs" / "bot_brake_state.json"
     if not brake_path.exists():
         return policy, False
@@ -297,6 +311,9 @@ def force_aggression_override(policy: dict) -> tuple[dict, bool]:
     for pair_name in (
         "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD",
         "EUR_JPY", "GBP_JPY", "AUD_JPY",
+        "NZD_USD", "USD_CAD", "USD_CHF", "EUR_GBP",
+        "NZD_JPY", "CAD_JPY",
+        "EUR_CHF", "AUD_NZD", "AUD_CAD",
     ):
         cur = pairs.get(pair_name, {}) or {}
         # Only override if PAUSE or LONG_ONLY/SHORT_ONLY (defensive single-side)

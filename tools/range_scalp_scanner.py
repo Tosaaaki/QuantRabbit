@@ -24,18 +24,33 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
+PAIRS = [
+    # Original 7 majors + JPY crosses
+    "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY",
+    # Added: NZD/CAD/CHF universe (spread < 3.0 pip verified)
+    "NZD_USD", "USD_CAD", "USD_CHF", "EUR_GBP",
+    "NZD_JPY", "CAD_JPY",
+    "EUR_CHF", "AUD_NZD", "AUD_CAD",
+]
 
 # Typical spreads in pips (conservative estimates — actual may vary by session)
 TYPICAL_SPREADS = {
     "USD_JPY": 0.4, "EUR_USD": 0.6, "GBP_USD": 0.9, "AUD_USD": 0.7,
     "EUR_JPY": 1.2, "GBP_JPY": 2.0, "AUD_JPY": 1.0,
+    # Added pairs (live spreads measured 2026-04-17)
+    "NZD_USD": 1.5, "USD_CAD": 2.0, "USD_CHF": 1.6, "EUR_GBP": 1.5,
+    "NZD_JPY": 3.0, "CAD_JPY": 2.4,
+    "EUR_CHF": 1.9, "AUD_NZD": 2.5, "AUD_CAD": 2.7,
 }
 
 # JPY per pip for sizing calculations (approximate at current rates)
 JPY_PER_PIP_10K = {
     "USD_JPY": 100, "EUR_USD": 159, "GBP_USD": 159, "AUD_USD": 159,
     "EUR_JPY": 100, "GBP_JPY": 100, "AUD_JPY": 100,
+    # Added pairs (approximate at current rates)
+    "NZD_USD": 159, "USD_CAD": 116, "USD_CHF": 203, "EUR_GBP": 187,
+    "NZD_JPY": 100, "CAD_JPY": 100,
+    "EUR_CHF": 203, "AUD_NZD": 130, "AUD_CAD": 116,
 }
 
 

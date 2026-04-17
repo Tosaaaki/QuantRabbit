@@ -134,15 +134,32 @@ PAIR_CURRENCIES = {
     "EUR_JPY": ("EUR", "JPY"),
     "GBP_JPY": ("GBP", "JPY"),
     "AUD_JPY": ("AUD", "JPY"),
+    # Added pairs
+    "NZD_USD": ("NZD", "USD"),
+    "USD_CAD": ("USD", "CAD"),
+    "USD_CHF": ("USD", "CHF"),
+    "EUR_GBP": ("EUR", "GBP"),
+    "NZD_JPY": ("NZD", "JPY"),
+    "CAD_JPY": ("CAD", "JPY"),
+    "EUR_CHF": ("EUR", "CHF"),
+    "AUD_NZD": ("AUD", "NZD"),
+    "AUD_CAD": ("AUD", "CAD"),
 }
 # Price decimal places per pair
 PRICE_DECIMALS = {
     "USD_JPY": 3, "EUR_USD": 5, "GBP_USD": 5, "AUD_USD": 5,
     "EUR_JPY": 3, "GBP_JPY": 3, "AUD_JPY": 3,
+    "NZD_USD": 5, "USD_CAD": 5, "USD_CHF": 5, "EUR_GBP": 5,
+    "NZD_JPY": 3, "CAD_JPY": 3,
+    "EUR_CHF": 5, "AUD_NZD": 5, "AUD_CAD": 5,
 }
 LEVERAGE = {
     "USD_JPY": 25, "EUR_USD": 25, "GBP_USD": 25, "AUD_USD": 20,
     "EUR_JPY": 25, "GBP_JPY": 25, "AUD_JPY": 25,
+    # Added pairs (Japan retail leverage cap = 25; AUD/NZD pairs sometimes 20)
+    "NZD_USD": 20, "USD_CAD": 25, "USD_CHF": 25, "EUR_GBP": 25,
+    "NZD_JPY": 20, "CAD_JPY": 25,
+    "EUR_CHF": 25, "AUD_NZD": 20, "AUD_CAD": 20,
 }
 LOG_FILE = _MAIN_ROOT / "logs" / "live_trade_log.txt"
 REENTRY_COOLDOWN_BY_TEMPO = {"BALANCED": 8, "FAST": 4, "MICRO": 1}  # MICRO was 2 — faster re-entry
@@ -897,7 +914,7 @@ def assess_m1_micro_context(direction: str, m1_data: dict | None) -> dict:
 
 
 def build_currency_pulse(all_technicals: dict[str, dict]) -> dict[str, dict[str, float]]:
-    currencies = ["USD", "JPY", "EUR", "GBP", "AUD"]
+    currencies = ["USD", "JPY", "EUR", "GBP", "AUD", "NZD", "CAD", "CHF"]
     signals = {ccy: {tf: [] for tf in PULSE_TFS} for ccy in currencies}
 
     for pair, (base, quote) in PAIR_CURRENCIES.items():
