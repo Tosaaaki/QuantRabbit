@@ -63,6 +63,7 @@ from range_bot import (
 )
 from range_scalp_scanner import PAIRS, TYPICAL_SPREADS, get_spread, pip_size, to_pips
 import brake_gate
+import thesis_gate
 from worker_target_race import (
     build_plan as build_target_race_plan,
     encode_comment as encode_target_race_comment,
@@ -96,13 +97,13 @@ TREND_FOLLOWTHROUGH_TP_M5_ATR = 2.10
 TREND_FOLLOWTHROUGH_TP_H1_ATR = 0.85
 TREND_MIN_TP_RR_MULTIPLE = 1.35
 TREND_FAST_TP_RR_MULTIPLE = 1.10
-TREND_FAST_TP_M5_ATR = 1.60
-TREND_FAST_TP_H1_ATR = 0.55
+TREND_FAST_TP_M5_ATR = 2.20  # was 1.60 — wider TP, fewer spread-eaten losses
+TREND_FAST_TP_H1_ATR = 0.80  # was 0.55
 TREND_FAST_MIN_RR = 0.65  # was 1.00 — Level 3
 TREND_FAST_ALLOWED_M1_STATES = {"aligned", "reload", "mixed"}  # Level 3: also allow mixed
 TREND_MICRO_TP_RR_MULTIPLE = 1.05
-TREND_MICRO_TP_M5_ATR = 1.20  # was 1.35 — tighter TP for faster MICRO exits
-TREND_MICRO_TP_H1_ATR = 0.40  # was 0.45
+TREND_MICRO_TP_M5_ATR = 1.80  # was 1.20 — wider TP for cleaner wins
+TREND_MICRO_TP_H1_ATR = 0.65  # was 0.40
 TREND_MICRO_MIN_RR = 0.70  # was 1.05 — Level 3
 TREND_MICRO_ALLOWED_M1_STATES = {"aligned", "reload", "mixed"}  # Level 3
 TREND_MAX_PAIR_TRADES = 4  # was 2 — Level 3
@@ -821,6 +822,10 @@ def main() -> int:
         gate_blocked, gate_reason = brake_gate.check(pair, direction)
         if gate_blocked:
             skipped.append(f"{pair}: brake_gate {gate_reason}")
+            continue
+        thesis_blocked, thesis_reason = thesis_gate.check(pair, direction)
+        if thesis_blocked:
+            skipped.append(f"{pair}: {thesis_reason}")
             continue
         if tempo == "FAST" and opp.get("m1_state") not in TREND_FAST_ALLOWED_M1_STATES:
             skipped.append(
