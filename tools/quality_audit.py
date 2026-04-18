@@ -8,7 +8,7 @@ Ground truth = OANDA API (not state.md regex parsing).
 Output:
   - logs/quality_audit.md  (human-readable, for trader + auditor)
   - logs/quality_audit.json (machine-readable, for daily-review)
-  - logs/audit_history.jsonl (append-only, for outcome tracking)
+  - logs/audit_history.jsonl (append-only scanner facts; the final audit prompt appends narrative picks)
   - stdout: summary for the task runner
 
 Exit code: 0 = no findings, 1 = findings present (auditor decides severity)
@@ -21,6 +21,8 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from config_loader import get_oanda_config
 
 ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = str(ROOT / ".venv" / "bin" / "python")
@@ -38,18 +40,12 @@ PIP_MULT = {
 
 
 def load_config():
-    cfg = {}
-    for line in open(ROOT / "config" / "env.toml"):
-        line = line.strip()
-        if "=" in line and not line.startswith("#"):
-            k, v = line.split("=", 1)
-            cfg[k.strip()] = v.strip().strip('"')
-    return cfg
+    return get_oanda_config()
 
 
-def oanda_api(path, token, acct):
-    url = f"https://api-fxtrade.oanda.com{path}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+def oanda_api(path, cfg):
+    url = f"{cfg['oanda_base_url']}{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {cfg['oanda_token']}"})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
 
@@ -472,28 +468,126 @@ def gather_rule_flags(state_text: str, s_candidates: list) -> list[dict]:
     return flags
 
 
-def self_check(trades: list, state_text: str) -> dict:
+def parse_state_positions(state_text: str) -> list[dict]:
+    """Parse held positions from state.md across current and legacy formats."""
+    positions = []
+    seen = set()
+    lines = state_text.splitlines()
+
+    # Current canonical format: open positions live under "## Positions (Current)".
+    in_positions = False
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("## "):
+            in_positions = line.lower().startswith("## positions")
+            continue
+        if not in_positions or not line:
+            continue
+        m = re.match(r"^([A-Z]{3}_[A-Z]{3})\s+(LONG|SHORT)\s+[\d,]+u\b", line)
+        if not m or "LIMIT" in line.upper():
+            continue
+        key = (m.group(1), m.group(2))
+        if key in seen:
+            continue
+        seen.add(key)
+        positions.append({
+            "pair": m.group(1),
+            "direction": m.group(2),
+            "line": line,
+            "source": "positions_current",
+        })
+
+    if positions:
+        return positions
+
+    # Legacy state.md format used position headers like "### EUR_USD LONG ..."
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line.startswith("###") or "LIMIT" in line.upper():
+            continue
+        m = re.match(r"^###\s+(?:Position:\s+)?([A-Z]{3}_[A-Z]{3})\s+(LONG|SHORT)\b", line)
+        if not m:
+            continue
+        key = (m.group(1), m.group(2))
+        if key in seen:
+            continue
+        seen.add(key)
+        positions.append({
+            "pair": m.group(1),
+            "direction": m.group(2),
+            "line": line,
+            "source": "legacy_header",
+        })
+
+    return positions
+
+
+def self_check(positions: list[dict], state_text: str) -> dict:
     """Verify OANDA ground truth vs state.md parsed positions."""
-    oanda_pairs = {t["instrument"] for t in trades}
+    oanda_pairs = {p["pair"] for p in positions}
+    parsed_state_positions = parse_state_positions(state_text)
+    parsed_pairs = {p["pair"] for p in parsed_state_positions}
 
-    # Parse state.md positions (multiple format patterns), excluding LIMIT orders
-    parsed_pairs = set()
-    for m in re.finditer(r"###\s+(\w+_\w+)\s+(?:LONG|SHORT)", state_text):
-        # Get the full line to check if it's a LIMIT order
-        line_start = state_text.rfind("\n", 0, m.start()) + 1
-        line_end = state_text.find("\n", m.end())
-        full_line = state_text[line_start:line_end if line_end != -1 else len(state_text)]
-        if "LIMIT" not in full_line:
-            parsed_pairs.add(m.group(1))
+    oanda_by_key = {}
+    for p in positions:
+        key = (p["pair"], p["direction"])
+        entry = oanda_by_key.setdefault(key, {
+            "pair": p["pair"],
+            "direction": p["direction"],
+            "trade_ids": [],
+            "units": 0,
+            "upl_jpy": 0,
+            "is_manual": False,
+        })
+        entry["trade_ids"].append(str(p.get("trade_id", "")))
+        entry["units"] += int(p.get("units", 0))
+        entry["upl_jpy"] += int(p.get("upl_jpy", 0))
+        entry["is_manual"] = entry["is_manual"] or bool(p.get("is_manual"))
 
-    match = oanda_pairs == parsed_pairs
+    state_by_key = {}
+    for p in parsed_state_positions:
+        key = (p["pair"], p["direction"])
+        state_by_key[key] = {
+            "pair": p["pair"],
+            "direction": p["direction"],
+            "line": p["line"],
+            "source": p["source"],
+        }
+
+    oanda_keys = set(oanda_by_key)
+    state_keys = set(state_by_key)
+    live_not_in_state = [oanda_by_key[key] for key in sorted(oanda_keys - state_keys)]
+    state_not_live = [state_by_key[key] for key in sorted(state_keys - oanda_keys)]
+    match = oanda_keys == state_keys
+
+    note_parts = []
+    if live_not_in_state:
+        live_desc = []
+        for p in live_not_in_state:
+            manual_note = " [MANUAL/NO_LOG]" if p["is_manual"] else ""
+            ids = ",".join(p["trade_ids"])
+            live_desc.append(
+                f"{p['pair']} {p['direction']} id={ids}{manual_note}"
+            )
+        note_parts.append(f"OANDA only: {', '.join(live_desc)}")
+    if state_not_live:
+        state_desc = [f"{p['pair']} {p['direction']}" for p in state_not_live]
+        note_parts.append(f"state.md only: {', '.join(state_desc)}")
+
     result = {
+        "held_positions_match": match,
         "held_pairs_match": match,
         "oanda_pairs": sorted(oanda_pairs),
         "parsed_pairs": sorted(parsed_pairs),
+        "oanda_positions": [f"{pair} {direction}" for pair, direction in sorted(oanda_keys)],
+        "parsed_positions": [f"{pair} {direction}" for pair, direction in sorted(state_keys)],
+        "live_not_in_state": live_not_in_state,
+        "state_not_live": state_not_live,
     }
     if not match:
-        result["note"] = f"OANDA has {sorted(oanda_pairs)}, state.md parsed {sorted(parsed_pairs)}"
+        result["note"] = " | ".join(note_parts) if note_parts else (
+            f"OANDA has {sorted(oanda_pairs)}, state.md parsed {sorted(parsed_pairs)}"
+        )
     return result
 
 
@@ -535,6 +629,22 @@ def build_markdown_report(data: dict) -> str:
     if not sc["held_pairs_match"]:
         lines.append(f"⚠ **SELF-CHECK**: {sc['note']}")
         lines.append("")
+        if sc["live_not_in_state"] or sc["state_not_live"]:
+            lines.append("## ⚠ Self-Check Drift")
+            lines.append("")
+            for p in sc["live_not_in_state"]:
+                manual_note = " **[MANUAL/NO_LOG]**" if p.get("is_manual") else ""
+                ids = ",".join(p.get("trade_ids", []))
+                lines.append(
+                    f"- OANDA only: **{p['pair']} {p['direction']} {p['units']}u** "
+                    f"id={ids} | UPL: {p['upl_jpy']:+.0f} JPY{manual_note}"
+                )
+            for p in sc["state_not_live"]:
+                lines.append(
+                    f"- state.md only: **{p['pair']} {p['direction']}** "
+                    f"| line: `{p['line']}`"
+                )
+            lines.append("")
 
     # Manual positions (user-entered, not in trade log)
     manual_positions = [p for p in data["positions"] if p.get("is_manual")]
@@ -685,6 +795,44 @@ def build_markdown_report(data: dict) -> str:
     return "\n".join(lines)
 
 
+def extract_auditor_view(text: str) -> str:
+    """Return the trailing Auditor's View block from quality_audit.md if present."""
+    if not text:
+        return ""
+    match = re.search(r"^## Auditor's View — .*$", text, re.M)
+    if not match:
+        return ""
+    return text[match.start():].strip()
+
+
+def merge_previous_auditor_view(md_report: str, previous_text: str) -> str:
+    """Keep the last Auditor's View available for the next cycle's follow-up step.
+
+    Step 2 of the quality-audit playbook reads `logs/quality_audit.md` to compare the
+    current cycle with the previous audit predictions. If the fact-gathering script
+    overwrites the file with facts only, the auditor loses the previous narrative and
+    the follow-up loop breaks. Preserve the latest Auditor's View until the current
+    cycle writes a fresh one.
+    """
+    report = md_report.rstrip()
+    prior_view = extract_auditor_view(previous_text)
+    if not prior_view:
+        return report + "\n"
+
+    first_line = prior_view.splitlines()[0].strip()
+    preserved_ts = first_line.replace("## Auditor's View — ", "", 1)
+    merged = [
+        report,
+        "",
+        "---",
+        "",
+        f"_Previous Auditor's View preserved for follow-up ({preserved_ts}) until this cycle writes a new one._",
+        "",
+        prior_view,
+    ]
+    return "\n".join(merged).rstrip() + "\n"
+
+
 def append_audit_history(data: dict):
     """Append S-scan results with prices to audit_history.jsonl for outcome tracking."""
     history_path = ROOT / "logs" / "audit_history.jsonl"
@@ -698,6 +846,7 @@ def append_audit_history(data: dict):
 
     entry = {
         "timestamp": data["timestamp"],
+        "source": "s_scan",
         "s_scan": [],
         "positions": len(data["positions"]),
         "margin_pct": data["account"]["margin_pct"],
@@ -738,7 +887,7 @@ def main():
 
     # Fetch OANDA state
     try:
-        summary = oanda_api(f"/v3/accounts/{acct}/summary", token, acct).get("account", {})
+        summary = oanda_api(f"/v3/accounts/{acct}/summary", cfg).get("account", {})
         nav = float(summary.get("NAV", 0))
         margin_used = float(summary.get("marginUsed", 0))
     except Exception as e:
@@ -746,7 +895,7 @@ def main():
         nav, margin_used = 0, 0
 
     try:
-        trades_resp = oanda_api(f"/v3/accounts/{acct}/openTrades", token, acct)
+        trades_resp = oanda_api(f"/v3/accounts/{acct}/openTrades", cfg)
         trades = trades_resp.get("trades", [])
     except Exception:
         trades = []
@@ -775,7 +924,7 @@ def main():
     directional_mix = gather_directional_mix(trades)
     sizing_flags = gather_sizing_facts(nav)
     rule_flags = gather_rule_flags(state_text, s_candidates)
-    sc = self_check(trades, state_text)
+    sc = self_check(positions, state_text)
 
     elapsed = time.time() - t0
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -825,15 +974,11 @@ def main():
 
     audit_md = ROOT / "logs" / "quality_audit.md"
     audit_json = ROOT / "logs" / "quality_audit.json"
+    previous_audit_text = audit_md.read_text() if audit_md.exists() else ""
+    md_output = merge_previous_auditor_view(md_report, previous_audit_text)
 
-    if has_findings:
-        audit_md.write_text(md_report)
-        audit_json.write_text(json_report)
-    else:
-        # Clean — write minimal report, remove old files
-        audit_md.write_text(f"# Quality Audit — {now}\n\nCLEAN — no findings ({elapsed:.1f}s)\n")
-        if audit_json.exists():
-            audit_json.unlink()
+    audit_md.write_text(md_output)
+    audit_json.write_text(json_report)
 
     # Always append to history (for outcome tracking)
     if s_scan_facts:
@@ -869,7 +1014,9 @@ def main():
         if rule_count:
             parts.append(f"rules:{rule_count}")
         if not sc["held_pairs_match"]:
-            parts.append("self-check:FAILED")
+            parts.append(
+                f"self-check:live{len(sc['live_not_in_state'])}/state{len(sc['state_not_live'])}"
+            )
         if state_age_min and state_age_min > 10:
             parts.append(f"stale:{state_age_min:.0f}min")
         print(f"FINDINGS: {' | '.join(parts)} ({elapsed:.1f}s)")

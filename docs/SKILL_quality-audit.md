@@ -11,6 +11,17 @@ You are an independent market analyst auditing the trader task. You gather your 
 
 **Your most important output is Section E (Regime Map) + Section C (7-pair predictions).** These are your independent market view. They exist EVERY cycle — whether or not the trader has positions. The trader reads your chart descriptions because you generate the PNGs, not them. If you skip these sections, the trader is blind.
 
+## Step 0: Acquire audit lock
+
+Run this first:
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/task_runtime.py quality-audit preflight --owner-pid $PPID
+```
+
+- `ACQUIRED:` → continue
+- `SKIP:` or `YIELD:` → output only `SKIP` and stop
+
 ## Step 1: Parallel data gathering (run ALL 4 in parallel)
 
 Bash A — Mechanical audit (facts):
@@ -30,7 +41,7 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/fib_wave.py --all 2>&1 && ech
 
 Bash D — Chart snapshot + regime detection (generates 14 PNGs + regime labels):
 ```
-cd /Users/tossaki/App/QuantRabbit && python3 tools/chart_snapshot.py --all 2>&1
+cd /Users/tossaki/App/QuantRabbit && .venv/bin/python tools/chart_snapshot.py --all 2>&1
 ```
 
 ## Step 1b: Read charts visually (AFTER Step 1 completes — charts must exist first)
@@ -144,7 +155,7 @@ No range trades: [if no RANGE regimes, or ranges too narrow — say so explicitl
 
 ### Section C: 7-Pair Predictions + Follow-up (REQUIRED EVERY CYCLE)
 
-**This is where S-conviction gets discovered AND where you hold yourself accountable.**
+**This is where high-edge opportunities get discovered AND where you hold yourself accountable.**
 
 #### Part 1: Follow-up (check your last predictions)
 
@@ -174,61 +185,61 @@ USD_JPY:
   Story: [macro + chart + cross-pair → what's happening and WHY]
   → Price [will/should/might] reach [specific price] in [30min/1h/2h] because [chart + story connected]
   Wrong if: [specific price] breaks [level] — because [scenario]
-  Conviction: [S/A/B/C] | [LONG/SHORT/WAIT] @___ TP=___
+  Edge: [S/A/B/C] | Allocation: [S/A/B/C] | [LONG/SHORT/WAIT] @___ TP=___
 
 EUR_USD:
   Chart tells me: ___
   Story: ___
   → Price ___ reach ___ in ___ because ___
   Wrong if: ___
-  Conviction: ___ | ___
+  Edge: ___ | Allocation: ___ | ___
 
 GBP_USD:
   Chart tells me: ___
   Story: ___
   → Price ___ reach ___ in ___ because ___
   Wrong if: ___
-  Conviction: ___ | ___
+  Edge: ___ | Allocation: ___ | ___
 
 AUD_USD:
   Chart tells me: ___
   Story: ___
   → Price ___ reach ___ in ___ because ___
   Wrong if: ___
-  Conviction: ___ | ___
+  Edge: ___ | Allocation: ___ | ___
 
 EUR_JPY:
   Chart tells me: ___
   Story: ___
   → Price ___ reach ___ in ___ because ___
   Wrong if: ___
-  Conviction: ___ | ___
+  Edge: ___ | Allocation: ___ | ___
 
 GBP_JPY:
   Chart tells me: ___
   Story: ___
   → Price ___ reach ___ in ___ because ___
   Wrong if: ___
-  Conviction: ___ | ___
+  Edge: ___ | Allocation: ___ | ___
 
 AUD_JPY:
   Chart tells me: ___
   Story: ___
   → Price ___ reach ___ in ___ because ___
   Wrong if: ___
-  Conviction: ___ | ___
+  Edge: ___ | Allocation: ___ | ___
 ```
 
 **Filled-in examples (the model mimics these):**
 
-S-conviction:
+High-edge example:
 ```
 EUR_USD:
   Chart tells me: 5 bull bodies expanding along BB upper, zero counter-wicks, GBP_USD doing same
   Story: ECB hawkish hold + USD selling post-CPI miss + EUR bid all TFs (H4+M15+M1) = USD-wide weakness
   → Price will reach 1.1835 in next 1h because band walk + no resistance until Fib 161.8% at 1.1840
   Wrong if: 1.1790 body close (20EMA break) — means USD selling exhausted
-  Conviction: S | LONG @1.1800 TP=1.1835
+  Edge: S | Allocation: A | LONG @1.1800 TP=1.1835
 ```
 
 B-conviction:
@@ -238,7 +249,7 @@ AUD_JPY:
   Story: AUD H4 bid (+26) but StRSI=0.96 ceiling. JPY weak. Cross signals mixed
   → Price might drift toward 112.60 but could reverse to 112.30 if AUD exhaustion kicks in
   Wrong if: either BB band breaks with 2+ clean bodies — directional move started
-  Conviction: B | BUY @112.32 TP=112.58
+  Edge: B | Allocation: B | LONG @112.32 TP=112.58
 ```
 
 C-conviction (WAIT is valid but requires chart reading):
@@ -248,10 +259,10 @@ USD_JPY:
   Story: Pre-FOMC positioning. No one wants to move before the statement
   → No directional call until breakout. First body close outside 159.10-159.35 = direction
   Wrong if: N/A (no directional prediction until breakout)
-  Conviction: C | WAIT — watching BB expansion for breakout signal
+  Edge: C | Allocation: C | WAIT — watching BB expansion for breakout signal
 ```
 
-**The conviction language IS the depth signal.** "Will reach" = clear story, everything aligned = S/A. "Might drift" = mixed = B. "No call" = can't read = C. You can't write "will reach 1.1835" without believing the story coheres.
+**The edge language IS the depth signal.** "Will reach" = clear story, everything aligned = S/A edge. "Might drift" = mixed = B. "No call" = can't read = C. `Allocation` is separate: it answers how much capital the trader should deploy right now, not whether the read is real.
 
 **Scanner supplement**: After writing all 7 predictions, note any s_conviction_scan matches and their accuracy tier. The scanner is supplementary — your predictions come from charts, not thresholds.
 
@@ -267,13 +278,18 @@ Trader's Currency Pulse says: "___" → [AGREE / DISAGREE: ___]
 ```
 
 ```
-🔥 Strongest NOT held by trader: {PAIR} {DIR} — [S/A] because [prediction rationale from above]
+### Narrative Opportunities (not held by trader)
+- {PAIR} {DIR} | Edge {S/A/B/C} | Allocation {S/A/B/C} | Entry @{price} | TP={price} | Why: [1-line reason]
+- {PAIR} {DIR} | Edge {S/A/B/C} | Allocation {S/A/B/C} | Entry @{price} | TP={price} | Why: [1-line reason]
+- {PAIR} {DIR} | Edge {S/A/B/C} | Allocation {S/A/B/C} | Entry @{price} | TP={price} | Why: [1-line reason]
+
+🔥 Strongest NOT held by trader: {PAIR} {DIR} — Edge {S/A/B/C} / Allocation {S/A/B/C} because [prediction rationale from above]
    Trader's state.md says: "___" (why they skip this)
    My counter: [what data/chart they're missing]
    Pair edge: [pair all-time WR + avg P&L from strategy_memory — flag if no-edge pair]
 ```
 
-**If no pair reaches S or A**: `No S/A candidates. Best: {PAIR} at B — would become S if: [specific missing piece]`
+**If no pair reaches Edge S or A**: `No unheld A/S opportunities. Best: {PAIR} {DIR} | Edge B | Allocation B | would upgrade if: [specific missing piece]`
 
 ---
 
@@ -326,7 +342,7 @@ Checked strategy_memory.md failure patterns:
 - "___" (name a second pattern) → [MATCH / CLEAR]
 
 ### Compliance Check
-Theme confidence: Trader wrote [proving/confirmed/late] → Sizing matches? [YES / NO]
+Theme confidence: Trader wrote [proving/confirmed/late] → Allocation matches? [YES / NO]
 Top 2 pairs: Margin allocated: ___% to top 2, ___% to others → [CONCENTRATED / DILUTED]
 Candle filter: Entries have "Last 5 candles" description? [YES / NO]
 Rotation: After last TP, did trader write re-entry plan? [YES / NO / N/A]
@@ -345,6 +361,7 @@ Position Mgmt C block: Trader included M15 + M1 + H4? [YES / NO: missing ___]
 
 - [ ] Section E: Regime Map has 7 rows (one per pair) with M5 Visual filled in? → If NO, go back
 - [ ] Section C: 7-Pair Conviction Map has 7 predictions with "Chart tells me" + price target? → If NO, go back
+- [ ] Section C: Narrative Opportunities block lists the unheld A/S ideas explicitly (or says none)? → If NO, go back
 - [ ] Section C: Follow-up checked last cycle's predictions? → If NO, go back
 - [ ] If positions exist: Section B has one block per position? → If NO, go back
 
@@ -360,27 +377,45 @@ Read the current `logs/quality_audit.md` (the script's facts from Step 1). Then 
 
 The trader reads this file at the start of every session via session_data.py. Your analysis is persistent — it survives across sessions.
 
-## Step 7: Slack (DANGER or S-conviction found)
+## Step 7: Record narrative opportunities in audit_history.jsonl
+
+After writing `logs/quality_audit.md`, record the final narrative opportunities:
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/record_audit_narrative.py
+```
+
+This appends the auditor's final `Edge/Allocation` picks to `logs/audit_history.jsonl`, so daily-review can learn from the auditor's real market view instead of scanner-only history.
+
+## Step 8: Slack (DANGER or A/S opportunity found)
 
 Post to Slack if:
 - Any position got a **DANGER** verdict, OR
 - Pattern Alert found a **MATCH** on a known failure pattern, OR
-- Your 7-pair predictions found **S-conviction** on a pair the trader doesn't hold
+- Your Narrative Opportunities block found an **Edge A or S** pair the trader doesn't hold
 
 ```
 cd /Users/tossaki/App/QuantRabbit && python3 tools/slack_post.py --channel C0ANCPLQJHK "$(cat <<'SLACK_EOF'
 📋 監査 — {timestamp}
 
-{1-2 lines: what's DANGER/S-found and why, Japanese}
+{1-2 lines: what's DANGER / best A-S opportunity and why, Japanese}
 
 詳細: logs/quality_audit.md
 SLACK_EOF
 )"
 ```
 
-**S-conviction Slack format**: `🎯 監査S発見: {PAIR} {DIR} @{price} — {1-line reason in Japanese}`
+**A/S opportunity Slack format**: `🎯 監査候補: {PAIR} {DIR} @{price} — Edge {S/A}, Allocation {S/A/B}, {1-line reason in Japanese}`
 
-This ensures the trader sees S-opportunities even if they don't read quality_audit.md thoroughly.
+This ensures the trader sees the best unheld A/S opportunities even if they don't read quality_audit.md thoroughly.
+
+## Step 9: Release audit lock
+
+When the run is complete, release the audit lock:
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && python3 tools/task_runtime.py quality-audit release
+```
 
 ## Error handling
 
@@ -388,3 +423,4 @@ This ensures the trader sees S-opportunities even if they don't read quality_aud
 - **profit_check or fib_wave crash**: Note it in your analysis and continue with what you have.
 - **Chart PNGs missing**: Write Section E regime from technicals JSON only. Note "chart PNGs unavailable — regime from data only, no visual read."
 - **state.md stale (>30 min)**: Note this as a finding — trader may not be running sessions.
+- **record_audit_narrative.py says `NO_NARRATIVE_OPPORTUNITIES_FOUND`**: acceptable if you explicitly wrote no unheld A/S ideas.

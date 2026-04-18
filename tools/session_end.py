@@ -9,7 +9,10 @@ Exit codes:
   1 = TOO_EARLY (keep trading)
   2 = ERROR
 """
-import os, sys, time, subprocess
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -19,6 +22,29 @@ START_FILE = ROOT / "logs" / ".trader_start"
 
 MIN_ELAPSED = 600   # 10 min minimum — below this, SESSION_END is blocked
 SESSION_END_AT = 780  # 13 min — normal SESSION_END threshold
+
+
+def archive_state_snapshot(session_date: str):
+    state_md = ROOT / "collab_trade" / "state.md"
+    if not state_md.exists():
+        return
+    day_dir = ROOT / "collab_trade" / "daily" / session_date
+    day_dir.mkdir(parents=True, exist_ok=True)
+    snapshot = day_dir / "state.md"
+    shutil.copy2(state_md, snapshot)
+    print(f"state snapshot saved: {snapshot.relative_to(ROOT)}")
+
+
+def state_session_date() -> str:
+    try:
+        from record_s_hunt_ledger import build_entry
+
+        entry = build_entry()
+        if entry and entry.get("session_date"):
+            return str(entry["session_date"])
+    except Exception:
+        pass
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 def main():
     now = int(time.time())
@@ -55,8 +81,34 @@ def main():
             print(f"⚠️ STATE.MD STALE ({state_age}s old) — UPDATE IT before session_end")
             sys.exit(1)
 
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "validate_trader_state.py")],
+            capture_output=True, text=True, timeout=10, cwd=str(ROOT)
+        )
+        if result.returncode != 0:
+            if result.stdout:
+                for line in result.stdout.strip().split("\n")[:20]:
+                    print(line)
+            print("Fix `S Hunt` / `Capital Deployment` receipts, then run the cycle again.")
+            sys.exit(1)
+    except Exception as e:
+        print(f"state validation warning: {e}")
+
     # === SESSION_END ===
     print(f"SESSION_END elapsed={elapsed}s ({start_utc}→{now_utc} UTC)")
+
+    # auto Hot Updates (safety net for next-session carry-forward)
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "auto_hot_updates.py")],
+            capture_output=True, text=True, timeout=10, cwd=str(ROOT)
+        )
+        if result.stdout:
+            for line in result.stdout.strip().split("\n")[:6]:
+                print(line)
+    except Exception as e:
+        print(f"auto_hot_updates warning: {e}")
 
     # trade_performance
     try:
@@ -70,15 +122,41 @@ def main():
     except Exception as e:
         print(f"trade_performance warning: {e}")
 
+    # S-hunt ledger (append-only deployment / missed-opportunity receipt)
+    try:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "record_s_hunt_ledger.py")],
+            capture_output=True, text=True, timeout=10, cwd=str(ROOT)
+        )
+        if result.stdout:
+            for line in result.stdout.strip().split("\n")[:5]:
+                print(line)
+    except Exception as e:
+        print(f"s_hunt_ledger warning: {e}")
+
     # ingest (with timeout)
     try:
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = state_session_date()
+        archive_state_snapshot(date_str)
         subprocess.run(
             ["python3", str(ROOT / "collab_trade" / "memory" / "ingest.py"), date_str, "--force"],
             capture_output=True, text=True, timeout=30, cwd=str(ROOT)
         )
     except Exception as e:
         print(f"ingest warning: {e}")
+
+    # formal seat-outcome sync (discovery → deployment → capture/miss)
+    try:
+        date_str = state_session_date()
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tools" / "seat_outcomes.py"), "sync", "--date", date_str, "--live"],
+            capture_output=True, text=True, timeout=15, cwd=str(ROOT)
+        )
+        if result.stdout:
+            for line in result.stdout.strip().split("\n")[:5]:
+                print(line)
+    except Exception as e:
+        print(f"seat_outcomes warning: {e}")
 
     # Release lock
     try:

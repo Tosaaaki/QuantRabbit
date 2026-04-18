@@ -24,7 +24,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-LOCK_DIR = Path(__file__).resolve().parents[2] / "logs" / "locks"
+# `task_lock.py` lives in `<repo>/tools/`, so the repo root is one level up.
+LOCK_DIR = Path(__file__).resolve().parent.parent / "logs" / "locks"
 ROTATION_FILE = LOCK_DIR / "last_runner.json"
 ROTATION_GRACE_SEC = 10  # after this many seconds, same caller can go again
 

@@ -6,6 +6,7 @@ Output:
   - RISK: HIGH/MEDIUM/LOW — risk warnings from historical data (backward-looking)
   - CONFIDENCE: S/A/B/C — quality of current setup (forward-looking) → basis for sizing decisions
   - RECOMMENDED SIZE: unit count based on conviction
+  - HISTORICAL PAYOFF: realized expectancy / avg win-loss / break-even WR
 
 Usage:
   python3 pretrade_check.py GBP_USD SHORT [--adx 38] [--headline "Iran"]
@@ -28,6 +29,66 @@ PAIR_CURRENCIES = {
 
 # --- SQL Layer: Statistics from structured data ---
 
+def payoff_metrics(pls: list[float]) -> dict:
+    """Realized payoff quality from closed-trade P&L.
+
+    R:R alone is not enough. What matters is whether the realized win rate and
+    realized payout shape produce positive expectancy after repeated trades.
+    """
+    if not pls:
+        return {
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0.0,
+            "avg_pl": 0.0,
+            "total_pl": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "rr_ratio": 0.0,
+            "profit_factor": None,
+            "expectancy": 0.0,
+            "break_even_win_rate": None,
+        }
+
+    wins = [pl for pl in pls if pl > 0]
+    losses = [pl for pl in pls if pl < 0]
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = sum(losses) / len(losses) if losses else 0.0
+    if avg_loss < 0:
+        rr_ratio = avg_win / abs(avg_loss)
+    elif avg_win > 0 and not losses:
+        rr_ratio = float("inf")
+    else:
+        rr_ratio = 0.0
+    gross_win = sum(wins)
+    gross_loss = abs(sum(losses))
+
+    break_even_win_rate = None
+    if avg_win > 0 and avg_loss < 0:
+        break_even_win_rate = abs(avg_loss) / (avg_win + abs(avg_loss))
+    elif avg_win > 0 and not losses:
+        break_even_win_rate = 0.0
+
+    profit_factor = None
+    if gross_loss > 0:
+        profit_factor = gross_win / gross_loss
+    elif gross_win > 0:
+        profit_factor = float("inf")
+
+    return {
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": len(wins) / len(pls),
+        "avg_pl": sum(pls) / len(pls),
+        "total_pl": sum(pls),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "rr_ratio": rr_ratio,
+        "profit_factor": profit_factor,
+        "expectancy": sum(pls) / len(pls),
+        "break_even_win_rate": break_even_win_rate,
+    }
+
 def trade_stats(conn, pair: str, direction: str) -> dict:
     """Win rate and average P&L by pair x direction"""
     all_trades = fetchall_dict(conn,
@@ -38,16 +99,12 @@ def trade_stats(conn, pair: str, direction: str) -> dict:
         return {"count": 0}
 
     wins = [t for t in all_trades if t["pl"] > 0]
-    losses = [t for t in all_trades if t["pl"] < 0]
     pls = [t["pl"] for t in all_trades]
+    metrics = payoff_metrics(pls)
 
     return {
         "count": len(all_trades),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": len(wins) / len(all_trades) if all_trades else 0,
-        "avg_pl": sum(pls) / len(pls),
-        "total_pl": sum(pls),
+        **metrics,
         "worst": min(pls),
         "best": max(pls),
         "no_sl_count": sum(1 for t in all_trades if t["had_sl"] == 0),
@@ -65,12 +122,7 @@ def regime_stats(conn, pair: str, direction: str, regime: str) -> dict:
         return {"count": 0}
 
     pls = [t["pl"] for t in trades]
-    wins = [p for p in pls if p > 0]
-    return {
-        "count": len(trades),
-        "win_rate": len(wins) / len(trades),
-        "avg_pl": sum(pls) / len(pls),
-    }
+    return {"count": len(trades), **payoff_metrics(pls)}
 
 
 def headline_risk(conn, pair: str) -> list[dict]:
@@ -139,11 +191,22 @@ def latest_user_call(conn, pair: str = None, max_age_days: int = 3) -> dict | No
 
 # --- Vector Layer ---
 
-def similar_trades_narrative(query: str, top_k: int = 3) -> list[dict]:
+def similar_trades_narrative(query: str, pair: str | None = None, direction: str | None = None, top_k: int = 3) -> list[dict]:
     """Retrieve narratives of similar situations via vector search"""
     try:
         from recall import hybrid_search
-        return hybrid_search(query, top_k=top_k)
+        hits = hybrid_search(query, top_k=max(top_k * 4, 6), pair=pair, direction=direction)
+        preferred = []
+        fallback = []
+        for hit in hits:
+            if hit.get("source_file") == "state.md" or hit.get("chunk_type") not in {"trade", "lesson"}:
+                fallback.append(hit)
+            else:
+                preferred.append(hit)
+        chosen = preferred[:top_k]
+        if len(chosen) < top_k:
+            chosen.extend(fallback[:top_k - len(chosen)])
+        return chosen
     except Exception:
         return []
 
@@ -203,6 +266,30 @@ def _get_current_spread(pair: str) -> float | None:
         return (ask - bid) * pip_factor
     except Exception:
         return None
+
+
+GRADE_ORDER = ["C", "B", "A", "S"]
+GRADE_TO_UNITS = {
+    "S": "8000-10000u (full pressure. strongest deployment)",
+    "A": "5000-8000u (core size. real edge)",
+    "B": "2000-3000u (scout / limited deployment)",
+    "C": "1000u or less (weak basis — data suggests caution, you decide)",
+}
+
+
+def _score_to_grade(score: int, thresholds: tuple[tuple[int, str], ...]) -> str:
+    for cutoff, grade in thresholds:
+        if score >= cutoff:
+            return grade
+    return thresholds[-1][1]
+
+
+def _cap_grade(grade: str, cap: str) -> str:
+    return GRADE_ORDER[min(GRADE_ORDER.index(grade), GRADE_ORDER.index(cap))]
+
+
+def _grade_icon(grade: str) -> str:
+    return {"S": "🔥", "A": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
 
 
 def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
@@ -445,30 +532,26 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
 
     # --- Grade mapping ---
     quality_score = max(0, quality_score)  # floor at 0
-    if quality_score >= 8:
-        grade = "S"
-    elif quality_score >= 6:
-        grade = "A"
-    elif quality_score >= 4:
-        grade = "B"
-    else:
-        grade = "C"
-
-    # Sizing recommendation — conviction determines size, not wave size.
-    # Even on a small wave, if conviction is S, size up. Compensate for smaller profit target with size.
-    sizing = {
-        "S": "8000-10000u (iron-clad. size up)",
-        "A": "5000-8000u (high conviction. trade it properly)",
-        "B": "2000-3000u (conservative)",
-        "C": "1000u or less (weak basis — data suggests caution, you decide)",
-    }
+    edge_grade = _score_to_grade(
+        quality_score,
+        (
+            (8, "S"),
+            (6, "A"),
+            (4, "B"),
+            (0, "C"),
+        ),
+    )
+    allocation_grade = edge_grade
 
     return {
-        "grade": grade,
+        "grade": edge_grade,  # backward-compatible alias
+        "edge_grade": edge_grade,
+        "allocation_grade": allocation_grade,
         "quality_score": quality_score,
+        "score_max": 10,
         "wave": wave,
         "details": details,
-        "sizing": sizing[grade],
+        "sizing": GRADE_TO_UNITS[allocation_grade],
         "counter_note": None,
         "mtf_aligned": aligned_count,
     }
@@ -484,8 +567,10 @@ def assess_counter_trade(pair: str, direction: str) -> dict:
     - M5 reversal signal is the timing trigger
     - Macro opposition is expected (counter = against macro)
 
-    Score 0-8 → B+ (4+) / B (2-3) / C (0-1)
-    Counter-trades are ALWAYS capped at B-max size (5% NAV).
+    Counter-trades can have HIGH EDGE even when allocation stays smaller.
+    This separates:
+    - edge_grade: how strong the reversal read is
+    - allocation_grade: how much size the book deserves right now
     """
     tfs = _load_technicals(pair)
     h4 = tfs.get("H4", {})
@@ -572,23 +657,38 @@ def assess_counter_trade(pair: str, direction: str) -> dict:
         else:
             details.append(f"Spread={spread_pip:.1f}pip ({spread_ratio:.0%} of {counter_target}pip) OK")
 
-    # --- Grade (counter trades cap at B+) ---
+    # --- Edge vs allocation (counter-trades can be S/A edge, smaller deployment) ---
     score = max(0, score)
-    if score >= 5:
-        grade = "B+"
-        sizing = "2000-3000u (strong counter setup — B-max)"
-    elif score >= 3:
-        grade = "B"
-        sizing = "1500-2000u (valid counter — standard B)"
-    else:
-        grade = "C"
+    edge_grade = _score_to_grade(
+        score,
+        (
+            (6, "S"),
+            (4, "A"),
+            (2, "B"),
+            (0, "C"),
+        ),
+    )
+    allocation_grade = _cap_grade(edge_grade, "A")
+    counter_note = None
+    if edge_grade != allocation_grade:
+        counter_note = (
+            "Execution edge is stronger than deployment size because this is still a "
+            "counter-trade against the upper-TF flow."
+        )
+    if allocation_grade == "C":
         sizing = "skip — counter conditions not met"
+    else:
+        sizing = GRADE_TO_UNITS[allocation_grade]
 
     return {
-        "grade": grade,
+        "grade": edge_grade,  # backward-compatible alias
+        "edge_grade": edge_grade,
+        "allocation_grade": allocation_grade,
         "score": score,
+        "score_max": 7,
         "details": details,
         "sizing": sizing,
+        "counter_note": counter_note,
     }
 
 
@@ -611,6 +711,23 @@ def assess_risk(
     # 1. Trade statistics
     stats = trade_stats(conn, pair, direction)
     if stats["count"] > 0:
+        if stats["expectancy"] < 0:
+            warnings.append(
+                f"⚠️ {pair} {direction} expectancy: {stats['expectancy']:+,.0f} JPY/trade "
+                f"(avg win {stats['avg_win']:+,.0f} vs avg loss {stats['avg_loss']:+,.0f})"
+            )
+            risk_score += 2
+        be_wr = stats.get("break_even_win_rate")
+        if (
+            be_wr is not None
+            and stats["count"] >= 5
+            and stats["win_rate"] + 0.05 < be_wr
+        ):
+            warnings.append(
+                f"⚠️ Break-even WR is {be_wr:.0%}, actual WR is {stats['win_rate']:.0%} "
+                f"→ payoff shape is not carrying the misses yet"
+            )
+            risk_score += 1
         if stats["win_rate"] < 0.5:
             warnings.append(f"⚠️ {pair} {direction} win rate: {stats['win_rate']:.0%} ({stats['wins']}/{stats['count']})")
             risk_score += 2
@@ -767,12 +884,16 @@ def assess_risk(
     }
 
     # 7. Similar situations via vector search
-    query_text = f"{pair} {direction}"
+    query_parts = [pair, direction]
     if headline:
-        query_text += f" {headline}"
+        query_parts.append(headline)
     if adx:
-        query_text += f" ADX={adx}"
-    narratives = similar_trades_narrative(query_text, top_k=2)
+        query_parts.append(f"ADX={adx}")
+    if setup.get("wave"):
+        query_parts.append(f"{setup['wave']} wave")
+    query_parts.extend(["lesson", "failure", "success"])
+    query_text = " ".join(query_parts)
+    narratives = similar_trades_narrative(query_text, pair=pair, direction=direction, top_k=2)
     if narratives:
         result["similar_memories"] = [
             {"date": n.get("session_date", "?"), "content": n.get("content", "")[:200]}
@@ -780,7 +901,8 @@ def assess_risk(
         ]
 
     # 8. Log this check result to pretrade_outcomes (daily_review will fill in pl later)
-    _log_pretrade(conn, pair, direction, level, risk_score, warnings)
+    thesis = _build_pretrade_thesis(result, headline)
+    _log_pretrade(conn, pair, direction, level, risk_score, warnings, thesis)
 
     return result
 
@@ -795,15 +917,60 @@ def _past_pretrade_outcomes(conn, pair: str, direction: str, level: str) -> list
         (pair, direction, level))
 
 
-def _log_pretrade(conn, pair: str, direction: str, level: str, score: int, warnings: list):
+def _build_pretrade_thesis(result: dict, headline: str | None = None) -> str:
+    setup = result.get("setup_quality") or {}
+    edge = setup.get("edge_grade") or setup.get("grade") or "?"
+    allocation = setup.get("allocation_grade") or edge
+    wave = setup.get("wave") or "?"
+    details = setup.get("details") or []
+    detail_text = " | ".join(str(detail).strip() for detail in details[:2] if detail)
+    detail_text = detail_text[:220]
+    headline_text = f" headline={headline}" if headline else ""
+    thesis = f"edge={edge} alloc={allocation} wave={wave}{headline_text}"
+    if detail_text:
+        thesis += f" | {detail_text}"
+    return thesis[:280]
+
+
+def _recent_duplicate_pretrade(
+    conn,
+    pair: str,
+    direction: str,
+    level: str,
+    score: int,
+    thesis: str,
+    lookback_minutes: int = 15,
+) -> bool:
+    recent = fetchone_val(
+        conn,
+        f"""SELECT 1
+            FROM pretrade_outcomes
+            WHERE pair = ?
+              AND direction = ?
+              AND pretrade_level = ?
+              AND pretrade_score = ?
+              AND thesis = ?
+              AND trade_id IS NULL
+              AND pl IS NULL
+              AND datetime(created_at) >= datetime('now', 'localtime', '-{lookback_minutes} minutes')
+            ORDER BY id DESC
+            LIMIT 1""",
+        (pair, direction, level, score, thesis),
+    )
+    return recent is not None
+
+
+def _log_pretrade(conn, pair: str, direction: str, level: str, score: int, warnings: list, thesis: str):
     """Log this check result to pretrade_outcomes"""
     try:
+        if _recent_duplicate_pretrade(conn, pair, direction, level, score, thesis):
+            return
         conn.execute(
             """INSERT INTO pretrade_outcomes
-               (session_date, pair, direction, pretrade_level, pretrade_score, pretrade_warnings)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (session_date, pair, direction, pretrade_level, pretrade_score, pretrade_warnings, thesis)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (str(date.today()), pair, direction, level, score,
-             json.dumps(warnings, ensure_ascii=False))
+             json.dumps(warnings, ensure_ascii=False), thesis)
         )
     except Exception:
         pass  # ignore if table does not yet exist
@@ -819,21 +986,38 @@ def format_check(result: dict) -> str:
 
     if is_counter:
         q_score = setup.get("score", 0)
-        grade_icon = {"B+": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
+        edge_grade = setup.get("edge_grade", grade)
+        allocation_grade = setup.get("allocation_grade", edge_grade)
+        score_max = setup.get("score_max", 7)
 
-        lines.append(f"🔄 COUNTER-TRADE | {grade_icon} Grade: {grade} (score={q_score}/8) | Risk: {level} (score={result['risk_score']})")
-        lines.append(f"   {result['pair']} {result['direction']} (M5 against H4/H1) → {setup.get('sizing', '?')}")
+        lines.append(
+            f"🔄 COUNTER-TRADE | {_grade_icon(edge_grade)} Edge: {edge_grade} "
+            f"(score={q_score}/{score_max}) | Allocation: {allocation_grade} | "
+            f"Risk: {level} (score={result['risk_score']})"
+        )
+        lines.append(
+            f"   {result['pair']} {result['direction']} (M5 against H4/H1) "
+            f"→ {setup.get('sizing', '?')}"
+        )
         lines.append("")
         lines.append("📐 Counter-trade evaluation (inverted axes — H4 extreme = FOR):")
         for detail in setup.get("details", []):
             lines.append(f"  {detail}")
+        if setup.get("counter_note"):
+            lines.append(f"  Note: {setup['counter_note']}")
     else:
         q_score = setup.get("quality_score", 0)
-        grade_icon = {"S": "🔥", "A": "✅", "B": "⚠️", "C": "❌"}.get(grade, "?")
+        edge_grade = setup.get("edge_grade", grade)
+        allocation_grade = setup.get("allocation_grade", edge_grade)
+        score_max = setup.get("score_max", 10)
 
         # Main header: conviction is most important (determines sizing)
         wave_label = {"big": "big wave", "mid": "mid wave", "small": "small wave"}.get(setup.get("wave", "?"), "?")
-        lines.append(f"{grade_icon} Conviction: {grade} (score={q_score}) | Risk: {level} (score={result['risk_score']}) | Wave: {wave_label}")
+        lines.append(
+            f"{_grade_icon(edge_grade)} Edge: {edge_grade} (score={q_score}/{score_max}) "
+            f"| Allocation: {allocation_grade} | Risk: {level} "
+            f"(score={result['risk_score']}) | Wave: {wave_label}"
+        )
         lines.append(f"   {result['pair']} {result['direction']} → {setup.get('sizing', '?')}")
         lines.append("")
 
@@ -846,7 +1030,24 @@ def format_check(result: dict) -> str:
     # Trade statistics
     stats = result.get("trade_stats")
     if stats:
-        lines.append(f"📊 Historical record: {stats['wins']}W {stats['losses']}L (win rate {stats['win_rate']:.0%}) avg P&L={stats['avg_pl']:+,.0f} JPY total={stats['total_pl']:+,.0f} JPY")
+        be_wr = stats.get("break_even_win_rate")
+        pf = stats.get("profit_factor")
+        be_text = f" | BE WR {be_wr:.0%}" if be_wr is not None else ""
+        if pf is None:
+            pf_text = ""
+        elif pf == float("inf"):
+            pf_text = " | PF inf"
+        else:
+            pf_text = f" | PF {pf:.2f}"
+        lines.append(
+            f"📊 Historical record: {stats['wins']}W {stats['losses']}L "
+            f"(WR {stats['win_rate']:.0%}) | EV {stats['expectancy']:+,.0f} JPY/trade"
+            f"{be_text}{pf_text}"
+        )
+        lines.append(
+            f"   avg win {stats['avg_win']:+,.0f} | avg loss {stats['avg_loss']:+,.0f} "
+            f"| R:R {stats['rr_ratio']:.2f} | total {stats['total_pl']:+,.0f} JPY"
+        )
 
     # Warnings
     if result["warnings"]:

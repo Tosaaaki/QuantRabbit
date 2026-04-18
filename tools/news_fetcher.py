@@ -8,7 +8,7 @@ Sources:
 3. Forex Factory: Economic calendar (HTML scraping)
 
 Output: logs/news_cache.json
-Run: Separate cron at 15-minute intervals. Trader session only reads the cache.
+Run: Hourly news pipeline fetch. Trader sessions only read the cache.
 
 Usage:
     python3 tools/news_fetcher.py              # Fetch all sources

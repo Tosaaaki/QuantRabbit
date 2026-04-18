@@ -47,7 +47,7 @@ How to achieve this:
 
 ---
 
-## Architecture (v8.1)
+## Architecture (v8.5)
 
 ### Scheduled tasks driving everything
 
@@ -55,7 +55,7 @@ How to achieve this:
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Sonnet (default) | **10-min cron** | Max 8 min | Pro trader. Does analysis, news, and trading all itself. **Discretionary-only — bots removed 2026-04-17** |
+| trader | Sonnet (default) | **10-min cron** | Shared runtime: 10-min minimum session, 15-min stale-lock threshold, 17-min watchdog | Pro trader. Does analysis, news, and trading all itself. **Discretionary-only — bots removed 2026-04-17** |
 | daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
 | daily-performance-report | Sonnet (default) | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
 | daily-slack-summary | Sonnet (default) | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
@@ -69,11 +69,11 @@ How to achieve this:
 | qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
 | qr-news-flow-append | Cowork | Hourly (:15) | Append compact snapshot from news_digest.md → logs/news_flow_log.md |
 
-**Method**: `trader` runs 8-minute sessions on 10-min cron. Every cycle = full decision loop (read state → analyse → act → write handoff → die). Lock mechanism prevents overlapping sessions.
+**Method**: `trader` is scheduled every 10 minutes on Claude, but the shared runtime is lock-based. `session_end.py` enforces a 10-minute minimum session, stale-lock recovery begins after 15 minutes, and the watchdog only kills truly stuck runs. Every cycle still aims to complete the full decision loop (read state → analyse → act → write handoff → die).
 
-**Bot architecture removed (2026-04-17)**: 7-day analysis showed bots net-negative — trend_bot EV -82/trade, range_bot EV -99/trade vs trader EV +73/trade. Removed: `local-bot-cycle` launchd (trend_bot / range_bot / bot_trade_manager / inventory_brake / regime_switch / bot_policy_guard / stranded_drain), plus scheduled tasks `range-bot`, `bot-trade-manager`, `inventory-director`. Python sources retained in `tools/` but not invoked. Reaper launchd agent kept (generic stale-agent cleanup, not bot-specific). See [docs/CHANGELOG.md](docs/CHANGELOG.md) 2026-04-17 entry for full rationale.
+**Bot architecture removed (2026-04-17)**: 7-day analysis showed bots net-negative — trend_bot EV -82/trade, range_bot EV -99/trade vs trader EV +73/trade. Claude keeps the disabled compatibility links under `~/.claude/scheduled-tasks/*.DISABLED`, but routine trader sessions do not steer worker policy or run any local bot loop. Reaper launchd agent stays because it is generic stale-agent cleanup, not bot logic.
 
-**Tag taxonomy** (live): All entries now `trader` (discretionary). Legacy `range_bot` / `range_bot_market` / `trend_bot_market` tags may appear in historical logs but are no longer being produced.
+**Tag taxonomy** (live): All entries now `trader` (discretionary). Legacy `range_bot` / `range_bot_market` / `trend_bot_market` tags may appear in historical logs but are no longer being produced by routine recurring trader sessions.
 
 - Memory handoff: `collab_trade/state.md` (external memory across sessions)
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
@@ -107,7 +107,7 @@ Every 10 min: trader session
   ├── if quality_audit.md has issues → address them (re-evaluate missed S-candidates, fix sizing)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END (7 min mark, 8 min hard limit): trade_performance.py + ingest.py → memory.db
+  └── SESSION_END (10-min minimum enforced in code; stale-lock recovery at 15 min): trade_performance.py + ingest.py → memory.db
 
 Every 45 min: quality-audit session (Sonnet)
   ├── runs: quality_audit.py + profit_check + fib_wave + chart_snapshot.py (14 PNGs)
@@ -173,7 +173,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 3. **Append to changelog**: Add an entry to `docs/CHANGELOG.md`
 4. **Merge to main**: Always merge to main when editing in a worktree
 5. **Deploy immediately**: Once changed, reflect it right away. Don't ask.
-6. **English only**: All prompt files are English-only (Japanese reference copies deprecated)
+6. **English only**: Active prompt, task, and guide files are English-only. Do not keep Japanese alternates in the repo or the live Claude task directories
 7. **Smoke test**: Run the script, verify actual output. Both `python3` and `.venv/bin/python`. "Syntax OK" ≠ "works"
 
 ## Document Map
@@ -183,16 +183,17 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | File | Contents |
 |------|----------|
 | `CLAUDE.md` (this file) | Full architecture overview, absolute rules |
-| `docs/TRADER_PROMPT.md` | Trader mindset · entries · take-profit · retrospectives |
+| `docs/SKILL_trader.md` | Canonical recurring trader task definition shared by Claude/Codex |
 
 ### Operational Documents (reference as needed)
 
 | File | Contents |
 |------|----------|
 | `docs/CHANGELOG.md` | Chronological log of all changes |
-| `docs/SKILL_trader.md` | Reference copy of trader task definition |
-| `docs/SKILL_daily-review.md` | Reference copy of daily-review task definition |
-| `docs/SKILL_quality-audit.md` | Reference copy of quality-audit task definition |
+| `docs/SKILL_daily-review.md` | Canonical daily-review task definition shared by Claude/Codex |
+| `docs/SKILL_quality-audit.md` | Canonical quality-audit task definition shared by Claude/Codex |
+| `docs/TRADER_PROMPT.md` | Trader mental model only. Not a runtime or scheduler contract |
+| `collab_trade/CLAUDE.md` | Manual collaborative-trading guide. Only used when scheduled tasks are stopped |
 | `docs/TRADER_LESSONS.md` | Historical failure patterns (daily-review reference, not loaded in trader sessions) |
 
 ### Runtime Files
@@ -205,10 +206,10 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `logs/live_trade_log.txt` | Trade execution log (chronological) |
 | `logs/news_digest.md` | News summary updated by Cowork hourly |
 | `logs/news_cache.json` | Structured news data from API parser |
-| `logs/bot_inventory_policy.md` | Human-readable LLM inventory policy for the local bot layer (written by trader; repaired by inventory-director backup if needed) |
-| `logs/bot_inventory_policy.json` | Machine policy consumed by the deterministic local bot layer |
+| `logs/bot_inventory_policy.md` | Legacy local-bot policy file retained for rollback/history. Not part of the routine recurring trader loop |
+| `logs/bot_inventory_policy.json` | Legacy machine policy file retained for rollback/history. Not part of the routine recurring trader loop |
 | `logs/technicals_*.json` | H1/H4 technical indicators |
-| `logs/quality_audit.md` | Quality audit facts (updated every 30 min. Trader reads at session start) |
+| `logs/quality_audit.md` | Quality audit facts (Claude quality-audit currently runs every 45 min. Trader reads at session start and treats stale prose as context only) |
 | `logs/quality_audit.json` | Quality audit machine-readable output (for daily-review parsing) |
 | `logs/audit_history.jsonl` | Append-only audit opportunity tracking (scanner fires + final narrative A/S picks. daily-review uses it for recipe and judgment accuracy) |
 
@@ -222,12 +223,12 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action. Detects rollover window |
 | `tools/rollover_guard.py` | Rollover SL guard — remove/restore SL/Trailing around daily OANDA maintenance (5 PM ET) |
 | `tools/preclose_check.py` | **Run before every close** — re-confirms thesis before exit |
-| `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes). Fresh worker-tagged trades now require `--force-worker-close` for routine trader/inventory-director overrides inside the first 10 minutes |
+| `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes). Historical worker-tag safeguards remain for recovery workflows, but routine recurring trader sessions manage discretionary `trader` inventory |
 | `tools/fib_wave.py` | N-wave structure + Fibonacci levels. Run at session start for all pairs |
 | `tools/refresh_factor_cache.py` | H1/H4 technical indicator refresh |
-| `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. **Run by quality-audit** (not trader). Auditor reads PNGs visually, writes Regime Map + Range Opportunities to quality_audit.md. `--all` = 7 pairs × M5+H1 |
+| `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. Primarily run by quality-audit; `session_data.py` may refresh stale/missing PNGs as a trader fallback. `--all` = 7 pairs × M5+H1 |
 | `tools/oanda_performance.py` | **OANDA API-based performance analysis** — ground truth P&L, win rate, R:R, best streak, per-pair breakdown. USE THIS for any performance analysis, not grep on log files |
-| `tools/trade_performance.py` | Performance aggregation (legacy — parses log file. Use oanda_performance.py instead for accurate data) |
+| `tools/trade_performance.py` | Performance aggregation (legacy — parses log file). Still used by the recurring trader loop for strategy-feedback compatibility; use `oanda_performance.py` for ground-truth analysis |
 | `tools/slack_trade_notify.py` | Slack notifications |
 | `tools/news_fetcher.py` | News fetch (Finnhub+AlphaVantage+FF. Called from Cowork task) |
 | `tools/slack_daily_summary.py` | Daily summary |
@@ -235,14 +236,14 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/record_audit_narrative.py` | Parses the final Auditor's View from `logs/quality_audit.md` and appends the auditor's unheld A/S narrative picks to `logs/audit_history.jsonl` |
 | `tools/s_conviction_scan.py` | S-conviction pattern scanner — auto-detects TF × indicator combinations |
 | `tools/range_scalp_scanner.py` | **Range scalp scanner** — detects RANGE across 7 pairs, outputs ready-to-trade plans with BB levels, signal strength, sizing, R:R. Run at session start when ranges detected in regime map. `--json` for programmatic use |
-| `tools/trend_bot.py` | **Trend continuation entry bot** — deterministic local trend layer. Reads `logs/bot_inventory_policy.json`, requires aligned `M15/H1` trend + `M5` continuation setup + `M1` momentum + 7-pair currency pulse, and fires MARKET-only continuation entries tagged `trend_bot_market`. Designed to capture band-walks and follow-through moves that the range bot should not fade. It obeys pair-level `Ownership` (`TRADER_ONLY` / `SHARED_PASSIVE` / `SHARED_MARKET`), supports `Tempo` (`BALANCED` / `FAST` / `MICRO`) for slower, fast, or ultra-short collaborative scalps, lets same-direction trader pending coexist when the shared ownership explicitly allows it, requires `M1 aligned` for `FAST`, allows `MICRO` only when `M1` is `aligned` or `reload`, and blocks same-pair re-entry for 10 minutes after fresh `STOP_LOSS` / `trader_worker_inventory` closes to avoid churn |
-| `tools/range_bot.py` | **Range scalp entry bot** — deterministic local entry layer. Reads `logs/bot_inventory_policy.json` from the trader-owned worker policy, evaluates both `M5` and `H1` range views per pair, and picks the best fade lens instead of collapsing everything to `M5` only. Uses M15 for band-walk / fast-break veto, H1 for breakout-risk / regime confirmation, M1 for micro entry timing, and a 7-pair currency pulse for cross-currency context. It refuses to fade band-walks. Picks MARKET only when the live edge and M1 trigger align; otherwise leaves LIMIT at BB extremes. Keeps fresh pending orders instead of blanket cancelling them. Tags LIMITs `range_bot`, MARKET fills `range_bot_market`. It enforces pair-level `Ownership`, `Tempo`, and `MaxPending`, supports short-TP `FAST` collaboration mode plus `MICRO` fine-wave bites for stronger `B/A/S` edges, and blocks same-pair re-entry for 10 minutes after fresh `STOP_LOSS` / `trader_worker_inventory` closes to avoid churn. `--dry-run` for testing |
-| `tools/bot_trade_manager.py` | **Bot emergency brake** — deterministic local guard. Reviews `range_bot` / `range_bot_market` / `trend_bot_market` exposure and intervenes only on policy pause, panic margin, rollover, or deadlock pressure. Normal worker lifecycle stays with the local worker; trader steers policy and only force-overrides in emergencies |
-| `tools/bot_inventory_snapshot.py` | Snapshot helper for `trader` and the backup `inventory-director` — prints bot pending orders, bot trades, projected margin, deadlock profile, pair policy context, and the worker tag legend |
-| `tools/render_bot_inventory_policy.py` | Converts `logs/bot_inventory_policy.md` into `logs/bot_inventory_policy.json` so the local bot layer can consume LLM policy deterministically |
-| `tools/cancel_order.py` | Pending-order cancel helper with optional trade-log append. Used by `trader` for routine bot cleanup and by `inventory-director` only as backup |
-| `tools/local_bot_cycle.sh` | Local bot supervisor script — refreshes OANDA `M1/M5/M15/H1` technical cache, then runs `bot_trade_manager.py`, `trend_bot.py`, and `range_bot.py` under one lock-protected cycle |
-| `scripts/install_local_bot_launchd.sh` | Installs the `com.quantrabbit.local-bot-cycle` launchd agent and seeds a default bot inventory policy |
+| `tools/trend_bot.py` | Legacy disabled local-bot tool retained for rollback and historical analysis. Not part of the live recurring trader path |
+| `tools/range_bot.py` | Legacy disabled local-bot tool retained for rollback and historical analysis. Not part of the live recurring trader path |
+| `tools/bot_trade_manager.py` | Legacy disabled local-bot helper retained for rollback and historical analysis. Not part of the live recurring trader path |
+| `tools/bot_inventory_snapshot.py` | Legacy disabled inspection helper retained for rollback and historical analysis. Not part of the live recurring trader path |
+| `tools/render_bot_inventory_policy.py` | Legacy disabled helper retained for rollback and historical analysis. Not part of the live recurring trader path |
+| `tools/cancel_order.py` | Pending-order cancel helper. Still useful for manual cleanup and recovery workflows |
+| `tools/local_bot_cycle.sh` | Legacy disabled local-bot supervisor retained for rollback only |
+| `scripts/install_local_bot_launchd.sh` | Legacy rollback helper for the removed local-bot layer |
 
 ## Key Directories
 
@@ -261,7 +262,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 - "秘書" → triggers `/secretary` skill — live OANDA status + full command hub
 - "共同トレード" → triggers `/collab-trade` skill — reads `collab_trade/CLAUDE.md`, stops scheduled tasks, starts collaborative session
-- "トレード開始" → **trader is a scheduled task** (1-min cron). This phrase in conversation launches a manual collaborative session same as "共同トレード"
+- "トレード開始" → **trader is a scheduled task** (Claude currently every 10 min). This phrase in conversation launches a manual collaborative session same as "共同トレード"
 
 ## Context Management
 

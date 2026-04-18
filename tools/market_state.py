@@ -34,7 +34,7 @@ def _is_us_dst(dt: datetime) -> bool:
     return dst_start <= dt < dst_end
 
 
-def get_market_state(now: datetime | None = None) -> tuple[str, str]:
+def get_market_state(now=None) -> tuple:
     """Determine current market tradeability based on time only.
 
     Args:
@@ -81,7 +81,7 @@ def get_market_state(now: datetime | None = None) -> tuple[str, str]:
     return "OPEN", "Market open"
 
 
-def is_tradeable(now: datetime | None = None) -> bool:
+def is_tradeable(now=None) -> bool:
     """Quick check: can we execute orders right now?"""
     state, _ = get_market_state(now)
     return state == "OPEN"

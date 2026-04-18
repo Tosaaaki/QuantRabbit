@@ -10,9 +10,19 @@ Review today's trades, find patterns, and **write concrete updates to strategy_m
 
 ## Step 1: Collect Data
 
-Bash①: Gather today's data with daily_review.py
+Set the review-day variable once. **This task reviews the most recent completed UTC trading day**, not the in-progress local calendar day at 15:00 JST.
 
-cd /Users/tossaki/App/QuantRabbit && python3 tools/daily_review.py --date $(date -u +%Y-%m-%d)
+```bash
+REVIEW_DAY=$(python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat())
+PY
+)
+```
+
+Bash①: Gather the review day's data with daily_review.py
+
+cd /Users/tossaki/App/QuantRabbit && python3 tools/daily_review.py --date "$REVIEW_DAY"
 
 Bash②: Verify user market calls (compare predicted direction vs actual price movement)
 
@@ -22,43 +32,56 @@ This verifies all unverified user calls (outcome=NULL, >2h old) by fetching actu
 Results feed directly into pretrade_check accuracy stats. Include any notable findings in Step 2.
 
 Read: collab_trade/strategy_memory.md (current knowledge)
-Read: collab_trade/daily/$(date -u +%Y-%m-%d)/trades.md (today's records, if any)
+Read: collab_trade/memory/lesson_registry.json (current lesson states / trust snapshot)
+Read: collab_trade/daily/$REVIEW_DAY/trades.md (that UTC day's records, if any)
 Read: logs/live_trade_log.txt (last 100 lines — for details daily_review.py might miss)
+Read: logs/s_hunt_ledger.jsonl (that UTC day's raw receipts — `daily_review.py` now syncs these into `memory.db` `seat_outcomes` first)
 
 ## Step 2: Reflect (Think with your own head)
 
 Read the output of daily_review.py and think through the following:
 
-1. **Today's winning patterns**: Why did you win? Is it reproducible?
-2. **Today's losing patterns**: Why did you lose? Could it have been avoided?
-3. **Pretrade score accuracy**: HIGH/S-score entries that lost = score is inflated. LOW entries that won = score is too conservative. **Track this.**
-4. **Repetitive behavior**: Did the trader enter the same pair × same direction × same thesis more than 3 times? That's bot behavior, not trading
-5. **Trailing stop effectiveness**: How many positions were closed by trailing stops? Were the trail widths appropriate vs ATR?
-6. **R/R ratio**: Compare average win size vs average loss size. If losses > wins, the sizing or hold duration is wrong
+1. **Execution ownership split first**: Read the `Execution Split` section before anything else.
+2. **Memory promotion gate second**: Read the `Memory Promotion Gate` section and treat it as the evidence filter for today's edits. Pair/direction lessons in `strategy_memory.md` must come from the allowed recurring-trader evidence set, not from quarantined execution.
+3. **Lesson state suggestions third**: Read the `Lesson State Suggestions` section. Use it as a registry-backed queue for what should be promoted to watch/confirmed or cut back to watch/deprecated.
+4. **Bayesian evidence fourth**: Read the `Bayesian Evidence Update` section. Treat today as evidence against or in favor of an existing prior, not as an excuse to rewrite memory from one print.
+5. **AAR queue fifth**: Read the `After Action Review Queue`. For the biggest win, biggest loss, and repetition candidate, fill `Planned / Actual / Gap / Next hypothesis`.
+6. **Today's winning patterns**: Why did you win? Is it reproducible?
+7. **Today's losing patterns**: Why did you lose? Could it have been avoided?
+8. **Pretrade score accuracy**: HIGH/S-score entries that lost = score is inflated. LOW entries that won = score is too conservative. **Track this.**
+9. **Repetitive behavior**: Did the trader enter the same pair × same direction × same thesis more than 3 times? That's bot behavior, not trading
+10. **Trailing stop effectiveness**: How many positions were closed by trailing stops? Were the trail widths appropriate vs ATR?
+11. **R/R ratio**: Compare average win size vs average loss size. If losses > wins, the sizing or hold duration is wrong
 
 ## Step 2.5: Audit Accuracy Review
 
-Read: `logs/audit_history.jsonl` (today's entries — each line is one audit run with S-scan results and prices)
+Read: `logs/audit_history.jsonl` (today's entries — append-only audit opportunity history: scanner facts + final narrative picks)
 
-**audit_history.jsonl format** (one JSON object per line):
+**audit_history.jsonl format** (append-only JSON lines):
 ```json
-{"timestamp": "2026-04-09T01:33Z", "s_scan": [
+{"timestamp": "2026-04-09T01:33Z", "source": "s_scan", "s_scan": [
   {"pair": "EUR_USD", "direction": "SHORT", "recipe": "Squeeze-S", "status": "NOT_HELD", "price_at_detection": 1.16518}
 ], "positions": 1, "margin_pct": 38.0}
+{"timestamp": "2026-04-09 01:35 UTC", "source": "narrative", "narrative_picks": [
+  {"pair": "GBP_JPY", "direction": "SHORT", "edge": "A", "allocation": "B", "entry_price": 215.44, "tp_price": 215.22, "held_status": "NOT_HELD"}
+], "strongest_unheld": {"pair": "GBP_JPY", "direction": "SHORT", "edge": "A", "allocation": "B"}}
 ```
 
-Key fields: `recipe` identifies which S-scan recipe fired (Trend-Dip, Multi-TF-Extreme, Squeeze-S, Structural, Counter). `price_at_detection` is the M5 close when the signal fired. `status` is ALREADY_HELD / HELD_OPPOSITE / NOT_HELD.
+Key fields:
+- `source="s_scan"` → raw scanner facts. `recipe` identifies which S-scan recipe fired. `price_at_detection` is the M5 close when the signal fired. `status` is ALREADY_HELD / HELD_OPPOSITE / NOT_HELD.
+- `source="narrative"` → auditor's final market view. `narrative_picks` are unheld actionables with separate `edge` and `allocation`.
 
-**For each S-scan signal that fired today, grouped by recipe:**
+**For each audit opportunity that fired today:**
 1. Get current price for that pair from OANDA: `GET /v3/accounts/{acct}/pricing?instruments={PAIR}`
-2. Calculate pip movement from `price_at_detection` to current price
+2. Calculate pip movement from detection/entry price to current price
 3. Cross-reference with `live_trade_log.txt` — was the pair entered after this signal? P&L?
 4. Verdict: CORRECT (moved +5pip in predicted direction) / PREMATURE (moved against, then correct) / WRONG (moved against)
 
-**Write findings in strategy_memory.md → Active Observations, grouped by recipe:**
+**Write findings in strategy_memory.md → Active Observations, grouped by source:**
 - `[date] Trend-Dip: fired 3×. Entered 2. Results: +180, -50. Accuracy: 2/3.`
 - `[date] Squeeze-S: EUR_USD SHORT @1.16518. NOT entered. Price→1.16380 (+13.8pip in 4h). CORRECT.`
 - `[date] Counter: USD_JPY SHORT @158.856. Entered. Lost -200 JPY. H4 extreme persisted. PREMATURE.`
+- `[date] Narrative strongest unheld: GBP_JPY SHORT Edge A / Allocation B @215.44. NOT entered. Price→215.12 (+32pip). CORRECT.`
 
 **Recipe scorecard** — keep a running tally in strategy_memory.md:
 ```
@@ -69,6 +92,30 @@ Key fields: `recipe` identifies which S-scan recipe fired (Trend-Dip, Multi-TF-E
 ```
 After 10+ data points: >60% accuracy → Confirmed (size up). <40% accuracy → Deprecated (remove from scan).
 
+For narrative picks, track the same way in prose: strongest-unheld A/S calls, whether the trader acted, and whether the direction was right. The point is to learn whether the auditor's judgment is useful, not just whether the scanner recipe fired.
+
+## Step 2.6: S Hunt Capture Review
+
+Read: `logs/s_hunt_ledger.jsonl` (today's raw rows — append-only horizon receipts from each trader session)
+
+`s_hunt_ledger.jsonl` captures what the trader claimed was the best short-term / medium-term / long-term S, plus whether that horizon ended as entered, armed, or dead thesis. `daily_review.py` now syncs those receipts into `memory.db` `seat_outcomes`, so the review output includes a formal `discovered / orderable / deployed / captured / missed` chain instead of ad-hoc JSONL parsing.
+
+For each horizon that appeared today:
+1. Check whether the horizon was actually deployed (`entered id=...`, `armed STOP`, `armed LIMIT`) or only described.
+2. Cross-reference with OANDA closed trades and `live_trade_log.txt` — did the seat turn into real P&L?
+3. Compare the reference price versus current price at review time. If the direction worked but the book stayed flat, count it as a capture miss, not as "no chance".
+4. Write one distilled observation about the failure mode:
+   - discovery was wrong
+   - vehicle was right but deployment was absent
+   - deployment existed but sizing was too small
+   - long-term thesis existed but was killed too early
+
+Write findings in strategy_memory.md → Active Observations with concrete language:
+- `[4/18] Short-term S found the right EUR_USD SHORT, but it ended as STILL PASS and price moved +11 pip without capture. Vehicle right, deployment absent.`
+- `[4/18] Medium-term S armed the correct EUR_JPY SHORT as a STOP order and captured +420 JPY. Horizon stacking worked when the receipt contained a real order id.`
+- `[4/18] Long-term S kept defaulting to 'none' even when the medium-term continuation was already proving. Long-term blindness, not no-opportunity.`
+- Use the `Horizon Scoreboard` counts in `daily_review.py` as the official chain totals for today: `discovered`, `orderable`, `deployed`, `captured`, `missed`.
+
 ## Step 3: Update strategy_memory.md (MANDATORY — every section must be touched)
 
 **You MUST edit strategy_memory.md. "No changes needed" is not acceptable.** At minimum:
@@ -76,6 +123,15 @@ After 10+ data points: >60% accuracy → Confirmed (size up). <40% accuracy → 
 - Add at least 1 new Active Observation from today
 - Update Per-Pair Learnings for any pair that was traded today
 - Add pretrade feedback entries for HIGH-score losses and LOW-score wins
+- Add at least 1 Active Observation from `S Hunt Capture Review` when the ledger shows a miss or a successful horizon stack
+
+### Promotion gate rules
+
+- If a pair/direction appears only under `Quarantine this evidence`, do **not** promote it as a recurring-trader pair lesson today.
+- If quarantine execution reveals something real, convert it into a process / tooling / memory-hygiene lesson, not a pair-edge lesson.
+- Every new pair/direction lesson should be defensible with the `Promote into recurring trader memory only from this clean evidence` list.
+- Use `lesson_registry.json` to keep the lesson state machine coherent: `candidate -> watch -> confirmed -> deprecated`. Do not promote by prose mood alone.
+- Use `Bayesian Evidence Update` to describe whether today supported or contradicted an existing prior. One trade can change the next day's caution level, but it should not instantly rewrite a confirmed lesson into a new worldview.
 
 ### What to write in each section
 
@@ -113,9 +169,11 @@ cd /Users/tossaki/App/QuantRabbit && head -3 collab_trade/strategy_memory.md && 
 
 ## Step 5: Re-ingest
 
-Bash③: Re-ingest today's data with enriched ingest
+Bash③: Re-ingest that reviewed UTC day with enriched ingest
 
-cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 ingest.py $(date -u +%Y-%m-%d) --force 2>/dev/null; echo "ingest done"
+cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 ingest.py "$REVIEW_DAY" --force 2>/dev/null; echo "ingest done"
+
+This re-ingest now also enforces the lesson-state markers in `strategy_memory.md` from the registry review queue, then rebuilds `lesson_registry.json` from the updated markdown before embedding the fresh lesson chunks.
 
 ## Step 6: Slack Report
 
@@ -126,6 +184,6 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/slack_post.py "📖 Daily Rev
 ## Absolute Rules
 - **strategy_memory.md MUST be modified every run.** If no trades happened, still update the date and note "no trades"
 - Don't write a stats report. Write a pro trader's journal
-- Don't stop at "win rate 65%". Write "why 65%, and what to change to hit 70%"
+- Don't stop at "win rate 65%". Write whether expectancy was actually positive, why, and what must change
 - If strategy_memory.md exceeds 300 lines, distill old and duplicate content to shorten it
 - Don't casually delete existing Confirmed Patterns. If disproven, move to Deprecated

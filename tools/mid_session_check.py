@@ -2,13 +2,13 @@
 """
 Mid-session lightweight check — replaces full session_data.py on 2nd+ cycle.
 
-Only fetches what changes within a session (seconds, not hours):
+Only fetches what changes within a recurring session (seconds, not hours):
 1. Slack user messages (new since session start)
 2. OANDA prices + spreads (live)
 3. Open trades with P&L (live)
 
 Everything else (technicals, macro, news, memory, fib, S-scan) is stable
-within an 8-minute session — no need to re-fetch.
+within the same lock-held session window — no need to re-fetch.
 
 Usage: python3 tools/mid_session_check.py
 """

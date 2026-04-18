@@ -17,6 +17,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
+from config_loader import get_oanda_config
+
 ROOT = Path(__file__).resolve().parent.parent
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 STATE_PATH = ROOT / "collab_trade" / "state.md"
@@ -29,18 +31,12 @@ PIP_MULT = {
 
 
 def load_config():
-    cfg = {}
-    for line in open(ROOT / "config" / "env.toml"):
-        line = line.strip()
-        if "=" in line and not line.startswith("#"):
-            k, v = line.split("=", 1)
-            cfg[k.strip()] = v.strip().strip('"')
-    return cfg
+    return get_oanda_config()
 
 
-def oanda_api(path, token, acct):
-    url = f"https://api-fxtrade.oanda.com{path}"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+def oanda_api(path, cfg):
+    url = f"{cfg['oanda_base_url']}{path}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {cfg['oanda_token']}"})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())
 
 
@@ -535,7 +531,7 @@ def main():
 
     # Get open trades
     try:
-        trades_resp = oanda_api(f"/v3/accounts/{acct}/openTrades", token, acct)
+        trades_resp = oanda_api(f"/v3/accounts/{acct}/openTrades", cfg)
         trades = trades_resp.get("trades", [])
     except Exception as e:
         print(f"ERROR getting trades: {e}")

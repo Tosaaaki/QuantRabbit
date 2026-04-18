@@ -1,5 +1,250 @@
 # Changelog
 
+## 2026-04-18 — state hot updates: intraday learning carried into the next session
+
+- Updated `tools/session_data.py`
+  - Reads `## Hot Updates` from `collab_trade/state.md` and surfaces those bullets at the top of the next session as the first carry-forward learning read
+  - Added a `Hot Updates` template in the mandatory state handoff block so `Micro AAR` can be compressed into one-line next-seat corrections
+- Added `tools/state_hot_update.py`
+  - Fast helper to prepend one carry-forward learning line into `collab_trade/state.md` without manually re-editing the whole file
+- Updated `collab_trade/memory/ingest.py`
+  - State snapshots now ingest `Hot Updates` bullets as `lesson` chunks so intraday corrections survive into memory snapshots and future recall
+- Updated `docs/SKILL_trader.md`
+  - Added the `Hot Updates` operating rule and state template section so intraday PDCA is explicitly carried forward
+- Updated `AGENTS.md`
+  - Documented `Hot Updates` as part of the state handoff and trader runtime
+
+## 2026-04-18 — hot updates auto-sync + formal seat-outcome DB
+
+- Added `tools/auto_hot_updates.py`
+  - Derives carry-forward `Hot Updates` automatically from the final `S Hunt` / `Capital Deployment` receipts at session end
+  - Replaces prior hot-update bullets seat-by-seat so the next session sees the latest live-seat correction instead of stale prose
+- Updated `tools/session_end.py`
+  - Runs `auto_hot_updates.py` before the state snapshot and memory ingest
+  - Syncs formal `seat_outcomes` after the session-end ledger append so the discovery / deployment / capture chain is persisted immediately
+- Added `tools/seat_outcomes.py`
+  - Syncs `logs/s_hunt_ledger.jsonl` into `memory.db` `seat_outcomes`
+  - Scores each horizon as `discovered / orderable / deployed / captured / missed`
+  - Exposes a review-style scoreboard CLI for verification and daily-review reuse
+- Updated `collab_trade/memory/schema.py`
+  - Added the `seat_outcomes` table and indexes to `memory.db`
+- Updated `tools/daily_review.py`
+  - `S Hunt Capture Review` now syncs the formal `seat_outcomes` table first, then reads the scoreboard from SQL instead of ad-hoc JSONL parsing
+- Updated `tools/state_hot_update.py`
+  - Added `--state` and `--replace-prefix` support so auto-generated and manual hot updates can safely replace seat-specific carry-forward bullets
+- Updated `docs/SKILL_trader.md`, `docs/SKILL_daily-review.md`, and `AGENTS.md`
+  - Documented the session-end hot-update safety net and the formal seat-outcome review chain
+
+## 2026-04-18 — intraday learning loop: OODA / Decision Journal / AAR / Bayesian update
+
+- Updated `tools/session_data.py`
+  - Added `INTRADAY LEARNING LOOP (OODA + DECISION JOURNAL)` for the top fresh-risk seats so the trader writes Observe / Orient / Decide / Act before the order
+  - Added `Micro AAR` prompt so each entry / exit / miss can update the next seat immediately instead of waiting for daily-review
+- Updated `tools/daily_review.py`
+  - Added `Bayesian Evidence Update` so daily-review treats today's outcome as evidence for or against an existing prior instead of rewriting memory from one trade
+  - Added `After Action Review Queue` for the biggest win, biggest loss, and repetition candidate
+- Updated `docs/SKILL_trader.md`
+  - Added the intraday learning-loop workflow and an `OODA / Decision Journal` section to the state handoff template
+- Updated `docs/SKILL_daily-review.md`
+  - Daily review now explicitly reads the Bayesian evidence and AAR sections before promoting or demoting lessons
+- Updated `AGENTS.md`
+  - Documented that trader runtime now includes intraday OODA / Micro AAR prompts and daily-review emits Bayesian / AAR review aids
+
+## 2026-04-18 — trader runtime: learning-weighted edge board + fresh-risk tournament
+
+- Updated `tools/session_data.py`
+  - Added a `LEARNING EDGE BOARD` that turns pair-direction lessons plus trade stats from `lesson_registry.json` into a live verdict and allocation cap for each held / pending / scanner seat
+  - Added a `FRESH-RISK TOURNAMENT` that ranks current non-held seats and names the best direct-USD / cross / USD_JPY learning-weighted vehicles
+  - Extended the trader's prefilled entry template with `Learning verdict`, `Learning cap`, and `Tournament rank` so pair memory directly constrains size, not just post-hoc reflection
+- Updated `docs/SKILL_trader.md`
+  - Documented how to use the edge board as a size gate on top of the market read
+  - Made `Learning cap` and `Tournament rank` explicit fields in the entry contract
+- Updated `AGENTS.md`
+  - Documented that `session_data.py` now converts lesson history into pair-direction size caps for live vehicle selection
+
+## 2026-04-18 — lesson registry: state/type/trust for strategy memory
+
+- Added `collab_trade/memory/lesson_registry.py`
+  - Extracts a structured registry from `strategy_memory.md`
+  - Assigns each lesson a `state` (`candidate/watch/confirmed/deprecated`), `lesson_type`, and `trust_score`
+  - Writes `collab_trade/memory/lesson_registry.json` for runtime/review use
+- Updated `collab_trade/memory/ingest.py`
+  - Strategy-memory refresh now also rebuilds `lesson_registry.json`
+  - Re-ingest now auto-syncs explicit lesson state markers back into `strategy_memory.md` before chunking, so markdown, registry, and vector memory stay aligned after daily-review
+  - Strategy lesson chunks now strip `[WATCH]`/`[CONFIRMED]` markers from embedded text and keep the state only as metadata tags, avoiding marker noise in semantic recall
+- Updated `tools/session_data.py`
+  - `ACTIONABLE MEMORY` now merges concrete trade memory with trusted registry lessons so recall includes not only what happened before, but which lesson is currently trusted
+- Updated `tools/daily_review.py`
+  - Added `Lesson State Suggestions` so daily-review gets a registry-backed queue of promotion/demotion candidates instead of editing `strategy_memory.md` from prose intuition alone
+- Updated `docs/SKILL_daily-review.md`
+  - Daily review now reads `lesson_registry.json` and treats lesson promotion as a state-machine update instead of prose-only editing
+  - Documented that the post-review `ingest.py --force` step auto-enforces lesson-state markers before rebuilding memory
+- Updated `AGENTS.md`
+  - Documented the new lesson-registry layer in the memory stack and the ingest-time marker sync
+
+## 2026-04-18 — strategy-memory section ingest + daily-review promotion gate
+
+- Updated `collab_trade/memory/ingest.py`
+  - `strategy_memory.md` is now re-ingested on every memory refresh as multiple section-level lesson chunks instead of being absent from vector memory
+  - Pair/direction metadata is attached where possible so recall can surface distilled pair learnings without mixing opposite-side trade chunks
+- Updated `tools/daily_review.py`
+  - Added `Memory Promotion Gate` output so recurring-trader evidence and quarantined non-recurring execution are separated before `strategy_memory.md` is edited
+- Updated `docs/SKILL_daily-review.md`
+  - Tightened the writing contract so new pair/direction lessons must be justified by the promotion-gate evidence set and quarantine evidence cannot be promoted directly
+- Updated `AGENTS.md`
+  - Documented section-level `strategy_memory.md` ingest and the new promotion-gate review flow
+
+## 2026-04-18 — memory precision cleanup: direction-tagged recall + historical state hygiene
+
+- Updated `collab_trade/memory/schema.py`
+  - Added `chunks.direction` plus a `(pair, direction)` index so recall can filter by actual trade side instead of `LIKE '%LONG%'`
+- Updated `collab_trade/memory/ingest.py`
+  - Trade chunks now derive from `parse_trades()` instead of loose keyword heuristics, cutting memory chunk noise sharply
+  - Chunks now store explicit direction metadata
+  - Historical re-ingest now uses `daily/<date>/state.md` when present and otherwise only ingests the live `collab_trade/state.md` for today, preventing current-state leakage into past dates
+  - Re-ingested the full memory corpus after the schema/chunking change
+- Updated `collab_trade/memory/recall.py`
+  - Direction filtering now uses structured metadata and excludes directionless `trade` chunks from same-side recall, reducing opposite-side contamination
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Suppresses identical unmatched pretrade logs within a short window so `pretrade_outcomes` reflects distinct decisions instead of repeated probes
+- Updated `tools/daily_review.py`
+  - Added duplicate unmatched pretrade-probe cleanup before outcome matching so legacy spam does not keep polluting review statistics
+- Updated `tools/session_end.py`
+  - `SESSION_END` now archives `collab_trade/state.md` into `collab_trade/daily/<UTC-date>/state.md` before ingest so future historical re-ingest has a real day-specific thesis snapshot
+- Updated `tools/session_data.py`
+  - `ACTIONABLE MEMORY` ranking now prefers recent, lesson-rich trade memory and de-prioritizes stale/cancel/position noise
+  - Fixed an old recency bug where memory compression favored older dates instead of newer ones
+- Verification
+  - Full `memory.db` re-ingest reduced chunk count from `797` to `459`
+  - `trade` chunks with explicit direction now cover `356/356` rows
+  - `ACTIONABLE MEMORY` no longer surfaces current `state.md` under historical dates after re-ingest
+  - First `daily_review.py` run after the change pruned unmatched `pretrade_outcomes` from `668` to `204`
+
+## 2026-04-18 — daily-review date boundary + recurring-trader split
+
+- Updated `tools/daily_review.py`
+  - The default review target is now the most recent completed UTC trading day instead of the in-progress current day
+  - OANDA fetch windows are now labeled explicitly in UTC and JST so review output cannot silently mix date conventions
+  - Added `Execution Split` output that separates recurring trader (`tag=trader*` / `qr-trader`) from other or unknown-tag execution before lessons are written
+  - Enriched closed-trade parsing with tag/comment recovery from OANDA clientExtensions and `logs/live_trade_log.txt`
+- Updated `docs/SKILL_daily-review.md`
+  - The playbook now computes `REVIEW_DAY` as the most recent completed UTC trading day and reuses it for `daily_review.py`, `trades.md`, and `ingest.py`
+  - Reflection now starts from the recurring-trader vs other-execution split so strategy memory does not learn from the wrong flow
+- Updated `docs/SKILL_trader.md`
+  - Tightened `S Hunt` / `Deepening Pass` wording so a valid trigger beyond live price must close as `STOP-ENTRY`, `LIMIT`, or `dead thesis because ...`, never prose-only `STILL PASS`
+- Updated `AGENTS.md`
+  - Documented that `daily-review` now reviews the most recent completed UTC trading day and splits recurring-trader vs other execution before distillation
+
+## 2026-04-18 — trader runtime: block prose-only flat books at SESSION_END
+
+- Added `tools/validate_trader_state.py`
+  - Validates `collab_trade/state.md` before `SESSION_END`
+  - Blocks prose-only closures such as `armed mentally only`, `retest only`, `breakout only`, and flat books with zero real `id=` receipts across `S Hunt` / `Capital Deployment`
+- Updated `tools/session_end.py`
+  - Runs `validate_trader_state.py` before lock release so invalid flat-book receipts fail fast and force a deeper deployment decision
+- Updated `tools/record_s_hunt_ledger.py`
+  - Hardened the parser for live `state.md` phrasing (`Why S:`, `Exact trigger:`, `Invalidation:`)
+  - `build_entry()` now accepts a custom state path so validation and future tooling can reuse the same parser
+- Updated `docs/SKILL_trader.md`
+  - Tightened `S Hunt` and `Capital Deployment` so each horizon must close as `id=...` or `dead thesis because ...`
+  - Added explicit rejection of prose-only closures and documented the new `STATE_VALIDATION_FAILED` loop
+- Updated `AGENTS.md`
+  - Documented the new `validate_trader_state.py` runtime gate in the recurring trader path
+- Updated `collab_trade/strategy_memory.md`
+  - Recorded the lesson that a flat handoff with zero `id=` receipts is fake participation, not deployment
+
+## 2026-04-18 — trader runtime: add M1 execution artifacts + S-hunt capture ledger
+
+- Updated `tools/chart_snapshot.py`
+  - Added optional `--with-m1` support so the trader runtime can generate an M1 execution set alongside the default M5/H1 chart pack
+  - Switched matplotlib to lazy import so lightweight paths such as `--regime-only` stay usable even when host `python3` lacks the plotting stack
+- Updated `tools/session_data.py`
+  - Trader fallback chart refresh now requests `.venv/bin/python tools/chart_snapshot.py --all --with-m1`
+  - Chart status output now explicitly reports the M1/M5/H1 execution set
+- Added `tools/record_s_hunt_ledger.py`
+  - Parses `collab_trade/state.md` and appends short / medium / long horizon receipts to `logs/s_hunt_ledger.jsonl`
+  - Captures deployment result, trigger/invalidation, and cached technical reference prices so daily-review can score misses vs captures
+- Updated `tools/session_end.py` and `tools/task_runtime.py`
+  - Session close and stale-lock recovery now best-effort persist the S-hunt ledger before ingest
+- Updated `tools/daily_review.py`
+  - Added `S Hunt Capture Review` sourced from `logs/s_hunt_ledger.jsonl`
+  - Daily review now scores horizon discovery vs deployment vs actual capture using closed trades plus current-price direction checks
+- Updated `docs/SKILL_trader.md`
+  - Trader must now open M1 PNGs for the primary / backup / best direct-USD / S-hunt pairs
+  - Each S-hunt horizon now requires a `Deployment result` receipt (entered / armed / dead thesis)
+  - Capital Deployment now explicitly mirrors the horizon receipt so discovery and execution cannot drift apart
+- Updated `docs/SKILL_daily-review.md`
+  - Daily review now reads `logs/s_hunt_ledger.jsonl` and writes at least one S-hunt capture observation into `strategy_memory.md`
+- Updated `AGENTS.md`
+  - Documented the M1 trader chart set and the new `logs/s_hunt_ledger.jsonl` / `tools/record_s_hunt_ledger.py` runtime artifacts
+- Updated `collab_trade/strategy_memory.md`
+  - Recorded the lesson that M1 trigger quality requires real M1 artifacts and that each S-hunt horizon must close as entered, armed, or dead thesis
+
+## 2026-04-18 — trader prompt: kill trigger drift and prose-only clean seats
+
+- Updated `docs/SKILL_trader.md`
+  - Added required `Last session trigger audit` and `Best direct-USD seat NOW` lines to the `Market Narrative` block
+  - Extended the `Capital Deployment Check` receipt with trigger-audit resolution and explicit direct-USD deployment status
+  - Tightened flat-book accountability so already-traded triggers must resolve as `ENTER NOW`, `LEAVE STOP-ENTRY`, or `MISSED — wait first retest` instead of being silently rewritten at a worse price
+  - Added `STOP-ENTRY + reload LIMIT` guidance for reclaim / breakout expressions that can fire between 20-minute trader sessions
+  - Added a concrete OANDA `STOP` order example so the new `STOP-ENTRY` path is executable, not just described
+  - Added required `MTF chain` and `6-category evidence` fields to Tier 1, no-trade best-seat review, and the pre-entry conviction block so `none` cannot be justified from only M5 shape + one trigger
+  - Added `Deepening Pass (TOO_EARLY only)` and rewired the runtime buffer so the extra window must compare best direct-USD vs best cross with full MTF/6-category evidence instead of narrating the timer
+  - Clarified that a `TOO_EARLY` session is still incomplete until `state.md` contains the `Deepening Pass` receipt, so a timer-only wait no longer counts as a clean handoff
+  - Added a mandatory `S Hunt` block so every session must name the best short-term, medium-term, and long-term S candidate before capital deployment is considered complete
+- Updated `collab_trade/strategy_memory.md`
+  - Recorded the distilled lesson that trigger drift is avoidance and that cleaner direct-USD seats must be deployed or explicitly rejected on tape grounds
+  - Recorded the new lesson that under-reading across timeframes/categories makes S disappear artificially
+  - Recorded the new lesson that the TOO_EARLY buffer must produce a second-pass market read, not compliance theater
+
+## 2026-04-17 — English-only prompt refresh + host metadata sync
+
+- Refreshed active agent-facing docs into English-only current-state versions
+  - Rewrote `README.md` around the live v8.5 architecture instead of the old multi-agent Claude stack
+  - Rewrote `docs/TRADER_PROMPT.md` as a judgment-only mental-model document and removed stale runtime/cadence guidance
+  - Rewrote `collab_trade/CLAUDE.md` as a concise English collaborative-trading guide
+  - Updated `AGENTS.md` / `CLAUDE.md` document maps so the canonical recurring contract is `docs/SKILL_trader.md`, while `TRADER_PROMPT.md` is explicitly non-runtime
+- Removed deprecated Japanese prompt copies from live QuantRabbit Claude task directories
+  - Deleted `SKILL_ja.md` from `trader`, `daily-review`, `daily-performance-report`, `daily-slack-summary`, and `intraday-pl-update`
+  - Updated the active `schedule.json` descriptions in `~/.claude/scheduled-tasks/*` to match canonical prompt frontmatter exactly
+- Hardened sync verification
+  - `tools/check_task_sync.py` now also fails on deprecated `SKILL_ja.md` files and stale Claude `schedule.json` descriptions
+  - Updated stale helper wording in `tools/mid_session_check.py` and `tools/news_fetcher.py` so comments match the current recurring runtime
+
+## 2026-04-17 — trader consistency pass (preserve working runtime, remove split-brain)
+
+- Updated `docs/SKILL_trader.md`
+  - Reframed the trader prompt around the shared lock-based runtime instead of one hardcoded host cadence
+  - Removed the dead bot-inventory / worker-policy workflow from the live trader path
+  - Aligned the timing section with the actual runtime gates: 10-minute minimum session, 15-minute stale-lock threshold
+- Updated `AGENTS.md` and `CLAUDE.md`
+  - Separated live recurring trader behavior from disabled legacy bot tooling
+  - Corrected host-specific scheduler notes (`Codex` 20-minute trader automation, `Claude` 10-minute trader schedule)
+  - Corrected stale references such as `1-min cron`, bot-live script tables, and quality-audit freshness wording
+- Updated `tools/task_runtime.py`
+  - Stale-lock ingest now uses the previous session timestamp to derive the UTC session date
+  - `trader cycle` now falls back to `mid_session_check.py` only on soft `session_end.py` rejections, not on hard runtime errors
+- Updated `tools/session_data.py`
+  - Prints the real `state.md` modification timestamp/age instead of echoing the current session time as if it were a file timestamp
+- Updated `tools/check_task_sync.py`
+  - Treats `~/.claude/scheduled-tasks/*.DISABLED/SKILL.md` compatibility links as valid sync points so intentionally disabled prompts no longer produce false failures
+
+## 2026-04-17 — Shared OANDA config loader + auth smoke test
+
+- Added `tools/config_loader.py` to centralize `config/env.toml` parsing and normalize accepted OANDA key aliases (`oanda_token`, `OANDA_TOKEN`, `OANDA_API_KEY`, `api_key`)
+- Added `tools/oanda_auth_check.py` for a read-only OANDA auth summary check instead of ad-hoc snippets
+- Updated `tools/session_data.py`, `tools/profit_check.py`, `tools/quality_audit.py`, and `tools/market_monitor.py` to use the shared loader and honor `oanda_practice`
+
+## 2026-04-17 — Trader prompt: expose benchmark-pressure chasing + remove stale Codex trader automation
+
+- Updated `docs/SKILL_trader.md`
+  - Added explicit `Benchmark pressure`, `Tempting P&L-driven trade`, and `Next fresh risk allowed NOW` lines to the required `Market Narrative` block
+  - Added matching fields to the `Capital Deployment Check` receipt so each session must separate the tempting recovery trade from the actually valid next seat
+  - Clarified that the benchmark changes the quality bar, not the pair selection
+- Updated `collab_trade/strategy_memory.md`
+  - Added the distilled lesson that benchmark deficit is not a setup and may only tighten the quality bar
+- Removed the stale paused Codex trader automation `qr-hourly-trader-2` so `qr-trader` remains the only Codex trader automation path
+
 ## 2026-04-17 — ALL BOTS REMOVED — discretionary-only architecture
 
 **Decision by user after 7-day P&L analysis**: bots were net-negative. Per-tag breakdown over last 7 days:
@@ -2814,3 +3059,16 @@ scheduled-tasks/*/SKILL_ja.md ← 日本語版（確認用）
 - Clarified in `README.md` that GCP/VM/Cloud Run/BigQuery/Looker references are archived history only and not part of the current runtime
 - Fixed the legacy runbook reference from `docs/OPS_GCP_RUNBOOK.md` to `archive/docs_legacy/OPS_GCP_RUNBOOK.md`
 - Clarified in `AGENTS.md` and `CLAUDE.md` that `archive/` contains historical VM/GCP artifacts only; current QuantRabbit does not run on VM/GCP
+
+## 2026-04-18
+
+### Runtime learning caps: add session/regime context
+- `tools/session_data.py` now scores `LEARNING EDGE BOARD` seats with three layers instead of pair-memory alone: pair-direction history, current UTC session bucket, and a live M5 regime proxy inferred from the technical cache
+- The board now prints session/regime context lines such as `tokyo: WR ... EV ...` and uses those headwind/tailwind stats to tighten or relax the runtime allocation cap before a seat reaches `A/S`
+- `docs/SKILL_trader.md` now requires a `Learning context` line in the trade thesis so the trader cannot ignore a `late NY` or `range` headwind while sizing up
+- `AGENTS.md` updated to reflect that `session_data.py` now converts lesson history into session/regime-aware size caps, not only pair-direction caps
+
+### Timing docs: remove stale trader cadence references
+- Updated `docs/SKILL_trader.md` to describe the current timing model consistently as a 15-minute trader session window on a 20-minute recurring cadence, instead of mixing in stale `Claude 10-minute` wording
+- Updated `AGENTS.md` to match the same timing model and to describe Claude trader compatibility as disabled/host-dependent rather than live `10-minute cron`
+- Refreshed the local Claude trader compatibility schedule file to remove the stale `*/10` recurrence and leave it disabled unless explicitly re-enabled

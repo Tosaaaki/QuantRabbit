@@ -7,13 +7,15 @@ writes the review to strategy_memory.md.
 
 Usage:
   python3 tools/daily_review.py --date 2026-03-27
-  python3 tools/daily_review.py  # today
+  python3 tools/daily_review.py  # most recent completed UTC trading day
 """
+from __future__ import annotations
+
 import json
 import re
 import sys
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -22,6 +24,54 @@ from schema import get_conn, init_db, fetchall_dict, fetchone_val
 
 ENV_TOML = ROOT / "config" / "env.toml"
 OANDA_PAIRS = {"USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"}
+JST = timezone(timedelta(hours=9))
+PRETRADE_LOOKBACK_DAYS = 3
+PRETRADE_MATCH_HOURS = 72
+RECURRING_TAG_PREFIXES = ("trader",)
+LESSON_REGISTRY_JSON = ROOT / "collab_trade" / "memory" / "lesson_registry.json"
+
+
+def payoff_metrics(pls: list[float]) -> dict:
+    """Realized payoff quality for review output."""
+    if not pls:
+        return {
+            "wins": 0,
+            "losses": 0,
+            "win_rate": 0.0,
+            "avg_win": 0.0,
+            "avg_loss": 0.0,
+            "rr_ratio": 0.0,
+            "expectancy": 0.0,
+            "break_even_win_rate": None,
+        }
+
+    wins = [pl for pl in pls if pl > 0]
+    losses = [pl for pl in pls if pl < 0]
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = sum(losses) / len(losses) if losses else 0.0
+    if avg_loss < 0:
+        rr_ratio = avg_win / abs(avg_loss)
+    elif avg_win > 0 and not losses:
+        rr_ratio = float("inf")
+    else:
+        rr_ratio = 0.0
+
+    break_even_win_rate = None
+    if avg_win > 0 and avg_loss < 0:
+        break_even_win_rate = abs(avg_loss) / (avg_win + abs(avg_loss))
+    elif avg_win > 0 and not losses:
+        break_even_win_rate = 0.0
+
+    return {
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": len(wins) / len(pls),
+        "avg_win": avg_win,
+        "avg_loss": avg_loss,
+        "rr_ratio": rr_ratio,
+        "expectancy": sum(pls) / len(pls),
+        "break_even_win_rate": break_even_win_rate,
+    }
 
 
 def _load_oanda_config():
@@ -34,8 +84,332 @@ def _load_oanda_config():
     return cfg
 
 
+def completed_utc_review_day(now: datetime | None = None) -> str:
+    """Return the most recent fully completed UTC trading day."""
+    current = now.astimezone(timezone.utc) if now else datetime.now(timezone.utc)
+    return (current.date() - timedelta(days=1)).isoformat()
+
+
+def review_day_bounds_utc(session_date: str) -> tuple[datetime, datetime]:
+    start = datetime.strptime(session_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return start, start + timedelta(days=1)
+
+
+def review_window_label(session_date: str) -> str:
+    start_utc, end_utc = review_day_bounds_utc(session_date)
+    start_jst = start_utc.astimezone(JST)
+    end_jst = end_utc.astimezone(JST)
+    return (
+        f"{start_utc.strftime('%Y-%m-%d %H:%M')}→{end_utc.strftime('%Y-%m-%d %H:%M')} UTC "
+        f"({start_jst.strftime('%m/%d %H:%M')}→{end_jst.strftime('%m/%d %H:%M')} JST)"
+    )
+
+
+def load_trade_tags_from_log() -> dict[str, dict[str, str]]:
+    """Recover trade tags/comments when the opening fill is outside the review window."""
+    path = ROOT / "logs" / "live_trade_log.txt"
+    if not path.exists():
+        return {}
+
+    tags: dict[str, dict[str, str]] = {}
+    for line in path.read_text(errors="ignore").splitlines():
+        id_match = re.search(r"\bid=(\d+)\b", line)
+        if not id_match:
+            continue
+        tag_match = re.search(r"\btag=([A-Za-z0-9_:-]+)", line)
+        comment_match = re.search(r"\bcomment=([^\s|]+)", line)
+        if not tag_match and not comment_match:
+            continue
+        tags[id_match.group(1)] = {
+            "tag": tag_match.group(1) if tag_match else "",
+            "comment": comment_match.group(1) if comment_match else "",
+        }
+    return tags
+
+
+def is_recurring_trader_trade(tag: str | None, comment: str | None) -> bool:
+    lowered_tag = (tag or "").lower()
+    lowered_comment = (comment or "").lower()
+    return lowered_tag.startswith(RECURRING_TAG_PREFIXES) or lowered_comment.startswith("qr-trader")
+
+
+def summarize_trade_bucket(title: str, trades: list[dict], tag_coverage: tuple[int, int] | None = None) -> list[str]:
+    lines = [f"### {title}: {len(trades)} trades"]
+    if tag_coverage is not None:
+        tagged, total = tag_coverage
+        lines.append(f"  Tag coverage: {tagged}/{total} trades linked to an explicit tag/comment")
+    if not trades:
+        lines.append("  No closed trades in this bucket.")
+        lines.append("")
+        return lines
+
+    total_pl = sum(t["pl"] for t in trades)
+    metrics = payoff_metrics([t["pl"] for t in trades])
+    wins = [t for t in trades if t["pl"] > 0]
+    losses = [t for t in trades if t["pl"] <= 0]
+    lines.append(
+        f"  P&L: {total_pl:+,.0f} JPY | Win: {metrics['wins']} Loss: {metrics['losses']} "
+        f"| Win rate: {metrics['win_rate']*100:.0f}% | EV {metrics['expectancy']:+,.0f}"
+    )
+    lines.append(
+        f"  Avg win: {metrics['avg_win']:+,.0f} | Avg loss: {metrics['avg_loss']:+,.0f} | R:R {metrics['rr_ratio']:.2f}"
+    )
+    by_pair: dict[str, list[dict]] = {}
+    for trade in trades:
+        by_pair.setdefault(trade["pair"], []).append(trade)
+    for pair, pair_trades in sorted(by_pair.items(), key=lambda item: sum(t["pl"] for t in item[1])):
+        pair_pl = sum(t["pl"] for t in pair_trades)
+        lines.append(f"  {pair}: {pair_pl:+,.0f} JPY across {len(pair_trades)} trades")
+    if wins:
+        best = max(wins, key=lambda t: t["pl"])
+        lines.append(f"  Best win: {best['pair']} {best['direction']} {best['pl']:+,.0f} JPY")
+    if losses:
+        worst = min(losses, key=lambda t: t["pl"])
+        lines.append(f"  Worst loss: {worst['pair']} {worst['direction']} {worst['pl']:+,.0f} JPY")
+    lines.append("")
+    return lines
+
+
+def memory_promotion_gate(recurring_trades: list[dict], other_trades: list[dict]) -> list[str]:
+    def summarize_pairs(trades: list[dict]) -> list[str]:
+        buckets: dict[tuple[str, str], dict[str, float]] = {}
+        for trade in trades:
+            key = (trade["pair"], trade["direction"])
+            bucket = buckets.setdefault(key, {"count": 0, "pl": 0.0})
+            bucket["count"] += 1
+            bucket["pl"] += trade["pl"]
+        ordered = sorted(
+            buckets.items(),
+            key=lambda item: (abs(item[1]["pl"]), item[1]["count"]),
+            reverse=True,
+        )
+        return [
+            f"{pair} {direction} ({bucket['count']} trades, {bucket['pl']:+,.0f} JPY)"
+            for (pair, direction), bucket in ordered[:5]
+        ]
+
+    lines = ["## Memory Promotion Gate", ""]
+    if recurring_trades:
+        lines.append("Promote into recurring trader memory only from this clean evidence:")
+        for item in summarize_pairs(recurring_trades):
+            lines.append(f"  - {item}")
+    else:
+        lines.append("Promote no pair/direction lesson today: there is no closed recurring-trader evidence.")
+
+    lines.append("")
+    if other_trades:
+        lines.append("Quarantine this evidence from strategy_memory pair lessons:")
+        for item in summarize_pairs(other_trades):
+            lines.append(f"  - {item}")
+        lines.append(
+            "  - If a quarantine trade reveals a process/tooling issue, rewrite it as a hygiene lesson only after separating it from the non-recurring execution path."
+        )
+    else:
+        lines.append("No quarantine execution detected.")
+    lines.append("")
+    return lines
+
+
+def lesson_registry_state_suggestions() -> list[str]:
+    if not LESSON_REGISTRY_JSON.exists():
+        return []
+    try:
+        registry = json.loads(LESSON_REGISTRY_JSON.read_text())
+    except Exception:
+        return []
+
+    queue = registry.get("review_queue") or []
+    if not queue:
+        return []
+
+    lines = ["## Lesson State Suggestions", ""]
+    lines.append("Apply these suggestions when rewriting strategy_memory.md. Registry state is not the source of truth; the markdown edit is.")
+    lines.append("")
+
+    def rank(state: str) -> int:
+        return {
+            "deprecated": 1,
+            "candidate": 2,
+            "watch": 3,
+            "confirmed": 4,
+        }.get(state, 0)
+
+    promote = [item for item in queue if rank(item.get("suggested_state", "")) > rank(item.get("state", ""))]
+    demote = [
+        item for item in queue
+        if rank(item.get("suggested_state", "")) < rank(item.get("state", ""))
+        and item.get("suggested_state") != "deprecated"
+    ]
+    stale = [item for item in queue if item.get("suggested_state") == "deprecated"]
+
+    def emit(title: str, items: list[dict]):
+        if not items:
+            return
+        lines.append(f"### {title}")
+        for item in items[:5]:
+            reasons = "; ".join(item.get("suggestion_reasons") or []) or "state drift"
+            pair = f"{item.get('pair')} " if item.get("pair") else ""
+            lines.append(
+                f"  {item.get('state')} -> {item.get('suggested_state')} | trust {item.get('trust_score')} | "
+                f"{pair}{item.get('title')} | {reasons}"
+            )
+        lines.append("")
+
+    emit("Promote", promote)
+    emit("Demote", demote)
+    emit("Stale / Drop", stale)
+
+    if len(lines) <= 3:
+        return []
+    return lines
+
+
+def bayesian_evidence_update(oanda_trades: list[dict]) -> list[str]:
+    if not oanda_trades or not LESSON_REGISTRY_JSON.exists():
+        return []
+    try:
+        registry = json.loads(LESSON_REGISTRY_JSON.read_text())
+    except Exception:
+        return []
+
+    lessons = registry.get("lessons") or []
+    if not lessons:
+        return []
+
+    buckets: dict[tuple[str, str], dict[str, float]] = {}
+    for trade in oanda_trades:
+        if trade.get("bucket") != "recurring_trader":
+            continue
+        key = (trade["pair"], trade["direction"])
+        bucket = buckets.setdefault(key, {"count": 0, "wins": 0, "pl": 0.0})
+        bucket["count"] += 1
+        bucket["pl"] += trade["pl"]
+        if trade["pl"] > 0:
+            bucket["wins"] += 1
+
+    if not buckets:
+        return []
+
+    lines = ["## Bayesian Evidence Update", ""]
+    added = 0
+    for (pair, direction), bucket in sorted(
+        buckets.items(),
+        key=lambda item: (abs(item[1]["pl"]), item[1]["count"]),
+        reverse=True,
+    ):
+        exact = sorted(
+            [
+                lesson for lesson in lessons
+                if lesson.get("pair") == pair
+                and lesson.get("direction") == direction
+                and lesson.get("state") != "deprecated"
+            ],
+            key=lambda lesson: (
+                int(lesson.get("trust_score", 0)),
+                int(lesson.get("state_rank", 0)),
+                str(lesson.get("lesson_date", "")),
+            ),
+            reverse=True,
+        )
+        pair_only = sorted(
+            [
+                lesson for lesson in lessons
+                if lesson.get("pair") == pair
+                and not lesson.get("direction")
+                and lesson.get("state") != "deprecated"
+            ],
+            key=lambda lesson: (
+                int(lesson.get("trust_score", 0)),
+                int(lesson.get("state_rank", 0)),
+                str(lesson.get("lesson_date", "")),
+            ),
+            reverse=True,
+        )
+        prior = exact[0] if exact else (pair_only[0] if pair_only else None)
+        if not prior:
+            continue
+
+        count = int(bucket["count"])
+        wins = int(bucket["wins"])
+        pl = float(bucket["pl"])
+        if pl > 0 and wins == count:
+            evidence = "supports prior strongly"
+        elif pl > 0:
+            evidence = "supports prior"
+        elif pl < 0 and wins == 0:
+            evidence = "contradicts prior strongly"
+        elif pl < 0:
+            evidence = "contradicts prior"
+        else:
+            evidence = "mixed / inconclusive"
+
+        lines.append(
+            f"  {pair} {direction}: prior {prior.get('state')} trust {prior.get('trust_score')} "
+            f"from `{prior.get('title')}` | today {wins}/{count} wins {pl:+,.0f} JPY → {evidence}"
+        )
+        added += 1
+        if added >= 8:
+            break
+
+    if added == 0:
+        return []
+    lines.append("")
+    return lines
+
+
+def after_action_review_queue(oanda_trades: list[dict]) -> list[str]:
+    if not oanda_trades:
+        return []
+
+    lines = ["## After Action Review Queue", ""]
+    added = 0
+
+    losses = [trade for trade in oanda_trades if trade["pl"] < 0]
+    if losses:
+        worst = min(losses, key=lambda trade: trade["pl"])
+        hold = f"{worst['hold_minutes']}min" if worst.get("hold_minutes") is not None else "hold n/a"
+        lines.append(f"### Biggest loss: {worst['pair']} {worst['direction']}")
+        lines.append(f"  Facts: {worst['pl']:+,.0f} JPY | {hold} | {worst.get('units', '?')}u")
+        lines.append("  Fill in AAR: Planned / Actual / Gap / Next hypothesis")
+        lines.append("")
+        added += 1
+
+    wins = [trade for trade in oanda_trades if trade["pl"] > 0]
+    if wins:
+        best = max(wins, key=lambda trade: trade["pl"])
+        hold = f"{best['hold_minutes']}min" if best.get("hold_minutes") is not None else "hold n/a"
+        lines.append(f"### Best win: {best['pair']} {best['direction']}")
+        lines.append(f"  Facts: {best['pl']:+,.0f} JPY | {hold} | {best.get('units', '?')}u")
+        lines.append("  Fill in AAR: What exactly made this work, and should it size up next time?")
+        lines.append("")
+        added += 1
+
+    buckets: dict[tuple[str, str], dict[str, float]] = {}
+    for trade in oanda_trades:
+        key = (trade["pair"], trade["direction"])
+        bucket = buckets.setdefault(key, {"count": 0, "pl": 0.0})
+        bucket["count"] += 1
+        bucket["pl"] += trade["pl"]
+    repetitive = [
+        (key, bucket) for key, bucket in buckets.items()
+        if bucket["count"] >= 2
+    ]
+    repetitive.sort(key=lambda item: (item[1]["pl"], -item[1]["count"]))
+    if repetitive:
+        (pair, direction), bucket = repetitive[0]
+        lines.append(f"### Repetition check: {pair} {direction}")
+        lines.append(
+            f"  Facts: {int(bucket['count'])} trades | total {float(bucket['pl']):+,.0f} JPY"
+        )
+        lines.append("  Fill in AAR: Was this repeated edge proof or idea recycling?")
+        lines.append("")
+        added += 1
+
+    return lines if added else []
+
+
 def fetch_closed_trades(session_date: str) -> list[dict]:
-    """Fetch closed trades for the specified date from the OANDA API"""
+    """Fetch closed trades for the specified completed UTC trading day from the OANDA API."""
     try:
         cfg = _load_oanda_config()
     except Exception:
@@ -46,9 +420,10 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
     base = 'https://api-fxtrade.oanda.com'
     headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
 
-    since = f"{session_date}T00:00:00.000000000Z"
-    dt = datetime.strptime(session_date, '%Y-%m-%d')
-    to = (dt + timedelta(days=1)).strftime('%Y-%m-%dT00:00:00.000000000Z')
+    start_utc, end_utc = review_day_bounds_utc(session_date)
+    since = start_utc.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
+    to = end_utc.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
+    log_tags = load_trade_tags_from_log()
 
     try:
         import urllib.parse
@@ -83,24 +458,31 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
         if trade_opened:
             tid = trade_opened.get('tradeID', '')
             units = int(float(trade_opened.get('units', 0)))
+            client_ext = trade_opened.get("clientExtensions") or {}
+            log_meta = log_tags.get(tid, {})
             entries[tid] = {
                 'price': float(txn.get('price', 0)),
                 'units': abs(units),
                 'direction': 'LONG' if units > 0 else 'SHORT',
                 'pair': instrument,
                 'time': txn.get('time', ''),
+                'tag': client_ext.get("tag") or log_meta.get("tag", ""),
+                'comment': client_ext.get("comment") or log_meta.get("comment", ""),
             }
 
         for tc in txn.get('tradesClosed', []) + txn.get('tradesReduced', []):
             tid = tc.get('tradeID', '')
             pl = float(tc.get('realizedPL', 0))
-            units_c = abs(int(float(tc.get('units', 0))))
+            units_signed = int(float(tc.get('units', 0)))
+            units_c = abs(units_signed)
             close_time = txn.get('time', '')
             if tid not in closes:
                 closes[tid] = {
                     'price': float(txn.get('price', 0)),
                     'pl': pl, 'units': units_c,
-                    'instrument': instrument, 'time': close_time,
+                    'instrument': instrument,
+                    'time': close_time,
+                    'direction': 'LONG' if units_signed > 0 else 'SHORT' if units_signed < 0 else None,
                 }
             else:
                 closes[tid]['pl'] += pl
@@ -112,8 +494,11 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
         close = closes.get(tid)
         if not close:
             continue
+        log_meta = log_tags.get(tid, {})
         pair = entry['pair'] if entry else close.get('instrument', 'UNKNOWN')
-        direction = entry['direction'] if entry else ('LONG' if close['pl'] >= 0 else 'SHORT')
+        direction = entry['direction'] if entry else (close.get('direction') or ('LONG' if close['pl'] >= 0 else 'SHORT'))
+        tag = (entry or {}).get("tag") or log_meta.get("tag", "")
+        comment = (entry or {}).get("comment") or log_meta.get("comment", "")
 
         # Hold time calculation
         hold_min = None
@@ -134,42 +519,236 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
             'exit_price': close['price'],
             'pl': close['pl'],
             'hold_minutes': hold_min,
+            'entry_time': entry['time'] if entry else None,
+            'close_time': close['time'],
+            'tag': tag,
+            'comment': comment,
+            'bucket': 'recurring_trader' if is_recurring_trader_trade(tag, comment) else 'other_execution',
         })
 
     return trades
 
 
+def _parse_oanda_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        base = value.replace('Z', '+00:00')
+        if '.' in base:
+            base = base.split('.')[0] + '+00:00'
+        return datetime.fromisoformat(base).astimezone(JST)
+    except Exception:
+        return None
+
+
+def _parse_local_created_at(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, '%Y-%m-%d %H:%M:%S').replace(tzinfo=JST)
+    except Exception:
+        return None
+
+
+def _parse_state_updated(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M UTC", "%Y-%m-%d %H:%M:%S UTC"):
+        try:
+            return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc).astimezone(JST)
+        except Exception:
+            continue
+    return None
+
+
+def _pip_factor(pair: str) -> int:
+    return 100 if "JPY" in pair else 10000
+
+
+def fetch_current_prices(pairs: set[str]) -> dict[str, float]:
+    if not pairs:
+        return {}
+
+    try:
+        cfg = _load_oanda_config()
+        pairs_str = ",".join(sorted(pairs))
+        url = f"https://api-fxtrade.oanda.com/v3/accounts/{cfg['oanda_account_id']}/pricing?instruments={pairs_str}"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {cfg['oanda_token']}",
+            "Content-Type": "application/json"
+        })
+        resp = json.loads(urllib.request.urlopen(req, timeout=5).read())
+    except Exception:
+        return {}
+
+    current_prices = {}
+    for price in resp.get("prices", []):
+        try:
+            bid = float(price["bids"][0]["price"])
+            ask = float(price["asks"][0]["price"])
+        except Exception:
+            continue
+        current_prices[price["instrument"]] = (bid + ask) / 2
+    return current_prices
+
+
+def repair_pretrade_outcome_links(conn, trade_ids: list[str]) -> int:
+    """Keep only the newest outcome linked to each trade_id.
+
+    Older matching logic could attach the same closed trade to multiple pretrade rows.
+    Those older probes should return to the unmatched pool so future reviews do not
+    learn from duplicate labels.
+    """
+    if not trade_ids:
+        return 0
+
+    placeholders = ",".join("?" for _ in trade_ids)
+    rows = fetchall_dict(
+        conn,
+        f"""SELECT id, trade_id, created_at
+            FROM pretrade_outcomes
+            WHERE trade_id IN ({placeholders})
+            ORDER BY trade_id, created_at DESC, id DESC""",
+        tuple(trade_ids),
+    )
+
+    seen = set()
+    repaired = 0
+    for row in rows:
+        trade_id = row.get('trade_id')
+        if not trade_id:
+            continue
+        if trade_id not in seen:
+            seen.add(trade_id)
+            continue
+        conn.execute(
+            "UPDATE pretrade_outcomes SET pl = NULL, trade_id = NULL WHERE id = ?",
+            (row['id'],),
+        )
+        repaired += 1
+
+    return repaired
+
+
+def collapse_duplicate_pretrade_probes(conn) -> int:
+    """Drop redundant unmatched probes with identical decision fields.
+
+    Historical sessions logged the same pretrade check many times before a real
+    entry decision existed. For evaluation, one exact unmatched probe per
+    session/pair/direction/level/score/thesis is enough.
+    """
+    rows = fetchall_dict(
+        conn,
+        """SELECT session_date, pair, direction, pretrade_level, pretrade_score,
+                  COALESCE(thesis, '') AS thesis_key, MAX(id) AS keep_id, COUNT(*) AS cnt
+           FROM pretrade_outcomes
+           WHERE pl IS NULL AND trade_id IS NULL
+           GROUP BY session_date, pair, direction, pretrade_level, pretrade_score, thesis_key
+           HAVING COUNT(*) > 1""",
+    )
+    deleted = 0
+    for row in rows:
+        duplicates = fetchall_dict(
+            conn,
+            """SELECT id
+               FROM pretrade_outcomes
+               WHERE session_date = ?
+                 AND pair = ?
+                 AND direction = ?
+                 AND pretrade_level = ?
+                 AND pretrade_score = ?
+                 AND COALESCE(thesis, '') = ?
+                 AND pl IS NULL
+                 AND trade_id IS NULL
+                 AND id != ?
+               ORDER BY id""",
+            (
+                row["session_date"],
+                row["pair"],
+                row["direction"],
+                row["pretrade_level"],
+                row["pretrade_score"],
+                row["thesis_key"],
+                row["keep_id"],
+            ),
+        )
+        for duplicate in duplicates:
+            conn.execute("DELETE FROM pretrade_outcomes WHERE id = ?", (duplicate["id"],))
+            deleted += 1
+    return deleted
+
+
 def match_pretrade_outcomes(conn, session_date: str, oanda_trades: list[dict]):
     """Fill pl in the pretrade_outcomes table (linking predictions to results)"""
-    # pretrade_outcomes for this day (where pl is still null)
+    repair_pretrade_outcome_links(
+        conn,
+        [trade['trade_id'] for trade in oanda_trades if trade.get('trade_id')],
+    )
+
+    cutoff = (datetime.strptime(session_date, '%Y-%m-%d') - timedelta(days=PRETRADE_LOOKBACK_DAYS)).strftime('%Y-%m-%d')
+
+    # All recent unmatched outcomes, not just today's. Trades often close the next day.
     outcomes = fetchall_dict(conn,
-        """SELECT id, pair, direction, pretrade_level
+        """SELECT id, pair, direction, pretrade_level, created_at
            FROM pretrade_outcomes
-           WHERE session_date = ? AND pl IS NULL""",
-        (session_date,))
+           WHERE session_date >= ? AND pl IS NULL
+           ORDER BY created_at, id""",
+        (cutoff,))
 
     if not outcomes:
         return 0
 
-    # Group by pair × direction
-    from collections import defaultdict
-    trade_by_key = defaultdict(list)
-    for t in oanda_trades:
-        trade_by_key[(t['pair'], t['direction'])].append(t)
+    used_trade_ids = {
+        row['trade_id']
+        for row in fetchall_dict(
+            conn,
+            "SELECT trade_id FROM pretrade_outcomes WHERE trade_id IS NOT NULL"
+        )
+        if row.get('trade_id')
+    }
+
+    candidate_trades = []
+    for trade in oanda_trades:
+        trade_id = trade.get('trade_id')
+        if not trade_id or trade_id in used_trade_ids:
+            continue
+        trade_time = _parse_oanda_time(trade.get('entry_time')) or _parse_oanda_time(trade.get('close_time'))
+        if trade_time is None:
+            continue
+        candidate_trades.append((trade_time, trade))
+
+    candidate_trades.sort(key=lambda item: item[0])
 
     matched = 0
-    for outcome in outcomes:
-        key = (outcome['pair'], outcome['direction'])
-        trades_for_key = trade_by_key.get(key, [])
-        if not trades_for_key:
+    used_outcome_ids = set()
+    for trade_time, trade in candidate_trades:
+        matching = []
+        for outcome in outcomes:
+            if outcome['id'] in used_outcome_ids:
+                continue
+            if outcome['pair'] != trade['pair'] or outcome['direction'] != trade['direction']:
+                continue
+            created_at = _parse_local_created_at(outcome.get('created_at'))
+            if created_at is None:
+                continue
+            delta = trade_time - created_at
+            if delta.total_seconds() < -300:
+                continue
+            if delta > timedelta(hours=PRETRADE_MATCH_HOURS):
+                continue
+            matching.append((created_at, outcome))
+
+        if not matching:
             continue
 
-        # Link the first unmatched trade
-        trade = trades_for_key.pop(0)
+        # Nearest pretrade check before the entry/fill wins; older probes stay unmatched.
+        _, outcome = max(matching, key=lambda item: item[0])
         conn.execute(
             "UPDATE pretrade_outcomes SET pl = ?, trade_id = ? WHERE id = ?",
             (trade['pl'], trade['trade_id'], outcome['id'])
         )
+        used_trade_ids.add(trade['trade_id'])
+        used_outcome_ids.add(outcome['id'])
         matched += 1
 
     return matched
@@ -206,17 +785,13 @@ def parse_pretrade_from_trades_md(trades_md_path: Path) -> list[dict]:
 
 
 def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list[str]:
-    """Analyze S-scan detections from audit_history.jsonl.
-    For each NOT_HELD detection, check:
-    1. Did the trader eventually enter? (matched against oanda_trades)
-    2. Was the direction call correct? (price moved in predicted direction)
-    Returns lines for the report, or empty list if no data."""
+    """Analyze scanner and narrative audit opportunities from audit_history.jsonl."""
     history_path = ROOT / "logs" / "audit_history.jsonl"
     if not history_path.exists():
         return []
 
-    # Collect all NOT_HELD detections for this date
-    detections = []  # {pair, direction, recipe, price, timestamp}
+    scanner_detections = []
+    narrative_detections = []
     try:
         for line in history_path.read_text().strip().split("\n"):
             if not line.strip():
@@ -227,108 +802,164 @@ def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list
                 continue
             for sc in entry.get("s_scan", []):
                 if isinstance(sc, dict) and sc.get("status") == "NOT_HELD":
-                    detections.append({
+                    scanner_detections.append({
                         "pair": sc.get("pair", "?"),
                         "direction": sc.get("direction", "?"),
-                        "recipe": sc.get("recipe", "?"),
+                        "label": sc.get("recipe", "?"),
                         "price": sc.get("price_at_detection", 0),
                         "timestamp": ts,
                     })
+            for pick in entry.get("narrative_picks", []):
+                if not isinstance(pick, dict):
+                    continue
+                direction = pick.get("direction", "?")
+                edge = pick.get("edge") or pick.get("conviction")
+                allocation = pick.get("allocation") or edge
+                held_status = pick.get("held_status")
+                if direction not in {"LONG", "SHORT"} or edge not in {"S", "A"}:
+                    continue
+                if held_status not in (None, "", "NOT_HELD"):
+                    continue
+                narrative_detections.append({
+                    "pair": pick.get("pair", "?"),
+                    "direction": direction,
+                    "label": f"Edge {edge} / Allocation {allocation}",
+                    "price": pick.get("entry_price", 0) or 0,
+                    "timestamp": ts,
+                })
+
+            strongest = entry.get("strongest_unheld")
+            if isinstance(strongest, dict):
+                direction = strongest.get("direction", "?")
+                edge = strongest.get("edge") or strongest.get("conviction")
+                allocation = strongest.get("allocation") or edge
+                if direction in {"LONG", "SHORT"} and edge in {"S", "A"}:
+                    pair = strongest.get("pair", "?")
+                    if not any(
+                        detection["pair"] == pair and detection["direction"] == direction
+                        for detection in narrative_detections
+                    ):
+                        narrative_detections.append({
+                            "pair": pair,
+                            "direction": direction,
+                            "label": f"Strongest unheld {edge}/{allocation}",
+                            "price": strongest.get("entry_price", 0) or 0,
+                            "timestamp": ts,
+                        })
     except Exception:
         return []
 
-    if not detections:
+    if not scanner_detections and not narrative_detections:
         return []
 
-    # Deduplicate: keep first detection per (pair, direction, recipe)
-    seen = set()
-    unique = []
-    for d in detections:
-        key = (d["pair"], d["direction"], d["recipe"])
-        if key not in seen:
+    def dedupe(detections: list[dict]) -> list[dict]:
+        seen = set()
+        unique = []
+        for detection in detections:
+            key = (detection["pair"], detection["direction"], detection["label"])
+            if key in seen:
+                continue
             seen.add(key)
-            unique.append(d)
+            unique.append(detection)
+        return unique
+
+    scanner_unique = dedupe(scanner_detections)
+    narrative_unique = dedupe(narrative_detections)
 
     # Build closed-trade lookup: (pair, direction) → list of P&L
     trade_lookup = {}
     for t in oanda_trades:
-        key = (t["pair"], "LONG" if t["units"] > 0 else "SHORT")
+        key = (t["pair"], t["direction"])
         trade_lookup.setdefault(key, []).append(t["pl"])
 
-    # Fetch current prices for outcome check
-    current_prices = {}
-    try:
-        cfg = _load_oanda_config()
-        pairs_str = ",".join(set(d["pair"] for d in unique))
-        url = f"https://api-fxtrade.oanda.com/v3/accounts/{cfg['oanda_account_id']}/pricing?instruments={pairs_str}"
-        req = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {cfg['oanda_token']}",
-            "Content-Type": "application/json"
-        })
-        resp = json.loads(urllib.request.urlopen(req, timeout=5).read())
-        for p in resp.get("prices", []):
-            bid = float(p["bids"][0]["price"])
-            ask = float(p["asks"][0]["price"])
-            current_prices[p["instrument"]] = (bid + ask) / 2
-    except Exception:
-        pass
+    current_prices = fetch_current_prices({
+        d["pair"] for d in scanner_unique + narrative_unique
+        if d["pair"] and d["pair"] != "?"
+    })
 
-    # Analyze each detection
-    lines = ["## S-Scan Outcome Analysis", ""]
-    recipe_stats = {}  # recipe → {correct: N, wrong: N, entered: N, missed: N}
+    def analyze_group(title: str, detections: list[dict]) -> list[str]:
+        if not detections:
+            return []
 
-    for d in unique:
-        pair = d["pair"]
-        direction = d["direction"]
-        recipe = d["recipe"]
-        det_price = d["price"]
+        lines = [f"### {title}", ""]
+        stats = {}
 
-        if recipe not in recipe_stats:
-            recipe_stats[recipe] = {"correct": 0, "wrong": 0, "entered": 0, "missed": 0}
+        for detection in detections:
+            pair = detection["pair"]
+            direction = detection["direction"]
+            label = detection["label"]
+            det_price = detection["price"]
 
-        # Did trader enter this setup?
-        key = (pair, direction)
-        entered = key in trade_lookup
-        if entered:
-            recipe_stats[recipe]["entered"] += 1
-            pl = sum(trade_lookup[key])
-            result = "WIN" if pl > 0 else "LOSS"
-            lines.append(f"  {pair} {direction} {recipe} @{det_price} → ENTERED → {result} {pl:+,.0f} JPY")
-            if pl > 0:
-                recipe_stats[recipe]["correct"] += 1
-            else:
-                recipe_stats[recipe]["wrong"] += 1
-        else:
-            recipe_stats[recipe]["missed"] += 1
-            # Check if direction was correct using current price
+            if label not in stats:
+                stats[label] = {"correct": 0, "wrong": 0, "entered": 0, "missed": 0}
+
+            key = (pair, direction)
+            entered = key in trade_lookup
+            if entered:
+                stats[label]["entered"] += 1
+                pl = sum(trade_lookup[key])
+                result = "WIN" if pl > 0 else "LOSS"
+                price_str = f" @{det_price}" if det_price else ""
+                lines.append(f"  {pair} {direction} {label}{price_str} → ENTERED → {result} {pl:+,.0f} JPY")
+                if pl > 0:
+                    stats[label]["correct"] += 1
+                else:
+                    stats[label]["wrong"] += 1
+                continue
+
+            stats[label]["missed"] += 1
             cur = current_prices.get(pair)
             if cur and det_price > 0:
-                moved_right = (direction == "LONG" and cur > det_price) or \
-                              (direction == "SHORT" and cur < det_price)
-                pip_move = abs(cur - det_price) * (100 if "JPY" in pair else 10000)
+                moved_right = (direction == "LONG" and cur > det_price) or (
+                    direction == "SHORT" and cur < det_price
+                )
+                pip_move = abs(cur - det_price) * _pip_factor(pair)
                 verdict = "CORRECT" if moved_right else "WRONG"
-                lines.append(f"  {pair} {direction} {recipe} @{det_price} → MISSED → {verdict} ({pip_move:.1f}pip moved)")
+                lines.append(
+                    f"  {pair} {direction} {label} @{det_price} → MISSED → "
+                    f"{verdict} ({pip_move:.1f}pip moved)"
+                )
                 if moved_right:
-                    recipe_stats[recipe]["correct"] += 1
+                    stats[label]["correct"] += 1
                 else:
-                    recipe_stats[recipe]["wrong"] += 1
+                    stats[label]["wrong"] += 1
             else:
-                lines.append(f"  {pair} {direction} {recipe} @{det_price} → MISSED → no price data")
+                price_str = f" @{det_price}" if det_price else ""
+                lines.append(f"  {pair} {direction} {label}{price_str} → MISSED → no price data")
 
-    # Summary per recipe
-    lines.append("")
-    lines.append("### Recipe Accuracy Summary")
-    lines.append("")
-    for recipe, stats in sorted(recipe_stats.items()):
-        total = stats["correct"] + stats["wrong"]
-        acc = stats["correct"] / total * 100 if total > 0 else 0
-        lines.append(
-            f"  {recipe}: {acc:.0f}% accuracy ({stats['correct']}/{total}) "
-            f"| entered: {stats['entered']} missed: {stats['missed']}"
-        )
-    lines.append("")
+        lines.append("")
+        lines.append("#### Accuracy Summary")
+        lines.append("")
+        for label, bucket in sorted(stats.items()):
+            total = bucket["correct"] + bucket["wrong"]
+            acc = bucket["correct"] / total * 100 if total > 0 else 0
+            lines.append(
+                f"  {label}: {acc:.0f}% accuracy ({bucket['correct']}/{total}) "
+                f"| entered: {bucket['entered']} missed: {bucket['missed']}"
+            )
+        lines.append("")
+        return lines
 
-    return lines
+    lines = ["## Audit Opportunity Outcome Analysis", ""]
+    lines.extend(analyze_group("S-Scan Outcomes", scanner_unique))
+    lines.extend(analyze_group("Narrative A/S Outcomes", narrative_unique))
+    return lines if len(lines) > 2 else []
+
+
+def analyze_s_hunt_ledger(session_date: str, oanda_trades: list[dict]) -> list[str]:
+    """Analyze horizon-by-horizon S Hunt capture quality from the formal seat_outcomes table."""
+    try:
+        from seat_outcomes import review_lines as seat_outcome_review_lines
+        from seat_outcomes import sync_seat_outcomes
+    except Exception:
+        return []
+
+    try:
+        sync_seat_outcomes(session_date, live=False)
+    except Exception:
+        return []
+
+    return seat_outcome_review_lines(session_date)
 
 
 def generate_report(session_date: str) -> str:
@@ -336,8 +967,15 @@ def generate_report(session_date: str) -> str:
     conn = get_conn()
     lines = []
 
-    lines.append(f"# Daily Review Report: {session_date}")
+    lines.append(f"# Daily Review Report: {session_date} (completed UTC trading day)")
     lines.append("")
+    lines.append(f"Window: {review_window_label(session_date)}")
+    lines.append("")
+
+    deduped = collapse_duplicate_pretrade_probes(conn)
+    if deduped:
+        lines.append(f"## Pretrade Probe Cleanup: removed {deduped} duplicate unmatched rows")
+        lines.append("")
 
     # 1. OANDA closed trades
     oanda_trades = fetch_closed_trades(session_date)
@@ -348,9 +986,19 @@ def generate_report(session_date: str) -> str:
         lines.append("No closed trades")
     else:
         total_pl = sum(t['pl'] for t in oanda_trades)
+        metrics = payoff_metrics([t['pl'] for t in oanda_trades])
         wins = [t for t in oanda_trades if t['pl'] > 0]
         losses = [t for t in oanda_trades if t['pl'] <= 0]
-        lines.append(f"Total P&L: {total_pl:+,.0f} JPY | Win: {len(wins)} Loss: {len(losses)} | Win rate: {len(wins)/len(oanda_trades)*100:.0f}%")
+        be_wr = metrics.get("break_even_win_rate")
+        be_text = f" | Break-even WR: {be_wr:.0%}" if be_wr is not None else ""
+        lines.append(
+            f"Total P&L: {total_pl:+,.0f} JPY | Win: {metrics['wins']} Loss: {metrics['losses']} "
+            f"| Win rate: {metrics['win_rate']*100:.0f}% | Expectancy: {metrics['expectancy']:+,.0f} JPY/trade{be_text}"
+        )
+        lines.append(
+            f"Avg win: {metrics['avg_win']:+,.0f} JPY | Avg loss: {metrics['avg_loss']:+,.0f} JPY "
+            f"| R:R: {metrics['rr_ratio']:.2f}"
+        )
         lines.append("")
 
         # Per-pair summary
@@ -361,33 +1009,76 @@ def generate_report(session_date: str) -> str:
 
         for pair, trades in sorted(by_pair.items()):
             pair_pl = sum(t['pl'] for t in trades)
-            pair_wins = sum(1 for t in trades if t['pl'] > 0)
-            lines.append(f"### {pair}: {pair_pl:+,.0f} JPY ({pair_wins}/{len(trades)} wins)")
+            metrics = payoff_metrics([t['pl'] for t in trades])
+            lines.append(
+                f"### {pair}: {pair_pl:+,.0f} JPY ({metrics['wins']}/{len(trades)} wins)"
+                f" | EV {metrics['expectancy']:+,.0f} | R:R {metrics['rr_ratio']:.2f}"
+            )
             for t in trades:
                 hold = f" ({t['hold_minutes']}min)" if t['hold_minutes'] is not None else ""
                 lines.append(f"  {t['direction']} {t['units']}u → {t['pl']:+,.0f} JPY{hold}")
             lines.append("")
 
+        recurring_trades = [t for t in oanda_trades if t.get("bucket") == "recurring_trader"]
+        other_trades = [t for t in oanda_trades if t.get("bucket") != "recurring_trader"]
+        tagged_count = sum(1 for t in oanda_trades if t.get("tag") or t.get("comment"))
+        lines.append("## Execution Split")
+        lines.append("")
+        lines.append(
+            "Read this before writing lessons. If the damage came from manual / legacy / unknown-tag execution, "
+            "do not teach that lesson to the recurring trader."
+        )
+        lines.append("")
+        lines.extend(summarize_trade_bucket(
+            "Recurring trader (`tag=trader*` or `qr-trader` comment)",
+            recurring_trades,
+            tag_coverage=(tagged_count, len(oanda_trades)),
+        ))
+        lines.extend(summarize_trade_bucket(
+            "Other execution / unknown tag",
+            other_trades,
+        ))
+        lines.extend(memory_promotion_gate(recurring_trades, other_trades))
+        lines.extend(lesson_registry_state_suggestions())
+        lines.extend(bayesian_evidence_update(oanda_trades))
+        lines.extend(after_action_review_queue(oanda_trades))
+
     # 2. pretrade_outcomes matching
     matched = match_pretrade_outcomes(conn, session_date, oanda_trades)
-    if matched:
-        lines.append(f"## Pretrade Outcomes: {matched} matched")
+    if oanda_trades:
+        lines.append(f"## Pretrade Outcomes: {matched} newly matched")
         lines.append("")
 
-    # 3. pretrade results vs actual P&L (feedback for this day)
-    outcomes = fetchall_dict(conn,
-        """SELECT pair, direction, pretrade_level, pretrade_score, pl, pretrade_warnings
-           FROM pretrade_outcomes
-           WHERE session_date = ? AND pl IS NOT NULL
-           ORDER BY pl""",
-        (session_date,))
+    # 3. pretrade results vs actual P&L (include carry-over trades that closed today)
+    trade_ids = [t['trade_id'] for t in oanda_trades if t.get('trade_id')]
+    if trade_ids:
+        placeholders = ",".join("?" for _ in trade_ids)
+        outcomes = fetchall_dict(
+            conn,
+            f"""SELECT session_date, pair, direction, pretrade_level, pretrade_score, pl, pretrade_warnings
+                FROM pretrade_outcomes
+                WHERE trade_id IN ({placeholders})
+                ORDER BY pl""",
+            tuple(trade_ids),
+        )
+    else:
+        outcomes = fetchall_dict(conn,
+            """SELECT session_date, pair, direction, pretrade_level, pretrade_score, pl, pretrade_warnings
+               FROM pretrade_outcomes
+               WHERE session_date = ? AND pl IS NOT NULL
+               ORDER BY pl""",
+            (session_date,))
 
     if outcomes:
         lines.append("## Pretrade Prediction vs Result")
         lines.append("")
         for o in outcomes:
             result = "WIN" if o['pl'] > 0 else "LOSS"
-            lines.append(f"  {o['pair']} {o['direction']} pretrade={o['pretrade_level']}(score={o['pretrade_score']}) → {result} {o['pl']:+,.0f} JPY")
+            carry = f" [checked {o['session_date']}]" if o.get('session_date') and o['session_date'] != session_date else ""
+            lines.append(
+                f"  {o['pair']} {o['direction']} pretrade={o['pretrade_level']}(score={o['pretrade_score']})"
+                f"{carry} → {result} {o['pl']:+,.0f} JPY"
+            )
         lines.append("")
 
         # Analysis of ignored LOW entries
@@ -395,8 +1086,12 @@ def generate_report(session_date: str) -> str:
         if low_entries:
             low_wins = sum(1 for o in low_entries if o['pl'] > 0)
             low_total_pl = sum(o['pl'] for o in low_entries)
+            low_metrics = payoff_metrics([o['pl'] for o in low_entries])
             lines.append(f"### LOW-ignored entries: {len(low_entries)} trades")
-            lines.append(f"  Win rate: {low_wins}/{len(low_entries)} | Total: {low_total_pl:+,.0f} JPY")
+            lines.append(
+                f"  Win rate: {low_wins}/{len(low_entries)} | Total: {low_total_pl:+,.0f} JPY "
+                f"| EV {low_metrics['expectancy']:+,.0f} | R:R {low_metrics['rr_ratio']:.2f}"
+            )
             lines.append("")
 
     # 4. Entries with pretrade notes from trades.md (also catches those not in DB)
@@ -432,12 +1127,17 @@ def generate_report(session_date: str) -> str:
 
         lines.append("")
 
-    # 6. S-scan outcome tracking (audit_history.jsonl)
+    # 6. Audit opportunity tracking (audit_history.jsonl)
     s_scan_lines = analyze_s_scan_outcomes(session_date, oanda_trades)
     if s_scan_lines:
         lines.extend(s_scan_lines)
 
-    # 7. DB trades stats (comparison against all-time)
+    # 7. S Hunt capture tracking (s_hunt_ledger.jsonl)
+    s_hunt_lines = analyze_s_hunt_ledger(session_date, oanda_trades)
+    if s_hunt_lines:
+        lines.extend(s_hunt_lines)
+
+    # 8. DB trades stats (comparison against all-time)
     db_stats = fetchall_dict(conn,
         """SELECT pair, direction,
            COUNT(*) as cnt,
@@ -453,7 +1153,10 @@ def generate_report(session_date: str) -> str:
         lines.append("")
         for s in db_stats:
             wr = s['wins'] / s['cnt'] * 100 if s['cnt'] > 0 else 0
-            lines.append(f"  {s['pair']} {s['direction']}: {s['wins']}/{s['cnt']} wins ({wr:.0f}%) avg {s['avg_pl']:+,.0f} JPY total {s['total_pl']:+,.0f} JPY")
+            lines.append(
+                f"  {s['pair']} {s['direction']}: {s['wins']}/{s['cnt']} wins ({wr:.0f}%) "
+                f"avg {s['avg_pl']:+,.0f} JPY/trade total {s['total_pl']:+,.0f} JPY"
+            )
         lines.append("")
 
     return "\n".join(lines)
@@ -462,7 +1165,7 @@ def generate_report(session_date: str) -> str:
 if __name__ == "__main__":
     init_db()
 
-    target_date = str(date.today())
+    target_date = completed_utc_review_day()
     for i, arg in enumerate(sys.argv[1:], 1):
         if arg == "--date" and i < len(sys.argv) - 1:
             target_date = sys.argv[i + 1]

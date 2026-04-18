@@ -24,6 +24,16 @@ def get_conn() -> apsw.Connection:
     return conn
 
 
+def _table_columns(conn: apsw.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _ensure_column(conn: apsw.Connection, table: str, column_def: str):
+    column = column_def.split()[0]
+    if column not in _table_columns(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
+
+
 def init_db():
     conn = get_conn()
 
@@ -35,13 +45,16 @@ def init_db():
             question TEXT,
             content TEXT NOT NULL,
             pair TEXT,
+            direction TEXT,
             tags TEXT,
             source_file TEXT,
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         )
     """)
+    _ensure_column(conn, "chunks", "direction TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_date ON chunks(session_date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_pair ON chunks(pair)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_pair_direction ON chunks(pair, direction)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(chunk_type)")
 
     conn.execute(f"""
@@ -155,6 +168,49 @@ def init_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_pair ON pretrade_outcomes(pair)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_date ON pretrade_outcomes(session_date)")
+
+    # --- ⑥ seat_outcomes: S-hunt discovery / deployment / capture / miss chain ---
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS seat_outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_date TEXT NOT NULL,
+            state_last_updated TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 's_hunt',
+            horizon TEXT NOT NULL,
+            pair TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            setup_type TEXT,
+            why TEXT,
+            mtf_chain TEXT,
+            payout_path TEXT,
+            orderability TEXT,
+            deployment_result TEXT,
+            trigger TEXT,
+            invalidation TEXT,
+            reference_price REAL,
+            discovered INTEGER DEFAULT 1,
+            orderable INTEGER DEFAULT 0,
+            deployed INTEGER DEFAULT 0,
+            captured INTEGER DEFAULT 0,
+            missed INTEGER DEFAULT 0,
+            directionally_correct INTEGER,
+            deployment_status TEXT,
+            outcome_status TEXT,
+            matched_trade_count INTEGER DEFAULT 0,
+            matched_trade_ids TEXT,
+            realized_pl REAL,
+            eval_price REAL,
+            eval_price_source TEXT,
+            pip_move REAL,
+            notes TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(state_last_updated, horizon, pair, direction)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_seat_outcomes_date ON seat_outcomes(session_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_seat_outcomes_pair ON seat_outcomes(pair, direction)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_seat_outcomes_horizon ON seat_outcomes(horizon)")
 
     print(f"memory.db initialized at {DB_PATH}")
 

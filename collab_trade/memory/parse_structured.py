@@ -13,14 +13,13 @@ import json
 def parse_trades(text: str, session_date: str) -> list[dict]:
     """Structured extraction of trade records from trades.md"""
     trades = []
-    sections = re.split(r'\n(?=###\s)', text)
+    sections = _split_markdown_sections(text, ("##", "###"))
 
     for section in sections:
-        section = section.strip()
         if not section:
             continue
 
-        header_match = re.match(r'###\s+(.+)', section)
+        header_match = re.match(r'#{2,3}\s+(.+)', section)
         if not header_match:
             continue
         header = header_match.group(1)
@@ -37,12 +36,21 @@ def parse_trades(text: str, session_date: str) -> list[dict]:
                 header
             )
             if not trade_match2:
-                continue
-            pair = trade_match2.group(1)
-            direction = trade_match2.group(2)
-            units = int(trade_match2.group(3))
-            trade_id = trade_match2.group(4)
-            rest = trade_match2.group(5)
+                pair = _extract_pair_from_text(section) or _extract_table_field(section, ["Pair"])
+                direction = _normalize_trade_direction(
+                    _extract_table_field(section, ["Direction", "Side"]) or header
+                )
+                units = _extract_units(section)
+                trade_id = _extract_trade_id(section)
+                rest = header
+                if not pair or not direction:
+                    continue
+            else:
+                pair = trade_match2.group(1)
+                direction = trade_match2.group(2)
+                units = int(trade_match2.group(3))
+                trade_id = trade_match2.group(4)
+                rest = trade_match2.group(5)
         else:
             pair = trade_match.group(1)
             direction = trade_match.group(2)
@@ -54,10 +62,14 @@ def parse_trades(text: str, session_date: str) -> list[dict]:
         pl = _extract_pl(rest) or _extract_pl(section)
 
         # Extract price
-        entry_price = _extract_float(section, r'エントリー[:\s]*(\d+\.\d+)')
+        entry_price = _extract_table_price(section, ["Entry", "Fill", "Limit Price", "Limit"])
+        if not entry_price:
+            entry_price = _extract_float(section, r'エントリー[:\s]*(\d+\.\d+)')
         if not entry_price:
             entry_price = _extract_float(section, r'@\s*(\d+\.\d+)')
-        exit_price = _extract_float(section, r'(?:クローズ|TP約定|損切り)[:\s]*(\d+\.\d+)')
+        exit_price = _extract_table_price(section, ["Close", "Exit"])
+        if not exit_price:
+            exit_price = _extract_float(section, r'(?:クローズ|TP約定|損切り)[:\s]*(\d+\.\d+)')
 
         # Extract time
         hour = _extract_hour(section)
@@ -127,10 +139,9 @@ def parse_user_calls(text: str, session_date: str) -> list[dict]:
     calls = []
 
     # "User read" or "User instruction" sections
-    sections = re.split(r'\n(?=##\s)', text)
+    sections = _split_markdown_sections(text, ("##", "###"))
 
     for section in sections:
-        section = section.strip()
         if not section:
             continue
 
@@ -284,7 +295,7 @@ def parse_market_events(text: str, session_date: str) -> list[dict]:
 # --- Helper Functions ---
 
 def _extract_pl(text: str) -> float | None:
-    m = re.search(r'([+-])\s*([\d,]+(?:\.\d+)?)\s*円', text)
+    m = re.search(r'([+-])\s*([\d,]+(?:\.\d+)?)\s*(?:円|JPY)', text, re.I)
     if m:
         sign = 1 if m.group(1) == '+' else -1
         return sign * float(m.group(2).replace(',', ''))
@@ -294,6 +305,67 @@ def _extract_pl(text: str) -> float | None:
 def _extract_float(text: str, pattern: str) -> float | None:
     m = re.search(pattern, text)
     return float(m.group(1)) if m else None
+
+
+def _split_markdown_sections(text: str, header_levels: tuple[str, ...]) -> list[str]:
+    escaped = "|".join(re.escape(level) for level in header_levels)
+    pattern = rf"\n(?=(?:{escaped})\s)"
+    return [section.strip() for section in re.split(pattern, text) if section.strip()]
+
+
+def _extract_table_field(text: str, labels: list[str]) -> str | None:
+    for label in labels:
+        match = re.search(
+            rf"^\|\s*{re.escape(label)}\s*\|\s*(.+?)\s*\|$",
+            text,
+            re.M | re.I,
+        )
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _extract_units(text: str) -> int | None:
+    match = re.search(r'(\d+)u', text)
+    if match:
+        return int(match.group(1))
+    table_val = _extract_table_field(text, ["Units"])
+    if table_val:
+        table_match = re.search(r'(\d+)', table_val.replace(",", ""))
+        if table_match:
+            return int(table_match.group(1))
+    return None
+
+
+def _extract_trade_id(text: str) -> str | None:
+    header_match = re.search(r'id[=\s:]+(\d+)', text, re.I)
+    if header_match:
+        return header_match.group(1)
+    table_val = _extract_table_field(text, ["id", "Trade ID", "Order ID"])
+    if table_val:
+        match = re.search(r'(\d+)', table_val)
+        if match:
+            return match.group(1)
+    return None
+
+
+def _extract_table_price(text: str, labels: list[str]) -> float | None:
+    raw = _extract_table_field(text, labels)
+    if not raw:
+        return None
+    match = re.search(r'(\d+\.\d+)', raw.replace(",", ""))
+    return float(match.group(1)) if match else None
+
+
+def _normalize_trade_direction(text: str | None) -> str | None:
+    if not text:
+        return None
+    upper = text.upper()
+    if "SHORT" in upper:
+        return "SHORT"
+    if "LONG" in upper:
+        return "LONG"
+    return None
 
 
 def _extract_hour(text: str) -> int | None:
@@ -392,6 +464,9 @@ def _extract_lesson(text: str) -> str | None:
     lessons = re.findall(r'(?:教訓|反省)[:\s：]*\*?\*?(.+?)(?:\*\*|\n|$)', text)
     if lessons:
         return ' / '.join(l.strip() for l in lessons[:3])
+    table_lesson = _extract_table_field(text, ["Lesson"])
+    if table_lesson:
+        return table_lesson
     # 2. Keywords inside bold text
     bold = re.findall(r'\*\*([^*]+)\*\*', text)
     lesson_bold = [b for b in bold if any(kw in b for kw in ['教訓', '反省', 'ミス', '禁止', 'NG'])]
@@ -409,6 +484,9 @@ def _extract_lesson(text: str) -> str | None:
 
 
 def _extract_reason(text: str) -> str | None:
+    table_reason = _extract_table_field(text, ["Reason", "Thesis"])
+    if table_reason:
+        return table_reason
     m = re.search(r'テーゼ[:\s]*(.+?)(?:\n|$)', text)
     if m:
         return m.group(1).strip()

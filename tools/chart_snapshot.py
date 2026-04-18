@@ -7,26 +7,21 @@ via the Read tool to get VISUAL chart perception — not just indicator numbers.
 Also outputs regime detection: TREND / RANGE / SQUEEZE per pair.
 
 Usage:
-    python3 tools/chart_snapshot.py EUR_USD M5          # single pair
-    python3 tools/chart_snapshot.py EUR_USD H1           # H1 chart
-    python3 tools/chart_snapshot.py --all                 # all 7 pairs, M5 + H1
-    python3 tools/chart_snapshot.py --all --regime-only   # regime detection only (no charts)
+    python3 tools/chart_snapshot.py EUR_USD M5              # single pair
+    python3 tools/chart_snapshot.py EUR_USD H1              # H1 chart
+    python3 tools/chart_snapshot.py EUR_USD M1              # M1 execution chart
+    python3 tools/chart_snapshot.py --all                   # all 7 pairs, M5 + H1
+    python3 tools/chart_snapshot.py --all --with-m1         # all 7 pairs, M1 + M5 + H1
+    python3 tools/chart_snapshot.py --all --regime-only     # regime detection only (no charts)
 """
 from __future__ import annotations
 
 import argparse
 import json
-import os
-import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")  # headless
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-from matplotlib.patches import FancyBboxPatch
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,6 +29,22 @@ CHART_DIR = ROOT / "logs" / "charts"
 CHART_DIR.mkdir(exist_ok=True)
 
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
+
+_PLT = None
+
+
+def _load_matplotlib():
+    global _PLT
+    if _PLT is not None:
+        return _PLT
+
+    import matplotlib
+
+    matplotlib.use("Agg")  # headless
+    import matplotlib.pyplot as plt
+
+    _PLT = plt
+    return _PLT
 
 
 def load_config():
@@ -207,7 +218,10 @@ def detect_regime(indicators: dict, pair: str) -> dict:
         direction = "BULL" if ema_slope > 0 else "BEAR"
         regime = f"TREND-{direction}"
         detail = f"EMA slope={ema_slope:+.1f}pip, EMA12/20 gap={ema_sep:.1f}pip. Clear trend."
-        trade_approach = f"Trade WITH trend ({direction}). Buy dips at EMA20 / BB mid. TP at structure."
+        if direction == "BULL":
+            trade_approach = "Trade WITH trend (BULL). Buy dips at EMA20 / BB mid. TP at structure."
+        else:
+            trade_approach = "Trade WITH trend (BEAR). Sell rallies at EMA20 / BB mid. TP at structure."
     elif upper_touches >= 2 and lower_touches >= 2:
         bb_range_pips = (bb_upper[-1] - bb_lower[-1]) * pip_factor if not np.isnan(bb_upper[-1]) else 0
         # Distinguish real RANGE from low-vol drift: range must be tradeable (> ATR×1.5)
@@ -238,7 +252,10 @@ def detect_regime(indicators: dict, pair: str) -> dict:
         direction = "BULL" if ema_slope > 0 else "BEAR"
         regime = f"MILD-{direction}"
         detail = f"Weak trend or transition. EMA slope={ema_slope:+.1f}pip. Not strongly directional."
-        trade_approach = f"Cautious {direction} bias. Small size. Quick TP."
+        if direction == "BULL":
+            trade_approach = "Cautious BULL bias. Buy dips only. Small size. Quick TP."
+        else:
+            trade_approach = "Cautious BEAR bias. Sell rallies only. Small size. Quick TP."
 
     # BB width trend (narrowing → squeeze forming)
     bb_widths_20 = bb_width[-20:]
@@ -280,6 +297,7 @@ def detect_regime(indicators: dict, pair: str) -> dict:
 def generate_chart(pair: str, candles: list[dict], indicators: dict,
                    regime: dict, positions: list[dict] | None, tf: str) -> str:
     """Generate candlestick chart with BB, EMA, and regime info. Returns PNG path."""
+    plt = _load_matplotlib()
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), height_ratios=[3, 1],
                                      gridspec_kw={"hspace": 0.05})
 
@@ -393,6 +411,7 @@ def main():
     parser.add_argument("pair", nargs="?", help="Pair (e.g., EUR_USD)")
     parser.add_argument("tf", nargs="?", default="M5", help="Timeframe (M5, M15, H1, H4)")
     parser.add_argument("--all", action="store_true", help="All 7 pairs, M5 + H1")
+    parser.add_argument("--with-m1", action="store_true", help="When used with --all, also generate M1 execution charts")
     parser.add_argument("--regime-only", action="store_true", help="Regime detection only, no chart images")
     parser.add_argument("--count", type=int, default=60, help="Number of candles (default: 60)")
     args = parser.parse_args()
@@ -402,6 +421,8 @@ def main():
     if args.all:
         pairs = PAIRS
         timeframes = ["M5", "H1"]
+        if args.with_m1:
+            timeframes = ["M1", "M5", "H1"]
     elif args.pair:
         pairs = [args.pair.upper()]
         timeframes = [args.tf.upper()]
@@ -431,7 +452,8 @@ def main():
     for pair in pairs:
         for tf in timeframes:
             try:
-                candles = fetch_candles(pair, tf, args.count, token, acct)
+                count = 90 if tf == "M1" and args.count == 60 else args.count
+                candles = fetch_candles(pair, tf, count, token, acct)
                 if len(candles) < 25:
                     print(f"{pair} {tf}: insufficient data ({len(candles)} candles)")
                     continue

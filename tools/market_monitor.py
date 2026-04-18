@@ -15,10 +15,12 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+from config_loader import get_oanda_config
+
+# `market_monitor.py` lives in `<repo>/tools/`, so the repo root is one level up.
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-OANDA_BASE = "https://api-fxtrade.oanda.com"
 ALL_PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
 SNAPSHOT_PATH = ROOT / "logs" / "market_snapshot.json"
 HANDOFF_REQ = ROOT / "logs" / ".trader_handoff_request"
@@ -29,32 +31,12 @@ PRICE_INTERVAL = 30         # 30秒
 
 
 def load_config():
-    try:
-        import tomllib as tomli
-    except ImportError:
-        try:
-            import tomli
-        except ImportError:
-            tomli = None
-
-    if tomli is not None:
-        with open(ROOT / "config" / "env.toml", "rb") as f:
-            cfg = tomli.load(f)
-    else:
-        cfg = {}
-        with open(ROOT / "config" / "env.toml") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    k, v = line.split("=", 1)
-                    cfg[k.strip()] = v.strip().strip('"').strip("'")
-    return cfg["oanda_token"], cfg["oanda_account_id"]
+    cfg = get_oanda_config()
+    return cfg["oanda_token"], cfg["oanda_account_id"], cfg["oanda_base_url"]
 
 
-def api_get(token, path):
-    url = f"{OANDA_BASE}{path}"
+def api_get(token, base_url, path):
+    url = f"{base_url}{path}"
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     try:
         resp = urllib.request.urlopen(req, timeout=10)
@@ -63,9 +45,9 @@ def api_get(token, path):
         return {"error": str(e)}
 
 
-def fetch_prices(token, account_id):
+def fetch_prices(token, account_id, base_url):
     instruments = ",".join(ALL_PAIRS)
-    data = api_get(token, f"/v3/accounts/{account_id}/pricing?instruments={instruments}")
+    data = api_get(token, base_url, f"/v3/accounts/{account_id}/pricing?instruments={instruments}")
     if "error" in data:
         return {"error": data["error"]}
 
@@ -84,8 +66,8 @@ def fetch_prices(token, account_id):
     return prices
 
 
-def fetch_account(token, account_id):
-    data = api_get(token, f"/v3/accounts/{account_id}/summary")
+def fetch_account(token, account_id, base_url):
+    data = api_get(token, base_url, f"/v3/accounts/{account_id}/summary")
     if "error" in data:
         return {"error": data["error"]}
 
@@ -100,8 +82,8 @@ def fetch_account(token, account_id):
     }
 
 
-def fetch_open_trades(token, account_id):
-    data = api_get(token, f"/v3/accounts/{account_id}/openTrades")
+def fetch_open_trades(token, account_id, base_url):
+    data = api_get(token, base_url, f"/v3/accounts/{account_id}/openTrades")
     if "error" in data:
         return {"error": data["error"]}
 
@@ -167,7 +149,7 @@ def write_snapshot(snapshot):
 
 
 def main():
-    token, account_id = load_config()
+    token, account_id, base_url = load_config()
     last_technicals = 0
     cycle = 0
 
@@ -186,9 +168,9 @@ def main():
             last_technicals = now
 
         # データ取得
-        prices = fetch_prices(token, account_id)
-        account = fetch_account(token, account_id)
-        trades = fetch_open_trades(token, account_id)
+        prices = fetch_prices(token, account_id, base_url)
+        account = fetch_account(token, account_id, base_url)
+        trades = fetch_open_trades(token, account_id, base_url)
         technicals = load_technicals()
         handoff = check_handoff()
 

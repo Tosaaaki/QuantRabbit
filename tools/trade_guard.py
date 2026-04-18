@@ -10,6 +10,42 @@ from datetime import datetime, timezone, timedelta
 LOG_PATH = 'logs/live_trade_log.txt'
 JST = timezone(timedelta(hours=9))
 
+
+def payoff_metrics(closes):
+    """Realized intraday payoff quality."""
+    pls = [c['pl'] for c in closes]
+    if not pls:
+        return None
+
+    wins = [pl for pl in pls if pl > 0]
+    losses = [pl for pl in pls if pl < 0]
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = sum(losses) / len(losses) if losses else 0.0
+    if avg_loss < 0:
+        rr = avg_win / abs(avg_loss)
+    elif avg_win > 0 and not losses:
+        rr = float('inf')
+    else:
+        rr = 0.0
+
+    break_even_wr = None
+    if avg_win > 0 and avg_loss < 0:
+        break_even_wr = abs(avg_loss) / (avg_win + abs(avg_loss))
+    elif avg_win > 0 and not losses:
+        break_even_wr = 0.0
+
+    return {
+        'count': len(pls),
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': len(wins) / len(pls),
+        'avg_win': avg_win,
+        'avg_loss': avg_loss,
+        'rr': rr,
+        'expectancy': sum(pls) / len(pls),
+        'break_even_wr': break_even_wr,
+    }
+
 def parse_trades_today():
     """Parse today's CLOSE trades"""
     today = datetime.now(JST).strftime('%Y-%m-%d')
@@ -97,20 +133,24 @@ def check_recent_losses():
     return result
 
 
-def check_rr_ratio(closes):
-    """Present the RR ratio as a fact"""
-    wins = [c['pl'] for c in closes if c['pl'] > 0]
-    losses = [c['pl'] for c in closes if c['pl'] < 0]
-
-    if len(wins) < 5 or len(losses) < 3:
+def check_payoff_quality(closes):
+    """Present realized payoff quality as a fact, not just planned R:R."""
+    metrics = payoff_metrics(closes)
+    if not metrics or metrics['wins'] < 3 or metrics['losses'] < 3:
         return None
-
-    avg_win = sum(wins) / len(wins)
-    avg_loss = sum(losses) / len(losses)
-    rr = avg_win / abs(avg_loss)
-
-    if rr < 0.7:
-        return f'📊 RR: avg win +{avg_win:.0f} JPY vs avg loss {avg_loss:.0f} JPY (RR={rr:.2f}). Focus on letting winners run'
+    be_wr = metrics['break_even_wr']
+    be_text = f"{be_wr:.0%}" if be_wr is not None else '?'
+    if metrics['expectancy'] < 0:
+        return (
+            f"📊 Payoff: WR {metrics['win_rate']:.0%} vs break-even {be_text} | "
+            f"avg win +{metrics['avg_win']:.0f} JPY vs avg loss {metrics['avg_loss']:.0f} JPY "
+            f"(R:R={metrics['rr']:.2f}) | EV {metrics['expectancy']:+,.0f} JPY/trade"
+        )
+    if metrics['rr'] < 0.7:
+        return (
+            f"📊 Payoff: avg win +{metrics['avg_win']:.0f} JPY vs avg loss {metrics['avg_loss']:.0f} JPY "
+            f"(R:R={metrics['rr']:.2f}) | WR {metrics['win_rate']:.0%} | EV {metrics['expectancy']:+,.0f}/trade"
+        )
     return None
 
 
@@ -147,10 +187,10 @@ def main():
     if garbage:
         alerts.append(garbage)
 
-    # RR ratio
-    rr = check_rr_ratio(closes)
-    if rr:
-        alerts.append(rr)
+    # Payoff quality
+    payoff = check_payoff_quality(closes)
+    if payoff:
+        alerts.append(payoff)
 
     # Per-pair cumulative loss
     pair_alerts = check_pair_loss(closes)

@@ -4,10 +4,12 @@ Retrieve past memories via hybrid vector search + keyword search
 """
 from __future__ import annotations
 
+import re
 import sys
 from schema import get_conn, serialize_f32, fetchall_dict, fetchone_val
 
 _model = None
+_chunks_columns = None
 
 def get_model():
     global _model
@@ -24,8 +26,27 @@ def embed_query(text: str) -> list[float]:
     return vec[0].tolist()
 
 
+def _get_chunks_columns(conn) -> set[str]:
+    global _chunks_columns
+    if _chunks_columns is None:
+        _chunks_columns = {row[1] for row in conn.execute("PRAGMA table_info(chunks)")}
+    return _chunks_columns
+
+
+def _apply_direction_filter(conn, where_clauses: list[str], params: list, direction: str | None):
+    if not direction:
+        return
+    if "direction" in _get_chunks_columns(conn):
+        where_clauses.append("((direction = ?) OR (direction IS NULL AND chunk_type != 'trade'))")
+        params.append(direction.upper())
+        return
+    upper = direction.upper()
+    where_clauses.append("(UPPER(content) LIKE ? OR UPPER(question) LIKE ?)")
+    params.extend([f"%{upper}%", f"%{upper}%"])
+
+
 def vector_search(query: str, top_k: int = 5, pair: str | None = None,
-                   chunk_type: str | None = None) -> list[dict]:
+                   chunk_type: str | None = None, direction: str | None = None) -> list[dict]:
     """Vector similarity search"""
     conn = get_conn()
     qvec = embed_query(query)
@@ -57,6 +78,7 @@ def vector_search(query: str, top_k: int = 5, pair: str | None = None,
     if chunk_type:
         where_clauses.append("chunk_type = ?")
         params.append(chunk_type)
+    _apply_direction_filter(conn, where_clauses, params, direction)
 
     sql = f"SELECT * FROM chunks WHERE {' AND '.join(where_clauses)}"
     results = fetchall_dict(conn, sql, params)
@@ -66,12 +88,27 @@ def vector_search(query: str, top_k: int = 5, pair: str | None = None,
 
 
 def keyword_search(keyword: str, top_k: int = 10, pair: str | None = None,
-                    chunk_type: str | None = None) -> list[dict]:
+                    chunk_type: str | None = None, direction: str | None = None) -> list[dict]:
     """Keyword full-text search (LIKE)"""
     conn = get_conn()
 
-    where_clauses = ["(content LIKE ? OR question LIKE ?)"]
-    params = [f"%{keyword}%", f"%{keyword}%"]
+    terms = _tokenize_query(keyword)
+    if not terms:
+        terms = [keyword]
+
+    score_parts = []
+    score_params = []
+    match_parts = []
+    match_params = []
+    for term in terms:
+        like = f"%{term}%"
+        score_parts.append("(CASE WHEN content LIKE ? OR question LIKE ? THEN 1 ELSE 0 END)")
+        score_params.extend([like, like])
+        match_parts.append("(content LIKE ? OR question LIKE ?)")
+        match_params.extend([like, like])
+
+    where_clauses = [f"({' OR '.join(match_parts)})"]
+    params = score_params + match_params
 
     if pair:
         where_clauses.append("pair = ?")
@@ -79,11 +116,14 @@ def keyword_search(keyword: str, top_k: int = 10, pair: str | None = None,
     if chunk_type:
         where_clauses.append("chunk_type = ?")
         params.append(chunk_type)
+    _apply_direction_filter(conn, where_clauses, params, direction)
 
+    score_sql = " + ".join(score_parts) if score_parts else "0"
     sql = f"""
-        SELECT * FROM chunks
+        SELECT *, ({score_sql}) AS match_score
+        FROM chunks
         WHERE {' AND '.join(where_clauses)}
-        ORDER BY session_date DESC
+        ORDER BY match_score DESC, session_date DESC, id DESC
         LIMIT ?
     """
     params.append(top_k)
@@ -91,10 +131,10 @@ def keyword_search(keyword: str, top_k: int = 10, pair: str | None = None,
 
 
 def hybrid_search(query: str, top_k: int = 5, pair: str | None = None,
-                   chunk_type: str | None = None) -> list[dict]:
+                   chunk_type: str | None = None, direction: str | None = None) -> list[dict]:
     """Hybrid vector + keyword search (deduplicated)"""
-    vec_results = vector_search(query, top_k=top_k, pair=pair, chunk_type=chunk_type)
-    kw_results = keyword_search(query, top_k=top_k, pair=pair, chunk_type=chunk_type)
+    vec_results = vector_search(query, top_k=top_k, pair=pair, chunk_type=chunk_type, direction=direction)
+    kw_results = keyword_search(query, top_k=top_k, pair=pair, chunk_type=chunk_type, direction=direction)
 
     seen_ids = set()
     merged = []
@@ -152,6 +192,28 @@ def stats():
     for r in by_date:
         lines.append(f"  {r['session_date']}: {r['cnt']}")
     return "\n".join(lines)
+
+
+def _tokenize_query(query: str) -> list[str]:
+    raw_terms = re.findall(r"[A-Za-z0-9_+.%-]+", query)
+    allow_short = {"M1", "M5", "H1", "H4"}
+    ignored = {"AND", "THE", "FOR", "WITH", "SETUP", "TRADE", "LESSON", "LESSONS"}
+    terms = []
+    seen = set()
+    for raw in raw_terms:
+        term = raw.strip()
+        if not term:
+            continue
+        upper = term.upper()
+        if upper in ignored:
+            continue
+        if len(term) < 3 and upper not in allow_short and "_" not in term:
+            continue
+        if upper in seen:
+            continue
+        terms.append(term)
+        seen.add(upper)
+    return terms
 
 
 # --- CLI ---
