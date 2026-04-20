@@ -26,6 +26,207 @@ PAIR_CURRENCIES = {
     "AUD_USD": ("AUD", "USD"), "EUR_JPY": ("EUR", "JPY"), "GBP_JPY": ("GBP", "JPY"),
     "AUD_JPY": ("AUD", "JPY"),
 }
+LESSON_REGISTRY_PATH = ROOT / "collab_trade" / "memory" / "lesson_registry.json"
+NO_EDGE_PATTERNS = (
+    "no-edge",
+    "no proven edge",
+    "pair remains no-edge",
+    "hard cap remains b-size",
+    "b-size max",
+    "statistically weak",
+    "execution-sensitive",
+    "pair expectancy is negative",
+)
+POSITIVE_EDGE_PATTERNS = (
+    "core directional edge",
+    "real edge",
+    "proven",
+    "cleaner structural edge",
+    "must be traded",
+    "best core edge",
+)
+CAP_LABELS = {
+    "pass": "pass unless exceptional",
+    "b_only": "B-only / pass unless exceptional",
+    "b_scout": "B scout only",
+    "ba_max": "B/A max",
+    "a_max": "A max",
+    "as_confirmed": "A/S when theme confirmed",
+}
+
+
+def _load_lesson_registry() -> dict:
+    try:
+        return json.loads(LESSON_REGISTRY_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def _registry_rank(lesson: dict) -> tuple[int, int, str, str]:
+    return (
+        int(lesson.get("trust_score", 0) or 0),
+        int(lesson.get("state_rank", 0) or 0),
+        str(lesson.get("lesson_date", "")),
+        str(lesson.get("id", "")),
+    )
+
+
+def _target_lessons_for_profile(pair: str, direction: str, registry: dict) -> tuple[list[dict], list[dict]]:
+    lessons = registry.get("lessons") or []
+    exact = sorted(
+        [
+            lesson for lesson in lessons
+            if lesson.get("pair") == pair
+            and lesson.get("direction") == direction
+            and lesson.get("state") != "deprecated"
+        ],
+        key=_registry_rank,
+        reverse=True,
+    )
+    pair_only = sorted(
+        [
+            lesson for lesson in lessons
+            if lesson.get("pair") == pair
+            and not lesson.get("direction")
+            and lesson.get("state") != "deprecated"
+        ],
+        key=_registry_rank,
+        reverse=True,
+    )
+    return exact, pair_only
+
+
+def _lesson_text_blob(lessons: list[dict]) -> str:
+    return " ".join(
+        (
+            f"{lesson.get('title', '')} {lesson.get('text', '')}".strip().lower()
+            for lesson in lessons
+        )
+    )
+
+
+def _clip_text(text: str, limit: int = 120) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _current_session_bucket(now_utc: datetime) -> str:
+    hour = now_utc.hour
+    if 0 <= hour < 7:
+        return "tokyo"
+    if 7 <= hour < 15:
+        return "london"
+    if 15 <= hour < 22:
+        return "newyork"
+    return "late"
+
+
+def _infer_current_pair_regime(pair: str) -> str | None:
+    tfs = _load_technicals(pair)
+    m5 = tfs.get("M5", {})
+    if not m5:
+        return None
+    adx = float(m5.get("adx", 0) or 0)
+    plus_di = float(m5.get("plus_di", 0) or 0)
+    minus_di = float(m5.get("minus_di", 0) or 0)
+    bbw = float(m5.get("bbw", 0) or 0)
+    kc_width = float(m5.get("kc_width", 0) or 0)
+    di_gap = abs(plus_di - minus_di)
+
+    if kc_width > 0 and bbw > 0 and bbw < kc_width * 0.9:
+        return "squeeze"
+    if adx >= 25 and di_gap >= 8:
+        return "trending"
+    if adx < 18:
+        return "range"
+    if bbw < 0.0015:
+        return "quiet"
+    return "transition"
+
+
+def _format_context_stat(stats: dict | None, label: str) -> str:
+    if not stats or int(stats.get("count", 0) or 0) <= 0:
+        return f"{label}: no sample"
+    return (
+        f"{label}: WR {float(stats.get('win_rate', 0.0))*100:.0f}% "
+        f"EV {float(stats.get('expectancy', 0.0)):+.0f} n={int(stats.get('count', 0))}"
+    )
+
+
+def _context_signal(stats: dict | None, *, min_count: int = 3) -> tuple[int, int, str]:
+    if not stats:
+        return 0, 0, "no sample"
+
+    count = int(stats.get("count", 0) or 0)
+    if count < min_count:
+        return 0, 0, "thin"
+
+    ev = float(stats.get("expectancy", 0.0) or 0.0)
+    win_rate = float(stats.get("win_rate", 0.0) or 0.0)
+
+    if ev > 0 and win_rate >= 0.55:
+        score = 4 + (2 if count >= 5 else 0) + (2 if win_rate >= 0.60 else 0)
+        cap = 1 if count >= 5 else 0
+        return score, cap, "tailwind"
+
+    if ev < 0 or win_rate <= 0.40:
+        score = -6 - (3 if count >= 5 else 0) - (2 if ev < 0 and win_rate <= 0.35 else 0)
+        cap = -2 if count >= 5 and ev < 0 and win_rate <= 0.40 else -1
+        return score, cap, "headwind"
+
+    return 0, 0, "mixed"
+
+
+def _cap_rank(label: str) -> int:
+    mapping = {
+        CAP_LABELS["pass"]: 0,
+        CAP_LABELS["b_only"]: 1,
+        CAP_LABELS["b_scout"]: 2,
+        CAP_LABELS["ba_max"]: 3,
+        CAP_LABELS["a_max"]: 4,
+        CAP_LABELS["as_confirmed"]: 5,
+    }
+    return mapping.get(label, 2)
+
+
+def _cap_label_from_rank(rank: int) -> str:
+    reverse = {
+        0: CAP_LABELS["pass"],
+        1: CAP_LABELS["b_only"],
+        2: CAP_LABELS["b_scout"],
+        3: CAP_LABELS["ba_max"],
+        4: CAP_LABELS["a_max"],
+        5: CAP_LABELS["as_confirmed"],
+    }
+    return reverse[max(0, min(5, rank))]
+
+
+def _market_spread_bands(pair: str, spread_pips: float | None, spread_ratio: float | None) -> tuple[bool, bool]:
+    if spread_pips is None and spread_ratio is None:
+        return True, True
+
+    is_jpy = str(pair).endswith("JPY")
+    tight_abs = 2.5 if is_jpy else 1.5
+    normal_abs = 3.0 if is_jpy else 2.0
+    tight_ok = (
+        (spread_ratio is None or spread_ratio <= 0.18)
+        or (spread_pips is not None and spread_pips <= tight_abs)
+    )
+    normal_ok = (
+        (spread_ratio is None or spread_ratio <= 0.24)
+        or (spread_pips is not None and spread_pips <= normal_abs)
+    )
+    return tight_ok, normal_ok
+
+
+def _learning_cap_to_grade(label: str) -> str:
+    if label == CAP_LABELS["pass"]:
+        return "C"
+    if label in {CAP_LABELS["b_only"], CAP_LABELS["b_scout"]}:
+        return "B"
+    return "A"
 
 # --- SQL Layer: Statistics from structured data ---
 
@@ -117,6 +318,32 @@ def regime_stats(conn, pair: str, direction: str, regime: str) -> dict:
     trades = fetchall_dict(conn,
         "SELECT pl FROM trades WHERE pair = ? AND direction = ? AND regime = ? AND pl IS NOT NULL",
         (pair, direction, regime))
+
+    if not trades:
+        return {"count": 0}
+
+    pls = [t["pl"] for t in trades]
+    return {"count": len(trades), **payoff_metrics(pls)}
+
+
+def session_stats(conn, pair: str, direction: str, session_bucket: str) -> dict:
+    """Win rate by UTC session bucket for the same pair/direction."""
+    trades = fetchall_dict(
+        conn,
+        """SELECT pl
+           FROM trades
+           WHERE pair = ?
+             AND direction = ?
+             AND session_hour IS NOT NULL
+             AND CASE
+                   WHEN session_hour BETWEEN 0 AND 6 THEN 'tokyo'
+                   WHEN session_hour BETWEEN 7 AND 14 THEN 'london'
+                   WHEN session_hour BETWEEN 15 AND 21 THEN 'newyork'
+                   ELSE 'late'
+                 END = ?
+             AND pl IS NOT NULL""",
+        (pair, direction, session_bucket),
+    )
 
     if not trades:
         return {"count": 0}
@@ -554,6 +781,10 @@ def assess_setup_quality(pair: str, direction: str, wave: str = "auto") -> dict:
         "sizing": GRADE_TO_UNITS[allocation_grade],
         "counter_note": None,
         "mtf_aligned": aligned_count,
+        "spread_pips": spread_pip,
+        "spread_ratio": spread_ratio if spread_pip is not None else None,
+        "target_pips": target if spread_pip is not None else None,
+        "is_counter": False,
     }
 
 
@@ -689,10 +920,328 @@ def assess_counter_trade(pair: str, direction: str) -> dict:
         "details": details,
         "sizing": sizing,
         "counter_note": counter_note,
+        "spread_pips": spread_pip,
+        "spread_ratio": (spread_pip / counter_target) if spread_pip is not None else None,
+        "target_pips": counter_target,
+        "is_counter": True,
     }
 
 
 # --- Risk Assessment (backward-looking: risk from historical data) ---
+
+def _build_learning_profile(
+    conn,
+    pair: str,
+    direction: str,
+    *,
+    regime_hint: str | None = None,
+) -> dict:
+    registry = _load_lesson_registry()
+    exact, pair_only = _target_lessons_for_profile(pair, direction, registry)
+    relevant = exact[:3] + pair_only[:2]
+    top = exact[0] if exact else (pair_only[0] if pair_only else None)
+    now_utc = datetime.now(timezone.utc)
+    current_session = _current_session_bucket(now_utc)
+    current_regime = regime_hint or _infer_current_pair_regime(pair)
+    pair_stat = trade_stats(conn, pair, direction)
+    session_stat = session_stats(conn, pair, direction, current_session)
+    regime_stat = regime_stats(conn, pair, direction, current_regime) if current_regime else {"count": 0}
+
+    profile = {
+        "learning_score": 18,
+        "verdict": "limited history",
+        "allocation_cap": CAP_LABELS["b_scout"],
+        "evidence": "No strong pair-direction lesson yet. Respect the chart more than memory.",
+        "state": None,
+        "trust_score": 0,
+        "trade_count": int(pair_stat.get("count", 0) or 0),
+        "trade_ev": float(pair_stat.get("expectancy", 0.0) or 0.0),
+        "trade_wr": float(pair_stat.get("win_rate", 0.0) or 0.0),
+        "has_exact": False,
+        "current_session": current_session,
+        "current_regime": current_regime,
+        "session_context": _format_context_stat(session_stat, current_session),
+        "regime_context": _format_context_stat(regime_stat, current_regime or "regime"),
+        "context_bias": "neutral",
+    }
+    if not top:
+        return profile
+
+    trust = int(top.get("trust_score", 0) or 0)
+    text_blob = _lesson_text_blob(relevant)
+    no_edge = any(pattern in text_blob for pattern in NO_EDGE_PATTERNS)
+    positive = any(pattern in text_blob for pattern in POSITIVE_EDGE_PATTERNS)
+    trade_count = int(pair_stat.get("count", 0) or 0)
+    trade_ev = float(pair_stat.get("expectancy", 0.0) or 0.0)
+    trade_wr = float(pair_stat.get("win_rate", 0.0) or 0.0)
+    session_score_delta, session_cap_delta, session_bias = _context_signal(session_stat)
+    regime_score_delta, regime_cap_delta, regime_bias = _context_signal(regime_stat)
+
+    score = trust
+    if exact:
+        score += 12
+    elif pair_only:
+        score += 5
+    if top.get("state") == "confirmed":
+        score += 8
+    elif top.get("state") == "watch":
+        score += 3
+    if trade_count >= 5 and trade_ev > 0:
+        score += 8
+    if trade_count >= 10 and trade_wr >= 0.55:
+        score += 5
+    if trade_count >= 5 and trade_ev < 0:
+        score -= 14
+    if no_edge:
+        score -= 28
+    elif trade_count >= 5 and trade_wr < 0.40:
+        score -= 8
+    if pair_only and not exact:
+        score -= 12
+        score = min(score, 74)
+    score += session_score_delta + regime_score_delta
+    score = max(0, min(99, score))
+
+    if no_edge:
+        verdict = "no-edge / restricted"
+        allocation_cap = CAP_LABELS["b_only"]
+    elif exact and top.get("state") == "confirmed" and trade_count >= 5 and trade_ev > 0 and trade_wr >= 0.50:
+        verdict = "confirmed edge"
+        allocation_cap = CAP_LABELS["as_confirmed"]
+    elif exact and top.get("state") == "confirmed":
+        verdict = "confirmed but session-dependent"
+        allocation_cap = CAP_LABELS["a_max"]
+    elif exact and top.get("state") == "watch" and trade_count >= 3 and trade_ev > 0:
+        verdict = "watch edge"
+        allocation_cap = CAP_LABELS["a_max"]
+    elif exact and top.get("state") == "watch":
+        verdict = "watch / unproven"
+        allocation_cap = CAP_LABELS["b_only"]
+    elif pair_only and trade_count >= 5 and trade_ev > 0:
+        verdict = "pair memory positive, direction unproven"
+        allocation_cap = CAP_LABELS["ba_max"]
+    elif pair_only:
+        verdict = "pair memory only"
+        allocation_cap = CAP_LABELS["b_scout"]
+    elif positive:
+        verdict = "positive lesson, thin sample"
+        allocation_cap = CAP_LABELS["ba_max"]
+    else:
+        verdict = "limited history"
+        allocation_cap = CAP_LABELS["b_scout"]
+
+    cap_rank = _cap_rank(allocation_cap)
+    cap_rank += session_cap_delta + regime_cap_delta
+    if no_edge:
+        cap_rank = min(cap_rank, 1)
+    if not exact:
+        cap_rank = min(cap_rank, 3)
+    if trade_count < 3:
+        cap_rank = min(cap_rank, 2)
+    allocation_cap = _cap_label_from_rank(cap_rank)
+
+    context_flags = []
+    if session_bias == "headwind":
+        context_flags.append(f"{current_session} headwind")
+    elif session_bias == "tailwind":
+        context_flags.append(f"{current_session} tailwind")
+    if current_regime:
+        if regime_bias == "headwind":
+            context_flags.append(f"{current_regime} headwind")
+        elif regime_bias == "tailwind":
+            context_flags.append(f"{current_regime} tailwind")
+    if context_flags:
+        verdict = f"{verdict} | {' + '.join(context_flags)}"
+
+    context_bias = "neutral"
+    if "headwind" in context_flags:
+        context_bias = "headwind"
+    elif "tailwind" in context_flags:
+        context_bias = "tailwind"
+
+    profile.update({
+        "learning_score": score,
+        "verdict": verdict,
+        "allocation_cap": allocation_cap,
+        "evidence": _clip_text(top.get("title") or top.get("text") or profile["evidence"]),
+        "state": top.get("state"),
+        "trust_score": trust,
+        "trade_count": trade_count,
+        "trade_ev": trade_ev,
+        "trade_wr": trade_wr,
+        "has_exact": bool(exact),
+        "session_context": _format_context_stat(session_stat, current_session),
+        "regime_context": _format_context_stat(regime_stat, current_regime or "regime"),
+        "context_bias": context_bias,
+    })
+    return profile
+
+
+def _cap_setup_allocation(setup: dict, learning_profile: dict) -> dict:
+    raw_grade = setup.get("allocation_grade", setup.get("edge_grade", "C"))
+    capped_grade = _cap_grade(
+        raw_grade,
+        _learning_cap_to_grade(learning_profile.get("allocation_cap", CAP_LABELS["b_scout"])),
+    )
+    setup["raw_allocation_grade"] = raw_grade
+    setup["allocation_grade"] = capped_grade
+    setup["learning_score"] = learning_profile.get("learning_score")
+    setup["learning_verdict"] = learning_profile.get("verdict")
+    setup["learning_cap"] = learning_profile.get("allocation_cap")
+    setup["learning_context"] = (
+        f"{learning_profile.get('session_context')} | {learning_profile.get('regime_context')}"
+    )
+    setup["learning_evidence"] = learning_profile.get("evidence")
+    if capped_grade != raw_grade:
+        setup["details"].append(
+            f"Learning cap: {learning_profile.get('allocation_cap')} → allocation {raw_grade}→{capped_grade}"
+        )
+    setup["sizing"] = GRADE_TO_UNITS[capped_grade]
+    return setup
+
+
+def _recommend_execution_style(
+    pair: str,
+    direction: str,
+    setup: dict,
+    learning_profile: dict,
+    risk_level: str,
+) -> dict:
+    session_bucket = learning_profile.get("current_session")
+    regime = learning_profile.get("current_regime")
+    pair = str(learning_profile.get("pair", ""))
+    spread_pips = setup.get("spread_pips")
+    spread_ratio = setup.get("spread_ratio")
+    wave = setup.get("wave")
+    learning_score = int(learning_profile.get("learning_score", 0) or 0)
+    trade_count = int(learning_profile.get("trade_count", 0) or 0)
+    cap_rank = _cap_rank(learning_profile.get("allocation_cap", CAP_LABELS["b_scout"]))
+    has_exact = bool(learning_profile.get("has_exact"))
+    confirmed_state = learning_profile.get("state") == "confirmed"
+    tight_market_spread, normal_market_spread = _market_spread_bands(pair, spread_pips, spread_ratio)
+    reasons: list[str] = []
+
+    if learning_profile.get("allocation_cap") == CAP_LABELS["pass"] or setup.get("allocation_grade") == "C":
+        reasons.append("learning cap or final allocation says this seat is not worth real risk")
+        return {"style": "PASS", "note": "; ".join(reasons)}
+
+    if learning_profile.get("context_bias") == "headwind" and risk_level == "HIGH":
+        reasons.append("historical learning and current risk stack are both against this seat")
+        return {"style": "PASS", "note": "; ".join(reasons)}
+
+    if spread_ratio is not None and spread_ratio > 0.30 and not normal_market_spread:
+        if regime in {"squeeze", "transition"}:
+            reasons.append(
+                f"spread {spread_pips:.1f}pip is too expensive for immediate entry while {regime} still needs proof"
+            )
+            return {"style": "STOP-ENTRY", "note": "; ".join(reasons)}
+        reasons.append(f"spread {spread_pips:.1f}pip destroys the payoff shape for a market fill")
+        return {"style": "LIMIT", "note": "; ".join(reasons)}
+
+    if regime in {"range", "quiet"} and wave in {"big", "mid"}:
+        reasons.append(f"{regime} regime rewards price improvement more than chasing")
+        return {"style": "LIMIT", "note": "; ".join(reasons)}
+
+    if session_bucket in {"newyork", "late"} and spread_ratio is not None and spread_ratio > 0.24 and not normal_market_spread:
+        reasons.append(
+            f"{session_bucket} bucket with {spread_pips:.1f}pip spread is execution-sensitive"
+        )
+        return {"style": "LIMIT", "note": "; ".join(reasons)}
+
+    if learning_profile.get("context_bias") == "headwind":
+        support = trade_count >= 3 or has_exact or confirmed_state
+        if regime in {"trending", "transition", "squeeze"} and risk_level != "HIGH":
+            if tight_market_spread and support:
+                if cap_rank >= 2 and learning_score >= 50:
+                    reasons.append(
+                        "historical headwind caps size, not all participation; take a small live scout now and leave one reload LIMIT"
+                    )
+                    return {"style": "MARKET", "note": "; ".join(reasons)}
+                if cap_rank == 1 and learning_score >= 58:
+                    reasons.append(
+                        "even with B-only memory, the live tape is paying enough at tight spread to justify a scout instead of full flatness"
+                    )
+                    return {"style": "MARKET", "note": "; ".join(reasons)}
+            if normal_market_spread and learning_score >= 45 and (support or cap_rank >= 2):
+                reasons.append(
+                    "historical headwind blocks blind chase, but the tape is alive enough to arm a trigger instead of passing"
+                )
+                return {"style": "STOP-ENTRY", "note": "; ".join(reasons)}
+        reasons.append("learning context is headwind, so require either price improvement or trigger proof")
+        style = "STOP-ENTRY" if regime in {"trending", "transition", "squeeze"} else "LIMIT"
+        return {"style": style, "note": "; ".join(reasons)}
+
+    if regime in {"squeeze", "transition"} and not setup.get("is_counter"):
+        if (
+            cap_rank >= 4
+            and learning_score >= 64
+            and normal_market_spread
+            and (trade_count >= 3 or has_exact or confirmed_state or learning_profile.get("context_bias") == "tailwind")
+            and risk_level != "HIGH"
+        ):
+            reasons.append(
+                f"{regime} is already leaning one way and the seat has earned immediate participation"
+            )
+            return {"style": "MARKET", "note": "; ".join(reasons)}
+        if (
+            cap_rank in {1, 2, 3}
+            and learning_score >= 53
+            and normal_market_spread
+            and (
+                learning_profile.get("context_bias") == "tailwind"
+                or trade_count >= 3
+                or has_exact
+                or confirmed_state
+            )
+            and risk_level != "HIGH"
+        ):
+            reasons.append(
+                f"{regime} is leaning enough for a market scout; participate now and still leave one reload LIMIT"
+            )
+            return {"style": "MARKET", "note": "; ".join(reasons)}
+        reasons.append(f"{regime} pays better after the reclaim/breakout proves itself")
+        return {"style": "STOP-ENTRY", "note": "; ".join(reasons)}
+
+    if regime == "trending":
+        if (
+            cap_rank >= 4
+            and learning_score >= 58
+            and normal_market_spread
+            and (trade_count >= 3 or has_exact or confirmed_state or learning_profile.get("context_bias") == "tailwind")
+            and risk_level != "HIGH"
+        ):
+            if tight_market_spread or learning_profile.get("context_bias") == "tailwind" or cap_rank >= 5:
+                reasons.append("trend is already paying and the learning cap is strong enough for immediate execution")
+            else:
+                reasons.append("trend is live enough now; enter the market print and still keep one reload LIMIT")
+            return {"style": "MARKET", "note": "; ".join(reasons)}
+        if (
+            cap_rank in {1, 2, 3}
+            and learning_score >= 50
+            and normal_market_spread
+            and (
+                learning_profile.get("context_bias") == "tailwind"
+                or trade_count >= 3
+                or has_exact
+                or confirmed_state
+            )
+            and risk_level != "HIGH"
+        ):
+            reasons.append(
+                "B-conviction seat with live tape leaning one way; take a market scout now and keep one reload LIMIT"
+            )
+            return {"style": "MARKET", "note": "; ".join(reasons)}
+
+    if risk_level == "HIGH":
+        reasons.append("setup exists, but the risk stack is elevated enough to avoid paying market")
+        return {"style": "LIMIT", "note": "; ".join(reasons)}
+
+    if regime == "trending":
+        reasons.append("trend is alive enough to keep a trigger armed even when the market scout lane is not justified")
+        return {"style": "STOP-ENTRY", "note": "; ".join(reasons)}
+
+    reasons.append("edge, learning cap, session, and spread all support immediate execution")
+    return {"style": "MARKET", "note": "; ".join(reasons)}
 
 def assess_risk(
     pair: str,
@@ -704,7 +1253,10 @@ def assess_risk(
     counter: bool = False,
 ) -> dict:
     """Overall risk + setup quality assessment"""
+    init_db(quiet=True)
     conn = get_conn()
+    if regime:
+        regime = str(regime).strip().lower()
     warnings = []
     risk_score = 0  # 0-10
 
@@ -847,9 +1399,13 @@ def assess_risk(
                 qs = setup["quality_score"]
                 if qs >= 8:
                     setup["grade"] = "S"
+                    setup["edge_grade"] = "S"
+                    setup["allocation_grade"] = "S"
                     setup["sizing"] = "8000-10000u (iron-clad. size up)"
                 elif qs >= 6:
                     setup["grade"] = "A"
+                    setup["edge_grade"] = "A"
+                    setup["allocation_grade"] = "A"
                     setup["sizing"] = "5000-8000u (high conviction. trade it properly)"
 
     # 6d. Macro regime conflict warning
@@ -872,6 +1428,10 @@ def assess_risk(
     except Exception:
         pass
 
+    learning_profile = _build_learning_profile(conn, pair, direction, regime_hint=regime)
+    setup = _cap_setup_allocation(setup, learning_profile)
+    execution_plan = _recommend_execution_style(pair, direction, setup, learning_profile, level)
+
     result = {
         "pair": pair,
         "direction": direction,
@@ -881,6 +1441,8 @@ def assess_risk(
         "trade_stats": stats if stats["count"] > 0 else None,
         "past_outcomes": past_outcomes,
         "setup_quality": setup,
+        "learning_profile": learning_profile,
+        "execution_plan": execution_plan,
     }
 
     # 7. Similar situations via vector search
@@ -902,7 +1464,24 @@ def assess_risk(
 
     # 8. Log this check result to pretrade_outcomes (daily_review will fill in pl later)
     thesis = _build_pretrade_thesis(result, headline)
-    _log_pretrade(conn, pair, direction, level, risk_score, warnings, thesis)
+    _log_pretrade(
+        conn,
+        pair,
+        direction,
+        level,
+        risk_score,
+        warnings,
+        thesis,
+        metadata={
+            "learning_score": learning_profile.get("learning_score"),
+            "learning_verdict": learning_profile.get("verdict"),
+            "learning_cap": learning_profile.get("allocation_cap"),
+            "session_bucket": learning_profile.get("current_session"),
+            "regime_snapshot": learning_profile.get("current_regime"),
+            "execution_style": execution_plan.get("style"),
+            "execution_note": execution_plan.get("note"),
+        },
+    )
 
     return result
 
@@ -919,6 +1498,8 @@ def _past_pretrade_outcomes(conn, pair: str, direction: str, level: str) -> list
 
 def _build_pretrade_thesis(result: dict, headline: str | None = None) -> str:
     setup = result.get("setup_quality") or {}
+    learning = result.get("learning_profile") or {}
+    execution = result.get("execution_plan") or {}
     edge = setup.get("edge_grade") or setup.get("grade") or "?"
     allocation = setup.get("allocation_grade") or edge
     wave = setup.get("wave") or "?"
@@ -926,7 +1507,9 @@ def _build_pretrade_thesis(result: dict, headline: str | None = None) -> str:
     detail_text = " | ".join(str(detail).strip() for detail in details[:2] if detail)
     detail_text = detail_text[:220]
     headline_text = f" headline={headline}" if headline else ""
-    thesis = f"edge={edge} alloc={allocation} wave={wave}{headline_text}"
+    learn_cap = learning.get("allocation_cap") or "?"
+    exec_style = execution.get("style") or "?"
+    thesis = f"edge={edge} alloc={allocation} learn={learn_cap} exec={exec_style} wave={wave}{headline_text}"
     if detail_text:
         thesis += f" | {detail_text}"
     return thesis[:280]
@@ -960,17 +1543,46 @@ def _recent_duplicate_pretrade(
     return recent is not None
 
 
-def _log_pretrade(conn, pair: str, direction: str, level: str, score: int, warnings: list, thesis: str):
+def _log_pretrade(
+    conn,
+    pair: str,
+    direction: str,
+    level: str,
+    score: int,
+    warnings: list,
+    thesis: str,
+    metadata: dict | None = None,
+):
     """Log this check result to pretrade_outcomes"""
     try:
         if _recent_duplicate_pretrade(conn, pair, direction, level, score, thesis):
             return
+        metadata = metadata or {}
         conn.execute(
             """INSERT INTO pretrade_outcomes
-               (session_date, pair, direction, pretrade_level, pretrade_score, pretrade_warnings, thesis)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (str(date.today()), pair, direction, level, score,
-             json.dumps(warnings, ensure_ascii=False), thesis)
+               (
+                 session_date, pair, direction, pretrade_level, pretrade_score,
+                 pretrade_warnings, thesis,
+                 learning_score, learning_verdict, learning_cap,
+                 session_bucket, regime_snapshot, execution_style, execution_note
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(date.today()),
+                pair,
+                direction,
+                level,
+                score,
+                json.dumps(warnings, ensure_ascii=False),
+                thesis,
+                metadata.get("learning_score"),
+                metadata.get("learning_verdict"),
+                metadata.get("learning_cap"),
+                metadata.get("session_bucket"),
+                metadata.get("regime_snapshot"),
+                metadata.get("execution_style"),
+                metadata.get("execution_note"),
+            )
         )
     except Exception:
         pass  # ignore if table does not yet exist
@@ -981,6 +1593,8 @@ def format_check(result: dict) -> str:
     lines = []
     level = result["risk_level"]
     setup = result.get("setup_quality", {})
+    learning = result.get("learning_profile", {})
+    execution = result.get("execution_plan", {})
     grade = setup.get("grade", "?")
     is_counter = setup.get("is_counter", False)
 
@@ -1025,7 +1639,30 @@ def format_check(result: dict) -> str:
         lines.append("📐 Setup quality:")
         for detail in setup.get("details", []):
             lines.append(f"  {detail}")
+
+    raw_alloc = setup.get("raw_allocation_grade")
+    if raw_alloc and raw_alloc != setup.get("allocation_grade"):
+        lines.append(f"  Allocation capped by learning: {raw_alloc} → {setup.get('allocation_grade')}")
     lines.append("")
+
+    if learning:
+        lines.append(
+            f"🧠 Learning gate: {int(learning.get('learning_score', 0))}/99 "
+            f"| {learning.get('verdict', '?')} | cap {learning.get('allocation_cap', '?')}"
+        )
+        lines.append(f"   Evidence: {learning.get('evidence', '?')}")
+        lines.append(
+            f"   Context: {learning.get('session_context', '?')} | "
+            f"{learning.get('regime_context', '?')}"
+        )
+        lines.append("")
+
+    if execution:
+        lines.append(
+            f"⚙️ Execution plan: {execution.get('style', '?')} "
+            f"| {execution.get('note', 'no note')}"
+        )
+        lines.append("")
 
     # Trade statistics
     stats = result.get("trade_stats")

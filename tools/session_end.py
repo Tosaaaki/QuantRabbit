@@ -158,6 +158,26 @@ def main():
     except Exception as e:
         print(f"seat_outcomes warning: {e}")
 
+    # Stop the detached watchdog immediately on clean session end.
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "task_runtime.py"),
+                "trader",
+                "cleanup-watchdog",
+                "--session-start",
+                str(start),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=str(ROOT),
+            check=False,
+        )
+    except Exception as e:
+        print(f"watchdog cleanup warning: {e}")
+
     # Release lock
     try:
         LOCK.unlink(missing_ok=True)

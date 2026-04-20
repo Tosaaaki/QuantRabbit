@@ -29,6 +29,7 @@ PRETRADE_LOOKBACK_DAYS = 3
 PRETRADE_MATCH_HOURS = 72
 RECURRING_TAG_PREFIXES = ("trader",)
 LESSON_REGISTRY_JSON = ROOT / "collab_trade" / "memory" / "lesson_registry.json"
+MAX_AUDIT_SIGNAL_GAP_HOURS = 12
 
 
 def payoff_metrics(pls: list[float]) -> dict:
@@ -127,10 +128,60 @@ def load_trade_tags_from_log() -> dict[str, dict[str, str]]:
     return tags
 
 
+def load_daily_trade_id_evidence(session_date: str) -> dict[str, str]:
+    """Recover ownership hints from the daily trade journal when tags are missing."""
+    path = ROOT / "collab_trade" / "daily" / session_date / "trades.md"
+    if not path.exists():
+        return {}
+
+    evidence: dict[str, str] = {}
+    for line in path.read_text(errors="ignore").splitlines():
+        lower = line.lower()
+        ids = set()
+        ids.update(re.findall(r"\b(?:trade id|id)\s*(?:\||=|:)\s*(\d+)\b", line, flags=re.IGNORECASE))
+        table_match = re.match(r"^\|\s*(\d{5,})\s*\|", line)
+        if table_match:
+            ids.add(table_match.group(1))
+        if not ids:
+            continue
+
+        source = "daily_record"
+        if "bot" in lower or "legacy" in lower:
+            source = "bot_record"
+
+        for tid in ids:
+            if source == "bot_record":
+                evidence[tid] = source
+            else:
+                evidence.setdefault(tid, source)
+    return evidence
+
+
 def is_recurring_trader_trade(tag: str | None, comment: str | None) -> bool:
     lowered_tag = (tag or "").lower()
     lowered_comment = (comment or "").lower()
     return lowered_tag.startswith(RECURRING_TAG_PREFIXES) or lowered_comment.startswith("qr-trader")
+
+
+def classify_trade_ownership(
+    trade_id: str,
+    tag: str | None,
+    comment: str | None,
+    daily_evidence: dict[str, str],
+) -> tuple[str, str]:
+    if is_recurring_trader_trade(tag, comment):
+        return "recurring_trader", "explicit_tag_or_comment"
+
+    if daily_evidence.get(trade_id) == "daily_record":
+        return "recurring_trader", "daily_trade_record"
+
+    if tag or comment:
+        return "other_execution", "explicit_non_recurring_tag"
+
+    if daily_evidence.get(trade_id) == "bot_record":
+        return "other_execution", "daily_bot_record"
+
+    return "other_execution", "unresolved"
 
 
 def summarize_trade_bucket(title: str, trades: list[dict], tag_coverage: tuple[int, int] | None = None) -> list[str]:
@@ -392,7 +443,7 @@ def after_action_review_queue(oanda_trades: list[dict]) -> list[str]:
         bucket["pl"] += trade["pl"]
     repetitive = [
         (key, bucket) for key, bucket in buckets.items()
-        if bucket["count"] >= 2
+        if bucket["count"] >= 3
     ]
     repetitive.sort(key=lambda item: (item[1]["pl"], -item[1]["count"]))
     if repetitive:
@@ -424,6 +475,7 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
     since = start_utc.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
     to = end_utc.strftime('%Y-%m-%dT%H:%M:%S.000000000Z')
     log_tags = load_trade_tags_from_log()
+    daily_evidence = load_daily_trade_id_evidence(session_date)
 
     try:
         import urllib.parse
@@ -499,6 +551,7 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
         direction = entry['direction'] if entry else (close.get('direction') or ('LONG' if close['pl'] >= 0 else 'SHORT'))
         tag = (entry or {}).get("tag") or log_meta.get("tag", "")
         comment = (entry or {}).get("comment") or log_meta.get("comment", "")
+        bucket, ownership_source = classify_trade_ownership(tid, tag, comment, daily_evidence)
 
         # Hold time calculation
         hold_min = None
@@ -523,7 +576,8 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
             'close_time': close['time'],
             'tag': tag,
             'comment': comment,
-            'bucket': 'recurring_trader' if is_recurring_trader_trade(tag, comment) else 'other_execution',
+            'bucket': bucket,
+            'ownership_source': ownership_source,
         })
 
     return trades
@@ -556,6 +610,25 @@ def _parse_state_updated(value: str | None) -> datetime | None:
     for fmt in ("%Y-%m-%d %H:%M UTC", "%Y-%m-%d %H:%M:%S UTC"):
         try:
             return datetime.strptime(value, fmt).replace(tzinfo=timezone.utc).astimezone(JST)
+        except Exception:
+            continue
+    return None
+
+
+def _parse_audit_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+
+    cleaned = value.strip()
+    if cleaned.endswith("Z") and "T" in cleaned:
+        try:
+            return datetime.fromisoformat(cleaned.replace("Z", "+00:00")).astimezone(JST)
+        except Exception:
+            pass
+
+    for fmt in ("%Y-%m-%d %H:%M UTC", "%Y-%m-%d %H:%M:%S UTC"):
+        try:
+            return datetime.strptime(cleaned, fmt).replace(tzinfo=timezone.utc).astimezone(JST)
         except Exception:
             continue
     return None
@@ -786,6 +859,13 @@ def parse_pretrade_from_trades_md(trades_md_path: Path) -> list[dict]:
 
 def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list[str]:
     """Analyze scanner and narrative audit opportunities from audit_history.jsonl."""
+    try:
+        from seat_outcomes import fetch_window_mid_stats as fetch_seat_window_mid_stats
+        from seat_outcomes import _score_window_move as score_window_move
+    except Exception:
+        fetch_seat_window_mid_stats = None
+        score_window_move = None
+
     history_path = ROOT / "logs" / "audit_history.jsonl"
     if not history_path.exists():
         return []
@@ -837,6 +917,7 @@ def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list
                     pair = strongest.get("pair", "?")
                     if not any(
                         detection["pair"] == pair and detection["direction"] == direction
+                        and detection["timestamp"] == ts
                         for detection in narrative_detections
                     ):
                         narrative_detections.append({
@@ -856,7 +937,13 @@ def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list
         seen = set()
         unique = []
         for detection in detections:
-            key = (detection["pair"], detection["direction"], detection["label"])
+            key = (
+                detection["timestamp"],
+                detection["pair"],
+                detection["direction"],
+                detection["label"],
+                detection.get("price"),
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -865,17 +952,61 @@ def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list
 
     scanner_unique = dedupe(scanner_detections)
     narrative_unique = dedupe(narrative_detections)
+    _review_start_utc, review_end_utc = review_day_bounds_utc(session_date)
+    review_end_jst = review_end_utc.astimezone(JST)
 
-    # Build closed-trade lookup: (pair, direction) → list of P&L
-    trade_lookup = {}
+    trade_lookup: dict[tuple[str, str], list[tuple[datetime, dict]]] = {}
     for t in oanda_trades:
+        trade_ts = _parse_oanda_time(t.get("entry_time")) or _parse_oanda_time(t.get("close_time"))
+        if trade_ts is None:
+            continue
         key = (t["pair"], t["direction"])
-        trade_lookup.setdefault(key, []).append(t["pl"])
+        trade_lookup.setdefault(key, []).append((trade_ts, t))
+    for bucket in trade_lookup.values():
+        bucket.sort(key=lambda item: item[0])
 
     current_prices = fetch_current_prices({
         d["pair"] for d in scanner_unique + narrative_unique
         if d["pair"] and d["pair"] != "?"
     })
+    excursion_cache: dict[tuple[str, str, str], dict] = {}
+
+    def attach_trade_windows(detections: list[dict]) -> list[dict]:
+        enriched = []
+        by_key: dict[tuple[str, str], list[dict]] = {}
+        for detection in detections:
+            payload = dict(detection)
+            payload["parsed_timestamp"] = _parse_audit_timestamp(detection.get("timestamp"))
+            payload["matched_trades"] = []
+            enriched.append(payload)
+            by_key.setdefault((payload["pair"], payload["direction"]), []).append(payload)
+
+        for key, items in by_key.items():
+            items.sort(key=lambda item: item.get("parsed_timestamp") or datetime.min.replace(tzinfo=JST))
+            trades = trade_lookup.get(key, [])
+            for idx, item in enumerate(items):
+                start = item.get("parsed_timestamp")
+                if start is None:
+                    continue
+                next_ts = None
+                for later in items[idx + 1:]:
+                    later_ts = later.get("parsed_timestamp")
+                    if later_ts is not None:
+                        next_ts = later_ts
+                        break
+                window_end = next_ts or (start + timedelta(hours=MAX_AUDIT_SIGNAL_GAP_HOURS))
+                if window_end > review_end_jst:
+                    window_end = review_end_jst
+                matched = []
+                for trade_ts, trade in trades:
+                    if trade_ts < start:
+                        continue
+                    if trade_ts >= window_end:
+                        continue
+                    matched.append(trade)
+                item["matched_trades"] = matched
+                item["window_end"] = window_end
+        return enriched
 
     def analyze_group(title: str, detections: list[dict]) -> list[str]:
         if not detections:
@@ -884,40 +1015,78 @@ def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list
         lines = [f"### {title}", ""]
         stats = {}
 
-        for detection in detections:
+        for detection in attach_trade_windows(detections):
             pair = detection["pair"]
             direction = detection["direction"]
             label = detection["label"]
             det_price = detection["price"]
+            matched_trades = detection.get("matched_trades") or []
 
             if label not in stats:
-                stats[label] = {"correct": 0, "wrong": 0, "entered": 0, "missed": 0}
+                stats[label] = {"correct": 0, "premature": 0, "wrong": 0, "entered": 0, "missed": 0}
 
-            key = (pair, direction)
-            entered = key in trade_lookup
-            if entered:
+            cutoff_price = current_prices.get(pair)
+            window_stats = None
+            start = detection.get("parsed_timestamp")
+            window_end = detection.get("window_end")
+            if fetch_seat_window_mid_stats is not None and start is not None and window_end is not None:
+                cache_key = (pair, start.isoformat(), window_end.isoformat())
+                if cache_key not in excursion_cache:
+                    excursion_cache[cache_key] = fetch_seat_window_mid_stats(
+                        pair,
+                        start.astimezone(timezone.utc),
+                        window_end.astimezone(timezone.utc),
+                    )
+                window_stats = excursion_cache.get(cache_key) or {}
+                if window_stats.get("last_close") is not None:
+                    try:
+                        cutoff_price = float(window_stats["last_close"])
+                    except Exception:
+                        pass
+
+            moved_right = None
+            pip_move = None
+            if score_window_move is not None:
+                scored = score_window_move(pair, direction, det_price, window_stats, cutoff_price)
+                moved_right = scored.get("moved_right")
+                pip_move = scored.get("pip_move")
+            elif cutoff_price and det_price > 0:
+                moved_right = (direction == "LONG" and cutoff_price > det_price) or (
+                    direction == "SHORT" and cutoff_price < det_price
+                )
+                pip_move = abs(cutoff_price - det_price) * _pip_factor(pair)
+
+            if matched_trades:
                 stats[label]["entered"] += 1
-                pl = sum(trade_lookup[key])
-                result = "WIN" if pl > 0 else "LOSS"
-                price_str = f" @{det_price}" if det_price else ""
-                lines.append(f"  {pair} {direction} {label}{price_str} → ENTERED → {result} {pl:+,.0f} JPY")
+                pl = sum(float(trade.get("pl") or 0.0) for trade in matched_trades)
                 if pl > 0:
+                    verdict = "CORRECT"
                     stats[label]["correct"] += 1
+                elif moved_right:
+                    verdict = "PREMATURE"
+                    stats[label]["premature"] += 1
                 else:
+                    verdict = "WRONG"
                     stats[label]["wrong"] += 1
+                price_str = f" @{det_price}" if det_price else ""
+                if pip_move is not None and moved_right:
+                    lines.append(
+                        f"  {pair} {direction} {label}{price_str} → ENTERED → {verdict} "
+                        f"({len(matched_trades)} trade{'s' if len(matched_trades) != 1 else ''}, {pl:+,.0f} JPY, best favorable excursion {pip_move:.1f}pip)"
+                    )
+                else:
+                    lines.append(
+                        f"  {pair} {direction} {label}{price_str} → ENTERED → {verdict} "
+                        f"({len(matched_trades)} trade{'s' if len(matched_trades) != 1 else ''}, {pl:+,.0f} JPY)"
+                    )
                 continue
 
             stats[label]["missed"] += 1
-            cur = current_prices.get(pair)
-            if cur and det_price > 0:
-                moved_right = (direction == "LONG" and cur > det_price) or (
-                    direction == "SHORT" and cur < det_price
-                )
-                pip_move = abs(cur - det_price) * _pip_factor(pair)
+            if pip_move is not None and moved_right is not None:
                 verdict = "CORRECT" if moved_right else "WRONG"
                 lines.append(
                     f"  {pair} {direction} {label} @{det_price} → MISSED → "
-                    f"{verdict} ({pip_move:.1f}pip moved)"
+                    f"{verdict} (best favorable excursion {pip_move:.1f}pip)"
                 )
                 if moved_right:
                     stats[label]["correct"] += 1
@@ -931,10 +1100,12 @@ def analyze_s_scan_outcomes(session_date: str, oanda_trades: list[dict]) -> list
         lines.append("#### Accuracy Summary")
         lines.append("")
         for label, bucket in sorted(stats.items()):
-            total = bucket["correct"] + bucket["wrong"]
-            acc = bucket["correct"] / total * 100 if total > 0 else 0
+            total = bucket["correct"] + bucket["premature"] + bucket["wrong"]
+            directional = bucket["correct"] + bucket["premature"]
+            acc = directional / total * 100 if total > 0 else 0
             lines.append(
-                f"  {label}: {acc:.0f}% accuracy ({bucket['correct']}/{total}) "
+                f"  {label}: {acc:.0f}% directional ({directional}/{total}) "
+                f"| correct: {bucket['correct']} premature: {bucket['premature']} wrong: {bucket['wrong']} "
                 f"| entered: {bucket['entered']} missed: {bucket['missed']}"
             )
         lines.append("")
@@ -960,6 +1131,16 @@ def analyze_s_hunt_ledger(session_date: str, oanda_trades: list[dict]) -> list[s
         return []
 
     return seat_outcome_review_lines(session_date)
+
+
+def analyze_s_excavation(session_date: str, oanda_trades: list[dict]) -> list[str]:
+    """Review near-S podium seats from the formal seat_outcomes table."""
+    try:
+        from seat_outcomes import excavation_review_lines
+    except Exception:
+        return []
+
+    return excavation_review_lines(session_date)
 
 
 def generate_report(session_date: str) -> str:
@@ -1022,15 +1203,24 @@ def generate_report(session_date: str) -> str:
         recurring_trades = [t for t in oanda_trades if t.get("bucket") == "recurring_trader"]
         other_trades = [t for t in oanda_trades if t.get("bucket") != "recurring_trader"]
         tagged_count = sum(1 for t in oanda_trades if t.get("tag") or t.get("comment"))
+        recurring_tag_count = sum(1 for t in recurring_trades if t.get("ownership_source") == "explicit_tag_or_comment")
+        recurring_daily_count = sum(1 for t in recurring_trades if t.get("ownership_source") == "daily_trade_record")
+        unresolved_count = sum(1 for t in oanda_trades if t.get("ownership_source") == "unresolved")
         lines.append("## Execution Split")
         lines.append("")
         lines.append(
-            "Read this before writing lessons. If the damage came from manual / legacy / unknown-tag execution, "
+            "Read this before writing lessons. Recurring ownership uses explicit tags/comments first, then the daily trade journal as a fallback. "
+            "If the damage came from manual / legacy / unresolved execution, "
             "do not teach that lesson to the recurring trader."
         )
         lines.append("")
+        lines.append(
+            f"Ownership evidence: explicit recurring={recurring_tag_count} | daily journal fallback={recurring_daily_count} "
+            f"| explicit tagged non-recurring={tagged_count - recurring_tag_count} | unresolved={unresolved_count}"
+        )
+        lines.append("")
         lines.extend(summarize_trade_bucket(
-            "Recurring trader (`tag=trader*` or `qr-trader` comment)",
+            "Recurring trader (`tag=trader*` / `qr-trader` / daily trade record fallback)",
             recurring_trades,
             tag_coverage=(tagged_count, len(oanda_trades)),
         ))
@@ -1136,6 +1326,11 @@ def generate_report(session_date: str) -> str:
     s_hunt_lines = analyze_s_hunt_ledger(session_date, oanda_trades)
     if s_hunt_lines:
         lines.extend(s_hunt_lines)
+
+    # 7b. S Excavation podium review (near-S seats not promoted into S Hunt)
+    excavation_lines = analyze_s_excavation(session_date, oanda_trades)
+    if excavation_lines:
+        lines.extend(excavation_lines)
 
     # 8. DB trades stats (comparison against all-time)
     db_stats = fetchall_dict(conn,

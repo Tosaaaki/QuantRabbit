@@ -9,7 +9,7 @@ Consolidates Bash steps ②③④ into one. This single script covers:
 4. Adaptive Technicals
 5. Slack: user messages
 6. Memory recall: lessons for held, pending, and scanner candidate pairs
-7. Learning-weighted edge board for current seats
+7. Learning-weighted edge board + deployment cues for current seats
 8. Today's performance
 
 Usage: python3 tools/session_data.py [--state-ts LAST_SLACK_TS]
@@ -19,11 +19,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from config_loader import get_oanda_config
@@ -63,6 +66,13 @@ CAP_LABELS = {
     "ba_max": "B/A max",
     "a_max": "A max",
     "as_confirmed": "A/S when theme confirmed",
+}
+SCANNER_MEMORY_TARGET_LIMIT = 6
+MAX_MEMORY_TARGETS = 10
+SOURCE_PRIORITY = {
+    "pending": 2,
+    "state": 1,
+    "scanner": 0,
 }
 _TRADE_CONTEXT_STATS = None
 
@@ -290,7 +300,91 @@ def _parse_scanner_candidates(scanner_output: str) -> list[dict]:
     return candidates
 
 
-def _build_memory_targets(trades_data: dict, pending_orders: list[dict], scanner_output: str) -> list[dict]:
+def _extract_pair_direction(text: str) -> tuple[str | None, str | None]:
+    pair_match = re.search(r"\b(" + "|".join(PAIRS) + r")\b", text)
+    if not pair_match:
+        return None, None
+
+    pair = pair_match.group(1)
+    direction_match = re.search(
+        rf"\b{re.escape(pair)}\b\s+(LONG|SHORT)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if direction_match:
+        return pair, direction_match.group(1).upper()
+
+    tail = text[pair_match.end():]
+    direction_match = re.search(r"\b(LONG|SHORT)\b", tail, flags=re.IGNORECASE)
+    direction = direction_match.group(1).upper() if direction_match else None
+    if direction is None:
+        lowered = tail.lower()
+        if re.search(r"\bbuy\b", lowered):
+            direction = "LONG"
+        elif re.search(r"\bsell\b", lowered):
+            direction = "SHORT"
+    return pair, direction
+
+
+def _parse_state_carry_targets(state_text: str) -> list[dict]:
+    if not state_text:
+        return []
+
+    targets: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_target(line: str, origin: str) -> None:
+        pair, direction = _extract_pair_direction(line)
+        if not pair or not direction:
+            return
+        key = (pair, direction)
+        if key in seen:
+            return
+        targets.append({
+            "pair": pair,
+            "direction": direction,
+            "source": "state",
+            "recipe": _clip_text(f"{origin}: {line}", 140),
+        })
+        seen.add(key)
+
+    prefixes = {
+        "Backup vehicle:": "backup vehicle",
+        "Second-best expression:": "second-best expression",
+        "Next fresh risk allowed NOW:": "next fresh risk",
+        "Best direct-USD seat NOW:": "best direct-USD seat",
+        "Best rotation candidate:": "rotation candidate",
+        "Best expression NOW:": "best expression",
+    }
+
+    for raw_line in state_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        for prefix, origin in prefixes.items():
+            if not line.startswith(prefix):
+                continue
+            if prefix == "Next fresh risk allowed NOW:" and re.search(r":\s*none\b", line, flags=re.IGNORECASE):
+                continue
+            add_target(line, origin)
+            break
+
+        if re.match(r"^Podium #\d+:", line):
+            add_target(line, "excavation podium")
+        elif re.match(r"^(Short-term|Medium-term|Long-term) S", line):
+            add_target(line, "s-hunt horizon")
+        elif re.match(r"^Lane [23] /", line):
+            add_target(line, "multi-vehicle lane")
+
+    return targets
+
+
+def _build_memory_targets(
+    trades_data: dict,
+    pending_orders: list[dict],
+    scanner_output: str,
+    carry_targets: list[dict] | None = None,
+) -> list[dict]:
     targets = []
     seen = set()
 
@@ -314,10 +408,13 @@ def _build_memory_targets(trades_data: dict, pending_orders: list[dict], scanner
     for order in pending_orders:
         add_target(order.get("instrument"), _units_to_direction(order.get("units")), "pending")
 
-    for candidate in _parse_scanner_candidates(scanner_output)[:3]:
+    for candidate in carry_targets or []:
+        add_target(candidate.get("pair"), candidate.get("direction"), "state", candidate.get("recipe"))
+
+    for candidate in _parse_scanner_candidates(scanner_output)[:SCANNER_MEMORY_TARGET_LIMIT]:
         add_target(candidate.get("pair"), candidate.get("direction"), "scanner", candidate.get("recipe"))
 
-    return targets[:5]
+    return targets[:MAX_MEMORY_TARGETS]
 
 
 def _memory_query_for_target(target: dict) -> str:
@@ -326,6 +423,8 @@ def _memory_query_for_target(target: dict) -> str:
         parts.extend(["hold", "exit", "lesson", "failure", "success"])
     elif target["source"] == "pending":
         parts.extend(["entry", "limit", "lesson", "failure", "success"])
+    elif target["source"] == "state":
+        parts.extend(["trigger", "backup", "rotation", "retest", "lesson"])
     else:
         parts.extend(["setup", "lesson", "failure", "success"])
     if target.get("recipe"):
@@ -397,6 +496,170 @@ def _clip_text(text: str, limit: int = 120) -> str:
     return compact[: limit - 1].rstrip() + "…"
 
 
+def _ledger_safe_text(text: str, limit: int = 120) -> str:
+    return _clip_text(str(text or "").replace("|", "/"), limit)
+
+
+def _load_audit_narrative_context() -> dict:
+    audit_path = ROOT / "logs" / "quality_audit.md"
+    if not audit_path.exists():
+        return {"available": False, "stale": False, "age_min": None, "pairs": {}, "strongest": None}
+
+    age_min = (time.time() - audit_path.stat().st_mtime) / 60
+    stale = age_min > QUALITY_AUDIT_STALE_MIN
+    if stale:
+        return {"available": True, "stale": True, "age_min": age_min, "pairs": {}, "strongest": None}
+
+    try:
+        from record_audit_narrative import build_entry as build_audit_narrative_entry
+        entry = build_audit_narrative_entry(audit_path.read_text())
+    except Exception:
+        return {"available": True, "stale": False, "age_min": age_min, "pairs": {}, "strongest": None}
+
+    pair_map: dict[tuple[str, str], list[str]] = {}
+    strongest = None
+    strongest_raw = entry.get("strongest_unheld") or {}
+    if strongest_raw.get("pair") and strongest_raw.get("direction"):
+        strongest = (strongest_raw["pair"], strongest_raw["direction"])
+        pair_map.setdefault(strongest, []).append("audit strongest-unheld")
+
+    for pick in entry.get("narrative_picks") or []:
+        pair = pick.get("pair")
+        direction = pick.get("direction")
+        edge = str(pick.get("edge") or "")
+        if not pair or not direction or edge not in {"S", "A"}:
+            continue
+        label = f"audit narrative Edge {edge}"
+        key = (pair, direction)
+        if label not in pair_map.setdefault(key, []):
+            pair_map[key].append(label)
+
+    return {
+        "available": True,
+        "stale": False,
+        "age_min": age_min,
+        "pairs": pair_map,
+        "strongest": strongest,
+    }
+
+
+def _tokyo_open_start_utc(now_utc: datetime) -> datetime:
+    anchor = datetime(now_utc.year, now_utc.month, now_utc.day, 21, tzinfo=timezone.utc)
+    if now_utc < anchor:
+        anchor -= timedelta(days=1)
+    return anchor
+
+
+def _fetch_window_move(pair: str, start_utc: datetime, cfg: dict) -> dict | None:
+    params = urllib.parse.urlencode(
+        {
+            "price": "M",
+            "granularity": "M5",
+            "from": start_utc.strftime("%Y-%m-%dT%H:%M:%S.000000000Z"),
+        }
+    )
+    url = f"{cfg['oanda_base_url']}/v3/instruments/{pair}/candles?{params}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {cfg['oanda_token']}",
+            "Content-Type": "application/json",
+        },
+    )
+    data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+    candles = data.get("candles") or []
+    values = []
+    for candle in candles:
+        mid = candle.get("mid") or {}
+        try:
+            values.append(
+                (
+                    candle.get("time"),
+                    float(mid["o"]),
+                    float(mid["h"]),
+                    float(mid["l"]),
+                    float(mid["c"]),
+                )
+            )
+        except Exception:
+            continue
+
+    if not values:
+        return None
+
+    pip_factor = 100 if "JPY" in pair else 10000
+    first = values[0]
+    last = values[-1]
+    high = max(values, key=lambda item: item[2])
+    low = min(values, key=lambda item: item[3])
+    open_px = first[1]
+    return {
+        "pair": pair,
+        "open_time": first[0],
+        "last_time": last[0],
+        "net_pips": (last[4] - open_px) * pip_factor,
+        "range_pips": (high[2] - low[3]) * pip_factor,
+        "max_up_pips": (high[2] - open_px) * pip_factor,
+        "max_down_pips": (open_px - low[3]) * pip_factor,
+        "high_time": high[0],
+        "low_time": low[0],
+    }
+
+
+def _print_tokyo_open_breadth(cfg: dict, now_utc: datetime, spread_data: dict[str, float]) -> None:
+    if now_utc.hour >= 8:
+        return
+
+    start_utc = _tokyo_open_start_utc(now_utc)
+    section("TOKYO-OPEN BREADTH")
+    print(
+        "Window: "
+        f"{start_utc.strftime('%Y-%m-%d %H:%M UTC')} -> {now_utc.strftime('%Y-%m-%d %H:%M UTC')} "
+        f"({(start_utc + timedelta(hours=9)).strftime('%m/%d %H:%M')} JST -> now)"
+    )
+
+    rows = []
+    for pair in PAIRS:
+        try:
+            row = _fetch_window_move(pair, start_utc, cfg)
+        except Exception:
+            row = None
+        if row:
+            rows.append(row)
+
+    if not rows:
+        print("(tokyo-open breadth unavailable)")
+        return
+
+    positive = sum(1 for row in rows if row["net_pips"] > 0.5)
+    negative = sum(1 for row in rows if row["net_pips"] < -0.5)
+    active = [
+        row for row in rows
+        if abs(float(row["net_pips"])) >= 15.0 or float(row["range_pips"]) >= 30.0
+    ]
+    leaders = sorted(rows, key=lambda item: abs(float(item["net_pips"])), reverse=True)[:3]
+    leader_text = ", ".join(f"{row['pair']} {float(row['net_pips']):+.1f}pip" for row in leaders)
+    print(
+        f"Breadth: up {positive}/{len(rows)} | down {negative}/{len(rows)} "
+        f"| active movers {len(active)}/{len(rows)} | leaders: {leader_text}"
+    )
+    for row in rows:
+        spread_note = ""
+        if row["pair"] in spread_data:
+            spread_note = f" | spread {float(spread_data[row['pair']]):.1f}pip"
+        print(
+            f"{row['pair']}: net {float(row['net_pips']):+.1f}pip | range {float(row['range_pips']):.1f}pip "
+            f"| max up {float(row['max_up_pips']):+.1f} | max down {float(row['max_down_pips']):+.1f}"
+            f"{spread_note}"
+        )
+    if len(active) >= 3:
+        print(
+            "Deployment implication: Tokyo breadth is real. If you still hold only one live receipt, "
+            "carry at least one BACKUP trigger/limit across the next 20-minute cadence or state exactly "
+            "why each second lane lost orderability."
+        )
+
+
 def _pair_bucket(pair: str | None) -> str:
     if pair in DIRECT_USD_PAIRS:
         return "direct_usd"
@@ -405,6 +668,203 @@ def _pair_bucket(pair: str | None) -> str:
     if pair == "USD_JPY":
         return "usd_jpy"
     return "other"
+
+
+def _execution_style_rank(style: str | None) -> int:
+    mapping = {
+        "MARKET": 3,
+        "STOP-ENTRY": 2,
+        "LIMIT": 1,
+        "PASS": 0,
+    }
+    return mapping.get(str(style or "").upper(), 0)
+
+
+def _select_multi_vehicle_lanes(fresh_profiles: list[dict], max_lanes: int = 3) -> list[dict]:
+    candidates = [
+        profile for profile in fresh_profiles
+        if profile.get("execution_style") != "PASS"
+    ]
+    candidates.sort(
+        key=lambda item: (
+            _execution_style_rank(item.get("execution_style")),
+            int(item.get("learning_score", 0)),
+            _cap_rank(str(item.get("allocation_cap", ""))),
+            int(item.get("trade_count", 0)),
+            float(item.get("trade_ev", 0.0)),
+        ),
+        reverse=True,
+    )
+
+    selected: list[dict] = []
+    seen_pairs: set[str] = set()
+    seen_bases: set[str] = set()
+    seen_buckets: set[str] = set()
+
+    for profile in candidates:
+        pair = str(profile.get("pair", ""))
+        if not pair or pair in seen_pairs:
+            continue
+        base, _quote = PAIR_CURRENCIES.get(pair, ("?", "?"))
+        bucket = str(profile.get("bucket", "other"))
+        if base in seen_bases and bucket in seen_buckets:
+            continue
+        selected.append(profile)
+        seen_pairs.add(pair)
+        seen_bases.add(base)
+        seen_buckets.add(bucket)
+        if len(selected) >= max_lanes:
+            return selected
+
+    for profile in candidates:
+        if len(selected) >= max_lanes:
+            break
+        pair = str(profile.get("pair", ""))
+        if not pair or pair in seen_pairs:
+            continue
+        selected.append(profile)
+        seen_pairs.add(pair)
+
+    return selected
+
+
+def _multi_vehicle_role(index: int) -> str:
+    if index == 1:
+        return "PRIMARY"
+    if index == 2:
+        return "BACKUP"
+    if index == 3:
+        return "THIRD CURRENCY"
+    return f"LANE {index}"
+
+
+def _multi_vehicle_reason(profile: dict, prior: list[dict]) -> str:
+    pair = str(profile.get("pair", ""))
+    base, quote = PAIR_CURRENCIES.get(pair, ("?", "?"))
+    if not prior:
+        return f"first live lane: {base}/{quote} is currently the cleanest expression"
+
+    parts = []
+    if all(PAIR_CURRENCIES.get(str(item.get("pair", "")), ("?", "?"))[0] != base for item in prior):
+        parts.append(f"new base currency {base}")
+    if all(str(item.get("bucket", "other")) != str(profile.get("bucket", "other")) for item in prior):
+        parts.append(f"new vehicle bucket {profile.get('bucket')}")
+    if not parts:
+        other_pairs = ", ".join(str(item.get("pair", "")) for item in prior[:2])
+        parts.append(f"separate expression from {other_pairs}")
+    return " + ".join(parts)
+
+
+def _build_s_excavation_podium_seeds(
+    fresh_profiles: list[dict],
+    best_direct: dict | None,
+    best_cross: dict | None,
+    best_usdjpy: dict | None,
+    audit_context: dict,
+) -> list[dict]:
+    seeds: dict[tuple[str, str], dict] = {}
+
+    def ensure_seed(pair: str, direction: str) -> dict:
+        return seeds.setdefault(
+            (pair, direction),
+            {
+                "pair": pair,
+                "direction": direction,
+                "priority": 0,
+                "why_bits": [],
+                "blocker": None,
+                "upgrade_action": None,
+            },
+        )
+
+    for idx, profile in enumerate(fresh_profiles[:6], start=1):
+        pair = str(profile.get("pair", ""))
+        direction = str(profile.get("direction", ""))
+        if not pair or not direction:
+            continue
+        style = str(profile.get("execution_style") or "PASS").upper()
+        if style == "PASS":
+            continue
+
+        seed = ensure_seed(pair, direction)
+        priority = int(profile.get("learning_score", 0))
+        if style == "STOP-ENTRY":
+            priority += 35
+        elif style == "LIMIT":
+            priority += 28
+        elif style == "MARKET":
+            priority += 10
+        if idx == 1:
+            priority += 12
+        elif idx == 2:
+            priority += 8
+        elif idx == 3:
+            priority += 4
+        seed["priority"] = max(seed["priority"], priority)
+
+        why_bits = seed["why_bits"]
+        tag = f"tournament #{idx}"
+        if tag not in why_bits:
+            why_bits.append(tag)
+        if best_direct and pair == best_direct.get("pair") and direction == best_direct.get("direction"):
+            why_bits.append("best direct-USD")
+        if best_cross and pair == best_cross.get("pair") and direction == best_cross.get("direction"):
+            why_bits.append("best cross")
+        if best_usdjpy and pair == best_usdjpy.get("pair") and direction == best_usdjpy.get("direction"):
+            why_bits.append("best USD_JPY")
+
+        for label in audit_context.get("pairs", {}).get((pair, direction), []):
+            if label not in why_bits:
+                why_bits.append(label)
+            seed["priority"] += 18 if "strongest-unheld" in label else 10
+
+        summary = _ledger_safe_text(
+            f"learning {int(profile.get('learning_score', 0))}/100 {profile.get('verdict')}",
+            120,
+        )
+        if summary not in why_bits:
+            why_bits.append(summary)
+
+        blocker = profile.get("execution_note")
+        if blocker:
+            seed["blocker"] = _ledger_safe_text(blocker, 120)
+        elif style == "MARKET":
+            seed["blocker"] = "no memory blocker remains; only a live chart contradiction should keep this out of S Hunt"
+
+        if style in {"STOP-ENTRY", "LIMIT", "MARKET"}:
+            seed["upgrade_action"] = style
+
+    ordered = sorted(
+        seeds.values(),
+        key=lambda item: (
+            int(item.get("priority", 0)),
+            1 if str(item.get("upgrade_action", "")) == "STOP-ENTRY" else 0,
+            1 if str(item.get("upgrade_action", "")) == "LIMIT" else 0,
+        ),
+        reverse=True,
+    )
+
+    result = []
+    seen_pairs: set[str] = set()
+    for seed in ordered:
+        if seed["pair"] in seen_pairs:
+            continue
+        if not seed.get("blocker") or not seed.get("upgrade_action"):
+            continue
+        result.append(
+            {
+                "pair": seed["pair"],
+                "direction": seed["direction"],
+                "closest_to_s_because": _ledger_safe_text(" + ".join(seed["why_bits"]), 150),
+                "still_blocked_by": seed["blocker"],
+                "upgrade_action": seed["upgrade_action"],
+            }
+        )
+        seen_pairs.add(seed["pair"])
+        if len(result) >= 3:
+            break
+
+    return result
 
 
 def _current_session_bucket(now_utc) -> str:
@@ -504,11 +964,18 @@ def _load_trade_context_stats() -> dict:
         return _TRADE_CONTEXT_STATS
 
     memory_dir = ROOT / "collab_trade" / "memory"
+    db_path = memory_dir / "memory.db"
     if str(memory_dir) not in sys.path:
         sys.path.insert(0, str(memory_dir))
-    from schema import get_conn  # type: ignore
+    try:
+        from schema import get_conn  # type: ignore
 
-    conn = get_conn()
+        conn = get_conn()
+    except ModuleNotFoundError as exc:
+        if exc.name != "apsw":
+            raise
+        conn = sqlite3.connect(str(db_path), timeout=5.0)
+        conn.execute("PRAGMA query_only=ON")
 
     def pack(rows, key_builder):
         out = {}
@@ -524,42 +991,47 @@ def _load_trade_context_stats() -> dict:
             }
         return out
 
-    pair_rows = conn.execute(
-        """SELECT pair, direction,
-                  COUNT(*) AS cnt,
-                  AVG(pl) AS ev,
-                  SUM(pl) AS total_pl,
-                  SUM(CASE WHEN pl > 0 THEN 1 ELSE 0 END) AS wins
-           FROM trades
-           WHERE pl IS NOT NULL
-           GROUP BY pair, direction"""
-    ).fetchall()
-    session_rows = conn.execute(
-        """SELECT pair, direction,
-                  CASE
-                    WHEN session_hour BETWEEN 0 AND 6 THEN 'tokyo'
-                    WHEN session_hour BETWEEN 7 AND 14 THEN 'london'
-                    WHEN session_hour BETWEEN 15 AND 21 THEN 'newyork'
-                    ELSE 'late'
-                  END AS session_bucket,
-                  COUNT(*) AS cnt,
-                  AVG(pl) AS ev,
-                  SUM(pl) AS total_pl,
-                  SUM(CASE WHEN pl > 0 THEN 1 ELSE 0 END) AS wins
-           FROM trades
-           WHERE pl IS NOT NULL AND session_hour IS NOT NULL
-           GROUP BY pair, direction, session_bucket"""
-    ).fetchall()
-    regime_rows = conn.execute(
-        """SELECT pair, direction, regime,
-                  COUNT(*) AS cnt,
-                  AVG(pl) AS ev,
-                  SUM(pl) AS total_pl,
-                  SUM(CASE WHEN pl > 0 THEN 1 ELSE 0 END) AS wins
-           FROM trades
-           WHERE pl IS NOT NULL AND regime IS NOT NULL AND TRIM(regime) <> ''
-           GROUP BY pair, direction, regime"""
-    ).fetchall()
+    try:
+        pair_rows = conn.execute(
+            """SELECT pair, direction,
+                      COUNT(*) AS cnt,
+                      AVG(pl) AS ev,
+                      SUM(pl) AS total_pl,
+                      SUM(CASE WHEN pl > 0 THEN 1 ELSE 0 END) AS wins
+               FROM trades
+               WHERE pl IS NOT NULL
+               GROUP BY pair, direction"""
+        ).fetchall()
+        session_rows = conn.execute(
+            """SELECT pair, direction,
+                      CASE
+                        WHEN session_hour BETWEEN 0 AND 6 THEN 'tokyo'
+                        WHEN session_hour BETWEEN 7 AND 14 THEN 'london'
+                        WHEN session_hour BETWEEN 15 AND 21 THEN 'newyork'
+                        ELSE 'late'
+                      END AS session_bucket,
+                      COUNT(*) AS cnt,
+                      AVG(pl) AS ev,
+                      SUM(pl) AS total_pl,
+                      SUM(CASE WHEN pl > 0 THEN 1 ELSE 0 END) AS wins
+               FROM trades
+               WHERE pl IS NOT NULL AND session_hour IS NOT NULL
+               GROUP BY pair, direction, session_bucket"""
+        ).fetchall()
+        regime_rows = conn.execute(
+            """SELECT pair, direction, regime,
+                      COUNT(*) AS cnt,
+                      AVG(pl) AS ev,
+                      SUM(pl) AS total_pl,
+                      SUM(CASE WHEN pl > 0 THEN 1 ELSE 0 END) AS wins
+               FROM trades
+               WHERE pl IS NOT NULL AND regime IS NOT NULL AND TRIM(regime) <> ''
+               GROUP BY pair, direction, regime"""
+        ).fetchall()
+    finally:
+        close = getattr(conn, "close", None)
+        if callable(close):
+            close()
 
     _TRADE_CONTEXT_STATS = {
         "pair": pack(pair_rows, lambda head: tuple(head)),
@@ -766,6 +1238,271 @@ def _bayesian_update_hint(profile: dict) -> str:
     if "watch" in verdict or "pair memory positive" in verdict:
         return "A clean trigger win upgrades live confidence today; a failed trigger keeps this in watch/B lane."
     return "Treat the next outcome as candidate evidence only. Do not rewrite the pair story from one print."
+
+
+def _execution_target_pips(profile: dict) -> float:
+    regime = profile.get("current_regime")
+    if regime == "trending":
+        return 20.0
+    if regime == "range":
+        return 12.0
+    if regime == "quiet":
+        return 10.0
+    if regime == "squeeze":
+        return 10.0
+    if regime == "transition":
+        return 12.0
+    return 12.0
+
+
+def _market_spread_bands(pair: str, spread_pips: float | None, spread_ratio: float | None) -> tuple[bool, bool]:
+    if spread_pips is None and spread_ratio is None:
+        return True, True
+
+    is_jpy = str(pair).endswith("JPY")
+    tight_abs = 2.5 if is_jpy else 1.5
+    normal_abs = 3.0 if is_jpy else 2.0
+    tight_ok = (
+        (spread_ratio is None or spread_ratio <= 0.18)
+        or (spread_pips is not None and spread_pips <= tight_abs)
+    )
+    normal_ok = (
+        (spread_ratio is None or spread_ratio <= 0.24)
+        or (spread_pips is not None and spread_pips <= normal_abs)
+    )
+    return tight_ok, normal_ok
+
+
+def _headwind_participation_plan(
+    regime: str | None,
+    cap_rank: int,
+    learning_score: int,
+    trade_count: int,
+    has_exact: bool,
+    confirmed_state: bool,
+    tight_market_spread: bool,
+    normal_market_spread: bool,
+) -> tuple[str | None, str | None]:
+    if regime not in {"trending", "transition", "squeeze"}:
+        return None, None
+
+    support = trade_count >= 3 or has_exact or confirmed_state
+    if tight_market_spread and support:
+        if cap_rank >= 2 and learning_score >= 50:
+            return (
+                "MARKET",
+                "historical headwind caps size, not all participation; take a small live scout now and leave one reload LIMIT",
+            )
+        if cap_rank == 1 and learning_score >= 58:
+            return (
+                "MARKET",
+                "even with B-only memory, the live tape is paying enough at tight spread to justify a scout instead of full flatness",
+            )
+
+    if normal_market_spread and learning_score >= 45 and (support or cap_rank >= 2):
+        return (
+            "STOP-ENTRY",
+            "historical headwind blocks blind chase, but the tape is alive enough to arm a trigger instead of passing",
+        )
+
+    return None, None
+
+
+def _recommend_profile_execution(profile: dict, spread_pips: float | None) -> dict:
+    regime = profile.get("current_regime")
+    context_bias = profile.get("context_bias")
+    cap = profile.get("allocation_cap")
+    source = profile.get("source")
+    learning_score = int(profile.get("learning_score", 0) or 0)
+    trade_count = int(profile.get("trade_count", 0) or 0)
+    target_pips = _execution_target_pips(profile)
+    spread_ratio = (spread_pips / target_pips) if spread_pips is not None and target_pips > 0 else None
+    cap_rank = _cap_rank(cap)
+    has_exact = bool(profile.get("has_exact"))
+    confirmed_state = profile.get("state") == "confirmed"
+    tight_market_spread, normal_market_spread = _market_spread_bands(
+        str(profile.get("pair", "")),
+        spread_pips,
+        spread_ratio,
+    )
+    reasons: list[str] = []
+
+    if source == "pending":
+        reasons.append("already armed; leave it alone unless the thesis is dead")
+        return {
+            "style": "LIMIT",
+            "orderability": "LIMIT",
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    if cap == CAP_LABELS["pass"]:
+        reasons.append("learning cap already says pass unless exceptional")
+        return {
+            "style": "PASS",
+            "orderability": "PASS",
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    if spread_ratio is not None and spread_ratio > 0.30 and not normal_market_spread:
+        if regime in {"trending", "transition", "squeeze"}:
+            reasons.append(
+                f"spread {spread_pips:.1f}pip is too expensive for immediate execution while {regime} still needs proof"
+            )
+            style = "STOP-ENTRY"
+        else:
+            reasons.append(f"spread {spread_pips:.1f}pip is too large for a market fill")
+            style = "LIMIT"
+        return {
+            "style": style,
+            "orderability": "ENTER NOW" if style == "MARKET" else style,
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    if regime in {"range", "quiet"}:
+        reasons.append(f"{regime} pays better from structural price improvement than from chasing")
+        return {
+            "style": "LIMIT",
+            "orderability": "LIMIT",
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    if context_bias == "headwind":
+        style, note = _headwind_participation_plan(
+            regime,
+            cap_rank,
+            learning_score,
+            trade_count,
+            has_exact,
+            confirmed_state,
+            tight_market_spread,
+            normal_market_spread,
+        )
+        if style and note:
+            reasons.append(note)
+            return {
+                "style": style,
+                "orderability": "ENTER NOW" if style == "MARKET" else style,
+                "note": "; ".join(reasons),
+                "spread_ratio": spread_ratio,
+                "target_pips": target_pips,
+            }
+        reasons.append("learning context is headwind, so require confirmation instead of a blind market fill")
+        style = "STOP-ENTRY" if regime in {"trending", "transition", "squeeze"} else "LIMIT"
+        return {
+            "style": style,
+            "orderability": style,
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    if regime in {"squeeze", "transition"}:
+        if (
+            cap_rank >= 4
+            and learning_score >= 64
+            and normal_market_spread
+            and (trade_count >= 3 or has_exact or confirmed_state or context_bias == "tailwind")
+        ):
+            reasons.append(
+                f"{regime} is already leaning one way and the seat has earned immediate participation"
+            )
+            return {
+                "style": "MARKET",
+                "orderability": "ENTER NOW",
+                "note": "; ".join(reasons),
+                "spread_ratio": spread_ratio,
+                "target_pips": target_pips,
+            }
+        if (
+            cap_rank in {1, 2, 3}
+            and learning_score >= 53
+            and normal_market_spread
+            and (context_bias == "tailwind" or trade_count >= 3 or has_exact or confirmed_state)
+        ):
+            reasons.append(
+                f"{regime} is leaning enough for a market scout; participate now and still leave one reload LIMIT"
+            )
+            return {
+                "style": "MARKET",
+                "orderability": "ENTER NOW",
+                "note": "; ".join(reasons),
+                "spread_ratio": spread_ratio,
+                "target_pips": target_pips,
+            }
+        reasons.append(f"{regime} tape should be closed as a trigger, not as prose")
+        return {
+            "style": "STOP-ENTRY",
+            "orderability": "STOP-ENTRY",
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    if regime == "trending":
+        if (
+            cap_rank >= 4
+            and learning_score >= 58
+            and normal_market_spread
+            and (trade_count >= 3 or has_exact or confirmed_state or context_bias == "tailwind")
+        ):
+            if tight_market_spread or context_bias == "tailwind" or cap_rank >= 5:
+                reasons.append(
+                    "trend is already paying and the learning cap is strong enough to justify immediate execution"
+                )
+            else:
+                reasons.append(
+                    "trend is live enough now; enter the market print and still keep one reload LIMIT in the plan"
+                )
+            return {
+                "style": "MARKET",
+                "orderability": "ENTER NOW",
+                "note": "; ".join(reasons),
+                "spread_ratio": spread_ratio,
+                "target_pips": target_pips,
+            }
+        if (
+            cap_rank in {1, 2, 3}
+            and learning_score >= 50
+            and normal_market_spread
+            and (context_bias == "tailwind" or trade_count >= 3 or has_exact or confirmed_state)
+        ):
+            reasons.append(
+                "B-conviction seat with live tape leaning one way; take a market scout now and keep one reload LIMIT"
+            )
+            return {
+                "style": "MARKET",
+                "orderability": "ENTER NOW",
+                "note": "; ".join(reasons),
+                "spread_ratio": spread_ratio,
+                "target_pips": target_pips,
+            }
+
+    if regime == "trending":
+        reasons.append("the trend is alive enough to keep a trigger armed even when the market scout lane is not justified")
+        return {
+            "style": "STOP-ENTRY",
+            "orderability": "STOP-ENTRY",
+            "note": "; ".join(reasons),
+            "spread_ratio": spread_ratio,
+            "target_pips": target_pips,
+        }
+
+    reasons.append("the seat is alive, but better closed as an armed order than as a market chase")
+    return {
+        "style": "LIMIT",
+        "orderability": "LIMIT",
+        "note": "; ".join(reasons),
+        "spread_ratio": spread_ratio,
+        "target_pips": target_pips,
+    }
 
 
 def _registry_hits_for_target(target: dict, registry: dict) -> list[dict]:
@@ -1195,7 +1932,6 @@ def main():
     acct = cfg["oanda_account_id"]
 
     # === Session time marker (first thing in output) ===
-    from datetime import datetime, timezone
     now_utc = datetime.now(timezone.utc)
     hour = now_utc.hour
     if 0 <= hour < 3:
@@ -1225,11 +1961,16 @@ def main():
     else:
         print("state.md last modified: missing")
     state_text = state_path.read_text() if state_path.exists() else ""
+    carry_targets = _parse_state_carry_targets(state_text)
     hot_updates = _parse_hot_updates(state_text)
     if hot_updates:
         section("HOT UPDATES FROM LAST SESSION")
         for update in hot_updates:
             print(f"- {update}")
+    if carry_targets:
+        section("STATE CARRY-FORWARD WATCHLIST")
+        for item in carry_targets:
+            print(f"{item['pair']} {item['direction']} [{str(item.get('source', '?')).upper()}] | {item.get('recipe')}")
 
     # === PARALLEL BLOCK: Start heavy I/O tasks concurrently ===
     executor = ThreadPoolExecutor(max_workers=4)
@@ -1395,6 +2136,8 @@ def main():
             )
     except Exception as e:
         print(f"ERROR: {e}")
+
+    _print_tokyo_open_breadth(cfg, now_utc, spread_data)
 
     # Load pair edge stats from strategy_feedback.json (written by trade_performance.py)
     pair_edge = {}
@@ -1647,10 +2390,22 @@ def main():
     print(out if out else "(no user messages)")
 
     # 6. Memory recall (held + pending + top scanner candidates)
-    memory_targets = _build_memory_targets(trades_data, pending_orders, scanner_out)
+    memory_targets = _build_memory_targets(trades_data, pending_orders, scanner_out, carry_targets)
     registry = _load_lesson_registry()
     learning_profiles = _build_learning_edge_profiles(memory_targets, registry)
     memory_results = _run_actionable_memory_recall(memory_targets)
+    for profile in learning_profiles:
+        plan = _recommend_profile_execution(profile, spread_data.get(profile.get("pair", "")))
+        profile["execution_style"] = plan.get("style")
+        profile["orderability"] = plan.get("orderability")
+        profile["execution_note"] = plan.get("note")
+        profile["execution_target_pips"] = plan.get("target_pips")
+        profile["execution_spread_ratio"] = plan.get("spread_ratio")
+    best_direct = None
+    best_cross = None
+    best_usdjpy = None
+    audit_context = {"available": False, "stale": False, "age_min": None, "pairs": {}, "strongest": None}
+    podium_seeds: list[dict] = []
     if learning_profiles:
         section("LEARNING EDGE BOARD")
         for profile in learning_profiles:
@@ -1672,6 +2427,18 @@ def main():
                 f"  Context: {profile.get('session_context')} | "
                 f"{profile.get('regime_context')}"
             )
+            spread_note = ""
+            if profile.get("execution_spread_ratio") is not None:
+                spread_note = (
+                    f" | spread {spread_data.get(profile['pair'], 0):.1f}pip"
+                    f" ({float(profile.get('execution_spread_ratio', 0.0))*100:.0f}% of "
+                    f"{float(profile.get('execution_target_pips', 0.0)):.0f}pip path)"
+                )
+            print(
+                f"  Deployment cue: close as {profile.get('execution_style')} "
+                f"({profile.get('orderability')}){spread_note}"
+            )
+            print(f"  Why now: {profile.get('execution_note')}")
 
         fresh_profiles = [profile for profile in learning_profiles if profile.get("source") != "held"]
         if fresh_profiles:
@@ -1679,7 +2446,7 @@ def main():
                 fresh_profiles,
                 key=lambda item: (
                     int(item.get("learning_score", 0)),
-                    1 if item.get("source") == "pending" else 0,
+                    SOURCE_PRIORITY.get(str(item.get("source", "")), 0),
                     int(item.get("trade_count", 0)),
                     float(item.get("trade_ev", 0.0)),
                 ),
@@ -1691,6 +2458,7 @@ def main():
                     f"{idx}. {profile['pair']} {profile['direction']} [{str(profile.get('source', '?')).upper()}] "
                     f"| learning {int(profile.get('learning_score', 0))}/100 "
                     f"| cap {profile.get('allocation_cap')} | {profile.get('verdict')} "
+                    f"| exec {profile.get('execution_style')} "
                     f"| {profile.get('current_session')}/{profile.get('current_regime') or 'n/a'}"
                 )
 
@@ -1712,6 +2480,97 @@ def main():
                     f"Best USD_JPY learning seat: {best_usdjpy['pair']} {best_usdjpy['direction']} "
                     f"| cap {best_usdjpy.get('allocation_cap')} | {best_usdjpy.get('verdict')}"
                 )
+            audit_context = _load_audit_narrative_context()
+            podium_seeds = _build_s_excavation_podium_seeds(
+                fresh_profiles,
+                best_direct,
+                best_cross,
+                best_usdjpy,
+                audit_context,
+            )
+            section("S EXCAVATION SEEDS (copy unless live chart disproves)")
+            audit_age = audit_context.get("age_min")
+            if audit_context.get("available") and not audit_context.get("stale"):
+                age_note = f"{audit_age:.0f}min" if audit_age is not None else "fresh"
+                print(
+                    "Source mix: fresh-risk tournament + fresh audit strongest-unheld / narrative A-S "
+                    f"({age_note} old)."
+                )
+            elif audit_context.get("stale"):
+                age_note = f"{audit_age:.0f}min" if audit_age is not None else "stale"
+                print(
+                    f"Audit narrative is stale ({age_note}); seeds fall back to the live fresh-risk board only."
+                )
+            else:
+                print("Audit narrative unavailable; seeds fall back to the live fresh-risk board only.")
+            if podium_seeds:
+                for idx, seed in enumerate(podium_seeds, start=1):
+                    print(
+                        f"Podium #{idx}: {seed['pair']} {seed['direction']} "
+                        f"| Closest-to-S because {seed['closest_to_s_because']} "
+                        f"| Still blocked by {seed['still_blocked_by']} "
+                        f"| If it upgrades: {seed['upgrade_action']}"
+                    )
+                if len(podium_seeds) < 3:
+                    print(
+                        f"Only {len(podium_seeds)} podium seed(s) survived the live execution gate. "
+                        "Fill the remaining slot(s) manually only if the chart gives a concrete better seat."
+                    )
+            else:
+                print(
+                    "No auto-seeded podium survived the execution gate. Fill Podium #1-#3 manually from the "
+                    "live chart and name the concrete contradiction that beat the board."
+                )
+            section("S-HUNT DEPLOYMENT CUES (always close the seat as an order, not prose)")
+            for label, profile in (
+                ("Best direct-USD seat", best_direct),
+                ("Best cross seat", best_cross),
+                ("Best USD_JPY seat", best_usdjpy),
+            ):
+                if not profile:
+                    continue
+                spread_note = ""
+                if profile.get("execution_spread_ratio") is not None:
+                    spread_note = (
+                        f" | spread {spread_data.get(profile['pair'], 0):.1f}pip"
+                        f" vs {float(profile.get('execution_target_pips', 0.0)):.0f}pip path"
+                    )
+                print(
+                    f"{label}: {profile['pair']} {profile['direction']} "
+                    f"[{str(profile.get('source', '?')).upper()}] "
+                    f"→ {profile.get('execution_style')} ({profile.get('orderability')}){spread_note}"
+                )
+                print(f"  Closure rule: {profile.get('execution_note')}")
+                print(
+                    "  If this is still your best live seat after the chart read, "
+                    "do not leave S Hunt as prose. Close it as an order or kill it explicitly."
+                )
+            multi_vehicle_lanes = _select_multi_vehicle_lanes(fresh_profiles)
+            if multi_vehicle_lanes:
+                section("MULTI-VEHICLE DEPLOYMENT LANES (when several currencies are alive)")
+                for idx, profile in enumerate(multi_vehicle_lanes, start=1):
+                    role = _multi_vehicle_role(idx)
+                    pair = str(profile.get("pair", ""))
+                    base, quote = PAIR_CURRENCIES.get(pair, ("?", "?"))
+                    spread_note = ""
+                    if profile.get("execution_spread_ratio") is not None:
+                        spread_note = (
+                            f" | spread {spread_data.get(pair, 0):.1f}pip"
+                            f" vs {float(profile.get('execution_target_pips', 0.0)):.0f}pip path"
+                        )
+                    print(
+                        f"{role}: {pair} {profile['direction']} [{str(profile.get('source', '?')).upper()}] "
+                        f"→ {profile.get('execution_style')} ({profile.get('orderability')})"
+                        f" | {base}/{quote}{spread_note}"
+                    )
+                    print(
+                        f"  Why this can coexist: {_multi_vehicle_reason(profile, multi_vehicle_lanes[:idx-1])}"
+                    )
+                    print(f"  Execution: {profile.get('execution_note')}")
+                    print(
+                        "  Book rule: valid to carry with the other lanes if this is not same-pair averaging "
+                        "and worst-case margin after all pending fills stays below 90%."
+                    )
             section("INTRADAY LEARNING LOOP (OODA + DECISION JOURNAL)")
             for idx, profile in enumerate(fresh_profiles[:2], start=1):
                 print(
@@ -1728,7 +2587,11 @@ def main():
                     f"{profile.get('verdict')} | cap {profile.get('allocation_cap')}"
                 )
                 print(f"    Memory says: {profile.get('evidence')}")
-                print("  Decide: [ENTER NOW / LIMIT / STOP-ENTRY / PASS] only if ___")
+                print(
+                    f"  Decide: default close state = {profile.get('orderability')} "
+                    f"because {profile.get('execution_note')}"
+                )
+                print("  Decide override only if the live chart clearly proves a better closure state.")
                 print("  Act: [exact order id / exact pass reason]")
                 print(f"  Bayesian update: {_bayesian_update_hint(profile)}")
     if memory_results:
@@ -1877,13 +2740,43 @@ Macro chain: How does the current theme affect EACH currency?
   Theme confidence: [proving/confirmed/late] → allocation lane: [B/A/S] (does NOT change edge)
   Learning verdict: [confirmed edge / watch edge / no-edge / limited history] ← copy from LEARNING EDGE BOARD
   Learning cap: [A/S when theme confirmed / A max / B-only / pass unless exceptional]
+  Execution cue from session_data: [MARKET / LIMIT / STOP-ENTRY / PASS] because ___
+  If not MARKET: exact structural level / exact trigger = ___ | if PASS: dead thesis because ___
   Tournament rank: [#1 fresh-risk seat / #2 / #3 / unranked]
+  Multi-vehicle lane: [PRIMARY / BACKUP / THIRD CURRENCY / NONE]
   AGAINST: ___
   If wrong: ___
   H4 position: {h4_hint if held_trades else "StRSI=___ →"} [early/mid/late/exhausting]
   Cross-currency: [currency] M15 [bid/offered] across [N] pairs → [currency-wide/pair-specific] → conviction [UP/DOWN]
   Event asymmetry: [event] at [time]. Positioned for [___]. [favorable/unfavorable]
   Margin: ___% → worst case ___% | → Edge: [S/A/B/C] Allocation: [S/A/B/C] Size: ___u""")
+
+    print("\n## S Excavation Matrix (write after 7-Pair Scan, before S Hunt)")
+    print("Default podium source: copy `S EXCAVATION SEEDS` unless the live chart disproves them.")
+    for pair in PAIRS:
+        print(
+            f"{pair}: Best expression ___ | Why not S now ___ | "
+            "Upgrade to S only if ___ | Dead if ___"
+        )
+    for idx in range(3):
+        if idx < len(podium_seeds):
+            seed = podium_seeds[idx]
+            print(
+                f"Podium #{idx + 1}: {seed['pair']} {seed['direction']} "
+                f"| Closest-to-S because {seed['closest_to_s_because']} "
+                f"| Still blocked by {seed['still_blocked_by']} "
+                f"| If it upgrades: {seed['upgrade_action']}"
+            )
+        else:
+            print(
+                f"Podium #{idx + 1}: [PAIR LONG/SHORT] | Closest-to-S because ___ | "
+                "Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]"
+            )
+    print("\n## Multi-Vehicle Deployment (when several currencies are alive)")
+    print("Lane 1 / PRIMARY: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]")
+    print("Lane 2 / BACKUP: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]")
+    print("Lane 3 / THIRD CURRENCY: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]")
+    print("Book rule: not same-pair averaging | distinct currency expression if possible | worst-case margin after all pending fills < 90%")
 
     print("""
 ## Micro AAR (fill immediately after each entry / exit / miss)

@@ -84,8 +84,8 @@ How to achieve this:
 - Long-term learning memory: `collab_trade/strategy_memory.md` (distilled daily by daily-review)
 - Vector memory: `collab_trade/memory/memory.db` (SQLite + sqlite-vec. Ruri v3 embeddings). Memory chunks are direction-tagged, historical re-ingest must use only day-specific state snapshots, never today's live `state.md`, and `strategy_memory.md` is re-ingested as section-level lesson chunks instead of one coarse blob. Re-ingest also auto-syncs lesson state markers in the markdown from the registry review queue before rebuilding chunks
 - Lesson state registry: `collab_trade/memory/lesson_registry.json` (generated from `strategy_memory.md`; tracks lesson state/type/trust so recall can prefer confirmed recurring-trader knowledge over loose prose)
-- Feedback DB: `pretrade_outcomes` table (pretrade_check predictions vs. actual P&L). Identical unmatched pretrade probes inside the same short window are deduped so review learns from distinct decisions, not spam
-- Seat-outcome DB: `seat_outcomes` table (formal `discovered / orderable / deployed / captured / missed` chain synced from `logs/s_hunt_ledger.jsonl`, so daily-review stops treating missed seats as loose prose)
+- Feedback DB: `pretrade_outcomes` table (pretrade_check predictions vs. actual P&L, plus learning-gate / session-bucket / regime / execution-style metadata). Identical unmatched pretrade probes inside the same short window are deduped so review learns from distinct decisions, not spam
+- Seat-outcome DB: `seat_outcomes` table (formal `discovered / orderable / deployed / captured / missed` chain synced from `logs/s_hunt_ledger.jsonl`, scored from the written reference price to the best favorable excursion by the review cutoff so missed seats are not understated by a flat close)
 - **News cache**: `logs/news_digest.md` (Cowork updates hourly) + `logs/news_cache.json` (API parser structured data + session_data.py fallback)
 - **News flow log**: `logs/news_flow_log.md` (48h of hourly snapshots — HOT/THEME/WATCH per hour. Cowork appends at :15 via tools/news_flow_append.py. daily-review reads this to track narrative evolution)
 - **S Hunt ledger**: `logs/s_hunt_ledger.jsonl` (append-only short/medium/long horizon receipts captured at session end; daily-review scores discovery vs deployment vs capture from it)
@@ -127,7 +127,7 @@ When quality-audit runs (Codex paused here; Claude compatibility currently every
   └── if REPORT items → posts summary to #qr-daily via Slack
 
 Daily 06:00 UTC: daily-review session
-  ├── runs: daily_review.py for the most recent completed UTC trading day (fact collection + recurring-trader vs other execution split + memory-promotion gate + lesson-state suggestions + pretrade result correlation + S Hunt capture review)
+  ├── runs: daily_review.py for the most recent completed UTC trading day (fact collection + recurring-trader vs other execution split with `trades.md` fallback ownership + signal-window audit scoring from each signal window's best favorable excursion + memory-promotion gate + lesson-state suggestions + pretrade result correlation + S Hunt capture review)
   ├── THINKS: What worked? Why?
   ├── WRITES: strategy_memory.md (pattern promotion/addition/refutation)
   └── runs: ingest.py --force (enriched re-ingestion, including fresh section-level `strategy_memory.md` chunks plus automatic lesson-state marker sync)
@@ -137,7 +137,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 ### Memory System (memory.db) — 3 Layers + Feedback
 - **SQL layer**: trades / user_calls / market_events / **pretrade_outcomes** → quantitative analysis + prediction accuracy tracking
-- **Seat-outcome layer**: `seat_outcomes` → horizon-by-horizon discovery / orderability / deployment / capture / miss scoring for missed-opportunity learning
+- **Seat-outcome layer**: `seat_outcomes` → promoted `S Hunt` horizons plus near-S `S Excavation` podium seats, with discovery / orderability / deployment / capture / miss scoring for missed-opportunity learning
 - **Vector layer**: Ruri v3-30m (256-dim) QA chunks → narrative search for "similar situations". Includes day-level trades/state plus section-level distilled strategy-memory lessons
 - **Registry layer**: `lesson_registry.json` → structured lesson state machine (`candidate/watch/confirmed/deprecated`) plus trust scores for runtime prioritization
 - **Distillation layer**: strategy_memory.md → experiential knowledge updated daily by daily-review
@@ -211,7 +211,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 | File | Contents |
 |------|----------|
-| `collab_trade/state.md` | State handoff across sessions (positions · story · lessons). Includes `Hot Updates` for intraday carry-forward: compressed micro-AAR bullets that the next `session_data.py` run surfaces first |
+| `collab_trade/state.md` | State handoff across sessions (positions · story · lessons). Includes `Hot Updates` for intraday carry-forward plus the required `S Excavation Matrix` (all 7 pairs: blocker / upgrade / dead condition) before `S Hunt` promotion. A promoted `S Hunt` horizon must name how that blocker cleared; otherwise it closes as `dead thesis because no seat cleared promotion gate` |
 | `collab_trade/strategy_memory.md` | Long-term learning memory (per-pair tendencies, pattern validity, lessons) |
 | `collab_trade/memory/lesson_registry.json` | Structured lesson registry generated from `strategy_memory.md` (state/type/trust snapshot for recall and review) |
 | `collab_trade/summary.md` | All-day performance · trend summary (updated at session end) |
@@ -224,13 +224,13 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `logs/quality_audit.md` | Quality audit facts (updated every 45 min when the audit runs. Trader reads at session start and ignores stale prose if session_data flags it) |
 | `logs/quality_audit.json` | Quality audit machine-readable output (for daily-review parsing) |
 | `logs/audit_history.jsonl` | Append-only audit opportunity tracking (scanner fires + final narrative A/S picks. daily-review uses it for recipe and judgment accuracy) |
-| `logs/s_hunt_ledger.jsonl` | Append-only horizon receipt log from each trader session (`S Hunt` + `Capital Deployment` + reference price). daily-review uses it to score discovery, deployment, and misses |
+| `logs/s_hunt_ledger.jsonl` | Append-only trader-receipt log from each session (`S Hunt` horizons + `S Excavation Matrix` podium + reference prices). daily-review uses it to score both promoted and near-S missed seats |
 
 ### Scripts
 
 | File | Contents |
 |------|----------|
-| `tools/session_data.py` | Full data fetch at trader session start (technicals M1/M5/M15/H1/H4 + OANDA + macro + **Currency Pulse** (cross-currency triangulation) + **H4 Position** (lifecycle) + Fib M5+H1 + Slack + **direction-aware actionable memory recall for held/pending/scanner pairs** + **learning-weighted edge board / fresh-risk tournament** that converts lesson history into pair-direction size caps, then tightens them further with the current session bucket and live M5 regime proxy + **intraday OODA / Decision Journal / Micro AAR prompts** + **Hot Updates from the prior state handoff**), all at once. Refreshes trader chart artifacts as needed, now including M1 execution charts |
+| `tools/session_data.py` | Full data fetch at trader session start (technicals M1/M5/M15/H1/H4 + OANDA + macro + **Currency Pulse** (cross-currency triangulation) + **H4 Position** (lifecycle) + **Tokyo-open breadth board** when the trader is inside the Tokyo complex, so multi-lane mornings are visible instead of inferred late + Fib M5+H1 + Slack + **direction-aware actionable memory recall for held/pending/scanner pairs plus carry-forward watch targets parsed from the prior `state.md`** with a wider scanner intake + **learning-weighted edge board / fresh-risk tournament** that converts lesson history into pair-direction size caps, then tightens them further with the current session bucket and live M5 regime proxy + **S-hunt deployment cues** that pre-close the best fresh seats as `MARKET / LIMIT / STOP-ENTRY / PASS`, now including market-scout lanes for live B seats so valid S-hunt ideas do not remain prose-only and allowing live `headwind` trend seats to demote into scout/trigger participation instead of auto-flatness when spread is still normal + **S Excavation seeds** that prefill the near-S podium from the live fresh-risk board plus fresh audit strongest-unheld / narrative A-S calls when available + **multi-vehicle deployment lanes** so broad sessions can keep up to `PRIMARY / BACKUP / THIRD CURRENCY` alive as separate expressions + **S Excavation Matrix template** so every pair names blocker / upgrade / dead condition before `S Hunt` + **intraday OODA / Decision Journal / Micro AAR prompts** + **Hot Updates from the prior state handoff**), all at once. Refreshes trader chart artifacts as needed, now including M1 execution charts |
 | `tools/mid_session_check.py` | Lightweight mid-session check (~1s): Slack + prices + trades + margin only |
 | `tools/profit_check.py` | **Run at every session start** — 6-axis TP evaluation (ATR ratio, M5 momentum, H1 structure, correlation, S/R, peak) |
 | `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action. Detects rollover window |
@@ -249,10 +249,10 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 | `tools/quality_audit.py` | Quality audit — cross-checks trader decisions against rules and S-conviction data |
 | `tools/record_audit_narrative.py` | Parses the final Auditor's View from `logs/quality_audit.md` and appends the auditor's unheld A/S narrative picks to `logs/audit_history.jsonl` |
 | `tools/auto_hot_updates.py` | Auto-derives compressed carry-forward `Hot Updates` from the final `S Hunt` / `Capital Deployment` receipts at session end. Safety net for the next session; does not replace writing the update live when you learn it |
-| `tools/record_s_hunt_ledger.py` | Parses `collab_trade/state.md` at session end and appends the trader's short / medium / long S-hunt receipts to `logs/s_hunt_ledger.jsonl` for daily-review scoring |
-| `tools/seat_outcomes.py` | Syncs `logs/s_hunt_ledger.jsonl` into `memory.db` `seat_outcomes`, scoring each horizon as discovered / orderable / deployed / captured / missed and exposing the review scoreboard |
+| `tools/record_s_hunt_ledger.py` | Parses `collab_trade/state.md` at session end and appends the trader's short / medium / long S-hunt receipts plus `S Excavation Matrix` podium seats to `logs/s_hunt_ledger.jsonl` for daily-review scoring |
+| `tools/seat_outcomes.py` | Syncs `logs/s_hunt_ledger.jsonl` into `memory.db` `seat_outcomes`, now for both promoted `S Hunt` horizons and near-S `S Excavation` podium seats. Scores discovery / orderability / deployment / capture / miss from the written reference price to the best favorable excursion by the review cutoff, and exposes the review scoreboard. The scoreboard collapses a continuing same-pair seat into one chain so repeated state snapshots do not inflate deployment counts |
 | `tools/state_hot_update.py` | Fast helper to prepend one compressed intraday learning bullet into `collab_trade/state.md` `## Hot Updates`, keeping only the latest carry-forward corrections for the next session |
-| `tools/validate_trader_state.py` | Validates that `state.md` closes each S-hunt horizon as a real order receipt or dead thesis, and blocks SESSION_END on prose-only flat books |
+| `tools/validate_trader_state.py` | Validates that `state.md` closes each S-hunt horizon as a real order receipt or an explicit `no seat cleared promotion gate` dead-thesis close, and (for 2026-04-18+ handoffs) blocks SESSION_END if the `S Excavation Matrix` is missing pair coverage or podium lines |
 | `tools/task_runtime.py` | Host-neutral trader/audit runtime helper for shared prompts (Claude/Codex) |
 | `tools/check_task_sync.py` | Verifies canonical prompts, Claude symlinks, and Codex wrappers stay aligned |
 | `tools/s_conviction_scan.py` | S-conviction pattern scanner — auto-detects TF × indicator combinations |

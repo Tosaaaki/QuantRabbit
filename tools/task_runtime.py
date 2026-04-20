@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / "logs"
 TRADER_LOCK = LOGS / ".trader_lock"
 TRADER_START = LOGS / ".trader_start"
+TRADER_WATCHDOG = LOGS / ".trader_watchdog"
 TASK_LOCK = ROOT / "tools" / "task_lock.py"
 JST = ZoneInfo("Asia/Tokyo") if ZoneInfo is not None else None
 
@@ -59,11 +60,56 @@ def _write_trader_lock(ts: int, owner_pid: int) -> None:
     TRADER_LOCK.write_text(f"{ts} {owner_pid}\n")
 
 
+def _read_trader_start() -> int:
+    try:
+        return int(TRADER_START.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return 0
+
+
+def _read_watchdog() -> tuple[int, int]:
+    try:
+        parts = TRADER_WATCHDOG.read_text().strip().split()
+        if len(parts) >= 2:
+            return int(parts[0]), int(parts[1])
+    except (FileNotFoundError, ValueError):
+        pass
+    return 0, 0
+
+
+def _write_watchdog(pid: int, session_start: int) -> None:
+    LOGS.mkdir(parents=True, exist_ok=True)
+    TRADER_WATCHDOG.write_text(f"{pid} {session_start}\n")
+
+
+def _clear_watchdog_file(expected_session_start: int | None = None) -> None:
+    if expected_session_start is not None:
+        _, session_start = _read_watchdog()
+        if session_start and session_start != expected_session_start:
+            return
+    TRADER_WATCHDOG.unlink(missing_ok=True)
+
+
+def _stop_watchdog(expected_session_start: int | None = None) -> None:
+    pid, session_start = _read_watchdog()
+    if not pid:
+        TRADER_WATCHDOG.unlink(missing_ok=True)
+        return
+    if expected_session_start is not None and session_start and session_start != expected_session_start:
+        return
+    if pid != os.getpid() and _is_pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+    _clear_watchdog_file(expected_session_start if expected_session_start is not None else session_start or None)
+
+
 def _run_ingest_for_previous_session(lock_ts: int | None = None) -> None:
     session_ts = lock_ts
     try:
-        session_ts = int(TRADER_START.read_text().strip())
-    except (FileNotFoundError, ValueError):
+        session_ts = _read_trader_start() or session_ts
+    except Exception:
         pass
     if not session_ts:
         session_ts = int(time.time())
@@ -103,6 +149,7 @@ def trader_preflight(timeout_sec: int) -> int:
         return 1
 
     if not TRADER_LOCK.exists():
+        _stop_watchdog()
         print("NO_LOCK — 新規セッション開始")
         return 0
 
@@ -114,6 +161,7 @@ def trader_preflight(timeout_sec: int) -> int:
         return 1
 
     print(f"STALE_LOCK age={age}s — 引き継ぎ開始")
+    _stop_watchdog(_read_trader_start() or None)
     if old_pid and _is_pid_alive(old_pid):
         try:
             os.kill(old_pid, signal.SIGTERM)
@@ -124,10 +172,15 @@ def trader_preflight(timeout_sec: int) -> int:
     return 0
 
 
-def trader_watchdog(owner_pid: int, watchdog_sec: int) -> int:
+def trader_watchdog(owner_pid: int, watchdog_sec: int, session_start: int) -> int:
     time.sleep(watchdog_sec)
+    current_start = _read_trader_start()
+    if current_start != session_start or not TRADER_LOCK.exists():
+        _clear_watchdog_file(session_start)
+        return 0
     lock_time, lock_pid = _read_trader_lock()
-    if lock_pid != owner_pid or not TRADER_LOCK.exists():
+    if lock_pid != owner_pid:
+        _clear_watchdog_file(session_start)
         return 0
     try:
         if _is_pid_alive(owner_pid):
@@ -136,14 +189,16 @@ def trader_watchdog(owner_pid: int, watchdog_sec: int) -> int:
         pass
     TRADER_LOCK.unlink(missing_ok=True)
     TRADER_START.unlink(missing_ok=True)
+    _clear_watchdog_file(session_start)
     return 0
 
 
 def trader_start(owner_pid: int, watchdog_sec: int) -> int:
+    _stop_watchdog()
     now = int(time.time())
     _write_trader_lock(now, owner_pid)
     TRADER_START.write_text(f"{now}\n")
-    subprocess.Popen(
+    watchdog = subprocess.Popen(
         [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -153,13 +208,16 @@ def trader_start(owner_pid: int, watchdog_sec: int) -> int:
             str(owner_pid),
             "--watchdog-sec",
             str(watchdog_sec),
+            "--session-start",
+            str(now),
         ],
         cwd=str(ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
     )
-    print(f"LOCK_ACQUIRED pid={owner_pid} start={now}")
+    _write_watchdog(watchdog.pid, now)
+    print(f"LOCK_ACQUIRED pid={owner_pid} start={now} watchdog_pid={watchdog.pid}")
     return 0
 
 
@@ -173,6 +231,11 @@ def trader_cycle(owner_pid: int) -> int:
         return result.returncode
     mid = subprocess.run([sys.executable, str(ROOT / "tools" / "mid_session_check.py")], cwd=str(ROOT))
     return mid.returncode
+
+
+def trader_cleanup_watchdog(session_start: int | None = None) -> int:
+    _stop_watchdog(session_start)
+    return 0
 
 
 def quality_audit_preflight(owner_pid: int, timeout_min: int) -> int:
@@ -281,6 +344,10 @@ def build_parser() -> argparse.ArgumentParser:
     trader_watchdog_parser = trader_sub.add_parser("watchdog")
     trader_watchdog_parser.add_argument("--owner-pid", type=int, required=True)
     trader_watchdog_parser.add_argument("--watchdog-sec", type=int, default=1020)
+    trader_watchdog_parser.add_argument("--session-start", type=int, required=True)
+
+    trader_cleanup_parser = trader_sub.add_parser("cleanup-watchdog")
+    trader_cleanup_parser.add_argument("--session-start", type=int)
 
     audit = subparsers.add_parser("quality-audit")
     audit_sub = audit.add_subparsers(dest="action", required=True)
@@ -312,7 +379,9 @@ def main() -> int:
         if args.action == "cycle":
             return trader_cycle(args.owner_pid)
         if args.action == "watchdog":
-            return trader_watchdog(args.owner_pid, args.watchdog_sec)
+            return trader_watchdog(args.owner_pid, args.watchdog_sec, args.session_start)
+        if args.action == "cleanup-watchdog":
+            return trader_cleanup_watchdog(args.session_start)
     if args.task == "quality-audit":
         if args.action == "preflight":
             return quality_audit_preflight(args.owner_pid, args.timeout_min)

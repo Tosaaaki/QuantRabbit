@@ -1,5 +1,206 @@
 # Changelog
 
+## 2026-04-20 — trader runtime: stop lingering watchdog overlap
+
+- Updated `tools/task_runtime.py`
+  - Added a `.trader_watchdog` pid file so the detached watchdog can be cleaned up explicitly on the next preflight or session end
+  - Bound each watchdog to the session's original `.trader_start` timestamp, so an old watchdog exits instead of mistaking the next 20-minute trader session for its own
+  - Stopped any stale watchdog before starting a new trader session, which prevents duplicate watchdog processes from stacking across clean runs
+- Updated `tools/session_end.py`
+  - Cleanly terminates the detached trader watchdog before releasing the lock, so a normal 10-13 minute session does not leave a Python watchdog process sleeping until the 17-minute timeout
+
+## 2026-04-20 — session_data: survive missing APSW under system python
+
+- Updated `tools/session_data.py`
+  - Added a read-only `sqlite3` fallback for trade-context stats when system `python3` cannot import `apsw`
+  - Restored the canonical `python3 tools/session_data.py` trader playbook path without requiring a manual `.venv` rerun
+  - Verified by rerunning `python3 tools/session_data.py` successfully during the 2026-04-20 02:21 UTC trader session
+
+
+## 2026-04-20 — trader gating: reduce prose-only opportunity loss
+
+- Updated `tools/session_data.py`
+  - `headwind` no longer auto-flattens every live `trending / squeeze / transition` seat; when spread is still normal and the tape is already paying, the seat can degrade into `MARKET` scout or `STOP-ENTRY`
+  - Loosened live `MARKET` thresholds slightly for B seats and changed weak live trend fallbacks from passive `LIMIT` to `STOP-ENTRY`
+  - Added `STATE CARRY-FORWARD WATCHLIST` parsing so prior backup / podium / rotation seats survive into the next 20-minute session instead of being rediscovered late
+  - Added `TOKYO-OPEN BREADTH` so the trader sees when the morning is broad enough for more than one live lane
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Matched the same scout/trigger logic at entry time so pretrade execution style no longer teaches a stricter flat bias than the session board
+- Updated `tools/daily_review.py`
+  - Audit/scanner signal review now scores each signal from the best favorable excursion inside its own signal window instead of only the current/flat close
+- Updated `docs/SKILL_trader.md`
+  - Clarified that `headwind` is a size cap first, not an automatic no-trade command
+  - Added a required `20-minute backup trigger armed NOW` line so valid backup lanes do not remain visual-only across the next cadence
+- Updated `docs/SKILL_daily-review.md`
+  - Clarified that scanner/audit signal review must use the same best-favorable standard as `seat_outcomes`
+- Updated `AGENTS.md`
+  - Documented the new live scout/trigger downgrade for `headwind` trend seats, the Tokyo-open breadth board, and carry-forward watch targets from `state.md`
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lessons that auto-passing live `headwind` trend seats is opportunity-loss behavior and that 20-minute cadence requires armed backup lanes, not visual-only watchlists
+
+## 2026-04-20 — seat-outcomes: score missed seats by best favorable excursion
+
+- Updated `tools/seat_outcomes.py`
+  - Missed / not-captured seat scoring now measures `pip_move` from the written reference price to the best favorable M5 excursion by the review cutoff, instead of only the cutoff close/current price
+  - Added a 1.0 pip minimum-favorable threshold so tiny flickers do not count as meaningful `directionally_correct` misses
+  - Updated seat review text so reports say `best favorable excursion` instead of implying the flat close was the whole move
+- Updated `docs/SKILL_daily-review.md`
+  - Daily-review guidance now tells the reviewer to compare against the best favorable excursion window, not just the review-time price
+- Updated `AGENTS.md`
+  - Documented that `seat_outcomes` miss scoring now uses best favorable excursion by the review cutoff
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that flat-close scoring understates real missed edge
+
+## 2026-04-20 — trader prompt: stop calling blocked seats `S Hunt`
+
+- Updated `docs/SKILL_trader.md`
+  - Added a formal `Promotion proof` line to every `S Hunt` horizon so promoted S must state which `S Excavation Matrix` blocker cleared on tape
+  - Tightened `S Hunt` wording so horizons whose blocker is still alive must close as `dead thesis because no seat cleared promotion gate: ...`, not as a fake blocked S
+  - Updated the mandatory output summary so `S Hunt` / `Capital Deployment` no-promotion closes stay explicit
+- Updated `tools/validate_trader_state.py`
+  - Validation now requires `Promotion proof:` on every `S Hunt` horizon
+  - `STILL PASS` is now valid only when both `Promotion proof` and `Deployment result` explicitly say `no seat cleared promotion gate`
+  - Live/orderable promoted S now must say `blocker was ... -> cleared by ...` before SESSION_END can pass
+- Updated `docs/SKILL_daily-review.md`
+  - `S Hunt Capture Review` now distinguishes real promoted S from honest no-promotion closes
+- Updated `AGENTS.md`
+  - Documented that promoted `S Hunt` horizons must show how the excavation blocker cleared, otherwise the horizon closes as `no seat cleared promotion gate`
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that a live blocker means the seat still belongs in excavation, not on the promoted S board
+
+## 2026-04-18 — excavation review: formalize podium outcomes and open deployment
+
+- Updated `tools/seat_outcomes.py`
+  - `seat_outcomes` sync now records `S Excavation Matrix` podium seats as `source=s_excavation` in addition to promoted `S Hunt` horizons
+  - Added formal excavation review rendering from `memory.db`, keeping `S Hunt` and podium reviews separate
+  - Later podium deployment now counts both closed trades and still-open trades that were entered after the podium was written
+- Updated `tools/daily_review.py`
+  - `S Excavation Review` now reads from the formal `seat_outcomes` sync instead of ad-hoc JSONL parsing
+- Updated `tools/validate_trader_state.py`
+  - `S Excavation Matrix` validation now requires `Best expression` on every pair row and concrete `Closest-to-S because` / `Still blocked by` text on every podium line
+- Updated `docs/SKILL_daily-review.md`
+  - Documented that excavation review is now DB-backed and that open later deployments count as real deployment, not as fake misses
+- Updated `AGENTS.md`
+  - Documented that `seat_outcomes` now covers both `S Hunt` horizons and excavation podium seats
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that a later-open podium seat is deployed evidence, not a bookkeeping miss
+
+## 2026-04-18 — session_data: seed the near-S podium from the live board
+
+- Updated `tools/session_data.py`
+  - Added `S EXCAVATION SEEDS` output that auto-builds default `Podium #1-#3` candidates from the live fresh-risk tournament
+  - When `logs/quality_audit.md` is still fresh, the podium seed also incorporates the auditor's strongest-unheld / narrative A-S picks
+  - The mandatory `S Excavation Matrix` template now pre-fills podium lines from those seeds instead of starting as a blank brainstorm
+- Updated `docs/SKILL_trader.md`
+  - Documented that the near-S podium should default to `S EXCAVATION SEEDS` unless the live chart provides a concrete contradiction
+- Updated `AGENTS.md`
+  - Documented the new session-data podium seeding behavior
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that a blank podium after the live board already ranked seats is avoidance, not openness
+
+## 2026-04-18 — daily-review metrics: stop counting the wrong things
+
+- Updated `tools/daily_review.py`
+  - `Execution Split` no longer depends only on `tag=trader*` / `qr-trader`; it now falls back to the reviewed UTC day's `collab_trade/daily/<date>/trades.md` when a clean recurring-trader execution forgot to persist a tag/comment
+  - Added ownership-source reporting so the review can separate explicit recurring evidence, daily-record fallback, explicit non-recurring tags, and unresolved trades
+  - Reworked audit opportunity scoring to keep timestamped signals separate instead of collapsing same pair/direction calls into one bucket
+  - Audit outcome analysis now links entries inside each signal window and can label losing-but-later-right trades as `PREMATURE`
+- Updated `tools/seat_outcomes.py`
+  - `Horizon Scoreboard` now collapses a continuing same-pair seat into one chain, so repeated state snapshots do not inflate `discovered / orderable / deployed`
+- Updated `docs/SKILL_daily-review.md`
+  - Documented the daily-trade-record ownership fallback, per-timestamp audit scoring rule, and chain-based horizon scoreboard
+- Updated `AGENTS.md`
+  - Documented the revised `daily_review.py` ownership/audit logic and the chain-based `seat_outcomes.py` scoreboard
+
+## 2026-04-18 — S excavation: make the near-S board reviewable
+
+- Updated `tools/validate_trader_state.py`
+  - `S Excavation Matrix` now fails validation if it still contains `___` placeholders
+  - `Podium #1-#3` must now name a concrete `PAIR LONG/SHORT` seat and the upgrade action (`MARKET / LIMIT / STOP-ENTRY`)
+- Updated `tools/record_s_hunt_ledger.py`
+  - `logs/s_hunt_ledger.jsonl` now stores `S Excavation Matrix` pair rows and podium seats in addition to `S Hunt` horizons
+- Updated `tools/daily_review.py`
+  - Added `S Excavation Review` so daily-review scores whether the near-S podium seats were later deployed, right without deployment, or correctly blocked noise
+- Updated `docs/SKILL_trader.md`
+  - Tightened the podium format to require a real pair and direction so the next day's review can score it
+- Updated `docs/SKILL_daily-review.md`
+  - Added explicit `S Excavation Review` instructions so near-S misses become memory evidence instead of disappearing after the session
+- Updated `AGENTS.md`
+  - Documented that `s_hunt_ledger.jsonl` now carries both promoted S horizons and near-S podium seats
+
+## 2026-04-18 — prompt + session_data: restore multi-currency deployment lanes
+
+- Updated `tools/session_data.py`
+  - Added `MULTI-VEHICLE DEPLOYMENT LANES` so the session output can now name up to three concurrent fresh-risk lanes instead of collapsing everything into a single live seat
+  - Lane selection prefers separate pairs, separate base currencies, and separate vehicle buckets when possible, while still skipping `PASS` seats
+  - Extended the output template with `Multi-Vehicle Deployment` and a `PRIMARY / BACKUP / THIRD CURRENCY` lane field
+- Updated `docs/SKILL_trader.md`
+  - Documented that broad sessions may legitimately carry 2-3 currencies if they are separate expressions and worst-case margin stays below 90%
+  - Expanded `Capital Deployment` and the state template so multi-lane deployment is an explicit receipt, not an afterthought
+- Updated `AGENTS.md`
+  - Documented that `session_data.py` now emits multi-vehicle deployment lanes in addition to the best-seat cues
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that broad sessions should not be compressed into one pair when multiple currencies are genuinely alive
+
+## 2026-04-18 — session_data + pretrade_check: widen live market lane for real opportunities
+
+- Updated `tools/session_data.py`
+  - Broadened scanner-derived memory targets from the top 3 seats to the top 6, with a larger overall fresh-seat intake, so live opportunities are not over-pruned before deployment cues run
+  - Reworked deployment-cue logic so `MARKET` is no longer reserved for only the narrowest trending A/S lane
+  - Added pair-normal spread bands plus a `B conviction + live tape` market-scout lane, and now allow live `MARKET` participation for strong `squeeze` / `transition` seats when the tape is already leaning one way
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Matched the execution-style gate to the new deployment-cue logic so the pre-entry tool no longer re-blocks the same valid live market seats
+  - Added the same pair-normal spread treatment and market-scout note for B-conviction live entries
+- Updated `docs/SKILL_trader.md`
+  - Clarified that `MARKET` on a B seat means scout first plus reload `LIMIT`, not a full-size chase
+- Updated `AGENTS.md`
+  - Documented the wider scanner intake and market-scout deployment lane in `session_data.py`
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that under-deployment can come from making the `MARKET` lane too narrow even when the live tape is already leaning
+
+## 2026-04-18 — trader prompt: force S excavation before S Hunt
+
+- Updated `docs/SKILL_trader.md`
+  - Added a required `S Excavation Matrix` between the 7-pair scan and `S Hunt`
+  - Each pair must now name the best expression, the exact blocker that keeps it below S, the exact print that upgrades it into S, and the death condition that kills the idea
+  - Added a `Podium #1-#3` so the nearest undiscovered S seats stay visible even if they are not promoted into the short / medium / long horizon board
+  - Updated the state template and time-allocation flow so `S Excavation Matrix` is part of the mandatory handoff
+- Updated `tools/session_data.py`
+  - Added a matching `S Excavation Matrix` template to the mandatory output block
+- Updated `tools/validate_trader_state.py`
+  - For 2026-04-18+ state handoffs, `SESSION_END` now fails if the `S Excavation Matrix` is missing pair coverage or podium lines
+- Updated `AGENTS.md`
+  - Documented `S Excavation Matrix` in the live state handoff, trader runtime, and validation flow
+- Updated `collab_trade/strategy_memory.md`
+  - Recorded the process lesson that S is often undiscovered, not absent, and that each pair now needs blocker / upgrade / death wording before the session can call the market "no S"
+
+## 2026-04-18 — session_data: deployment cues close every fresh S as an order state
+
+- Updated `tools/session_data.py`
+  - Added execution-style cues on top of the learning edge board so each fresh-risk seat now closes by default as `MARKET`, `LIMIT`, `STOP-ENTRY`, or `PASS`
+  - Added `S-HUNT DEPLOYMENT CUES` for the best direct-USD / cross / USD_JPY seats so valid S ideas stop dying as prose-only waits
+  - Extended the mandatory new-entry template with an `Execution cue from session_data` line and an explicit `exact structural level / exact trigger` field when the closure is not `MARKET`
+- Updated `docs/SKILL_trader.md`
+  - Documented the new deployment-cue section and made it the default closure source for `S Hunt`
+- Updated `AGENTS.md`
+  - Documented that `session_data.py` now emits S-hunt deployment cues, not only learning caps
+
+## 2026-04-18 — pretrade_check: learning gate + execution style now persist into DB
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a learning-aware pretrade profile using `lesson_registry.json`, pair-direction history, current UTC session bucket, and the current regime proxy
+  - Caps allocation with the learning verdict instead of leaving the learning board as read-only context
+  - Emits a concrete execution-style recommendation per seat: `MARKET`, `LIMIT`, `STOP-ENTRY`, or `PASS`
+  - Persists those decisions into `pretrade_outcomes` so later review can measure not only whether the seat won, but whether the gate and order style were right
+- Updated `collab_trade/memory/schema.py`
+  - Added `pretrade_outcomes` columns for `learning_score`, `learning_verdict`, `learning_cap`, `session_bucket`, `regime_snapshot`, `execution_style`, and `execution_note`
+  - `init_db()` now supports `quiet=True` so runtime tools can apply migrations without noisy output
+- Updated `docs/SKILL_trader.md`
+  - Added a required `Execution style from pretrade_check` field in the pre-entry block
+  - Documented that `LIMIT` / `STOP-ENTRY` is the path to higher entry frequency without degrading entry quality into bad market orders
+- Updated `AGENTS.md`
+  - Documented that `pretrade_outcomes` now stores the learning and execution metadata used at the moment of entry
+
 ## 2026-04-18 — state hot updates: intraday learning carried into the next session
 
 - Updated `tools/session_data.py`

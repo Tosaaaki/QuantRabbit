@@ -31,6 +31,7 @@ HORIZON_HEADERS = (
     "Medium-term S",
     "Long-term S",
 )
+PODIUM_RE = re.compile(r"^Podium #(\d+):\s*(.+)$")
 
 
 def _normalize_horizon_key(value: str | None) -> str | None:
@@ -243,6 +244,67 @@ def _parse_simple_line(section: str, label: str) -> str | None:
     return None
 
 
+def _clean_labeled_value(part: str, label: str) -> str | None:
+    lowered = part.lower()
+    prefix = label.lower()
+    if lowered.startswith(prefix):
+        return part[len(label):].strip(" :")
+    return None
+
+
+def _parse_s_excavation(section: str) -> dict:
+    pair_rows: list[dict] = []
+    podium_rows: list[dict] = []
+
+    for raw in section.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+
+        podium_match = PODIUM_RE.match(line)
+        if podium_match:
+            rank = int(podium_match.group(1))
+            payload = podium_match.group(2).strip()
+            pair_match = PAIR_RE.search(payload)
+            pair = pair_match.group(1) if pair_match else None
+            direction = pair_match.group(2) if pair_match else None
+            parts = [part.strip() for part in payload.split("|")]
+            row = {
+                "rank": rank,
+                "pair": pair,
+                "direction": direction,
+                "closest_to_s_because": next((_clean_labeled_value(part, "Closest-to-S because") for part in parts if "Closest-to-S because" in part), None),
+                "still_blocked_by": next((_clean_labeled_value(part, "Still blocked by") for part in parts if "Still blocked by" in part), None),
+                "upgrade_action": next((_clean_labeled_value(part, "If it upgrades") for part in parts if "If it upgrades" in part), None),
+                "raw": line,
+            }
+            row.update(_load_reference_price(pair))
+            podium_rows.append(row)
+            continue
+
+        pair_match = re.match(r"^([A-Z]{3}_[A-Z]{3}):\s*(.+)$", line)
+        if not pair_match:
+            continue
+
+        pair = pair_match.group(1)
+        payload = pair_match.group(2).strip()
+        parts = [part.strip() for part in payload.split("|")]
+        row = {
+            "pair": pair,
+            "best_expression": next((_clean_labeled_value(part, "Best expression") for part in parts if "Best expression" in part), None),
+            "why_not_s_now": next((_clean_labeled_value(part, "Why not S now") for part in parts if "Why not S now" in part), None),
+            "upgrade_to_s_only_if": next((_clean_labeled_value(part, "Upgrade to S only if") for part in parts if "Upgrade to S only if" in part), None),
+            "dead_if": next((_clean_labeled_value(part, "Dead if") for part in parts if "Dead if" in part), None),
+            "raw": line,
+        }
+        row.update(_load_reference_price(pair))
+        pair_rows.append(row)
+
+    pair_rows.sort(key=lambda item: item.get("pair") or "")
+    podium_rows.sort(key=lambda item: int(item.get("rank") or 99))
+    return {"pairs": pair_rows, "podium": podium_rows}
+
+
 def _load_existing_keys() -> set[str]:
     if not LEDGER_PATH.exists():
         return set()
@@ -273,9 +335,11 @@ def build_entry(state_path: Path = STATE_PATH) -> dict | None:
     action_section = _extract_section(text, "Action Tracking")
     market_section = _extract_section(text, "Market Narrative")
     deepening_section = _extract_section(text, "Deepening Pass")
+    excavation_section = _extract_section(text, "S Excavation Matrix")
 
     horizons = [_parse_horizon(name, lines) for name, lines in _split_horizon_blocks(s_hunt_section)]
     horizon_deployment = _parse_horizon_deployment(capital_section)
+    excavation = _parse_s_excavation(excavation_section)
     for horizon in horizons:
         deployment = horizon_deployment.get(_normalize_horizon_key(horizon["horizon"]))
         if deployment and not horizon.get("deployment_result"):
@@ -291,6 +355,8 @@ def build_entry(state_path: Path = STATE_PATH) -> dict | None:
         "primary_vehicle": _parse_simple_line(market_section, "Primary vehicle"),
         "best_direct_usd_seat": _parse_simple_line(market_section, "Best direct-USD seat NOW"),
         "next_fresh_risk_allowed": _parse_simple_line(market_section, "Next fresh risk allowed NOW"),
+        "s_excavation_pairs": excavation.get("pairs", []),
+        "s_excavation_podium": excavation.get("podium", []),
         "horizons": horizons,
         "horizon_deployment": horizon_deployment,
         "live_now": _parse_simple_line(capital_section, "LIVE NOW"),

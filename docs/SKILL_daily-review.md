@@ -41,7 +41,7 @@ Read: logs/s_hunt_ledger.jsonl (that UTC day's raw receipts — `daily_review.py
 
 Read the output of daily_review.py and think through the following:
 
-1. **Execution ownership split first**: Read the `Execution Split` section before anything else.
+1. **Execution ownership split first**: Read the `Execution Split` section before anything else. It uses explicit tags/comments first, then the reviewed UTC day's `trades.md` as the fallback ownership proof when a clean recurring-trader trade forgot to persist a tag.
 2. **Memory promotion gate second**: Read the `Memory Promotion Gate` section and treat it as the evidence filter for today's edits. Pair/direction lessons in `strategy_memory.md` must come from the allowed recurring-trader evidence set, not from quarantined execution.
 3. **Lesson state suggestions third**: Read the `Lesson State Suggestions` section. Use it as a registry-backed queue for what should be promoted to watch/confirmed or cut back to watch/deprecated.
 4. **Bayesian evidence fourth**: Read the `Bayesian Evidence Update` section. Treat today as evidence against or in favor of an existing prior, not as an excuse to rewrite memory from one print.
@@ -76,6 +76,7 @@ Key fields:
 2. Calculate pip movement from detection/entry price to current price
 3. Cross-reference with `live_trade_log.txt` — was the pair entered after this signal? P&L?
 4. Verdict: CORRECT (moved +5pip in predicted direction) / PREMATURE (moved against, then correct) / WRONG (moved against)
+5. Do **not** merge two same-pair / same-direction calls if their timestamps differ. Score each timestamped signal window separately.
 
 **Write findings in strategy_memory.md → Active Observations, grouped by source:**
 - `[date] Trend-Dip: fired 3×. Entered 2. Results: +180, -50. Accuracy: 2/3.`
@@ -98,23 +99,46 @@ For narrative picks, track the same way in prose: strongest-unheld A/S calls, wh
 
 Read: `logs/s_hunt_ledger.jsonl` (today's raw rows — append-only horizon receipts from each trader session)
 
-`s_hunt_ledger.jsonl` captures what the trader claimed was the best short-term / medium-term / long-term S, plus whether that horizon ended as entered, armed, or dead thesis. `daily_review.py` now syncs those receipts into `memory.db` `seat_outcomes`, so the review output includes a formal `discovered / orderable / deployed / captured / missed` chain instead of ad-hoc JSONL parsing.
+`s_hunt_ledger.jsonl` captures what the trader claimed was the best short-term / medium-term / long-term promoted S, plus whether that horizon ended as entered, armed, or `dead thesis because no seat cleared promotion gate`. `daily_review.py` now syncs those receipts into `memory.db` `seat_outcomes`, so the review output includes a formal `discovered / orderable / deployed / captured / missed` chain instead of ad-hoc JSONL parsing.
 
 For each horizon that appeared today:
-1. Check whether the horizon was actually deployed (`entered id=...`, `armed STOP`, `armed LIMIT`) or only described.
+1. First classify whether the horizon was a true promoted S (`entered id=...`, `armed STOP`, `armed LIMIT`) or an honest no-promotion close (`dead thesis because no seat cleared promotion gate: ...`).
 2. Cross-reference with OANDA closed trades and `live_trade_log.txt` — did the seat turn into real P&L?
-3. Compare the reference price versus current price at review time. If the direction worked but the book stayed flat, count it as a capture miss, not as "no chance".
+3. Compare the reference price versus the best favorable excursion between the state timestamp and the review cutoff. If the tape moved enough in the intended direction but the book stayed flat, count it as a capture miss or a missed promotion, not as "no chance".
+4. Apply the same best-favorable standard to scanner / audit signals inside each signal window. Current price or flat close alone understates opportunity loss when the tape moved first and faded later.
 4. Write one distilled observation about the failure mode:
    - discovery was wrong
    - vehicle was right but deployment was absent
+   - closest seat was right but never cleared the promotion gate
    - deployment existed but sizing was too small
    - long-term thesis existed but was killed too early
 
 Write findings in strategy_memory.md → Active Observations with concrete language:
-- `[4/18] Short-term S found the right EUR_USD SHORT, but it ended as STILL PASS and price moved +11 pip without capture. Vehicle right, deployment absent.`
+- `[4/18] Short-term S found the right EUR_USD SHORT, but it closed as no seat cleared promotion gate and price still moved +11 pip. Vehicle right, promotion absent.`
 - `[4/18] Medium-term S armed the correct EUR_JPY SHORT as a STOP order and captured +420 JPY. Horizon stacking worked when the receipt contained a real order id.`
-- `[4/18] Long-term S kept defaulting to 'none' even when the medium-term continuation was already proving. Long-term blindness, not no-opportunity.`
-- Use the `Horizon Scoreboard` counts in `daily_review.py` as the official chain totals for today: `discovered`, `orderable`, `deployed`, `captured`, `missed`.
+- `[4/18] Long-term S kept closing as no-promotable-seat even when the medium-term continuation was already proving. Long-term blindness, not no-opportunity.`
+- Use the `Horizon Scoreboard` counts in `daily_review.py` as the official chain totals for today: `discovered`, `orderable`, `deployed`, `captured`, `missed`. Continuing same-pair seats count once, so repeated state snapshots do not create fake extra deployments.
+
+## Step 2.7: S Excavation Review
+
+Read: `daily_review.py` `## S Excavation Review` section
+
+`daily_review.py` now reads `S Excavation Review` from the formal `memory.db` `seat_outcomes` sync, not from ad-hoc JSONL parsing. That means near-S podium seats are reviewed with the same persistent receipt model as `S Hunt`, and a seat that later opened and was still live at review time still counts as `LATER DEPLOYED / OPEN`, not as a fake non-deployment.
+
+`S Excavation Matrix` is the near-S board: seats that were close enough to matter but did not get promoted into the short / medium / long `S Hunt` board. The review goal is to learn whether those near-S seats were real edge that went undiscovered, or just noise that was correctly blocked.
+
+For each podium seat:
+1. Check whether it later became a real trade the same day, including seats that later opened and were still live at review time.
+2. If it never deployed, compare its reference price versus the UTC day close.
+3. Write one distilled observation:
+   - blocker was valid, seat stayed noise
+   - blocker was valid, but the seat later upgraded and was deployed
+   - blocker was too conservative; the seat was right without deployment
+   - podium named the wrong vehicle even though the horizon board later found the right one
+
+Write findings in `strategy_memory.md` → `Active Observations` with concrete language:
+- `[4/18] Podium #1 GBP_USD SHORT was right without deployment. The blocker was trigger quality, not direction quality. Next session should arm the stop-entry sooner when the reclaim shelf is the only missing piece.`
+- `[4/18] Podium #2 EUR_USD LONG stayed wrong into the UTC close. The blocker was real; this was not hidden S, just a floor idea that never reclaimed.`
 
 ## Step 3: Update strategy_memory.md (MANDATORY — every section must be touched)
 

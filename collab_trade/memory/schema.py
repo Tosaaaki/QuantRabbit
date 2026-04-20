@@ -34,7 +34,7 @@ def _ensure_column(conn: apsw.Connection, table: str, column_def: str):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
 
 
-def init_db():
+def init_db(quiet: bool = False):
     conn = get_conn()
 
     conn.execute("""
@@ -166,6 +166,13 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         )
     """)
+    _ensure_column(conn, "pretrade_outcomes", "learning_score INTEGER")
+    _ensure_column(conn, "pretrade_outcomes", "learning_verdict TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "learning_cap TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "session_bucket TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "regime_snapshot TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "execution_style TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "execution_note TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_pair ON pretrade_outcomes(pair)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_date ON pretrade_outcomes(session_date)")
 
@@ -212,7 +219,8 @@ def init_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_seat_outcomes_pair ON seat_outcomes(pair, direction)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_seat_outcomes_horizon ON seat_outcomes(horizon)")
 
-    print(f"memory.db initialized at {DB_PATH}")
+    if not quiet:
+        print(f"memory.db initialized at {DB_PATH}")
 
 
 def serialize_f32(vec: list[float]) -> bytes:
