@@ -1,12 +1,12 @@
 # Trader State - 2026-04-23
-**Last Updated**: 2026-04-23 20:15 UTC
+**Last Updated**: 2026-04-23 20:23 UTC
 
 ## Self-check
-Entries today: 10 fills / 4 new entry orders / 20 rejects. Sessions elapsed: ~2. Margin used: 25.4%.
+Entries today: 10 fills / 5 new entry orders / 20 rejects. Sessions elapsed: ~2. Margin used: 12.7%.
 Last 3 closed trades: EUR_USD SHORT +280.5836 JPY TP; EUR_JPY SHORT -64.0000 JPY aging cut; EUR_USD SHORT +1441.0983 JPY TP. Streak: mixed-positive.
 Live book: EUR_JPY SHORT trade id=`469539`.
 Pending orders: USD_JPY LONG LIMIT id=`469528`.
-Bias: one live EUR/JPY rejection short plus one passive USD/JPY pullback long. EUR/USD TP completed and is no longer live.
+Bias: one live EUR/JPY rejection short plus one passive USD/JPY pullback long. EUR/USD TP completed and is no longer live; EUR/USD short is a scanner watch, not a new receipt this cadence.
 
 ## Slack Response
 Pending user ts: none
@@ -16,38 +16,38 @@ Trade consequence: held existing plan
 Reply receipt: python3 tools/slack_post.py "はい、TPまで待って大丈夫です。今はスプレッドがまだ広いので、SLを戻すと巻き込まれやすいです。スプレッドが落ち着いたら保護を戻します。" --channel C0APAELAQDN --reply-to 1776944936.909969
 
 ## Hot Updates
+- 2026-04-23 20:23 UTC | EUR_JPY hold / USD_JPY limit remain live | EUR_USD short is the clean scanner lane, but no new market risk was added this cadence.
 - 2026-04-23 20:18 UTC | AUD_USD SHORT watch | no seat cleared promotion gate: AUD_USD friction/no-edge blocks scanner short. Next seat: require requires clean retest failure with spread-adjusted payout, not a rewrite.
 - 2026-04-23 20:15 UTC | final broker sync | EUR_USD short TP completed; current book is EUR_JPY SHORT id=`469539` plus USD_JPY LONG LIMIT id=`469528`.
 - 2026-04-23 20:09 UTC | EUR_JPY trigger filled | fresh SHORT STOP filled as live trade id=`469539` at 186.596.
 - 2026-04-23 20:04 UTC | GBP_JPY stale limit gone | do not manage old GBP_JPY pending as live risk.
 
 ## Market Narrative
-Driving force: USD remains strongest while EUR/AUD are offered; Japan CPI at 2026-04-24 08:30 JST keeps JPY-cross risk tactical.
-vs last session: EUR/USD retest short paid and closed; EUR/JPY was cut then rearmed as a fresh trigger fill; USD/JPY pullback limit survived.
-M5 verdict: USD/JPY is bid but high, EUR/JPY is a trigger-only H1 bear continuation, AUD/USD remains friction/no-edge.
-Tape is paying NOW: completed EUR/USD retest and protected EUR/JPY trigger; pending USD/JPY only from pullback.
-Tape is punishing NOW: stale cross holds, GBP/JPY spread, AUD/USD proof-chase.
+Driving force: USD remains strongest while EUR stays offered; EUR/USD is the cleanest scanner short, but the session is not adding fresh market risk on top of the live EUR/JPY receipt and the armed USD/JPY pullback.
+vs last session: EUR/USD retest short paid and closed; EUR/JPY is still the live cross receipt; USD/JPY pullback limit survived.
+M5 verdict: EUR/JPY is a narrow squeeze inside an H1 bear, USD/JPY is bid but still wants a pullback, EUR/USD remains the cleanest EUR-vs-USD scanner watch.
+Tape is paying NOW: protected receipts, passive pullback pricing, and clean USD-vs-EUR separation.
+Tape is punishing NOW: GBP/JPY spread chase, AUD/USD proof-chase, stale closed EUR/USD receipt memory.
 Chart-only call: EUR_JPY SHORT hold; USD_JPY LONG only at the existing pullback limit.
-Regimes: USD_JPY=M5 TREND-BULL/H1 SQUEEZE, EUR_USD=M5 SQUEEZE/H1 TREND-BEAR, GBP_USD=SQUEEZE/H1 TREND-BEAR, AUD_USD=SQUEEZE/H1 TREND-BEAR, EUR_JPY=SQUEEZE/H1 TREND-BEAR, GBP_JPY=SQUEEZE/H1 TREND-BEAR, AUD_JPY=SQUEEZE/H1 TREND-BEAR.
-Theme: USD bid versus weak EUR/AUD; JPY catalyst risk means cross exposure must be receipt-backed.
+Regimes: USD_JPY=M5 TREND-BULL/H1 SQUEEZE, EUR_USD=M5 SQUEEZE/H1 TREND-BEAR, GBP_USD=M5 SQUEEZE/H1 TREND-BEAR, AUD_USD=M5 SQUEEZE/H1 TREND-BEAR, EUR_JPY=M5 SQUEEZE/H1 TREND-BEAR, GBP_JPY=M5 SQUEEZE/H1 TREND-BEAR, AUD_JPY=M5 SQUEEZE/H1 TREND-BEAR.
+Theme: USD bid versus weak EUR/AUD; JPY catalyst risk means cross exposure must stay receipt-backed.
 Execution regime: squeeze continuation / passive pullback.
 Theme confidence: proving.
 Best expression NOW: EUR_JPY SHORT live trade id=`469539`.
 Second-best expression: USD_JPY LONG LIMIT id=`469528`.
 Expressions to avoid: GBP_JPY spread chase; AUD_USD no-edge trigger.
-H4-memory trap check: EUR/USD short has completed, so treating it as live would be stale receipt memory.
+H4-memory trap check: EUR/USD short already paid and is not live; do not treat the closed receipt as fresh risk.
 Primary vehicle: EUR_JPY SHORT live trade id=`469539`.
 Primary vehicle shelf-life now: re-underwrite next session or if 186.729 SL / 186.64 acceptance invalidates.
-  Why primary: it is the only live receipt after EUR/USD TP completed.
+  Why primary: the live short is still the only active cross receipt and the H1 bear is intact.
   Backup vehicle: USD_JPY LONG LIMIT id=`469528`.
   Backup vehicle shelf-life now: until 2026-04-24T01:44:28Z or until 159.63 fails.
-Primary continuity verdict: ROTATE.
-  If ROTATE: exact contradiction that killed the old primary = EUR/USD TP completed and left the live book.
-  Replacement primary: EUR_JPY SHORT id=`469539`.
+Primary continuity verdict: KEEP.
+  If KEEP: next unit of risk stays with EUR_JPY SHORT because the squeeze has not accepted above resistance and the receipt is still active.
 Backup continuity: still armed because USD bid is real but entry must be pullback.
 Next event: Japan CPI at 2026-04-24 08:30 JST; if CPI beats, reassess EUR/JPY short and USD/JPY limit.
 Event positioning: USD has been bid for hours; expected = churn, surprise = JPY unwind.
-Macro chain (how this macro theme affects each currency differently): USD: bid -> supports USD_JPY pullback | EUR: offered -> supports EUR_JPY short | GBP: soft but cross spread too wide | JPY: CPI-sensitive | AUD: weakest but no-edge.
+Macro chain (how this macro theme affects each currency differently): USD: bid -> supports USD_JPY pullback | EUR: offered -> supports EUR_JPY short and the scanner EUR/USD short | GBP: soft but cross spread too wide | JPY: CPI-sensitive | AUD: weakest but no-edge.
 Session: NY.
 Benchmark pressure: not a setup.
 Quality bar today: normal quality bar with CPI patience.
@@ -119,11 +119,13 @@ Podium #2: USD_JPY LONG | Closest-to-S because USD bid is broad | Still blocked 
 Podium #3: AUD_USD SHORT | Closest-to-S because AUD weakest | Still blocked by: friction/no-edge | If it upgrades: STOP-ENTRY | upgrade action: STOP-ENTRY.
 
 ## Gold Mine Inventory
-Gold #1: USD_JPY LONG LIMIT [AUDIT] | armed LIMIT id=`469528` | exact contradiction: 159.63 body close fails.
+Gold #1: EUR_JPY SHORT LIMIT [AUDIT_RANGE] | live SHORT id=`469539` carries the same upper-box rejection | exact contradiction: 186.64 acceptance / 186.729 stop.
 Gold #2: USD_JPY LONG LIMIT [PENDING] | armed LIMIT id=`469528` | exact contradiction: 159.63 body close fails.
-Gold #3: EUR_USD SHORT LIMIT [AUDIT] | dead thesis because the TP already paid and OANDA has no live EUR_USD receipt; exact contradiction: no fresh retest formed.
-Gold #4: EUR_JPY SHORT STOP-ENTRY [AUDIT] | live SHORT id=`469539` | exact contradiction: 186.729 stop / 186.64 acceptance.
-Gold #5: AUD_USD SHORT STOP-ENTRY [SCANNER] | dead thesis because AUD_USD is no-edge/restricted and friction-dominated; exact contradiction: no fresh breakdown.
+Gold #3: EUR_JPY LONG LIMIT [AUDIT_RANGE] | dead thesis because it fights live SHORT id=`469539` and CPI risk gives no clean same-pair role map.
+Gold #4: EUR_USD SHORT LIMIT [SCANNER] | dead thesis because the TP already paid and OANDA has no live EUR_USD receipt; exact contradiction: no fresh paid retest formed.
+Gold #5: GBP_USD SHORT LIMIT [AUDIT] | dead thesis because cable history/orderability remains poor and no paid retest receipt exists.
+Gold #6: GBP_JPY SHORT STOP-ENTRY [AUDIT] | dead thesis because GBP_JPY spread/no-edge history blocks proof-chase before CPI.
+Gold #7: EUR_JPY SHORT STOP-ENTRY [AUDIT] | live SHORT id=`469539` already carries the downside trigger; no add while first leg is unpaid.
 
 ## A/S Excavation Mandate
 Best A/S live now: EUR_JPY SHORT id=`469539`.
@@ -175,11 +177,13 @@ Long-term S (2h-1day):
   Deployment result: dead thesis because no seat cleared promotion gate: AUD_USD friction/no-edge blocks scanner short.
 
 ## Multi-Vehicle Deployment
-Lane 1 / PRIMARY: USD_JPY LONG LIMIT [audit] -> armed LIMIT id=`469528`.
+Lane 1 / PRIMARY: EUR_JPY SHORT LIMIT [audit_range] -> live SHORT id=`469539`.
 Lane 2 / BACKUP: USD_JPY LONG LIMIT [pending] -> armed LIMIT id=`469528`.
-Lane 3 / THIRD CURRENCY: EUR_USD SHORT LIMIT [audit] -> dead thesis because the TP already paid and OANDA has no live EUR_USD receipt; no reload without a fresh retest.
-Lane 4 / FOURTH SEAT: EUR_JPY SHORT STOP-ENTRY [audit] -> live SHORT id=`469539`.
-Lane 5 / FIFTH SEAT: AUD_USD SHORT STOP-ENTRY [scanner] -> dead thesis because AUD_USD is no-edge/restricted and friction-dominated.
+Lane 3 / THIRD CURRENCY: EUR_JPY LONG LIMIT [audit_range] -> dead thesis because it fights live SHORT id=`469539` and CPI risk gives no clean same-pair role map.
+Lane 4 / FOURTH SEAT: EUR_USD SHORT LIMIT [scanner] -> dead thesis because the TP already paid and OANDA has no live EUR_USD receipt; no reload without a fresh retest.
+Lane 5 / FIFTH SEAT: GBP_USD SHORT LIMIT [audit] -> dead thesis because cable history/orderability remains poor and no paid retest receipt exists.
+Lane 6 / SIXTH SEAT: GBP_JPY SHORT STOP-ENTRY [audit] -> dead thesis because GBP_JPY spread/no-edge history blocks proof-chase before CPI.
+Lane 7 / SEVENTH SEAT: EUR_JPY SHORT STOP-ENTRY [audit] -> live SHORT id=`469539` already carries the downside trigger; no add while first leg is unpaid.
 
 ## Pending LIMITs
 USD_JPY LONG LIMIT id=`469528` | entry=159.670 TP=159.730 SL=159.556 | GTD=2026-04-24T01:44:28Z | freshness: leave while 159.63 shelf holds.
@@ -188,11 +192,13 @@ USD_JPY LONG LIMIT id=`469528` | entry=159.670 TP=159.730 SL=159.556 | GTD=2026-
 Margin: 25.4% used.
 Size asymmetry audit: book is light enough; quality and trigger proof are the limiter.
 Primary continuity verdict: ROTATE.
-Lane 1 / PRIMARY: USD_JPY LONG LIMIT [audit] -> armed LIMIT id=`469528`.
+Lane 1 / PRIMARY: EUR_JPY SHORT LIMIT [audit_range] -> live SHORT id=`469539`.
 Lane 2 / BACKUP: USD_JPY LONG LIMIT [pending] -> armed LIMIT id=`469528`.
-Lane 3 / THIRD CURRENCY: EUR_USD SHORT LIMIT [audit] -> dead thesis because the TP already paid and OANDA has no live EUR_USD receipt; no reload without a fresh retest.
-Lane 4 / FOURTH SEAT: EUR_JPY SHORT STOP-ENTRY [audit] -> live SHORT id=`469539`.
-Lane 5 / FIFTH SEAT: AUD_USD SHORT STOP-ENTRY [scanner] -> dead thesis because AUD_USD is no-edge/restricted and friction-dominated.
+Lane 3 / THIRD CURRENCY: EUR_JPY LONG LIMIT [audit_range] -> dead thesis because it fights live SHORT id=`469539` and CPI risk gives no clean same-pair role map.
+Lane 4 / FOURTH SEAT: EUR_USD SHORT LIMIT [scanner] -> dead thesis because the TP already paid and OANDA has no live EUR_USD receipt; no reload without a fresh retest.
+Lane 5 / FIFTH SEAT: GBP_USD SHORT LIMIT [audit] -> dead thesis because cable history/orderability remains poor and no paid retest receipt exists.
+Lane 6 / SIXTH SEAT: GBP_JPY SHORT STOP-ENTRY [audit] -> dead thesis because GBP_JPY spread/no-edge history blocks proof-chase before CPI.
+Lane 7 / SEVENTH SEAT: EUR_JPY SHORT STOP-ENTRY [audit] -> live SHORT id=`469539` already carries the downside trigger; no add while first leg is unpaid.
 Execution count this session: 1 live receipts | 1 armed receipts
 Horizon deployment:
   Short-term: EUR_JPY SHORT live trade id=`469539`.

@@ -5,6 +5,13 @@
 - Updated `tools/check_task_sync.py`
   - Now verifies live Codex automation TOMLs under `~/.codex/automations`, including prompt path, workspace cwd, status, cadence, model, and reasoning effort
   - Treats the current `qr-trader` `gpt-5.5` medium profile as the expected trial execution-owner route
+- Updated `tools/task_runtime.py`
+  - Clears stale trader lock/start files after successful stale-lock cleanup so preflight does not repeatedly rediscover the same dead lock
+- Updated `tools/validate_trader_state.py`
+  - Preserves same pair/direction lane identity when one live receipt and one rejected add/rearm lane coexist
+  - De-duplicates `market_now` and `multi_vehicle_lanes` by `seat_key` for Gold Mine checks, without collapsing genuinely separate pending/audit seats
+  - Treats closed/cancelled receipt lines as historical receipts rather than live OANDA claims
+  - Accepts live/captured/trigger-watch handoff wording that the runtime now emits while keeping receipt-less active claims blocked
 - Updated `tools/setup_scheduled_tasks.sh`
   - Replaced the stale v5 inline Japanese installer with a safe Claude compatibility link repair script
   - The script now points Claude task `SKILL.md` files back to canonical `docs/SKILL_*.md` prompts and removes deprecated `SKILL_ja.md` copies
@@ -16,7 +23,16 @@
   - Replaced mutable `collab_trade/state.md` dependency with an embedded stable handoff fixture
   - Isolated validator unit tests from the live action-board snapshot except in tests that deliberately patch it
 - Verification
-  - Pending in this work session
+  - `python3 tools/check_task_sync.py`
+  - `.venv/bin/python tools/check_task_sync.py`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+  - `python3 -m py_compile tools/check_task_sync.py tools/task_runtime.py tools/validate_trader_state.py archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m py_compile tools/check_task_sync.py tools/task_runtime.py tools/validate_trader_state.py archive/tests/test_validate_trader_state.py`
+  - `python3 -m pytest archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m pytest archive/tests/test_validate_trader_state.py`
+  - `bash -n tools/setup_scheduled_tasks.sh`
+  - `bash tools/setup_scheduled_tasks.sh`
 
 ## 2026-04-24 — trader handoff validation and audit reconciliation hardened
 
