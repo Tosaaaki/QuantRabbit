@@ -22,6 +22,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
+from technicals_json import load_technicals_timeframes
 
 ROOT = Path(__file__).resolve().parent.parent
 PAIRS = [
@@ -71,7 +72,7 @@ def load_technicals(pair: str) -> dict:
     f = ROOT / f"logs/technicals_{pair}.json"
     if not f.exists():
         return {}
-    return json.loads(f.read_text()).get("timeframes", {})
+    return load_technicals_timeframes(f)
 
 
 def pip_size(pair: str) -> float:

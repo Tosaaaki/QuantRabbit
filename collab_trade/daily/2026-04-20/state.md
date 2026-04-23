@@ -1,244 +1,188 @@
 # Trader State - 2026-04-20
-**Last Updated**: 2026-04-20 06:50 UTC
+**Last Updated**: 2026-04-20 23:46 UTC
 
 ## Self-check
-Entries today: 5 total. Most: AUD_JPY x2 and EUR_USD x2. Fixated on one pair? NO: the book rotated through the range pairs first, then reloaded the direct-USD lane only after a fresh upper-band retest printed.
-Last 3 closed trades: L / L / W. Streak: cold. B-max until the next win.
-Bias: the trap is revenge-shorting EUR_USD after the stop or defending USD_JPY if 158.810 accepts on bodies.
-Macro chain: USD tactically mixed but still the cleaner defensive leg on direct-USD retests | EUR offered on H1 but rebounding inside M5 range | GBP offered but pair history still blocks fresh size | JPY firm on H4 but giving back enough intraday to allow lower-box USD_JPY dip-buy | AUD still weakest passenger.
+Entries today: 24 total. Most: AUD_JPY x9. Fixated on one pair? YES earlier; this session stays off the stale cross-rescue loop and keeps only the clean direct-USD receipt.
+Last 3 closed trades: W / L / W. Streak: neutral. If 2+L -> B max only, no catch-up chase.
+Bias: the danger is still upgrading higher-TF weak-USD memory into late market buys while M1 is printing corrective USD bid.
+Macro chain: USD weak higher up but BID on M1 | EUR constructive but offered on M1 | GBP constructive but unreclaimed | JPY firmer on headlines and still able to box the crosses | AUD strongest board score but still only drift.
 
 ## Market Narrative
-Driving force: Hormuz / risk-off headline backdrop is still the macro shell, but the live tape is no longer paying straight-line continuation. It is paying range-edge execution after the direct-USD rebound and the USD_JPY flush into the lower rail.
-vs last session: the first EUR_USD short was stopped at 1.17612 because the stop sat inside the upper-band retest; the standing USD_JPY buy limit filled at 158.900; EUR_USD was then re-armed higher as a fresh upper-band range short and filled at 1.17615.
-M5 verdict: buyers accelerated into the EUR_USD upper band and then stalled; USD_JPY sellers flushed the pair into the lower box and are no longer expanding away from the floor. This is a fade-the-extremes tape, not a chase tape.
-Regimes: USD_JPY=RANGE, EUR_USD=RANGE, GBP_USD=SQUEEZE-leaning-bear, AUD_USD=SQUEEZE-leaning-bear, EUR_JPY=RANGE under H1 bear, GBP_JPY=SQUEEZE/late-bear, AUD_JPY=RANGE with weak floor.
-Theme: tactical mean reversion inside a still risk-off macro backdrop. Direct-USD is no longer a clean market chase. Quiet-session price improvement matters more than narrative purity.
-Execution regime: late Tokyo / quiet cleanup; paying exact range edges and punishing stops parked inside normal M5 noise.
+Driving force: cautious optimism around Iran ceasefire-extension chatter still supports weak USD / risk-on higher up, but the live tape is a corrective USD bid into JP Trade Balance and the later UK/ZEW/US stack.
+vs last session: direct-USD shelves bled lower, EUR_JPY repaired off 187.12 then flattened under 187.21, and GBP_JPY / AUD_JPY only repaired into their broken shelves rather than reclaiming them.
+M5 verdict: sellers leaning, steady on direct-USD and buyers only repairing the JPY crosses, because M5 shows lower-band bleed in EUR_USD and recoil-then-flat shelves in EUR_JPY / GBP_JPY / AUD_JPY rather than fresh expansion.
+Tape is paying NOW: structural price improvement and trigger-honest receipts. Tape is punishing NOW: late chase, old H4 memory, dirty cross rescue, and breakout-before-trigger.
+Chart-only call: EUR_USD LONG only at 1.17815; otherwise PASS. If every indicator vanished, the chart alone still says the live quote is late because M5 is bleeding lower and M1 is still staircasing down into support.
+Regimes: USD_JPY=RANGE/SQUEEZE, EUR_USD=RANGE/SQUEEZE, GBP_USD=SQUEEZE, AUD_USD=SQUEEZE, EUR_JPY=SQUEEZE, GBP_JPY=SQUEEZE, AUD_JPY=SQUEEZE.
+Theme: weak-USD backdrop, live corrective USD bid, late-session cross compression.
+Execution regime: squeeze waiting / late cleanup. The tape is paying patient support buys and honest stop/limit closures, punishing market participation inside the box.
 Theme confidence: proving.
-Best expression NOW: EUR_USD SHORT from the 1.1761 upper-band retest. Why this is the cleanest way to express the tape right now: it is the clearest direct-USD range extreme with a live rejection candle and normal spread.
-Second-best expression: USD_JPY LONG from the 158.83-158.90 lower box. Why it is usable but less clean than the best expression: H1 is mild-bull and the box is real, but the lower flush was violent enough that the defense still needs to prove itself.
-Expressions to avoid: market-selling GBP_USD after the bounce already printed, defending AUD_JPY below the recent floor failure, and rewriting EUR_USD into a breakout long before 1.17635+ accepts on bodies.
-H4-memory trap check: "H4 USD weakness means buy EUR_USD now" is still rejected because the live EUR_USD move is only a range rebound, not a true H1 reclaim.
-Primary vehicle: EUR_USD SHORT trade id=469121.
-  Why primary: best direct-USD seat, live upper-band location, and B-only range fade fits the current quiet tape better than forcing a breakout thesis.
-Backup vehicle: USD_JPY LONG trade id=469115.
-Next event: Canada CPI at 2026-04-20 12:30 UTC. No new market chase ahead of it.
-Event positioning: market still sits in a defensive macro shell, but the current intraday move is not trending cleanly enough to front-run CPI with extra size.
-Macro chain (how this macro theme affects each currency differently):
-  USD: structural backdrop still mixed -> tactical bid fades in and out
-  EUR: H1 offered -> intraday rebound passenger only
-  GBP: offered -> weaker clean shorts exist elsewhere
-  JPY: H4 firm -> intraday offer allows lower-box bounce only
-  AUD: weakest passenger -> no fresh edge unless a hard wall holds
-Session: Tokyo-London overlap
-Benchmark pressure: Balance +767.3 JPY realized vs day-start NAV 120557.42. Live NAV +492.1 JPY. Gap to +5% NAV target = 5535.8 JPY. Gap to +10% NAV target = 11563.6 JPY.
-Quality bar today: patient and B-max because the last two closes were losses and the tape is still location-sensitive.
-Tempting P&L-driven trade: press a second direct-USD short lower or average the USD_JPY long if the floor wobbles.
-Why that trade is invalid in this tape: both are location errors. This session is paying the first edge, not repeated same-thesis forcing.
-Next fresh risk allowed NOW: none beyond the two live B-size receipts.
-  Why it deserves risk independent of P&L: both trades are structural range-edge executions with live chart evidence, not recovery trades.
-  What would invalidate it immediately: EUR_USD body acceptance above 1.17635 or USD_JPY body acceptance below 158.810.
-20-minute backup trigger armed NOW: none - the book already owns the primary and backup lanes as live trades.
-Last session trigger audit: "require EUR_USD 1.1760+ acceptance with expansion, not a rewrite."
-  Since then price did: tagged 1.1761-1.1762 and printed into the M5 upper band, but the refreshed chart still classifies the move as RANGE, not a clean breakout.
-  This session response: ENTERED SHORT again via fresh upper-band rearm (trade id=469121), not a breakout long.
-  Why this is not just a higher trigger rewrite: the market reached the exact shelf / upper-band test and produced a new sellable range extreme rather than a trend continuation body.
-Best direct-USD seat NOW: EUR_USD SHORT trade id=469121.
-  Deployment status: live.
+Best expression NOW: EUR_USD LONG via structural LIMIT `469229` @1.17815 because it is still the cleanest direct-USD vehicle with normal spread and a real defense price.
+Second-best expression: EUR_JPY LONG only on 187.16-12 retest or true 187.21/24 body acceptance; the current quote is still only a repaired shelf.
+Expressions to avoid: GBP_JPY LONG market chase, AUD_JPY rescue under 114.03/06, GBP_USD LONG before 1.35355 accepts, USD_JPY sell-low mid-box.
+H4-memory trap check: "USD weak so buy now." Today's tape rejects that; the honest seat is price improvement, not the live quote.
+Primary vehicle: EUR_USD LONG LIMIT `469229`. Why primary: it is the only live seat with clean direct-USD expression, normal spread, and an actual structural receipt already armed. Backup vehicle: EUR_JPY LONG only on retest / reclaim. Best direct-USD seat: EUR_USD LONG. Deployment status: id=469229.
+Next event: JP Trade Balance 2026-04-20 23:50 UTC. If it spikes JPY risk and keeps the crosses boxed, stay flat there; if it passes quietly, keep the current limit and let Europe decide the next clean seat.
+Event positioning: market has been selling USD for several sessions, while JPY crosses already spent their breakout attempts. Expected JP release = small noise. Surprise = JPY bid / cross shakeout. Asymmetry: unfavorable for fresh cross longs, manageable for passive EUR_USD reload.
+Benchmark pressure: Day P&L -716.98 JPY (-0.60% vs day-start NAV). Gap to +5% = 6741.25 JPY. Gap to +10% = 12765.52 JPY.
+Quality bar today: patient because tape is late or dirty.
+Tempting P&L-driven trade: market-buy EUR_JPY or GBP_JPY to recover faster if USD weakness resumes.
+Why that trade is invalid in this tape: both crosses are still only repaired shelves inside squeeze tape with event asymmetry and unfinished reclaim proof.
+Next fresh risk allowed NOW: EUR_USD LONG only via id=469229.
+Why it deserves risk independent of P&L: weak-USD backdrop + direct-USD vehicle + normal spread + exact structural defense.
+What would invalidate it immediately: 1.17758 body failure.
+15-minute backup trigger armed NOW: none because the best cross still needs the reclaim print first.
+Last session trigger audit: EUR_USD LONG @1.17815.
+Since then price did: never reached.
+This session response: LEAVE RELOAD LIMIT.
+Why this is not just a higher trigger rewrite: the exact same price remains the honest first defense and the live chart moved toward it rather than proving a cleaner market buy.
+Best direct-USD seat NOW: EUR_USD LONG.
+Deployment status: live order id=469229.
 
 ## Currency Pulse
-USD: H4=offered M15=BID M1=offered -> structural weak-USD backdrop is still there, but the live session has become a two-way range rather than clean weak-USD trend continuation.
-JPY: H4=BID M15=BID M1=offered -> higher-TF firm, intraday giving back enough to support a tactical USD_JPY long at the lower rail.
-EUR: H4=offered M15=offered M1=BID -> rebound passenger, not clean leadership.
-GBP: H4=offered M15=offered M1=BID -> bounce exists, but cable short memory remains poor.
-AUD: H4=neutral M15=offered M1=BID -> weakest passenger, still no fresh clean edge.
-MTF conflict: H4 weak-USD memory is colliding with an intraday fade market. That means exact range prices matter more than narrative direction.
-M1 synchrony: direct-USD rebound already printed; now the question is whether that rebound becomes breakout acceptance or only a completed upper-band test.
-Correlation break: EUR_USD is the cleaner direct-USD short because the range extreme is cleaner than cable and the spread is cheaper than the JPY crosses.
-H4 wave: USD_JPY mild-bull dip-buy only | EUR_USD H1 trend-bear but M5 range | GBP_JPY late-bear / spread-heavy | AUD_JPY floor still weak.
-Best vehicle NOW: EUR_USD SHORT.
-My position matches best vehicle? YES. The live book now owns the cleanest direct-USD seat plus the cheaper lower-box USD_JPY backup.
+USD: H4=offered M15=neutral M1=BID -> broader weakness remains, but the live tape is a corrective USD rebound.
+JPY: H4=BID M15=neutral M1=BID -> haven bid cooled from the earlier spike, yet it is still enough to keep the crosses boxed.
+EUR: H4=BID M15=neutral M1=neutral -> still constructive higher up, but intraday flow is only stabilizing, not expanding.
+GBP: H4=BID M15=neutral M1=offered -> constructive backdrop, but the live tape is still weaker than EUR and unreclaimed.
+AUD: H4=BID M15=neutral M1=offered -> strongest board score, but the live tape is only repair drift, not impulse.
+MTF conflict: H4 USD weakness with M1 USD bid = correction in progress. Buy direct USD only at real support, not at the live quote.
+M1 synchrony: JPY still firmer across the crosses than the optimistic higher-frame story wants, which is why the cross bounces remain shelves rather than expansion.
+Correlation break: EUR_JPY repaired more cleanly than GBP_JPY and AUD_JPY, so EUR is the only cross base worth keeping on the board.
+H4 wave: EUR_USD / EUR_JPY stay MID BULL with room; GBP_JPY is still mid but dirty; AUD_JPY is bullish higher up but tactically late.
+Best vehicle NOW: EUR vs USD = EUR_USD LONG on the first honest defense, not at market.
+My position matches best vehicle? YES in intent: the only live receipt is the EUR_USD limit.
 
 ## Positions (Current)
-- EUR_USD SHORT 3000u id=469121 @1.17615 | TP 1.17540 | SL 1.17635 | UPL approx -48 JPY at 06:50 UTC
-- USD_JPY LONG 3000u id=469115 @158.900 | TP 159.000 | SL 158.810 | UPL approx -240 JPY at 06:50 UTC
-
-## Directional Mix
-Positions: 1 LONG / 1 SHORT / 2 pairs
-Direction mix: mixed OK. Same macro leg is visible through USD, but the executions are distinct range edges, not same-pair averaging.
-
-## Audit Response
-No unheld audit Edge S / A opportunities this cycle. Fresh action came from the live range edges, not from a missed A/S narrative seat.
-
-## Position Management
-
-### USD_JPY +3000u id=469115 UPL approx -240 JPY
-  A - Hold + adjust: widen SL to 158.664 only if converting this from a lower-box fade into an H1 dip-buy hold; TP would then expand to 159.03.
-  B - Cut and re-enter: close now only if 158.810 prints on bodies, then re-enter only on 158.83 reclaim or deeper 158.66 support.
-  C - Hold as-is REQUIRES all 4:
-    (1) Changed since last session: the parked limit filled exactly as EUR_USD stopped out; refreshed M5 now marks USD_JPY as RANGE, not squeeze.
-    (2) Entry TF: M5
-        M15: range / squeeze backdrop, no clean trend payout yet -> neutral but not thesis-dead
-        M1: lower-box flush has not accelerated further -> threatens the long only if 158.810 starts accepting on bodies
-    (3) H4: mild-bull dip-buy context still exists -> Room? YES, but only for a box rebound, not a trend chase
-    (4) Enter NOW @current? YES, but only as the same B-size lower-box buy, not as an add
-  -> Chosen: C. Keep the original box invalidation. Widening beyond 158.810 would turn a range edge into hope.
-
-### EUR_USD -3000u id=469121 UPL approx -48 JPY
-  A - Hold + adjust: widen SL to 1.17765 only if converting this into an H1 sell-rally hold; TP would remain 1.17540 or deeper 1.17520.
-  B - Cut and re-enter: close now only if 1.17635 accepts, then re-enter on the next 1.1761-1.1762 upper-band test or after 1.17570 breaks lower again.
-  C - Hold as-is REQUIRES all 4:
-    (1) Changed since last session: the first short died on a too-tight stop at the same upper-band retest; the re-arm was placed at the actual range ceiling and filled higher.
-    (2) Entry TF: M5
-        M15: range / squeeze, still not a true upside breakout -> neutral-to-supportive for the fade
-        M1: rebound already completed into the upper band -> supports the short only if the next candles fail to accept above 1.17615-35
-    (3) H4: H1/H4 still do not confirm a clean upside reclaim -> Room? YES for a move back to the mid, NO for a loose H1 swing stop
-    (4) Enter NOW @current? YES, as a B-only upper-band fade; this is the honest range price
-  -> Chosen: C. The new stop is outside the M5 box. Widening to the H1 mid would turn a B-range short into a stale-story swing.
-
-## 7-Pair Scan
-### Tier 1
-EUR_USD [HELD] - RANGE 1.1746-1.1761
-  Chart tells me: direct-USD rebound ran straight into the upper band, then the refreshed M5 print stopped trending and reclassified as RANGE.
-  Expression fit: best direct-USD seat because the upper edge is real and the spread is still normal.
-  MTF chain: H1 offered shell -> M15 squeeze/range -> M5 upper-band fade -> M1 rebound already completed into the sell zone.
-  NOW: live SHORT id=469121 @1.17615 TP=1.17540 SL=1.17635
-  RELOAD: none unless 1.17610 retests again after partial TP
-  SECOND SHOT / OTHER SIDE: LONG only if 1.17635 accepts on bodies and 1.17640+ holds
-
-USD_JPY [HELD] - RANGE 158.83-159.03
-  Chart tells me: the squeeze released down into the lower rail, then stopped accelerating; refreshed M5 now shows a buyable lower-box range rather than a clean breakdown.
-  Expression fit: backup vehicle only because the lower-box price is honest and H1 still leans mild-bull.
-  MTF chain: H1 mild-bull dip-buy -> M15 range/squeeze -> M5 lower-box test -> M1 flush needs defense.
-  NOW: live LONG id=469115 @158.900 TP=159.000 SL=158.810
-  RELOAD: none; already live at the rail
-  SECOND SHOT / OTHER SIDE: SHORT only if 158.810 accepts on bodies toward 158.66
-
-### Tier 2
-GBP_USD: SQUEEZE-leaning-bear | bounce already printed
-  EXPRESSION: dirty - cable short still has real shelf failure, but pair memory remains pass-unless-exceptional and EUR_USD is cleaner
-  NOW: SHORT only on 1.3499-1.3500 rejection
-  RELOAD: 1.3500 lid retest + stall
-  OTHER SIDE: LONG only on 1.35035 acceptance
-  -> Edge B / Allocation C / SKIP for now
-
-AUD_USD: SQUEEZE-leaning-bear | weak rebound from lower half
-  EXPRESSION: dirty - no-edge pair
-  NOW: SHORT only on 0.7152 rejection
-  RELOAD: 0.71525-35 failed retest
-  OTHER SIDE: LONG only on 0.71535 acceptance
-  -> Edge C / Allocation C / SKIP
-
-EUR_JPY: RANGE under H1 bear | upper-wick sell box still visible
-  EXPRESSION: acceptable - spread improved but still not cleaner than owned lanes
-  NOW: SHORT only on 186.90-92 rejection
-  RELOAD: 186.90 upper-box touch + fail
-  OTHER SIDE: LONG only on 186.93+ acceptance
-  -> Edge B / Allocation C / SKIP
-
-GBP_JPY: late-bear / squeeze | spread still wide
-  EXPRESSION: dirty - offered tape but too expensive
-  NOW: SHORT only on 214.50-56 failure with narrower spread
-  RELOAD: same zone
-  OTHER SIDE: LONG only on 214.56 acceptance
-  -> Edge C / Allocation C / SKIP
-
-AUD_JPY: RANGE with weak floor | fresh floor still not proved
-  EXPRESSION: dirty - live floor failed earlier and reclaim remains weak
-  NOW: LONG only if 113.60 reclaims from a fresh 113.54/56 base
-  RELOAD: 113.54-56 hold + reclaim
-  OTHER SIDE: SHORT only on 113.54 acceptance lower
-  -> Edge C / Allocation C / SKIP
-
-## S Excavation Matrix
-USD_JPY: Best expression LONG lower-box hold (live id=469115) | Why not S now flush defense still not proved | Upgrade to S only if 158.86 reclaims and holds with green M1 follow-through | Dead if 158.810 accepts on bodies
-EUR_USD: Best expression SHORT upper-band fade (live id=469121) | Why not S now pure range scalp, not a clean H1 downside release | Upgrade to S only if 1.17610 rejects and 1.17570 breaks back down | Dead if 1.17635 accepts on bodies
-GBP_USD: Best expression SHORT weak retest | Why not S now pair memory still says pass unless exceptional | Upgrade to S only if 1.3499-1.3500 fails and EUR_USD is no longer cleaner | Dead if 1.35035 accepts
-AUD_USD: Best expression SHORT weak retest | Why not S now no-edge squeeze | Upgrade to S only if 0.7152 rejects and USD bid re-expands | Dead if 0.71535 accepts
-EUR_JPY: Best expression SHORT upper box 186.90-92 | Why not S now spread + mid-rotation location | Upgrade to S only if 186.90 rejects on fresh upper wick | Dead if 186.93 accepts
-GBP_JPY: Best expression SHORT weak retest 214.50-56 | Why not S now spread too wide and learning cap still blocks fresh deployment | Upgrade to S only if spread normalizes and 214.50 fails again | Dead if 214.56 accepts
-AUD_JPY: Best expression PASS until 113.54-60 resolves | Why not S now recent floor invalidation still dominates | Upgrade to S only if 113.54/56 base forms and 113.60 reclaims | Dead if 113.54 accepts lower
-Podium #1: EUR_USD SHORT | Closest-to-S because the cleanest direct-USD edge is now live at the upper band | Still blocked by range-only context, not trend release | If it upgrades: MARKET
-Podium #2: USD_JPY LONG | Closest-to-S because the lower-box receipt is live and H1 still supports a dip-buy | Still blocked by unproved lower-box defense | If it upgrades: MARKET
-Podium #3: GBP_USD SHORT | Closest-to-S because the shelf failure is still real | Still blocked by pass-unless-exceptional pair history | If it upgrades: LIMIT
-
-## S Hunt
-Short-term S (5-30m): EUR_USD SHORT / upper-band range fade
-  Why S: live direct-USD upper-band rejection with a real receipt, not prose
-  Promotion proof: blocker was no real upper-band rearm after the stop -> cleared by LIMIT order id=469120 / trade id=469121
-  MTF chain: H1 offered shell | M15 range/squeeze | M5 upper-band test | M1 rebound already completed
-  Payout path: 1.17615 -> 1.17540
-  Orderability: live trade
-  If not live: sell the next 1.1761 upper-band touch only
-  invalidation: 1.17635 acceptance
-  Deployment result: entered trade id=469121
-
-Medium-term S (30m-2h): USD_JPY LONG / lower-box mean reversion
-  Why S: the parked lower-box buy finally filled and H1 still leans mild-bull
-  Promotion proof: blocker was no receipt -> cleared by LIMIT id=469106 filling as trade id=469115
-  MTF chain: H1 mild-bull | M15 range/squeeze | M5 lower-box test | M1 flush needs defense
-  Payout path: 158.900 -> 159.000
-  Orderability: live trade
-  If not live: next honest seat is only another lower-box reclaim, not a higher rewrite
-  invalidation: 158.810 body acceptance
-  Deployment result: entered trade id=469115
-
-Long-term S (2h-1day): EUR_USD LONG / direct-USD repair memory
-  Why S: the higher-timeframe repair edge still exists in memory, but this session still has not printed a true H1 reclaim
-  Promotion proof: none — no seat cleared promotion gate
-  MTF chain: H4 repair memory | M15 payer absent | M5 range upper | M1 breakout acceptance unproved
-  Payout path: 1.17635+ acceptance -> 1.1775+
-  Orderability: STILL PASS(dead only - use only when no seat cleared promotion gate)
-  If not live: exact trigger 1.17635+ accepted bodies with follow-through
-  invalidation: fresh failure back under 1.17570
-  Deployment result: dead thesis because no seat cleared promotion gate
-
-## Multi-Vehicle Deployment
-Lane 1 / PRIMARY: EUR_USD SHORT entered id=469121
-Lane 2 / BACKUP: USD_JPY LONG entered id=469115
-Lane 3 / THIRD CURRENCY: none - GBP_USD / AUD_JPY did not clear the orderability gate
-Book rule: not same-pair averaging | distinct execution logic | current margin about 34.3%
-
-## Pending LIMITs
-No standalone entry limits. Only attached TP / SL orders remain on the two live trades.
-
-## Capital Deployment
-Margin: about 34.3% used with both live trades.
-Horizon deployment: short-term EUR_USD SHORT live id=469121 | medium-term USD_JPY LONG live id=469115 | long-term EUR_USD LONG dead thesis because no seat cleared promotion gate
-Short-term: EUR_USD SHORT live trade id=469121
-Medium-term: USD_JPY LONG live trade id=469115
-Long-term: EUR_USD LONG dead thesis because no seat cleared promotion gate
-LIVE NOW: EUR_USD SHORT id=469121 and USD_JPY LONG id=469115
-RELOAD: none - both honest seats are already live
-SECOND SHOT / OTHER SIDE: EUR_USD LONG only on 1.17635+ acceptance; USD_JPY SHORT only on 158.810 body acceptance
-Flat-book status: not flat
-Quality bar: patient, B-max until next win
-Next fresh risk allowed NOW: none besides management of the two live receipts
-Trigger audit: the prior EUR_USD short stop was a noise-tight stop on the correct upper-band zone; the next honest state was a higher rearm with a wider outside-range stop, and that is now live as trade id=469121
+No open trades.
 
 ## OODA / Decision Journal
-Observe: EUR_USD stopped the first short at the exact upper-band retest, while USD_JPY filled the parked lower-box buy at the same time.
-Orient: refreshed charts show both pairs as RANGE, not clean breakouts. That converts the session into precise edge execution instead of directional chase.
-Decide: keep USD_JPY as a box-edge hold, re-arm EUR_USD higher as the direct-USD fade, and refuse third-lane clutter.
-Act: USD_JPY remains live id=469115. EUR_USD was re-armed via LIMIT id=469120 and filled as trade id=469121.
+Observe: EUR_USD M5 kept stepping down into the lower half and EUR_USD M1 printed a clean lower staircase; EUR_JPY only repaired off 187.12 then flattened under 187.21; GBP_JPY and AUD_JPY repaired into broken shelves without real acceptance.
+Orient: the learning board still keeps EUR_USD LONG as the best direct-USD seat; EUR_JPY LONG remains the cleanest cross only as retest / reclaim; late-session event asymmetry makes cross-market execution weaker than the story.
+Decide: keep the book flat except for EUR_USD LIMIT `469229`; do not convert unfinished JPY-cross repair into market participation.
+Act: no new order. Leave EUR_USD LONG LIMIT `469229` untouched.
 
 ## Hot Updates
-- 2026-04-20 06:54 UTC | EUR_USD LONG watch | no seat cleared promotion gate. Next seat: require 1.17635+ accepted bodies with follow-through invalidation: fresh failure back under 1.17570, not a rewrite.
-- 2026-04-20 06:49 UTC | EUR_USD SHORT | first stop was noise-tight at the same upper band. Next seat correction: if fading this box, use the true 1.1761 ceiling with stop outside the range, not inside it.
-- 2026-04-20 06:43 UTC | USD_JPY LONG | parked lower-box receipt finally filled during the direct-USD squeeze. Next seat correction: manage it as a range-edge buy only; no add unless 158.86 reclaims cleanly.
+- 2026-04-20 23:46 UTC | EUR_USD LONG | M1 is still staircasing lower into the shelf | keep 1.17815 as the only honest rebuy, no market chase
+- 2026-04-20 23:46 UTC | EUR_JPY LONG | floor recoil held, but 187.21/24 never accepted on bodies and pretrade says TP/spread is still too thin | next seat stays 187.16-12 reload or true acceptance only
+- 2026-04-20 23:46 UTC | GBP_JPY LONG | repair reached the lid, but pretrade still fails the payoff floor vs spread | no fresh cross-long rescue while 214.98/215.00 remains only a cap test
+- 2026-04-20 23:46 UTC | AUD_JPY LONG | repair bounced to 114.03/04 then flattened under the shelf | quiet rebound is still limit-only, not market participation
+
+## Directional Mix
+Positions: 0 LONG / 0 SHORT / 0 pairs
+Direction mix: mixed not applicable while flat.
+Best rotation candidate: EUR_USD SHORT only below 1.17758 failure.
+I would enter this rotation because: the defended floor would be dead and the squeeze would finally resolve lower.
+I would NOT enter because: the floor is still intact right now.
+Action: PASSED - missing the body failure below 1.17758.
+
+## 7-Pair Scan
+USD_JPY: RANGE/SQUEEZE | failed 158.90 pop, then tiny mixed bodies under the cap. MTF hinge: H4/H1 still bear-leaning, M15 box, M1 just repaired into the lid. Indicator combo: failed breakout + squeeze + JPY still firm. EXPRESSION: acceptable SHORT fade, but mid-box now. NOW: none. RELOAD: SHORT only on 158.85 rejection. OTHER SIDE: LONG only on 158.83/85 body reclaim. -> Edge C / Allocation C SKIP.
+EUR_USD: RANGE/SQUEEZE | bought lower wash, then lower-band bleed back toward support. MTF hinge: H4/H1 bull, M15 correction, M1 lower staircase. Indicator combo: H1 bull + range lower half + exact structural defense. EXPRESSION: clean. NOW: no market order while M1 still bleeds. RELOAD: LONG 1.17815 with immediate floor hold. OTHER SIDE: SHORT only below 1.17758 failure. -> Edge A / Allocation B LIMIT reload id=469229.
+GBP_USD: SQUEEZE | defended floor, but still flat under EMA20. MTF hinge: H4 bull, H1 range, M15/M5 squeeze, M1 still lower-half. Indicator combo: defended 1.3531 floor + reclaim-not-printed. EXPRESSION: acceptable but late. NOW: none. RELOAD: LONG only on 1.35355 body acceptance. OTHER SIDE: SHORT only if 1.35320 fails. -> Edge B / Allocation C SKIP.
+AUD_USD: SQUEEZE | quiet drift only, no impulse. MTF hinge: H4/H1 bull, M15 corrective, M1 lower drift after the pop. Indicator combo: AUD strongest higher up but pair edge still restricted. EXPRESSION: dirty vs EUR_USD. NOW: none. RELOAD: LONG 0.71772/45 support only. OTHER SIDE: SHORT only if 0.71772 fails. -> Edge C / Allocation C SKIP.
+EUR_JPY: SQUEEZE | 187.12 flush was bought, then price flattened just under 187.21. MTF hinge: H4/H1 bull, M15 pause, M1 repaired then capped. Indicator combo: higher-frame bull + floor recoil + reclaim still missing. EXPRESSION: acceptable cross backup. NOW: none. RELOAD: LONG 187.16-12. OTHER SIDE: LONG only on 187.21/24 body acceptance or SHORT only if 187.12 fails. -> Edge B / Allocation C SKIP.
+GBP_JPY: SQUEEZE | failed 215.08 breakout, lower-half repair reached the lid but not acceptance. MTF hinge: H4/H1 bull, M15 range, M1 repaired into 214.98 cap. Indicator combo: failed-break repair + wide spread. EXPRESSION: dirty cross. NOW: none. RELOAD: SHORT 214.98/215.10 reject or LONG only on true 215.00 acceptance. OTHER SIDE: LONG 214.84 defense only if price flushes and repairs again. -> Edge B / Allocation C SKIP.
+AUD_JPY: SQUEEZE | failed 114.07 breakout, rebound reached 114.03/04 then flattened. MTF hinge: H4/H1 bull, M15 fatigue, M1 rebound only. Indicator combo: broken shelf + quiet repair + learning cap A max. EXPRESSION: quiet limit-only. NOW: none. RELOAD: LONG 113.97/94 or SHORT 114.03/07 reject. OTHER SIDE: LONG only after 114.06 acceptance. -> Edge C / Allocation C SKIP.
+
+## S Excavation Matrix
+USD_JPY: Best expression cap-reject SHORT | Best A/S path failed 158.90 pop + M5 squeeze break lower | Why not S now mid-box compression | Upgrade to S only if 158.85 rejects again or 158.76 breaks on bodies | Dead if 158.83/85 accepts on bodies
+EUR_USD: Best expression first-defense LONG | Best A/S path H1 bull + bought lower wash + 1.17815 defense + M1 higher low on fill | Why not S now M1 is still bleeding lower at the live quote | Upgrade to S only if 1.17815 fills and holds immediately | Dead if 1.17758 fails
+GBP_USD: Best expression reclaim LONG | Best A/S path H1 bull + 1.3531 floor + 1.35355 body acceptance | Why not S now reclaim absent | Upgrade to S only if 1.35355 accepts on bodies | Dead if 1.35320 fails
+AUD_USD: Best expression dip LONG | Best A/S path H4/H1 bull + 0.71772/45 support + AUD pulse re-expands | Why not S now no proven pair edge and no live expansion | Upgrade to S only if support holds with expanding bodies | Dead if 0.71772 fails first
+EUR_JPY: Best expression pullback LONG | Best A/S path H1 bull + 187.16/12 floor + 187.21/24 reclaim with M1 acceptance | Why not S now repaired shelf is still a box, not a reclaim | Upgrade to S only if 187.12 holds then 187.21/24 accepts on bodies | Dead if 187.12/14 fails
+GBP_JPY: Best expression failed-break SHORT or deeper defense LONG | Best A/S path 214.98/215.10 cap reject or 214.84 floor defense with true reclaim | Why not S now lower-half shelf and 3.7pip spread | Upgrade to S only if the cap rejects cleanly again or 215.00 accepts with spread normalization | Dead if 215.00 accepts on bodies
+AUD_JPY: Best expression failed-break SHORT or quiet first-defense LONG | Best A/S path 113.97/94 defense or 114.03/07 reject with the shelf still broken | Why not S now repair remains under the shelf and the move is still quiet | Upgrade to S only if the shelf rejects cleanly again or 114.06 accepts with expansion | Dead if 114.06 accepts on bodies
+Podium #1: EUR_USD LONG | Closest-to-S because tournament #1 + best direct-USD + learning 99/100 confirmed edge / late headwind | MTF/indicator combo H1 bull + bought M5 lower wash + 1.17815 defense + M1 hold on fill | Still blocked by already armed; leave it alone unless the thesis is dead | If it upgrades: LIMIT
+Podium #2: EUR_JPY LONG | Closest-to-S because it is still the cleanest cross if 187.12/16 holds and 187.21/24 re-accepts | MTF/indicator combo H1 bull + M5 recoil from floor + M1 reclaim above the midline | Still blocked by repaired shelf, not true acceptance | If it upgrades: STOP-ENTRY
+Podium #3: AUD_JPY LONG | Closest-to-S because it repaired faster than GBP_JPY and still has the quiet structural long lane | MTF/indicator combo H1 bull + 113.97/94 defense + 114.06 reclaim | Still blocked by quiet repair under the broken shelf and limit-only orderability | If it upgrades: LIMIT
+
+## A/S Excavation Mandate
+Best A/S live now: none only because every live candidate is explicitly contradicted by the current M1/M5 location.
+Why this is A/S: no live quote cleared the bar; the clean ideas are reload or reclaim seats, not market participation.
+MTF/indicator combo: none promoted.
+Why this is not just B: none.
+Order now: dead thesis because no live quote cleared promotion.
+Best A/S one print away: EUR_USD LONG.
+Missing print: 1.17815 retest and immediate M1 higher-low / floor hold.
+MTF/indicator combo waiting to complete: H1 bull + bought M5 shelf + exact defense price + M1 hold on fill + normal spread.
+Arm now as: LIMIT id=469229.
+Best A/S I am explicitly rejecting: EUR_JPY LONG at market.
+Exact contradiction: the current quote is only a repaired shelf inside a squeeze and the reclaim through 187.21/24 has not printed yet.
+
+## S Hunt
+Short-term S (5-30m):
+  Pair / dir / type: none
+  Why this is S on this horizon: every live quote is still inside the squeeze, not beyond it
+  Promotion proof: none - no seat cleared promotion gate
+  MTF chain: none
+  A/S proof combo: none
+  Why this is not B anymore: none
+  Payout path: none
+  Orderability: STILL PASS(dead only - use only when no seat cleared promotion gate)
+  If not live: exact trigger none | invalidation none
+  Deployment result: dead thesis because no seat cleared promotion gate: all live quotes remain coils or late shelves
+Medium-term S (30m-2h):
+  Pair / dir / type: EUR_USD LONG / reload LIMIT
+  Why this is S on this horizon: only normal-spread structural receipt that matches the core edge without paying a late shelf
+  Promotion proof: blocker was "current quote too late to rebuy" -> cleared by structural LIMIT `469229` at 1.17815
+  MTF chain: H4/H1 story bull with room | M15 payer corrective against the bigger weak-USD story | M5 seat lower-band bleed into support | M1 trigger hold needed on fill because the live M1 chart is still stepping lower now
+  A/S proof combo: H1 bull + bought lower wash + exact defense price + normal spread + core edge memory
+  Why this is not B anymore: it is a real armed receipt, not prose-only interest
+  Payout path: 1.17815 -> 1.17893 within the next 30m-2h
+  Orderability: LIMIT
+  If not live: exact trigger 1.17815 defended | invalidation 1.17758
+  Deployment result: armed LIMIT id=469229
+Long-term S (2h-1day):
+  Pair / dir / type: none
+  Why this is S on this horizon: event risk arrives before any cleaner long-horizon seat
+  Promotion proof: none - no seat cleared promotion gate
+  MTF chain: none
+  A/S proof combo: none
+  Why this is not B anymore: none
+  Payout path: none
+  Orderability: STILL PASS(dead only - use only when no seat cleared promotion gate)
+  If not live: exact trigger none | invalidation none
+  Deployment result: dead thesis because no seat cleared promotion gate: event risk arrives before any cleaner long-horizon seat
+
+## Multi-Vehicle Deployment
+Lane 1 / PRIMARY: EUR_USD LONG armed LIMIT id=469229
+Lane 2 / BACKUP: dead thesis because EUR_JPY still needs 187.21/24 acceptance and the current breakout template fails the payoff floor once 2.0pip spread is charged
+Lane 3 / THIRD CURRENCY: dead thesis because no third-currency lane cleared promotion gate
+Book rule: not same-pair averaging | distinct currency expression if possible | worst-case margin after all pending fills < 90%
+
+## Pending LIMITs
+EUR_USD @1.17815 id=469229 | age=98m | expires_in=283m | live_gap=3.1pip (2.1x M5 ATR / 3.9x spread)
+Exact seat if touched now: STILL YES
+Cleaner live alternative on this pair: NONE
+Action: LEAVE because the exact defense price is still valid and the live tape is moving toward it rather than proving a cleaner market buy.
+
+## Capital Deployment
+Margin: 0.0% used -> after all pending fill: about 7%
+Horizon deployment: Short-term dead thesis because no seat cleared promotion gate | Medium-term EUR_USD LONG armed LIMIT id=469229 | Long-term dead thesis because no seat cleared promotion gate
+Multi-vehicle lanes: PRIMARY EUR_USD LONG armed LIMIT id=469229 | BACKUP dead thesis because no backup lane cleared promotion gate | THIRD CURRENCY dead thesis because no third-currency lane cleared promotion gate
+LIVE NOW: none
+RELOAD: EUR_USD LONG LIMIT @1.17815 TP=1.17893 SL=1.17758 id=469229
+SECOND SHOT / OTHER SIDE: none armed; failure-side short stays dead until 1.17758 actually fails
+Flat-book status: flat but covered by real reload receipt id=469229
+Day: -0.60% vs benchmark. -716.98 JPY from day-start NAV.
+Quality bar: patient because tape is late or dirty
+Tempting but invalid recovery trade: market-buy EUR_JPY or GBP_JPY now - invalid because both are still repaired shelves, not accepted breaks
+Next fresh risk allowed NOW: EUR_USD LONG via id=469229 - only if 1.17815 touches and immediately holds
+Trigger audit: Prior named seat EUR_USD LONG @1.17815 | Since last session untouched | This session response LEAVE RELOAD LIMIT
+Best direct-USD seat: EUR_USD LONG | Deployment: id=469229
 
 ## Deepening Pass
-Best direct-USD seat: EUR_USD SHORT live. The missing piece was an honest upper-band price; now the seat is closed as a real trade, not prose.
-Best cross seat: USD_JPY LONG live. The missing piece remains defense, not discovery.
+Best direct-USD seat: EUR_USD LONG reload. H4/H1 story: H4 MID BULL with room and H1 still constructive, not broken. M15 payer: corrective against the bigger weak-USD story. M5 seat: lower-band bleed toward the defense zone, not a fresh market buy. M1 trigger: a clear lower staircase into support; the live M1 chart still needs touch-and-hold at 1.17815 before buyers earn market participation. 6-category evidence: Direction=H4/H1 bull intact | Timing=better lower, not here | Momentum=M1/M5 flat to down right now | Structure=1.17815 defense / 1.17758 invalidation / 1.17893 target | Cross-pair=cleaner than GBP_USD and more orderable than AUD_USD drift | Macro=weak-USD backdrop still alive. Orderability now: LIMIT only via id=469229.
+Best cross seat: EUR_JPY LONG reload. H4/H1 story: both still bull with room. M15 payer: quiet pause, not expansion. M5 seat: 187.12 flush got bought, then price flattened under the box high. M1 trigger: repair is visible, but 187.21/24 body acceptance is still missing. 6-category evidence: Direction=H4/H1 bull | Timing=better lower or on true reclaim | Momentum=M1 repair only, not expansion | Structure=187.12 floor / 187.21-24 reclaim / 187.28 cap | Cross-pair=cleaner than GBP_JPY but still event-sensitive | Macro=JPY headline risk still caps lazy cross-long aggression. Different lens: pretrade at 187.214/187.285/187.148 graded Edge C because 7.1pip TP is only 3.5x the 2.0pip spread and the most recent exact thesis lost. Orderability now: STILL PASS at the current quote; next honest seat is 187.16-12 reload or true 187.21/24 acceptance.
 
 ## Action Tracking
-- Day-start NAV: 120557.42 JPY
-- Balance now: 121324.7332 JPY -> realized +767.3 JPY
-- NAV now: 121049.5390 JPY -> live +492.1 JPY
-- Target: 10%+ (min 5%). Progress: 5535.8 JPY short of +5% on live NAV basis
-- Last action: 2026-04-20 06:49 UTC re-armed and filled EUR_USD SHORT at the upper band (trade id=469121)
-- Next action trigger: EUR_USD body acceptance above 1.17635 or USD_JPY body acceptance below 158.810
+- Day-start NAV: 120485.39
+- Today's confirmed P&L: -716.98 JPY = -0.60% of day-start NAV
+- Target: 10%+ (min 5%). Progress: behind - need 6741.25 JPY more for +5%
+- Last action: 2026-04-20 23:50 UTC second-pass fib/pretrade review killed EUR_JPY and GBP_JPY breakout receipts on payoff-floor grounds; EUR_USD LIMIT `469229` remains the only honest receipt
+- Next action trigger: EUR_USD 1.17815 touch-and-hold; otherwise stay flat
 
 ## Lessons (Recent)
-- 2026-04-20: a correct EUR_USD upper-band fade still fails if the stop is parked inside the band. Range trades need outside-range protection or they are just donation.
-- 2026-04-20: the parked backup lane mattered. USD_JPY filled exactly when the direct-USD lane was whipping, which is why real secondary receipts matter more than prose backups.
+- A live direct-USD shelf that is still printing an M1 lower staircase stays a price-improvement order, not a market rebuy.
+- A JPY-cross recoil from the floor is still only excavation until the micro-box high actually re-accepts on bodies.
+- A flat book is honest when one real structural receipt remains and every other horizon is closed explicitly as dead or blocked.

@@ -38,6 +38,7 @@ if not (_MAIN_ROOT / "config" / "env.toml").exists():
 
 sys.path.insert(0, str(ROOT / "tools"))
 
+from technicals_json import load_technicals_timeframes
 from market_state import get_market_state
 from bot_policy import (
     global_status_allows_new_entries,
@@ -206,7 +207,7 @@ def load_technicals(pair: str) -> dict:
     f = _MAIN_ROOT / f"logs/technicals_{pair}.json"
     if not f.exists():
         return {}
-    return json.loads(f.read_text()).get("timeframes", {})
+    return load_technicals_timeframes(f)
 
 
 def fetch_prices(token: str, acct: str) -> dict:

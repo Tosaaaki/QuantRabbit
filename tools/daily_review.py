@@ -30,6 +30,7 @@ PRETRADE_MATCH_HOURS = 72
 RECURRING_TAG_PREFIXES = ("trader",)
 LESSON_REGISTRY_JSON = ROOT / "collab_trade" / "memory" / "lesson_registry.json"
 MAX_AUDIT_SIGNAL_GAP_HOURS = 12
+HOSTILE_LIVE_TAPE_BUCKETS = {"friction", "spread_unstable", "two_way", "opposed", "unavailable"}
 
 
 def payoff_metrics(pls: list[float]) -> dict:
@@ -751,6 +752,363 @@ def collapse_duplicate_pretrade_probes(conn) -> int:
     return deleted
 
 
+def _recent_pretrade_feedback_rows(
+    conn,
+    outcome: dict,
+    *,
+    exact_only: bool = False,
+    family_only: bool = False,
+    limit: int = 4,
+) -> list[dict]:
+    conditions = ["pair = ?", "direction = ?", "pl IS NOT NULL"]
+    params: list[object] = [outcome["pair"], outcome["direction"]]
+
+    thesis_key = outcome.get("thesis_key")
+    thesis_family = outcome.get("thesis_family")
+    thesis_trigger = outcome.get("thesis_trigger")
+    thesis_vehicle = outcome.get("thesis_vehicle")
+    if exact_only and thesis_key:
+        conditions.append("COALESCE(thesis_key, '') = ?")
+        params.append(thesis_key)
+    elif family_only and thesis_family:
+        conditions.append("COALESCE(thesis_family, '') = ?")
+        params.append(thesis_family)
+        if thesis_key:
+            conditions.append("(thesis_key IS NULL OR thesis_key != ?)")
+            params.append(thesis_key)
+    else:
+        scoped = []
+        if thesis_trigger:
+            scoped.append("COALESCE(thesis_trigger, '') = ?")
+            params.append(thesis_trigger)
+        if thesis_vehicle:
+            scoped.append("COALESCE(thesis_vehicle, '') = ?")
+            params.append(thesis_vehicle)
+        if not scoped:
+            conditions.append("pretrade_level = ?")
+            params.append(outcome.get("pretrade_level"))
+            if outcome.get("execution_style"):
+                conditions.append("COALESCE(execution_style, '') = ?")
+                params.append(outcome.get("execution_style"))
+        else:
+            conditions.append("(" + " OR ".join(scoped) + ")")
+
+    params.append(limit)
+    return fetchall_dict(
+        conn,
+        f"""SELECT id, session_date, pl, execution_style, lesson_from_review,
+                  thesis_trigger, thesis_vehicle, collapse_layer
+           FROM pretrade_outcomes
+           WHERE {' AND '.join(conditions)}
+           ORDER BY id DESC
+           LIMIT ?""",
+        tuple(params),
+    )
+
+
+def _loss_streak(rows: list[dict]) -> tuple[int, float]:
+    streak = 0
+    total = 0.0
+    for row in rows:
+        pl = float(row.get("pl") or 0.0)
+        if pl >= 0:
+            break
+        streak += 1
+        total += pl
+    return streak, total
+
+
+def _clip_feedback(text: str, limit: int = 280) -> str:
+    compact = " ".join(str(text or "").split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _live_tape_bucket_label(bucket: str | None) -> str:
+    text = str(bucket or "unknown").strip().replace("_", " ")
+    return text or "unknown"
+
+
+def _live_tape_summary(row: dict) -> str | None:
+    bucket = str(row.get("live_tape_bucket") or "").strip()
+    bias = str(row.get("live_tape_bias") or "").strip()
+    state = str(row.get("live_tape_state") or "").strip()
+    if not bucket and not bias and not state:
+        return None
+    parts = []
+    if bucket:
+        parts.append(_live_tape_bucket_label(bucket))
+    detail = " / ".join(part for part in (bias, state) if part)
+    if detail:
+        if parts:
+            return f"{parts[0]} ({detail})"
+        return detail
+    return parts[0] if parts else None
+
+
+def _loss_attribution_bucket(row: dict) -> str:
+    collapse = str(row.get("collapse_layer") or "").strip().lower()
+    style = str(row.get("execution_style") or "").strip().upper()
+    live_bucket = str(row.get("live_tape_bucket") or "").strip().lower()
+
+    if collapse in {"vehicle", "trigger"}:
+        return "execution_tape"
+    if style == "MARKET" and live_bucket in HOSTILE_LIVE_TAPE_BUCKETS:
+        return "execution_tape"
+    if collapse in {"market", "structure"}:
+        return "market_structure"
+    if collapse == "aging" or style == "PASS":
+        return "stale_process"
+    return "unclassified"
+
+
+def _pretrade_failure_attribution_lines(outcomes: list[dict]) -> list[str]:
+    losses = [row for row in outcomes if float(row.get("pl") or 0.0) < 0]
+    if not losses:
+        return []
+
+    labels = {
+        "execution_tape": "Execution / Tape",
+        "market_structure": "Market / Structure",
+        "stale_process": "Stale / Process",
+        "unclassified": "Unclassified",
+    }
+    buckets: dict[str, list[dict]] = {key: [] for key in labels}
+    tape_buckets: dict[str, list[dict]] = {}
+
+    for row in losses:
+        buckets[_loss_attribution_bucket(row)].append(row)
+        tape_key = str(row.get("live_tape_bucket") or "unknown").strip() or "unknown"
+        tape_buckets.setdefault(tape_key, []).append(row)
+
+    hostile_market = [
+        row for row in losses
+        if str(row.get("execution_style") or "").upper() == "MARKET"
+        and str(row.get("live_tape_bucket") or "").strip().lower() in HOSTILE_LIVE_TAPE_BUCKETS
+    ]
+
+    lines = ["## Failure Attribution (market-state vs execution/tape)", ""]
+    for key in ("execution_tape", "market_structure", "stale_process", "unclassified"):
+        rows = buckets[key]
+        if not rows:
+            continue
+        total_pl = sum(float(row.get("pl") or 0.0) for row in rows)
+        lines.append(f"  {labels[key]}: {len(rows)} losses | {total_pl:+,.0f} JPY")
+    if hostile_market:
+        hostile_pl = sum(float(row.get("pl") or 0.0) for row in hostile_market)
+        lines.append(
+            f"  MARKET into hostile tape: {len(hostile_market)} losses | {hostile_pl:+,.0f} JPY"
+        )
+    lines.append("")
+    lines.append("### Losses By Entry Tape")
+    for tape_key, rows in sorted(
+        tape_buckets.items(),
+        key=lambda item: (sum(float(row.get("pl") or 0.0) for row in item[1]), -len(item[1]), item[0]),
+    ):
+        total_pl = sum(float(row.get("pl") or 0.0) for row in rows)
+        collapse_counts: dict[str, int] = {}
+        for row in rows:
+            collapse = str(row.get("collapse_layer") or "none").strip().lower() or "none"
+            collapse_counts[collapse] = collapse_counts.get(collapse, 0) + 1
+        dominant = ", ".join(
+            f"{layer} {count}"
+            for layer, count in sorted(collapse_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+        )
+        lines.append(
+            f"  {_live_tape_bucket_label(tape_key)}: {len(rows)} losses | {total_pl:+,.0f} JPY | collapse {dominant}"
+        )
+    lines.append("")
+    return lines
+
+
+def _collapse_counts(rows: list[dict]) -> dict[str, int]:
+    counts = {"market": 0, "structure": 0, "trigger": 0, "vehicle": 0, "aging": 0}
+    for row in rows:
+        layer = str(row.get("collapse_layer") or "").strip().lower()
+        if layer in counts:
+            counts[layer] += 1
+    return counts
+
+
+def _load_regret_rows(session_date: str) -> dict[str, dict]:
+    try:
+        from post_close_regret import build_regret_result_map
+    except Exception:
+        return {}
+    try:
+        return build_regret_result_map(session_date_from=session_date, hours=6)
+    except Exception:
+        return {}
+
+
+def _review_collapse_layer(
+    outcome: dict,
+    exact_rows: list[dict],
+    family_rows: list[dict],
+    regret_row: dict | None,
+) -> tuple[str | None, str | None]:
+    pl = float(outcome.get("pl") or 0.0)
+    if pl >= 0:
+        return None, None
+
+    style = str(outcome.get("execution_style") or "").upper()
+    exact_streak, _ = _loss_streak(exact_rows)
+    family_streak, family_total = _loss_streak(family_rows)
+    family_recent_wins = sum(1 for row in family_rows[:3] if float(row.get("pl") or 0.0) > 0)
+    recovered = bool(regret_row and regret_row.get("recovered"))
+    regret_component = str((regret_row or {}).get("collapse_component") or "")
+    family_counts = _collapse_counts(family_rows)
+    live_tape_bucket = str(outcome.get("live_tape_bucket") or "").strip().lower()
+    live_tape_context = _live_tape_summary(outcome)
+
+    if style == "PASS":
+        return "aging", "This overrode a blocked/pass seat. The thesis age was the problem, not a fresh market read."
+    if regret_component == "stale_thesis":
+        return "aging", "The loss came from a stale recycled idea. Do not rewrite the market story from a stale seat."
+    if exact_streak >= 2 or (family_streak >= 2 and family_recent_wins == 0 and family_counts["aging"] >= 1):
+        return "aging", f"The family is recycling losses ({family_total:+,.0f} JPY). The idea aged out before the tape improved."
+    if style == "MARKET" and live_tape_bucket in HOSTILE_LIVE_TAPE_BUCKETS:
+        detail = f" ({live_tape_context})" if live_tape_context else ""
+        return "vehicle", f"The entry paid market friction into hostile tape{detail}. Fix the vehicle before rewriting the direction."
+    if recovered:
+        if style == "MARKET" or regret_component == "vehicle_friction":
+            return "vehicle", "The market/structure later recovered. The paid market vehicle was wrong; wait for a better vehicle, not a new direction."
+        return "trigger", "The market/structure later recovered. The trigger or first wobble was misread as full thesis death."
+    if regret_component == "structure_break":
+        return "structure", "Price did not recover and the defended level failed. The structure layer, not just the trigger, was dead."
+    if regret_component in {"trigger_timing_fail", "manual_discretionary_cut"}:
+        return "trigger", "The exit treated a trigger wobble as thesis collapse. Keep the family alive but require a new print."
+    if regret_component == "vehicle_friction":
+        return "vehicle", "The execution vehicle paid friction without enough edge. Keep the story only if the next vehicle changes."
+    if live_tape_bucket == "opposed":
+        detail = f" ({live_tape_context})" if live_tape_context else ""
+        return "trigger", f"The tape was paying the other side at entry{detail}. The trigger was early even if the broader story looked attractive."
+    if family_streak >= 2 and family_recent_wins == 0 and (family_counts["market"] + family_counts["structure"] >= 2):
+        return "market", "The same market-state family is failing at the directional layer. Require a new market-state read, not a better entry."
+    if style in {"LIMIT", "STOP-ENTRY"}:
+        return "structure", "A better price / trigger did not save the trade and it did not recover. Treat the defended structure as broken."
+    return "market", "The trade did not recover and no better layer explanation survived. Treat the directional market-state read as wrong."
+
+
+def _generate_pretrade_review_note(
+    outcome: dict,
+    exact_rows: list[dict],
+    family_rows: list[dict],
+    regret_row: dict | None,
+) -> tuple[str | None, str | None, str | None]:
+    pl = float(outcome.get("pl") or 0.0)
+    style = str(outcome.get("execution_style") or "").upper()
+    level = str(outcome.get("pretrade_level") or "")
+    exact_streak, exact_total = _loss_streak(exact_rows)
+    family_streak, family_total = _loss_streak(family_rows)
+    family_recent_wins = sum(1 for row in family_rows[:3] if float(row.get("pl") or 0.0) > 0)
+    collapse_layer, collapse_note = _review_collapse_layer(outcome, exact_rows, family_rows, regret_row)
+
+    notes: list[str] = []
+    if pl < 0:
+        if style == "PASS":
+            notes.append("Trade overrode a pretrade PASS. Keep this thesis blocked until the written contradiction is gone.")
+        elif style == "MARKET":
+            notes.append("Market execution paid friction before proof. Re-enter only after a materially new trigger or a better vehicle exists.")
+        elif style == "STOP-ENTRY":
+            notes.append("Trigger proof was still not enough. Do not re-arm the same trigger without a materially new print.")
+        elif style == "LIMIT":
+            notes.append("Price improvement alone did not rescue the thesis. Wait for a new state change, not the same limit again.")
+        else:
+            notes.append("This thesis/vehicle failed. Require a materially new state change before the next attempt.")
+
+        if exact_streak >= 2:
+            notes.append(f"Same thesis key is now {exact_streak} straight losses ({exact_total:+,.0f} JPY).")
+        elif exact_rows:
+            notes.append("The most recent exact thesis is negative, so the next identical attempt should stay blocked.")
+        elif family_streak >= 2 and family_recent_wins == 0:
+            notes.append(f"The wider thesis family is still negative ({family_total:+,.0f} JPY). Keep it in watch/B lane.")
+        if collapse_layer and collapse_note:
+            survivor = {
+                "market": "If you retry, rewrite the market-state first.",
+                "structure": "Do not keep the same defended level alive just because the direction is attractive.",
+                "trigger": "Keep the market/structure story, but change the trigger print.",
+                "vehicle": "Keep the story only if the vehicle changes first.",
+                "aging": "Treat this as a stale idea, not a fresh read.",
+            }.get(collapse_layer, "")
+            notes.append(f"Collapse layer: {collapse_layer}. {collapse_note}")
+            if survivor:
+                notes.append(survivor)
+    else:
+        if style in {"LIMIT", "STOP-ENTRY"}:
+            notes.append("Proof-first execution matched the tape. Keep this thesis in trigger/price-improvement form until it repeats cleanly.")
+        elif style == "MARKET":
+            notes.append("Immediate execution worked today, but it upgrades only after repeated clean evidence.")
+        if level == "LOW":
+            notes.append("LOW was conservative here. Review whether this regime deserves promotion instead of treating the win as a fluke.")
+
+    if not notes:
+        return None, collapse_layer, collapse_note
+    return _clip_feedback(" ".join(notes)), collapse_layer, collapse_note
+
+
+def backfill_pretrade_review_feedback(conn, session_date: str, oanda_trades: list[dict]) -> int:
+    regret_rows = _load_regret_rows(session_date)
+    trade_ids = [trade["trade_id"] for trade in oanda_trades if trade.get("trade_id")]
+    if trade_ids:
+        placeholders = ",".join("?" for _ in trade_ids)
+        rows = fetchall_dict(
+            conn,
+            f"""SELECT id, session_date, pair, direction, pretrade_level, pl,
+                      execution_style, thesis_key, thesis_family, thesis_trigger, thesis_vehicle,
+                      lesson_from_review, collapse_layer, collapse_note, trade_id,
+                      live_tape_bias, live_tape_state, live_tape_bucket
+               FROM pretrade_outcomes
+               WHERE trade_id IN ({placeholders})
+                 AND pl IS NOT NULL
+                 AND (
+                    lesson_from_review IS NULL OR lesson_from_review = ''
+                    OR collapse_layer IS NULL OR collapse_layer = ''
+                    OR collapse_note IS NULL OR collapse_note = ''
+                 )
+               ORDER BY id DESC""",
+            tuple(trade_ids),
+        )
+    else:
+        rows = fetchall_dict(
+            conn,
+            """SELECT id, session_date, pair, direction, pretrade_level, pl,
+                      execution_style, thesis_key, thesis_family, thesis_trigger, thesis_vehicle,
+                      lesson_from_review, collapse_layer, collapse_note, trade_id,
+                      live_tape_bias, live_tape_state, live_tape_bucket
+               FROM pretrade_outcomes
+               WHERE session_date = ?
+                 AND pl IS NOT NULL
+                 AND (
+                    lesson_from_review IS NULL OR lesson_from_review = ''
+                    OR collapse_layer IS NULL OR collapse_layer = ''
+                    OR collapse_note IS NULL OR collapse_note = ''
+                 )
+               ORDER BY id DESC""",
+            (session_date,),
+        )
+
+    updated = 0
+    for row in rows:
+        exact_rows = _recent_pretrade_feedback_rows(conn, row, exact_only=True)
+        family_rows = _recent_pretrade_feedback_rows(conn, row, family_only=True)
+        regret_row = regret_rows.get(str(row.get("trade_id") or ""))
+        note, collapse_layer, collapse_note = _generate_pretrade_review_note(row, exact_rows, family_rows, regret_row)
+        if not note and not collapse_layer and not collapse_note:
+            continue
+        conn.execute(
+            """UPDATE pretrade_outcomes
+               SET lesson_from_review = COALESCE(?, lesson_from_review),
+                   collapse_layer = COALESCE(?, collapse_layer),
+                   collapse_note = COALESCE(?, collapse_note)
+               WHERE id = ?""",
+            (note, collapse_layer, collapse_note, row["id"]),
+        )
+        updated += 1
+    return updated
+
+
 def match_pretrade_outcomes(conn, session_date: str, oanda_trades: list[dict]):
     """Fill pl in the pretrade_outcomes table (linking predictions to results)"""
     repair_pretrade_outcome_links(
@@ -1130,7 +1488,10 @@ def analyze_s_hunt_ledger(session_date: str, oanda_trades: list[dict]) -> list[s
     except Exception:
         return []
 
-    return seat_outcome_review_lines(session_date)
+    try:
+        return seat_outcome_review_lines(session_date)
+    except Exception:
+        return []
 
 
 def analyze_s_excavation(session_date: str, oanda_trades: list[dict]) -> list[str]:
@@ -1140,7 +1501,10 @@ def analyze_s_excavation(session_date: str, oanda_trades: list[dict]) -> list[st
     except Exception:
         return []
 
-    return excavation_review_lines(session_date)
+    try:
+        return excavation_review_lines(session_date)
+    except Exception:
+        return []
 
 
 def generate_report(session_date: str) -> str:
@@ -1235,8 +1599,12 @@ def generate_report(session_date: str) -> str:
 
     # 2. pretrade_outcomes matching
     matched = match_pretrade_outcomes(conn, session_date, oanda_trades)
+    feedback_notes = backfill_pretrade_review_feedback(conn, session_date, oanda_trades)
     if oanda_trades:
         lines.append(f"## Pretrade Outcomes: {matched} newly matched")
+        lines.append("")
+    if feedback_notes:
+        lines.append(f"## Pretrade Feedback Notes: wrote {feedback_notes} review notes back to pretrade_outcomes")
         lines.append("")
 
     # 3. pretrade results vs actual P&L (include carry-over trades that closed today)
@@ -1246,6 +1614,8 @@ def generate_report(session_date: str) -> str:
         outcomes = fetchall_dict(
             conn,
             f"""SELECT session_date, pair, direction, pretrade_level, pretrade_score, pl, pretrade_warnings
+                , execution_style, live_tape_bias, live_tape_state, live_tape_bucket
+                , lesson_from_review, collapse_layer, collapse_note
                 FROM pretrade_outcomes
                 WHERE trade_id IN ({placeholders})
                 ORDER BY pl""",
@@ -1254,6 +1624,8 @@ def generate_report(session_date: str) -> str:
     else:
         outcomes = fetchall_dict(conn,
             """SELECT session_date, pair, direction, pretrade_level, pretrade_score, pl, pretrade_warnings
+               , execution_style, live_tape_bias, live_tape_state, live_tape_bucket
+               , lesson_from_review, collapse_layer, collapse_note
                FROM pretrade_outcomes
                WHERE session_date = ? AND pl IS NOT NULL
                ORDER BY pl""",
@@ -1265,11 +1637,24 @@ def generate_report(session_date: str) -> str:
         for o in outcomes:
             result = "WIN" if o['pl'] > 0 else "LOSS"
             carry = f" [checked {o['session_date']}]" if o.get('session_date') and o['session_date'] != session_date else ""
+            style = str(o.get("execution_style") or "").upper()
+            tape_summary = _live_tape_summary(o)
+            style_bits = []
+            if style:
+                style_bits.append(f"style={style}")
+            if tape_summary:
+                style_bits.append(f"tape={tape_summary}")
+            style_text = f" | {' | '.join(style_bits)}" if style_bits else ""
             lines.append(
                 f"  {o['pair']} {o['direction']} pretrade={o['pretrade_level']}(score={o['pretrade_score']})"
-                f"{carry} → {result} {o['pl']:+,.0f} JPY"
+                f"{carry} → {result} {o['pl']:+,.0f} JPY{style_text}"
             )
+            if o.get("lesson_from_review"):
+                lines.append(f"    → {o['lesson_from_review']}")
+            if o.get("collapse_layer"):
+                lines.append(f"    collapse={o['collapse_layer']}: {o.get('collapse_note') or 'no note'}")
         lines.append("")
+        lines.extend(_pretrade_failure_attribution_lines(outcomes))
 
         # Analysis of ignored LOW entries
         low_entries = [o for o in outcomes if o['pretrade_level'] == 'LOW']

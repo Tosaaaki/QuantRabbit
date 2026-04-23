@@ -10,11 +10,10 @@
 
 ## Host Differences
 
-- Codex currently runs `trader` every 20 minutes
-- Claude compatibility currently runs `trader` every 10 minutes
-- Codex `quality-audit` is currently paused
-- Claude compatibility `quality-audit` currently runs every 45 minutes
-- Shared runtime is lock-based: 10-minute minimum session, 15-minute stale-lock threshold, 17-minute watchdog
+- Codex currently runs `trader` every 20 minutes on `gpt-5.5` as a trial execution-owner profile
+- Codex `quality-audit` currently runs every 30 minutes on `gpt-5.4-mini`
+- Claude compatibility schedules are host-specific recovery paths, not the live Codex source of truth
+- Shared runtime is lock-based: 10-minute minimum session, 16-minute stale-lock threshold, 17-minute watchdog
 
 ## Source Of Truth
 

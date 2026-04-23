@@ -10,6 +10,8 @@ Examples:
     python3 tools/close_trade.py 465743 --reason zombie_hold --auto-log --auto-slack  # 全自動
     python3 tools/close_trade.py 465743 1000 --reason half_tp --auto-log --auto-slack  # 部分+全自動
     python3 tools/close_trade.py 468302 --reason worker_emergency_override --auto-log --auto-slack --force-worker-close
+    python3 tools/close_trade.py 469357 --reason false_break_reclaim --check-only
+    python3 tools/close_trade.py 469357 --reason structure_break --auto-log --auto-slack --force-full-close
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
+from close_discipline import decide_close_discipline
 from oanda_trade_tags import attach_trade_extensions
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,11 +88,35 @@ def parse_oanda_time(ts: str | None) -> datetime | None:
         return None
 
 
+def spread_pips_from_full_price(fill: dict, instrument: str) -> float | None:
+    full_price = fill.get("fullPrice") or {}
+    if not isinstance(full_price, dict):
+        return None
+    try:
+        bids = full_price.get("bids") or []
+        asks = full_price.get("asks") or []
+        if bids and asks:
+            bid = float(bids[0]["price"])
+            ask = float(asks[0]["price"])
+        else:
+            bid = float(full_price["closeoutBid"])
+            ask = float(full_price["closeoutAsk"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    pip_mult = 100 if "JPY" in instrument else 10000
+    return abs(ask - bid) * pip_mult
+
+
 def fetch_trade(trade_id: str) -> dict:
     trade = oanda_request(f"/v3/accounts/{{account_id}}/trades/{trade_id}").get("trade", {})
     if not trade:
         return trade
     return attach_trade_extensions(trade, oanda_request)
+
+
+def fetch_open_trades() -> list[dict]:
+    data = oanda_request("/v3/accounts/{account_id}/openTrades")
+    return data.get("trades", []) or []
 
 
 def enforce_worker_guard(trade: dict, reason: str, force_worker_close: bool) -> None:
@@ -129,11 +156,58 @@ def close_trade(
     auto_log: bool = False,
     auto_slack: bool = False,
     force_worker_close: bool = False,
+    force_full_close: bool = False,
+    check_only: bool = False,
 ):
     cfg = load_config()
     acct = cfg["oanda_account_id"]
     trade = fetch_trade(trade_id)
     enforce_worker_guard(trade, reason, force_worker_close)
+    open_trades = fetch_open_trades()
+
+    requested_units: int | None = None
+    if units:
+        requested_units = abs(int(units))
+
+    discipline = decide_close_discipline(
+        trade,
+        reason=reason,
+        requested_units=requested_units,
+        open_trades=open_trades,
+    )
+    if check_only:
+        print(
+            json.dumps(
+                {
+                    "trade_id": trade_id,
+                    "pair": trade.get("instrument"),
+                    "dead_layer": discipline["dead_layer"],
+                    "recommended_action": discipline["recommended_action"],
+                    "allow_full_close": discipline["allow_full_close"],
+                    "execution_style": discipline["execution_style"],
+                    "archetype": discipline["archetype"],
+                    "regime": discipline["regime"],
+                    "suggested_units": discipline["suggested_units"],
+                    "inventory_group": discipline["inventory_group"],
+                    "problems": discipline["problems"],
+                    "notes": discipline["notes"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return {"check_only": True, "discipline": discipline}
+
+    if not discipline["allow_full_close"] and not force_full_close:
+        problems = "; ".join(discipline["problems"]) or "full close blocked by close discipline"
+        notes = " | ".join(discipline["notes"])
+        suggested = discipline["suggested_units"]
+        raise RuntimeError(
+            f"close-discipline: {problems}. Suggested next step: close {suggested}u instead, or keep/reload the inventory leg. "
+            f"Dead layer={discipline['dead_layer']} action={discipline['recommended_action']}"
+            + (f" | {notes}" if notes else "")
+            + " | override only with --force-full-close."
+        )
 
     body = {}
     if units:
@@ -154,11 +228,7 @@ def close_trade(
             abs_units = abs(u)
             is_partial = units is not None
 
-            # Get spread from fill
-            half_spread = float(fill.get("halfSpreadCost", "0"))
-            # Estimate spread in pips
-            pip_mult = 100 if "JPY" in inst else 10000
-            spread_pips = abs(half_spread * 2 / abs_units * pip_mult) if abs_units > 0 else 0
+            spread_pips = spread_pips_from_full_price(fill, inst)
 
             print(f"CLOSED: {inst} {closed_units}u @{price} P/L={pl} JPY")
 
@@ -168,40 +238,42 @@ def close_trade(
 
             # Auto-log to live_trade_log.txt
             if auto_log:
-                log_line = f"[{now_str}] {action} {inst} {side} {abs_units}u @{price} P/L={pl}JPY Sp={spread_pips:.1f}pip{reason_str} id={trade_id}\n"
+                spread_text = f"{spread_pips:.1f}pip" if spread_pips is not None else "n/a"
+                log_line = f"[{now_str}] {action} {inst} {side} {abs_units}u @{price} P/L={pl}JPY Sp={spread_text}{reason_str} id={trade_id}\n"
                 log_path = ROOT / "logs" / "live_trade_log.txt"
                 with open(log_path, "a") as f:
                     f.write(log_line)
                 print(f"  → logged to live_trade_log.txt")
 
-            # Auto-slack notification
+            # Auto-slack notification. Use the transaction sync path so manual
+            # closes and broker-side TP/SL fills share one deduped Slack stream.
             if auto_slack:
                 try:
                     import subprocess
-                    if is_partial:
-                        slack_cmd = [
-                            sys.executable, str(ROOT / "tools" / "slack_trade_notify.py"),
-                            "modify",
-                            "--pair", inst,
-                            "--action", f"PARTIAL CLOSE ({reason or 'scale-out'})",
-                            "--units", str(abs_units),
-                            "--price", str(price),
-                            "--pl", f"{pl}JPY",
-                        ]
-                    else:
-                        slack_cmd = [
-                            sys.executable, str(ROOT / "tools" / "slack_trade_notify.py"),
-                            "close",
-                            "--pair", inst,
-                            "--side", side,
-                            "--units", str(abs_units),
-                            "--price", str(price),
-                            "--pl", f"{pl}JPY",
-                        ]
-                    subprocess.run(slack_cmd, capture_output=True, timeout=10)
-                    print(f"  → Slack notified")
+
+                    sync_cmd = [
+                        sys.executable,
+                        str(ROOT / "tools" / "trade_event_sync.py"),
+                        "--notify-slack",
+                        "--lookback-hours",
+                        "2",
+                    ]
+                    sync_result = subprocess.run(
+                        sync_cmd,
+                        cwd=str(ROOT),
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                    )
+                    if sync_result.stdout.strip():
+                        for line in sync_result.stdout.strip().splitlines()[:8]:
+                            print(f"  → {line}")
+                    if sync_result.returncode != 0:
+                        raise RuntimeError(sync_result.stderr.strip() or "trade_event_sync failed")
+                    print(f"  → Slack close sync complete")
                 except Exception as e:
-                    print(f"  → Slack failed: {e}")
+                    print(f"  → Slack failed: {e}", file=sys.stderr)
+                    raise
 
             return result
         else:
@@ -225,6 +297,8 @@ if __name__ == "__main__":
     parser.add_argument("--auto-log", action="store_true")
     parser.add_argument("--auto-slack", action="store_true")
     parser.add_argument("--force-worker-close", action="store_true")
+    parser.add_argument("--force-full-close", action="store_true")
+    parser.add_argument("--check-only", action="store_true")
     args = parser.parse_args()
 
     close_trade(
@@ -234,4 +308,6 @@ if __name__ == "__main__":
         args.auto_log,
         args.auto_slack,
         args.force_worker_close,
+        args.force_full_close,
+        args.check_only,
     )

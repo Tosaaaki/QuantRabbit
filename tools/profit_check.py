@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 from config_loader import get_oanda_config
+from technicals_json import load_technicals_timeframes
 
 ROOT = Path(__file__).resolve().parent.parent
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
@@ -44,7 +45,7 @@ def load_technicals(pair: str) -> dict:
     f = ROOT / f"logs/technicals_{pair}.json"
     if not f.exists():
         return {}
-    return json.loads(f.read_text()).get("timeframes", {})
+    return load_technicals_timeframes(f)
 
 
 def get_peak_from_state(pair: str) -> dict | None:
@@ -431,9 +432,19 @@ def assess_position(trade: dict, all_technicals: dict) -> dict:
     peak = get_peak_from_state(pair)
     if peak and "peak_yen" in peak:
         peak_yen = peak["peak_yen"]
-        if upl > 0 and peak_yen > 0:
+        if peak_yen > 0:
             drawdown = peak_yen - upl
-            if drawdown > peak_yen * 0.3:
+            if upl <= 0:
+                result["signals"].append(
+                    f"🚨 Peak {peak_yen:+,.0f} JPY has fully round-tripped to {upl:+,.0f} JPY ({drawdown:,.0f} JPY give-back)"
+                )
+                take_signals += 4
+            elif drawdown > peak_yen * 0.5:
+                result["signals"].append(
+                    f"🚨 Peak {peak_yen:+,.0f} JPY, gave back {drawdown:,.0f} JPY ({drawdown/peak_yen*100:.0f}%)"
+                )
+                take_signals += 3
+            elif drawdown > peak_yen * 0.3:
                 result["signals"].append(f"⚠ Peak {peak_yen:+,.0f} JPY, pulled back {drawdown:,.0f} JPY ({drawdown/peak_yen*100:.0f}%)")
                 take_signals += 2
 

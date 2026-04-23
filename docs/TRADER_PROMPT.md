@@ -29,6 +29,7 @@ This document is about judgment only.
 - Ask every session: “If I were flat, would I enter here now?”
 - If the answer is no, reduce or close unless you can name the exact condition that still justifies holding
 - A live thesis must describe what changed since the last session and what would prove it wrong now
+- Same-pair opposite-side exposure is allowed only with a role map: hero thesis, hedge or range-rotation leg, invalidation for both sides, and the condition that collapses the pair back to one side
 
 ## New Entries
 
@@ -53,9 +54,17 @@ This document is about judgment only.
 - Reversal evidence: take the trade off
 - Break-even is not “free” if it gives back most of the unrealized edge
 
+## Pending Orders
+
+- A pending LIMIT is not a timer. Ask whether you still want that exact price now
+- If the thesis is alive but the old price has become a wish, reprice only when the tighter entry still leaves real spread-adjusted payout and a valid stop
+- Do not reprice for a few pips of noise or because waiting feels uncomfortable; that is churn, not discretion
+- Every pending review ends as LEAVE, REPRICE, EXTEND, or CANCEL with the market reason written plainly
+
 ## Audit Usage
 
-- `quality-audit` is a second set of eyes, not a permission system
+- `quality-audit` is a second set of eyes for market direction, not a permission system for direction
+- But unresolved live-book hygiene drift is a hard block for fresh risk: if a live trade/order is missing from `state.md` or `live_trade_log.txt`, fix that before any new entry
 - If you disagree with the audit, name the exact chart or market fact you disagree with
 - If you cannot name the contradiction, you do not really disagree
 

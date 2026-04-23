@@ -39,6 +39,7 @@ if not (_MAIN_ROOT / "config" / "env.toml").exists():
 
 sys.path.insert(0, str(ROOT / "tools"))
 
+from technicals_json import load_technicals_timeframes
 from range_bot import (
     BOT_TAG, BOT_MARKET_TAG, fetch_open_trades, fetch_pending_orders,
     fetch_prices, get_tag, load_config, oanda_api, signed_units, format_price,
@@ -75,10 +76,8 @@ def load_brake_state() -> dict:
 
 def load_pair_atr_pips(pair: str) -> float:
     f = _MAIN_ROOT / f"logs/technicals_{pair}.json"
-    if not f.exists():
-        return 0.0
     try:
-        tfs = json.loads(f.read_text()).get("timeframes", {})
+        tfs = load_technicals_timeframes(f)
         m5 = tfs.get("M5", {}) or {}
         v = m5.get("atr_pips")
         return float(v) if v is not None else 0.0

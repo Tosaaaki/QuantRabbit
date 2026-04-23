@@ -11,7 +11,7 @@ description: Elite pro trader — lock-based recurring session shared by Codex +
 1. **There is no routine bot-inventory step in the live trader path.** Do not run `bot_inventory_snapshot`, `render_bot_inventory_policy`, or any worker-policy workflow from this playbook.
 2. **All entries you place are `trader` tag.** No `range_bot` / `trend_bot_market` entries are being produced anymore. Historical tags in trades.md / live_trade_log.txt / memory.db may still show them — that's read-only history.
 3. **You own every position.** No bot_trade_manager emergency brake. No inventory-director backup. Nothing else is touching OANDA. If you don't act, nothing moves.
-4. **Scheduler cadence is host-controlled.** The intended recurring trader cadence is every 20 minutes on every host when enabled. Shared runtime rules live in `tools/task_runtime.py` + `tools/session_end.py`: 15-minute session window (10-minute minimum gate), 15-minute stale-lock threshold, 17-minute watchdog.
+4. **Scheduler cadence is host-controlled.** Codex currently runs the recurring trader every 20 minutes. Shared runtime rules live in `tools/task_runtime.py` + `tools/session_end.py`: 15-minute session window (10-minute minimum gate), 16-minute stale-lock threshold, 17-minute watchdog that only clears the lock after the owner PID is confirmed dead.
 5. **Keep doing**: profit_check, protection_check, rollover_guard, chart reading, pretrade_check, state.md handoff, Slack notifications, the 6-category conviction block, fib_wave analysis, MTF reads. **These are YOUR tools and they all still work.**
 
 When in doubt: are you placing an order with your own judgement for your own reasons, or trying to direct a bot? Only the former exists now.
@@ -20,7 +20,7 @@ When in doubt: are you placing an order with your own judgement for your own rea
 
 **Language rule**: Slack messages MUST be in Japanese (the user reads Slack). Everything else — state.md, internal notes, analysis — write in English to minimize token cost.
 
-Method: shared runtime is lock-based. Preflight decides whether a new session may start, `session_end.py` enforces the 15-minute session window through a 10-minute minimum gate plus a 15-minute stale-lock recovery threshold, and the watchdog kills only truly stuck runs. The next scheduler tick depends on the host, so trust the runtime outputs instead of memorizing one cadence line.
+Method: shared runtime is lock-based. Preflight decides whether a new session may start, `session_end.py` enforces the 15-minute session window through a 10-minute minimum gate plus a 16-minute stale-lock recovery threshold, and the 17-minute watchdog kills only truly stuck runs. If the owner PID refuses to die, the watchdog now leaves the lock in place so the next scheduler tick skips instead of starting a second live trader session. On a clean `main` runtime, `task_runtime.py trader start` snapshots the repo dirtiness at session start and `session_end.py` auto-runs `tools/runtime_git_sync.py sync-trader` before lock release, so tracked handoff files (`state.md`, day snapshots, `lesson_registry.json`, any ingest-driven `strategy_memory.md` marker sync) are commit/push'd automatically only when no unrelated dirty paths exist. The next scheduler tick depends on the host, so trust the runtime outputs instead of memorizing one cadence line.
 
 **Performance benchmark: compare realized P&L vs day-start NAV every session.** Day starts at 0:00 UTC. day-start NAV = NAV at 0:00 UTC (captured in state.md `Day-start NAV`). The +10% / +5% numbers are stretch benchmarks, not permission to lower the bar. Being behind does **not** justify weaker entries, larger size, or late-session chasing. Use the benchmark only to decide whether the tape deserves fresh risk now, or whether patience/protection is the better trade.
 
@@ -47,29 +47,44 @@ Read (parallel, batch 3 — charts): `logs/charts/EUR_JPY_M5.png`, `logs/charts/
 Read (parallel, batch 4 — H1 for held pairs only): `logs/charts/{HELD_PAIR}_H1.png` (one per held pair)
 Read (after naming Primary / Backup / Best direct-USD seat): `logs/charts/{PAIR}_M1.png` for the primary vehicle, backup vehicle, best direct-USD seat, and every pair kept in `S Hunt`
 
-**You are looking at the charts with your own eyes.** quality-audit is the primary chart writer on a 45-minute cadence, and `session_data.py` now auto-regenerates the full PNG set with `.venv/bin/python tools/chart_snapshot.py --all --with-m1` whenever the oldest chart is stale (>40 min) or missing. Trust the freshest local PNG timestamp, not the planned audit cadence. If session_data says the audit memo is stale, use the fresh PNGs + raw data first and treat old `quality_audit.md` narrative as historical context only. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in the "Chart tells me" line in Tier 1 and the candle shape in Tier 2. Your chart reading + the auditor's text summary = two independent views of the same market.
+**You are looking at the charts with your own eyes.** quality-audit is the primary chart writer on a 30-minute cadence, and `session_data.py` now auto-regenerates the full PNG set with `.venv/bin/python tools/chart_snapshot.py --all --with-m1` whenever the oldest chart is stale (>40 min) or missing. Trust the freshest local PNG timestamp, not the planned audit cadence. If session_data says the audit memo is stale, use the fresh PNGs + raw data first and treat old `quality_audit.md` narrative as historical context only. Look at candle shapes, BB position, momentum direction, wick patterns. This is what you write in the "Chart tells me" line in Tier 1 and the candle shape in Tier 2. Your chart reading + the auditor's text summary = two independent views of the same market.
 **M1 trigger means an actual M1 chart read.** Do not invent an M1 trigger from M5 prose. If a seat survives into `Primary vehicle`, `Best direct-USD seat`, or `S Hunt`, open that pair's `logs/charts/{PAIR}_M1.png` and write what the M1 chart is doing.
 
 **How to read strategy_memory.md**: Confirmed Patterns = rules, Active Observations = reference, Pretrade Feedback = past LOW outcomes, Per-Pair Learnings = pair-specific tendencies. **Caution: strategy_memory is heavy on "don't do X" lessons (30+ warnings vs 12 positive patterns). Don't let cautionary bias shrink your sizing. The lessons say "don't chase, don't panic" — they do NOT say "enter small." The biggest historical loss was undersizing S-conviction trades, not oversizing. When a setup is genuinely good, SIZE UP.**
 
 **How to use ACTIONABLE MEMORY** (in session_data output): Past trades and lessons for held positions, pending orders, and top scanner candidates. Read it before deciding to hold, add, cancel, or enter. If the memory section is empty for a pair, that means you don't have a strong precedent — size accordingly.
-**How to use LEARNING EDGE BOARD / FRESH-RISK TOURNAMENT** (in session_data output): This is the memory brake/accelerator. It does **not** choose direction for you; it limits how far size is allowed to go once the chart and macro agree. It now shows three layers at once: pair-direction history, the current session bucket, and the current M5 regime proxy. If the board says `B-only / pass unless exceptional`, do not promote that seat into A/S just because the narrative sounds cleaner. If it says `A/S when theme confirmed`, that is the vehicle that deserves the next add once the tape proves it. The tournament is the fast comparison between current fresh-risk seats; use it to break ties between a pretty story and a historically cleaner vehicle.
-**How to use S-HUNT DEPLOYMENT CUES** (in session_data output): This is the closure lane. It takes the best direct-USD / cross / USD_JPY fresh-risk seats and prints the default close state: `MARKET`, `LIMIT`, `STOP-ENTRY`, or `PASS`. The cue does not replace chart reading. It prevents fake flatness. If the seat survives your live chart read, `S Hunt` must close it as an order, not as prose. If the cue says `MARKET` because the seat is only B-conviction, that means participate with a scout first and still leave the reload `LIMIT` instead of waiting for perfect A/S prose.
-**How to use S EXCAVATION SEEDS** (in session_data output): This is the anti-blank-podium lane. session_data merges the live fresh-risk tournament with fresh quality-audit strongest-unheld / narrative A-S calls when available, then prints default `Podium #1-#3` seeds. Copy them unless the live chart gives a concrete contradiction. If you replace a seed, write the contradiction explicitly in `Still blocked by` or the chart-proof that made a different seat cleaner.
-**How to use MULTI-VEHICLE DEPLOYMENT LANES** (in session_data output): This is the anti-underdeployment lane. When several currencies are alive, one-pair-only is not discipline; it is missed breadth. Carry up to 3 lanes only when they are separate expressions, not same-pair averaging: `PRIMARY`, `BACKUP`, and `THIRD CURRENCY`. Primary gets the next add. Backup and third-currency lanes can still be live in the same session if the tape is broad and worst-case margin after all pending fills stays below 90%.
+**How to use LEARNING EDGE BOARD / FRESH-RISK TOURNAMENT** (in session_data output): This is the memory brake/accelerator. It does **not** choose direction for you; it limits how far size is allowed to go once the chart and macro agree. It now shows four layers at once: recent matched `pretrade_outcomes` feedback first, then pair-direction history, then the current session bucket, then the current M5 regime proxy. Those runtime learning windows are now floored at the 2026-04-17 discretionary reset, so old bot spam stays historical context instead of capping today's trader. If the board says `B-only / pass unless exceptional`, do not automatically promote that seat into A/S just because the narrative sounds cleaner. But if repeated audit / missed-seat pressure keeps hitting the same seat, the board may re-open that pass-cap seat as a **thin trigger-first scout**, not as full conviction; direct-USD pairs may still escalate further into a small market scout only when the live tape is calm/stable. `Pair feedback` is the hard anchor: copy the WR / EV / sample line exactly and treat it as the freshest base rate. The tournament is the fast comparison between current fresh-risk seats; use it to break ties between a pretty story and a historically cleaner vehicle. It is **not** permission to demote the old primary every cycle. Replacing the primary still requires the exact contradiction that killed it.
+**How to use CARRY-FORWARD FOCUS** (in session_data output): This is the concentration lane for GPT-5.4. session_data now repeats the prior handoff's `Best expression NOW`, `Primary vehicle`, `Backup vehicle`, and `Next fresh risk allowed NOW`, then forces a `Primary continuity verdict: KEEP / ROTATE / DEAD`. Use it before you touch the fresh-risk board. `KEEP` means manage or add on the same theme. `ROTATE` means you must write the exact contradiction that killed the old primary before naming the replacement. In normal runtime mode, do not stop at the stale carry-forward lines: the later `HANDOFF REFRESH` block is the live override. If carry-forward says `none` but `HANDOFF REFRESH` names a backup or fresh risk lane, the stale `none` is dead.
+`Backup vehicle` and `Next fresh risk allowed NOW` are closure lines, not summaries. If the current board still has a lane there, you must name that pair/direction there or close it there as `dead thesis because ...`. Leaving `none` while only the deeper lane lines changed is invalid.
+`Primary vehicle shelf-life now`, `Backup vehicle shelf-life now`, and `Next fresh risk shelf-life now` are the carry contract. A lane without a shelf-life is half-written. Treat `MARKET` as this-session-only, `STOP-ENTRY` as roughly the next 2 sessions, passive `LIMIT` as several sessions while the structural shelf survives, and armed pending orders as their real OANDA GTD.
+
+**Every surviving `Lane N / ...` line must close explicitly.** If the current board still has a lane, that lane line cannot say just `none`. It must either carry the real receipt / pending order or say `dead thesis because ...` for that exact lane.
+**How to use SESSION INTENT GATE** (in session_data output): This is the anti-token-burn lane. `WATCH-ONLY` means flat live book, no repeated audit pressure, and no fresh missed-S pressure. In that mode, do **not** rebuild the entire map just because the scheduler woke you up. Keep the old primary / backup / 7-pair map unless the live tape gives a concrete contradiction, and update only management, pending-order freshness, and the exact re-arm / kill condition. `FULL_TRADER` means there is real deployment pressure now, so the session must end with a real arm / kill decision, not fresh prose.
+**How to use S-HUNT DEPLOYMENT CUES** (in session_data output): This is the closure lane. It takes the best direct-USD / cross / USD_JPY fresh-risk seats and prints the default expression: `MARKET`, `LIMIT`, `STOP-ENTRY`, or `PASS`. The cue does not replace chart reading. It prevents fake flatness. If the seat survives your live chart read, `S Hunt` must close it as an order, not as prose. Fresh market risk still mainly belongs to `A/S` seats, but a repeated seat with repeat audit / missed-seat pressure may re-open from `pass unless exceptional` into a **thin trigger-first scout**, and only calm/stable direct-USD tape should further escalate that into a small market scout. That is a thin scout, not a size-up. When recent vehicle stats say `STOP-ENTRY` is still losing, prefer a real `LIMIT` receipt over another proof-chase trigger unless today's chart gives the exact contradiction. Fresh audit strongest-unheld / narrative seats now enter the learning board as real `AUDIT` sources before scanner filler, so a repeated auditor read can become the live board seat instead of staying commentary. When the cue also shows repeat audit / missed-seat pressure, the burden flips: either arm the honest order now or write the exact contradiction that still blocks it. `Hard guardrails` bind. `Trader override room` does not.
+
+**How to treat fresh thesis losses**: A fresh exact-thesis loss is still a real warning, but it is no longer a same-day death sentence by date alone. Runtime now uses a short created-at cool-off window. Inside that window, do not recycle the exact same seat. Outside it, you may re-enter only if the chart shows a materially new state change or a different vehicle.
+**How to use PAYABLE-NOW MARKET CHECK** (in session_data output): This is the anti-fake-passive lane. If there is a real marketable seat, it must show here as `ENTER NOW`. If this block says `No payable market now`, it must also name the top blocked lanes and why they still stay `LIMIT` / `STOP-ENTRY`. Do not claim "there was no market lane" unless this block already says why. `quiet / stable` tape is not the same as `friction-dominated`: it means microstructure is calm and stable, so a market fill can still be honest if the higher-timeframe chart already earned it.
+**How to use S EXCAVATION SEEDS** (in session_data output): This is the anti-blank-podium lane. session_data merges the live fresh-risk tournament with fresh quality-audit strongest-unheld / narrative A-S calls when available, then prints default `Podium #1-#5` seeds. Copy them unless the live chart gives a concrete contradiction. High-quality `PASS` seats that are only one print away now stay on the podium as near-S excavation seeds; they are not excuses to stay flat forever, they are the exact structures you must arm honestly as `STOP-ENTRY` or `LIMIT` once the missing print appears. The seeds now prefer passive `LIMIT` lanes over losing proof-chase `STOP-ENTRY` lanes when recent execution-style feedback says the trigger vehicle is still a drag. Repeated audit strongest-unheld pressure and fresh missed-S pressure now stay attached to the seed; if you replace that seed, write the contradiction explicitly in `Still blocked by` or the chart-proof that made a different seat cleaner. Reviewed `trigger` / `vehicle` failures no longer kill the direction by themselves: if review says market/structure survived, recycle the seat only with a new print or better vehicle, never by copy-pasting the same exact entry.
+**How to use GOLD MINE INVENTORY** (in session_data output): This is the anti-compression lane. `SEAT INVENTORY BOARD` tells you what exists; `GOLD MINE INVENTORY` tells you what to mine. In `FULL_TRADER`, copy at least the top 5 mines into your own output unless the live chart disproves them. Each mine must close as an executable expression (`MARKET / LIMIT / STOP-ENTRY`) or an exact contradiction. `trigger not printed yet`, `price not traded there yet`, and `needs better price` are pending-order logic, not contradictions.
+**How to use MULTI-VEHICLE DEPLOYMENT LANES** (in session_data output): This is the anti-underdeployment lane. When several currencies are alive or one pair offers multiple genuinely different seats, one-pair-only is not discipline; it is missed breadth. Carry as many lanes as the board honestly supports, up to the runtime inventory limit. Same-pair multi-seat is allowed only when trigger / vehicle / invalidation differ; blind same-pair averaging is still banned. If session_data prints 2 or more non-`PASS` lanes, the session may not close with only 1 live/armed receipt unless you write the exact blocker to lane two. `trigger-only watch lane` is not a receipt. Pending lanes now preserve their real armed style, so an armed stop must stay `STOP-ENTRY` on the board instead of being rewritten as a fake `LIMIT`.
+**How to use ORDER RECIPES FOR ARMABLE LANES** (in session_data output): This is the execution-conversion lane. Treat these as the runtime's default expression for a surviving seat, not as a binding script you obey blindly. If the live tape changed, you may override the default `MARKET / STOP-ENTRY / LIMIT` choice as the trader. The helper should hard-block only real safety issues (live-book drift, broken payoff/stop geometry, unpaid-unprotected same-pair stacking), not replace your market judgment. `session_data.py` now tries one geometry repair pass before giving up: if the first proxy stop is still inside the pair's recent noise floor or the first TP does not even clear live friction, widen the stop / payout path once and rerun exact pretrade so a valid seat does not die on a thin first draft. If you still do not arm the seat, the dead-thesis reason must be the actual market / structure / live-tape contradiction. For `LIMIT` / `STOP-ENTRY`, `trigger not printed yet` or `price not traded there yet` is not a valid dead-thesis reason; that is the reason to arm the pending order. `dead thesis because no live pending entry order exists` is invalid because that only restates the missing execution. `logs/session_action_board.json` now stores this seat contract as `default_expression / default_orderability`; legacy `execution_style / orderability` are compatibility aliases only.
 **How to use INTRADAY LEARNING LOOP / Micro AAR** (in session_data output): This is the fast OODA lane. For the top fresh-risk seats, write `Observe -> Orient -> Decide -> Act` before the order, then immediately fill one `Micro AAR` after the order / miss / exit. That is the intraday PDCA loop. Do not wait for daily-review to update your next trade.
+**Same-thesis failure is not the same as pair-edge failure.** If `pretrade_check.py` returns a thesis guard after a fresh loss, the market-state / structure prior may still be alive while the exact trigger / vehicle is dead. The next trade must name the materially new state change. Repeating the old reason with the same trigger is not a new trade.
+
+**Protected reloads are different from blind averaging-in.** If a same-direction live leg is still unpaid but already protected, `pretrade_check.py` may keep a second lane alive as `LIMIT` / `STOP-ENTRY` instead of killing it at `PASS`. That is permission for a cleaner trigger or better price only. It is not permission to stack another blind market fill into the same unpaid seat.
+**Name which thesis layer died.** `market / structure / trigger / vehicle / aging` are different failures. A recovered post-close loss usually means trigger or vehicle died, not the whole market thesis. Re-entry is allowed only after the dead layer changes.
 **How to use Hot Updates** (in `state.md`): After each meaningful `Micro AAR`, compress the lesson into one line under `## Hot Updates`. This is the carry-forward lane for the next session. Keep it concrete: pair / direction / what changed / next-seat correction. `session_data.py` surfaces this section first on the next run, so it should contain only the few intraday updates you want to trade with immediately. Fast path: `python3 tools/state_hot_update.py add --note "PAIR DIR | what changed | next-seat correction"`. `session_end.py` now auto-runs `tools/auto_hot_updates.py` as a safety net from the final `S Hunt` / `Capital Deployment` receipts, but that does **not** replace writing the intraday lesson when you notice it live.
 
 ## Bot Inventory Workflow
 
 Removed from the live trader path on 2026-04-17. Do not run any worker-policy, bot-inventory, or local-bot commands from this playbook during normal recurring trader sessions. If you encounter historical bot-tagged positions in logs or memory, treat them as read-only history unless a separate recovery task explicitly tells you otherwise.
 
-**QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do. Compare the auditor's visual read with what you saw in the chart PNGs. If you disagree, trust YOUR eyes — you're the trader.
+**QUALITY AUDIT** (read in parallel above + preview in session_data): The audit presents FACTS — S-scan data, exit quality, position challenges, **Regime Map** (7-pair regime + visual chart read), and **Range Opportunities** (actionable buy/sell levels). It does NOT tell you what to do on direction. But it DOES gate hygiene: if live positions/orders are missing from `state.md` or `logs/live_trade_log.txt`, fix that drift before any fresh risk. Compare the auditor's visual read with what you saw in the chart PNGs. If you disagree, trust YOUR eyes — you're the trader. Fresh audit range opportunities now seed `AUDIT_RANGE` fresh-risk lanes in `session_data.py`; if the box is still honest after your live read, close it as a real `LIMIT` plan with the printed rails / TP or write the exact contradiction.
 
-**AUDIT PREDICTIONS** (Section C of quality_audit.md — "7-Pair Conviction Map + Narrative Opportunities"):
+**AUDIT PREDICTIONS** (Section C of quality_audit.md — "7-Pair Conviction Map + Narrative Opportunities / Deployment Inventory"):
 The auditor made specific price predictions for all 7 pairs with separate **Edge** and **Allocation** ratings. The auditor also checked its OWN previous predictions (follow-up accuracy). This is a real market view, not scanner output.
 
-For each audit **Narrative Opportunity** rated **Edge S or A** that you DON'T hold, write in state.md's "Audit Response" section:
+For each audit **Narrative Opportunity** rated **Edge S or A** that you DON'T hold, write in state.md's "Audit Response" section. When the audit inventory is broad, also answer the top 3 B-grade inventory seats if they are still among your best executable mines; tactical B seats are still real money when the tape is moving.
 ```
 ## Audit Response
 {PAIR}: Audit predicted [price] [DIR] (Edge S / Allocation A). I [agree/disagree]: [cite specific chart observation or data that supports or contradicts]. Action: [ENTER NOW / RELOAD LIMIT / PASSED — reason]
@@ -104,6 +119,7 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/profit_check.py --all && pyth
 **The new default**: Look at the chart FIRST. Band walk = hold to ATR×2.0+. Deceleration = half TP. Reversal = full TP.
 
 **BE SL (SL at entry price) is banned at ATR×1.0+.** It gives back 100% of unrealized profit. That's not risk management — it's the 3/27 Default HOLD trap in disguise. If you write "SL moved to BE", you must first write how much profit you're giving back and why that's better than HALF TP.
+**Peak-to-red is a management failure, not neutral variance.** If the trade already had a meaningful open profit and you let it round-trip to flat or red, the burden of proof flips hard to `A` (close) or `B` (half TP). `C` must explain what new information appeared after the peak that still makes the current hold better than banking the profit.
 
 ### S/A-conviction — Reading the Pullback (not following a label)
 
@@ -140,7 +156,7 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 - `SL too tight` → Widen or remove. Tight SL = free money for market makers
 - `TP too wide` → TP may be unreachable. Consider partial TP at a closer structural level
 
-**SL is a judgment call, not a requirement.** Ask: "Will this SL get clipped by normal noise before my thesis plays out?" If yes → don't set it. Don't be a bot that attaches SL to every position.
+**SL is a judgment call, not a requirement.** Ask: "Will this SL get clipped by normal noise before my thesis plays out?" If yes → don't set it. Don't be a bot that attaches SL to every position. Recent pair regret now matters here too: if the pair keeps recovering after recent 5-10 pip stop-outs, the next 4-5 pip SL is usually noise, not protection.
 
 **SL decision tree (not a checklist — a decision)**:
 1. **ROLLOVER window (protection_check says ROLLOVER)?** → **Run `rollover_guard.py remove` immediately. No new SL/Trail until rollover passes.**
@@ -150,6 +166,7 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 5. Pre-event (NFP/FOMC)? → **No trailing stop. Fixed SL at structural invalidation or nothing.**
 6. Structural level within ATR×2.0? → **Set there (swing low, Fib 78.6%, DI reversal, cluster)**
 7. No structural level nearby? → **No SL, manage discretionally. ATR×N without structure = noise stop.**
+8. If recent stop-loss regret says the pair usually recovers after `X` pip losses, do not place the next SL inside that historical noise floor unless market / structure is explicitly dead.
 
 **Trailing stop — use sparingly:**
 - Strong trend (ADX>30, clean bodies) → Yes, ATR×1.0+ minimum
@@ -162,7 +179,7 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 
 ## Regime + Visual Chart Data (from quality_audit.md)
 
-**The auditor is the primary chart generator on a 45-minute cadence.** Normally you do NOT regenerate chart PNGs manually because `session_data.py` refreshes stale or missing files before you read them. If that refresh fails and the local PNGs are stale/missing, run `.venv/bin/python tools/chart_snapshot.py --all` yourself before trusting any visual read. Read the regime map and visual observations from `logs/quality_audit.md` only when the audit memo is still fresh in session_data.
+**The auditor is the primary chart generator on a 30-minute cadence.** Normally you do NOT regenerate chart PNGs manually because `session_data.py` refreshes stale or missing files before you read them. If that refresh fails and the local PNGs are stale/missing, run `.venv/bin/python tools/chart_snapshot.py --all` yourself before trusting any visual read. Read the regime map and visual observations from `logs/quality_audit.md` only when the audit memo is still fresh in session_data.
 
 **Regime types and how to trade them:**
 
@@ -175,7 +192,7 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 
 **The auditor's Regime Map gives you:** regime per pair (M5/H1), visual chart description (candle patterns, BB position, momentum character), and range trade opportunities (buy/sell levels with pip targets).
 
-**Match your strategy to the regime.** Don't force a directional trade in a RANGE regime. Don't wait for confirmation in a clear TREND. If the auditor flags a range opportunity, evaluate it as a real trade candidate.
+**Match your strategy to the regime.** Don't force a directional trade in a RANGE regime. Don't wait for confirmation in a clear TREND. If the auditor flags a range opportunity, evaluate it as a real trade candidate. `session_data.py` now promotes those fresh range rails into the learning board as `AUDIT_RANGE` LIMIT seats; if you still reject one, the burden is to name the exact rail / structure contradiction, not to leave it visual-only.
 
 ## Market Narrative (write FIRST — before indicators, before scan)
 
@@ -186,11 +203,14 @@ So I'm doing: [specific action — trail width in pip, hold, half TP, full TP �
 Driving force: ___ (cite specific event/data from news_digest — "USD selling on CPI miss" not just "USD weak")
 vs last session: ___ changed (read news_flow_log or news_digest. If nothing: "same — [why still same]")
 M5 verdict: [buyers/sellers/balanced] × [accelerating/exhausting/reversing] — because M5 candles show ___
+Tape is paying NOW: ___ [continuation / fade / rotation / breakout failure / range edge] because ___
+Tape is punishing NOW: ___ [late chase / old H4 memory / dirty cross / blind mean-revert / breakout-before-trigger] because ___
+Chart-only call: ___ [pair + direction / PASS] — if every indicator vanished, the chart alone still says ___ because ___
 Regimes: [copy from quality_audit.md Regime Map — e.g., "EUR_USD=TREND-BULL, AUD_JPY=RANGE, GBP_JPY=SQUEEZE"]
 Theme: ___ (what the market IS doing — "USD weakness across the board", not "waiting for UK data")
 Execution regime: [trend continuation / corrective retrace / post-event fade / range rotation / squeeze waiting / late cleanup] — the tape is paying ___, punishing ___
 Theme confidence: [proving / confirmed / late]
-  proving = first 1-2 trades today testing the thesis. Size: B (3,000u)
+  proving = first 1-2 trades today testing the thesis. Size: usually B0/B+; B- only for a near-S probe or a paid-lane reload that still lacks one print
   confirmed = TP hit at least once on this theme today. Size: A→S (4,000-6,000u)
   late = theme running 6h+, most of the move captured. Size: reduce, protect gains
 Best expression NOW: ___ [pair + direction] — why this is the cleanest way to express the regime right now
@@ -198,8 +218,15 @@ Second-best expression: ___ — why it is usable but less clean than the best ex
 Expressions to avoid: ___ — what looks tempting but is the wrong vehicle for this tape (dirty cross / late chase / memory dip-buy / duplicate theme)
 H4-memory trap check: The stale higher-TF story tempting me is ___; today's tape confirms/rejects it because ___
 Primary vehicle: ___ [the pair + direction that deserves the NEXT unit of risk right now, not a day-long quota]
+Primary vehicle shelf-life now: ___ [re-underwrite by next session / N sessions / until UTC time]
   Why primary: [strongest theme × best regime × best CS alignment. If that changes, the primary changes]
   Backup vehicle: ___ [#2 expression if the primary becomes late, dirty, or already paid]
+  Backup vehicle shelf-life now: ___ [N sessions / until UTC time]
+Primary continuity verdict: [KEEP / ROTATE / DEAD]
+  If KEEP: next unit of risk stays with ___ because ___
+  If ROTATE: exact contradiction that killed the old primary = ___
+  Replacement primary: ___ because ___
+Backup continuity: [still armed / arm now / dead] because ___
 Next event: ___ [name + time + what you do WHEN it hits, not UNTIL it hits]
 Event positioning: Market has been [buying/selling] [direction] for [N days/hours]. Expected=[soft/hot/neutral].
   If expected: ~___pip move (priced in). If surprise: ~___pip move (unwind). Asymmetry: [favorable/unfavorable for held positions]
@@ -211,6 +238,7 @@ Quality bar today: [protecting gains / normal quality bar / patient because tape
 Tempting P&L-driven trade: ___ [the trade that would recover money fastest if you stopped thinking]
 Why that trade is invalid in this tape: ___ [late / dirty / duplicate theme / event asymmetry / weak defense / spread / no reclaim / wrong vehicle]
 Next fresh risk allowed NOW: ___ [pair + direction / none]
+  Next fresh risk shelf-life now: ___ [N sessions / until UTC time]
   Why it deserves risk independent of P&L: ___ [theme + regime + structure + cross-currency]
   What would invalidate it immediately: ___
 20-minute backup trigger armed NOW: ___ [pair + STOP-ENTRY/LIMIT id=___ / none because ___]
@@ -233,14 +261,21 @@ Best direct-USD seat NOW: ___ [pair + direction / not cleaner than current prima
 **Spreading across 5+ pairs equally = mediocre day (+1,291 avg).** But "primary vehicle" does NOT mean forcing one pair after the tape turns late or dirty. Pick the cleanest current vehicle from Theme + Currency Strength + Regime. If a cleaner vehicle appears later, rotate the vehicle, not your excuses.
 
 **The backup vehicle fills gaps.** While the primary is pulling back or already paid, the backup captures a separate move. 4/7: EUR_USD (primary) + AUD_USD (backup, +4,886). Primary gets the next add only while it remains the best expression.
+**"Primary continuity verdict" is the anti-scatter lane.** GPT-5.4 should not silently replace the old primary just because the board printed a prettier seat. `KEEP` means the same thesis still deserves the next unit. `ROTATE` means the tape printed a contradiction strong enough to kill the old primary. If you cannot name that contradiction, the old primary is still your concentration lane.
+**"Backup continuity" keeps the second lane honest.** A backup is not a second story you rediscover later. Either it is still armed for this cadence, it needs to be armed now, or it is dead.
 
 **"vs last session" can't be blank.** The market moved since last session. What changed? If you can't say, you didn't read the news.
 **"M5 verdict" embeds chart reading into the narrative.** "buyers × exhausting — because M5 candles show bodies shrinking, upper wicks lengthening" is chart reading. "buyers × accelerating — because RSI=65" is number reading. Write what you SEE on the chart.
+**"Tape is paying NOW / punishing NOW" forces a present-tense market read.** Before you choose a pair, say what behavior is actually being rewarded and what behavior is getting trapped.
+**"Chart-only call" is the anti-bot lane.** If hiding every indicator destroys the trade idea, you never had a market read; you had a score-follow.
 **"Execution regime" is the anti-bot layer.** "GBP dip-buy" is a pair idea. "post-event fade with corrective USD bid" is a market read. Write what the tape is paying and what it is punishing before you pick a pair.
 **"Benchmark pressure" is where catch-up chasing gets exposed.** The deficit may tighten the quality bar. It never chooses the pair for you.
 **"Tempting P&L-driven trade" makes the bad idea visible before it becomes an order.** If the recovery trade only looks good because it fixes the account fastest, write that sentence and kill it on paper.
 **"Next fresh risk allowed NOW" separates market edge from account emotion.** If you cannot name a seat that deserves risk without mentioning the P&L hole, write `none`.
 **"20-minute backup trigger armed NOW" turns the backup into a real lane.** If the backup is still valid across the next cadence, arm the honest `STOP-ENTRY` or `LIMIT` now. Otherwise the next session just rediscovers the same seat too late.
+**That line is receipt-only.** If there is no live pending entry order `id=...`, write `none because ...`. A board seat is not an armed trigger.
+**Receipt absence is not thesis death.** `dead thesis because no live pending entry order exists` is not an acceptable closure for an armable lane. Either paste the armed `id=...` receipt or state the actual contradiction that killed the seat.
+**Every lane needs an expiry.** If you say there are `2 MARKET` and `3 LIMIT` seats, also say how long each survives. Otherwise the next session cannot distinguish `pay now` from `still good later`.
 **"Last session trigger audit" kills trigger drift.** If the old trigger traded, you must classify what happened before writing a new price. `1.3572 -> 1.3584` with no audit is avoidance, not analysis.
 **"Best direct-USD seat NOW" keeps the clean vehicle visible.** If direct USD is cleaner than the crosses, either deploy it or explain concretely why it is not orderable.
 **"Best expression NOW" forces vehicle choice from the regime, not from habit.** If the market is saying "direct USD pair still clean, JPY crosses dirty," the output has to say that before a single pair block is written.
@@ -300,9 +335,10 @@ My position matches best vehicle? [YES / NO — if NO, why am I in this pair ins
 ## Self-check (30 sec — write honestly before scanning)
 
 ```
-Entries today: [N] total. Sessions elapsed: ~[N]. Margin used: [N]%.
+Entries today: [N] fills / [N] new entry orders / [N] rejects. Sessions elapsed: ~[N]. Margin used: [N]%.
+Old `Entries today: N total` wording is invalid. Copy the structured live count from `HANDOFF REFRESH`.
 Last 3 closed trades: [W/L/W]. Streak: [hot/cold/neutral].
-If cold (2+ consecutive L): B-max until next W.
+If cold (2+ consecutive L): B-band max until next W.
 NO-TRADE ACCOUNTABILITY: [entries today] entries / [sessions elapsed] sessions = [ratio].
   If 0 entries after 5+ sessions:
     Best untraded seat: [PAIR DIR]
@@ -313,25 +349,29 @@ LIMIT TRAP CHECK: Last [N] sessions placed [N] LIMITs, [N] filled, [N] cancelled
   If cancelled > filled for 3+ sessions: state whether the next valid expression should be [MARKET / LIMIT] and why. Do not default to market just to prove activity.
 ```
 
+If normal runtime mode omits the giant templates, copy these same fields from the compact `HANDOFF REFRESH` block instead of reusing yesterday's counts.
+
 **Flat is acceptable only when this block is concrete.** A real no-trade read still names the best missed seat, the trigger, and the invalidation. Vague flatness is avoidance. Forced entry is not edge.
 
-### Minimum size: 3,000u (data-driven)
+### Honest first size + B-band exceptions (data-driven)
 
 **500-trade analysis: 1-2k trades = -23,098 JPY (330 trades). 3-5k trades = +19,226 JPY (152 trades).**
 
-The SAME trader, the SAME setups — the only difference is size. 1-2k loses money because:
+The SAME trader, the SAME setups — the only difference is size. Random 1-2k entries lost money because:
 - Spread eats a higher % of the move (2pip spread / 8pip target = 25% cost at 1k vs 10% at 3k)
 - Small size = low conviction = exits too early
 - Wins are too small to offset losses (+212 avg win vs -370 avg loss)
 
-| Allocation | Minimum size | Maximum size |
-|------------|-------------|-------------|
-| **S** | 8,000u | 10,000u (full deployment) |
-| **A** | 4,000u | 6,000u |
-| **B** | 3,000u | 3,000u |
+| Allocation lane | Typical size | Meaning |
+|-----------------|--------------|---------|
+| **S** | 8,000u-10,000u | Full deployment on a proven clean seat |
+| **A** | 4,000u-6,000u | Serious participation on a paid or very clean seat |
+| **B+** | 3,000u-4,500u | Full-B pressure. The A/S path is real, but the seat still needs trigger or price improvement |
+| **B0** | 2,000u-3,000u | Honest scout / first proving seat |
+| **B-** | 1,000u-2,000u | Thin probe only. Usually near-S one-print-away or paid-lane reload, not random curiosity |
 | **C** | Don't enter | — |
 
-**There is no 2,000u entry.** If it's not worth 3,000u, it's not worth entering. Period.
+**There is no casual 1-2k entry.** `B-` exists only when the seat is on a real A/S path but still missing one print, or when a paid theme is reloading with explicitly reduced risk. If you cannot name that reason, it is not `B-`; it is `PASS`.
 
 ### Sweet spot hold time: 30-120 minutes (data-driven)
 
@@ -359,7 +399,7 @@ The SAME trader, the SAME setups — the only difference is size. 1-2k loses mon
 1. STOP entering for this session
 2. Write: "3-loss stop. Market direction: ___. My direction: ___. Mismatch? [YES/NO]"
 3. If mismatch = YES → next session can enter the OTHER direction only
-4. If mismatch = NO → next session B-size only until first win
+4. If mismatch = NO → next session B-band only until first win (default B0/B-, never fresh A/S size)
 
 **This is direction-specific.** 3 LONG losses don't block SHORT entries. They block more LONGs.
 
@@ -381,7 +421,7 @@ The SAME trader, the SAME setups — the only difference is size. 1-2k loses mon
 **If entry hour = 19:00-23:00 UTC (04:00-08:00 JST):**
 ```
 Late session penalty: This hour has avg P&L = -___JPY.
-LIMIT only (never market). B-size max (3,000u).
+LIMIT only (never market). B-band only: default B0/B-, B+ only if this is clearly the best A/S path and the blocker is price-not-direction.
 Why this can't wait until 08:00 UTC: ___
 ```
 
@@ -421,6 +461,8 @@ MTF chain:
   Structure: ___ [Fib / cluster / swing / Ichimoku]
   Cross-pair: ___ [currency pulse / correlated pairs / CS]
   Macro: ___ [news / event / flow]
+A/S proof combo: ___ [the exact TF × indicator combination that makes this seat A/S or keeps it capped at B]
+Why this is not just B: ___ [what makes the combo coherent enough to pay now, not just interesting]
 Missing piece before LIVE NOW: ___
 NOW: [MARKET/LIMIT/STOP-ENTRY] [direction] @___ TP=___ SL=___ — [why this is live now: news/cross-pair/structure. Currency-wide or pair-specific?]
 RELOAD: [LIMIT] [direction] @___ TP=___ SL=___ — [structural level: Fib / BB edge / cluster / EMA20]
@@ -442,7 +484,7 @@ SQUEEZE: `Chart tells me: BB narrowing to 10pip, bodies shrinking, no direction 
 **Why examples, not rules**: A rule says "set TP at ATR×2.0 for band walk." You read the rule, then write TP=ATR×0.4 anyway. An example shows "band walk → TP at ATR×2.0 = 214.20" — you see the number and match it. The RANGE example has two prices and two order IDs. You see it and write two prices and two IDs.
 **If `NOW` depends on a reclaim above/below live price and you will not babysit the candle, use `STOP-ENTRY`.** A 20-minute cadence cannot rely on "I will watch the next candle" as a deployment plan.
 
-**Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, 2000-3000u, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
+**Rotation trade ≠ counter-trade.** Counter-trade = betting against the trend at swing size. Risky. Rotation = capturing the pullback within your trend, usually B0/B+ size, TP=M5 support/resistance (ATR×0.5-1.0), 15-30min hold. B- is only for a thin probe when the A/S path is real but one print is still missing. On OANDA hedge account, your main position stays open. **If M5 data convinced you to tighten TP or add trailing, that same data is an entry signal for the opposite direction.**
 
 ### Tier 2: Remaining pairs — ENTRY FIRST format (no free pass)
 
@@ -452,6 +494,8 @@ The old format let you write "C → pass" in 3 seconds. The new format requires 
 
 ```
 {PAIR}: {REGIME} | [candle shape]
+  MTF hinge: H4/H1 ___ | M15 ___ | M1 ___
+  Indicator combo: ___ [the 2-4 pieces across TFs that could make this A/S]
   EXPRESSION: [clean / acceptable / dirty] — why this pair is or is not a good vehicle for the current regime
   NOW: [direction + price/trigger if the move is live right now]
   RELOAD: [specific price + condition — "dip to BB lower 1.3540 + M5 StRSI<0.1"]
@@ -540,31 +584,90 @@ Write this block after the full 7-pair scan and before `S Hunt`:
 
 ```
 ## S Excavation Matrix
-USD_JPY: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
-EUR_USD: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
-GBP_USD: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
-AUD_USD: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
-EUR_JPY: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
-GBP_JPY: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
-AUD_JPY: Best expression ___ | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+USD_JPY: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+EUR_USD: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+GBP_USD: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+AUD_USD: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+EUR_JPY: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+GBP_JPY: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
+AUD_JPY: Best expression ___ | Best A/S path ___ [MTF + indicator combo] | Why not S now ___ | Upgrade to S only if ___ | Dead if ___
 
-Podium #1: [PAIR LONG/SHORT] | Closest-to-S because ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
-Podium #2: [PAIR LONG/SHORT] | Closest-to-S because ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
-Podium #3: [PAIR LONG/SHORT] | Closest-to-S because ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
+Podium #1: [PAIR LONG/SHORT] | Seat family ___ | Closest-to-S because ___ | MTF/indicator combo ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
+Podium #2: [PAIR LONG/SHORT] | Seat family ___ | Closest-to-S because ___ | MTF/indicator combo ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
+Podium #3: [PAIR LONG/SHORT] | Seat family ___ | Closest-to-S because ___ | MTF/indicator combo ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
+Podium #4: [PAIR LONG/SHORT] | Seat family ___ | Closest-to-S because ___ | MTF/indicator combo ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
+Podium #5: [PAIR LONG/SHORT] | Seat family ___ | Closest-to-S because ___ | MTF/indicator combo ___ | Still blocked by ___ | If it upgrades: [MARKET / LIMIT / STOP-ENTRY]
 ```
 
 **Default podium source: copy `S EXCAVATION SEEDS` from session_data unless the live chart disproves them.** A blank or fully rewritten podium after the board already ranked live seats is avoidance unless you can state the exact contradiction.
+**`Best A/S path` is the anti-indicator-soup lane.** Name the exact cross-TF combo that would make the seat pay. If all your evidence comes from one TF, it is still B until the rest of the chain agrees.
 **`Why not S now` must be one real contradiction, not mood.** "Need more confirmation" is lazy. "M15 payer still opposite," "spread too expensive for a 10pip path," "M1 trigger never printed," and "vehicle is dirtier than the direct-USD alternative" are real blockers.
 **`Upgrade to S only if` must be observable on tape.** "Looks better" is not a trigger. "1.3523 reclaim fails with upper wick + M1 JPY softens + spread normalizes" is a trigger.
 **`Dead if` prevents memory-story drift.** If the current tape prints the kill condition, the seat is dead. You do not get to rewrite it as a slightly worse trigger and call that patience.
 **The podium is the anti-avoidance lane.** `S Hunt` only holds the promoted winners by horizon. The podium names the near-S seats you almost missed. If the session ends flat, the podium makes that visible.
 **The podium must name a real pair and direction.** `Podium #1: GBP_USD SHORT` is reviewable tomorrow. `Podium #1: direct-USD fade` is not.
 
+### Gold Mine Inventory (required — write after S Excavation Matrix and before A/S Excavation Mandate)
+
+**This is the anti-hero-seat lane.** A pro trader does not stop after naming one clean seat. The market often offers several payable seams at once. Inventory the mine before you decide where to swing hardest.
+
+Write this block after `S Excavation Matrix`:
+
+```
+## Gold Mine Inventory
+Gold #1: [PAIR LONG/SHORT] | Seat family ___ | Why mineable now ___ | Arm if alive now as [MARKET / LIMIT / STOP-ENTRY] | If not armed by session end: [trade id=___ / armed LIMIT id=___ / armed STOP id=___ / exact contradiction ___]
+Gold #2: [PAIR LONG/SHORT] | Seat family ___ | Why mineable now ___ | Arm if alive now as [MARKET / LIMIT / STOP-ENTRY] | If not armed by session end: [trade id=___ / armed LIMIT id=___ / armed STOP id=___ / exact contradiction ___]
+Gold #3: [PAIR LONG/SHORT] | Seat family ___ | Why mineable now ___ | Arm if alive now as [MARKET / LIMIT / STOP-ENTRY] | If not armed by session end: [trade id=___ / armed LIMIT id=___ / armed STOP id=___ / exact contradiction ___]
+Gold #4: [PAIR LONG/SHORT] | Seat family ___ | Why mineable now ___ | Arm if alive now as [MARKET / LIMIT / STOP-ENTRY] | If not armed by session end: [trade id=___ / armed LIMIT id=___ / armed STOP id=___ / exact contradiction ___]
+Gold #5: [PAIR LONG/SHORT] | Seat family ___ | Why mineable now ___ | Arm if alive now as [MARKET / LIMIT / STOP-ENTRY] | If not armed by session end: [trade id=___ / armed LIMIT id=___ / armed STOP id=___ / exact contradiction ___]
+Gold #6-#10: continue when `GOLD MINE INVENTORY` / `SEAT INVENTORY BOARD` shows real breadth
+```
+
+**In `FULL_TRADER`, Gold #1-#5 are mandatory.** If the tape is truly dead, the contradiction must kill them. Do not shrink this list to one hero pair because the primary is already live.
+**Each gold line must speak in executable terms.** `Arm if alive now as ...` is the format that forces real trading thought. `watch`, `maybe`, and `wait for confirmation` are not valid actions here.
+**The closure must be auditable.** If Gold #3 stayed unarmed, tomorrow must be able to read the exact contradiction and score it. `No pending id` is not a contradiction.
+**This section mines breadth; `A/S Excavation Mandate` names the hero seat.** You need both. One tells you where the best gold is; the other prevents tunnel vision.
+
+### A/S Excavation Mandate (required — write after Gold Mine Inventory)
+
+**Every session must surface the best A/S candidate, even when it is not live yet.** The market may be dirty, but your read cannot stay blank on where the best A/S path lives now.
+
+```
+## A/S Excavation Mandate
+Best A/S live now: [PAIR LONG/SHORT / none only if every live candidate is explicitly contradicted]
+  Why this is A/S: ___
+  MTF/indicator combo: ___
+  Why this is not just B: ___
+  Order now: [ENTER NOW already filled as trade id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+
+Best A/S one print away: [PAIR LONG/SHORT]
+  Missing print: ___
+  MTF/indicator combo waiting to complete: ___
+  Arm now as: [armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+
+Best A/S I am explicitly rejecting: [PAIR LONG/SHORT / none]
+  Exact contradiction: ___
+```
+
+**`Best A/S live now` should normally come from Gold #1.** If it does not, write the contradiction that demoted Gold #1 out of hero status.
+**`Best A/S one print away` should normally come from the highest-ranked unarmed mine.** Do not invent a fresh seat here that never survived `Gold Mine Inventory`.
+
+**`Best A/S live now` cannot be blank because you feel uncertain.** If it is `none`, the contradiction must kill every live candidate, not just the one you dislike.
+**`Best A/S live now` must use the best armable bucket seat, not the prettiest blocked seat.** If the highest raw-score seat is still `PASS` but another seat in the same bucket is already `LIMIT` or `STOP-ENTRY`, the armable seat is the honest answer.
+**The `Best A/S ...:` header lines are seat identity only.** Do not put `dead thesis because ...` in the header itself. The closure belongs only in `Order now:` / `Arm now as:`.
+**If `Order now` is not `dead thesis`, it must close with a real receipt.** By session end that means `trade id=___`, `armed STOP id=___`, or `armed LIMIT id=___`, not prose about what you meant to do.
+**`Best A/S one print away` is the anti-late lane.** If the best seat only needs one reclaim, rejection, or pulse flip, arm the honest `STOP-ENTRY` or `LIMIT` now instead of rediscovering it next session.
+**`Best A/S one print away` should come from the highest-quality near-S `PASS` seed.** Keep the missing print explicit so tomorrow can judge whether you waited honestly or just hesitated.
+**If `Arm now as` is not `dead thesis`, it must already carry the armed order `id=___`.** "LIMIT later" or "STOP if it goes" is fake participation and will fail the runtime handoff gate.
+**`dead thesis because no live pending entry order exists` also fails the gate.** That sentence only says you did not execute. It does not say the seat died.
+**`Best A/S I am explicitly rejecting` makes disagreement auditable.** If you reject the market's cleanest-looking seat, name the exact contradiction so tomorrow can score it.
+
 ### S Hunt — short / medium / long (required EVERY session)
 
 **A serious trader does not stop at one horizon.** If the short-term seat is dirty, the medium-term seat may be clean. If the medium-term seat is late, the long-term seat may still be early. A blank "no chance" turn is not earned until you have named the best S candidate in all three horizons.
 **`S Excavation Matrix` is the mining pass; `S Hunt` is the promotion pass.** First surface the near-S seats across all 7 pairs. Then promote the best short / medium / long horizons into `S Hunt`. Skipping the mining pass is how real S gets left undiscovered.
-**Promotion gate:** a seat belongs in `S Hunt` only after the blocker named in `S Excavation Matrix` has already cleared on tape, or after you are willing to arm the exact order right now. If the blocker sentence is still true, that seat is still excavation, not promoted S.
+**`Gold Mine Inventory` is the monetization pass between them.** It lists the top 5-10 executable seams before you compress them into 3 horizons or 1 hero A/S seat.
+**Promotion gate:** a seat belongs in `S Hunt` only after the blocker named in `S Excavation Matrix` has already cleared on tape, or after you are willing to arm the exact order right now. If the blocker sentence is still true, that seat is still excavation, not promoted S. If the same pair/direction has already repeated in audit strongest-unheld or missed-S pressure, you no longer get to answer with fresh prose. Arm it, or write the exact contradiction.
 
 **The same pair may appear in multiple horizons only if the expression is genuinely different** (different entry logic, hold time, trigger, or TP path). Copying the same reclaim line three times is not a 3-horizon read.
 
@@ -577,6 +680,8 @@ Short-term S (5-30m):
   Why this is S on this horizon: ___
   Promotion proof: blocker was ___ -> cleared by ___ [or: none — no seat cleared promotion gate]
   MTF chain: H4/H1 story ___ | M15 payer ___ | M5 seat ___ | M1 trigger ___
+  A/S proof combo: ___
+  Why this is not B anymore: ___
   Payout path: ___ [what move pays within 5-30m]
   Orderability: [ENTER NOW / STOP-ENTRY / LIMIT / STILL PASS(dead only — use only when no seat cleared promotion gate)]
   If not live: exact trigger ___ | invalidation ___
@@ -587,6 +692,8 @@ Medium-term S (30m-2h):
   Why this is S on this horizon: ___
   Promotion proof: blocker was ___ -> cleared by ___ [or: none — no seat cleared promotion gate]
   MTF chain: H4/H1 story ___ | M15 payer ___ | M5 seat ___ | M1 trigger ___
+  A/S proof combo: ___
+  Why this is not B anymore: ___
   Payout path: ___ [what move pays within 30m-2h]
   Orderability: [ENTER NOW / STOP-ENTRY / LIMIT / STILL PASS(dead only — use only when no seat cleared promotion gate)]
   If not live: exact trigger ___ | invalidation ___
@@ -597,10 +704,14 @@ Long-term S (2h-1day):
   Why this is S on this horizon: ___
   Promotion proof: blocker was ___ -> cleared by ___ [or: none — no seat cleared promotion gate]
   MTF chain: H4/H1 story ___ | M15 payer ___ | M5 seat ___ | M1 trigger ___
+  A/S proof combo: ___
+  Why this is not B anymore: ___
   Payout path: ___ [what move pays within 2h-1day]
   Orderability: [ENTER NOW / STOP-ENTRY / LIMIT / STILL PASS(dead only — use only when no seat cleared promotion gate)]
   If not live: exact trigger ___ | invalidation ___
   Deployment result: ___ [entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because no seat cleared promotion gate: ___]
+
+**Long-term S is watch-only by default.** Promote it into a live receipt only when the same theme is already alive from a shorter horizon or the blocker genuinely cleared before this session. Do not invent a fresh long-horizon deployment just to fill the lane.
 ```
 
 **This block is about discovery plus closure, not forcing three trades.** One horizon may be live now, one may need a stop-entry, and one may need a structural limit. But each horizon must end in a receipt: entered, armed, or dead thesis. `STILL PASS` without a `Deployment result` is not a finished horizon read.
@@ -615,14 +726,25 @@ Long-term S (2h-1day):
 
 ```
 Margin: ___% used → after all pending fill: ___%
+Size asymmetry audit: today's biggest winner used ___u; best live seat now uses ___u. If best live seat is not bigger, exact blocker = ___
+Primary continuity verdict: [KEEP / ROTATE / DEAD]
+  If ROTATE: exact contradiction that killed the old primary = ___
 Horizon deployment:
   Short-term: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
   Medium-term: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
   Long-term: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
 Multi-vehicle lanes:
-  Lane 1 / PRIMARY: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
-  Lane 2 / BACKUP: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
-  Lane 3 / THIRD CURRENCY: ___ [pair + dir + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Lane 1 / PRIMARY: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Lane 2 / BACKUP: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Lane 3 / THIRD CURRENCY: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Lane 4 / FOURTH SEAT: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Lane 5 / FIFTH SEAT: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Additional lanes: continue `Lane N / ...` for every surviving runtime lane
+  Lane 4 / FOURTH SEAT: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Lane 5 / FIFTH SEAT: ___ [pair + dir + seat family + entered id=___ / armed STOP id=___ / armed LIMIT id=___ / dead thesis because ___]
+  Additional lanes: continue `Lane N / ...` for every surviving runtime lane
+Execution count this session: ___ live receipts | ___ armed receipts
+If broad tape but fewer than 2 live/armed lanes survived: exact blocker to second lane = ___
 LIVE NOW:
   [pair] [dir] [MARKET/LIMIT/STOP-ENTRY] @___ TP=___ SL=___ id=___
 RELOAD:
@@ -645,7 +767,13 @@ Best direct-USD seat:
 
 **This is a receipt, not a plan.** It lists what you ACTUALLY did this session with real order IDs. If any of the three sections is empty, say why. The next session reads this and knows whether you participated in the live move, covered the pullback, and left a second path.
 **`Horizon deployment` must agree with `S Hunt`.** Each short / medium / long horizon needs the same closure state in both places: entered, armed, or dead thesis. If `S Hunt` found a seat but `Horizon deployment` is blank, the work is unfinished.
+**`Primary continuity verdict` must agree with Market Narrative.** If Capital Deployment rotates away from the old primary, the contradiction sentence must match the one you wrote in Market Narrative. Silent rotation is how GPT-5.4 starts scattering.
 **Broad sessions are allowed to hold 2-3 currencies.** If Currency Pulse, scanner breadth, and `S Hunt` all point the same way across different currencies, one-seat-only is under-deployment. The bar is not "one pair"; it is "clear lane role, no same-pair averaging, worst-case margin < 90%."
+**Same-pair opposite-side coexistence needs a written role map.** If the book holds or arms both LONG and SHORT on the same pair, the handoff must say which side is the hero thesis, which side is hedge / range rotation / failed-break probe, the invalidation for each side, and what event collapses the pair back to one side. If you cannot write that narrative, close or cancel the weaker side.
+**The receipt must explain why a second lane did not survive.** When the tape is broad, `Execution count this session` makes under-deployment explicit. One live lane is fine only if the exact blocker to lane two is written.
+**The receipt must also explain the missing mines.** If `Gold Mine Inventory` named 5 mines but only 2 receipts survived, the missing 3 need exact contradictions, not silence.
+**The count must match real receipts.** `Pending orders: none` means `0 armed receipts`. Do not claim armed inventory unless a real pending entry `id=...` is still live.
+**`trigger-only watch lane` is invalid closure.** If lane 2 or lane 3 still survives your chart read, arm the honest `STOP-ENTRY` / `LIMIT` and write the `id=___`. If you are not willing to arm it, close it as `dead thesis because ___`.
 **A flat book still needs one real receipt.** If `Flat-book status` is flat, at least one horizon must still carry a real `id=___` in either `S Hunt` or `Capital Deployment`. Three trigger-only horizons is not participation.
 **The benchmark chooses the bar, not the trade.** If the receipt cannot name a valid fresh-risk seat without talking about the P&L hole, the correct answer is `none`.
 **If the trigger already traded, the receipt must resolve it.** The honest follow-up is `ENTER NOW`, `LEAVE STOP-ENTRY`, or `MISSED` — not a slightly worse reclaim written as if nothing happened.
@@ -671,16 +799,21 @@ LIMIT @___ = [structural level name: "H1 BB lower" / "Fib 38.2%" / "cluster 215.
 
 **When reviewing pending LIMITs at session start (in Capital Deployment section):**
 ```
-Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cancel: ___]
+Pending: {PAIR} @{PRICE} id={ID} | age=___ | expires_in=___ | live_gap=___pip (___x M5 ATR / ___x spread)
+  Exact seat if touched now: [STILL YES / NO]
+  Cleaner live alternative on this pair: [NONE / LONG because ___ / SHORT because ___]
+  Reprice test: [NO / YES -> new entry ___, TP ___, SL ___, because ___]
+  Action: [LEAVE / REPRICE to ___ because ___ / EXTEND GTD to ___ because ___ / CANCEL because ___]
 ```
-**That's it.** Thesis alive = leave the LIMIT alone. Don't re-evaluate the price. The structural level is the structural level. Thesis dead (H1 structure flipped, news event invalidated direction) = cancel with one-sentence reason.
+**This is the freshness test.** A structural LIMIT can stay only if you would still want that exact price now and the opposite-side live seat is not cleaner. If the order only survives because the older thesis sounds nicer than the current tape, cancel it and write the contradiction.
+**`REPRICE` is a discretionary cancel-replace, not impatience.** Use it only when the narrative is still alive but the original price is now unlikely to trade before the edge decays, and the tighter entry still preserves enough TP distance to clear spread, recent noise floor, and the intended reward/risk. The line must name the old id, the new entry / TP / SL, and why the tighter price still pays. Do not reprice for 2-3 pip noise, because the candle twitched, or because you are tired of waiting.
 
 **What is NOT a cancel reason:**
 - "M5 moved away" — that's why you placed a LIMIT instead of a market order
 - "StochRSI changed" — StochRSI changes every 5 minutes
-- "Price is X pip away, unlikely to fill" — for an existing structural LIMIT. Do not place a brand-new far-away wish order in the first place
-- "Found a slightly better level" — if it's 2-3 pip different, that's noise, not a better level
-- "GTD is about to expire" — extend GTD, don't cancel and re-place
+- "Price is X pip away" by itself — if the live gap now means the wave already paid or the opposite side is cleaner, write THAT as the reason
+- "Found a slightly better level" — if it's 2-3 pip different, that's noise, not a better level; if it is materially closer and still pays, use `REPRICE` with the full narrative and geometry
+- "GTD is about to expire" by itself — if you still want the exact price, extend GTD instead of cancel → re-place
 
 **What IS a cancel reason:**
 - H1 structure changed (DI flip, ADX collapsed, regime changed)
@@ -703,6 +836,7 @@ Pending: {PAIR} @{PRICE} id={ID} — thesis alive? [YES → leave / NO → cance
 - a trend candidate marked S/A/B with vague "waiting" language instead of a concrete trigger
 - a prior named trigger got traded and the new state silently rewrites it at a worse price with no audit
 - a cleaner direct-USD seat exists but remains prose-only: no live order, no impossibility reason, no explicit rejection
+- the live runtime board still had a payable / armable lane in `session_action_board.json`, but the handoff closes with `0 live receipts | 0 armed receipts` and no explicit dead-thesis contradiction for that same lane
 - any `S Hunt` or `Horizon deployment` line closes as `armed mentally only`, `retest only`, `breakout only`, `none placed`, or similar prose instead of `id=___` / `dead thesis because ___`
 - `Flat-book status` says flat while all three horizons remain trigger-only and zero real order IDs were left behind
 
@@ -737,15 +871,18 @@ Macro: ___
 
 ## Pre-entry — Conviction Block (required every time)
 
-cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT} [--counter]
+cd /Users/tossaki/App/QuantRabbit/collab_trade/memory && python3 pretrade_check.py {PAIR} {LONG|SHORT} [--counter] [--entry {ENTRY_PRICE} --tp {TP_PRICE} --sl {SL_PRICE}]
 # Use --counter for Type=Counter entries (M5 against H4/H1). Inverted scoring: H4 extreme = FOR.
+# If the plan already has exact prices, pass them. The tool now grades the real TP/spread and SL/spread, not just a generic wave target.
 
 ```
-Thesis: [what the CHART shows → why that means entry NOW]
+Thesis: [what the CHART shows → why that means entry NOW. If the indicators disappeared, this line must still stand]
   ❌ "StRSI=0.0 + ADX=61 + BB lower dip buy" — indicator list, not a thesis
   ✅ "Sellers made a 40-pip staircase but lower wicks at 215.35 are growing — buyers absorbing. H4 ADX=61 hasn't broken → buying the absorption"
 Last 5 M5 candles: bodies [growing/shrinking/same] × [bull/bear/mixed], wicks [lower/upper/both/none]
   → Buyers defending? [YES: at what price ___ / NO: clean sell-through, no defense → PASS]
+What the market is paying RIGHT NOW on this pair: ___
+Why the opposite side is wrong RIGHT NOW: ___
 Regime: [TREND/RANGE/SQUEEZE] — from quality_audit.md Regime Map
 Execution regime: [trend continuation / corrective retrace / post-event fade / range rotation / squeeze break / late cleanup]
 Why this pair is the best expression of that regime: ___
@@ -768,13 +905,24 @@ Type: [Scalp / Momentum / Swing / Counter / Range-Mean-Revert]
 Expected hold: [5-30m / 30m-2h / 2h-1day] → Zombie at: [HH:MMZ = entry + 2× max expected]
 First confirmation by: [entry + 15m]. If no movement in my direction → close. Max loss: ___JPY (units × SL_pip)
 Theme confidence: [proving / confirmed / late] → allocation lane [B/A/S] (theme confidence changes SIZE, not edge)
+If allocation lane = B: B band [B+ / B0 / B-] because ___
 Learning verdict: [confirmed edge / watch edge / no-edge / limited history] ← copy from LEARNING EDGE BOARD
 Learning cap: [A/S when theme confirmed / A max / B-only / pass unless exceptional]
 Learning context: [Tokyo/London/NY/Late tailwind or headwind + current regime tailwind/headwind]
-Execution style from pretrade_check: [MARKET / LIMIT / STOP-ENTRY / PASS] | Why: ___
+Pair feedback: ___ [copy the exact `Pair feedback` line from LEARNING EDGE BOARD]
+Tape-first orderability: [ENTER NOW / NEED STOP-ENTRY / NEED LIMIT / PASS] because ___
+Primary continuity: [same-theme add / same-theme reload / rotation away from old primary]
+If rotation away from last primary: exact contradiction = ___
+If same theme: why this deserves the next unit instead of inventing a new lane = ___
+pretrade_check execution style: [MARKET / LIMIT / STOP-ENTRY / PASS] | [agrees / disagrees] because ___
+A/S proof combo: ___ [cross-TF combo that makes this deserve market / trigger / price-improvement treatment]
+If the last seat failed: dead layer = [market / structure / trigger / vehicle / aging] | surviving layers = ___
+Why this is not just B: ___
 Tournament rank: [#1 fresh-risk seat / #2 / #3 / unranked]
-Is this the primary vehicle right now? [YES → can take the next add if tape improves / BACKUP → can stay live beside primary / THIRD CURRENCY → separate live lane / OTHER → B-size or pass]
+Is this the primary vehicle right now? [YES → can take the next add if tape improves / BACKUP → can stay live beside primary / THIRD CURRENCY → separate live lane / OTHER → B-band or pass]
 Session losses today: [N]W / [N]L. If 3+ consecutive L → STOP (circuit breaker). Direction of losses: ___
+Same-pair live inventory right now: [NONE / id=___ side=___ UPL=___]
+Second fill allowed only if: [existing leg already paid / risk already reduced / NO because ___]
 AGAINST: ___ [specific. "nothing" only if you actually checked]
 If I'm wrong: ___ [the scenario where this trade loses, and at what price]
 H4 position: StRSI=___ → [early/mid/late/exhausting]. Entering [with room / near ceiling / at floor]
@@ -783,25 +931,32 @@ Cross-currency: [base currency] M15 = [bid/offered] across [N] pairs → [curren
 Event asymmetry: Next [event] at [time]. Market positioned for [X]. [favorable/unfavorable for this entry]
 Margin after: ___% (include pending LIMITs → worst case ___%)
 Session: [Tokyo/London/NY_AM/NY_PM] — entry hour ___:00 UTC
-→ Edge: [S/A/B/C] | Allocation: [S/A/B/C] | Size: ___u
+→ Edge: [S/A/B/C] | Allocation: [S/A/B/C] | B band: [B+ / B0 / B- / n/a] | Size: ___u
 ```
 
 **"Thesis" is now a STORY, not an indicator list.** "StRSI=0.0 + ADX=61" is what indicators say. "Sellers made a staircase but buyers are absorbing at 215.35" is what the CHART says. Both can be true at the same time, but only the chart tells you IF this particular StRSI=0.0 is a trap or a real bounce. The indicators are the same in both cases — the candle shapes aren't.
 
 **"Last 5 candles → Buyers defending?"** is the trap filter. April data: formula entries win 73%. But the 25% big losers (-2,583, -1,413, -876) all entered at StRSI=0.0 where there was NO defense (clean bearish bodies, no lower wicks). 15 seconds to check. Saves -1,000+ on traps.
+**"What the market is paying RIGHT NOW on this pair" keeps the seat in the present tense.** Do not describe a nice higher-TF story if the tape is currently paying the opposite behavior.
+**"Why the opposite side is wrong RIGHT NOW" prevents one-sided storytelling.** A real seat survives comparison against the other direction on the same pair, not just comparison against your preferred narrative.
 
 **"First confirmation by: entry + 15m"** forces an exit clock. April data: losers cut in <30m average -354/trade. Losers held >2h average -818/trade. 39 slow-cut losers cost -31,890 (75% of all losses). If the trade doesn't start moving your direction within 15 minutes, the entry thesis was wrong. Cut, don't wait for SL.
 
 **"Theme confidence" links to Market Narrative.** It changes **allocation**, not **edge**. If theme = "proving", your edge can still be S, but allocation may stay at B/A until the theme pays. If "confirmed", allocation can match the edge. This IS the 4/7 pattern: 500u→5,000u as EUR_USD proved the USD-weakness thesis. Writing "confirmed" at entry means you've already had a winning rotation today.
+**`B band` prevents all B seats from collapsing into one size.** `B+` = the A/S path is real but the current seat still needs trigger or price improvement, so it can carry full-B pressure once armed. `B0` = honest scout. `B-` = thin probe only, usually because the path is interesting but still under-proven. `true weak B` is still a pass.
 **"Learning cap" is the memory gate on top of the market read.** Theme confidence tells you how much the tape has proven itself today. Learning cap tells you whether this pair/direction has earned that size historically. The chart can still veto a high cap, but a weak-cap seat does not get promoted by emotion.
 **"Learning context" prevents session-blind aggression.** A seat can have strong pair memory and still be wrong for the current bucket or regime. If the board prints `late headwind` or `range headwind`, that is a direct warning that the tape is where this seat historically degrades.
-**"Execution style from pretrade_check" converts precision into frequency.** If the tool says `LIMIT` or `STOP-ENTRY`, the seat may still be good, but the current price is not. If it says `MARKET` on a B-conviction seat, that means scout first and leave the better reload level. This is how you keep opportunity count up without turning every watchlist idea into a bad full-size market order.
-**`headwind` caps size before it kills participation.** If `trending / squeeze / transition` is already paying and spread is still normal, the honest closure can still be `MARKET` scout or `STOP-ENTRY`. Do not auto-flatten a real live seat just because memory says `B-only`.
+**"Pair feedback" is the fresh base-rate lane.** This must come from the LEARNING EDGE BOARD line, not from vague memory. Recent matched `pretrade_outcomes` outrank old legends. If the line says `recent pretrade feedback (14d): WR 18% EV -295 n=11`, you are not allowed to write an A/S story without naming the exact live contradiction that makes today different.
+**"Tape-first orderability" kills tool-worship.** Decide from the chart whether this is live now, trigger later, price-improvement later, or a pass. The tool is a cross-check, not the trader.
+**"pretrade_check execution style" converts precision into frequency.** If the tool says `LIMIT` or `STOP-ENTRY`, the seat may still be good, but the current price is not. Fresh market execution is reserved for `A/S` seats. `B` means trigger first or better price first. If you disagree, write why the chart wins or why the learning/risk gate wins.
+**"Same-pair live inventory" is the anti-friction lane.** If the first leg on this pair is still unpaid, a second fill is usually just doubled spread and doubled narrative risk. A reload only earns `YES` after the first leg is paid or risk is already reduced.
+**`headwind` caps participation before it becomes flatness.** If `trending / squeeze / transition` is already paying and spread is still normal, a real seat can still stay alive as `STOP-ENTRY` or `LIMIT`. Do not auto-flatten a valid seat, but do not pay market on a sub-A seat either.
 **"Tournament rank" kills pretty-story bias.** If a direct-USD seat is rank #3 and the cross is rank #1, you need a concrete market reason to ignore the ranking. "I like the narrative more" is not a reason.
+**`A/S proof combo` is the anti-overfitting lane.** Name the 2-4 pieces across at least 2 timeframes that make this seat coherent. A pile of same-timeframe indicators is still B-quality noise until another TF confirms it.
 **The MTF chain prevents one-timeframe hallucinations.** H4/H1 gives the story, M15 gives the payer, M5 gives the seat, and M1 gives the trigger. If one link is blank, the trade is not ready.
 **The 6-category evidence prevents low-information passes and low-information entries.** A serious call names Direction, Timing, Momentum, Structure, Cross-pair, and Macro explicitly. If one category contradicts, you can still trade. If you never surfaced it, you are guessing.
 
-**"Is this the primary vehicle right now?"** prevents dilution without forcing fixation. Primary gets the next add only while it stays the cleanest expression. Backup and third-currency lanes can still be live in the same session when the move is broad. Everything else is B-size scouting or a pass. 4/7: EUR_USD (primary) + AUD_USD (backup) = 98% of +11,014 JPY. The label follows the tape; it is not a quota.
+**"Is this the primary vehicle right now?"** prevents dilution without forcing fixation. Primary gets the next add only while it stays the cleanest expression. Backup and third-currency lanes can still be live in the same session when the move is broad. Everything else is B-band scouting or a pass. 4/7: EUR_USD (primary) + AUD_USD (backup) = 98% of +11,014 JPY. The label follows the tape; it is not a quota.
 
 **"Expected hold → Zombie at"** is the orphan killer. A Momentum trade entered at 12:38Z expects 30m-2h → zombie at 16:38Z. When the next session checks this position at 17:00Z, it sees "Zombie at 16:38Z — PAST." The position management block forces justification or closure. This alone would have prevented the 4/14 GBP_USD -2,583 JPY loss (Momentum entry, held 5h40m past zombie time).
 
@@ -884,6 +1039,25 @@ Pending LIMITs if filled: +___JPY → worst case ___%  ← must be below 90%
 | **Above 90%** | **BLOCKED. Do not enter.** Free margin first (TP/cancel LIMIT/half-close) |
 
 **4/8 lesson: EUR_JPY + EUR_USD + GBP_JPY stacked to 97% → forced EUR_JPY close at -319 JPY. The loss was caused by margin mismanagement, not market conditions. Calculate BEFORE entering.**
+**4/7 lesson: high margin was a result of concentrated proven themes, not the reason the day worked.** `~89.5% margin utilization` was used only after multiple live lanes already existed and the trader was pressing the cleanest expressions, not because "margin should be high."
+
+### Margin deployment bands (audit the book shape, not just the cap)
+
+**Margin % is not an entry reason.** Use the band to judge whether the book matches the tape. If the tape only justifies one proving lane, low margin is fine. If two clean A/S lanes are already live and paying, 30-40% is probably under-deployed.
+
+| Book state | Healthy margin band | What it means |
+|------------|---------------------|---------------|
+| **No paid lane yet / first proving entry** | **0-45%** | Stay selective. One or two honest probes only |
+| **Two honest live lanes OR one lane paid and one backup armed** | **45-70%** | Normal expansion band. This is where under-deployment often shows up |
+| **Theme confirmed, concentrated in top 1-2 clean expressions, no same-pair averaging** | **70-82%** | Aggressive but healthy |
+| **Above 82%** | **Exceptional only** | Only for proven A/S concentration or exact pullback re-entry after profits are already locked |
+| **Above 90%** | **Blocked** | Free margin first. Do not stack into forced-closeout risk |
+
+**Use this as a deployment audit:**
+
+- If margin is **below 45%** and you already have 2 clean live lanes, ask what real third lane or add-on is being missed.
+- If margin is **70%+** without a paid lane or without top-2 concentration, size is ahead of proof.
+- If margin is **82%+** on fresh B seats, you are pressing noise, not edge.
 
 ### Sizing (allocation determines size — calculate fresh every entry)
 
@@ -893,7 +1067,9 @@ Units = (NAV × margin%) / (price / 25)
 |------------|-----------------|-----------|------------|
 | **S** | **~30%** | 8,000u | 4/4 wins, +5,921 JPY, WR 100% |
 | **A** | **~15%** | 4,000u | Sweet spot for +19k bucket |
-| **B** | **~7%** | 3,000u | Min viable (below = net negative) |
+| **B+** | **~7-10%** | 3,000u-4,500u | Best B lane. A/S path is live, only seat quality is unresolved |
+| **B0** | **~5-7%** | 2,000u-3,000u | Normal proving scout |
+| **B-** | **~2-4%** | 1,000u-2,000u | Probe-only / often better as PASS |
 | **C** | **Don't enter.** | — | Not worth spread at any size |
 
 ### Sizing discipline — Theme confidence determines size
@@ -908,11 +1084,30 @@ Units = (NAV × margin%) / (price / 25)
 
 **4/7 blueprint**: EUR_USD started at 500u (proving). After first TP (+402 at entry #3), scaled to 4,000u (confirmed). By entry #7, 5,000u. The same signal (StRSI=0.0) kept a strong edge throughout. What changed was the amount of capital it deserved after the theme proved itself.
 
-**Hero pair gets full theme-confidence sizing + rotation. Sidekick gets A-size. Others get B-size max.**
+**Hero pair gets full theme-confidence sizing + rotation. Sidekick gets A-size. Others stay inside the B band that their seat actually deserves.**
+**If yesterday's or today's winners were all capped at B0 while the book still had spare healthy margin, that is underbetting, not discipline.** The next clean seat must either move `B-→B0`, `B0→B+`, or `B+→A`, or write the exact blocker.
 
-**Minimum 3,000u per entry.** Below 3,000u = data shows net negative P&L (330 trades at 1-2k = -23,098 JPY). If conviction is too low for 3,000u, don't enter.
+**Default honest fresh-risk size is 3,000u.** Go below that only when you explicitly tag the seat `B-` and write why the path is real but the seat is still incomplete. Otherwise, if conviction is too low for 3,000u, don't enter.
 
 **Max loss per trade: 500 JPY.** Calculate: units × SL_distance ÷ pip_multiplier. If > 500 JPY → reduce units or widen SL to structural level and reduce units. April data: good days have worst trade around -350. Bad days have -2,000+. The 500 cap prevents bad days.
+
+### Winner concentration — the next clean seat must get paid
+
+**Good days are asymmetric.** The profitable lanes carry larger size than the noisy lanes. If every winner and every loser is still `3000u`, you did not express conviction; you spread risk evenly across good and bad ideas.
+
+**Paid-lane escalation rule:**
+
+- First proving seat: `B0`, `B+`, or `A` is fine. `B-` is probe-only, not your default first expression.
+- After the first clean TP or once a live lane has already reduced risk, the next clean entry on the same confirmed theme defaults up one allocation lane (`B→A`, `A→S`) unless you write the blocker.
+- Inside the B bucket, the next clean improvement defaults `B-→B0` or `B0→B+` before it deserves `A`.
+- The size-up belongs to the hero pair / cleanest vehicle, not to every sibling pair.
+- Never size up a revenge entry, same-pair averaging into open risk, or a thesis that just failed.
+
+**Required question before leaving size unchanged on a winner:**
+
+`If this seat is cleaner than yesterday's winners, why is it not in a higher B band or a higher lane?`
+
+If the answer is vague (`not sure`, `be safe`, `maybe late`), the sizing decision is not finished.
 
 ### ROTATION ENGINE — the only thing that makes money (MANDATORY after every TP)
 
@@ -936,7 +1131,7 @@ ROTATION [N]: [PAIR] +___JPY closed. Theme alive? [YES — because ___]
 
 | Rotation # | What happened | Size | Theme confidence |
 |------------|--------------|------|-----------------|
-| 1 | First entry, testing thesis | 3,000u | proving |
+| 1 | First entry, testing thesis | B0/B+ (3,000u-4,000u) | proving |
 | 2 | **First TP hit** → thesis confirmed | 4,000u | **confirmed** |
 | 3-4 | Rotating on proven theme | 4,000-6,000u | confirmed |
 | 5+ | Theme is printing money | 6,000-8,000u | confirmed → peak |
@@ -966,7 +1161,7 @@ EUR_USD is +8,812 JPY over 88 trades (the system's strongest proven edge). GBP_U
 | S/A conviction + spread > 2× normal (holiday/rollover) | **LIMIT at M5 BB mid or recent wick level** | Wide spread = slippage. LIMIT saves 3-5pip on a 15pip target |
 | S/A conviction + M5 NOT at extreme (mid-range) | **LIMIT at M5 BB edge / structural support + second-shot level** | Don't chase mid-range. Cover the dip and the failure/continuation |
 | Reclaim / breakout is the actual edge and the trigger sits beyond live price | **STOP-ENTRY + reload LIMIT** | If the trigger is the trade, leave it live. Don't promise to "watch next candle" across a 20-minute cadence |
-| B conviction + live tape leaning one way | 3,000u market scout + one reload LIMIT | Small live participation is better than watching the move go without you |
+| B conviction + live tape leaning one way | STOP-ENTRY + one reload LIMIT | B can stay alive, but fresh market risk is reserved for A/S |
 | B conviction + no live tape | Reload LIMIT + other-side LIMIT | Not good enough to chase, but still not one-limit-and-done |
 
 **4/8 Easter Monday: EUR_USD 4000u and GBP_JPY 3900u entered via market order in thin liquidity. LIMIT at M5 support would have saved 5-10pip of entry cost.**
@@ -1013,7 +1208,10 @@ Held: [time] vs expected [range] → ratio: [held/max_expected]x
 
 A — Close now: {+/-}Xpip = {+/-}Y JPY. This is what I keep.
 B — Half TP: close ___u, trail remainder at ___pip
-C — Hold: REQUIRES all 4 below ↓
+Peak seen this trade: ___ JPY / ___pip
+Give-back from peak: ___ JPY (___%)
+  [if peak -> red or give-back >50%, C requires a real new reason, not "thesis intact"]
+C — Hold: REQUIRES all 5 below ↓
 
 If C:
   (1) What changed since last session? ___ ["nothing" → A. Must be NEW info]
@@ -1023,6 +1221,15 @@ If C:
       M1: [currency] M1 across [N] crosses = [bid/offered/neutral] → [supports/threatens my position]
   (3) H4 position: StRSI=___ → [early/mid/late/exhausting]. Room to run? [YES/NO]
   (4) If I entered NOW at current price, would I? [YES: why / NO: → then close]
+  (5) Range monetization check: [n/a because not range / TAKE PROFIT NOW / HOLD ONLY FOR BREAKOUT / ROTATE THE BOX]
+      Regime transition: [same / TREND→RANGE / SQUEEZE→RANGE / other]
+      Box now: lower ___ | upper ___
+      Paid path from here: [breakout through ___ / sell upper rail ___ / buy lower rail ___ / TP ___]
+      Why holding the old direction still beats boxing it: ___
+  Recent regret on losing closes: ___/___ recovered in 6h | avg loss ___pip -> avg later favorable ___pip | median return ___min
+  Dead layer if closing now: [market / structure / trigger / vehicle / aging]
+  Surviving layers if closing now: ___
+  If dead layer = trigger / vehicle, why full close beats hold / half / reload: ___
 → Chosen: [A/B/C]
 ```
 
@@ -1033,6 +1240,7 @@ If C:
 - **C(1) "What changed since last session?"** — kills the "thesis intact" loop. H1 ADX=46 was also 46 last session. That's not new. "M5 printed 3 bullish bodies above EMA20 = sellers exhausted" IS new. If literally nothing changed, you're holding the same stale thesis — close.
 - **C(2) "Entry TF right now shows"** — forces you onto the RIGHT timeframe. Momentum entry (M5) can't be justified with H1 data. Swing entry (H1) can't hide behind M5 noise. You must read YOUR timeframe.
 - **C(3) "If I entered NOW"** — the strongest filter. A 15-hour GBP_USD position at +60 JPY. Would you open a new LONG right here at 1.35640? If NO — and you probably wouldn't, because M5 is flat and you'd wait for a dip — then you're holding something you wouldn't buy. That's not conviction, it's inertia.
+- **"Recent regret on losing closes" + "Dead layer"** — this is the anti-premature-close filter. If the same pair usually trades back within minutes and the dead layer is only `trigger` or `vehicle`, a full close is usually inventory destruction. `A` needs `market / structure / aging` death, not "first wobble felt bad."
 
 **profit_check.py now gives HALF_TP recommendations more often.** H1 trend and cross-pair correlation are displayed as context but no longer block HALF_TP. If profit_check says HALF_TP or TAKE_PROFIT, start from A or B, not C.
 
@@ -1051,9 +1259,10 @@ protection_check.py outputs `Structural TP/SL candidates` menus. Use them.
 
 ## Pre-close check (required every time)
 
-cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SIDE} {UNITS} {unrealized_pnl_jpy}
+cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SIDE} {UNITS} {unrealized_pnl_jpy} [--reason planned_close_reason]
 
 **Closing without a reason = rule violation.** Note the close reason in live_trade_log.
+**The check now forces a dead-layer test plus post-close regret evidence.** If the dead layer is only `trigger` or `vehicle`, the burden is on the trader to prove why full close beats hold / half / reload.
 
 ## 4-point record (simultaneous with order — never defer)
 
@@ -1062,7 +1271,7 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SID
 | `collab_trade/daily/YYYY-MM-DD/trades.md` | Entry/close details |
 | `collab_trade/state.md` | Positions, thesis, realized P&L |
 | `logs/live_trade_log.txt` | `[{UTC}] ENTRY/CLOSE {pair} ... Sp={X.X}pip` |
-| Slack #qr-trades | `python3 tools/slack_trade_notify.py {entry|modify|close} ...` |
+| Slack #qr-trades | Entries: `place_trader_order.py --auto-slack`. Closes: `trade_event_sync.py --notify-slack` batched from OANDA transactions |
 
 ### Slack notifications
 
@@ -1070,20 +1279,52 @@ cd /Users/tossaki/App/QuantRabbit && python3 tools/preclose_check.py {PAIR} {SID
 python3 tools/slack_trade_notify.py entry --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} [--thesis "thesis"]
 python3 tools/slack_trade_notify.py modify --pair {PAIR} --action "half TP" --units {UNITS} --price {PRICE} --pl "{PL}"
 python3 tools/slack_trade_notify.py close --pair {PAIR} --side {LONG|SHORT} --units {UNITS} --price {PRICE} --pl "{PL}"
+python3 tools/trade_event_sync.py --notify-slack
 ```
+
+**Close notifications are broker-synced and batched.** TP / SL / market-close fills can happen at OANDA without passing through `close_trade.py`, so `session_data.py` runs `trade_event_sync.py --notify-slack` at session start. If several closes happened while the trader was away, they should become one `CLOSE SYNC` post instead of scattered one-line spam.
+**Do not hand-write close Slack when the sync can see the transaction.** Use the sync unless you need a human explanation thread. It appends missing close lines to `logs/live_trade_log.txt`, dedupes by transaction id, and posts one compact #qr-trades summary.
 
 ### Close command (prevents hedge account mistakes)
 
 ```
 python3 tools/close_trade.py {tradeID}         # full close (manual log/slack)
 python3 tools/close_trade.py {tradeID} {units}  # partial close (manual log/slack)
+python3 tools/close_trade.py {tradeID} --reason m1_pulse_flip --check-only
+python3 tools/close_trade.py {tradeID} --reason structure_break --check-only
 
 # ONE-COMMAND close: log + Slack notification handled automatically
 python3 tools/close_trade.py {tradeID} --reason zombie_hold --auto-log --auto-slack
 python3 tools/close_trade.py {tradeID} {units} --reason half_tp --auto-log --auto-slack
+python3 tools/close_trade.py {tradeID} --reason structure_break --auto-log --auto-slack
+python3 tools/close_trade.py {tradeID} --reason market_flip --auto-log --auto-slack --force-full-close
 ```
 
-**Use `--auto-log --auto-slack` for routine closes.** This reduces close cost from 3-4 minutes (close + manual log + manual Slack) to ~30 seconds. The time saved goes to analysis. Only skip auto-log for complex closes that need custom log entries.
+**Use `--auto-log --auto-slack` for routine closes.** This reduces close cost from 3-4 minutes to ~30 seconds. `--auto-slack` now calls the close-event sync path, so manual exits and TP/SL auto-fills share the same deduped Slack stream. Only skip auto-log for complex closes that need custom log entries.
+**`close_trade.py` now enforces dead-layer close discipline on trader inventory.** If a losing seat only died at `trigger` / `vehicle`, full close is refused by default and the helper tells you to manage it as `HALF / HOLD / reload` instead.
+**Range / squeeze `LIMIT` and `STOP-ENTRY` seats are not allowed to die on M1 wobble alone.** Use `--check-only` first when in doubt. Full-close override exists as `--force-full-close`, but only after you can write the exact market / structure / aging contradiction.
+**Same market thesis siblings are treated as one inventory family.** If a sibling expression is still live under the same `thesis_market`, the helper blocks reflex full-close on one leg and tells you to manage the family, not micro-close one seat.
+**`stale_thesis`, pathological `bad fill`, and dirty `counter-reversal` seats are killed faster.** Those branches are allowed to full-close without the soft-wobble protection because the seat itself is rotten.
+
+### Trader entry helper — routine entries must create the order and the receipt together
+
+```bash
+# LIMIT / STOP-ENTRY / MARKET all go through the same helper
+python3 tools/place_trader_order.py LIMIT EUR_USD LONG 3000 --entry 1.17815 --tp 1.17893 --sl 1.17758 --thesis first_defense_rearm --pretrade 'B(4/10)->B0' --allocation B --allocation-band B0
+python3 tools/place_trader_order.py STOP-ENTRY EUR_JPY LONG 3000 --entry 187.286 --tp 187.420 --sl 187.148 --thesis tokyo_reclaim_stop --pretrade 'B(5/10)->B+' --allocation B --allocation-band B+
+python3 tools/place_trader_order.py LIMIT EUR_USD LONG 2000 --entry 1.17435 --tp 1.17505 --sl 1.17395 --thesis eurusd_counter_reversal_probe --pretrade 'A(6/10)->B-' --allocation B --allocation-band B- --counter
+python3 tools/place_trader_order.py MARKET EUR_USD SHORT 3000 --tp 1.17710 --sl 1.17835 --thesis honest_break_now --pretrade 'A(6/10)' --allocation A
+```
+
+**This helper does 3 things in one step:** places the real OANDA order, appends the trader log line to `logs/live_trade_log.txt`, and prints the exact `STATE_RECEIPT` string to paste into `state.md`.
+**This helper now runs a live-book hygiene gate first.** If any live trade or pending entry order exists in OANDA but is missing from `state.md` or `logs/live_trade_log.txt`, the helper refuses fresh risk until that drift is repaired.
+**This helper now runs the exact `pretrade_check.py` geometry before every live send.** The real `entry / tp / sl` must still clear hard safety gates such as stop-floor, target-floor, and unpaid-unprotected same-pair stacking; a board seat is not enough. Soft vehicle preferences from exact pretrade are advisory for the trader, not automatic veto power.
+**`--pretrade`, `--allocation`, and `--allocation-band` are no longer trusted as authority.** They are helper inputs only. The order helper now derives the effective log line and size band from the exact pretrade result, so stale self-labeling cannot smuggle an A-size order through a B/C seat.
+**`MARKET` orders now use live bid/ask as the exact entry proxy before send.** If the helper cannot price the market order honestly, it blocks instead of pretending the geometry is known.
+**The `session_action_board` mismatch gate belongs to `SESSION_END`, not to order entry.** If the board just printed the lane you are about to execute, the order helper must be allowed to be the thing that resolves it. Fresh-risk preflight should block only on real live-book drift, not on the yet-to-be-written receipt.
+**This helper now enforces lot honesty before the order leaves your hand.** If the units do not match the effective `allocation / allocation-band`, or if a `counter / reversal` seat tries to come through as A-size or MARKET, the order is blocked.
+**This helper now kills pathological STOP / MARKET fills immediately.** If the actual fill spread explodes relative to the live spread and to the planned TP/SL path, the helper emergency-closes the trade instead of pretending the fill was acceptable.
+**Use `--dry-run` first if you only want to verify payload / receipt wording.** Do not write `armed LIMIT` / `armed STOP` / `trade id=...` in the handoff from memory.
 
 ### Slack reply to user — ALWAYS use `--reply-to`
 
@@ -1137,6 +1378,17 @@ trailing = {"trailingStopLoss": {"distance": "0.150", "timeInForce": "GTC"}}
 3. Unrealized profit → taking profit is first option. "Thesis alive" is not a hold reason. "M5 still making new highs, 5pip to structural level" is
 4. Unrealized loss → "Would I enter this right now?" If NO → close
 5. Check indicators last. Don't override price action with indicators
+
+**If M5 is RANGE / shelf / sideways, or the auditor marks the pair `Range Tradeable? YES`, you must write this before you choose hold:**
+
+```
+Range monetization verdict: [TAKE PROFIT NOW / HOLD ONLY FOR BREAKOUT / ROTATE THE BOX]
+Range rails now: lower ___ | upper ___
+How this position gets paid from here: [breakout through ___ / rotation to ___]
+Why not monetize the opposite rail instead: ___
+```
+
+`managed shelf` is not a verdict. If the pair is ranging, either bank the old trend trade, keep it only for the exact shelf break, or rewrite it as the box trade with exact rails.
 
 ### STEP 2: 7-pair scan (Tier 1 deep + Tier 2 quick — no pair skipped)
 
@@ -1217,14 +1469,18 @@ Sessions die unexpectedly (context overflow, API timeout, maxTurns). You cannot 
 
 1. **FIRST write: immediately after profit_check/protection_check** (minute 1). Write positions + market context + planned actions. Even a rough draft is infinitely better than nothing.
 2. **UPDATE after every trade action** (as part of 4-point record). Order placed → update state.md positions section. This takes 5 seconds.
-3. **UPDATE `## Hot Updates` after every Micro AAR**. One line only: what changed and what the next seat must do differently. Use `python3 tools/state_hot_update.py add --note "..."` when you want the carry-forward update written fast without re-editing the whole file. Session end will auto-derive a final safety-net update from the receipt blocks, but do not wait for that if the correction is obvious now.
-4. **FINAL write: at SESSION_END**. Polish and add lessons.
+3. **UPDATE `## Slack Response` immediately after every human Slack reply.** `Pending user ts` stays `none` only after the real `slack_post.py --reply-to ...` receipt exists.
+4. **UPDATE `## Hot Updates` after every Micro AAR**. One line only: what changed and what the next seat must do differently. Use `python3 tools/state_hot_update.py add --note "..."` when you want the carry-forward update written fast without re-editing the whole file. Session end will auto-derive a final safety-net update from the receipt blocks, but do not wait for that if the correction is obvious now.
+5. **FINAL write: at SESSION_END**. Polish and add lessons.
 
 If you trade for 7 minutes and die at minute 7.5 without writing state.md, you wasted the entire session. If you write at minute 1 and die at minute 7.5, the next session has 90% of what it needs.
 
 state.md is a handoff document, not a log. **Don't write the same content twice.**
+**Rewrite sections in place.** Do not append a second `## Deepening Pass`, `## Capital Deployment`, or any other duplicate heading. The parser only reads one block, so a later fix can stay invisible if the old section is still above it.
 
 **CRITICAL: Copy the UTC timestamp from session_data.py output (`=== SESSION: YYYY-MM-DD HH:MM UTC ===`). Do NOT compute the date yourself — JST/UTC date mismatch causes quality-audit false alarms.**
+**session_data may omit the giant static templates in normal runtime mode.** The canonical templates live in this file. The runtime output should foreground live board / tape / deployment data, not rebroadcast pages of static scaffolding every cycle.
+**If `SESSION INTENT GATE` says `WATCH-ONLY`, keep the existing 7-pair scan / podium / S-Hunt map unless you have a concrete contradiction.** Update the live-management sections and the exact re-arm / kill sentence; do not hallucinate a fresh map to justify the scheduler tick.
 
 ```
 # Trader State — {date from SESSION line}
@@ -1233,8 +1489,15 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 ## Self-check ← WRITE FIRST (from MANDATORY TEMPLATES in session_data)
 {copy the Self-check template from session_data output, fill ALL blanks}
 
+## Slack Response
+Pending user ts: [none / latest unread ts shown in session_data]
+Latest handled user ts: [latest ts already handled via `--reply-to` / none]
+Message class: [directive / hold-order / question-observation / none]
+Trade consequence: [executed ___ / held existing plan / no trade change / none]
+Reply receipt: [python3 tools/slack_post.py "..." --channel C0APAELAQDN --reply-to {ts} / none because no unread user message]
+
 ## Market Narrative
-{Driving force + vs last session + M5 verdict + theme + execution regime + best/second-best expression + expressions to avoid + H4-memory trap check + event positioning + macro chain + trigger audit + best direct-USD seat}
+{Driving force + vs last session + M5 verdict + theme + execution regime + best/second-best expression + expressions to avoid + H4-memory trap check + primary continuity verdict + event positioning + macro chain + trigger audit + best direct-USD seat}
 
 ## Currency Pulse
 {copy from session_data CURRENCY PULSE, add your stories + MTF conflict + best vehicle}
@@ -1255,19 +1518,25 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 {Tier 1 deep + Tier 2 quick}
 
 ## S Excavation Matrix
-{all 7 pairs: best expression + exact blocker + exact upgrade print + exact death condition, then Podium #1-#3}
+{all 7 pairs: best expression + best A/S path combo + exact blocker + exact upgrade print + exact death condition, then Podium #1-#5 with MTF/indicator combo}
+
+## Gold Mine Inventory
+{Gold #1-#5 mandatory in FULL_TRADER, Gold #6-#10 when the board is broad. Each line must name pair/direction, seat family, why it is mineable now, the executable expression (`MARKET / LIMIT / STOP-ENTRY`), and either the real receipt or the exact contradiction that kept it unarmed}
+
+## A/S Excavation Mandate
+{best A/S live now + best A/S one print away + best A/S explicitly rejected, each with the exact MTF/indicator combo and receipt/dead-thesis closure}
 
 ## S Hunt
-{short-term S + medium-term S + long-term S, each with pair/dir/type, why it is S, promotion proof (`blocker was ... -> cleared by ...` or `none — no seat cleared promotion gate`), MTF chain, payout path, orderability, exact trigger/invalidation if not live, and deployment result closed as `id=...` or `dead thesis because no seat cleared promotion gate: ...`}
+{short-term S + medium-term S + long-term S, each with pair/dir/type, why it is S, promotion proof (`blocker was ... -> cleared by ...` or `none — no seat cleared promotion gate`), MTF chain, A/S proof combo, why it is no longer B, payout path, orderability, exact trigger/invalidation if not live, and deployment result closed as `id=...` or `dead thesis because no seat cleared promotion gate: ...`}
 
 ## Multi-Vehicle Deployment
-{Lane 1 / PRIMARY + Lane 2 / BACKUP + Lane 3 / THIRD CURRENCY. Only when several currencies are alive: each lane must close as entered / armed / dead thesis, with no same-pair averaging and worst-case margin still below 90%}
+{Lane 1 / PRIMARY + Lane 2 / BACKUP + Lane 3 / THIRD CURRENCY + Lane 4 / FOURTH SEAT + Lane 5 / FIFTH SEAT + more `Lane N / ...` as needed. Each lane must close as entered / armed / dead thesis. Blind same-pair averaging is banned, but same-pair multi-seat is allowed when trigger/vehicle/invalidation differ and worst-case margin still stays below 90%. If same-pair opposite-side positions/orders coexist, add `Same-pair role map: hero ___ / hedge-or-rotation ___ / collapse condition ___`}
 
-## Pending LIMITs (review — thesis alive?)
-{For each pending: PAIR @PRICE id=ID — thesis alive? YES→leave / NO→cancel: reason}
+## Pending LIMITs (freshness review — would I still take this exact price now?)
+{For each pending: PAIR @PRICE id=ID | age=___ | expires_in=___ | live_gap=___pip (___x M5 ATR / ___x spread); Exact seat if touched now [STILL YES / NO]; Cleaner live alternative [NONE / pair dir because ___]; Reprice test [NO / YES -> new entry ___, TP ___, SL ___, because ___]; Action [LEAVE / REPRICE / EXTEND GTD / CANCEL because ___]}
 
 ## Capital Deployment
-{margin %, horizon deployment lines that mirror the exact `S Hunt` closure state, multi-vehicle lanes, live now / reload / other side, trigger audit, best direct-USD seat, new LIMITs placed this session. A flat session still needs at least one real `id=...` receipt; no-promotion horizons must stay explicit as `dead thesis because no seat cleared promotion gate: ...`}
+{margin %, size asymmetry audit, primary continuity verdict + exact contradiction if rotating, horizon deployment lines that mirror the exact `S Hunt` closure state, multi-vehicle lanes, live now / reload / other side, trigger audit, best direct-USD seat, new LIMITs placed this session. A flat session still needs at least one real `id=...` receipt; no-promotion horizons must stay explicit as `dead thesis because no seat cleared promotion gate: ...`}
 
 ## Deepening Pass (TOO_EARLY only)
 {best direct-USD seat + best cross seat, each with H4/H1 story, M15 payer, M5 seat, M1 trigger, 6-category evidence, what was missing in the first read, and whether the seat is now ENTER NOW / STOP-ENTRY / LIMIT / STILL PASS}
@@ -1294,7 +1563,7 @@ state.md is a handoff document, not a log. **Don't write the same content twice.
 | 2-6 min | **Currency Pulse + Market Narrative + Self-check.** Write state.md v1 with currency dynamics, MTF conflicts, macro chain, event positioning. This is WHERE YOU THINK. |
 | 6-10 min | 7-pair scan (Tier 1 deep + Tier 2 quick) + `S Excavation Matrix` + `S Hunt` (short / medium / long) + Position management + Execute. **Each trade → update state.md immediately.** |
 | 10-13 min | **SESSION_END window.** Final state.md polish, then Next Cycle Bash. If you get TOO_EARLY, fill `## Deepening Pass` immediately. |
-| 13-15 min | Buffer before stale-lock recovery. After `Deepening Pass`, one fresh mid-session check is enough; do not replace market work with repeated timer narration. If `Deepening Pass` is still blank, the buffer is still analysis time. |
+| 13-16 min | Buffer before stale-lock recovery. After `Deepening Pass`, one fresh mid-session check is enough; do not replace market work with repeated timer narration. If `Deepening Pass` is still blank, the buffer is still analysis time. |
 
 **Hard rule: After every bash output, immediately run the next cycle bash.** Never write more than 1 analysis block without checking the clock.
 
@@ -1311,15 +1580,18 @@ Session summary ({start_from_bash}–{end_from_bash} UTC, {elapsed}s):
 
 cd /Users/tossaki/App/QuantRabbit && python3 tools/task_runtime.py trader cycle --owner-pid $PPID
 
-**How it works**: `task_runtime.py trader cycle` refreshes the shared lock, runs `session_end.py`, and falls back to `mid_session_check.py` only on soft rejection (`TOO_EARLY` / stale-state reminder). Hard runtime errors are not silently converted into a mid-session poll.
+**How it works**: `task_runtime.py trader cycle` refreshes the shared lock, runs `session_end.py`, and falls back to `mid_session_check.py` only on soft rejection (`TOO_EARLY` / `STATE_MD_STALE`). Hard runtime errors are not silently converted into a mid-session poll.
 
 - SESSION_END + LOCK_RELEASED → session complete. **state.md MUST be updated BEFORE running this Bash.**
-- `STATE_VALIDATION_FAILED` → your `S Hunt` / `Capital Deployment` receipt is still prose-only. Fix the horizon closure state (`id=...` or `dead thesis because ...`), then run the cycle Bash again.
+- `STATE_VALIDATION_FAILED` → your `S Hunt` / `Capital Deployment` receipt is still prose-only. This is a hard stop, not a mid-session refresh. Fix the horizon closure state (`id=...` or `dead thesis because ...`), then run the cycle Bash again.
+- `STATE_VALIDATION_FAILED` also covers stale focus ladders. If `Backup vehicle` / `Next fresh risk allowed NOW` still say `none` while the current board has a lane, that is the same hidden inaction and must be fixed before the cycle can end.
+- `STATE_VALIDATION_ERROR` → validator runtime failed. Treat it like a broken safety rail, not a soft reminder. Fix the runtime or rerun only after the validator works again.
+- `STATE_MD_STALE` → refresh `state.md`, then run the cycle Bash again. This is the only stale-state reminder that may fall through to `mid_session_check.py`.
 - **TOO_EARLY → session_end.py rejected your request. Go back and do deeper analysis.** Update `## Deepening Pass` with best direct-USD seat + best cross seat, run fib_wave --all only if Structure is still the missing category, refresh one live mid-session check, then run the cycle Bash again. If `## Deepening Pass` is missing, you are not done with the session yet.
 - Otherwise (mid_session_check) → trade judgment → next cycle Bash.
 - **Full session_data.py runs ONCE at session start (Bash②). Mid-session cycles use mid_session_check.py (prices + Slack only) to save ~26s per cycle.** Technicals, news, macro, S-scan, memory are stable within the current 15-minute trader session window.
 
-**CRITICAL: session_end.py is the ONLY way to release the lock and run ingest.** Do NOT run `rm -f logs/.trader_lock` or `ingest.py` directly. Do NOT write "SESSION_END" or "LOCK_RELEASED" as text — those words must come from session_end.py output. The script enforces the minimum session duration. Bypassing it = lying about session time.
+**CRITICAL: session_end.py is the ONLY way to release the lock and run ingest.** Do NOT run `rm -f logs/.trader_lock` or `ingest.py` directly. Do NOT write "SESSION_END" or "LOCK_RELEASED" as text — those words must come from session_end.py output. The script enforces the minimum session duration and now also performs the runtime git sync on clean `main` sessions. Bypassing it = lying about session time and bypassing the handoff commit.
 
 ## Slack handling (highest priority)
 
@@ -1330,6 +1602,19 @@ If there's a user message in Slack, handle it before making trade decisions. Ign
 2. **"SLいらない" / "持ってろ" / "来週まで" = HOLD order.** Do NOT close. Do NOT re-add SL. Do NOT override. If structure changes, PROPOSE on Slack and wait for response. If no response within 5 min, hold. Do NOT act on your own
 3. **Questions, observations** → reply. Don't change entry judgment
 4. When in doubt → treat as question
+
+By session end, close Slack handling in `state.md` with this exact block:
+
+```md
+## Slack Response
+Pending user ts: [none / latest unread ts]
+Latest handled user ts: [latest ts already handled via `--reply-to` / none]
+Message class: [directive / hold-order / question-observation / none]
+Trade consequence: [executed ___ / held existing plan / no trade change / none]
+Reply receipt: [python3 tools/slack_post.py "..." --channel C0APAELAQDN --reply-to {ts} / none because no unread user message]
+```
+
+`Slack Response` is part of the runtime gate. If a human Slack message is still unread, or this block does not close it with the real `--reply-to` receipt, `SESSION_END` fails.
 
 ## Watch the spread
 

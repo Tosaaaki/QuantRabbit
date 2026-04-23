@@ -29,6 +29,18 @@ NARRATIVE_PICK_RE = re.compile(
     r"(?:\s*\|\s*TP=?([\d.]+))?(?:\s*\|\s*Why:\s*(.+))?$",
     re.M,
 )
+RANGE_PICK_RE = re.compile(
+    r"^Best RANGE-(BUY|SELL):\s*(\w+_\w+)\s*@\s*([\d.]+)\s*->\s*TP\s*([\d.]+)\s*\(([^)]*)\)",
+    re.M,
+)
+INVENTORY_LEAD_RE = re.compile(
+    r"Inventory lead:\s*(\w+_\w+)\s+(LONG|SHORT)\s*\|\s*"
+    r"Edge\s*([SABC])\s*\|\s*Allocation\s*([SABC])"
+    r"(?:\s*\|\s*Entry\s*@?([\d.]+))?"
+    r"(?:\s*\|\s*TP=?([\d.]+))?"
+    r"(?:\s*\|\s*(?:Why|would upgrade if):\s*(.+))?",
+    re.I,
+)
 
 
 def _rotate_history(path: Path) -> None:
@@ -40,13 +52,22 @@ def _rotate_history(path: Path) -> None:
 
 
 def _extract_section(text: str, heading: str) -> str:
-    match = re.search(rf"^### {re.escape(heading)}\s*$", text, re.M)
-    if not match:
+    matches = list(re.finditer(rf"^### {re.escape(heading)}\s*$", text, re.M))
+    if not matches:
         return ""
+    match = matches[-1]
     remainder = text[match.end():]
     next_heading = re.search(r"^### ", remainder, re.M)
     end = match.end() + next_heading.start() if next_heading else len(text)
     return text[match.end():end].strip()
+
+
+def _extract_first_section(text: str, headings: tuple[str, ...]) -> str:
+    for heading in headings:
+        block = _extract_section(text, heading)
+        if block:
+            return block
+    return ""
 
 
 def _parse_timestamp(text: str) -> str:
@@ -54,9 +75,9 @@ def _parse_timestamp(text: str) -> str:
         r"^## Auditor's View — ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{5} UTC)",
         r"^# Quality Audit — ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]{5} UTC)",
     ):
-        match = re.search(pattern, text, re.M)
-        if match:
-            return match.group(1)
+        matches = list(re.finditer(pattern, text, re.M))
+        if matches:
+            return matches[-1].group(1)
     raise ValueError("Could not find audit timestamp in quality_audit.md")
 
 
@@ -97,7 +118,14 @@ def _parse_convictions(text: str) -> list[dict]:
 
 
 def _parse_narrative_picks(text: str) -> list[dict]:
-    block = _extract_section(text, "Narrative Opportunities (not held by trader)")
+    block = _extract_first_section(
+        text,
+        (
+            "Narrative Opportunities (not held by trader)",
+            "Deployment Inventory (not held by trader)",
+            "Narrative Opportunities / Deployment Inventory (not held by trader)",
+        ),
+    )
     picks = []
     if block:
         for match in NARRATIVE_PICK_RE.finditer(block):
@@ -114,6 +142,84 @@ def _parse_narrative_picks(text: str) -> list[dict]:
                     "held_status": "NOT_HELD",
                 }
             )
+    return picks
+
+
+def _pip_factor(pair: str) -> int:
+    return 100 if pair.endswith("JPY") else 10000
+
+
+def _parse_range_opportunities(text: str) -> list[dict]:
+    block = _extract_first_section(
+        text,
+        (
+            "Range Opportunities (actionable - trader reads this)",
+            "Range Opportunities (actionable — trader reads this)",
+        ),
+    )
+    if not block:
+        return []
+
+    lines = block.splitlines()
+    picks: list[dict] = []
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].strip()
+        match = RANGE_PICK_RE.match(line)
+        if not match:
+            idx += 1
+            continue
+
+        side, pair, entry_price, tp_price, note = match.groups()
+        direction = "LONG" if side.upper() == "BUY" else "SHORT"
+        visual = ""
+        risk = ""
+        idx += 1
+        while idx < len(lines):
+            detail = lines[idx].strip()
+            if not detail:
+                idx += 1
+                continue
+            if RANGE_PICK_RE.match(detail) or detail.startswith("No range trades:") or detail.startswith("### "):
+                break
+            if detail.lower().startswith("visual:"):
+                visual = detail.split(":", 1)[1].strip()
+            elif detail.lower().startswith("risk:"):
+                risk = detail.split(":", 1)[1].strip()
+            idx += 1
+
+        entry = float(entry_price)
+        tp = float(tp_price)
+        target_pips = abs(tp - entry) * _pip_factor(pair)
+        spread_multiple = None
+        spread_match = re.search(r"([\d.]+)x spread", note, re.IGNORECASE)
+        if spread_match:
+            spread_multiple = float(spread_match.group(1))
+
+        picks.append(
+            {
+                "pair": pair,
+                "direction": direction,
+                "entry_price": entry,
+                "tp_price": tp,
+                "target_pips": target_pips,
+                "spread_multiple": spread_multiple,
+                "range_side": side.upper(),
+                "note": note.strip(),
+                "visual": visual,
+                "risk": risk,
+            }
+        )
+
+    opposite_by_pair: dict[str, dict[str, float]] = {}
+    for pick in picks:
+        opposite_by_pair.setdefault(str(pick["pair"]), {})[str(pick["direction"])] = float(pick["entry_price"])
+    for pick in picks:
+        pair = str(pick["pair"])
+        direction = str(pick["direction"])
+        opposite_direction = "SHORT" if direction == "LONG" else "LONG"
+        pick["opposite_entry_price"] = opposite_by_pair.get(pair, {}).get(opposite_direction)
+
     return picks
 
 
@@ -144,10 +250,40 @@ def _parse_strongest_unheld(text: str) -> dict | None:
     return None
 
 
+def _parse_inventory_lead(text: str) -> dict | None:
+    match = INVENTORY_LEAD_RE.search(text)
+    if not match:
+        return None
+    pair, direction, edge, allocation, entry_price, tp_price, why = match.groups()
+    return {
+        "pair": pair,
+        "direction": direction.upper(),
+        "edge": edge.upper(),
+        "allocation": allocation.upper(),
+        "entry_price": float(entry_price) if entry_price else None,
+        "tp_price": float(tp_price) if tp_price else None,
+        "why": (why or "").strip(),
+        "held_status": "NOT_HELD",
+    }
+
+
 def build_entry(text: str) -> dict:
     convictions = _parse_convictions(text)
     narrative_picks = _parse_narrative_picks(text)
     strongest_unheld = _parse_strongest_unheld(text)
+    inventory_lead = _parse_inventory_lead(text)
+    range_opportunities = _parse_range_opportunities(text)
+
+    if not strongest_unheld and narrative_picks:
+        rank = {"S": 4, "A": 3, "B": 2, "C": 1}
+        strongest_unheld = max(
+            narrative_picks,
+            key=lambda item: (
+                rank.get(str(item.get("edge") or ""), 0),
+                rank.get(str(item.get("allocation") or ""), 0),
+                float(item.get("entry_price") or 0.0),
+            ),
+        )
 
     if strongest_unheld:
         key = (strongest_unheld["pair"], strongest_unheld["direction"])
@@ -160,12 +296,19 @@ def build_entry(text: str) -> dict:
                 }
             )
 
+    if inventory_lead:
+        key = (inventory_lead["pair"], inventory_lead["direction"])
+        if not any((pick["pair"], pick["direction"]) == key for pick in narrative_picks):
+            narrative_picks.append(inventory_lead)
+
     return {
         "timestamp": _parse_timestamp(text),
         "source": "narrative",
         "convictions": convictions,
         "narrative_picks": narrative_picks,
         "strongest_unheld": strongest_unheld,
+        "inventory_lead": inventory_lead,
+        "range_opportunities": range_opportunities,
     }
 
 
@@ -210,7 +353,13 @@ def main() -> int:
         print(json.dumps(entry, indent=2, ensure_ascii=False))
         return 0
 
-    if not entry["convictions"] and not entry["narrative_picks"] and not entry["strongest_unheld"]:
+    if (
+        not entry["convictions"]
+        and not entry["narrative_picks"]
+        and not entry["strongest_unheld"]
+        and not entry["inventory_lead"]
+        and not entry["range_opportunities"]
+    ):
         print("NO_NARRATIVE_OPPORTUNITIES_FOUND")
         return 0
 
@@ -226,7 +375,8 @@ def main() -> int:
     print(
         f"RECORDED timestamp={entry['timestamp']} "
         f"convictions={len(entry['convictions'])} "
-        f"narrative_picks={len(entry['narrative_picks'])}"
+        f"narrative_picks={len(entry['narrative_picks'])} "
+        f"range_opportunities={len(entry['range_opportunities'])}"
     )
     return 0
 

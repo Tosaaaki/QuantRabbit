@@ -63,6 +63,7 @@ def get_oanda_config(path: Path = CONFIG_PATH) -> dict[str, object]:
     cfg = load_env_toml(path)
     practice = _normalize_bool(get_config_value(cfg, "oanda_practice", default=False))
     base_url = "https://api-fxpractice.oanda.com" if practice else "https://api-fxtrade.oanda.com"
+    stream_url = "https://stream-fxpractice.oanda.com" if practice else "https://stream-fxtrade.oanda.com"
     return {
         "oanda_token": str(get_config_value(cfg, "oanda_token")),
         "oanda_account_id": str(get_config_value(cfg, "oanda_account_id")),
@@ -71,4 +72,5 @@ def get_oanda_config(path: Path = CONFIG_PATH) -> dict[str, object]:
             get_config_value(cfg, "oanda_hedging_enabled", default=False)
         ),
         "oanda_base_url": base_url,
+        "oanda_stream_url": stream_url,
     }

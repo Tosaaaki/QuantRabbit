@@ -1,5 +1,1163 @@
 # Changelog
 
+## 2026-04-24 — runtime routing audit fixes and sync guardrails
+
+- Updated `tools/check_task_sync.py`
+  - Now verifies live Codex automation TOMLs under `~/.codex/automations`, including prompt path, workspace cwd, status, cadence, model, and reasoning effort
+  - Treats the current `qr-trader` `gpt-5.5` medium profile as the expected trial execution-owner route
+- Updated `tools/setup_scheduled_tasks.sh`
+  - Replaced the stale v5 inline Japanese installer with a safe Claude compatibility link repair script
+  - The script now points Claude task `SKILL.md` files back to canonical `docs/SKILL_*.md` prompts and removes deprecated `SKILL_ja.md` copies
+- Updated `.codex/config.toml`, `README.md`, `CLAUDE.md`, `tools/README.md`, and `AGENTS.md`
+  - Repaired local MCP observer paths to the live workspace
+  - Removed stale 15-minute / paused-audit / Claude-primary guidance
+  - Documented the current Codex 20-minute trader route and `gpt-5.5` trial profile
+- Updated `archive/tests/test_validate_trader_state.py`
+  - Replaced mutable `collab_trade/state.md` dependency with an embedded stable handoff fixture
+  - Isolated validator unit tests from the live action-board snapshot except in tests that deliberately patch it
+- Verification
+  - Pending in this work session
+
+## 2026-04-24 — trader handoff validation and audit reconciliation hardened
+
+- Updated `tools/validate_trader_state.py`
+  - Requires `Gold Mine Inventory` in `FULL_TRADER` handoffs and checks Gold #1-#5 against the latest `logs/session_action_board.json` order
+  - Blocks Gold / lane closures that hide armable lanes behind receipt absence instead of a real market contradiction
+- Updated `tools/session_data.py`
+  - `HANDOFF REFRESH` now prints copy-ready `Gold #...` and `Lane N / ...` closure lines so the trader has to resolve the current board lanes directly
+- Updated `tools/quality_audit.py`
+  - Treats bare fill receipts like `[UTC] EUR_JPY SHORT ... id=...` as logged trader fills
+  - Treats broker `STOP_FILL ... trade id=...` receipts as real logged trader fills, so fresh stop-entry fills do not show as false manual/OANDA-only positions
+  - Parses prose `Current book: ... trade id=... is live` lines under `## Positions (Current)` while ignoring pending LIMIT rows
+- Reconciled `collab_trade/state.md`
+  - Removed stale EUR_USD live inventory after broker TP close, logged the close, and reflected the current EUR_JPY live receipt plus USD_JPY pending receipt
+- Verification
+  - `python3 -m py_compile tools/quality_audit.py tools/validate_trader_state.py tools/session_data.py archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m py_compile tools/quality_audit.py tools/validate_trader_state.py tools/session_data.py archive/tests/test_validate_trader_state.py`
+  - `python3 -m pytest archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m pytest archive/tests/test_validate_trader_state.py`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+  - `python3 tools/quality_audit.py`
+  - `.venv/bin/python tools/quality_audit.py`
+
+## 2026-04-24 — OANDA close fills now sync to Slack as batched receipts
+
+- Added `tools/trade_event_sync.py`
+  - Reads OANDA transactions for close fills, catches broker-side TP/SL exits that do not pass through `close_trade.py`
+  - Appends missing `CLOSE` / `PARTIAL_CLOSE` lines to `logs/live_trade_log.txt`
+  - Posts one compact `CLOSE SYNC` batch to #qr-trades and stores a transaction cursor in `logs/trade_event_sync_state.json`
+- Updated `tools/close_trade.py`
+  - `--auto-slack` now calls the close-event sync path instead of firing a one-off close message and swallowing failures
+- Updated `tools/session_data.py`
+  - Runs the close-event sync at session start before the trader reads the live book
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that routine close notifications are broker-synced and batched, while entry notifications can remain explicit
+- Verification
+  - `python3 -m py_compile tools/trade_event_sync.py tools/close_trade.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/trade_event_sync.py tools/close_trade.py tools/session_data.py`
+  - `python3 tools/trade_event_sync.py --since-id 469489 --notify-slack --dry-run --json`
+  - `python3 tools/trade_event_sync.py --since-id 469489 --notify-slack` posted one `CLOSE SYNC 7 fill(s)` receipt to #qr-trades (`ts=1776973932.042919`)
+  - `python3 tools/trade_event_sync.py --notify-slack` returned `events=0 missing_log=0 notify=0`
+  - `python3 tools/session_data.py | sed -n '1,55p'` showed the session-start `TRADE EVENT SYNC` block
+
+## 2026-04-24 — discretionary pending-order specs now include `REPRICE` and same-pair role maps
+
+- Updated `docs/SKILL_trader.md`
+  - Added `REPRICE` as a first-class pending LIMIT action alongside `LEAVE / EXTEND GTD / CANCEL`
+  - Required a reprice test that names the old id, tighter entry, TP, SL, and why the tighter price still preserves spread-adjusted payout and noise-floor-safe risk
+  - Added a same-pair opposite-side role-map requirement: hero thesis, hedge-or-rotation leg, invalidation for both sides, and collapse condition back to one side
+- Updated `docs/TRADER_PROMPT.md`
+  - Added pending-order judgment guidance so LIMITs are reviewed as live discretionary decisions, not timers
+  - Added same-pair opposite-side exposure guidance to the trader mental model
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented the new handoff contract and added the 4/24 memory reminders for reprice discipline and same-pair role maps
+- Verification
+  - `rg -n "REPRICE|same-pair opposite-side|role map" docs/SKILL_trader.md docs/TRADER_PROMPT.md AGENTS.md collab_trade/strategy_memory.md docs/CHANGELOG.md`
+
+## 2026-04-23 — qr-trader stale-lock handoff refreshed with current live book
+
+- Updated `collab_trade/state.md`
+  - Brought the session timestamp forward to 2026-04-23 19:23 UTC
+  - Refreshed the self-check margin and added the 19:23 UTC hold-check Hot Update
+- Updated automation memory
+  - Created `/Users/tossaki/.codex/automations/qr-trader/memory.md`
+  - Recorded the stale-lock recovery, live book, and no-new-order decision
+- Verification
+  - `python3 tools/task_runtime.py trader preflight`
+  - `python3 tools/task_runtime.py trader start --owner-pid $PPID && python3 tools/session_data.py`
+  - Chart read: `EUR_USD_M1`, `EUR_USD_M5`, `EUR_JPY_M5`, `AUD_USD_M5`, `USD_JPY_M1`
+
+## 2026-04-23 — qr-quality-audit refreshed with the latest chart read and self-check drift note
+
+- Updated `logs/quality_audit.md`
+  - Added a new Auditor's View for 2026-04-23 18:35 UTC
+  - Refreshed the 7-pair regime map, follow-up, conviction map, position challenge, pattern alert, and compliance check against the current M5/H1 charts and profit/protection output
+  - Kept the self-check drift explicit: the live OANDA shorts remain present, but the audit parser still does not reconcile them cleanly back into state
+- Updated automation memory
+  - Brought `/Users/tossaki/.codex/automations/qr-quality-audit/memory.md` forward to the current run
+- Verification
+  - `python3 tools/task_runtime.py quality-audit preflight --owner-pid $PPID`
+  - `python3 tools/quality_audit.py`
+  - `python3 tools/profit_check.py --all`
+  - `python3 tools/fib_wave.py --all`
+  - `.venv/bin/python tools/chart_snapshot.py --all`
+
+## 2026-04-23 — trader and audit prompts now force breadth mining before hero-seat compression
+
+- Updated `docs/SKILL_trader.md`
+  - Added a required `Gold Mine Inventory` block between `S Excavation Matrix` and `A/S Excavation Mandate`
+  - Forces `FULL_TRADER` to name at least `Gold #1-#5` as executable seams before collapsing into one hero A/S seat
+  - Makes each unarmed mine close as a real receipt or an exact contradiction, so `no pending id` and similar elegant hesitation no longer count as completion
+- Updated `tools/session_data.py`
+  - Added a runtime `GOLD MINE INVENTORY` section right after `SEAT INVENTORY BOARD`
+  - Prints the top actionable seams as `Gold #...` with `Arm if alive now as ...`, mineability reasons, and receipt-vs-contradiction closure language
+- Updated `docs/SKILL_quality-audit.md`
+  - Strengthened `Narrative Opportunities / Deployment Inventory` so the auditor inventories 5-10 mineable seams on broad tape instead of compressing to one representative seat
+  - Clarified that `No unheld A/S opportunities` still requires the rest of the B-grade mine inventory when the tape is active
+- Updated `AGENTS.md`
+  - Documented that quality-audit now inventories broad unheld mine candidates instead of only surfacing a single hero opportunity
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `python3 tools/session_data.py > /tmp/qr_session_gold_mine_py.out`
+  - `.venv/bin/python tools/session_data.py > /tmp/qr_session_gold_mine_venv.out`
+  - Verified `GOLD MINE INVENTORY` plus `Gold #1-#5` in both outputs
+
+## 2026-04-23 — qr-quality-audit refreshed with current chart read
+
+- Updated `logs/quality_audit.md`
+  - Added a new Auditor's View for 2026-04-23 13:31 UTC
+  - Refreshed the 7-pair regime map, follow-up, conviction map, and position challenge against the current M5/H1 charts and technical caches
+  - Kept the current assessment aligned with the live EUR_USD short and the GBP_USD passive range lane
+- Updated automation memory
+  - Brought `/Users/tossaki/.codex/automations/qr-quality-audit/memory.md` forward to the current run
+- Verification
+  - `python3 tools/task_runtime.py quality-audit preflight --owner-pid $PPID`
+  - `python3 tools/quality_audit.py`
+  - `python3 tools/profit_check.py --all`
+  - `python3 tools/fib_wave.py --all`
+  - `.venv/bin/python tools/chart_snapshot.py --all`
+
+## 2026-04-23 — pending lanes can no longer die just because the trigger/price has not printed yet, and board recipes now repair thin first-draft geometry
+
+- Updated `tools/validate_trader_state.py`
+  - Added action-board validation for `LIMIT` / `STOP-ENTRY` lanes that were dead-closed only because the trigger had not printed yet or the better price had not traded yet
+  - Treats `has not broken yet`, `needs price improvement`, `one print away`, and similar waiting-condition prose as invalid lane death for pending-style board seats
+  - Keeps real contradictions such as acceptance/invalidation/quality-bar failure valid, so the validator still distinguishes “not yet armed” from “actually dead”
+- Updated `tools/session_data.py`
+  - Added a one-pass proxy-geometry repair loop before hard-blocking fresh seats
+  - When exact pretrade says the first drafted stop is still inside the pair's recent noise floor, runtime widens the stop to the required floor and reruns exact pretrade
+  - When the first drafted TP is too thin to clear live friction, runtime now widens the payout path for non-explicit-target seats and reruns exact pretrade instead of killing the seat on the first draft
+  - Repaired geometry is now what powers the candidate order recipes, so surviving seats reach `place_trader_order.py` with prices that already respect the live stop/target floors
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that waiting for the trigger/price is the reason to arm a pending order, not a valid `dead thesis because ...`
+  - Documented that runtime now repairs thin first-draft `SL / TP` geometry once before passing on the seat
+- Updated `archive/tests/test_validate_trader_state.py`
+  - Added a regression covering a `STOP-ENTRY` board lane killed only because the trigger had not broken yet
+- Verification
+  - `python3 -m py_compile tools/validate_trader_state.py tools/session_data.py archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m py_compile tools/validate_trader_state.py tools/session_data.py archive/tests/test_validate_trader_state.py`
+  - `python3 -m pytest archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m pytest archive/tests/test_validate_trader_state.py`
+  - `python3 tools/session_data.py > /tmp/qr_session_pending_semantics_py.out`
+  - `.venv/bin/python tools/session_data.py > /tmp/qr_session_pending_semantics_venv.out`
+
+## 2026-04-23 — runtime board contract now uses `default_expression / default_orderability`
+
+- Updated `tools/session_data.py`
+  - Added runtime seat helpers so live board selection, shelf-life logic, handoff refresh, multi-lane output, and action-board snapshots now read `default_expression / default_orderability` first
+  - Kept `execution_style / orderability` only as compatibility aliases in the emitted profile and `logs/session_action_board.json`
+  - Wrote both new keys into the action-board snapshot so downstream tools can migrate without losing the current runtime view
+- Updated `tools/validate_trader_state.py`
+  - Switched action-board validation to read `default_orderability / default_expression` before falling back to legacy keys
+  - Kept `S Hunt` markdown validation unchanged because the trader-facing handoff still writes `Orderability: ...`
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that `default_expression / default_orderability` is the live trader contract and that legacy field names are compatibility-only
+- Verification
+  - `python3 -m py_compile tools/session_data.py tools/validate_trader_state.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py tools/validate_trader_state.py`
+  - `python3 tools/session_data.py > /tmp/qr_session_default_contract_py.out`
+  - `.venv/bin/python tools/session_data.py > /tmp/qr_session_default_contract_venv.out`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+
+## 2026-04-23 — SESSION_END now hard-fails unread Slack user messages
+
+- Updated `tools/validate_trader_state.py`
+  - Added a live-session `Slack Response` gate that reads pending human messages from `#qr-commands` after `logs/.slack_last_read_ts`
+  - Fails `SESSION_END` when a human Slack message is still unread, when `state.md` omits `## Slack Response`, or when the block does not cite the real `slack_post.py --reply-to ...` receipt
+  - Added duplicate-heading protection for `## Slack Response`
+- Updated `tools/session_end.py`
+  - Validation failure output now points the trader at the handoff receipts plus `Slack Response`, not only trade receipts
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Added the required `## Slack Response` state block with `Pending user ts`, `Latest handled user ts`, `Message class`, `Trade consequence`, and `Reply receipt`
+  - Documented that Slack handling is now part of the session-end runtime gate, not just a prompt instruction
+- Updated `archive/tests/test_validate_trader_state.py`
+  - Added regressions for missing `Slack Response`, unread pending user messages, and a clean replied state
+- Verification
+  - `python3 -m py_compile tools/validate_trader_state.py tools/session_end.py`
+  - `.venv/bin/python -m py_compile tools/validate_trader_state.py tools/session_end.py`
+  - `python3 -m pytest archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m pytest archive/tests/test_validate_trader_state.py`
+
+## 2026-04-23 — receipt-absence dead closes now fail in A/S headers, S Hunt receipts, and Hot Updates
+
+- Updated `tools/validate_trader_state.py`
+  - Refined tautology detection so `dead thesis because no seat cleared promotion gate: ...` stays valid only when the suffix names a real tape / structure blocker
+  - Added runtime failures for execution-only dead closes inside `Best A/S ...` header lines, `S Hunt` deployment results, `Capital Deployment` horizon mirrors, and `Hot Updates`
+  - Kept explicit `no seat cleared promotion gate` prefixes valid only as formatting scaffolding, not as the contradiction itself
+- Updated `tools/auto_hot_updates.py`
+  - Stopped recycling receipt-absence prose into carry-forward notes; execution-only closes now render as trigger/tape blockers instead of `no live pending entry order exists`
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Documented that `Best A/S ...:` headers are seat-identity lines only; dead-thesis closure belongs in `Order now:` / `Arm now as:`
+  - Documented that `validate_trader_state.py` and `auto_hot_updates.py` now reject / rewrite execution-only closure language in those sections
+- Updated `collab_trade/state.md` and `collab_trade/daily/2026-04-23/state.md`
+  - Replaced the current `EUR_JPY SHORT` receipt-absence wording with the actual M1/lower-band trigger blocker already implied elsewhere in the handoff
+  - Realigned the current `Multi-Vehicle Deployment` lane lines with the latest action-board snapshot so the live handoff validates cleanly again
+- Added `archive/tests/test_validate_trader_state.py`
+  - Covers valid vs invalid `no seat cleared promotion gate` suffixes, `Best A/S one print away` header misuse, `S Hunt` execution-only deployment results, and `Hot Updates` regressions
+- Verification
+  - `python3 -m py_compile tools/validate_trader_state.py tools/auto_hot_updates.py`
+  - `.venv/bin/python -m py_compile tools/validate_trader_state.py tools/auto_hot_updates.py`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+  - `python3 tools/auto_hot_updates.py --dry-run`
+  - `.venv/bin/python tools/auto_hot_updates.py --dry-run`
+  - `python3 -m pytest archive/tests/test_validate_trader_state.py`
+  - `.venv/bin/python -m pytest archive/tests/test_validate_trader_state.py`
+
+## 2026-04-23 — execution helper now blocks only on hard guardrails, not soft vehicle preference
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added explicit `hard_execution_blockers` extraction so exact pretrade can distinguish real vetoes from soft execution-style preference
+  - Marked stop-floor, target-floor, and unpaid-unprotected same-pair reload stacking as hard blockers instead of letting them hide inside generic `PASS` / `note` prose
+  - Surfaced those hard blockers in formatted pretrade output so the trader can see what is truly non-negotiable
+- Updated `tools/trader_order_guard.py`
+  - Split exact-pretrade results into `exact_pretrade_issues()` for hard blockers and `exact_pretrade_advisories()` for soft `LIMIT / STOP-ENTRY / MARKET` preference
+  - Removed the old behavior where any softer exact-pretrade style automatically vetoed the trader's requested order style
+- Updated `tools/place_trader_order.py`
+  - Live sends now block only on hard exact-pretrade guardrails; soft style mismatches print `ADVISORY` instead of `ORDER_BLOCKED`
+- Updated `tools/session_data.py`
+  - Reframed `ORDER RECIPES FOR ARMABLE LANES` as candidate/default expressions rather than binding commands
+  - Documented that trader override is valid when the live tape changed, while hard guards still bind
+  - Stopped letting soft exact-pretrade `PASS / LIMIT / STOP-ENTRY` preference kill the runtime seat; the board now keeps the default expression alive unless exact pretrade found a real hard blocker
+  - Surfaced `hard guardrails` vs `trader override room` directly in the learning board, seat inventory board, and S-Hunt deployment cues
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented the new split: market judgment stays with the trader; the helper owns only safety gates
+- Verification
+  - `python3 -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/place_trader_order.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/place_trader_order.py tools/session_data.py`
+  - `python3 - <<'PY' ... assess_risk(...); print(result['hard_execution_blockers']) ... PY`
+  - `.venv/bin/python - <<'PY' ... assess_risk(...); print(result['hard_execution_blockers']) ... PY`
+  - `python3 tools/place_trader_order.py MARKET EUR_USD SHORT ... --dry-run` and `.venv/bin/python ... --dry-run` to confirm soft exact-pretrade disagreement prints `ADVISORY` while hard blockers still return `ORDER_BLOCKED`
+  - `python3 tools/session_data.py > /tmp/qr_session_discretionary_py.out`
+  - `.venv/bin/python tools/session_data.py > /tmp/qr_session_discretionary_venv.out`
+
+## 2026-04-23 — armable lanes can no longer die just because nobody armed them
+
+- Updated `tools/validate_trader_state.py`
+  - Stopped treating tautological closures such as `dead thesis because no live pending entry order exists` or `board lane, not a live limit order` as valid resolution for recent action-board lanes
+  - Tightened `Market Narrative`, `A/S Excavation Mandate`, and `Capital Deployment` checks so receipt absence is no longer accepted as lane death or as the blocker-to-lane-two explanation
+  - Added `validate_state_for_entry()` so order-entry preflight can keep checking live-book drift without inheriting the full session-end handoff gate
+- Updated `tools/place_trader_order.py`
+  - Switched entry preflight back to live-book drift validation only, so the order helper can place the receipt that resolves a stale handoff instead of being blocked by session-end-quality rhetoric checks
+- Updated `tools/session_data.py`
+  - Added `ORDER RECIPES FOR ARMABLE LANES`, which prints concrete `place_trader_order.py` commands for surviving `MARKET / STOP-ENTRY / LIMIT` seats using the same exact proxy geometry and band-sized units already used by the board
+  - Made recipe sizing prefer the exact-pretrade label over the runtime B-band when they disagree, so an `A(7/10)` command does not self-reject with a B-sized unit floor
+  - Added explicit receipt expectations per lane so the trader sees the required `ENTER NOW trade id=...` / `armed STOP id=...` / `armed LIMIT id=...` close, not just the board label
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that missing execution is not a thesis contradiction and that armable lanes must be armed or explicitly contradicted by tape / structure
+- Verification
+  - `python3 -m py_compile tools/session_data.py tools/validate_trader_state.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py tools/validate_trader_state.py`
+  - `python3 tools/session_data.py > /tmp/qr_session_arm_recipes_py.out`
+  - `.venv/bin/python tools/session_data.py > /tmp/qr_session_arm_recipes_venv.out`
+  - `python3 - <<'PY' ... session_data._profile_command_units({'exact_pretrade_label': 'A(7/10)', 'allocation_band': 'B+'}) -> 4000 ... PY`
+  - `.venv/bin/python - <<'PY' ... session_data._profile_command_units({'exact_pretrade_label': 'A(7/10)', 'allocation_band': 'B+'}) -> 4000 ... PY`
+  - `python3 tools/place_trader_order.py STOP-ENTRY EUR_USD SHORT 4000 --entry 1.16896 --tp 1.16776 --sl 1.16974 ... --dry-run` and `.venv/bin/python ... --dry-run` both return `DRY_RUN` with `armed STOP id=DRY_RUN`
+  - `python3 tools/place_trader_order.py MARKET EUR_JPY SHORT 2000 ... --dry-run` and `.venv/bin/python ... --dry-run` now reach the exact-pretrade gate instead of dying on stale handoff, then block on the live noise-floor rule because the market recipe had already drifted
+  - `python3 tools/validate_trader_state.py` now fails the current handoff for receipt-free dead closures, which is the intended new gate
+  - `.venv/bin/python tools/validate_trader_state.py` now fails the current handoff for the same reason
+
+## 2026-04-23 — quiet-stable repeat-pressure seats can pay market again, but unpaid same-pair reloads still need real risk reduction
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Re-opened `quiet / stable` repeat-pressure seats as small `MARKET` scouts even outside direct-USD when promotion pressure is strong enough, instead of forcing every such seat back into another trigger-only rewrite
+  - Tightened same-pair reload logic so `has_protection` is no longer treated as enough by itself; the existing leg must show real stop-side risk reduction before an unpaid same-pair `MARKET` reload can bypass the trigger/passive guard
+  - Kept unpaid same-pair reloads blocked when the live leg has no stop-side protection, so the system gets more aggressive on fresh seats without blindly stacking the same weak leg
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that active deployment should come from quiet-stable repeat-pressure seats first, while same-pair reloads still require genuine risk reduction
+- Verification
+  - `python3 -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/session_data.py`
+  - `PYTHONPATH=tools python3 - <<'PY' ... EUR_USD SHORT exact -> STOP-ENTRY because same_direction_inventory has no stop-side protection ... PY`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_aggressive_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_aggressive_venv.out`
+  - `python3 - <<'PY' ... logs/session_action_board.json -> market_now 1 / EUR_JPY SHORT AUDIT MARKET ... PY`
+
+## 2026-04-23 — cross-source duplicates now collapse into one live seat instead of multiplying board lanes
+
+- Updated `tools/session_data.py`
+  - Added cross-source seat consolidation after execution closure so `audit / state / scanner` can corroborate the same live idea without occupying separate board lanes
+  - Kept structured-anchor seats (`audit` with explicit entry, `audit_range`, held, pending) distinct, while collapsing generic same-style duplicates into one representative seat with a `source_label` like `AUDIT+2`
+  - Stopped held/pending inventory from being absorbed into fresh-risk groups, so existing live receipts still stay separate from new deployment lanes
+  - Wrote `source_label`, `merged_sources`, and `corroboration` into `logs/session_action_board.json` snapshots for runtime inspection
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that same live idea across audit/state/scanner is one seat with corroboration, not three permissions to occupy the board
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `PYTHONPATH=tools python3 - <<'PY' ... _consolidate_cross_source_profiles(...) -> EUR_USD SHORT audit/state/scanner merged, held left separate ... PY`
+  - `PYTHONPATH=tools .venv/bin/python - <<'PY' ... _consolidate_cross_source_profiles(...) -> EUR_USD SHORT audit/state/scanner merged, held left separate ... PY`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_source_dedupe_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_source_dedupe_venv.out`
+  - `python3 - <<'PY' ... logs/session_action_board.json -> market_now 0 / multi_vehicle_lanes 4 / EUR_USD SHORT source_label=AUDIT+2 ... PY`
+
+## 2026-04-23 — state focus siblings now collapse into one carry-forward seat
+
+- Updated `tools/session_data.py`
+  - Collapsed same-idea state focus lines (`Best expression NOW`, `Primary vehicle`, `Next fresh risk allowed NOW`, etc.) into a single `state-focus-*` carry seat instead of re-injecting each line as a fake separate lane
+  - Kept `Short-term / Medium-term / Long-term S` horizon carry independent, but treated focus lines as concentration guidance rather than fresh inventory breadth
+  - Preserved the most informative focus line text in the merged recipe so runtime still sees the current live idea without multiplying same-pair state lanes
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that focus-ladder siblings are one carry seat, not permission to occupy several same-pair lanes
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `PYTHONPATH=tools python3 - <<'PY' ... _parse_state_carry_targets(state.md) ... EUR_USD SHORT -> one state-focus-active seat ... PY`
+  - `PYTHONPATH=tools .venv/bin/python - <<'PY' ... _parse_state_carry_targets(state.md) ... EUR_USD SHORT -> one state-focus-active seat ... PY`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_state_dedupe_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_state_dedupe_venv.out`
+  - `rg -n "STATE CARRY-FORWARD WATCHLIST|EUR_USD SHORT \\[STATE\\]|Lane 2 / BACKUP: EUR_USD SHORT \\[STATE\\]" /tmp/qr_session_state_dedupe_py.out /tmp/qr_session_state_dedupe_venv.out`
+
+## 2026-04-23 — range seats now read profitable vehicle stats before pair-direction aggregate suppresses them
+
+- Updated `tools/session_data.py`
+  - Added preferred execution-style feedback into learning-profile scoring for seats that already imply a vehicle, starting with `AUDIT_RANGE -> LIMIT`
+  - Let range seats consult recent `LIMIT` execution stats before pair-direction aggregate feedback, so a profitable limit vehicle is not buried by the same pair's losing market / stop-entry experiments
+  - Exposed that preferred style context on the profile for downstream board / decision output
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that profitable AUD-style range/limit vehicles must be judged by vehicle-specific feedback, not by the pair's blended churn record
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `python3 - <<'PY' ... _build_learning_profile(AUD_JPY SHORT audit_range) ... preferred_execution_style=LIMIT, allocation_cap=B/A max, LIMIT execution WR 50% EV +231 n=4 ... PY`
+  - `.venv/bin/python - <<'PY' ... _build_learning_profile(AUD_JPY SHORT audit_range) ... preferred_execution_style=LIMIT, allocation_cap=B/A max, LIMIT execution WR 50% EV +231 n=4 ... PY`
+
+## 2026-04-23 — strongest-unheld and edge labels stop leaking across same-pair audit siblings
+
+- Updated `tools/session_data.py`
+  - Stopped same-pair audit candidates from inheriting every pair-level label during `_build_audit_targets()`
+  - Kept shared repeat-pressure labels on sibling seats, but restricted candidate-specific labels such as `audit strongest-unheld` and `audit narrative Edge A/B` to the seat that actually owns them
+  - Preserved the seat-by-seat audit intake path while removing false label bleed that made sibling seats look like the same hero setup
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `PYTHONPATH=tools python3 - <<'PY' ... synthetic quality_audit.md with two EUR_USD SHORT seats -> _load_audit_narrative_context() / _build_audit_targets() ... PY`
+  - `PYTHONPATH=tools .venv/bin/python - <<'PY' ... synthetic quality_audit.md with two EUR_USD SHORT seats -> _load_audit_narrative_context() / _build_audit_targets() ... PY`
+
+## 2026-04-23 — audit narrative seats now survive into runtime inventory as real distinct seats
+
+- Updated `tools/session_data.py`
+  - Changed audit narrative intake from pair-direction aggregation to seat-by-seat candidate intake so multiple same-pair audit seats can survive into runtime when entry / vehicle / trigger differ
+  - Merged `strongest-unheld` onto the best matching narrative seat instead of spawning a duplicate ghost seat when the auditor is clearly pointing at the same setup
+  - Preserved audit seat extras (`seat_family`, `entry`, `tp`, edge/allocation metadata) through `_build_memory_targets()` so runtime learning / board closure sees the actual seat identity instead of a flattened pair shell
+  - Widened same-pair deployment concentration caps to `4 same-pair lanes / 3 same-pair-direction lanes` so broad sessions can keep more same-pair seat families alive without reverting to blind unlimited stacking
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that audit narrative opportunities now enter runtime as seat objects, not one representative per pair-direction, and that `strongest-unheld` is a seat-strength label rather than a duplicate seat
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `python3 - <<'PY' ... synthetic quality_audit.md with two EUR_USD SHORT seats -> _load_audit_narrative_context() / _build_audit_targets() / _build_memory_targets() ... PY`
+  - `.venv/bin/python - <<'PY' ... synthetic quality_audit.md with two EUR_USD SHORT seats -> _load_audit_narrative_context() / _build_audit_targets() / _build_memory_targets() ... PY`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_audit_seats_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_audit_seats_venv.out`
+  - `rg -n "SEAT INVENTORY BOARD|MULTI-VEHICLE DEPLOYMENT LANES|EUR_JPY SHORT \\[AUDIT\\]|PAYABLE-NOW MARKET CHECK" /tmp/qr_session_audit_seats_py.out /tmp/qr_session_audit_seats_venv.out`
+
+## 2026-04-23 — audit facts and lane selection stop compressing fresh inventory too early
+
+- Updated `tools/quality_audit.py`
+  - Removed pair+direction S-scan compression from the audit facts path
+  - Kept only exact-duplicate filtering so same-pair multi-horizon scanner seats survive into `quality_audit.md`, `quality_audit.json`, and `audit_history.jsonl`
+  - Renamed the JSON note to describe inventory preservation instead of deduplication
+- Updated `tools/session_data.py`
+  - Removed the first-pass 4-pair breadth filter from multi-vehicle lane selection
+  - Lane selection now ranks the full actionable inventory directly into the 10-lane cap while still honoring same-pair and same-pair-direction concentration limits
+- Updated `AGENTS.md`
+  - Documented that audit scanner facts now keep raw seat identity and that deployment lanes no longer pre-compress to four unique pairs before ranking
+- Verification
+  - `python3 tools/quality_audit.py > /tmp/qr_quality_audit_inventory_py.out 2>&1`
+  - `.venv/bin/python tools/quality_audit.py > /tmp/qr_quality_audit_inventory_venv.out 2>&1`
+  - `PYTHONPATH=tools python3 - <<'PY' ... unique_s_candidates(sample_same_pair_multi_horizon) ... PY`
+  - `PYTHONPATH=tools .venv/bin/python - <<'PY' ... unique_s_candidates(sample_same_pair_multi_horizon) ... PY`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_inventory_py.out 2>&1`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_inventory_venv.out 2>&1`
+  - `rg -n "SEAT INVENTORY BOARD|MULTI-VEHICLE DEPLOYMENT LANES|Lane 4 /|Lane 5 /|Lane 6 /|Lane 7 /|Lane 8 /|Lane 9 /|Lane 10 /" /tmp/qr_session_inventory_py.out /tmp/qr_session_inventory_venv.out`
+
+## 2026-04-23 — audit inventory lead survives and send-time exact now shares runtime context
+
+- Updated `tools/record_audit_narrative.py`
+  - Added parsing for `Inventory lead: ...` so quality-audit can preserve a real B-seat even when it explicitly says there are no unheld A/S opportunities
+  - Appended that lead into `narrative_picks` when it is not already present, and exposed it as structured `inventory_lead` metadata
+- Updated `tools/session_data.py`
+  - Ingested `inventory_lead` as an `AUDIT` candidate and weighted `audit inventory lead` labels so B-grade breadth does not disappear when the auditor writes no hero seat
+- Updated `tools/place_trader_order.py`
+  - Added current pair-regime inference from the live technical cache
+  - Added a fresh pricing-probe summary before exact pretrade and passed `regime / spread / live_tape` into `run_exact_pretrade()`
+  - Reused that same live-tape probe for the market-order execution guard so send-time and board-time exact checks share the same current tape context
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that `Inventory lead` is a real runtime seat and that send-time exact must share runtime context, not only runtime geometry
+- Verification
+  - `python3 -m py_compile tools/place_trader_order.py tools/record_audit_narrative.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/place_trader_order.py tools/record_audit_narrative.py tools/session_data.py`
+  - `python3 - <<'PY' ... build_entry(sample_with_inventory_lead) ... PY`
+  - `.venv/bin/python - <<'PY' ... build_entry(sample_with_inventory_lead) ... PY`
+  - `python3 - <<'PY' ... session_data._load_audit_narrative_context() against temp audit root ... PY`
+  - `.venv/bin/python - <<'PY' ... session_data._load_audit_narrative_context() against temp audit root ... PY`
+  - `python3 - <<'PY' ... place_trader_order._infer_current_pair_regime('EUR_USD'); place_trader_order._probe_live_tape_summary(...) ... PY`
+  - `.venv/bin/python - <<'PY' ... place_trader_order._infer_current_pair_regime('EUR_USD'); place_trader_order._probe_live_tape_summary(...) ... PY`
+
+## 2026-04-23 — state carry now preserves continuity without replaying old board echoes
+
+- Updated `tools/session_data.py`
+  - Stopped `state.md` carry-forward parsing from re-injecting prior `Podium #...` / `Lane ...` lines as fresh seats
+  - Added an `id=board` guard so board-only pseudo-receipts stay historical closure context instead of re-entering the live seat inventory
+  - Kept state carry focused on unresolved top-level continuity lines; current opportunity breadth now comes from live `pending` / `audit` / `audit_range` / `scanner` inputs instead of self-copying the previous board
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that prior board echoes are continuity records, not fresh opportunity inventory
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_after_state_prune_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_after_state_prune_venv.out`
+  - `rg -n "SEAT INVENTORY BOARD|Lane [0-9]+ /|\\[STATE\\]|EUR_USD SHORT \\[AUDIT\\]|GBP_USD SHORT \\[AUDIT\\]|EUR_JPY SHORT \\[AUDIT_RANGE\\]|MULTI-VEHICLE DEPLOYMENT LANES|PAYABLE-NOW MARKET CHECK" /tmp/qr_session_after_state_prune_py.out`
+  - `rg -n "SEAT INVENTORY BOARD|Lane [0-9]+ /|\\[STATE\\]|EUR_USD SHORT \\[AUDIT\\]|GBP_USD SHORT \\[AUDIT\\]|EUR_JPY SHORT \\[AUDIT_RANGE\\]|MULTI-VEHICLE DEPLOYMENT LANES|PAYABLE-NOW MARKET CHECK" /tmp/qr_session_after_state_prune_venv.out`
+
+## 2026-04-23 — runtime orderability now closes through the same exact pretrade engine as send-time
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added `spread_pips` and `live_tape` overrides to `assess_risk()` so runtime exact checks can reuse already-fetched session context instead of re-querying OANDA per seat
+  - Threaded spread overrides into `assess_setup_quality()` / `assess_counter_trade()` so proxy geometry is judged with the same spread math as live sends
+- Updated `tools/trader_order_guard.py`
+  - Expanded `run_exact_pretrade()` to accept runtime overrides for regime, spread, and live tape while keeping send-time callers backward-compatible
+- Updated `tools/session_data.py`
+  - Added proxy `entry / tp / sl` builders per seat so runtime inventory can run exact pretrade before naming the board closure state
+  - Changed fresh seat closure flow to `heuristic scaffold -> exact pretrade proxy -> live-tape guard -> recent style guard` instead of heuristic-only `MARKET / LIMIT / STOP-ENTRY / PASS`
+  - Stored and printed the exact-pretrade label/style plus proxy geometry on the live board, so the trader can see whether a lane is blocked by exact geometry or only demoted by tape / recent feedback
+  - Kept `AUDIT_RANGE` seats passive even when exact pretrade says the box is live, because range rails remain structural `LIMIT` expressions
+- Updated `AGENTS.md` and `collab_trade/strategy_memory.md`
+  - Documented that runtime board orderability now shares the exact pretrade authority used at send-time
+- Verification
+  - `python3 -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/session_data.py`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py | rg "Exact pretrade:|SEAT INVENTORY BOARD|MULTI-VEHICLE DEPLOYMENT LANES|PAYABLE-NOW MARKET CHECK"`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py | rg "Exact pretrade:|SEAT INVENTORY BOARD|MULTI-VEHICLE DEPLOYMENT LANES|PAYABLE-NOW MARKET CHECK"`
+
+## 2026-04-23 — seat inventory runtime: stop compressing the market into one pair-direction story
+
+- Updated `tools/session_data.py`
+  - Replaced `(pair, direction)` memory-target dedupe with `seat_key` / `seat_family` identity so scanner, audit, range, carry, held, and pending seats can coexist when their trigger/vehicle differs
+  - Expanded scanner/audit intake limits and added a `SEAT INVENTORY BOARD` so the runtime surfaces broad opportunity inventory before compressing to execution
+  - Expanded deployment breadth from a hard 3-lane cap to a 10-lane runtime inventory with explicit `Lane N / ...` labels and 5-podium excavation seeds
+  - Stopped echoing already-closed `id=` receipt lines and `dead thesis because ...` carry lines back into fresh-risk inventory
+- Updated `tools/s_conviction_scan.py`
+  - Removed same-pair direction deduplication so the scanner no longer throws away additional valid recipes on the same pair
+  - Added M15-based pullback / structure inventory recipes so the scanner can surface distinct seats across timeframes instead of only H4/H1/M5 compression
+- Updated `tools/validate_trader_state.py` and `tools/seat_outcomes.py`
+  - Reworked lane validation from fixed `PRIMARY / BACKUP / THIRD` assumptions to variable `Lane N / ...` parsing
+  - Reworked excavation review ordering so `Podium #4+` rows remain valid instead of being silently flattened back to 3
+- Updated `tools/record_audit_narrative.py`
+  - Added support for `Deployment Inventory` heading variants and promoted the best narrative pick to `strongest_unheld` when the prompt omits the old hero-seat line
+- Updated `docs/SKILL_trader.md`, `docs/SKILL_quality-audit.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Switched the trader/audit contract from 3-lane / hero-seat compression to inventory-first breadth
+  - Documented that same-pair multi-seat inventory is allowed only when trigger / vehicle / invalidation differ; blind averaging remains banned
+- Verification
+  - `python3 -m py_compile tools/session_data.py tools/s_conviction_scan.py tools/validate_trader_state.py tools/record_audit_narrative.py tools/seat_outcomes.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py tools/s_conviction_scan.py tools/validate_trader_state.py tools/record_audit_narrative.py tools/seat_outcomes.py`
+  - `python3 tools/s_conviction_scan.py`
+  - `.venv/bin/python tools/s_conviction_scan.py`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+  - `python3 tools/record_audit_narrative.py --dry-run`
+  - `.venv/bin/python tools/record_audit_narrative.py --dry-run`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_data_rebuild_py.out 2>&1 && rg -n "SEAT INVENTORY BOARD|Lane 4 / FOURTH SEAT|Lane 5 / FIFTH SEAT|Podium #4|Podium #5|PAYABLE-NOW MARKET CHECK|MULTI-VEHICLE DEPLOYMENT LANES" /tmp/qr_session_data_rebuild_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_data_rebuild_venv.out 2>&1 && rg -n "SEAT INVENTORY BOARD|Lane 4 / FOURTH SEAT|Lane 5 / FIFTH SEAT|Podium #4|Podium #5|PAYABLE-NOW MARKET CHECK|MULTI-VEHICLE DEPLOYMENT LANES" /tmp/qr_session_data_rebuild_venv.out`
+  - `python3 tools/seat_outcomes.py --help`
+  - `.venv/bin/python tools/seat_outcomes.py --help`
+
+## 2026-04-23 — audit range seats: make fresh range boxes real board lanes
+
+- Updated `tools/record_audit_narrative.py`
+  - Added parsing for `Range Opportunities` so the latest auditor view now exposes structured range buy/sell rails, TP, visual note, risk note, and spread-multiple metadata
+  - Stopped treating range-only audits as no-op narrative runs; structured range opportunities now survive dry-run/record flows too
+- Updated `tools/session_data.py`
+  - Added `AUDIT_RANGE` memory targets sourced from fresh audit range boxes before scanner filler
+  - Fresh audit range seats now enter the learning board with `range` regime hints, exact entry/TP metadata, and LIMIT-first execution notes
+  - Session intent can now wake a flat book on a fresh paid audit range box instead of leaving range edges visual-only
+  - Fresh-risk board output now prints the exact audit range entry / TP / opposite rail when the source is `AUDIT_RANGE`
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that fresh audit range opportunities must become real `AUDIT_RANGE` LIMIT lanes or an explicit contradiction, not prose-only commentary
+- Verification
+  - `python3 -m py_compile tools/record_audit_narrative.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/record_audit_narrative.py tools/session_data.py`
+  - `python3 tools/record_audit_narrative.py --dry-run | rg "range_opportunities|AUD_JPY|LONG|SHORT"`
+  - `.venv/bin/python tools/record_audit_narrative.py --dry-run | rg "range_opportunities|AUD_JPY|LONG|SHORT"`
+  - `TOKENIZERS_PARALLELISM=false python3 tools/session_data.py > /tmp/qr_session_data_range_py.out 2>&1 && rg -n "AUDIT_RANGE|Audit range: entry|fresh audit range" /tmp/qr_session_data_range_py.out`
+  - `TOKENIZERS_PARALLELISM=false .venv/bin/python tools/session_data.py > /tmp/qr_session_data_range_venv.out 2>&1 && rg -n "AUDIT_RANGE|Audit range: entry|fresh audit range" /tmp/qr_session_data_range_venv.out`
+
+## 2026-04-23 — range monetization: stop letting held trend seats hide inside "managed shelf"
+
+- Updated `docs/SKILL_trader.md`
+  - Added a mandatory `Range monetization verdict` block for any held pair that is now `RANGE / shelf / sideways` or that the auditor marks `Range Tradeable? YES`
+  - Expanded the hold template so a range-transition seat must resolve as `TAKE PROFIT NOW`, `HOLD ONLY FOR BREAKOUT`, or `ROTATE THE BOX` with exact rails and payout path
+- Updated `tools/session_data.py`
+  - Added the same range-monetization fields to the live held-position template so each trader session has to write the exact box / breakout decision instead of hiding behind `managed shelf`
+- Updated `collab_trade/strategy_memory.md`
+  - Added the lesson that a live continuation seat decaying into an M5 range shelf must resolve as bank / breakout / box rotation, not vague shelf management
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `python3 tools/session_data.py --emit-templates | rg -A12 "## Position Management|Range monetization"`
+  - `.venv/bin/python tools/session_data.py --emit-templates | rg -A12 "## Position Management|Range monetization"`
+
+## 2026-04-23 — state contract honesty: stop letting stale handoffs outrank live fixes
+
+- Updated `tools/validate_trader_state.py`
+  - Added duplicate-heading validation for critical handoff sections so a second `## Deepening Pass` or `## Capital Deployment` now hard-fails instead of leaving the parser on the stale first block
+  - Added internal consistency checks for impossible armed counts (`Pending orders: none` with `1 armed receipts`), fake `20-minute backup trigger armed NOW` claims without a real pending entry receipt, and focus lines that keep naming a seat after its lane already closed as `dead thesis because ...`
+  - Added a lane-line check that rejects multi-seat closures like one `Lane 1 / PRIMARY` line trying to carry both the live trade and the backup board seat at once
+- Updated `tools/session_data.py`
+  - `HANDOFF REFRESH` now prints `20-minute backup trigger armed NOW` from the real pending-entry book (`id=...` or `none because ...`) instead of letting a board-only seat masquerade as armed
+- Updated `collab_trade/state.md`
+  - Removed duplicate `## Deepening Pass` sections so the current handoff no longer leaves stale blocks above the live one
+  - Reconciled the current live state to the actual book (`EUR_JPY SHORT id=469444`, `0` pending entry orders)
+  - Rewrote the current backup / fresh-risk ladder and execution counts so board-only seats are no longer described as armed receipts
+- Updated `AGENTS.md`, `docs/SKILL_trader.md`, and `collab_trade/strategy_memory.md`
+  - Documented that duplicate headings are invalid, `20-minute backup trigger armed NOW` is receipt-only, and armed counts must match real pending entry receipts
+- Verification
+  - `python3 -m py_compile tools/validate_trader_state.py tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/validate_trader_state.py tools/session_data.py`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+  - `python3 tools/session_data.py | rg "HANDOFF REFRESH|Primary vehicle now:|Backup vehicle now:|Next fresh risk allowed NOW:|20-minute backup trigger armed NOW:"`
+  - `.venv/bin/python tools/session_data.py | rg "HANDOFF REFRESH|Primary vehicle now:|Backup vehicle now:|Next fresh risk allowed NOW:|20-minute backup trigger armed NOW:"`
+
+## 2026-04-23 — lane shelf-life: stop handing the next session unlabeled MARKET/LIMIT ideas
+
+- Updated `tools/session_data.py`
+  - Added per-lane shelf-life / expiry labels and next-session carry rules to actionable board profiles
+  - Added `LANE SHELF-LIFE BOARD` so the runtime now prints the actionable mix (`MARKET / STOP-ENTRY / LIMIT`) plus how long each lane survives
+  - Added shelf-life lines to `HANDOFF REFRESH` (`Primary vehicle shelf-life now`, `Backup vehicle shelf-life now`, `Next fresh risk shelf-life now`) so the next session can inherit an actual carry contract instead of vague prose
+  - Armed pending entries now carry their real OANDA GTD/TTL into the board, while held positions print a next-session re-underwrite deadline instead of fake fresh-lane expiry
+- Updated `AGENTS.md`, `docs/SKILL_trader.md`, and `collab_trade/strategy_memory.md`
+  - Documented that every actionable lane needs an explicit shelf-life and that carry-forward is now expressed in session-count / UTC-expiry terms
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `python3 tools/session_data.py | rg "LANE SHELF-LIFE BOARD|Actionable mix:|Shelf-life:|Primary vehicle shelf-life now:|Backup vehicle shelf-life now:|Next fresh risk shelf-life now:|Next-session carry rule:"`
+  - `.venv/bin/python tools/session_data.py | rg "LANE SHELF-LIFE BOARD|Actionable mix:|Shelf-life:|Primary vehicle shelf-life now:|Backup vehicle shelf-life now:|Next fresh risk shelf-life now:|Next-session carry rule:"`
+
+## 2026-04-23 — trader handoff refreshed to the current live board
+
+- Updated `collab_trade/state.md`
+  - Advanced the handoff timestamp to 2026-04-23 04:22 UTC
+  - Refreshed the live self-check and market narrative to the current EUR_JPY live short / EUR_USD limit / GBP_JPY limit-only cross read
+  - Replaced stale GBP/USD backup wording with the current GBP/JPY board-seat read
+- Updated `$CODEX_HOME/automations/qr-trader/memory.md`
+  - Added a fresh run note capturing the 04:22 UTC live-board refresh and the current limit-only GBP/JPY cross seat
+
+## 2026-04-23 — exact order-send gate: stop letting live trader orders bypass real geometry
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added `log_result=False` support so exact pretrade can be reused for live send / live pending validation without polluting `pretrade_outcomes`
+- Added `tools/trader_order_guard.py`
+  - Centralized the exact-pretrade send-time guard shared by `place_trader_order.py` and `validate_trader_state.py`
+  - Standardized order-style compatibility (`PASS / LIMIT / STOP-ENTRY / MARKET`) and exact `pretrade` / allocation extraction
+- Updated `tools/place_trader_order.py`
+  - Runs exact `pretrade_check.py` on the real `entry / tp / sl` before any send
+  - Blocks orders whose real geometry resolves to `PASS` or to a quieter vehicle than the requested order type
+  - Derives the effective `pretrade / allocation / allocation_band` from the exact result instead of trusting user-supplied flags
+  - Uses live bid/ask as the entry proxy for `MARKET` orders so stop-floor / target-floor checks still apply to market sends
+- Updated `tools/validate_trader_state.py`
+  - Re-audits live trader pending entry orders against the same exact pretrade geometry during session-end validation
+  - Current contaminated pending orders now fail `STATE_VALIDATION_FAILED` instead of surviving as clean pending risk
+- Updated `AGENTS.md`, `docs/SKILL_trader.md`, and `collab_trade/strategy_memory.md`
+  - Documented that a board seat is not a send license and that self-reported allocation can no longer override exact orderability
+- Verification
+  - `python3 -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/place_trader_order.py tools/validate_trader_state.py`
+  - `.venv/bin/python -m py_compile collab_trade/memory/pretrade_check.py tools/trader_order_guard.py tools/place_trader_order.py tools/validate_trader_state.py`
+  - `python3 tools/place_trader_order.py LIMIT EUR_USD SHORT 3000 --entry 1.17082 --tp 1.16996 --sl 1.17128 --thesis exact_guard_smoke --pretrade 'A(6/10)' --allocation A --dry-run`
+  - `.venv/bin/python tools/place_trader_order.py LIMIT EUR_USD SHORT 3000 --entry 1.17082 --tp 1.16996 --sl 1.17128 --thesis exact_guard_smoke --pretrade 'A(6/10)' --allocation A --dry-run`
+  - `python3 tools/place_trader_order.py LIMIT EUR_JPY SHORT 2000 --entry 186.638 --tp 186.540 --sl 186.840 --thesis exact_guard_limit_smoke --pretrade 'A(6/10)' --allocation A --dry-run`
+  - `.venv/bin/python tools/place_trader_order.py LIMIT EUR_JPY SHORT 2000 --entry 186.638 --tp 186.540 --sl 186.840 --thesis exact_guard_limit_smoke --pretrade 'A(6/10)' --allocation A --dry-run`
+  - `python3 tools/place_trader_order.py MARKET EUR_USD SHORT 2000 --tp 1.17028 --sl 1.17153 --thesis market_proxy_smoke --dry-run`
+  - `.venv/bin/python tools/place_trader_order.py MARKET EUR_USD SHORT 2000 --tp 1.17028 --sl 1.17153 --thesis market_proxy_smoke --dry-run`
+  - `python3 tools/validate_trader_state.py`
+  - `.venv/bin/python tools/validate_trader_state.py`
+  - `python3 - <<'PY' ... validate_state(..., verify_live_entry_orderability=False) ... PY`
+
+## 2026-04-23 — stop swallowing failed handoffs as harmless mid-session polls
+
+- Updated `tools/session_end.py`
+  - Split session-end exits into explicit outcomes: `TOO_EARLY`, `STATE_MD_STALE`, `STATE_VALIDATION_FAILED`, and `STATE_VALIDATION_ERROR`
+  - `state.md` validation failures now print `STATE_VALIDATION_FAILED` and exit hard instead of reusing the same soft code as `TOO_EARLY`
+  - Validator runtime exceptions no longer degrade to a warning followed by `LOCK_RELEASED`; they now stop the session as runtime errors
+- Updated `tools/task_runtime.py`
+  - `trader cycle` now falls through to `mid_session_check.py` only for soft session-end rejections (`TOO_EARLY`, `STATE_MD_STALE`)
+  - `STATE_VALIDATION_FAILED` and validator runtime errors now propagate out of the cycle so the automation run stays visibly failed instead of ending as a quiet poll
+- Updated `AGENTS.md`, `docs/SKILL_trader.md`, and `collab_trade/strategy_memory.md`
+  - Documented that underdeployed / prose-only handoffs are hard runtime failures, not soft reminders
+- Updated `tools/validate_trader_state.py`
+  - Added a `Self-check` gate so stale `Entries today: N total` prose is no longer allowed; the handoff must carry the structured live count (`fills / new entry orders / rejects`)
+  - Added a focus-ladder gate so stale `Backup vehicle: none` / `Next fresh risk allowed NOW: none` is no longer allowed when the latest `session_action_board.json` still has a live backup / fresh-risk lane
+- Verification
+  - `python3 -m py_compile tools/session_end.py tools/task_runtime.py`
+  - `.venv/bin/python -m py_compile tools/session_end.py tools/task_runtime.py`
+  - `python3 tools/session_end.py ; echo $?`
+  - `.venv/bin/python tools/session_end.py ; echo $?`
+  - `python3 tools/validate_trader_state.py collab_trade/state.md ; echo $?`
+  - `.venv/bin/python tools/validate_trader_state.py collab_trade/state.md ; echo $?`
+  - `python3 - <<'PY' ... trader_cycle hard/soft exit smoke ... PY`
+  - `.venv/bin/python - <<'PY' ... trader_cycle hard/soft exit smoke ... PY`
+
+## 2026-04-23 — session_data compact mode: stop carrying stale flat ladders into the next run
+
+- Updated `tools/session_data.py`
+  - Added exact UTC-day entry activity parsing from `logs/live_trade_log.txt` (`fills / new entry orders / rejects`) instead of the old loose `"ENTRY"` substring count
+  - Normal runtime mode now prints a compact `HANDOFF REFRESH` block with live `Entries today`, `Primary vehicle now`, `Backup vehicle now`, and `Next fresh risk allowed NOW` lines, plus explicit contradiction text when the prior carry-forward ladder still says `none` while the live board has a fresh lane
+  - Template mode now uses the same exact entry-activity summary instead of the old inflated `N total` count
+- Updated `tools/validate_trader_state.py`
+  - The latest `session_action_board` lane can no longer disappear behind `Lane 2 / BACKUP: none` or `Lane 3 / THIRD CURRENCY: none`; the lane line itself must now close as a real receipt or `dead thesis because ...`
+- Updated `AGENTS.md`, `docs/SKILL_trader.md`, and `collab_trade/strategy_memory.md`
+  - Documented that compact runtime mode must still refresh state facts, and that stale `none` carry-forward lines are invalid once `HANDOFF REFRESH` names a live backup / fresh-risk lane
+  - Documented that lane 2 / lane 3 are closure lines, not optional prose summaries
+- Verification
+  - `python3 -m py_compile tools/session_data.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py`
+  - `python3 tools/session_data.py | rg "HANDOFF REFRESH|Entries today:|Primary vehicle now:|Backup vehicle now:|Next fresh risk allowed NOW:|Carry-forward contradiction"`
+  - `.venv/bin/python tools/session_data.py | rg "HANDOFF REFRESH|Entries today:|Primary vehicle now:|Backup vehicle now:|Next fresh risk allowed NOW:|Carry-forward contradiction"`
+  - `python3 -m py_compile tools/validate_trader_state.py`
+  - `.venv/bin/python -m py_compile tools/validate_trader_state.py`
+  - `python3 tools/validate_trader_state.py collab_trade/state.md`
+  - `.venv/bin/python tools/validate_trader_state.py collab_trade/state.md`
+
+## 2026-04-23 — separate session-end accountability from order-entry preflight, and stop rebroadcasting static templates every cycle
+
+- Updated `tools/validate_trader_state.py` and `tools/place_trader_order.py`
+  - Added an explicit `check_action_board` split so `session_action_board.json` is enforced for `SESSION_END` accountability, but routine order entry preflight still blocks only on real live-book / logging drift
+  - Added `--skip-action-board` to `validate_trader_state.py` for smoke tests and focused drift checks
+- Updated `tools/session_data.py`
+  - Added normal runtime mode that omits the giant static state templates by default; the canonical templates still live in `docs/SKILL_trader.md`, and `--emit-templates` restores the old full-template output when needed
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that unresolved action-board lanes are a session-end gate, not an order-entry gate, and that default session_data output should foreground live action data instead of rebroadcasting static scaffolding
+- Verification
+  - `python3 -m py_compile tools/session_data.py tools/validate_trader_state.py tools/place_trader_order.py`
+  - `.venv/bin/python -m py_compile tools/session_data.py tools/validate_trader_state.py tools/place_trader_order.py`
+  - `python3 tools/validate_trader_state.py collab_trade/daily/2026-04-23/state.md` fails with a synthetic unresolved action-board lane, while `python3 tools/validate_trader_state.py --skip-action-board collab_trade/daily/2026-04-23/state.md` passes
+  - `python3 tools/place_trader_order.py ... --dry-run` and `.venv/bin/python tools/place_trader_order.py ... --dry-run` both reach `DRY_RUN` even while the synthetic unresolved action-board snapshot exists
+  - `python3 tools/session_data.py` and `.venv/bin/python tools/session_data.py` now finish in normal runtime mode without printing the giant static template block, while `python3 tools/session_data.py --emit-templates` still prints it when explicitly requested
+
+## 2026-04-23 — action-board snapshot: stop letting live lanes disappear into flat handoffs
+
+- Updated `tools/session_data.py`
+  - Added a live-session `logs/session_action_board.json` snapshot that records the latest payable / armable board lanes plus session-intent context while the trader lock is active
+- Updated `tools/validate_trader_state.py`
+  - Added `session_action_board.json` validation so `SESSION_END` now fails if the latest live board still had payable / armable lanes but `state.md` closes with `0 live receipts | 0 armed receipts`
+  - Tightened the receipt matcher to look only at live / pending receipt sections, so closed-trade mentions in narrative or action-tracking prose no longer count as a live resolution
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that a live board lane must be resolved as a real receipt or explicit dead-thesis contradiction before a flat handoff can pass
+- Verification
+  - `python3 -m py_compile tools/validate_trader_state.py tools/session_data.py collab_trade/memory/pretrade_check.py`
+  - `.venv/bin/python -m py_compile tools/validate_trader_state.py tools/session_data.py collab_trade/memory/pretrade_check.py`
+  - `python3 tools/session_data.py` and `.venv/bin/python tools/session_data.py` both completed under a live trader lock and wrote `logs/session_action_board.json`
+  - `python3 tools/validate_trader_state.py` and `.venv/bin/python tools/validate_trader_state.py` now fail the current flat handoff with `EUR_JPY SHORT STOP-ENTRY [state]` still unresolved from the latest action board
+
+## 2026-04-23 — stop rewriting armed stops as fake limits, and force an explicit no-market explanation
+
+- Updated `tools/session_data.py`
+  - Preserved the real armed style for pending entry orders, so existing `STOP-ENTRY` receipts stay `STOP-ENTRY` on the board instead of being silently rewritten as `LIMIT`
+  - Kept review feedback on already-armed orders as annotation-only, instead of mutating the displayed live receipt type behind the trader's back
+  - Added `PAYABLE-NOW MARKET CHECK`, which now prints either real `ENTER NOW` lanes or the top reasons why every current lane still stays `LIMIT` / `STOP-ENTRY`
+- Updated `tools/pricing_probe.py`, `collab_trade/memory/pretrade_check.py`, and `tools/session_data.py`
+  - Split calm `quiet / stable` tape from truly `friction-dominated` tape so a short, low-variance probe does not automatically kill every market lane when spreads are stable
+  - Taught both runtime and pretrade live-tape guards to allow `MARKET` to survive on `quiet / stable` tape when the chart/timeframe edge already earned it
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Documented that pending lanes preserve their actual armed style, that a no-market session must now explain why no payable market lane existed, and that calm `quiet / stable` tape is not the same as high-friction tape
+
+## 2026-04-23 — fail one-lane handoffs when the board already printed breadth
+
+- Updated `tools/validate_trader_state.py`
+  - Added multi-vehicle closure validation so `Lane 1 / PRIMARY`, `Lane 2 / BACKUP`, and `Lane 3 / THIRD CURRENCY` must all appear in the handoff
+  - Added broad-tape underdeployment checks: when fewer than 2 live/armed lanes survived, the handoff must write the exact blocker to lane two
+  - Added lane-level prose checks so `trigger-only watch lane` / `watch lane` can no longer pass SESSION_END as fake closure
+  - Added `Multi-Vehicle / Pending` as a backward-compatible receipt section name for live-book validation
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that multi-vehicle board lanes must close as real receipts or explicit dead theses, not as watch prose
+
+## 2026-04-22 — refresh qr-trader handoff for the 17:21→17:32 UTC session
+
+- Updated `collab_trade/state.md`
+  - Brought the live handoff forward to the current 17:21→17:32 UTC trader session
+  - Kept `EUR_JPY LONG` armed STOP `469425` as the primary cross lane while `EUR_USD SHORT` stayed trigger-only
+  - Recorded the fresh chart read: `EUR_JPY` remained a squeeze/range under the stop and `EUR_USD` stayed the cleaner direct-USD short vehicle
+- Updated `/Users/tossaki/.codex/automations/qr-trader/memory.md`
+  - Stored a concise summary of the session read and the no-new-order outcome for the next automation run
+
+## 2026-04-22 — refresh qr-trader handoff for the 17:02 UTC session
+
+- Updated `collab_trade/state.md`
+  - Brought the live handoff forward to the current 17:02 UTC trader session
+  - Recorded that `EUR_JPY LONG` remained the armed primary while the fresh chart read downgraded the cross to a range/squeeze
+  - Kept `EUR_USD SHORT` as the clean direct-USD trigger lane and left the book flat with no new order
+- Updated `/Users/tossaki/.codex/automations/qr-trader/memory.md`
+  - Stored a concise summary of the session read and the no-trade outcome for the next automation run
+
+## 2026-04-22 — promote repeated audit seats into the live board and stop overblocking shallow thesis damage
+
+- Updated `tools/session_data.py`
+  - Promoted fresh audit strongest-unheld / narrative seats into the memory-target and learning-board path as `AUDIT` sources, so repeated auditor pressure can become the live fresh-risk seat instead of remaining side commentary
+  - Kept audit / missed-seat pressure in the same preloaded context used by both the board and the session-intent gate, so the trader sees one consistent pressure map through recall, ranking, and deployment cues
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a shallow exact-thesis recycle path: when review tagged the last exact loss as `trigger` / `vehicle` damage and market/structure survived, the gate now returns `layer_headwind` instead of hard `blocked`
+  - Preserved the hard block for fresh exact losses unless review or repeated shallow evidence proves the failure was only trigger / vehicle damage
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented that repeated audit seats now enter the live board directly and that reviewed trigger / vehicle failures must come back only with a new print or better vehicle, not as dead direction or copied entry
+
+## 2026-04-22 — trader session refreshed the live handoff and rejected the GBP_USD long chase
+
+- Updated `collab_trade/state.md`
+  - Brought the live trader handoff forward to the 2026-04-22 13:43 UTC session
+  - Kept `EUR_JPY LONG` as the active primary on armed STOP `469425`
+  - Recast the direct-USD lane as `EUR_USD SHORT` retrace-only and marked the `GBP_USD LONG` scanner read as contradicted by the current bear staircase
+- Updated `~/.codex/automations/qr-trader/memory.md`
+  - Stored a concise summary of the session outcome for the next automation run
+
+## 2026-04-22 — stop repeating the same missed seat and shut bad same-day chase lanes
+
+- Updated `tools/session_data.py`
+  - Added repeat-pressure context from `logs/audit_history.jsonl` plus fresh missed-S pressure from `seat_outcomes`, so repeated strongest-unheld / missed seats stay attached to the board, deployment cues, and S-excavation seeds instead of disappearing into fresh prose
+  - Added a `SESSION INTENT GATE` that marks pressure-free flat ticks as `WATCH-ONLY` so the trader keeps the prior map and updates only management / re-arm / kill conditions instead of pretending each scheduler wake-up is a brand-new opportunity
+  - Added a same-day `MARKET` / `STOP-ENTRY` kill switch that demotes those vehicles after 2+ losing outcomes with zero captured S for the day
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added the same same-day vehicle kill switch at the final pre-order gate, so bad intraday chase lanes are blocked even if the broader reset-forward history still looks acceptable
+  - Expanded execution feedback output to show the actual vehicle block reason, not only the historical sample label
+- Updated `docs/SKILL_trader.md`, `AGENTS.md`, and `collab_trade/strategy_memory.md`
+  - Documented `SESSION INTENT GATE`, repeat audit / missed-S promotion pressure, long-term S defaulting to watch-only unless already alive, and the new rule that repeated unheld seats must be armed or explicitly contradicted
+
+## 2026-04-22 — runtime learning: stop letting legacy bot stats suppress live trader deployment
+
+- Added `tools/runtime_history.py`
+  - Centralized the 2026-04-17 discretionary-reset floor used by runtime learning windows so live trader stats no longer silently mix with pre-removal bot history
+- Updated `collab_trade/memory/schema.py`
+  - Added a sqlite3 fallback when `apsw` / `sqlite_vec` are unavailable so `pretrade_check.py` and other runtime readers still run under plain `python3` for smoke tests and emergency use
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Floored pair / regime / session / thesis-history lookbacks at the discretionary reset instead of falling back to all legacy trades
+  - Relabeled runtime feedback lines so the trader sees when a stat comes from the reset-forward discretionary sample rather than vague "all history"
+  - Added vehicle feedback that demotes losing recent `STOP-ENTRY` lanes to `LIMIT` instead of repeatedly chasing proof with a bad vehicle
+- Updated `tools/session_data.py`
+  - Floored the learning edge board / fresh-risk tournament context stats at the same discretionary reset date
+  - Re-ranked execution styles so passive `LIMIT` lanes outrank `STOP-ENTRY` when the board is choosing among armable seats
+  - Extended recent execution-style feedback so losing `STOP-ENTRY` lanes are demoted to `LIMIT`, not only losing `MARKET` lanes
+  - Reweighted S-excavation seed priority toward `LIMIT` when the trigger vehicle is the weak link
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Documented that legacy bot history is analytics-only context for the live trader and that runtime vehicle selection now prefers passive receipts when proof-chase triggers are still losing
+
+## 2026-04-22 — trader runtime: stop double-start overlap and make the 20-minute lane explicit
+
+- Updated `tools/task_runtime.py`
+  - Added a staged `SIGTERM` -> `SIGKILL` shutdown helper for stale trader owners instead of firing one `SIGTERM` and immediately trusting the lock state
+  - Changed stale preflight takeover so it now aborts as `ALREADY_RUNNING ... stale_kill_failed=1` when the old owner refuses to die, instead of starting a second live session on top of it
+  - Changed the 17-minute watchdog so it only releases `.trader_lock` after the owner PID is confirmed dead; if not, it leaves the lock in place for the next explicit takeover attempt
+- Updated `tools/session_data.py`
+  - Renamed the carry-forward field to `20-minute backup trigger armed NOW` while preserving parse compatibility with the older `15-minute` label in existing `state.md` snapshots
+  - Added `Execution count this session` plus a required second-lane blocker line to the multi-vehicle scaffold so broad tapes cannot quietly collapse into one live receipt
+- Updated `docs/SKILL_trader.md`
+  - Corrected the live Codex trader cadence to the actual 20-minute automation
+  - Documented the new watchdog lock-release safety behavior
+  - Added explicit receipt fields that force the trader to explain why a second lane did not survive in broad conditions
+- Updated `AGENTS.md` and `CLAUDE.md`
+  - Aligned the architecture docs with the live 20-minute trader cadence and the stricter no-overlap runtime contract
+
+## 2026-04-22 — trim Codex automation burn rate without removing the trader lane
+
+- Updated Codex automation runtime config
+  - Lowered `qr-trader` from `gpt-5.4 / high` to `gpt-5.4 / medium` so the primary discretionary loop keeps the full model but stops paying `high` every cycle
+  - Lowered `qr-quality-audit` from `gpt-5.4 / high` to `gpt-5.4-mini / medium` because the audit is a secondary analyst, not the live execution owner
+- Updated `AGENTS.md`
+  - Documented the active Codex rate-control profile so the repo matches the live automation settings
+
+## 2026-04-22 — review now separates market-state mistakes from tape / vehicle mistakes, and runtime learns from that shape
+
+- Updated `collab_trade/memory/schema.py`
+  - Added structured `pretrade_outcomes` live-tape columns (`live_tape_bias / live_tape_state / live_tape_bucket / live_tape_samples / live_tape_mode`) plus an index on `(pair, direction, live_tape_bucket)` so runtime and review can query tape-conditioned outcomes directly instead of scraping thesis text
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Stores the structured live-tape fields on every logged pretrade check, not just the compact `tape=...` token inside the thesis string
+  - Rebuilds the learning gate against the current live-tape bucket when enough recent matched samples exist, so the same pair-direction can keep its broad edge while still carrying a tape-specific headwind or tailwind
+  - Adds a recent vehicle-feedback guard that demotes `MARKET` when matched recent `MARKET` outcomes in that pair-direction are still losing
+- Updated `tools/session_data.py`
+  - Extends the fresh-risk tournament context map with current-bucket live-tape stats and recent execution-style stats from `pretrade_outcomes`
+  - Prints `Tape-matched feedback` when the current live-tape bucket has enough matched history and keeps recent losing `MARKET` lanes demoted before board-seat ranking
+- Updated `tools/post_close_regret.py`
+  - Carries `live_tape_bias / state / bucket` into regret rows and now emits `by_live_tape_bucket` so review can see whether losses cluster in friction / opposed / unavailable tape instead of only by regime
+- Updated `tools/daily_review.py`
+  - Adds `Failure Attribution (market-state vs execution/tape)` plus `Losses By Entry Tape` so the daily report separates structural misreads from bad vehicle / tape choice
+  - Uses live-tape context in collapse-layer backfill (`vehicle` vs `trigger`) when recent losses came from hostile tape or opposed flow
+  - Wraps seat-outcome review calls defensively so a transient `seat_outcomes` DB I/O failure no longer aborts the full daily review
+- Updated `AGENTS.md`
+  - Documented structured live-tape storage, tape-conditioned learning, recent `MARKET` vehicle demotion, and tape-aware review attribution
+
+## 2026-04-22 — added a live pricing probe so the trader sees tape quality, not just bars
+
+- Added `tools/pricing_probe.py`
+  - Added bounded OANDA pricing-stream capture so the probe now uses real live ticks when available instead of only repeated snapshots
+  - Keeps a snapshot fallback path when the stream is unavailable or too quiet to produce enough samples
+  - Summarizes per-pair microstructure (`buyers pressing / sellers pressing / two-way`, spread stability, range vs friction) and writes `logs/pricing_probe.json` so the latest tape read is recoverable across tools
+- Updated `tools/session_data.py`
+  - Added a `LIVE TAPE PROBE` section for all 7 pairs so the recurring trader sees short-burst tape quality before naming fresh risk
+  - Prints the probe mode (`stream` vs snapshot fallback) so stale assumptions about the live input path are visible in the runtime output
+  - Feeds the live pricing probe into the fresh-risk tournament, bucket board-seat selection, S-Hunt deployment cues, and multi-vehicle lane ranking so friction-dominated / opposite-pressure seats lose board rank before raw score
+  - Prints a live-tape reason next to each deployment cue, podium seed, and OODA seat so the runtime output shows why a seat stayed `MARKET`, demoted to `STOP-ENTRY`, or remained passive
+- Updated `tools/mid_session_check.py`
+  - Added the same short pricing probe so later checks within the same session still see live tape, not only the first snapshot
+- Updated `tools/place_trader_order.py`
+  - Added a market-order pricing-probe gate that blocks immediate execution when the live tape is friction-dominated or spread-unstable even if static pricing looks superficially OK
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a fresh pair-specific live-tape read (fresh cache when recent, bounded stream probe otherwise) so per-entry execution style is not decided off stale tape assumptions
+  - Demotes `MARKET` to `STOP-ENTRY` / `LIMIT` when the live tape is unavailable, friction-dominated, two-way, or paying the other side, and now prints the tape summary directly in the pretrade output
+  - Adds the live-tape token into the compact thesis log so review can distinguish otherwise-identical checks that happened under different tape states
+- Updated `tools/config_loader.py`
+  - Added `oanda_stream_url` so stream-capable tools can choose the correct practice/live stream host without hardcoding it locally
+- Updated `AGENTS.md`
+  - Documented the new live pricing probe lane, the market-order gate that depends on it, and the pretrade live-tape demotion path
+
+## 2026-04-22 — time-consistency hardening for news and technical inputs
+
+- Updated `tools/technicals_json.py`
+  - Added cache timestamp parsing helpers plus per-timeframe age calculation so runtime tools can verify how old each technical snapshot really is
+- Updated `tools/session_data.py`
+  - Added a `TECHNICAL CACHE FRESHNESS` section that prints M1/M5/M15/H1/H4 ages for every pair after refresh
+  - Added a one-shot retry when refreshed technical caches are still stale instead of silently trusting old JSON
+  - Fixed `UPCOMING EVENTS (next 4h)` to actually filter and sort calendar events by the next 4 hours instead of dumping the first rows from `news_cache.json`
+- Updated `tools/news_fetcher.py`
+  - Normalized calendar/event timestamps through a single UTC parser before JST rendering
+  - Fixed `--summary` so `HIGH IMPACT TODAY` uses the trader's JST day, not the current UTC date
+- Updated `tools/place_trader_order.py`
+  - Added a pre-order technical-freshness gate that refreshes the target pair once and blocks the order if M1/M5/M15/H1 inputs are still stale at send time
+- Updated `AGENTS.md`
+  - Documented the new technical freshness checks, JST-aligned news rendering, and stale-data order block
+
+## 2026-04-22 — pretrade now hard-stops pair-direction lanes with negative realized expectancy
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a negative-expectancy guard that forces `PASS` when a pair-direction lane has enough sample, is still losing in realized EV, and its win rate remains below the current payout break-even
+  - Left an escape hatch only for exact confirmed edges that still retain `A max` / `A/S when theme confirmed` learning caps
+  - Surfaced the guard reason in the trader-facing output so weak lanes fail as an explicit base-rate problem, not as vague caution text
+
+## 2026-04-22 — learning gate now trusts recent pretrade feedback before stale history
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Reweighted pair/session/regime stats to prioritize matched `pretrade_outcomes` from the recent recurring-trader window before falling back to closed-trade history
+  - Added a recent-feedback headwind override so strong fresh losses can clamp `learning_score` / `allocation_cap` even when older lesson memory still says `confirmed`
+  - Surfaced the exact `Pair feedback` source line plus any recent-feedback override inside the trader-facing output
+- Updated `tools/session_data.py`
+  - Rebuilt the LEARNING EDGE BOARD context maps to load recent `pretrade_outcomes` first, then recent trades, then all-time trades only as a last fallback
+  - Added `Pair feedback` and `Recent feedback override` lines so the trader must see the fresh base rate before naming conviction
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Documented that recent matched pretrade feedback outranks old lore and added a required `Pair feedback` field to the fresh-risk entry template
+
+## 2026-04-22 — close logic branching: trigger damage no longer auto-kills the trade
+
+- Added `tools/close_discipline.py`
+  - Centralized dead-layer classification (`market / structure / trigger / vehicle / aging`) plus rotten-seat detection (`stale`, pathological fill, dirty counter-reversal)
+  - Added sibling-inventory grouping so multiple live expressions under the same non-neutral `thesis_market` are treated as one inventory family instead of isolated micro-close candidates
+- Updated `tools/close_trade.py`
+  - Added a trader close-discipline gate before routine full closes
+  - Full close now refuses by default when a losing seat only died at `trigger` / `vehicle`, especially for `LIMIT` / `STOP-ENTRY` entries in soft regimes (`range / squeeze / quiet`)
+  - Added `--check-only` to print the dead layer, recommended action, sibling inventory context, and suggested half-close size without sending the order
+  - Added `--force-full-close` so the human can still override after naming the exact contradiction
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Documented the new branch logic, the `--check-only` workflow, and the distinction between soft-wobble seats versus rotten seats that should be killed fast
+
+## 2026-04-22 — close discipline hardening: stop killing inventory on trigger wobble
+
+- Updated `tools/preclose_check.py`
+  - Rebuilt the helper around thesis-layer close discipline instead of generic reflection prompts
+  - Added recent post-close-regret evidence for the same pair and the planned close family (`manual` / `stop`) so the trader sees how often similar losing closes later recover
+  - Added the required `dead layer` test (`market / structure / trigger / vehicle / aging`) plus explicit bias text: trigger / vehicle failure alone is not enough for reflex full-close
+- Updated `tools/post_close_regret.py`
+  - Added reusable `build_regret_payload(...)` so runtime tools can import the same regret evidence without shelling out to a text-only CLI path
+- Updated `tools/session_data.py` and `docs/SKILL_trader.md`
+  - Position-management blocks now print recent regret stats for each held pair and force the trader to name `dead layer`, `surviving layers`, and why a full close beats hold / half / reload
+- Updated `AGENTS.md`
+  - Documented the stronger pre-close discipline in the canonical script map
+
+## 2026-04-22 — thesis-layer review: separate market, structure, trigger, vehicle, and aging
+
+- Updated `collab_trade/memory/schema.py`
+  - Added explicit `pretrade_outcomes` fields for `thesis_market`, `thesis_structure`, `thesis_trigger`, `thesis_vehicle`, `thesis_age`, plus review backfill fields `collapse_layer` and `collapse_note`
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Rebuilt thesis tagging around explicit layers instead of the old coarse pair/level fallback: `family = market+structure`, `key = family+trigger+vehicle`
+  - Added thesis-stack output (`Market / Structure / Trigger / Vehicle / Aging`) so the trader must name what actually changed before re-entry
+  - Replaced the old `same pair/direction/level` fallback with layer-aware history (`same market`, `same trigger`, `same vehicle`) and demotion logic that distinguishes deep family failure from shallow trigger/vehicle churn
+- Updated `tools/daily_review.py`
+  - Added thesis-layer-aware review backfill so losing `pretrade_outcomes` now get both `lesson_from_review` and a specific `collapse_layer`
+  - Wired in the post-close regret diagnostic so review can tell "market thesis died" apart from "trigger / vehicle got shaken out"
+- Updated `tools/post_close_regret.py`, `tools/session_data.py`, `docs/SKILL_trader.md`, and `AGENTS.md`
+  - Exposed a reusable regret-result map for daily-review
+  - Reworded carry-forward guidance around `market-state prior` instead of `pair prior`
+  - Documented the new thesis-layer vocabulary in the runtime prompt and architecture notes
+
+## 2026-04-22 — post-close regret analysis: measure chop shakeouts versus truly bad theses
+
+- Added `tools/post_close_regret.py`
+  - Joins local losing closes with OANDA close timestamps, then measures post-close M1 favorable excursion and recovery-to-entry inside a configurable lookahead window
+  - Reports recovery rate, average loss versus average post-close favorable move, and recovery splits by regime so review can tell premature squeeze/range scratches apart from genuinely wrong seats
+  - Extended the output with thesis-lens (`archetype / wave / session / regime`) and collapse-component (`trigger_timing_fail / structure_break / stale_thesis / vehicle_friction / hard_invalidation`) tags so the review can analyze failure by market-state thesis, not only by pair
+- Updated `AGENTS.md`
+  - Added the new diagnostic tool to the canonical script map
+
+## 2026-04-22 — execution honesty guard: stop oversized dirty seats and pathological fills
+
+- Updated `tools/place_trader_order.py`
+  - Added lot-honesty validation against the effective `allocation / allocation_band`, including parsing `B+ / B0 / B-` from `--allocation-band` or the `--pretrade` text
+  - Added a `counter / reversal` guard so those seats are blocked from A-size+ or MARKET execution
+  - Added a size-asymmetry guard so dirty seats cannot be larger than the recent paid winner size
+  - Added a post-fill emergency guard that immediately closes STOP / MARKET trades when the actual fill spread blows out relative to the live spread and the planned TP/SL path
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a counter-size / counter-execution guard so `--counter` seats are capped at B-max and demoted from `MARKET` to `STOP-ENTRY` before the trader writes the order
+- Updated `docs/SKILL_trader.md`, `tools/session_data.py`, and `AGENTS.md`
+  - Extended the trader order command examples/template with `--allocation-band` and `--counter`
+  - Documented the new lot-honesty and pathological-fill protections so GPT-5.4 writes commands the guard can actually verify
+
+## 2026-04-21 — B-band sizing split: stop treating every B seat like the same scout
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added `allocation_band` logic so `B` seats are now split into `B+ / B0 / B-` based on orderability, learning cap, live context, and risk posture
+  - Wrote the B-band into the printed pretrade output, the thesis key, and the `pretrade_outcomes` logging path
+- Updated `collab_trade/memory/schema.py`
+  - Added `pretrade_outcomes.allocation_band` so daily review and future analysis can separate promotable `B+` from noisy `B-`
+- Updated `tools/session_data.py`
+  - Surfaced `B+ / B0 / B-` on the learning edge board, fresh-risk tournament, and new-entry template
+  - Added band-specific size notes so the trader sees the intended lot range before writing the seat
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Replaced the old single `B-size` language with explicit B-band sizing guidance
+  - Clarified that sub-3000u is only valid as an explicit `B-` probe on a real A/S path, not as a casual low-conviction entry
+
+## 2026-04-21 — AGENTS sync with useful CLAUDE compatibility details
+
+- Updated `AGENTS.md`
+  - Clarified that runtime prompt truth still lives in `docs/SKILL_*.md`, while root `CLAUDE.md` is only a compatibility overview and not the trader prompt source
+  - Brought over the useful quality-audit contract still visible in `CLAUDE.md`: no early exit on the audit's market-view sections, mandatory 7-pair conviction map every cycle, and Slack posting when the audit finds DANGER or unheld A/S opportunities
+
+## 2026-04-21 — GPT-5.4 focus tuning: preserve the primary unless the tape explicitly kills it
+
+- Updated `tools/session_data.py`
+  - Added a `CARRY-FORWARD FOCUS` section that repeats the prior handoff's `Best expression NOW`, `Primary vehicle`, `Backup vehicle`, `Next fresh risk`, and backup trigger so the trader must write a `Primary continuity verdict: KEEP / ROTATE / DEAD` before re-ranking fresh risk
+  - Added `Primary vehicle` to state carry-forward memory targets so prior concentration lanes stay visible in actionable recall
+  - Extended the new-entry template with `Primary continuity` fields so every rotation away from the old primary must name the exact contradiction
+- Updated `docs/SKILL_trader.md`
+  - Clarified that `FRESH-RISK TOURNAMENT` is a tie-breaker, not permission to demote the old primary every cadence
+  - Added `Primary continuity verdict` / `Backup continuity` to `Market Narrative`, `Capital Deployment`, and the new-entry template so GPT-5.4 keeps concentration inside the existing system instead of scattering across newly-ranked seats
+- Updated `AGENTS.md`
+  - Documented the new carry-forward focus snapshot in the recurring trader architecture and `session_data.py` map
+
+## 2026-04-21 — fresh-risk hygiene gate: no new orders while live book is missing from state/log
+
+- Updated `tools/validate_trader_state.py`
+  - Added live-book coverage checks so current live validation now fails when an open OANDA trade or pending entry order exists but is missing from `collab_trade/state.md` or `logs/live_trade_log.txt`
+  - Added `--require-live-book-coverage` for explicit smoke tests against synthetic handoffs
+- Updated `tools/place_trader_order.py`
+  - Runs the live state/book hygiene gate before sending any new trader order
+  - Refuses fresh risk when the current book is not fully reconciled into `state.md` and `live_trade_log.txt`
+- Updated `docs/SKILL_trader.md`, `docs/SKILL_quality-audit.md`, and `docs/TRADER_PROMPT.md`
+  - Clarified the real audit cadence (`30 min`)
+  - Clarified the architecture split: audit is not a direction-permission system, but unresolved state/log drift is now a hard hygiene block for fresh risk
+
+## 2026-04-21 — trader entry helper: place the order and print the state receipt in one command
+
+- Added `tools/place_trader_order.py`
+  - Places discretionary `MARKET` / `LIMIT` / `STOP-ENTRY` orders directly in OANDA with trader client extensions
+  - Auto-appends the trader log line to `logs/live_trade_log.txt`
+  - Prints a `STATE_RECEIPT` line (`armed LIMIT id=...`, `armed STOP id=...`, or `ENTER NOW already filled as trade id=...`) so the handoff can copy the real receipt instead of prose
+  - Supports `--dry-run` for smoke tests and payload review without sending a live order
+- Updated `docs/SKILL_trader.md`, `tools/session_data.py`, and `AGENTS.md`
+  - Documented the new routine-entry path so `pretrade_check` and order placement sit next to each other in the trader workflow
+
+## 2026-04-21 — live OANDA receipt verification: current state ids must exist in the book
+
+- Updated `tools/validate_trader_state.py`
+  - Added live OANDA cross-checking for the current `collab_trade/state.md`, so claimed `trade id=...` / `armed LIMIT id=...` / `armed STOP id=...` receipts must actually exist in `openTrades` / `pendingOrders`
+  - Added `--require-live-oanda` so synthetic handoffs can be tested against the live book without overwriting the real `state.md`
+- Updated `AGENTS.md`
+  - Documented that the session-end validator now verifies live receipt ids against OANDA for the active handoff
+
+## 2026-04-21 — arm-now receipt gate: block prose-only A/S mandates at session end
+
+- Updated `tools/validate_trader_state.py`
+  - Added a new `A/S Excavation Mandate` runtime gate that blocks SESSION_END when `Best A/S live now` or `Best A/S one print away` says `Order now` / `Arm now as` without a real `id=...` receipt somewhere in the handoff
+  - Added a consistency check so `## Pending LIMITs` cannot say no fresh entry orders are live while another section still claims an armed `LIMIT` / `STOP`
+- Updated `docs/SKILL_trader.md` and `tools/session_data.py`
+  - Changed the mandate format so `Order now` must close as `trade id=___` / `armed STOP id=___` / `armed LIMIT id=___`, and `Arm now as` must already carry `armed STOP id=___` or `armed LIMIT id=___`
+- Updated `AGENTS.md`
+  - Documented the stronger session-end handoff gate for A/S mandate receipts
+
+## 2026-04-21 — winner concentration sizing: press the paid lane, not every lane equally
+
+- Updated `docs/SKILL_trader.md`
+  - Added `Winner concentration` guidance so unchanged `3000u` sizing across winners and losers is treated as underbetting, not neutrality
+  - Added a paid-lane escalation rule: after the first clean TP or a live lane has already reduced risk, the next clean entry on the same confirmed theme must default up one allocation lane unless the trader writes the blocker
+  - Added a `Size asymmetry audit` line to `Capital Deployment` so the trader must compare the current best live seat against the biggest winning size already seen
+- Updated `tools/session_data.py`
+  - Extended the mandatory `New Entry Template` with paid-lane proof / next-size fields
+  - Added a `Size asymmetry audit` prompt to the deployment receipt so the session cannot keep every lane at the same size without explaining why
+
+## 2026-04-21 — dynamic margin deployment bands: proof first, pressure second
+
+- Updated `docs/SKILL_trader.md`
+  - Kept the hard cap structure (`>90%` blocked) but added deployment-band guidance so margin is judged by book quality, not by a static "more is better" instinct
+  - Documented the real distinction from the +10% day: high margin on 4/7 came from concentrated proven themes, not from using margin itself as the trade thesis
+  - Added explicit audit bands:
+    - `0-45%` for first proving / no paid lane
+    - `45-70%` for two honest live lanes or one paid lane plus one backup
+    - `70-82%` for confirmed top-2 concentration
+    - `82%+` exceptional only
+
+## 2026-04-21 — surface armable A/S seats before raw-score PASS seats
+
+- Updated `tools/session_data.py`
+  - Added bucket board selection that prefers real orderability (`MARKET` / `STOP-ENTRY` / `LIMIT`) before raw learning score, so each bucket surfaces the best armable seat instead of the prettiest blocked seat
+  - Keeps high-quality near-S `PASS` profiles on the excavation podium when they are clearly one print away rather than true no-edge passes
+  - Derives the honest default upgrade vehicle for those near-S `PASS` podium seeds instead of leaving them as vague prose
+- Updated `docs/SKILL_trader.md` and `AGENTS.md`
+  - Clarified that `Best A/S live now` should use the best armable bucket seat, while `Best A/S one print away` should come from the highest-quality near-S `PASS` seed
+
+## 2026-04-21 — quality audit narrative recorder: parse the latest appended auditor view
+
+- Updated `tools/record_audit_narrative.py`
+  - Changed section and timestamp parsing to use the last matching `Auditor's View` block in `logs/quality_audit.md`, so the Step 7 recorder now works with the playbook's required layout where the script facts preserve the previous auditor view and the new analysis is appended after a separator
+
+## 2026-04-21 — thesis-level learning guard: exact-loss block + review feedback backfill
+
+- Updated `collab_trade/memory/schema.py`
+  - Added `pretrade_outcomes.thesis_key` / `thesis_family` columns and indexes so pretrade memory can distinguish the exact setup/vehicle from the broader pair-direction bucket
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a thesis-family / thesis-key builder that tags each fresh check by structure, session bucket, regime, execution style, and setup archetype instead of only pair-direction
+  - Added an exact-thesis fresh-loss block and a thesis-family headwind demotion, so repeated failed ideas now downgrade to `PASS` / `B-only` instead of hiding behind old pair priors
+  - Added thesis-family context and recent same-thesis outcomes to the formatted pretrade output
+  - Fixed `_recommend_execution_style()` to use the real pair symbol for spread-band logic instead of blanking it through the learning profile
+- Updated `tools/daily_review.py`
+  - Backfills concise review notes into `pretrade_outcomes.lesson_from_review` for matched trades, so the next day's pretrade check can surface real feedback instead of `NULL`
+  - Prints those review notes in the review report under `Pretrade Feedback Notes` / `Pretrade Prediction vs Result`
+- Updated `tools/session_data.py`, `docs/SKILL_trader.md`, `docs/SKILL_daily-review.md`, and `AGENTS.md`
+  - Clarified the new rule: one loss does not kill the pair prior, but it does block the exact failed thesis until a materially new state change is written
+
+## 2026-04-20 — technical-cache hardening: tolerate trailing junk in `technicals_*.json`
+
+- Added `tools/technicals_json.py`
+  - Introduced a relaxed technical-cache loader that accepts the first valid JSON object and ignores trailing garbage instead of crashing on `JSONDecodeError: Extra data`
+- Updated runtime readers that consume `logs/technicals_*.json`
+  - `tools/session_data.py`, `tools/profit_check.py`, `tools/protection_check.py`, `tools/quality_audit.py`, `tools/range_scalp_scanner.py`, `tools/range_bot.py`, `tools/s_conviction_scan.py`, `tools/stranded_drain.py`, `tools/macro_view.py`, `tools/adaptive_technicals.py`, `tools/regime_switch.py`, and `collab_trade/memory/pretrade_check.py`
+  - These paths now share the relaxed loader instead of failing hard when a cache file contains trailing junk after a valid payload
+
+## 2026-04-20 — execution-friction guardrails: actual TP/SL aware pretrade + same-pair reload block
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added `--entry`, `--tp`, `--sl`, `--tp-pips`, and `--sl-pips` so the check can score the real planned payoff shape instead of a generic wave target
+  - Penalizes plans whose TP is too small versus spread or whose SL sits inside spread/noise, and prints the actual `TP/SL vs spread` ratios in the formatted output
+  - Added a hard target-floor guard: if the planned TP is still inside `4x spread`, execution is demoted to `PASS` until the payoff improves
+  - Added a hard stop-floor guard: if the planned SL is still inside `4x spread`, execution is demoted to `PASS` until the stop is widened or the entry improves
+  - Added a live same-pair same-direction inventory guard: if the existing leg is still unpaid, the next leg is demoted to `PASS` instead of stacking friction
+- Updated `tools/session_data.py`
+  - New-entry scaffolding now explicitly asks for the exact `pretrade_check.py --entry --tp --sl` command plus same-pair inventory / second-fill permission, so the live session uses the new execution-friction guards instead of falling back to generic wave assumptions
+- Updated `docs/SKILL_trader.md`
+  - The pre-entry block now tells the trader to pass exact planned prices into `pretrade_check` and to write the current same-pair inventory / second-fill permission explicitly
+- Updated `tools/close_trade.py`
+  - Fixed `Sp=` logging to use OANDA `fullPrice` bid/ask instead of misreading `halfSpreadCost` as pip distance, which was corrupting non-JPY close logs
+
+## 2026-04-20 — tape-first trader prompt: force market read before tool read
+
+- Updated `docs/SKILL_trader.md`
+  - Added `Tape is paying NOW`, `Tape is punishing NOW`, and `Chart-only call` to `Market Narrative` so the trader must write the live market behavior before choosing a vehicle
+  - Updated the pre-entry conviction block so each seat must state what the market is paying on that pair now, why the opposite side is wrong now, and a tape-first orderability judgment before consulting `pretrade_check`
+- Updated `tools/session_data.py`
+  - Refreshed `New Entry Template` to mirror the tape-first prompt contract and keep `pretrade_check` in the cross-check role instead of the driver role
+
+## 2026-04-20 — pretrade same-pair contest: stop the weaker side from stealing the seat
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a same-pair direction contest that compares the current side against the live opposite side on setup quality, learning gate, and orderability
+  - When the opposite side is materially cleaner, the weaker side now gets flagged explicitly and weak `MARKET` / `LIMIT` / `STOP-ENTRY` plans are demoted to `PASS` instead of being left as a live backup
+  - Added the contest result to the formatted pretrade output so the trader sees which side is actually winning the pair right now
+
+## 2026-04-20 — pending order freshness: stop treating aged LIMITs as alive by default
+
+- Updated `tools/session_data.py`
+  - Pending orders now print direction, age, TTL, live-gap pips, and gap-vs-ATR / gap-vs-spread so the session start can see whether a parked order is still a real seat or has drifted into wish-distance
+- Updated `docs/SKILL_trader.md`
+  - Replaced the old `thesis alive?` pending review with a freshness review that forces the trader to state whether the exact price is still wanted now, whether the opposite-side live seat is cleaner, and whether the action is `LEAVE`, `EXTEND GTD`, or `CANCEL`
+  - Clarified that `price is far` or `GTD is near` alone are not reasons; the written reason must name the actual contradiction, stale wave, or opposite-side upgrade
+
+## 2026-04-20 — trader cadence tightened to 15 minutes
+
+- Updated `tools/task_runtime.py`
+  - Raised trader stale-lock preflight from 900s to 960s so a 15-minute automation tick does not collide with the stale boundary
+- Updated `docs/SKILL_trader.md`
+  - Replaced the old 20-minute cadence wording with the current 15-minute Codex cadence
+  - Updated stale-lock references from 15 minutes to 16 minutes and renamed the backup-trigger lane accordingly
+- Updated `AGENTS.md`
+  - Aligned the runtime table, self-improvement loop, and scheduler references with the 15-minute trader cadence / 16-minute stale-lock model
+- Updated `CLAUDE.md`
+  - Removed the stale fixed-interval claim and aligned the shared runtime wording with the new 16-minute stale-lock threshold
+
+## 2026-04-20 — trader prompt: force A/S excavation with MTF combo proof
+
+- Updated `docs/SKILL_trader.md`
+  - Added `A/S proof combo` and `Why this is not just B` fields to Tier 1 / S-Hunt / New Entry blocks so conviction must be defended with a real cross-TF indicator combination
+  - Tightened Tier 2 and `S Excavation Matrix` formats so every pair now names its `MTF hinge`, `Indicator combo`, and `Best A/S path`
+  - Added a required `A/S Excavation Mandate` block that forces each session to name the best live A/S candidate, the best one-print-away A/S candidate, and the exact contradiction behind any explicit rejection
+- Updated `tools/session_data.py`
+  - Printed the same `A/S proof combo` / `Why this is not just B` scaffolding in the session-start templates so the live session output matches the canonical trader prompt
+  - Expanded the auto-printed `S Excavation Matrix` and podium scaffolds with `Best A/S path` and `MTF/indicator combo` fields
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Added a `Strongest A/S combo` summary line so per-entry pretrade output surfaces the actual multi-timeframe evidence bundle instead of leaving it scattered across detail bullets
+- Updated `collab_trade/strategy_memory.md`
+  - Recorded the lessons that a blank A/S read usually means under-reading and that A/S requires a coherent cross-TF combo rather than a same-timeframe indicator pile
+
+## 2026-04-20 — trader gating: reserve fresh market risk for A/S seats
+
+- Updated `collab_trade/memory/pretrade_check.py`
+  - Stopped returning `MARKET` for fresh B-grade seats; B now resolves as `STOP-ENTRY` or `LIMIT` so weak-but-interesting ideas stay armed without paying market
+  - Tightened the same rule inside `headwind` participation paths so sub-A seats require trigger proof instead of "market scout" behavior
+- Updated `tools/session_data.py`
+  - Matched the deployment-cue logic so `fresh-risk` and `S-HUNT DEPLOYMENT CUES` no longer tell the trader to pay market on B-cap seats
+  - Kept B seats alive as armed `STOP-ENTRY` / `LIMIT` lanes so breadth is not lost, only blind market fills are removed
+- Updated `tools/profit_check.py`
+  - Escalates peak give-back warnings when an open trade has already round-tripped more than 50% of open profit or turned a winner back to flat/red
+- Updated `docs/SKILL_trader.md`
+  - Clarified that fresh market execution is A/S-only, while B remains a trigger / better-price lane
+  - Added explicit peak / give-back accounting in the position-management block so "winner to loser" holds are harder to narrate away
+- Updated `collab_trade/strategy_memory.md`
+  - Recorded the new lessons that fresh market risk belongs to A/S seats and that peak-to-red give-back without a new thesis is a management failure
+
+## 2026-04-20 — runtime git sync: keep main clean without scooping code edits
+
+- Added `tools/runtime_git_sync.py`
+  - Added strict allowlist-based git sync for tracked runtime files only
+  - Added trader-session baseline snapshots so auto-commit runs only when the repo was clean at session start
+  - Added a daily-review sync path for `strategy_memory.md` + `lesson_registry.json`
+  - Made unrelated dirty files, non-`main` branches, and pre-existing dirtiness hard skip conditions instead of partial commits
+- Updated `tools/task_runtime.py`
+  - `trader start` now records the session's starting git dirtiness via `runtime_git_sync.py snapshot-trader-baseline`
+- Updated `tools/session_end.py`
+  - Before lock release, clean trader sessions now call `runtime_git_sync.py sync-trader` so tracked handoff files can commit/push back to `main`
+- Updated `docs/SKILL_trader.md`
+  - Documented that `session_end.py` now owns the runtime handoff git sync on clean `main` sessions
+- Updated `docs/SKILL_daily-review.md`
+  - Added a final `runtime_git_sync.py sync-daily-review` step so reviewed memory files return to `main` when no unrelated dirt exists
+- Updated `AGENTS.md`
+  - Documented the new runtime git-sync path for trader sessions and daily-review
+
 ## 2026-04-20 — trader runtime: stop lingering watchdog overlap
 
 - Updated `tools/task_runtime.py`
@@ -3273,3 +4431,68 @@ scheduled-tasks/*/SKILL_ja.md ← 日本語版（確認用）
 - Updated `docs/SKILL_trader.md` to describe the current timing model consistently as a 15-minute trader session window on a 20-minute recurring cadence, instead of mixing in stale `Claude 10-minute` wording
 - Updated `AGENTS.md` to match the same timing model and to describe Claude trader compatibility as disabled/host-dependent rather than live `10-minute cron`
 - Refreshed the local Claude trader compatibility schedule file to remove the stale `*/10` recurrence and leave it disabled unless explicitly re-enabled
+
+## 2026-04-20
+
+### Memory DB audit fixes: direction truth, user-call recovery, chunk granularity, orphan cleanup
+- `collab_trade/memory/ingest.py` now resolves closed-trade direction and entry metadata from OANDA trade snapshots instead of inferring `LONG/SHORT` from realized P/L on carry closes. This removed the carry-close direction corruption that was polluting pair-direction EV/WR stats.
+- `collab_trade/memory/ingest.py` now splits `strategy_memory.md` pair-learning bullets into separate lesson chunks. The vector DB now stores 30 `pair_learning` chunks instead of one coarse chunk per pair section, so LONG/SHORT lessons are recalled separately.
+- `collab_trade/memory/parse_structured.py` now understands current `notes.md` user-call formats (`##`/`###`, UTC/JST headers, quoted English-style remarks), expands explicit multi-pair calls into per-pair rows, and avoids false `trade_id` extraction from strings like `bid=...`.
+- `collab_trade/memory/parse_structured.py` now skips pending/cancel order sections from the structured `trades` table and no longer treats hypothetical risk text such as `If wrong: -120 JPY` as realized P/L.
+- `collab_trade/memory/parse_structured.py` now prefers header-level pair/direction metadata over incidental mentions inside the body, distinguishes `TP FILL` / `LIMIT FILL` / `MARKET` / `OPEN POSITIONS` / summary headers correctly, and prefers `trade id=` over generic `id=` when both appear in the same section.
+- `collab_trade/memory/parse_structured.py` now parses multi-id exit summary tables such as `| Field | id=... | id=... |` so both trades are enriched instead of only the first column.
+- `collab_trade/memory/ingest.py` now takes an exclusive file lock before ingest/rebuild runs, preventing concurrent writers from duplicating rows in `memory.db` during overlapping session-end / review workflows.
+- `tools/seat_outcomes.py` now fetches OANDA trade snapshots for direction truth and prunes implausible future rows before syncing, removing stale orphan `seat_outcomes` records.
+- Verification: rebuilt `memory.db`, re-synced `seat_outcomes`, re-ran `verify_user_calls.py`, and smoke-tested the parser/ingest flow under both `python3` and `.venv/bin/python`. Final checks showed `chunks = 561`, `trades = 596`, `null entry_price with realized P/L = 0`, `future seat rows = 0`, `pair_learning tagged chunks = 30`, recovered `user_calls = 11` (`correct=3 / incorrect=4 / pending=4`), and both `GBP_JPY` TP-summary ids on `2026-04-10` enriched correctly.
+
+## 2026-04-23 — pretrade entry gate: stop killing repeat seats before they can act
+
+- `collab_trade/memory/pretrade_check.py` now reads recent audit / missed-seat pressure on the entry side too, so repeated seats can re-open as thin trigger-first scouts instead of dying at `pass/C` before the order path even starts.
+- `collab_trade/memory/pretrade_check.py` no longer auto-kills every same-direction reload while the live leg is red. If the existing leg is already protected, reloads stay trigger/passive-only instead of hard `PASS`.
+- `collab_trade/memory/pretrade_check.py` now treats severe negative expectancy with strong repeat pressure as a thin scout headwind, not an automatic flat order. The lane can stay `LIMIT` / `STOP-ENTRY`, but no longer gets fresh blind market risk.
+- `collab_trade/memory/pretrade_check.py` now fetches live tape for high-pressure pass-cap seats so thin-scout exceptions are based on current tape instead of stale prose.
+- Updated `AGENTS.md`
+- Updated `docs/SKILL_trader.md`
+- Updated `collab_trade/strategy_memory.md`
+- Verification:
+  - `python3 -m py_compile collab_trade/memory/pretrade_check.py`
+  - `.venv/bin/python -m py_compile collab_trade/memory/pretrade_check.py`
+  - `python3 collab_trade/memory/pretrade_check.py EUR_JPY SHORT`
+  - `.venv/bin/python collab_trade/memory/pretrade_check.py EUR_JPY SHORT`
+  - `python3 - <<'PY' ... _recent_promotion_pressure(...) ... PY`
+  - `.venv/bin/python - <<'PY' ... _recent_promotion_pressure(...) ... PY`
+
+## 2026-04-23
+
+### Runtime: force thin-scout action on repeated direct-USD seats
+- `tools/session_data.py` no longer dead-ends every repeated `pass unless exceptional` seat at `PASS`. When repeat audit / missed-seat pressure is strong, direct-USD seats can re-open as thin `STOP-ENTRY` scouts and then escalate to `MARKET` when the live tape is `quiet / stable`.
+- `tools/session_data.py` now allows `quiet / stable` market-scout promotion for `squeeze` regimes and for repeated pass-cap seats with positive pair feedback, instead of requiring a pre-existing B-cap before the upgrade path even runs.
+- `collab_trade/memory/pretrade_check.py` now mirrors that behavior: `pass/C` direct-USD seats with positive pair EV can arm as thin scouts, and the live-tape guard can upgrade them to `MARKET` on calm/stable tape rather than collapsing to `PASS`.
+- `collab_trade/memory/pretrade_check.py` also shortened the exact-thesis fresh-loss hard block to a 6-hour created-at cool-off window. Same-day losses no longer auto-bury the seat until midnight if the cool-off has already passed.
+- `collab_trade/memory/pretrade_check.py` now loads recent pair regret and blocks planned SLs that sit inside the pair's historical stop-out noise floor. Example: recent `EUR_USD` stop losses recovered `7/10` within 6h with average loss `6.1pip`, so a new `4.7pip` SL is rejected as noise.
+- Verification: both `python3` and `.venv/bin/python` `pretrade_check.py EUR_USD SHORT --entry 1.17088 --tp 1.17028 --sl 1.17135` now return `Execution plan: PASS` with a regret-based stop-floor warning, while `tools/session_data.py` still prints `EUR_USD SHORT [AUDIT] -> MARKET (ENTER NOW)` as the payable primary lane before order-specific stop validation.
+
+### Runtime: trader session confirmation
+- Refreshed the trader handoff state after a full session read.
+- Confirmed the live `EUR_JPY LONG` stop at `469433` remained the only armed receipt.
+- Left `EUR_USD SHORT` and `USD_JPY LONG` in trigger-only/watch status; no fresh market order was justified on this pass.
+
+### Runtime: qr-quality-audit refresh
+- Re-ran the canonical quality-audit playbook in `/Users/tossaki/App/QuantRabbit` and rewrote `logs/quality_audit.md` with the 2026-04-23 01:32 UTC chart read.
+- Reconciled the current live seat as `EUR_JPY SHORT id=469444` with the audit drift check and the updated position challenge.
+- Appended the automation memory trail and prepared the current narrative picks for audit-history ingestion.
+
+### Quality audit: refresh current cycle view
+- Re-ran the canonical quality-audit playbook and rewrote `logs/quality_audit.md` with the latest OANDA/chart read.
+- Kept the live `EUR_JPY SHORT` receipt as the only confirmed position, while flagging the `live1/state0` bookkeeping drift for repair before fresh risk.
+- Updated the audit memory trail for the `qr-quality-audit` automation run.
+
+### Runtime: trader board refresh
+- Refreshed the live trader handoff at 2026-04-23 05:24 UTC after reading the canonical trader playbook, live session snapshot, audit, and charts.
+- Confirmed `EUR_JPY SHORT id=469444` remains the live primary while `GBP_JPY SHORT` and `GBP_USD LONG` stay limit-only board seats with no payable market now.
+- Updated `collab_trade/state.md` and the `qr-trader` automation memory trail from the current board read.
+
+### Runtime: qr-quality-audit refresh
+- Re-ran the canonical quality-audit playbook in `/Users/tossaki/App/QuantRabbit` and rewrote `logs/quality_audit.md` with the 2026-04-23 14:33 UTC read.
+- Read all seven M5 charts plus the two held H1 charts, then reconciled the current state/news/strategy context against the live OANDA drift.
+- Updated the `qr-quality-audit` automation memory trail for the completed audit cycle.

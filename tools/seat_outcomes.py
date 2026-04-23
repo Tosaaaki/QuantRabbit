@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -21,8 +22,13 @@ LEDGER_PATH = ROOT / "logs" / "s_hunt_ledger.jsonl"
 JST = timezone(timedelta(hours=9))
 OANDA_PAIRS = {"USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"}
 HORIZON_ORDER = {"Short-term S": 0, "Medium-term S": 1, "Long-term S": 2}
-PODIUM_ORDER = {"Podium #1": 0, "Podium #2": 1, "Podium #3": 2}
 MIN_FAVORABLE_MOVE_PIPS = 1.0
+MAX_FUTURE_SESSION_DRIFT_DAYS = 3
+
+
+def _podium_order(value: str | None) -> int:
+    match = re.match(r"Podium #(\d+)$", str(value or ""))
+    return int(match.group(1)) if match else 99
 
 
 def _pip_factor(pair: str) -> int:
@@ -86,6 +92,87 @@ def _load_ledger_dates() -> list[str]:
     return sorted({row.get("session_date") for row in rows if row.get("session_date")})
 
 
+def _request_json(url: str, headers: dict, *, timeout: int = 10) -> dict:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def _normalize_trade_snapshot(trade: dict) -> dict | None:
+    if not trade:
+        return None
+
+    trade_id = str(trade.get("id", "")).strip()
+    pair = trade.get("instrument")
+    try:
+        initial_units = float(trade.get("initialUnits", 0) or 0)
+    except Exception:
+        initial_units = 0.0
+    direction = "LONG" if initial_units > 0 else "SHORT" if initial_units < 0 else None
+
+    return {
+        "trade_id": trade_id or None,
+        "pair": pair,
+        "direction": direction,
+        "entry_time": trade.get("openTime"),
+        "close_time": trade.get("closeTime"),
+    }
+
+
+def _fetch_trade_snapshots(cfg: dict, trade_ids: list[str]) -> dict[str, dict]:
+    headers = {
+        "Authorization": f"Bearer {cfg['oanda_token']}",
+        "Content-Type": "application/json",
+    }
+    snapshots: dict[str, dict] = {}
+    clean_ids = [str(trade_id).strip() for trade_id in trade_ids if str(trade_id).strip()]
+    if not clean_ids:
+        return snapshots
+
+    for i in range(0, len(clean_ids), 50):
+        batch = clean_ids[i:i + 50]
+        params = urllib.parse.urlencode({"state": "CLOSED", "ids": ",".join(batch)})
+        try:
+            data = _request_json(
+                f"{cfg['oanda_base_url']}/v3/accounts/{cfg['oanda_account_id']}/trades?{params}",
+                headers,
+            )
+        except Exception:
+            data = {}
+        for trade in data.get("trades", []):
+            snapshot = _normalize_trade_snapshot(trade)
+            if snapshot and snapshot["trade_id"]:
+                snapshots[snapshot["trade_id"]] = snapshot
+
+        missing = [trade_id for trade_id in batch if trade_id not in snapshots]
+        for trade_id in missing:
+            try:
+                data = _request_json(
+                    f"{cfg['oanda_base_url']}/v3/accounts/{cfg['oanda_account_id']}/trades/{trade_id}",
+                    headers,
+                )
+            except Exception:
+                continue
+            snapshot = _normalize_trade_snapshot(data.get("trade"))
+            if snapshot and snapshot["trade_id"]:
+                snapshots[snapshot["trade_id"]] = snapshot
+    return snapshots
+
+
+def _purge_implausible_future_rows(conn) -> int:
+    cutoff = (datetime.now(timezone.utc).date() + timedelta(days=MAX_FUTURE_SESSION_DRIFT_DAYS)).isoformat()
+    rows = fetchall_dict(
+        conn,
+        "SELECT id FROM seat_outcomes WHERE session_date > ? OR state_last_updated > ?",
+        (cutoff, f"{cutoff} 23:59 UTC"),
+    )
+    if not rows:
+        return 0
+    for row in rows:
+        conn.execute("DELETE FROM seat_outcomes WHERE id = ?", (row["id"],))
+    return len(rows)
+
+
 def fetch_closed_trades(session_date: str) -> list[dict]:
     """Fetch closed trades for the specified UTC day from OANDA."""
     cfg = get_oanda_config()
@@ -99,37 +186,31 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
         }
     )
     url = f"{cfg['oanda_base_url']}/v3/accounts/{cfg['oanda_account_id']}/transactions?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {cfg['oanda_token']}",
-            "Content-Type": "application/json",
-        },
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            id_range = json.loads(resp.read())
+        id_range = _request_json(
+            url,
+            {
+                "Authorization": f"Bearer {cfg['oanda_token']}",
+                "Content-Type": "application/json",
+            },
+        )
     except Exception:
         return []
 
     all_txns = []
     for page_url in id_range.get("pages", []):
         try:
-            req = urllib.request.Request(
+            data = _request_json(
                 page_url,
-                headers={
+                {
                     "Authorization": f"Bearer {cfg['oanda_token']}",
                     "Content-Type": "application/json",
                 },
             )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read())
-                all_txns.extend(data.get("transactions", []))
+            all_txns.extend(data.get("transactions", []))
         except Exception:
             continue
 
-    entries = {}
     closes = {}
     for txn in all_txns:
         if txn.get("type") != "ORDER_FILL":
@@ -138,46 +219,35 @@ def fetch_closed_trades(session_date: str) -> list[dict]:
         if instrument not in OANDA_PAIRS:
             continue
 
-        trade_opened = txn.get("tradeOpened")
-        if trade_opened:
-            tid = trade_opened.get("tradeID", "")
-            units = int(float(trade_opened.get("units", 0)))
-            entries[tid] = {
-                "pair": instrument,
-                "direction": "LONG" if units > 0 else "SHORT",
-                "units": abs(units),
-                "entry_time": txn.get("time", ""),
-            }
-
         for tc in txn.get("tradesClosed", []) + txn.get("tradesReduced", []):
             tid = tc.get("tradeID", "")
             pl = float(tc.get("realizedPL", 0))
-            units_signed = int(float(tc.get("units", 0)))
             close = closes.setdefault(
                 tid,
                 {
                     "pair": instrument,
-                    "direction": "LONG" if units_signed > 0 else "SHORT" if units_signed < 0 else None,
                     "pl": 0.0,
                     "close_time": txn.get("time", ""),
                 },
             )
             close["pl"] += pl
 
+    snapshots = _fetch_trade_snapshots(cfg, list(closes.keys()))
+
     trades = []
-    for tid in sorted(set(entries) | set(closes)):
+    for tid in sorted(closes):
         close = closes.get(tid)
         if not close:
             continue
-        entry = entries.get(tid)
+        snapshot = snapshots.get(tid, {})
         trades.append(
             {
                 "trade_id": tid,
-                "pair": (entry or close).get("pair"),
-                "direction": (entry or close).get("direction"),
+                "pair": snapshot.get("pair") or close.get("pair"),
+                "direction": snapshot.get("direction"),
                 "pl": float(close.get("pl", 0.0)),
-                "entry_time": (entry or {}).get("entry_time"),
-                "close_time": close.get("close_time"),
+                "entry_time": snapshot.get("entry_time"),
+                "close_time": close.get("close_time") or snapshot.get("close_time"),
             }
         )
     return trades
@@ -637,6 +707,7 @@ def _upsert_seat_outcome(conn, record: dict) -> None:
 def sync_seat_outcomes(session_date: str | None = None, *, live: bool = False) -> dict:
     init_db()
     conn = get_conn()
+    purged = _purge_implausible_future_rows(conn)
 
     dates = [session_date] if session_date else _load_ledger_dates()
     upserted = 0
@@ -930,7 +1001,7 @@ def sync_seat_outcomes(session_date: str | None = None, *, live: bool = False) -
                 _upsert_seat_outcome(conn, record)
                 upserted += 1
 
-    return {"dates": dates, "upserted": upserted}
+    return {"dates": dates, "upserted": upserted, "purged": purged}
 
 
 def review_lines(session_date: str) -> list[str]:
@@ -1072,19 +1143,20 @@ def excavation_review_lines(session_date: str) -> list[str]:
                captured, missed, notes
         FROM seat_outcomes
         WHERE session_date = ? AND source = 's_excavation'
-        ORDER BY state_last_updated,
-                 CASE horizon
-                   WHEN 'Podium #1' THEN 0
-                   WHEN 'Podium #2' THEN 1
-                   WHEN 'Podium #3' THEN 2
-                   ELSE 9
-                 END,
-                 pair, direction
         """,
         (session_date,),
     )
     if not rows:
         return []
+
+    rows.sort(
+        key=lambda row: (
+            row.get("state_last_updated") or "",
+            _podium_order(row.get("horizon")),
+            row.get("pair") or "",
+            row.get("direction") or "",
+        )
+    )
 
     grouped: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
@@ -1177,7 +1249,9 @@ def main() -> int:
         result = sync_seat_outcomes(args.date, live=args.live)
         dates = [date for date in result["dates"] if date]
         date_text = ",".join(dates) if dates else "none"
-        print(f"SEAT_OUTCOMES_SYNC_OK dates={date_text} upserted={result['upserted']}")
+        print(
+            f"SEAT_OUTCOMES_SYNC_OK dates={date_text} upserted={result['upserted']} purged={result['purged']}"
+        )
         return 0
 
     if args.cmd == "stats":

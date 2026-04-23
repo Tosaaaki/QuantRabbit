@@ -1,0 +1,34 @@
+# Trades - 2026-04-22
+
+- 00:06 UTC | CLOSE EUR_USD SHORT 2000u @1.17482 | P/L -312.87 JPY | id=469357 | reason=false_break_reclaim after 1.17422/35 shelf accepted on M1/M5
+- 00:07-00:08 UTC | NO NEW ORDER | tested EUR_JPY LONG 187.110/TP187.220/SL187.050 and EUR_JPY SHORT 187.200/TP187.100/SL187.260 with `pretrade_check.py`; both PASS because spread / stop-floor friction made the range seat dishonest
+- 00:16 UTC | ARM STOP EUR_USD SHORT 1000u @1.17460 | TP 1.17385 | SL 1.17512 | id=469373 | reason=fresh_false_break_retrigger / flat_book_trigger_receipt
+- 00:25 UTC | CANCEL STOP EUR_USD SHORT 1000u @1.17460 | id=469373 | reason=repeat shelf acceptance above 1.17495/1.17505 killed the re-trigger
+- 00:30 UTC | ARM STOP GBP_JPY LONG 3000u @215.352 | TP 215.500 | SL 215.238 | id=469375 | reason=gbpjpy_shelf_break_stop / B(4/10)->B+
+- 00:30 UTC | FILL GBP_JPY LONG 3000u @215.354 | trade id=469376 | via STOP id=469375 | TP 215.500 | SL 215.238 | reason=shelf break accepted above 215.35
+- 00:52 UTC | CLOSE GBP_JPY LONG 3000u @215.237 | P/L -351.00 JPY | id=469376 | tx=469379 | reason=STOP_LOSS_ORDER after 215.24 shelf failure
+- 01:14 UTC | ARM STOP AUD_JPY LONG 3000u @114.060 | TP 114.200 | SL 113.980 | id=469381 | reason=tokyo_squeeze_reclaim_stop / B(5/10)->B0
+- 01:14 UTC | FILL AUD_JPY LONG 3000u @114.060 | trade id=469382 | via STOP id=469381 | TP 114.200 | SL 113.980 | reason=tokyo_squeeze_reclaim_stop
+- 01:29 UTC | CLOSE AUD_JPY LONG 3000u @113.999 | P/L -183.00 JPY | id=469382 | tx=469386 | reason=market_close_no_first_confirmation_by_01_30
+- 01:32 UTC | ARM LIMIT USD_JPY SHORT 1000u @159.320 | TP 159.240 | SL 159.365 | id=469389 | reason=usdjpy_reclaim_fail_probe / B(3/7)->B-
+- 02:49 UTC | FILL USD_JPY SHORT 1000u @159.320 | trade id=469390 | via LIMIT id=469389 | TP 159.240 | SL 159.365 | reason=usdjpy_reclaim_fail_probe
+- 02:55 UTC | CLOSE USD_JPY SHORT 1000u @159.365 | P/L -45.00 JPY | id=469390 | tx=469393 | reason=STOP_LOSS_ORDER after 159.345/365 acceptance killed the reclaim-fail probe
+- 03:26 UTC | ARM STOP AUD_JPY LONG 2000u @114.105 | TP 114.210 | SL 114.035 | id=469395 | reason=tokyo_upper_box_reclaim / B(4/10)->B0
+- 03:29 UTC | FILL AUD_JPY LONG 2000u @114.106 | trade id=469396 | via STOP id=469395 | TP 114.210 | SL 114.035 | reason=tokyo_upper_box_reclaim
+- 03:59 UTC | CLOSE AUD_JPY LONG 2000u @114.035 | P/L -142.00 JPY | id=469396 | tx=469399 | reason=STOP_LOSS_ORDER after the first 114.09/10 reclaim failed and the shelf rolled back through the stop
+- 04:11 UTC | ARM STOP AUD_JPY LONG 3000u @114.112 | TP 114.210 | SL 114.020 | id=469401 | reason=fresh_reclaim_after_stopout / A(6/10)->B+ capped to B-band after the flat-book gate blocked the helper
+- 04:33 UTC | CANCEL STOP AUD_JPY LONG 3000u @114.112 | id=469401 | tx=469402 | reason=invalidation_traded_before_trigger after price traded 114.020 before the stop-entry could arm
+- 05:03 UTC | ARM STOP EUR_USD SHORT 3000u @1.17392 | TP 1.17332 | SL 1.17428 | id=469403 | reason=eurusd_first_retest_rebreak / S(9/10)->B0 after the first lower break traded unarmed and the wider stop-floor retest finally cleared pretrade
+- 05:04 UTC | FILL EUR_USD SHORT 3000u @1.17392 | trade id=469404 | via STOP id=469403 | TP 1.17332 | SL 1.17428 | reason=eurusd_first_retest_rebreak
+- 05:09 UTC | CLOSE EUR_USD SHORT 3000u @1.17428 | P/L -172.39 JPY | id=469404 | tx=469406 | reason=STOP_LOSS_ORDER after the reclaimed 1.1748/1.1750 shelf squeezed the first-retest short
+- 05:34 UTC | ARM LIMIT EUR_USD LONG 1000u @1.17495 | TP 1.17600 | SL 1.17442 | id=469409 | reason=eurusd_first_defense_after_stop / C(2/10)->B- exceptional counter probe to satisfy flat-book reload honesty
+- 06:01 UTC | FILL EUR_USD LONG 1000u @1.17495 | trade id=469410 | via LIMIT id=469409 | TP 1.17600 | SL 1.17442 | reason=eurusd_first_defense_after_stop
+- 10:03 UTC | CLOSE EUR_USD LONG 1000u @1.17442 | P/L -84.63 JPY | id=469410 | tx=469413 | reason=STOP_LOSS_ORDER after the flat shelf squeeze lost 1.1748/50 and traded the written stop
+- 10:46 UTC | ARM LIMIT EUR_USD LONG 3000u @1.17450 | TP 1.17505 | SL 1.17410 | id=469415 | reason=eurusd_range_floor_rearm / B(4/10)->B+ after the lower-band flush rebuilt into the only honest direct-USD reload
+- 11:16 UTC | FILL EUR_USD LONG 3000u @1.17450 | trade id=469416 | via LIMIT id=469415 | TP 1.17505 | SL 1.17410 | reason=eurusd_range_floor_rearm
+- 11:27 UTC | CLOSE EUR_USD LONG 3000u @1.17454 | P/L +19.07 JPY | id=469416 | reason=no_first_confirmation after the exact first-defense fill stayed flat through the confirmation window
+- 11:38 UTC | ARM STOP EUR_JPY LONG 4000u @187.020 | TP 187.180 | SL 186.950 | id=469423 | reason=eurjpy_reclaim_stop / A(6/10) after the same-pair contest promoted LONG as the cleaner live stop-entry lane
+- 11:46 UTC | CANCEL STOP EUR_JPY LONG 4000u @187.020 | id=469423 | tx=469424 | reason=stale_trigger_tight_stop after deeper-pass stop-floor review failed the 7pip protection
+- 11:51 UTC | ARM STOP EUR_JPY LONG 4000u @187.000 | TP 187.180 | SL 186.880 | id=469425 | reason=eurjpy_reclaim_stop_refresh / A(6/10) after the deeper pass widened the structural stop floor
+- 14:33 UTC | FILL EUR_USD SHORT 2000u @1.17325 | trade id=469427 | TP 1.17240 | SL 1.17442 | reason=manual_oanda_fill_backfill
+- 14:53 UTC | CLOSE EUR_USD SHORT 2000u @1.17240 | P/L +270.2989 JPY | id=469427 | txn=469430 | reason=TAKE_PROFIT_ORDER

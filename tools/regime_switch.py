@@ -35,6 +35,7 @@ if not (_MAIN_ROOT / "config" / "env.toml").exists():
     _MAIN_ROOT = _git_common.resolve().parent
 
 sys.path.insert(0, str(ROOT / "tools"))
+from technicals_json import load_technicals_timeframes
 
 PAIRS = (
     "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY",
@@ -61,7 +62,7 @@ def load_technicals(pair: str) -> dict:
     if not f.exists():
         return {}
     try:
-        return json.loads(f.read_text()).get("timeframes", {})
+        return load_technicals_timeframes(f)
     except Exception:
         return {}
 

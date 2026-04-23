@@ -7,7 +7,9 @@ Usage: python3 tools/session_end.py
 Exit codes:
   0 = SESSION_END completed (lock released, ingest done)
   1 = TOO_EARLY (keep trading)
-  2 = ERROR
+  2 = RUNTIME_ERROR
+  3 = STATE_MD_STALE (refresh handoff, then keep trading)
+  4 = STATE_VALIDATION_FAILED (hard stop; fix receipts before continuing)
 """
 import shutil
 import subprocess
@@ -22,6 +24,10 @@ START_FILE = ROOT / "logs" / ".trader_start"
 
 MIN_ELAPSED = 600   # 10 min minimum — below this, SESSION_END is blocked
 SESSION_END_AT = 780  # 13 min — normal SESSION_END threshold
+EXIT_TOO_EARLY = 1
+EXIT_RUNTIME_ERROR = 2
+EXIT_STATE_STALE = 3
+EXIT_STATE_VALIDATION_FAILED = 4
 
 
 def archive_state_snapshot(session_date: str):
@@ -52,13 +58,13 @@ def main():
     # Read start time
     if not START_FILE.exists():
         print("ERROR: no .trader_start file — session not properly initialized")
-        sys.exit(2)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
     try:
         start = int(START_FILE.read_text().strip())
     except ValueError:
         print("ERROR: .trader_start contains invalid data")
-        sys.exit(2)
+        sys.exit(EXIT_RUNTIME_ERROR)
 
     elapsed = now - start
     start_utc = datetime.fromtimestamp(start, tz=timezone.utc).strftime("%H:%M")
@@ -71,29 +77,31 @@ def main():
         print(f"Minimum {MIN_ELAPSED}s required. {remaining}s remaining.")
         print("Go deeper: fib_wave --all, Different lens, Tier 2 M5 chart reading, LIMIT placement.")
         print("Run mid_session_check.py and keep trading.")
-        sys.exit(1)
+        sys.exit(EXIT_TOO_EARLY)
 
     # Check state.md freshness
     state_md = ROOT / "collab_trade" / "state.md"
     if state_md.exists():
         state_age = now - int(state_md.stat().st_mtime)
         if state_age > 3600:
-            print(f"⚠️ STATE.MD STALE ({state_age}s old) — UPDATE IT before session_end")
-            sys.exit(1)
+            print(f"STATE_MD_STALE age={state_age}s — UPDATE IT before session_end")
+            sys.exit(EXIT_STATE_STALE)
 
     try:
         result = subprocess.run(
             [sys.executable, str(ROOT / "tools" / "validate_trader_state.py")],
-            capture_output=True, text=True, timeout=10, cwd=str(ROOT)
+            capture_output=True, text=True, timeout=60, cwd=str(ROOT)
         )
         if result.returncode != 0:
+            print("STATE_VALIDATION_FAILED")
             if result.stdout:
                 for line in result.stdout.strip().split("\n")[:20]:
                     print(line)
-            print("Fix `S Hunt` / `Capital Deployment` receipts, then run the cycle again.")
-            sys.exit(1)
+            print("Fix the handoff receipts / `Slack Response`, then run the cycle again.")
+            sys.exit(EXIT_STATE_VALIDATION_FAILED)
     except Exception as e:
-        print(f"state validation warning: {e}")
+        print(f"STATE_VALIDATION_ERROR {e}")
+        sys.exit(EXIT_RUNTIME_ERROR)
 
     # === SESSION_END ===
     print(f"SESSION_END elapsed={elapsed}s ({start_utc}→{now_utc} UTC)")
@@ -157,6 +165,31 @@ def main():
                 print(line)
     except Exception as e:
         print(f"seat_outcomes warning: {e}")
+
+    # auto-commit/push tracked runtime files when the repo stayed runtime-only dirty.
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "runtime_git_sync.py"),
+                "sync-trader",
+                "--session-start",
+                str(start),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            cwd=str(ROOT),
+            check=False,
+        )
+        if result.stdout:
+            for line in result.stdout.strip().split("\n")[:8]:
+                print(line)
+        if result.stderr and result.returncode != 0:
+            for line in result.stderr.strip().split("\n")[:8]:
+                print(line)
+    except Exception as e:
+        print(f"runtime_git_sync warning: {e}")
 
     # Stop the detached watchdog immediately on clean session end.
     try:

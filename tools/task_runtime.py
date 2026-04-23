@@ -25,6 +25,7 @@ TRADER_START = LOGS / ".trader_start"
 TRADER_WATCHDOG = LOGS / ".trader_watchdog"
 TASK_LOCK = ROOT / "tools" / "task_lock.py"
 JST = ZoneInfo("Asia/Tokyo") if ZoneInfo is not None else None
+SOFT_SESSION_END_CODES = {1, 3}
 
 
 def _now_jst() -> datetime:
@@ -38,11 +39,56 @@ def _is_pid_alive(pid: int) -> bool:
         return False
     try:
         os.kill(pid, 0)
-        return True
+        return not _pid_is_zombie(pid)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
+
+
+def _pid_is_zombie(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    status = result.stdout.strip()
+    return bool(status) and status.split()[0].startswith("Z")
+
+
+def _terminate_pid(pid: int, *, term_wait_sec: float = 5.0, kill_wait_sec: float = 2.0) -> bool:
+    if pid <= 0 or not _is_pid_alive(pid):
+        return True
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return not _is_pid_alive(pid)
+    deadline = time.time() + max(0.0, term_wait_sec)
+    while time.time() < deadline:
+        if not _is_pid_alive(pid):
+            return True
+        time.sleep(0.2)
+    if not _is_pid_alive(pid):
+        return True
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return not _is_pid_alive(pid)
+    deadline = time.time() + max(0.0, kill_wait_sec)
+    while time.time() < deadline:
+        if not _is_pid_alive(pid):
+            return True
+        time.sleep(0.1)
+    return not _is_pid_alive(pid)
 
 
 def _read_trader_lock() -> tuple[int, int]:
@@ -163,12 +209,14 @@ def trader_preflight(timeout_sec: int) -> int:
     print(f"STALE_LOCK age={age}s — 引き継ぎ開始")
     _stop_watchdog(_read_trader_start() or None)
     if old_pid and _is_pid_alive(old_pid):
-        try:
-            os.kill(old_pid, signal.SIGTERM)
-            print(f"KILLED_STALE pid={old_pid}")
-        except OSError:
-            pass
+        if not _terminate_pid(old_pid):
+            print(f"ALREADY_RUNNING age={age}s pid={old_pid} stale_kill_failed=1")
+            return 1
+        print(f"KILLED_STALE pid={old_pid}")
     _run_ingest_for_previous_session(lock_time or None)
+    TRADER_LOCK.unlink(missing_ok=True)
+    TRADER_START.unlink(missing_ok=True)
+    print("STALE_LOCK_CLEARED")
     return 0
 
 
@@ -178,15 +226,16 @@ def trader_watchdog(owner_pid: int, watchdog_sec: int, session_start: int) -> in
     if current_start != session_start or not TRADER_LOCK.exists():
         _clear_watchdog_file(session_start)
         return 0
-    lock_time, lock_pid = _read_trader_lock()
+    _, lock_pid = _read_trader_lock()
     if lock_pid != owner_pid:
         _clear_watchdog_file(session_start)
         return 0
-    try:
-        if _is_pid_alive(owner_pid):
-            os.kill(owner_pid, signal.SIGTERM)
-    except OSError:
-        pass
+    if owner_pid and _is_pid_alive(owner_pid):
+        if not _terminate_pid(owner_pid, term_wait_sec=8.0, kill_wait_sec=2.0):
+            # Keep the lock in place if the owner refuses to die. The next preflight
+            # should skip or take over explicitly instead of double-starting a session.
+            _clear_watchdog_file(session_start)
+            return 0
     TRADER_LOCK.unlink(missing_ok=True)
     TRADER_START.unlink(missing_ok=True)
     _clear_watchdog_file(session_start)
@@ -198,6 +247,26 @@ def trader_start(owner_pid: int, watchdog_sec: int) -> int:
     now = int(time.time())
     _write_trader_lock(now, owner_pid)
     TRADER_START.write_text(f"{now}\n")
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "tools" / "runtime_git_sync.py"),
+                "snapshot-trader-baseline",
+                "--session-start",
+                str(now),
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.stdout:
+            for line in result.stdout.strip().splitlines()[:2]:
+                print(line)
+    except Exception as exc:
+        print(f"RUNTIME_GIT_BASELINE_WARN {exc}")
     watchdog = subprocess.Popen(
         [
             sys.executable,
@@ -227,7 +296,7 @@ def trader_cycle(owner_pid: int) -> int:
     result = subprocess.run([sys.executable, str(ROOT / "tools" / "session_end.py")], cwd=str(ROOT))
     if result.returncode == 0:
         return 0
-    if result.returncode != 1:
+    if result.returncode not in SOFT_SESSION_END_CODES:
         return result.returncode
     mid = subprocess.run([sys.executable, str(ROOT / "tools" / "mid_session_check.py")], cwd=str(ROOT))
     return mid.returncode
@@ -332,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
     trader_sub = trader.add_subparsers(dest="action", required=True)
 
     trader_pre = trader_sub.add_parser("preflight")
-    trader_pre.add_argument("--timeout-sec", type=int, default=900)
+    trader_pre.add_argument("--timeout-sec", type=int, default=960)
 
     trader_start_parser = trader_sub.add_parser("start")
     trader_start_parser.add_argument("--owner-pid", type=int, default=os.getppid())

@@ -50,6 +50,30 @@ def _clean_reason(deployment_result: str) -> str:
     return _clip(reason, 110)
 
 
+def _is_execution_only_reason(reason: str) -> bool:
+    normalized = " ".join((reason or "").split()).lower().strip(" .")
+    if not normalized:
+        return False
+    if normalized == "no seat cleared promotion gate":
+        return True
+    if normalized.startswith("no seat cleared promotion gate"):
+        normalized = normalized[len("no seat cleared promotion gate"):].strip(" .:;,-—")
+        if not normalized:
+            return True
+    execution_only_phrases = (
+        "no live pending entry order exists",
+        "no pending entry order exists",
+        "no live pending id",
+        "board lane, not a live",
+        "never earned a real stop-entry id",
+        "never earned a stop receipt",
+        "never earned a real pending id",
+    )
+    if any(phrase in normalized for phrase in execution_only_phrases):
+        return True
+    return normalized.startswith("receipt id=") and "closed" in normalized
+
+
 def _live_note(state_text: str, horizon: dict) -> str:
     pair = str(horizon.get("pair") or "").strip()
     direction = str(horizon.get("direction") or "").strip()
@@ -91,6 +115,17 @@ def _dead_note(horizon: dict) -> str:
     trigger = _trigger_text(horizon)
     reason = _clean_reason(str(horizon.get("deployment_result") or ""))
     trigger_lower = trigger.lower()
+
+    if _is_execution_only_reason(reason):
+        if trigger:
+            return (
+                f"{pair} {direction} watch | Trigger never cleared promotion on tape. "
+                f"Next seat: require {trigger}, not a rewrite."
+            )
+        return (
+            f"{pair} {direction} watch | Seat stayed unconfirmed on tape. "
+            "Next seat: do not upgrade it without a fresh trigger."
+        )
 
     if "reclaim" in trigger_lower:
         return (

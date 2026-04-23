@@ -350,42 +350,47 @@ def fetch_all(cfg: dict) -> dict:
 JST = timezone(timedelta(hours=9))
 
 
+def _parse_event_time_utc(time_str: str | None) -> datetime | None:
+    if not time_str:
+        return None
+    raw = str(time_str).strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 def _to_jst(time_str: str) -> str:
     """Convert ISO time string to JST display (HH:MM JST). Returns original[:16] on failure."""
-    if not time_str:
+    dt = _parse_event_time_utc(time_str)
+    if dt is None:
         return ""
-    try:
-        dt = datetime.fromisoformat(time_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        jst_dt = dt.astimezone(JST)
-        return jst_dt.strftime("%m/%d %H:%M JST")
-    except Exception:
-        return time_str[:16]
+    return dt.astimezone(JST).strftime("%m/%d %H:%M JST")
 
 
 def _event_countdown(time_str: str, now: datetime) -> str:
     """Calculate countdown string for an event. Returns '' if unparseable or past."""
-    if not time_str:
+    ev_dt = _parse_event_time_utc(time_str)
+    if ev_dt is None:
         return ""
-    try:
-        ev_dt = datetime.fromisoformat(time_str)
-        if ev_dt.tzinfo is None:
-            ev_dt = ev_dt.replace(tzinfo=timezone.utc)
-        diff = ev_dt - now
-        minutes = diff.total_seconds() / 60
-        if minutes < 0:
-            return " [RELEASED]"
-        elif minutes < 60:
-            return f" [in {int(minutes)}min]"
-        elif minutes < 1440:
-            h = int(minutes // 60)
-            m = int(minutes % 60)
-            return f" [in {h}h{m:02d}m]"
-        else:
-            return f" [in {int(minutes // 1440)}d]"
-    except Exception:
-        return ""
+    diff = ev_dt - now
+    minutes = diff.total_seconds() / 60
+    if minutes < 0:
+        return " [RELEASED]"
+    if minutes < 60:
+        return f" [in {int(minutes)}min]"
+    if minutes < 1440:
+        h = int(minutes // 60)
+        m = int(minutes % 60)
+        return f" [in {h}h{m:02d}m]"
+    return f" [in {int(minutes // 1440)}d]"
 
 
 def print_summary():
@@ -411,21 +416,38 @@ def print_summary():
 
     # Calendar: today's high impact events with countdown
     now = datetime.now(timezone.utc)
-    today = now.strftime("%Y-%m-%d")
-    high_events = [e for e in cache.get("calendar", [])
-                   if e.get("impact") == "high" and today in str(e.get("time", ""))]
+    today_jst = now.astimezone(JST).date()
+    high_events = []
+    for event in cache.get("calendar", []):
+        if event.get("impact") != "high":
+            continue
+        ev_dt = _parse_event_time_utc(event.get("time"))
+        if ev_dt is None:
+            continue
+        if ev_dt.astimezone(JST).date() == today_jst:
+            high_events.append((ev_dt, event))
+    high_events.sort(key=lambda item: item[0])
     if high_events:
         print(f"🔴 HIGH IMPACT TODAY:")
-        for ev in high_events[:5]:
+        for _, ev in high_events[:5]:
             actual = f" → {ev['actual']}" if ev.get("actual") else ""
             forecast = f" (forecast:{ev['forecast']})" if ev.get("forecast") else ""
             countdown = _event_countdown(ev.get("time", ""), now)
             print(f"  {_to_jst(ev.get('time',''))} {ev['country']} {ev['event']}{forecast}{actual}{countdown}")
     else:
-        upcoming_high = [e for e in cache.get("calendar", []) if e.get("impact") == "high"]
+        upcoming_high = []
+        for event in cache.get("calendar", []):
+            if event.get("impact") != "high":
+                continue
+            ev_dt = _parse_event_time_utc(event.get("time"))
+            if ev_dt is None or ev_dt < now:
+                continue
+            upcoming_high.append((ev_dt, event))
+        upcoming_high.sort(key=lambda item: item[0])
         if upcoming_high:
-            countdown = _event_countdown(upcoming_high[0].get("time", ""), now)
-            print(f"📅 Next HIGH IMPACT: {upcoming_high[0]['country']} {upcoming_high[0]['event']} ({_to_jst(upcoming_high[0].get('time',''))}){countdown}")
+            _, next_event = upcoming_high[0]
+            countdown = _event_countdown(next_event.get("time", ""), now)
+            print(f"📅 Next HIGH IMPACT: {next_event['country']} {next_event['event']} ({_to_jst(next_event.get('time',''))}){countdown}")
         else:
             print("📅 No upcoming high impact events")
 

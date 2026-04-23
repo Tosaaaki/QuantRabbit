@@ -7,6 +7,8 @@ v2 (2026-03-25): Added feature to fetch today's trades directly from OANDA API.
 trades.md parsing continues to be used as supplementary info (thesis, lessons).
 """
 from __future__ import annotations
+from contextlib import contextmanager
+import fcntl
 import json
 import re
 import sys
@@ -22,6 +24,7 @@ from lesson_registry import refresh_registry, sync_strategy_memory_states
 DAILY_DIR = Path(__file__).parent.parent / "daily"
 STATE_MD = Path(__file__).parent.parent / "state.md"
 STRATEGY_MD = Path(__file__).parent.parent / "strategy_memory.md"
+INGEST_LOCK_PATH = DB_PATH.with_name(f"{DB_PATH.name}.ingest.lock")
 
 
 # --- Embedding ---
@@ -41,6 +44,18 @@ def embed(texts: list[str]) -> list[list[float]]:
     model = get_model()
     vecs = model.encode(texts, normalize_embeddings=True)
     return [v.tolist() for v in vecs]
+
+
+@contextmanager
+def ingest_write_lock():
+    """Prevent concurrent writers from duplicating rows during rebuilds."""
+    INGEST_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with INGEST_LOCK_PATH.open("w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 # --- Chunking ---
@@ -232,6 +247,7 @@ def chunk_strategy_memory_md(text: str) -> tuple[str, list[dict]]:
             should_split_bullets = top_tag in {
                 "confirmed_pattern",
                 "active_observation",
+                "pair_learning",
                 "pretrade_feedback",
                 "event_rule",
                 "mental",
@@ -263,6 +279,9 @@ def chunk_strategy_memory_md(text: str) -> tuple[str, list[dict]]:
                 continue
 
             body = subsection_text.strip()
+            body_lines = [line for line in body.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+            if not body_lines:
+                continue
             pair = extract_pair(body) or extract_pair(subsection_name or "") or extract_pair(section_name)
             direction = extract_direction(body)
             title = normalize_heading_text(subsection_name or section_name)
@@ -567,6 +586,74 @@ def _load_oanda_config():
 OANDA_PAIRS = {"USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"}
 
 
+def _request_json(url: str, headers: dict) -> dict:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read())
+
+
+def _normalize_trade_snapshot(trade: dict) -> dict | None:
+    if not trade:
+        return None
+
+    trade_id = str(trade.get("id", "")).strip()
+    pair = trade.get("instrument")
+    try:
+        initial_units = float(trade.get("initialUnits", 0) or 0)
+    except Exception:
+        initial_units = 0.0
+    direction = "LONG" if initial_units > 0 else "SHORT" if initial_units < 0 else None
+    try:
+        entry_price = float(trade.get("price")) if trade.get("price") is not None else None
+    except Exception:
+        entry_price = None
+    try:
+        exit_price = float(trade.get("averageClosePrice")) if trade.get("averageClosePrice") is not None else None
+    except Exception:
+        exit_price = None
+
+    return {
+        "trade_id": trade_id or None,
+        "pair": pair,
+        "direction": direction,
+        "units": abs(int(initial_units)) if initial_units else None,
+        "entry_price": entry_price,
+        "exit_price": exit_price,
+        "entry_time": trade.get("openTime"),
+        "close_time": trade.get("closeTime"),
+    }
+
+
+def _fetch_trade_snapshots(base: str, acct: str, headers: dict, trade_ids: list[str]) -> dict[str, dict]:
+    snapshots: dict[str, dict] = {}
+    clean_ids = [str(trade_id).strip() for trade_id in trade_ids if str(trade_id).strip()]
+    if not clean_ids:
+        return snapshots
+
+    for i in range(0, len(clean_ids), 50):
+        batch = clean_ids[i:i + 50]
+        params = urllib.parse.urlencode({"state": "CLOSED", "ids": ",".join(batch)})
+        try:
+            data = _request_json(f"{base}/v3/accounts/{acct}/trades?{params}", headers)
+        except Exception:
+            data = {}
+        for trade in data.get("trades", []):
+            snapshot = _normalize_trade_snapshot(trade)
+            if snapshot and snapshot["trade_id"]:
+                snapshots[snapshot["trade_id"]] = snapshot
+
+        missing = [trade_id for trade_id in batch if trade_id not in snapshots]
+        for trade_id in missing:
+            try:
+                data = _request_json(f"{base}/v3/accounts/{acct}/trades/{trade_id}", headers)
+            except Exception:
+                continue
+            snapshot = _normalize_trade_snapshot(data.get("trade"))
+            if snapshot and snapshot["trade_id"]:
+                snapshots[snapshot["trade_id"]] = snapshot
+    return snapshots
+
+
 def fetch_oanda_trades(session_date: str) -> list[dict]:
     """Fetch closed trades for the specified date from OANDA API and return in trades table format"""
     try:
@@ -597,21 +684,16 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
             'pageSize': 1000,
         })
         url = f"{base}/v3/accounts/{acct}/transactions?{params}"
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req) as resp:
-            id_range = json.loads(resp.read())
+        id_range = _request_json(url, headers)
 
         all_txns = []
         for page_url in id_range.get('pages', []):
-            req = urllib.request.Request(page_url, headers=headers)
-            with urllib.request.urlopen(req) as resp:
-                data = json.loads(resp.read())
-                all_txns.extend(data.get('transactions', []))
+            data = _request_json(page_url, headers)
+            all_txns.extend(data.get('transactions', []))
     except Exception as e:
         print(f"  OANDA API error: {e}")
         return []
 
-    # Parse: match entries and closes by trade_id
     entries = {}
     closes = {}
 
@@ -636,38 +718,53 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
                 'reason': txn.get('reason', ''),
             }
 
-        # Close (also save instrument to fix UNKNOWN issue)
         for tc in txn.get('tradesClosed', []) + txn.get('tradesReduced', []):
             tid = tc.get('tradeID', '')
             pl = float(tc.get('realizedPL', 0))
             units = abs(int(float(tc.get('units', 0))))
             if tid not in closes:
                 closes[tid] = {
-                    'price': float(txn.get('price', 0)),
+                    'close_price': float(txn.get('price', 0)),
                     'pl': pl,
                     'units': units,
-                    'instrument': instrument,  # Get pair name from close txn
+                    'instrument': instrument,
+                    'close_time': txn.get('time', ''),
                 }
             else:
                 closes[tid]['pl'] += pl
                 closes[tid]['units'] += units
 
-    # Merge
+    snapshots = _fetch_trade_snapshots(base, acct, headers, list(closes.keys()))
+
     trades = []
-    for tid in set(list(entries.keys()) + list(closes.keys())):
-        entry = entries.get(tid)
+    for tid in sorted(closes.keys()):
         close = closes.get(tid)
         if not close:
-            continue  # Still open
+            continue
+        entry = entries.get(tid)
+        snapshot = snapshots.get(tid, {})
 
-        # Pair name: prefer entry, otherwise use instrument from close txn (avoid UNKNOWN)
         pair = 'UNKNOWN'
-        if entry:
+        if snapshot.get('pair'):
+            pair = snapshot['pair']
+        elif entry:
             pair = entry['pair']
         elif close.get('instrument'):
             pair = close['instrument']
 
-        ts = entry['time'] if entry else ''
+        direction = snapshot.get('direction') or (entry['direction'] if entry else None)
+        if not direction:
+            continue
+
+        units = snapshot.get('units')
+        if units is None:
+            units = entry['units'] if entry else close['units']
+
+        entry_price = snapshot.get('entry_price')
+        if entry_price is None and entry:
+            entry_price = entry['price']
+
+        ts = snapshot.get('entry_time') or (entry['time'] if entry else '')
         try:
             dt = datetime.fromisoformat(ts.replace('Z', '+00:00').split('.')[0] + '+00:00') if ts else None
         except:
@@ -677,10 +774,10 @@ def fetch_oanda_trades(session_date: str) -> list[dict]:
             'session_date': session_date,
             'trade_id': tid,
             'pair': pair,
-            'direction': entry['direction'] if entry else ('LONG' if close.get('pl', 0) >= 0 else 'SHORT'),
-            'units': entry['units'] if entry else close['units'],
-            'entry_price': entry['price'] if entry else None,
-            'exit_price': close['price'],
+            'direction': direction,
+            'units': units,
+            'entry_price': entry_price,
+            'exit_price': close['close_price'],
             'pl': close['pl'],
             'session_hour': dt.hour if dt else None,
             'reason': entry.get('reason', '') if entry else '',
@@ -729,7 +826,7 @@ def _enrich_from_log(conn, session_date: str, log_path: Path) -> int:
 
 # --- Ingest ---
 
-def ingest_date(session_date: str, force: bool = False, refresh_strategy_memory: bool = True):
+def _ingest_date_unlocked(session_date: str, force: bool = False, refresh_strategy_memory: bool = True):
     """Ingest data for the specified date into memory.db"""
     day_dir = DAILY_DIR / session_date
 
@@ -934,7 +1031,14 @@ def ingest_date(session_date: str, force: bool = False, refresh_strategy_memory:
     return len(all_chunks)
 
 
-def ingest_all(force: bool = False):
+def ingest_date(session_date: str, force: bool = False, refresh_strategy_memory: bool = True, with_lock: bool = True):
+    if not with_lock:
+        return _ingest_date_unlocked(session_date, force=force, refresh_strategy_memory=refresh_strategy_memory)
+    with ingest_write_lock():
+        return _ingest_date_unlocked(session_date, force=force, refresh_strategy_memory=refresh_strategy_memory)
+
+
+def _ingest_all_unlocked(force: bool = False):
     """Ingest all dates inside daily/"""
     total = 0
     if not DAILY_DIR.exists():
@@ -951,12 +1055,19 @@ def ingest_all(force: bool = False):
     conn = get_conn()
     for day_dir in sorted(DAILY_DIR.iterdir()):
         if day_dir.is_dir() and re.match(r'\d{4}-\d{2}-\d{2}', day_dir.name):
-            total += ingest_date(day_dir.name, force=force, refresh_strategy_memory=False)
+            total += _ingest_date_unlocked(day_dir.name, force=force, refresh_strategy_memory=False)
     strategy_chunks = refresh_strategy_memory_chunks(conn)
     if strategy_chunks:
         print(f"Strategy memory refreshed: {strategy_chunks} chunks")
     print(f"Total: {total} chunks ingested")
     return total
+
+
+def ingest_all(force: bool = False, with_lock: bool = True):
+    if not with_lock:
+        return _ingest_all_unlocked(force=force)
+    with ingest_write_lock():
+        return _ingest_all_unlocked(force=force)
 
 
 if __name__ == "__main__":

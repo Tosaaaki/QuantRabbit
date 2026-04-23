@@ -1,4 +1,4 @@
-# QuantRabbit — Claude Discretionary FX Trading System
+# QuantRabbit — Claude Compatibility Overview
 
 ## Core Philosophy: Claude IS a Human Elite Pro Trader
 
@@ -47,20 +47,18 @@ How to achieve this:
 
 ---
 
-## Architecture (v8.5)
+## Architecture (v8.6 Compatibility)
 
 ### Scheduled tasks driving everything
 
-**Claude Code tasks** (defined in `~/.claude/scheduled-tasks/`):
+**Live Codex automations** are the source of truth for routine operation. Claude scheduled-task assets under `~/.claude/scheduled-tasks/` are compatibility and recovery paths that must point back to the canonical `docs/SKILL_*.md` prompts.
 
 | Task | Model | Interval | Session Length | Role |
 |------|-------|----------|----------------|------|
-| trader | Sonnet (default) | **10-min cron** | Shared runtime: 10-min minimum session, 15-min stale-lock threshold, 17-min watchdog | Pro trader. Does analysis, news, and trading all itself. **Discretionary-only — bots removed 2026-04-17** |
-| daily-review | Opus | Daily 06:00 UTC | ~5 min | Daily retrospective. Evolves strategy_memory.md |
-| daily-performance-report | Sonnet (default) | Daily 10:30 JST | ~2 min | Aggregate realized P&L from OANDA → post to #qr-daily |
-| daily-slack-summary | Sonnet (default) | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
-| intraday-pl-update | Sonnet (default) | Every 3h (9-24 JST) | ~1 min | Post today's realized P&L to #qr-daily |
-| quality-audit | Sonnet | Every 45 min | ~5-10 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + **chart_snapshot.py** (visual chart reading + regime detection), reads state.md + strategy_memory, forms own market view, challenges each position with bear case, **writes 7-pair conviction map EVERY cycle**. Posts to Slack on DANGER or unheld A/S opportunities |
+| trader | Codex `gpt-5.5` trial profile | Every 20 min | Shared runtime: 15-min session window (10-min minimum), 16-min stale-lock threshold, 17-min watchdog | Pro trader. Does analysis, news, and trading all itself. **Discretionary-only — bots removed 2026-04-17** |
+| daily-review | Codex `gpt-5.4` high reasoning | Daily 15:00 JST | ~5 min | Daily retrospective. Evolves strategy_memory.md |
+| daily-slack-summary | Codex `gpt-5.4-mini` | Daily 07:00 JST | ~2 min | Auto-post daily trade summary to Slack #qr-daily |
+| quality-audit | Codex `gpt-5.4-mini` | Every 30 min | ~3-4 min | Independent market analyst. Runs profit_check + fib_wave + protection_check + chart_snapshot.py, writes the 7-pair conviction map every cycle, and posts to Slack on DANGER or unheld A/S opportunities |
 
 **Cowork tasks** (runs on Cowork platform, not in scheduled-tasks/):
 
@@ -69,7 +67,7 @@ How to achieve this:
 | qr-news-digest | Cowork | Hourly | News collection + trader-perspective summary via WebSearch |
 | qr-news-flow-append | Cowork | Hourly (:15) | Append compact snapshot from news_digest.md → logs/news_flow_log.md |
 
-**Method**: `trader` is scheduled every 10 minutes on Claude, but the shared runtime is lock-based. `session_end.py` enforces a 10-minute minimum session, stale-lock recovery begins after 15 minutes, and the watchdog only kills truly stuck runs. Every cycle still aims to complete the full decision loop (read state → analyse → act → write handoff → die).
+**Method**: Codex runs the shared lock-based trader runtime on a 20-minute cadence. Claude compatibility may run host-specific recovery schedules, but those prompts must stay thin links to the same canonical files. `session_end.py` enforces a 15-minute session window through a 10-minute minimum gate, stale-lock recovery begins after 16 minutes, and the 17-minute watchdog only clears the lock after the owner PID is confirmed dead. Every cycle still aims to complete the full decision loop (read state -> analyse -> act -> write handoff -> die), and broad sessions should still close multiple live lanes when the tape is genuinely broad.
 
 **Bot architecture removed (2026-04-17)**: 7-day analysis showed bots net-negative — trend_bot EV -82/trade, range_bot EV -99/trade vs trader EV +73/trade. Claude keeps the disabled compatibility links under `~/.claude/scheduled-tasks/*.DISABLED`, but routine trader sessions do not steer worker policy or run any local bot loop. Reaper launchd agent stays because it is generic stale-agent cleanup, not bot logic.
 
@@ -93,23 +91,23 @@ Every 1 hour: Cowork qr-news-digest (:00)
 Every 1 hour: Cowork qr-news-flow-append (:15, runs after qr-news-digest)
   └── python3 tools/news_flow_append.py → APPENDS to logs/news_flow_log.md (HOT/THEME/WATCH snapshot)
 
-Every 10 min: trader session
+Every 20 min: trader session
   ├── session_data.py reads logs/news_digest.md (macro context in 10 seconds)
   └── Incorporates news into thesis construction (the "why is it moving" evidence)
 ```
 
 ### Self-Improvement Loop
 ```
-Every 10 min: trader session
+Every 20 min: trader session
   ├── reads: strategy_memory.md + state.md + quality_audit.md (regime map + visual read + range opportunities)
   ├── profit_check.py --all + protection_check.py  ← every session, first thing
   ├── reads regime + visual chart observations from quality_audit.md (auditor's eyes)
   ├── if quality_audit.md has issues → address them (re-evaluate missed S-candidates, fix sizing)
   ├── per entry: pretrade_check.py → records to pretrade_outcomes
   ├── trades → trades.md + live_trade_log.txt + Slack
-  └── SESSION_END (10-min minimum enforced in code; stale-lock recovery at 15 min): trade_performance.py + ingest.py → memory.db
+  └── SESSION_END (15-min session window, 10-min minimum enforced in code; stale-lock recovery at 16 min): validate_trader_state.py + auto_hot_updates.py + record_s_hunt_ledger.py + seat_outcomes.py + trade_performance.py + ingest.py + runtime_git_sync.py
 
-Every 45 min: quality-audit session (Sonnet)
+Every 30 min: quality-audit session (Codex)
   ├── runs: quality_audit.py + profit_check + fib_wave + chart_snapshot.py (14 PNGs)
   ├── READS: chart PNGs visually (candle patterns, BB position, momentum character)
   ├── WRITES: logs/quality_audit.md (facts + Regime Map + Visual Read + Range Opportunities)
@@ -217,19 +215,20 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 | File | Contents |
 |------|----------|
-| `tools/session_data.py` | Full data fetch at trader session start (technicals M1/M5/M15/H1/H4 + OANDA + macro + **Currency Pulse** (cross-currency triangulation) + **H4 Position** (lifecycle) + Fib M5+H1 + Slack + memory, all at once) |
+| `tools/session_data.py` | Full data fetch at trader session start (technicals M1/M5/M15/H1/H4 + OANDA + broker-side close sync + macro + **Currency Pulse** (cross-currency triangulation) + **H4 Position** (lifecycle) + Fib M5+H1 + Slack + memory, all at once) |
 | `tools/mid_session_check.py` | Lightweight mid-session check (~1s): Slack + prices + trades + margin only |
 | `tools/profit_check.py` | **Run at every session start** — 6-axis TP evaluation (ATR ratio, M5 momentum, H1 structure, correlation, S/R, peak) |
 | `tools/protection_check.py` | **Run at every session start** — TP/SL/Trailing status check per ATR. NO PROTECTION = immediate action. Detects rollover window |
 | `tools/rollover_guard.py` | Rollover SL guard — remove/restore SL/Trailing around daily OANDA maintenance (5 PM ET) |
 | `tools/preclose_check.py` | **Run before every close** — re-confirms thesis before exit |
-| `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes). Historical worker-tag safeguards remain for recovery workflows, but routine recurring trader sessions manage discretionary `trader` inventory |
+| `tools/close_trade.py` | Position close (PUT /trades/{id}/close. Prevents hedge account mistakes). Historical worker-tag safeguards remain for recovery workflows, but routine recurring trader sessions manage discretionary `trader` inventory. `--auto-slack` goes through the OANDA close-fill sync |
 | `tools/fib_wave.py` | N-wave structure + Fibonacci levels. Run at session start for all pairs |
 | `tools/refresh_factor_cache.py` | H1/H4 technical indicator refresh |
 | `tools/chart_snapshot.py` | **Visual charts + regime detection** — generates candlestick PNG (BB/EMA/KC overlay) + detects TREND/RANGE/SQUEEZE. Primarily run by quality-audit; `session_data.py` may refresh stale/missing PNGs as a trader fallback. `--all` = 7 pairs × M5+H1 |
 | `tools/oanda_performance.py` | **OANDA API-based performance analysis** — ground truth P&L, win rate, R:R, best streak, per-pair breakdown. USE THIS for any performance analysis, not grep on log files |
 | `tools/trade_performance.py` | Performance aggregation (legacy — parses log file). Still used by the recurring trader loop for strategy-feedback compatibility; use `oanda_performance.py` for ground-truth analysis |
-| `tools/slack_trade_notify.py` | Slack notifications |
+| `tools/trade_event_sync.py` | OANDA close-fill sync for TP/SL/manual exits; appends missing close logs and posts batched #qr-trades receipts |
+| `tools/slack_trade_notify.py` | Entry / modify Slack notifications |
 | `tools/news_fetcher.py` | News fetch (Finnhub+AlphaVantage+FF. Called from Cowork task) |
 | `tools/slack_daily_summary.py` | Daily summary |
 | `tools/quality_audit.py` | Quality audit — cross-checks trader decisions against rules and S-conviction data |
@@ -262,7 +261,7 @@ Next day's trader → reads updated strategy_memory.md → behavior changes
 
 - "秘書" → triggers `/secretary` skill — live OANDA status + full command hub
 - "共同トレード" → triggers `/collab-trade` skill — reads `collab_trade/CLAUDE.md`, stops scheduled tasks, starts collaborative session
-- "トレード開始" → **trader is a scheduled task** (Claude currently every 10 min). This phrase in conversation launches a manual collaborative session same as "共同トレード"
+- "トレード開始" → **trader is a scheduled task** (Codex currently every 20 min). This phrase in conversation launches a manual collaborative session same as "共同トレード"
 
 ## Context Management
 

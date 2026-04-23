@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config_loader import get_oanda_config
+from technicals_json import load_technicals_timeframes
 
 ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = str(ROOT / ".venv" / "bin" / "python")
@@ -62,7 +63,7 @@ def load_technicals(pair: str) -> dict:
     if not f.exists():
         return {}
     try:
-        return json.loads(f.read_text()).get("timeframes", {})
+        return load_technicals_timeframes(f)
     except Exception:
         return {}
 
@@ -133,18 +134,23 @@ def parse_s_scan(scan_output: str) -> list[dict]:
     return candidates
 
 
-def deduplicate_s_candidates(candidates: list) -> list:
-    """Keep only the strongest recipe per pair+direction."""
-    best = {}
-    for c in candidates:
-        key = (c["pair"], c["direction"])
-        if key not in best:
-            best[key] = c
-        else:
-            # More detail characters = more evidence. Simple heuristic.
-            if len(c["details"]) > len(best[key]["details"]):
-                best[key] = c
-    return list(best.values())
+def unique_s_candidates(candidates: list[dict]) -> list[dict]:
+    """Keep exact-duplicate scanner lines out without collapsing distinct same-pair seats."""
+    unique: list[dict] = []
+    seen: set[tuple[str, str, str, str, float]] = set()
+    for candidate in candidates:
+        key = (
+            str(candidate.get("pair") or ""),
+            str(candidate.get("direction") or ""),
+            str(candidate.get("recipe") or ""),
+            str(candidate.get("details") or ""),
+            float(candidate.get("price") or 0.0),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    return unique
 
 
 # ──────────────────────────────────────────────
@@ -269,17 +275,34 @@ def gather_exit_quality(trades: list, state_text: str, token: str, acct: str) ->
     return findings
 
 
+def _is_logged_trade_receipt_line(line: str) -> bool:
+    """Return true when a log line records a real trade receipt, not only an order."""
+    if not line:
+        return False
+    if any(token in line for token in ("ORDER_REJECT", "CANCEL_ORDER", "MODIFY ")):
+        return False
+    if "ENTRY_ORDER" in line:
+        return False
+    if any(token in line for token in ("LIMIT_FILL", "STOP_FILL", "via LIMIT fill", "via STOP-ENTRY fill")):
+        return True
+    if re.search(r"\bENTRY\s+[A-Z]{3}_[A-Z]{3}\s+(LONG|SHORT)\b", line):
+        return True
+    if re.search(r"\]\s+[A-Z]{3}_[A-Z]{3}\s+(LONG|SHORT)\s+\d+u\s+@", line):
+        return True
+    return False
+
+
 def load_logged_trade_ids() -> set:
-    """Load all trade IDs that appear in live_trade_log.txt (ENTRY/LIMIT_FILL/LIMIT_FILLED)."""
+    """Load trade IDs that appear in live_trade_log.txt as real fill receipts."""
     log_path = ROOT / "logs" / "live_trade_log.txt"
     if not log_path.exists():
         return set()
     ids = set()
     for line in log_path.read_text().split("\n"):
-        # Match id=NNNN patterns in ENTRY/LIMIT_FILL/LIMIT_FILLED lines
-        if any(kw in line for kw in ["ENTRY", "LIMIT_FILL"]):
-            for m in re.finditer(r"id=(\d+)", line):
-                ids.add(m.group(1))
+        if not _is_logged_trade_receipt_line(line):
+            continue
+        for m in re.finditer(r"id=(\d+)", line):
+            ids.add(m.group(1))
     return ids
 
 
@@ -483,19 +506,30 @@ def parse_state_positions(state_text: str) -> list[dict]:
             continue
         if not in_positions or not line:
             continue
-        m = re.match(r"^([A-Z]{3}_[A-Z]{3})\s+(LONG|SHORT)\s+[\d,]+u\b", line)
-        if not m or "LIMIT" in line.upper():
+        upper = line.upper()
+        if "LIMIT" in upper or "PENDING" in upper:
             continue
-        key = (m.group(1), m.group(2))
-        if key in seen:
-            continue
-        seen.add(key)
-        positions.append({
-            "pair": m.group(1),
-            "direction": m.group(2),
-            "line": line,
-            "source": "positions_current",
-        })
+        matches = list(re.finditer(r"\b([A-Z]{3}_[A-Z]{3})\s+(LONG|SHORT)\b", line))
+        for m in matches:
+            before = line[:m.start()].lower()
+            after = line[m.end():].lower()
+            local_context = after[:120]
+            if "closed" in local_context or "not live" in local_context:
+                continue
+            if "id=" not in local_context and "trade id=" not in local_context and not re.match(
+                r"\s+[\d,]+u\b", after
+            ):
+                continue
+            key = (m.group(1), m.group(2))
+            if key in seen:
+                continue
+            seen.add(key)
+            positions.append({
+                "pair": m.group(1),
+                "direction": m.group(2),
+                "line": line,
+                "source": "positions_current",
+            })
 
     if positions:
         return positions
@@ -915,7 +949,7 @@ def main():
     # Run S-scan ONCE
     scan_output = run_script([VENV_PYTHON, "tools/s_conviction_scan.py"])
     raw_candidates = parse_s_scan(scan_output)
-    s_candidates = deduplicate_s_candidates(raw_candidates)
+    s_candidates = unique_s_candidates(raw_candidates)
 
     # Gather all facts
     s_scan_facts = gather_s_scan_facts(s_candidates, held, margin_pct)
@@ -944,7 +978,10 @@ def main():
             "positions": len(trades),
         },
         "s_scan": s_scan_facts,
-        "s_scan_dedup_note": f"{len(raw_candidates)} raw → {len(s_candidates)} deduplicated",
+        "s_scan_inventory_note": (
+            f"{len(raw_candidates)} raw seats scanned → {len(s_candidates)} kept "
+            "(exact-duplicate filter only; no pair+direction compression)"
+        ),
         "exit_quality": exit_quality,
         "positions": positions,
         "directional_mix": directional_mix,

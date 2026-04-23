@@ -9,6 +9,7 @@ Output: one-line summary per detected S-candidate, or "(no S-candidates)" if non
 """
 import json
 from pathlib import Path
+from technicals_json import load_technicals_timeframes
 
 ROOT = Path(__file__).resolve().parent.parent
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
@@ -18,7 +19,7 @@ def load_technicals(pair: str) -> dict:
     f = ROOT / f"logs/technicals_{pair}.json"
     if not f.exists():
         return {}
-    return json.loads(f.read_text()).get("timeframes", {})
+    return load_technicals_timeframes(f)
 
 
 def load_macro() -> dict:
@@ -42,6 +43,7 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
     """Scan a single pair for S-conviction recipes. Returns list of match descriptions."""
     h4 = tfs.get("H4", {})
     h1 = tfs.get("H1", {})
+    m15 = tfs.get("M15", {})
     m5 = tfs.get("M5", {})
     m1 = tfs.get("M1", {})
 
@@ -57,6 +59,8 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
     h4_os = g(h4, "stoch_rsi") <= 0.05
     h1_ob = g(h1, "stoch_rsi") >= 0.95
     h1_os = g(h1, "stoch_rsi") <= 0.05
+    m15_ob = g(m15, "stoch_rsi") >= 0.95
+    m15_os = g(m15, "stoch_rsi") <= 0.05
     m5_ob = g(m5, "stoch_rsi") >= 0.95
     m5_os = g(m5, "stoch_rsi") <= 0.05
 
@@ -89,6 +93,10 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
     h1_adx = g(h1, "adx")
     h1_dip = g(h1, "plus_di")
     h1_dim = g(h1, "minus_di")
+    m15_bull = g(m15, "plus_di") > g(m15, "minus_di")
+    m15_bear = g(m15, "minus_di") > g(m15, "plus_di")
+    m5_bull = g(m5, "plus_di") > g(m5, "minus_di")
+    m5_bear = g(m5, "minus_di") > g(m5, "plus_di")
 
     if h1_adx >= 25 and h1_dip > h1_dim and m5_os:
         extra = []
@@ -171,6 +179,50 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
         if at_bb_upper and m5_ob and h1_dim > h1_dip:
             matches.append(f"🎯 {pair} SHORT Structural-S [proven 3/3]: M5 at BB upper + StRSI=1.0 + H1 BEAR")
 
+    # ── Recipe 6: H1 trend + M15 reset + M5 re-acceleration ──
+    # Lets the scanner keep both the larger trend and the shorter trigger seat.
+    if h1_adx >= 22 and h1_dip > h1_dim and m15_os and m5_bull:
+        extra = []
+        if g(h4, "plus_di") > g(h4, "minus_di"):
+            extra.append("H4 aligned")
+        if g(m15, "cci") <= -100:
+            extra.append(f"M15 CCI={g(m15, 'cci'):.0f}")
+        reset = f" + {'+'.join(extra)}" if extra else ""
+        matches.append(
+            f"🎯 {pair} LONG M15-Pullback-S [inventory]: H1 BULL trend + M15 reset OS + M5 re-accel{reset}"
+        )
+
+    if h1_adx >= 22 and h1_dim > h1_dip and m15_ob and m5_bear:
+        extra = []
+        if g(h4, "minus_di") > g(h4, "plus_di"):
+            extra.append("H4 aligned")
+        if g(m15, "cci") >= 100:
+            extra.append(f"M15 CCI={g(m15, 'cci'):.0f}")
+        reset = f" + {'+'.join(extra)}" if extra else ""
+        matches.append(
+            f"🎯 {pair} SHORT M15-Pullback-S [inventory]: H1 BEAR trend + M15 reset OB + M5 re-accel{reset}"
+        )
+
+    # ── Recipe 7: H4/H1 regime + M15 structural reclaim/break ──
+    # Designed for same-pair multi-seat inventory, not single representative compression.
+    if h4 and m15:
+        h4_bull = g(h4, "plus_di") > g(h4, "minus_di")
+        h4_bear = g(h4, "minus_di") > g(h4, "plus_di")
+        m15_close = g(m15, "close")
+        m15_bb_lower = g(m15, "bb_lower")
+        m15_bb_upper = g(m15, "bb_upper")
+        if m15_close > 0 and m15_bb_lower > 0 and m15_bb_upper > 0:
+            at_m15_lower = (m15_close - m15_bb_lower) / max(m15_close, 0.001) < 0.00035
+            at_m15_upper = (m15_bb_upper - m15_close) / max(m15_close, 0.001) < 0.00035
+            if h4_bull and h1_dip > h1_dim and at_m15_lower and not m5_ob:
+                matches.append(
+                    f"🎯 {pair} LONG M15-Structure-S [inventory]: H4+H1 BULL + M15 lower-band reclaim zone"
+                )
+            if h4_bear and h1_dim > h1_dip and at_m15_upper and not m5_os:
+                matches.append(
+                    f"🎯 {pair} SHORT M15-Structure-S [inventory]: H4+H1 BEAR + M15 upper-band rejection zone"
+                )
+
     # ── Recipe 6: Squeeze Breakout + Trend ──
     # DISABLED: 0/4 accuracy (4/9 audit). All 4 signals were wrong direction.
     # EUR_USD SHORT @1.16518 → price went UP +9.8pip. USD_JPY LONG @158.86 → stayed flat.
@@ -186,26 +238,6 @@ def scan_pair(pair: str, tfs: dict, cs: dict) -> list[str]:
     #         matches.append(f"🎯 {pair} SHORT Squeeze-S: ...")
 
     return matches
-
-
-def deduplicate(matches: list[str]) -> list[str]:
-    """Keep only the strongest recipe per pair+direction."""
-    import re as _re
-    best = {}
-    for line in matches:
-        m = _re.match(r"🎯 (\w+) (LONG|SHORT) (\S+) \[.*?\]: (.+)", line)
-        if not m:
-            continue
-        key = (m.group(1), m.group(2))  # (pair, direction)
-        if key not in best:
-            best[key] = line
-        else:
-            # More detail = more evidence = stronger
-            existing_detail = best[key].split(": ", 1)[-1] if ": " in best[key] else ""
-            new_detail = m.group(4)
-            if len(new_detail) > len(existing_detail):
-                best[key] = line
-    return list(best.values())
 
 
 def main():
@@ -248,9 +280,7 @@ def main():
         all_matches.extend(matches)
 
     if all_matches:
-        # Deduplicate: same pair + same direction → keep strongest recipe
-        deduped = deduplicate(all_matches)
-        for m in deduped:
+        for m in all_matches:
             # Append current price for outcome tracking
             pair_m = m.split()[1] if len(m.split()) > 1 else ""
             tfs = load_technicals(pair_m)
@@ -258,9 +288,7 @@ def main():
             price = m5.get("close", 0)
             price_str = f" @{price:.5f}" if price else ""
             print(f"{m}{price_str}")
-        raw_count = len(all_matches)
-        dup_note = f" (raw {raw_count}, deduplicated)" if raw_count != len(deduped) else ""
-        print(f"\n→ {len(deduped)} S-candidate(s) found{dup_note}.")
+        print(f"\n→ {len(all_matches)} S-candidate(s) found.")
     else:
         print("(no S-candidates detected across 7 pairs)")
 

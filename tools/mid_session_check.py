@@ -20,6 +20,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from pricing_probe import probe_market
+
 ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = str(ROOT / ".venv" / "bin" / "python")
 PAIRS = ["USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY"]
@@ -82,6 +84,34 @@ def main():
             print(f"{pair} bid={p['bids'][0]['price']} ask={p['asks'][0]['price']} Sp={spread_pip:.1f}pip{warn}")
     except Exception as e:
         print(f"ERROR: {e}")
+
+    # 2b. Short pricing probe
+    print("\n=== LIVE TAPE ===")
+    try:
+        cfg_obj = {
+            "oanda_token": token,
+            "oanda_account_id": acct,
+            "oanda_base_url": cfg.get("oanda_base_url", "https://api-fxtrade.oanda.com"),
+            "oanda_stream_url": cfg.get("oanda_stream_url", "").strip(),
+        }
+        probe = probe_market(cfg_obj, pairs=PAIRS, samples=6, interval_sec=0.40, write_cache=True)
+        print(
+            f"mode={probe.get('mode_used')} "
+            f"duration={float(probe.get('duration_sec', 0.0)):.2f}s"
+        )
+        for pair in PAIRS:
+            summary = probe["pairs"].get(pair) or {}
+            if summary.get("tape") == "unavailable":
+                print(f"{pair}: unavailable")
+                continue
+            print(
+                f"{pair}: {summary.get('bias')} | tape={summary.get('tape')} | "
+                f"move={float(summary.get('delta_pips', 0.0)):+.1f}pip | "
+                f"spread avg/max={float(summary.get('avg_spread_pips', 0.0)):.1f}/"
+                f"{float(summary.get('max_spread_pips', 0.0)):.1f}pip"
+            )
+    except Exception as e:
+        print(f"(skip: {e})")
 
     # 3. Open trades with unrealized P&L
     print("\n=== TRADES ===")

@@ -4,31 +4,46 @@ SQLite + sqlite-vec (via APSW) for vector-searchable trade memory DB
 """
 from __future__ import annotations
 
-import apsw
-import sqlite_vec
+import sqlite3
 import struct
 from pathlib import Path
+from typing import Any
+
+try:
+    import apsw  # type: ignore
+    import sqlite_vec  # type: ignore
+except ModuleNotFoundError:
+    apsw = None
+    sqlite_vec = None
 
 DB_PATH = Path(__file__).parent / "memory.db"
 VEC_DIM = 256  # Ruri v3-30m
+Connection = Any
 
 
-def get_conn() -> apsw.Connection:
-    conn = apsw.Connection(str(DB_PATH))
-    conn.setbusytimeout(5000)  # 5秒リトライ（cron並列アクセス時のBusyError防止）
-    conn.enableloadextension(True)
-    conn.loadextension(sqlite_vec.loadable_path())
-    conn.enableloadextension(False)
+def get_conn() -> Connection:
+    if apsw is not None and sqlite_vec is not None:
+        conn = apsw.Connection(str(DB_PATH))
+        conn.setbusytimeout(5000)  # 5秒リトライ（cron並列アクセス時のBusyError防止）
+        conn.enableloadextension(True)
+        conn.loadextension(sqlite_vec.loadable_path())
+        conn.enableloadextension(False)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        return conn
+
+    conn = sqlite3.connect(str(DB_PATH), timeout=5.0)
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
 
-def _table_columns(conn: apsw.Connection, table: str) -> set[str]:
+def _table_columns(conn: Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 
-def _ensure_column(conn: apsw.Connection, table: str, column_def: str):
+def _ensure_column(conn: Connection, table: str, column_def: str):
     column = column_def.split()[0]
     if column not in _table_columns(conn, table):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column_def}")
@@ -57,12 +72,13 @@ def init_db(quiet: bool = False):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_pair_direction ON chunks(pair, direction)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_type ON chunks(chunk_type)")
 
-    conn.execute(f"""
-        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
-            chunk_id INTEGER PRIMARY KEY,
-            embedding float[{VEC_DIM}]
-        )
-    """)
+    if apsw is not None and sqlite_vec is not None:
+        conn.execute(f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
+                chunk_id INTEGER PRIMARY KEY,
+                embedding float[{VEC_DIM}]
+            )
+        """)
 
     # --- ② 構造化トレード記録 ---
     conn.execute("""
@@ -173,8 +189,28 @@ def init_db(quiet: bool = False):
     _ensure_column(conn, "pretrade_outcomes", "regime_snapshot TEXT")
     _ensure_column(conn, "pretrade_outcomes", "execution_style TEXT")
     _ensure_column(conn, "pretrade_outcomes", "execution_note TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "allocation_band TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_key TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_family TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_market TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_structure TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_trigger TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_vehicle TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "thesis_age TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "collapse_layer TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "collapse_note TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "live_tape_bias TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "live_tape_state TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "live_tape_bucket TEXT")
+    _ensure_column(conn, "pretrade_outcomes", "live_tape_samples INTEGER")
+    _ensure_column(conn, "pretrade_outcomes", "live_tape_mode TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_pair ON pretrade_outcomes(pair)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_date ON pretrade_outcomes(session_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_thesis_key ON pretrade_outcomes(pair, direction, thesis_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_thesis_family ON pretrade_outcomes(pair, direction, thesis_family)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_thesis_market ON pretrade_outcomes(pair, direction, thesis_market)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_collapse_layer ON pretrade_outcomes(pair, direction, collapse_layer)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pretrade_live_tape_bucket ON pretrade_outcomes(pair, direction, live_tape_bucket)")
 
     # --- ⑥ seat_outcomes: S-hunt discovery / deployment / capture / miss chain ---
     conn.execute("""
@@ -229,21 +265,32 @@ def serialize_f32(vec: list[float]) -> bytes:
 
 # --- APSW row helper (dict-like access) ---
 
-def fetchall_dict(conn: apsw.Connection, sql: str, params=None) -> list[dict]:
+def _cursor_description(cursor) -> Any:
+    if hasattr(cursor, "getdescription"):
+        return cursor.getdescription()
+    return cursor.description
+
+
+def fetchall_dict(conn: Connection, sql: str, params=None) -> list[dict]:
     cursor = conn.execute(sql, params or ())
     try:
-        desc = cursor.getdescription()
-    except apsw.ExecutionCompleteError:
+        desc = _cursor_description(cursor)
+    except Exception:
+        return []
+    if not desc:
         return []
     cols = [d[0] for d in desc]
-    return [dict(zip(cols, row)) for row in cursor]
+    rows = cursor.fetchall() if hasattr(cursor, "fetchall") else list(cursor)
+    return [dict(zip(cols, row)) for row in rows]
 
 
-def fetchone_dict(conn: apsw.Connection, sql: str, params=None) -> dict | None:
+def fetchone_dict(conn: Connection, sql: str, params=None) -> dict | None:
     cursor = conn.execute(sql, params or ())
     try:
-        desc = cursor.getdescription()
-    except apsw.ExecutionCompleteError:
+        desc = _cursor_description(cursor)
+    except Exception:
+        return None
+    if not desc:
         return None
     cols = [d[0] for d in desc]
     row = next(cursor, None)

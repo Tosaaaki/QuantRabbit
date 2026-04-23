@@ -45,13 +45,14 @@ Read the output of daily_review.py and think through the following:
 2. **Memory promotion gate second**: Read the `Memory Promotion Gate` section and treat it as the evidence filter for today's edits. Pair/direction lessons in `strategy_memory.md` must come from the allowed recurring-trader evidence set, not from quarantined execution.
 3. **Lesson state suggestions third**: Read the `Lesson State Suggestions` section. Use it as a registry-backed queue for what should be promoted to watch/confirmed or cut back to watch/deprecated.
 4. **Bayesian evidence fourth**: Read the `Bayesian Evidence Update` section. Treat today as evidence against or in favor of an existing prior, not as an excuse to rewrite memory from one print.
-5. **AAR queue fifth**: Read the `After Action Review Queue`. For the biggest win, biggest loss, and repetition candidate, fill `Planned / Actual / Gap / Next hypothesis`.
-6. **Today's winning patterns**: Why did you win? Is it reproducible?
-7. **Today's losing patterns**: Why did you lose? Could it have been avoided?
-8. **Pretrade score accuracy**: HIGH/S-score entries that lost = score is inflated. LOW entries that won = score is too conservative. **Track this.**
-9. **Repetitive behavior**: Did the trader enter the same pair × same direction × same thesis more than 3 times? That's bot behavior, not trading
-10. **Trailing stop effectiveness**: How many positions were closed by trailing stops? Were the trail widths appropriate vs ATR?
-11. **R/R ratio**: Compare average win size vs average loss size. If losses > wins, the sizing or hold duration is wrong
+5. **Pretrade feedback fifth**: Read the `Pretrade Feedback Notes` section. `daily_review.py` now writes concise machine notes back into `pretrade_outcomes.lesson_from_review`; if a note correctly identifies a repeat-loss thesis or a vehicle failure, turn that into cleaner `strategy_memory.md` language.
+6. **AAR queue sixth**: Read the `After Action Review Queue`. For the biggest win, biggest loss, and repetition candidate, fill `Planned / Actual / Gap / Next hypothesis`.
+7. **Today's winning patterns**: Why did you win? Is it reproducible?
+8. **Today's losing patterns**: Why did you lose? Could it have been avoided?
+9. **Pretrade score accuracy**: HIGH/S-score entries that lost = score is inflated. LOW entries that won = score is too conservative. **Track this.**
+10. **Repetitive behavior**: Did the trader enter the same pair × same direction × same thesis more than 3 times? That's bot behavior, not trading
+11. **Trailing stop effectiveness**: How many positions were closed by trailing stops? Were the trail widths appropriate vs ATR?
+12. **R/R ratio**: Compare average win size vs average loss size. If losses > wins, the sizing or hold duration is wrong
 
 ## Step 2.5: Audit Accuracy Review
 
@@ -204,6 +205,14 @@ This re-ingest now also enforces the lesson-state markers in `strategy_memory.md
 Bash④: Post review results to Slack (in Japanese)
 
 cd /Users/tossaki/App/QuantRabbit && python3 tools/slack_post.py "📖 Daily Review完了。strategy_memory.md更新済み。" --channel C0APAELAQDN 2>/dev/null || echo "slack skip"
+
+## Step 7: Keep main clean
+
+Bash⑤: Auto-commit/push the reviewed memory files back to `main`
+
+cd /Users/tossaki/App/QuantRabbit && python3 tools/runtime_git_sync.py sync-daily-review --date "$REVIEW_DAY"
+
+This helper is intentionally strict. It stages only `collab_trade/strategy_memory.md` and `collab_trade/memory/lesson_registry.json`, and it skips entirely if any unrelated dirty path exists. If it prints `RUNTIME_GIT_SYNC_SKIP`, leave the repo alone and investigate what else is dirty instead of force-adding files.
 
 ## Absolute Rules
 - **strategy_memory.md MUST be modified every run.** If no trades happened, still update the date and note "no trades"
