@@ -40,9 +40,25 @@ Co-Authored-By: Codex <noreply@openai.com>
 - Existing TP is not moved by the protection gateway.
 
 ## Legacy Knowledge
-- Treat `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` as read-only evidence.
+- Previous system archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`.
+- Treat the previous system archive as read-only evidence.
+- Archive manifest: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/ARCHIVE_MANIFEST_20260430T151527Z.md`.
 - Use `PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy` before strategy work.
 - Do not copy old schedulers, automation prompts, or order helpers into vNext wholesale.
+
+## Archived Log Sources
+- Archive root: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`.
+- Structured memory: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/collab_trade/memory/memory.db`.
+- Current handoff: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/collab_trade/state.md`.
+- Strategy memory: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/collab_trade/strategy_memory.md`.
+- Daily handoffs: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/collab_trade/daily/*/state.md`.
+- Live trade log: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/live_trade_log.txt`.
+- Trader journal: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/trader_journal.jsonl`.
+- S hunt ledger: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/s_hunt_ledger.jsonl`.
+- Audit history: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/audit_history.jsonl`.
+- News digest: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/news_digest.md`.
+- News flow: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/news_flow_log.md`.
+- Quality audit: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z/logs/quality_audit.md`.
 
 ## Current Commands
 ```bash
