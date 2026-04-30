@@ -15,6 +15,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories
 PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance 222781
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli promote-receipts
+PYTHONPATH=src python3 -m quant_rabbit.cli stage-live-order --lane-id 'failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE'
 PYTHONPATH=src python3 -m quant_rabbit.cli risk-dry-run --intent intent.json --snapshot snapshot.json
 ```
 
@@ -24,4 +26,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli risk-dry-run --intent intent.json --s
 
 `generate-intents` turns campaign lanes into priced dry-run order intents when a read-only broker snapshot is available. Without a snapshot it reports `NEEDS_BROKER_SNAPSHOT`; this is a hard stop, not a prompt problem.
 
-Live execution is not implemented in this rebuild yet. That is intentional: strategy evidence, market story, and campaign role must become a risk-checked order intent before any OANDA write path exists.
+`promote-receipts` feeds successful dry-run receipts back into `data/strategy_profile.json`. It can reopen `RISK_REPAIR_CANDIDATE` only when the current receipt passes risk geometry, and can reopen `MINE_MISSED_EDGE` only when the receipt is a LIMIT or STOP-ENTRY trigger. It never auto-promotes `BLOCK_UNTIL_NEW_EVIDENCE`.
+
+`stage-live-order` turns one live-ready intent into an OANDA order request after fetching fresh broker truth and rerunning live validation. It stages by default. A real send requires `--send --confirm-live`, `QR_LIVE_ENABLED=1`, and an explicit `--lane-id`.
+
+Live execution is guarded behind this gateway: strategy evidence, market story, campaign role, fresh broker truth, risk geometry, and explicit live enablement must all pass before any OANDA write occurs.

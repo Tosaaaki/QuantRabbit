@@ -147,3 +147,22 @@ def _parse_oanda_time(value: object) -> datetime | None:
         return datetime.fromisoformat(text).astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+class OandaExecutionClient(OandaReadOnlyClient):
+    """Narrow OANDA execution client used only behind the risk gateway."""
+
+    def post_order_json(self, order_request: dict) -> dict:
+        url = f"{self.base_url}/v3/accounts/{self.account_id}/orders"
+        body = json.dumps({"order": order_request}).encode()
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())

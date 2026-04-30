@@ -7,7 +7,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
+from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
@@ -15,11 +17,14 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_REPORT,
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
+    DEFAULT_LIVE_ORDER_REQUEST,
+    DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_LEGACY_ARCHIVE,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_RECEIPT_PROMOTION_REPORT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_STRATEGY_REPORT,
 )
@@ -29,6 +34,7 @@ from quant_rabbit.strategy.intent_generator import IntentGenerator
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.miner import StrategyMiner
 from quant_rabbit.strategy.profile import StrategyProfile
+from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,6 +75,21 @@ def main(argv: list[str] | None = None) -> int:
     p_intents.add_argument("--output", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_intents.add_argument("--report", type=Path, default=DEFAULT_ORDER_INTENT_REPORT)
     p_intents.add_argument("--max-candidates", type=int, default=12)
+
+    p_promote = sub.add_parser("promote-receipts", help="Promote strategy profiles from dry-run order receipts.")
+    p_promote.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_promote.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_promote.add_argument("--output-profile", type=Path, default=None)
+    p_promote.add_argument("--report", type=Path, default=DEFAULT_RECEIPT_PROMOTION_REPORT)
+
+    p_stage = sub.add_parser("stage-live-order", help="Stage or explicitly send one live-ready OANDA order.")
+    p_stage.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_stage.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_stage.add_argument("--lane-id", default=None)
+    p_stage.add_argument("--output", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_stage.add_argument("--report", type=Path, default=DEFAULT_LIVE_ORDER_STAGE_REPORT)
+    p_stage.add_argument("--send", action="store_true")
+    p_stage.add_argument("--confirm-live", action="store_true")
 
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
@@ -121,6 +142,55 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "promote-receipts":
+        summary = ReceiptPromoter(
+            profile_path=args.profile,
+            intents_path=args.intents,
+            output_profile=args.output_profile,
+            report_path=args.report,
+        ).run()
+        print(
+            json.dumps(
+                {
+                    "profile_path": str(summary.profile_path),
+                    "intents_path": str(summary.intents_path),
+                    "report_path": str(summary.report_path),
+                    "profiles_seen": summary.profiles_seen,
+                    "receipts_seen": summary.receipts_seen,
+                    "promoted": summary.promoted,
+                    "still_blocked": summary.still_blocked,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "stage-live-order":
+        summary = LiveOrderGateway(
+            client=OandaExecutionClient(),
+            strategy_profile=args.strategy_profile,
+            output_path=args.output,
+            report_path=args.report,
+            live_enabled=os.environ.get("QR_LIVE_ENABLED") == "1",
+        ).run(intents_path=args.intents, lane_id=args.lane_id, send=args.send, confirm_live=args.confirm_live)
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "lane_id": summary.lane_id,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "sent": summary.sent,
+                    "risk_issues": summary.risk_issues,
+                    "strategy_issues": summary.strategy_issues,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status in {"STAGED", "SENT"} else 2
     if args.command == "plan-campaign":
         summary = CampaignPlanner(
             strategy_profile=args.strategy_profile,
