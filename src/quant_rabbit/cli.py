@@ -7,6 +7,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_REPORT
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
@@ -90,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     p_stage.add_argument("--report", type=Path, default=DEFAULT_LIVE_ORDER_STAGE_REPORT)
     p_stage.add_argument("--send", action="store_true")
     p_stage.add_argument("--confirm-live", action="store_true")
+
+    p_auto = sub.add_parser("autotrade-cycle", help="Run one safe automated trading cycle.")
+    p_auto.add_argument("--send", action="store_true")
+    p_auto.add_argument("--report", type=Path, default=DEFAULT_AUTOTRADE_REPORT)
 
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
@@ -191,6 +196,30 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status in {"STAGED", "SENT"} else 2
+    if args.command == "autotrade-cycle":
+        summary = AutoTradeCycle(
+            report_path=args.report,
+            live_enabled=os.environ.get("QR_LIVE_ENABLED") == "1",
+        ).run(send=args.send)
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "report_path": str(summary.report_path),
+                    "snapshot_path": str(summary.snapshot_path),
+                    "intents_path": str(summary.intents_path),
+                    "selected_lane_id": summary.selected_lane_id,
+                    "sent": summary.sent,
+                    "positions": summary.positions,
+                    "orders": summary.orders,
+                    "live_ready": summary.live_ready,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status in {"SENT", "STAGED", "MONITOR_ONLY_EXPOSURE_OPEN", "NO_LIVE_READY_INTENT"} else 2
     if args.command == "plan-campaign":
         summary = CampaignPlanner(
             strategy_profile=args.strategy_profile,

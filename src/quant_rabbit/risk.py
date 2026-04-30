@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .models import BrokerSnapshot, OrderIntent, Owner, Quote, RiskDecision, RiskIssue, RiskMetrics, Side, TradeMethod
+from .models import BrokerOrder, BrokerSnapshot, OrderIntent, Owner, Quote, RiskDecision, RiskIssue, RiskMetrics, Side, TradeMethod
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class RiskPolicy:
     min_stop_spread_multiple: float = 5.0
     block_new_entries_with_external_risk: bool = True
     block_unprotected_positions: bool = True
+    block_new_entries_with_pending_entry_orders: bool = True
     require_live_enabled_for_send: bool = True
     require_market_context_for_live_send: bool = True
 
@@ -94,6 +95,17 @@ class RiskEngine:
                             "UNPROTECTED_POSITION",
                             f"open position lacks {'/'.join(missing)}: {position.pair} {position.side.value} "
                             f"id={position.trade_id} {position.units}u",
+                        )
+                    )
+
+        if self.policy.block_new_entries_with_pending_entry_orders:
+            for order in snapshot.orders:
+                if _is_pending_entry_order(order):
+                    issues.append(
+                        RiskIssue(
+                            "PENDING_ENTRY_ORDER_OPEN",
+                            f"pending entry order is already open: {order.pair or '(unknown)'} "
+                            f"{order.order_type} id={order.order_id}; resolve it before new entries",
                         )
                     )
 
@@ -277,3 +289,10 @@ class RiskEngine:
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _is_pending_entry_order(order: BrokerOrder) -> bool:
+    if order.trade_id:
+        return False
+    order_type = order.order_type.upper()
+    return order_type in {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}

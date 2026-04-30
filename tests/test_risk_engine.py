@@ -3,15 +3,16 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskEngine
 
 
-def snapshot(*, positions=()) -> BrokerSnapshot:
+def snapshot(*, positions=(), orders=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
         fetched_at_utc=now,
         positions=tuple(positions),
+        orders=tuple(orders),
         quotes={
             "EUR_USD": Quote("EUR_USD", bid=1.17322, ask=1.17330, timestamp_utc=now),
             "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=now),
@@ -159,6 +160,29 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine().validate(intent, snapshot(positions=(unprotected,)))
         self.assertFalse(decision.allowed)
         self.assertIn("UNPROTECTED_POSITION", {issue.code for issue in decision.issues})
+
+    def test_pending_entry_order_blocks_duplicate_fresh_entries(self) -> None:
+        pending = BrokerOrder(
+            order_id="123",
+            pair="AUD_JPY",
+            order_type="STOP",
+            trade_id=None,
+            price=112.576,
+            state="PENDING",
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.17330,
+            tp=1.17450,
+            sl=1.17250,
+            thesis="must_not_stack_entry_orders",
+        )
+        decision = RiskEngine().validate(intent, snapshot(orders=(pending,)))
+        self.assertFalse(decision.allowed)
+        self.assertIn("PENDING_ENTRY_ORDER_OPEN", {issue.code for issue in decision.issues})
 
     def test_bad_reward_risk_blocks(self) -> None:
         intent = OrderIntent(

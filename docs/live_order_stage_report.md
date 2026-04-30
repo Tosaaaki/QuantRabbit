@@ -1,21 +1,21 @@
 # Live Order Stage Report
 
-- Generated at UTC: `2026-04-30T16:36:35.959164+00:00`
-- Status: `STAGED`
+- Generated at UTC: `2026-04-30T16:40:59.818509+00:00`
+- Status: `BLOCKED`
 - Lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
-- Send requested: `False`
+- Send requested: `True`
 - Sent: `False`
 
 ## Order Request
 
 - `EUR_USD` `STOP` units=`1000`
-- price: `1.17262`
-- takeProfitOnFill: `1.17382`
-- stopLossOnFill: `1.17182`
+- price: `1.17282`
+- takeProfitOnFill: `1.17402`
+- stopLossOnFill: `1.17202`
 
 ## Issues
 
-- none
+- `BLOCK` PENDING_ENTRY_ORDER_OPEN: pending entry order is already open: AUD_JPY STOP id=470021; resolve it before new entries
 
 ## Send Contract
 
