@@ -18,11 +18,14 @@ from quant_rabbit.paths import (
     DEFAULT_LEGACY_ARCHIVE,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_MARKET_STORY_REPORT,
+    DEFAULT_ORDER_INTENT_REPORT,
+    DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_STRATEGY_REPORT,
 )
 from quant_rabbit.risk import RiskEngine
 from quant_rabbit.strategy.ensemble import CampaignPlanner
+from quant_rabbit.strategy.intent_generator import IntentGenerator
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.miner import StrategyMiner
 from quant_rabbit.strategy.profile import StrategyProfile
@@ -39,6 +42,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_snapshot = sub.add_parser("broker-snapshot", help="Read current broker truth without placing orders.")
     p_snapshot.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_snapshot.add_argument("--output", type=Path, default=None)
 
     p_mine = sub.add_parser("mine-strategy", help="Mine legacy evidence into a strategy profile.")
     p_mine.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
@@ -57,6 +61,14 @@ def main(argv: list[str] | None = None) -> int:
     p_campaign.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_campaign.add_argument("--report", type=Path, default=DEFAULT_CAMPAIGN_REPORT)
     p_campaign.add_argument("--plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
+
+    p_intents = sub.add_parser("generate-intents", help="Generate dry-run order intents from campaign lanes.")
+    p_intents.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
+    p_intents.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_intents.add_argument("--snapshot", type=Path)
+    p_intents.add_argument("--output", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_intents.add_argument("--report", type=Path, default=DEFAULT_ORDER_INTENT_REPORT)
+    p_intents.add_argument("--max-candidates", type=int, default=12)
 
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
@@ -78,6 +90,30 @@ def main(argv: list[str] | None = None) -> int:
                     "legacy_rows": summary.legacy_rows,
                     "live_trade_events": summary.live_trade_events,
                     "journal_events": summary.journal_events,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "generate-intents":
+        summary = IntentGenerator(
+            campaign_plan=args.campaign_plan,
+            strategy_profile=args.strategy_profile,
+            output_path=args.output,
+            report_path=args.report,
+        ).run(snapshot_path=args.snapshot, max_candidates=args.max_candidates)
+        print(
+            json.dumps(
+                {
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "candidates_seen": summary.candidates_seen,
+                    "generated": summary.generated,
+                    "needs_snapshot": summary.needs_snapshot,
+                    "dry_run_passed": summary.dry_run_passed,
+                    "live_ready": summary.live_ready,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -129,7 +165,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "broker-snapshot":
         pairs = [part.strip().upper() for part in args.pairs.split(",") if part.strip()]
         snapshot = OandaReadOnlyClient().snapshot(pairs)
-        print(_snapshot_to_json(snapshot))
+        text = _snapshot_to_json(snapshot)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(text + "\n")
+            print(
+                json.dumps(
+                    {
+                        "output_path": str(args.output),
+                        "positions": len(snapshot.positions),
+                        "orders": len(snapshot.orders),
+                        "quotes": len(snapshot.quotes),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        else:
+            print(text)
         return 0
     if args.command == "mine-strategy":
         summary = StrategyMiner(args.db, args.report, args.profile).run()

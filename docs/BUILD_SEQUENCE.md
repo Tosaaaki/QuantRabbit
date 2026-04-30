@@ -30,6 +30,13 @@
 4. Portfolio Director must publish NOW / BACKUP / RUNNER candidates or an explicit coverage gap.
 5. A 10% campaign target never overrides the risk gateway; it only forces missing coverage to be named.
 
+## Phase 2D: Dry-Run Intent Generation
+
+1. Read current broker truth to `data/broker_snapshot.json`.
+2. Convert campaign lanes into priced order intents with entry, TP, SL, units, campaign role, and market context.
+3. Batch-check the generated intents through `RiskEngine` and `StrategyProfile`.
+4. Promote only `LIVE_READY` receipts to the future live gateway; `DRY_RUN_PASSED` still needs profile promotion, and `NEEDS_BROKER_SNAPSHOT` is a hard stop.
+
 ## Phase 3: Execution Gateway
 
 1. Add one live gateway method behind `QR_LIVE_ENABLED=1`.
