@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from quant_rabbit.strategy.ensemble import CampaignPlanner
+
+
+class CampaignPlannerTest(unittest.TestCase):
+    def test_builds_multi_desk_plan_without_live_guarantee(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            story = root / "story.json"
+            report = root / "campaign.md"
+            plan_path = root / "campaign.json"
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "status": "RISK_REPAIR_CANDIDATE",
+                                "required_fix": "old sizing broke loss cap",
+                                "pretrade_net_jpy": 1000,
+                                "live_net_jpy": 500,
+                                "live_worst_jpy": -700,
+                            },
+                            {
+                                "pair": "USD_JPY",
+                                "direction": "LONG",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "required_fix": "bad history",
+                                "pretrade_net_jpy": -100,
+                                "live_net_jpy": -1000,
+                                "live_worst_jpy": -900,
+                            },
+                        ]
+                    }
+                )
+            )
+            story.write_text(
+                json.dumps(
+                    {
+                        "pair_profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "methods": {"TREND_CONTINUATION": 4, "RANGE_ROTATION": 2, "EVENT_RISK": 1},
+                                "themes": {"momentum": 3, "event_risk": 1},
+                                "examples": ["quality_audit: green staircase"],
+                            },
+                            {
+                                "pair": "USD_JPY",
+                                "methods": {"BREAKOUT_FAILURE": 3, "EVENT_RISK": 5},
+                                "themes": {"intervention": 5},
+                                "examples": ["news_digest: intervention risk"],
+                            },
+                        ]
+                    }
+                )
+            )
+
+            summary = CampaignPlanner(
+                strategy_profile=strategy,
+                market_story_profile=story,
+                report_path=report,
+                plan_path=plan_path,
+            ).run(start_balance_jpy=200_000)
+
+            self.assertEqual(summary.target_jpy, 20_000)
+            self.assertGreaterEqual(summary.lanes, 4)
+            payload = json.loads(plan_path.read_text())
+            adoptions = {lane["adoption"] for lane in payload["lanes"]}
+            self.assertIn("RISK_REPAIR_DRY_RUN", adoptions)
+            self.assertIn("RISK_OVERLAY", adoptions)
+            self.assertIn("REJECTED", adoptions)
+            self.assertIn("target, not a profit guarantee", payload["operating_rule"])
+            self.assertIn("Portfolio Director Rules", report.read_text())
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -11,6 +11,8 @@ from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
+    DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_CAMPAIGN_REPORT,
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
     DEFAULT_LEGACY_ARCHIVE,
@@ -20,6 +22,7 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_REPORT,
 )
 from quant_rabbit.risk import RiskEngine
+from quant_rabbit.strategy.ensemble import CampaignPlanner
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.miner import StrategyMiner
 from quant_rabbit.strategy.profile import StrategyProfile
@@ -47,6 +50,14 @@ def main(argv: list[str] | None = None) -> int:
     p_story.add_argument("--report", type=Path, default=DEFAULT_MARKET_STORY_REPORT)
     p_story.add_argument("--profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
 
+    p_campaign = sub.add_parser("plan-campaign", help="Build a multi-desk daily campaign plan.")
+    p_campaign.add_argument("--start-balance", type=float, required=True)
+    p_campaign.add_argument("--target-return-pct", type=float, default=10.0)
+    p_campaign.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_campaign.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+    p_campaign.add_argument("--report", type=Path, default=DEFAULT_CAMPAIGN_REPORT)
+    p_campaign.add_argument("--plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
+
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
     p_risk.add_argument("--snapshot", type=Path, required=True)
@@ -67,6 +78,29 @@ def main(argv: list[str] | None = None) -> int:
                     "legacy_rows": summary.legacy_rows,
                     "live_trade_events": summary.live_trade_events,
                     "journal_events": summary.journal_events,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "plan-campaign":
+        summary = CampaignPlanner(
+            strategy_profile=args.strategy_profile,
+            market_story_profile=args.market_story_profile,
+            report_path=args.report,
+            plan_path=args.plan,
+        ).run(start_balance_jpy=args.start_balance, target_return_pct=args.target_return_pct)
+        print(
+            json.dumps(
+                {
+                    "report_path": str(summary.report_path),
+                    "plan_path": str(summary.plan_path),
+                    "target_jpy": summary.target_jpy,
+                    "lanes": summary.lanes,
+                    "actionable_lanes": summary.actionable_lanes,
+                    "rejected_lanes": summary.rejected_lanes,
                 },
                 ensure_ascii=False,
                 indent=2,

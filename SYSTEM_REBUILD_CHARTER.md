@@ -13,7 +13,9 @@ Build a profitable discretionary FX execution system from a small, testable core
 5. Runtime automation cannot create strategy. It can only schedule observation, reconcile broker truth, and call the execution gateway.
 6. Learning memory is advisory. It cannot silently force entries, suppress exits, or resize trades.
 7. Every order intent must explain the current market story: regime, narrative, chart story, selected method, and invalidation.
-8. A rebuild component is accepted only with a failing test, a passing test, and a live-risk failure mode documented.
+8. The daily 10% campaign is mandatory as a target ledger, but it is not permission to force weak trades or exceed the risk gateway.
+9. Multiple trader desks can disagree; Portfolio Director must record which desk wins and why.
+10. A rebuild component is accepted only with a failing test, a passing test, and a live-risk failure mode documented.
 
 ## vNext Shape
 

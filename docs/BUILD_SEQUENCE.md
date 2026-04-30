@@ -22,10 +22,18 @@
 3. Require each order intent to state `regime`, `narrative`, `chart_story`, `method`, and `invalidation`.
 4. Reject live sends when the chosen method contradicts the stated market regime, such as range rotation inside a one-way trend impulse.
 
+## Phase 2C: Multi-Desk Daily Campaign
+
+1. Compute the daily campaign target as `day_start_balance * 10%`.
+2. Run simultaneous desks: trend continuation, range rotation, breakout/failure, event-risk, and position management.
+3. Let each desk propose, veto, or resize lanes from the same strategy and market-story evidence.
+4. Portfolio Director must publish NOW / BACKUP / RUNNER candidates or an explicit coverage gap.
+5. A 10% campaign target never overrides the risk gateway; it only forces missing coverage to be named.
+
 ## Phase 3: Execution Gateway
 
 1. Add one live gateway method behind `QR_LIVE_ENABLED=1`.
-2. Require current broker snapshot, fresh quote, TP, SL, risk JPY, reward/risk, owner, and market context.
+2. Require current broker snapshot, fresh quote, TP, SL, risk JPY, reward/risk, owner, market context, and campaign role.
 3. Journal every accepted and rejected intent.
 
 ## Phase 4: Automation
