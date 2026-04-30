@@ -27,6 +27,8 @@ class ManagedPosition:
     remaining_reward_jpy: float | None
     same_direction_score: float | None
     opposite_direction_score: float | None
+    recommended_stop_loss: float | None
+    recommended_take_profit: float | None
     reasons: tuple[str, ...]
 
 
@@ -71,6 +73,9 @@ class PositionManager:
         remaining_risk = _remaining_risk_jpy(position)
         remaining_reward = _remaining_reward_jpy(position)
         reasons: list[str] = []
+        quote = snapshot.quotes.get(position.pair)
+        recommended_stop_loss: float | None = None
+        recommended_take_profit: float | None = None
 
         if position.stop_loss is None or position.take_profit is None:
             missing = []
@@ -79,9 +84,28 @@ class PositionManager:
             if position.stop_loss is None:
                 missing.append("SL")
             reasons.append(f"missing {'/'.join(missing)}")
-            action = ACTION_REPAIR_PROTECTION
+            if position.stop_loss is None:
+                recommended_stop_loss = _repair_stop_loss(position, quote)
+                if recommended_stop_loss is None:
+                    reasons.append("no market-valid capped SL repair is available; exposure needs exit review")
+                    action = ACTION_REVIEW_EXIT
+                else:
+                    reasons.append(f"repair SL candidate {recommended_stop_loss:.5f}")
+                    action = ACTION_REPAIR_PROTECTION
+            else:
+                action = ACTION_REPAIR_PROTECTION
+            if position.take_profit is None:
+                basis_stop = recommended_stop_loss if recommended_stop_loss is not None else position.stop_loss
+                recommended_take_profit = _repair_take_profit(position, basis_stop, quote)
+                if recommended_take_profit is not None:
+                    reasons.append(f"repair TP candidate {recommended_take_profit:.5f}")
         elif _profit_protection_needed(position, remaining_risk):
             reasons.append("profit is large enough to require break-even/trailing review")
+            recommended_stop_loss = _break_even_stop(position, quote)
+            if recommended_stop_loss is None:
+                reasons.append("break-even SL is not market-valid yet")
+            else:
+                reasons.append(f"break-even SL candidate {recommended_stop_loss:.5f}")
             action = ACTION_PROFIT_PROTECT
         elif opposite_score is not None and same_score is not None and opposite_score >= same_score + 20 and position.unrealized_pl_jpy < 0:
             reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
@@ -106,6 +130,12 @@ class PositionManager:
             remaining_reward_jpy=round(remaining_reward, 2) if remaining_reward is not None else None,
             same_direction_score=same_score,
             opposite_direction_score=opposite_score,
+            recommended_stop_loss=round(recommended_stop_loss, _price_precision(position.pair))
+            if recommended_stop_loss is not None
+            else None,
+            recommended_take_profit=round(recommended_take_profit, _price_precision(position.pair))
+            if recommended_take_profit is not None
+            else None,
             reasons=tuple(reasons),
         )
 
@@ -131,6 +161,9 @@ class PositionManager:
                 f"action=`{item.action}` upl=`{item.unrealized_pl_jpy:.1f}`"
             )
             lines.append(f"  - scores: same=`{item.same_direction_score}` opposite=`{item.opposite_direction_score}`")
+            lines.append(
+                f"  - protection plan: sl=`{item.recommended_stop_loss}` tp=`{item.recommended_take_profit}`"
+            )
             for reason in item.reasons:
                 lines.append(f"  - reason: {reason}")
         lines.extend(
@@ -209,12 +242,73 @@ def _profit_protection_needed(position: BrokerPosition, remaining_risk: float | 
     return position.stop_loss > position.entry_price
 
 
+def _break_even_stop(position: BrokerPosition, quote) -> float | None:
+    if quote is None:
+        return position.entry_price
+    if position.side == Side.LONG:
+        if quote.bid <= position.entry_price:
+            return None
+        return position.entry_price
+    if quote.ask >= position.entry_price:
+        return None
+    return position.entry_price
+
+
+def _repair_stop_loss(position: BrokerPosition, quote) -> float | None:
+    jpy_per_pip = _jpy_per_pip(position)
+    if jpy_per_pip <= 0:
+        return None
+    cap_pips = 500.0 / jpy_per_pip
+    repair_pips = min(cap_pips, _default_repair_stop_pips(position.pair))
+    distance = repair_pips / _pip_factor(position.pair)
+    candidate = position.entry_price - distance if position.side == Side.LONG else position.entry_price + distance
+    if quote is None:
+        return candidate
+    if not _market_valid_stop(position, candidate, quote):
+        return None
+    return candidate
+
+
+def _repair_take_profit(position: BrokerPosition, stop_loss: float | None, quote) -> float | None:
+    if stop_loss is None:
+        return None
+    risk_distance = abs(position.entry_price - stop_loss)
+    if risk_distance <= 0:
+        return None
+    candidate = (
+        position.entry_price + risk_distance * 1.5
+        if position.side == Side.LONG
+        else position.entry_price - risk_distance * 1.5
+    )
+    if quote is None:
+        return candidate
+    if position.side == Side.LONG and candidate <= quote.ask:
+        return None
+    if position.side == Side.SHORT and candidate >= quote.bid:
+        return None
+    return candidate
+
+
+def _market_valid_stop(position: BrokerPosition, stop_loss: float, quote) -> bool:
+    if position.side == Side.LONG:
+        return stop_loss < quote.bid
+    return stop_loss > quote.ask
+
+
+def _default_repair_stop_pips(pair: str) -> float:
+    return 10.0 if pair.endswith("_JPY") else 8.0
+
+
 def _opposite(side: Side) -> str:
     return Side.SHORT.value if side == Side.LONG else Side.LONG.value
 
 
 def _pip_factor(pair: str) -> int:
     return 100 if pair.endswith("_JPY") else 10000
+
+
+def _price_precision(pair: str) -> int:
+    return 3 if pair.endswith("_JPY") else 5
 
 
 def _jpy_per_pip(position: BrokerPosition) -> float:

@@ -1,0 +1,309 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Protocol
+
+from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
+from quant_rabbit.strategy.position_manager import (
+    ACTION_HOLD_PROTECTED,
+    ACTION_PROFIT_PROTECT,
+    ACTION_REPAIR_PROTECTION,
+    ACTION_REVIEW_EXIT,
+    ManagedPosition,
+    PositionManagementDecision,
+)
+
+
+class PositionExecutionClient(Protocol):
+    def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]: ...
+
+    def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]: ...
+
+
+@dataclass(frozen=True)
+class PositionExecutionSummary:
+    status: str
+    output_path: Path
+    report_path: Path
+    sent: bool
+    actions: int
+    blocked: int
+
+
+class PositionProtectionGateway:
+    """Execute only risk-reducing position-management actions."""
+
+    def __init__(
+        self,
+        *,
+        client: PositionExecutionClient,
+        output_path: Path = DEFAULT_POSITION_EXECUTION,
+        report_path: Path = DEFAULT_POSITION_EXECUTION_REPORT,
+        live_enabled: bool = False,
+    ) -> None:
+        self.client = client
+        self.output_path = output_path
+        self.report_path = report_path
+        self.live_enabled = live_enabled
+
+    def run(
+        self,
+        *,
+        decision: PositionManagementDecision,
+        snapshot: BrokerSnapshot,
+        send: bool = False,
+    ) -> PositionExecutionSummary:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        positions = {position.trade_id: position for position in snapshot.positions}
+        actions = [
+            self._plan_action(managed, positions.get(managed.trade_id), snapshot)
+            for managed in decision.positions
+        ]
+        if send and not self.live_enabled:
+            for action in actions:
+                if action["request"] is not None:
+                    action["issues"].append(
+                        {
+                            "severity": "BLOCK",
+                            "code": "LIVE_DISABLED",
+                            "message": "position protection write requires QR_LIVE_ENABLED=1",
+                        }
+                    )
+
+        responses: list[dict[str, Any] | None] = []
+        for action in actions:
+            request = action["request"]
+            blocked = _has_block(action)
+            response = None
+            if send and request is not None and not blocked:
+                if request["type"] == "CLOSE":
+                    response = self.client.close_trade(str(request["trade_id"]), str(request.get("units") or "ALL"))
+                elif request["type"] == "DEPENDENT_ORDER_REPLACE":
+                    response = self.client.replace_trade_dependent_orders(
+                        str(request["trade_id"]),
+                        dict(request["order_request"]),
+                    )
+                action["sent"] = True
+            responses.append(response)
+            action["response"] = response
+
+        actionable = sum(1 for action in actions if action["request"] is not None)
+        blocked_count = sum(1 for action in actions if _has_block(action))
+        sent_count = sum(1 for action in actions if action.get("sent"))
+        status = _status(actionable=actionable, blocked=blocked_count, sent=sent_count, send=send)
+        result = {
+            "generated_at_utc": generated_at,
+            "status": status,
+            "send_requested": send,
+            "sent": sent_count > 0,
+            "actions": actions,
+        }
+        self._write_result(result)
+        self._write_report(result)
+        return PositionExecutionSummary(
+            status=status,
+            output_path=self.output_path,
+            report_path=self.report_path,
+            sent=sent_count > 0,
+            actions=actionable,
+            blocked=blocked_count,
+        )
+
+    def _plan_action(
+        self,
+        managed: ManagedPosition,
+        position: BrokerPosition | None,
+        snapshot: BrokerSnapshot,
+    ) -> dict[str, Any]:
+        action: dict[str, Any] = {
+            "trade_id": managed.trade_id,
+            "pair": managed.pair,
+            "management_action": managed.action,
+            "request": None,
+            "issues": [],
+            "sent": False,
+            "response": None,
+        }
+        if position is None:
+            action["issues"].append(
+                {
+                    "severity": "BLOCK",
+                    "code": "POSITION_NOT_FOUND",
+                    "message": "managed position is no longer open in broker snapshot",
+                }
+            )
+            return action
+        if position.owner != Owner.TRADER:
+            action["issues"].append(
+                {
+                    "severity": "BLOCK",
+                    "code": "NON_TRADER_POSITION",
+                    "message": f"refusing to modify {position.owner.value} position id={position.trade_id}",
+                }
+            )
+            return action
+        if managed.action == ACTION_HOLD_PROTECTED:
+            return action
+        if managed.action == ACTION_REVIEW_EXIT:
+            action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
+            return action
+        if managed.action not in {ACTION_REPAIR_PROTECTION, ACTION_PROFIT_PROTECT}:
+            return action
+
+        quote = snapshot.quotes.get(position.pair)
+        order_request: dict[str, Any] = {}
+        if managed.recommended_stop_loss is not None:
+            stop_issue = _stop_update_issue(position, float(managed.recommended_stop_loss), quote)
+            if stop_issue:
+                action["issues"].append(stop_issue)
+            else:
+                order_request["stopLoss"] = {
+                    "timeInForce": "GTC",
+                    "price": _price(position.pair, float(managed.recommended_stop_loss)),
+                }
+        if managed.recommended_take_profit is not None and position.take_profit is None:
+            tp_issue = _take_profit_issue(position, float(managed.recommended_take_profit), quote)
+            if tp_issue:
+                action["issues"].append(tp_issue)
+            else:
+                order_request["takeProfit"] = {
+                    "timeInForce": "GTC",
+                    "price": _price(position.pair, float(managed.recommended_take_profit)),
+                }
+        if order_request:
+            action["request"] = {
+                "type": "DEPENDENT_ORDER_REPLACE",
+                "trade_id": position.trade_id,
+                "order_request": order_request,
+            }
+        return action
+
+    def _write_result(self, result: dict[str, Any]) -> None:
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+    def _write_report(self, result: dict[str, Any]) -> None:
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Position Execution Report",
+            "",
+            f"- Generated at UTC: `{result['generated_at_utc']}`",
+            f"- Status: `{result['status']}`",
+            f"- Send requested: `{result['send_requested']}`",
+            f"- Sent: `{result['sent']}`",
+            "",
+            "## Actions",
+            "",
+        ]
+        actions = result.get("actions", [])
+        if not actions:
+            lines.append("- none")
+        for action in actions:
+            request = action.get("request")
+            lines.append(
+                f"- `{action['trade_id']}` `{action['pair']}` management=`{action['management_action']}` "
+                f"request=`{request['type'] if request else 'none'}` sent=`{action.get('sent')}`"
+            )
+            if request and request["type"] == "DEPENDENT_ORDER_REPLACE":
+                lines.append(f"  - order_request: `{json.dumps(request['order_request'], sort_keys=True)}`")
+            for issue in action.get("issues", []):
+                lines.append(f"  - `{issue['severity']}` {issue['code']}: {issue['message']}")
+        lines.extend(
+            [
+                "",
+                "## Execution Contract",
+                "",
+                "- Position writes are risk-reducing only: close the trade, create missing protection, or tighten an existing SL.",
+                "- Existing SL cannot be widened. Existing TP is not moved by this gateway.",
+                "- Live execution requires the autotrade send path and `QR_LIVE_ENABLED=1`.",
+            ]
+        )
+        self.report_path.write_text("\n".join(lines) + "\n")
+
+
+def _status(*, actionable: int, blocked: int, sent: int, send: bool) -> str:
+    if blocked and actionable == 0:
+        return "BLOCKED"
+    if actionable == 0:
+        return "NO_ACTION"
+    if blocked >= actionable:
+        return "BLOCKED"
+    if sent and blocked:
+        return "PARTIAL_SENT_WITH_BLOCKS"
+    if sent:
+        return "SENT"
+    if send and blocked:
+        return "BLOCKED"
+    return "STAGED"
+
+
+def _has_block(action: dict[str, Any]) -> bool:
+    return any(issue.get("severity") == "BLOCK" for issue in action.get("issues", []))
+
+
+def _stop_update_issue(position: BrokerPosition, new_stop: float, quote: Quote | None) -> dict[str, str] | None:
+    if position.stop_loss is not None:
+        if position.side == Side.LONG and new_stop <= position.stop_loss:
+            return {
+                "severity": "BLOCK",
+                "code": "SL_NOT_TIGHTER",
+                "message": f"LONG SL update would not tighten: current={position.stop_loss} proposed={new_stop}",
+            }
+        if position.side == Side.SHORT and new_stop >= position.stop_loss:
+            return {
+                "severity": "BLOCK",
+                "code": "SL_NOT_TIGHTER",
+                "message": f"SHORT SL update would not tighten: current={position.stop_loss} proposed={new_stop}",
+            }
+    if quote is not None:
+        if position.side == Side.LONG and new_stop >= quote.bid:
+            return {
+                "severity": "BLOCK",
+                "code": "SL_NOT_MARKET_VALID",
+                "message": f"LONG SL must stay below bid: bid={quote.bid} proposed={new_stop}",
+            }
+        if position.side == Side.SHORT and new_stop <= quote.ask:
+            return {
+                "severity": "BLOCK",
+                "code": "SL_NOT_MARKET_VALID",
+                "message": f"SHORT SL must stay above ask: ask={quote.ask} proposed={new_stop}",
+            }
+    return None
+
+
+def _take_profit_issue(position: BrokerPosition, take_profit: float, quote: Quote | None) -> dict[str, str] | None:
+    if quote is not None:
+        if position.side == Side.LONG and take_profit <= quote.ask:
+            return {
+                "severity": "BLOCK",
+                "code": "TP_NOT_MARKET_VALID",
+                "message": f"LONG TP must stay above ask: ask={quote.ask} proposed={take_profit}",
+            }
+        if position.side == Side.SHORT and take_profit >= quote.bid:
+            return {
+                "severity": "BLOCK",
+                "code": "TP_NOT_MARKET_VALID",
+                "message": f"SHORT TP must stay below bid: bid={quote.bid} proposed={take_profit}",
+            }
+    if position.side == Side.LONG and take_profit <= position.entry_price:
+        return {
+            "severity": "BLOCK",
+            "code": "TP_NOT_REWARD_SIDE",
+            "message": f"LONG TP must stay above entry: entry={position.entry_price} proposed={take_profit}",
+        }
+    if position.side == Side.SHORT and take_profit >= position.entry_price:
+        return {
+            "severity": "BLOCK",
+            "code": "TP_NOT_REWARD_SIDE",
+            "message": f"SHORT TP must stay below entry: entry={position.entry_price} proposed={take_profit}",
+        }
+    return None
+
+
+def _price(pair: str, value: float) -> str:
+    precision = 3 if pair.endswith("_JPY") else 5
+    return f"{value:.{precision}f}"

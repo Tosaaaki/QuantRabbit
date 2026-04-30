@@ -188,3 +188,33 @@ class OandaExecutionClient(OandaReadOnlyClient):
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read())
+
+    def replace_trade_dependent_orders(self, trade_id: str, order_request: dict) -> dict:
+        url = f"{self.base_url}/v3/accounts/{self.account_id}/trades/{urllib.parse.quote(trade_id)}/orders"
+        body = json.dumps(order_request).encode()
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="PUT",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+
+    def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+        url = f"{self.base_url}/v3/accounts/{self.account_id}/trades/{urllib.parse.quote(trade_id)}/close"
+        body = json.dumps({"units": units}).encode()
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method="PUT",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())

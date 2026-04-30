@@ -37,10 +37,13 @@ class AutoTradeCycleTest(unittest.TestCase):
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
                 decision_path=root / "decision.json",
                 decision_report_path=root / "decision.md",
                 position_management_path=root / "pm.json",
                 position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
                 report_path=root / "report.md",
                 live_enabled=True,
             ).run(send=False)

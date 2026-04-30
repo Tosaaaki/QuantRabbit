@@ -7,9 +7,13 @@ from pathlib import Path
 
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
+from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_POSITION_EXECUTION,
+    DEFAULT_POSITION_EXECUTION_REPORT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_TRADER_DECISION,
@@ -37,6 +41,8 @@ class AutoTradeCycleSummary:
     live_ready: int
     canceled_orders: tuple[str, ...] = ()
     position_management_action: str | None = None
+    position_execution_status: str | None = None
+    position_execution_sent: bool = False
 
 
 class AutoTradeCycle:
@@ -52,20 +58,26 @@ class AutoTradeCycle:
         client: OandaExecutionClient | None = None,
         snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         intents_path: Path = DEFAULT_ORDER_INTENTS,
+        intent_report_path: Path = DEFAULT_ORDER_INTENT_REPORT,
         decision_path: Path = DEFAULT_TRADER_DECISION,
         decision_report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
         position_management_path: Path = DEFAULT_POSITION_MANAGEMENT,
         position_management_report_path: Path = DEFAULT_POSITION_MANAGEMENT_REPORT,
+        position_execution_path: Path = DEFAULT_POSITION_EXECUTION,
+        position_execution_report_path: Path = DEFAULT_POSITION_EXECUTION_REPORT,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
         live_enabled: bool = False,
     ) -> None:
         self.client = client or OandaExecutionClient()
         self.snapshot_path = snapshot_path
         self.intents_path = intents_path
+        self.intent_report_path = intent_report_path
         self.decision_path = decision_path
         self.decision_report_path = decision_report_path
         self.position_management_path = position_management_path
         self.position_management_report_path = position_management_report_path
+        self.position_execution_path = position_execution_path
+        self.position_execution_report_path = position_execution_report_path
         self.report_path = report_path
         self.live_enabled = live_enabled
 
@@ -77,12 +89,25 @@ class AutoTradeCycle:
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
-        intent_summary = IntentGenerator(output_path=self.intents_path).run(snapshot_path=self.snapshot_path)
+        intent_summary = IntentGenerator(output_path=self.intents_path, report_path=self.intent_report_path).run(
+            snapshot_path=self.snapshot_path
+        )
         if positions or orders:
             decision = self._brain().run(snapshot)
             position_decision = self._position_manager().run(snapshot)
+            position_execution = self._position_gateway().run(
+                decision=position_decision,
+                snapshot=snapshot,
+                send=send and positions > 0,
+            )
             canceled_orders: list[str] = []
             status = "MONITOR_ONLY_EXPOSURE_OPEN"
+            if position_execution.sent:
+                status = "POSITION_ACTION_SENT"
+            elif position_execution.status == "STAGED":
+                status = "POSITION_ACTION_STAGED"
+            elif position_execution.status == "BLOCKED":
+                status = "POSITION_ACTION_BLOCKED"
             if send and positions == 0 and decision.pending_cancel_order_ids:
                 for order_id in decision.pending_cancel_order_ids:
                     self.client.cancel_order(order_id)
@@ -100,6 +125,8 @@ class AutoTradeCycle:
                 live_ready=intent_summary.live_ready,
                 canceled_orders=tuple(canceled_orders),
                 position_management_action=position_decision.action,
+                position_execution_status=position_execution.status,
+                position_execution_sent=position_execution.sent,
             )
             self._write_report(summary, generated_at)
             return summary
@@ -155,10 +182,12 @@ class AutoTradeCycle:
             f"- Sent: `{summary.sent}`",
             f"- Canceled orders: `{', '.join(summary.canceled_orders) if summary.canceled_orders else 'none'}`",
             f"- Position management: `{summary.position_management_action or 'none'}`",
+            f"- Position execution: `{summary.position_execution_status or 'none'}` sent=`{summary.position_execution_sent}`",
             "",
             "## Cycle Contract",
             "",
-            "- If any open position or pending order exists, the cycle is monitor-only and sends no fresh entry.",
+            "- If any open position or pending order exists, the cycle is monitor-only for fresh entries and sends no new entry.",
+            "- Open positions are handed to PositionManager first, then the protection gateway may close, repair protection, or tighten SL when the action is risk-reducing.",
             "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
             "- If flat, the cycle refreshes broker truth, regenerates intents, asks TraderBrain to compare lanes, and sends only the selected lane when live mode is explicitly enabled.",
         ]
@@ -176,6 +205,14 @@ class AutoTradeCycle:
             trader_decision_path=self.decision_path,
             output_path=self.position_management_path,
             report_path=self.position_management_report_path,
+        )
+
+    def _position_gateway(self) -> PositionProtectionGateway:
+        return PositionProtectionGateway(
+            client=self.client,
+            output_path=self.position_execution_path,
+            report_path=self.position_execution_report_path,
+            live_enabled=self.live_enabled,
         )
 
 
