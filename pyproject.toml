@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-rabbit-vnext"
+version = "0.1.0"
+description = "QuantRabbit vNext rebuild: history ingestion, risk gateway, and dry-run execution core."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+qr-vnext = "quant_rabbit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

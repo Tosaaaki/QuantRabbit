@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any
+
+
+class Side(str, Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+    @classmethod
+    def parse(cls, value: str) -> "Side":
+        upper = value.strip().upper()
+        if upper not in cls.__members__:
+            raise ValueError(f"side must be LONG or SHORT, got {value!r}")
+        return cls[upper]
+
+
+class OrderType(str, Enum):
+    MARKET = "MARKET"
+    LIMIT = "LIMIT"
+    STOP_ENTRY = "STOP-ENTRY"
+
+    @classmethod
+    def parse(cls, value: str) -> "OrderType":
+        upper = value.strip().upper()
+        if upper == "STOP":
+            upper = "STOP-ENTRY"
+        for item in cls:
+            if item.value == upper:
+                return item
+        raise ValueError(f"unsupported order type: {value!r}")
+
+
+class Owner(str, Enum):
+    TRADER = "trader"
+    MANUAL = "manual"
+    EXTERNAL = "external"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class Quote:
+    pair: str
+    bid: float
+    ask: float
+    timestamp_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def mid(self) -> float:
+        return (self.bid + self.ask) / 2.0
+
+
+@dataclass(frozen=True)
+class BrokerPosition:
+    trade_id: str
+    pair: str
+    side: Side
+    units: int
+    entry_price: float
+    unrealized_pl_jpy: float = 0.0
+    take_profit: float | None = None
+    stop_loss: float | None = None
+    owner: Owner = Owner.UNKNOWN
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BrokerOrder:
+    order_id: str
+    pair: str | None
+    order_type: str
+    trade_id: str | None = None
+    price: float | None = None
+    state: str | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BrokerSnapshot:
+    fetched_at_utc: datetime
+    positions: tuple[BrokerPosition, ...] = ()
+    orders: tuple[BrokerOrder, ...] = ()
+    quotes: dict[str, Quote] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OrderIntent:
+    pair: str
+    side: Side
+    order_type: OrderType
+    units: int
+    tp: float
+    sl: float
+    thesis: str
+    owner: Owner = Owner.TRADER
+    entry: float | None = None
+    reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RiskIssue:
+    code: str
+    message: str
+    severity: str = "BLOCK"
+
+
+@dataclass(frozen=True)
+class RiskMetrics:
+    entry_price: float
+    loss_pips: float
+    reward_pips: float
+    risk_jpy: float
+    reward_jpy: float
+    reward_risk: float
+    spread_pips: float
+    jpy_per_pip: float
+
+
+@dataclass(frozen=True)
+class RiskDecision:
+    allowed: bool
+    metrics: RiskMetrics | None
+    issues: tuple[RiskIssue, ...]
+
+    @property
+    def block_reasons(self) -> list[str]:
+        return [issue.message for issue in self.issues if issue.severity == "BLOCK"]
