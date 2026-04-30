@@ -1,13 +1,14 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-04-30T16:55:02.312353+00:00`
-- Status: `SENT`
-- Positions: `0`
-- Orders: `0`
+- Generated at UTC: `2026-04-30T17:01:45.842743+00:00`
+- Status: `MONITOR_ONLY_EXPOSURE_OPEN`
+- Positions: `1`
+- Orders: `2`
 - Live-ready intents: `12`
-- Selected lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
-- Sent: `True`
+- Selected lane: `None`
+- Sent: `False`
 - Canceled orders: `none`
+- Position management: `HOLD_PROTECTED`
 
 ## Cycle Contract
 

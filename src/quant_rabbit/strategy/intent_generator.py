@@ -13,7 +13,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
-from quant_rabbit.risk import RiskEngine
+from quant_rabbit.risk import RiskEngine, RiskPolicy
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -119,7 +119,11 @@ class IntentGenerator:
                 note="Cannot build priced intent without a live quote.",
             )
         intent = _intent_from_lane(lane, quote)
-        risk = RiskEngine().validate(intent, snapshot, for_live_send=False)
+        risk = RiskEngine(policy=RiskPolicy(block_new_entries_with_pending_entry_orders=False)).validate(
+            intent,
+            snapshot,
+            for_live_send=False,
+        )
         strategy_issues = tuple(
             issue.__dict__ for issue in (strategy_profile.validate(intent, for_live_send=False) if strategy_profile else ())
         )
@@ -337,6 +341,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             price=float(item["price"]) if item.get("price") is not None else None,
             state=item.get("state"),
             units=int(item["units"]) if item.get("units") is not None else None,
+            owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
         )
         for item in payload.get("orders", []) or []
     )

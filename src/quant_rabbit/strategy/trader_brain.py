@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.models import BrokerSnapshot, Side, TradeMethod
+from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_MARKET_STORY_PROFILE,
@@ -31,6 +31,7 @@ class LaneScore:
     direction: str
     method: str
     order_type: str
+    entry: float | None
     status: str
     score: float
     action: str
@@ -144,6 +145,7 @@ class TraderBrain:
         direction = str(intent.get("side") or "")
         method = str((intent.get("market_context") or {}).get("method") or "")
         order_type = str(intent.get("order_type") or "")
+        entry = _optional_float(intent.get("entry"))
         status = str(result.get("status") or "")
         strategy = strategies.get((pair, direction), {})
         story = stories.get(pair, {})
@@ -214,6 +216,7 @@ class TraderBrain:
             direction=direction,
             method=method,
             order_type=order_type,
+            entry=entry,
             status=status,
             score=round(score, 2),
             action=action,
@@ -338,12 +341,20 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
         direction = _order_direction(order.units)
         if not order.pair or direction is None:
             continue
+        if order.owner != Owner.TRADER:
+            continue
         score = score_by_key.get((order.pair, direction))
         if score is None:
             contaminated.append(order.order_id)
             continue
         blocker_text = " ".join(score.blockers).upper()
-        if score.score < 115.0 or "INTERVENTION" in blocker_text or "VISUAL STORY" in blocker_text:
+        if (
+            score.score < 115.0
+            or "INTERVENTION" in blocker_text
+            or "VISUAL STORY" in blocker_text
+            or not _same_entry_type(order.order_type, score.order_type)
+            or _entry_drift_pips(order.pair, order.price, score.entry) > 2.0
+        ):
             contaminated.append(order.order_id)
     return tuple(contaminated)
 
@@ -356,6 +367,18 @@ def _order_direction(units: int | None) -> str | None:
     if units < 0:
         return Side.SHORT.value
     return None
+
+
+def _same_entry_type(order_type: str, lane_order_type: str) -> bool:
+    normalized_order = "STOP-ENTRY" if order_type.upper() == "STOP" else order_type.upper()
+    return normalized_order == lane_order_type.upper()
+
+
+def _entry_drift_pips(pair: str, order_price: float | None, lane_entry: float | None) -> float:
+    if order_price is None or lane_entry is None:
+        return 0.0
+    pip_factor = 100 if pair.endswith("_JPY") else 10000
+    return abs(order_price - lane_entry) * pip_factor
 
 
 def _method_theme_score(method: str, themes: dict[str, Any], rationale: list[str]) -> float:

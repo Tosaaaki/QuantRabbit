@@ -92,6 +92,7 @@ class BrokerOrder:
     price: float | None = None
     state: str | None = None
     units: int | None = None
+    owner: Owner = Owner.UNKNOWN
     raw: dict[str, Any] = field(default_factory=dict)
 
 

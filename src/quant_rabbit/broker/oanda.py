@@ -81,6 +81,7 @@ class OandaReadOnlyClient:
                     price=_optional_float(order.get("price")),
                     state=order.get("state"),
                     units=_optional_int(order.get("units")),
+                    owner=_owner_from_trade(order),
                     raw=order,
                 )
             )

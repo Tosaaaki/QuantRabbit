@@ -10,11 +10,14 @@ from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_POSITION_MANAGEMENT,
+    DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_DECISION_REPORT,
     ROOT,
 )
 from quant_rabbit.strategy.intent_generator import IntentGenerator
+from quant_rabbit.strategy.position_manager import PositionManager
 from quant_rabbit.strategy.trader_brain import ACTION_SEND_ENTRY, TraderBrain
 
 
@@ -33,6 +36,7 @@ class AutoTradeCycleSummary:
     orders: int
     live_ready: int
     canceled_orders: tuple[str, ...] = ()
+    position_management_action: str | None = None
 
 
 class AutoTradeCycle:
@@ -50,6 +54,8 @@ class AutoTradeCycle:
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         decision_path: Path = DEFAULT_TRADER_DECISION,
         decision_report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
+        position_management_path: Path = DEFAULT_POSITION_MANAGEMENT,
+        position_management_report_path: Path = DEFAULT_POSITION_MANAGEMENT_REPORT,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
         live_enabled: bool = False,
     ) -> None:
@@ -58,6 +64,8 @@ class AutoTradeCycle:
         self.intents_path = intents_path
         self.decision_path = decision_path
         self.decision_report_path = decision_report_path
+        self.position_management_path = position_management_path
+        self.position_management_report_path = position_management_report_path
         self.report_path = report_path
         self.live_enabled = live_enabled
 
@@ -69,8 +77,10 @@ class AutoTradeCycle:
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
+        intent_summary = IntentGenerator(output_path=self.intents_path).run(snapshot_path=self.snapshot_path)
         if positions or orders:
             decision = self._brain().run(snapshot)
+            position_decision = self._position_manager().run(snapshot)
             canceled_orders: list[str] = []
             status = "MONITOR_ONLY_EXPOSURE_OPEN"
             if send and positions == 0 and decision.pending_cancel_order_ids:
@@ -87,13 +97,13 @@ class AutoTradeCycle:
                 sent=False,
                 positions=positions,
                 orders=orders,
-                live_ready=0,
+                live_ready=intent_summary.live_ready,
                 canceled_orders=tuple(canceled_orders),
+                position_management_action=position_decision.action,
             )
             self._write_report(summary, generated_at)
             return summary
 
-        intent_summary = IntentGenerator(output_path=self.intents_path).run(snapshot_path=self.snapshot_path)
         decision = self._brain().run(snapshot)
         selected_lane_id = decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
         if selected_lane_id is None:
@@ -144,6 +154,7 @@ class AutoTradeCycle:
             f"- Selected lane: `{summary.selected_lane_id}`",
             f"- Sent: `{summary.sent}`",
             f"- Canceled orders: `{', '.join(summary.canceled_orders) if summary.canceled_orders else 'none'}`",
+            f"- Position management: `{summary.position_management_action or 'none'}`",
             "",
             "## Cycle Contract",
             "",
@@ -158,6 +169,13 @@ class AutoTradeCycle:
             intents_path=self.intents_path,
             output_path=self.decision_path,
             report_path=self.decision_report_path,
+        )
+
+    def _position_manager(self) -> PositionManager:
+        return PositionManager(
+            trader_decision_path=self.decision_path,
+            output_path=self.position_management_path,
+            report_path=self.position_management_report_path,
         )
 
 
@@ -187,6 +205,7 @@ def _snapshot_to_json(snapshot) -> str:
                 "price": order.price,
                 "state": order.state,
                 "units": order.units,
+                "owner": order.owner.value,
             }
             for order in snapshot.orders
         ],

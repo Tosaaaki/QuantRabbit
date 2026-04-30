@@ -366,6 +366,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
                 "price": order.price,
                 "state": order.state,
                 "units": order.units,
+                "owner": order.owner.value,
             }
             for order in snapshot.orders
         ],
@@ -443,6 +444,7 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
                 price=float(item["price"]) if item.get("price") is not None else None,
                 state=item.get("state"),
                 units=int(item["units"]) if item.get("units") is not None else None,
+                owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
             )
         )
     quotes = {}

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.automation import AutoTradeCycle
-from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Quote
+from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
 
 
 class AutoTradeCycleTest(unittest.TestCase):
@@ -25,6 +25,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                             order_type="STOP",
                             price=112.576,
                             state="PENDING",
+                            units=1000,
+                            owner=Owner.TRADER,
                         ),
                     ),
                     quotes={"AUD_JPY": Quote("AUD_JPY", 112.49, 112.50, timestamp_utc=now)},
@@ -37,9 +39,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 intents_path=root / "intents.json",
                 decision_path=root / "decision.json",
                 decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
                 report_path=root / "report.md",
                 live_enabled=True,
-            ).run(send=True)
+            ).run(send=False)
 
             self.assertEqual(summary.status, "MONITOR_ONLY_EXPOSURE_OPEN")
             self.assertFalse(summary.sent)

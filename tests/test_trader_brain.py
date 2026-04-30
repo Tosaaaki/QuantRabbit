@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Quote
+from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
 from quant_rabbit.strategy.trader_brain import ACTION_MONITOR_EXISTING, ACTION_SEND_ENTRY, TraderBrain
 
 
@@ -51,6 +51,7 @@ class TraderBrainTest(unittest.TestCase):
                         price=112.5,
                         state="PENDING",
                         units=1000,
+                        owner=Owner.TRADER,
                     ),
                 )
             )
