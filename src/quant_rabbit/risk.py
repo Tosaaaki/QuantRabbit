@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from .models import BrokerSnapshot, OrderIntent, Owner, Quote, RiskDecision, RiskIssue, RiskMetrics, Side
+from .models import BrokerSnapshot, OrderIntent, Owner, Quote, RiskDecision, RiskIssue, RiskMetrics, Side, TradeMethod
 
 
 @dataclass(frozen=True)
@@ -39,6 +39,7 @@ class RiskPolicy:
     block_new_entries_with_external_risk: bool = True
     block_unprotected_positions: bool = True
     require_live_enabled_for_send: bool = True
+    require_market_context_for_live_send: bool = True
 
 
 class RiskEngine:
@@ -67,6 +68,7 @@ class RiskEngine:
             issues.append(RiskIssue("BAD_UNITS", f"units must be positive, got {intent.units}"))
         if not intent.thesis.strip():
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
+        issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         if self.policy.block_new_entries_with_external_risk:
             for position in snapshot.positions:
@@ -172,6 +174,72 @@ class RiskEngine:
             return float(intent.entry)
         return quote.ask if intent.side == Side.LONG else quote.bid
 
+    def _market_context_issues(self, intent: OrderIntent, *, for_live_send: bool) -> list[RiskIssue]:
+        severity = "BLOCK" if for_live_send and self.policy.require_market_context_for_live_send else "WARN"
+        context = intent.market_context
+        if context is None:
+            return [
+                RiskIssue(
+                    "MISSING_MARKET_CONTEXT",
+                    "order intent must state market regime, narrative, chart story, method, and invalidation",
+                    severity=severity,
+                )
+            ]
+        issues: list[RiskIssue] = []
+        missing = [
+            name
+            for name, value in (
+                ("regime", context.regime),
+                ("narrative", context.narrative),
+                ("chart_story", context.chart_story),
+                ("invalidation", context.invalidation),
+            )
+            if not value.strip()
+        ]
+        if missing:
+            issues.append(
+                RiskIssue(
+                    "INCOMPLETE_MARKET_CONTEXT",
+                    f"market context is missing {', '.join(missing)}",
+                    severity=severity,
+                )
+            )
+        method_issue = self._method_regime_issue(intent, severity)
+        if method_issue:
+            issues.append(method_issue)
+        return issues
+
+    def _method_regime_issue(self, intent: OrderIntent, severity: str) -> RiskIssue | None:
+        context = intent.market_context
+        if context is None:
+            return None
+        regime_text = f"{context.regime} {context.chart_story} {context.narrative}".upper()
+        method = context.method
+        if method == TradeMethod.RANGE_ROTATION and _contains_any(regime_text, ("TREND", "IMPULSE", "BAND WALK")):
+            if not _contains_any(regime_text, ("RANGE", "BOX", "RAIL", "ROTATION")):
+                return RiskIssue(
+                    "METHOD_REGIME_MISMATCH",
+                    "range rotation method needs a range/box/rail story, not a one-way trend or impulse",
+                    severity=severity,
+                )
+        if method == TradeMethod.TREND_CONTINUATION and not _contains_any(
+            regime_text, ("TREND", "CONTINUATION", "STAIRCASE", "BAND WALK", "LADDER", "BREAKOUT")
+        ):
+            return RiskIssue(
+                "METHOD_REGIME_MISMATCH",
+                "trend continuation method needs a trend/continuation chart story",
+                severity=severity,
+            )
+        if method == TradeMethod.BREAKOUT_FAILURE and not _contains_any(
+            regime_text, ("FAIL", "REJECT", "RETEST", "RECLAIM", "TRAP", "BREAK")
+        ):
+            return RiskIssue(
+                "METHOD_REGIME_MISMATCH",
+                "breakout-failure method needs a failed break, rejection, retest, reclaim, or trapped-side story",
+                severity=severity,
+            )
+        return None
+
     def _metrics(self, intent: OrderIntent, quote: Quote, spec: InstrumentSpec, entry_price: float) -> RiskMetrics:
         if intent.side == Side.LONG:
             loss_pips = (entry_price - intent.sl) * spec.pip_factor
@@ -205,3 +273,7 @@ class RiskEngine:
             # During single-pair tests, fall back to a conservative recent USDJPY band.
             return 157.0
         raise ValueError(f"quote-to-JPY conversion not implemented for {pair}")
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in text for needle in needles)

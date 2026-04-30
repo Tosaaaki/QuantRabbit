@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, OrderIntent, OrderType, Owner, Quote, Side
+from quant_rabbit.models import BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskEngine
 
 
@@ -36,6 +36,7 @@ class RiskEngineTest(unittest.TestCase):
         assert decision.metrics is not None
         self.assertLessEqual(decision.metrics.risk_jpy, 500)
         self.assertGreaterEqual(decision.metrics.reward_risk, 1.2)
+        self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
 
     def test_live_send_requires_live_enabled(self) -> None:
         intent = OrderIntent(
@@ -50,6 +51,51 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine(live_enabled=False).validate(intent, snapshot(), for_live_send=True)
         self.assertFalse(decision.allowed)
         self.assertIn("LIVE_DISABLED", {issue.code for issue in decision.issues})
+        self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
+
+    def test_valid_context_removes_market_story_warning(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="eurusd_direct_usd_continuation",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="USD softness lets EUR squeeze higher",
+                chart_story="green staircase into upper band with shallow pullbacks",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1716 loses on M5 bodies",
+                event_risk="NFP later, no hold through spread window",
+                session="London-NY overlap",
+            ),
+        )
+        decision = RiskEngine().validate(intent, snapshot())
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
+
+    def test_range_method_rejects_one_way_trend_story_for_live_send(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="eurusd_bad_method",
+            market_context=MarketContext(
+                regime="TREND-BULL impulse",
+                narrative="USD softness is driving continuation",
+                chart_story="one-way trend extension with no two-way structure",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="1.1716 loses on bodies",
+            ),
+        )
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+        self.assertFalse(decision.allowed)
+        self.assertIn("METHOD_REGIME_MISMATCH", {issue.code for issue in decision.issues})
 
     def test_risk_cap_blocks_oversized_trade(self) -> None:
         intent = OrderIntent(

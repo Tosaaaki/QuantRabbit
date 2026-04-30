@@ -15,10 +15,17 @@
 4. Treat `RISK_REPAIR_CANDIDATE` as not-live-ready until a dry-run receipt proves loss is capped under 500 JPY.
 5. Feed the strategy profile into `risk-dry-run` so history status is enforced, not just reported.
 
+## Phase 2B: Market Story And Method Switching
+
+1. Mine `news_digest`, `news_flow_log`, `quality_audit`, `state.md`, daily state snapshots, and `strategy_memory.md`.
+2. Convert narrative/chart evidence into a seven-pair `market_story_profile`.
+3. Require each order intent to state `regime`, `narrative`, `chart_story`, `method`, and `invalidation`.
+4. Reject live sends when the chosen method contradicts the stated market regime, such as range rotation inside a one-way trend impulse.
+
 ## Phase 3: Execution Gateway
 
 1. Add one live gateway method behind `QR_LIVE_ENABLED=1`.
-2. Require current broker snapshot, fresh quote, TP, SL, risk JPY, reward/risk, and owner.
+2. Require current broker snapshot, fresh quote, TP, SL, risk JPY, reward/risk, owner, and market context.
 3. Journal every accepted and rejected intent.
 
 ## Phase 4: Automation

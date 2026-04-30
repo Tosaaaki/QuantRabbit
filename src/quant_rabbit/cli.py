@@ -9,15 +9,18 @@ from pathlib import Path
 
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.legacy.importer import LegacyImporter
-from quant_rabbit.models import BrokerSnapshot, OrderIntent, OrderType, Owner, Quote, Side
+from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
     DEFAULT_LEGACY_ARCHIVE,
+    DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_STRATEGY_REPORT,
 )
 from quant_rabbit.risk import RiskEngine
+from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.miner import StrategyMiner
 from quant_rabbit.strategy.profile import StrategyProfile
 
@@ -39,6 +42,11 @@ def main(argv: list[str] | None = None) -> int:
     p_mine.add_argument("--report", type=Path, default=DEFAULT_STRATEGY_REPORT)
     p_mine.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
 
+    p_story = sub.add_parser("mine-market-stories", help="Mine narrative, market regime, and chart-story evidence.")
+    p_story.add_argument("--archive", type=Path, default=DEFAULT_LEGACY_ARCHIVE)
+    p_story.add_argument("--report", type=Path, default=DEFAULT_MARKET_STORY_REPORT)
+    p_story.add_argument("--profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
     p_risk.add_argument("--snapshot", type=Path, required=True)
@@ -59,6 +67,24 @@ def main(argv: list[str] | None = None) -> int:
                     "legacy_rows": summary.legacy_rows,
                     "live_trade_events": summary.live_trade_events,
                     "journal_events": summary.journal_events,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "mine-market-stories":
+        summary = MarketStoryMiner(args.archive, args.report, args.profile).run()
+        print(
+            json.dumps(
+                {
+                    "archive": str(summary.archive),
+                    "report_path": str(summary.report_path),
+                    "profile_path": str(summary.profile_path),
+                    "artifacts": summary.artifacts,
+                    "story_lines": summary.story_lines,
+                    "pairs": summary.pairs,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -171,7 +197,24 @@ def _intent_from_json(payload: dict) -> OrderIntent:
         thesis=str(payload.get("thesis") or ""),
         reason=str(payload.get("reason") or ""),
         owner=Owner(str(payload.get("owner") or Owner.TRADER.value)),
+        market_context=_market_context_from_json(payload.get("market_context")),
         metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _market_context_from_json(payload: object) -> MarketContext | None:
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("market_context must be an object")
+    return MarketContext(
+        regime=str(payload.get("regime") or ""),
+        narrative=str(payload.get("narrative") or ""),
+        chart_story=str(payload.get("chart_story") or ""),
+        method=TradeMethod.parse(str(payload.get("method") or "")),
+        invalidation=str(payload.get("invalidation") or ""),
+        event_risk=str(payload.get("event_risk") or ""),
+        session=str(payload.get("session") or ""),
     )
 
 

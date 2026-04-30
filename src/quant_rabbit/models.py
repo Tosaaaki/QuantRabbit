@@ -34,6 +34,22 @@ class OrderType(str, Enum):
         raise ValueError(f"unsupported order type: {value!r}")
 
 
+class TradeMethod(str, Enum):
+    TREND_CONTINUATION = "TREND_CONTINUATION"
+    RANGE_ROTATION = "RANGE_ROTATION"
+    BREAKOUT_FAILURE = "BREAKOUT_FAILURE"
+    EVENT_RISK = "EVENT_RISK"
+    POSITION_MANAGEMENT = "POSITION_MANAGEMENT"
+
+    @classmethod
+    def parse(cls, value: str) -> "TradeMethod":
+        upper = value.strip().upper().replace("-", "_").replace(" ", "_")
+        for item in cls:
+            if item.value == upper:
+                return item
+        raise ValueError(f"unsupported trade method: {value!r}")
+
+
 class Owner(str, Enum):
     TRADER = "trader"
     MANUAL = "manual"
@@ -87,6 +103,17 @@ class BrokerSnapshot:
 
 
 @dataclass(frozen=True)
+class MarketContext:
+    regime: str
+    narrative: str
+    chart_story: str
+    method: TradeMethod
+    invalidation: str
+    event_risk: str = ""
+    session: str = ""
+
+
+@dataclass(frozen=True)
 class OrderIntent:
     pair: str
     side: Side
@@ -98,6 +125,7 @@ class OrderIntent:
     owner: Owner = Owner.TRADER
     entry: float | None = None
     reason: str = ""
+    market_context: MarketContext | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

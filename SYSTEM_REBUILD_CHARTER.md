@@ -12,7 +12,8 @@ Build a profitable discretionary FX execution system from a small, testable core
 4. Helper bypass is impossible. Manual/tagless or broker-synced exposure is treated as external risk and blocks new entries until adopted or closed.
 5. Runtime automation cannot create strategy. It can only schedule observation, reconcile broker truth, and call the execution gateway.
 6. Learning memory is advisory. It cannot silently force entries, suppress exits, or resize trades.
-7. A rebuild component is accepted only with a failing test, a passing test, and a live-risk failure mode documented.
+7. Every order intent must explain the current market story: regime, narrative, chart story, selected method, and invalidation.
+8. A rebuild component is accepted only with a failing test, a passing test, and a live-risk failure mode documented.
 
 ## vNext Shape
 
