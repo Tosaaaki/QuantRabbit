@@ -10,9 +10,12 @@ from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_TRADER_DECISION,
+    DEFAULT_TRADER_DECISION_REPORT,
     ROOT,
 )
 from quant_rabbit.strategy.intent_generator import IntentGenerator
+from quant_rabbit.strategy.trader_brain import ACTION_SEND_ENTRY, TraderBrain
 
 
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
@@ -29,6 +32,7 @@ class AutoTradeCycleSummary:
     positions: int
     orders: int
     live_ready: int
+    canceled_orders: tuple[str, ...] = ()
 
 
 class AutoTradeCycle:
@@ -44,12 +48,16 @@ class AutoTradeCycle:
         client: OandaExecutionClient | None = None,
         snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         intents_path: Path = DEFAULT_ORDER_INTENTS,
+        decision_path: Path = DEFAULT_TRADER_DECISION,
+        decision_report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
         live_enabled: bool = False,
     ) -> None:
         self.client = client or OandaExecutionClient()
         self.snapshot_path = snapshot_path
         self.intents_path = intents_path
+        self.decision_path = decision_path
+        self.decision_report_path = decision_report_path
         self.report_path = report_path
         self.live_enabled = live_enabled
 
@@ -62,8 +70,16 @@ class AutoTradeCycle:
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         if positions or orders:
+            decision = self._brain().run(snapshot)
+            canceled_orders: list[str] = []
+            status = "MONITOR_ONLY_EXPOSURE_OPEN"
+            if send and positions == 0 and decision.pending_cancel_order_ids:
+                for order_id in decision.pending_cancel_order_ids:
+                    self.client.cancel_order(order_id)
+                    canceled_orders.append(order_id)
+                status = "CANCELED_CONTAMINATED_PENDING"
             summary = AutoTradeCycleSummary(
-                status="MONITOR_ONLY_EXPOSURE_OPEN",
+                status=status,
                 report_path=self.report_path,
                 snapshot_path=self.snapshot_path,
                 intents_path=self.intents_path,
@@ -72,16 +88,17 @@ class AutoTradeCycle:
                 positions=positions,
                 orders=orders,
                 live_ready=0,
+                canceled_orders=tuple(canceled_orders),
             )
             self._write_report(summary, generated_at)
             return summary
 
         intent_summary = IntentGenerator(output_path=self.intents_path).run(snapshot_path=self.snapshot_path)
-        intents_payload = json.loads(self.intents_path.read_text())
-        selected_lane_id = _first_live_ready_lane(intents_payload)
+        decision = self._brain().run(snapshot)
+        selected_lane_id = decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
         if selected_lane_id is None:
             summary = AutoTradeCycleSummary(
-                status="NO_LIVE_READY_INTENT",
+                status=decision.action if decision.action != ACTION_SEND_ENTRY else "NO_LIVE_READY_INTENT",
                 report_path=self.report_path,
                 snapshot_path=self.snapshot_path,
                 intents_path=self.intents_path,
@@ -126,20 +143,22 @@ class AutoTradeCycle:
             f"- Live-ready intents: `{summary.live_ready}`",
             f"- Selected lane: `{summary.selected_lane_id}`",
             f"- Sent: `{summary.sent}`",
+            f"- Canceled orders: `{', '.join(summary.canceled_orders) if summary.canceled_orders else 'none'}`",
             "",
             "## Cycle Contract",
             "",
             "- If any open position or pending order exists, the cycle is monitor-only and sends no fresh entry.",
-            "- If flat, the cycle refreshes broker truth, regenerates intents, selects the first live-ready lane, and sends only when live mode is explicitly enabled.",
+            "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
+            "- If flat, the cycle refreshes broker truth, regenerates intents, asks TraderBrain to compare lanes, and sends only the selected lane when live mode is explicitly enabled.",
         ]
         self.report_path.write_text("\n".join(lines) + "\n")
 
-
-def _first_live_ready_lane(payload: dict) -> str | None:
-    for item in payload.get("results", []) or []:
-        if isinstance(item, dict) and item.get("status") == "LIVE_READY":
-            return str(item.get("lane_id") or "")
-    return None
+    def _brain(self) -> TraderBrain:
+        return TraderBrain(
+            intents_path=self.intents_path,
+            output_path=self.decision_path,
+            report_path=self.decision_report_path,
+        )
 
 
 def _snapshot_to_json(snapshot) -> str:
@@ -167,6 +186,7 @@ def _snapshot_to_json(snapshot) -> str:
                 "trade_id": order.trade_id,
                 "price": order.price,
                 "state": order.state,
+                "units": order.units,
             }
             for order in snapshot.orders
         ],

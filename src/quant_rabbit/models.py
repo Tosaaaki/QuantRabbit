@@ -91,6 +91,7 @@ class BrokerOrder:
     trade_id: str | None = None
     price: float | None = None
     state: str | None = None
+    units: int | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 

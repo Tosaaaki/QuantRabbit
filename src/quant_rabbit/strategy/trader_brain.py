@@ -1,0 +1,450 @@
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from quant_rabbit.models import BrokerSnapshot, Side, TradeMethod
+from quant_rabbit.paths import (
+    DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_ORDER_INTENTS,
+    DEFAULT_STRATEGY_PROFILE,
+    DEFAULT_TRADER_DECISION,
+    DEFAULT_TRADER_DECISION_REPORT,
+)
+
+
+JPY_CROSSES = {"AUD_JPY", "EUR_JPY", "GBP_JPY", "USD_JPY"}
+PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
+ACTION_SEND_ENTRY = "SEND_ENTRY"
+ACTION_MONITOR_EXISTING = "MONITOR_EXISTING_EXPOSURE"
+ACTION_NO_TRADE = "NO_TRADE"
+
+
+@dataclass(frozen=True)
+class LaneScore:
+    lane_id: str
+    pair: str
+    direction: str
+    method: str
+    order_type: str
+    status: str
+    score: float
+    action: str
+    blockers: tuple[str, ...]
+    rationale: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class TraderDecision:
+    action: str
+    selected_lane_id: str | None
+    generated_at_utc: str
+    reason: str
+    scores: tuple[LaneScore, ...]
+    positions: int
+    orders: int
+    pending_cancel_order_ids: tuple[str, ...] = ()
+
+
+class TraderBrain:
+    """Compare live-ready lanes using mined history, market story, and current risk state."""
+
+    def __init__(
+        self,
+        *,
+        intents_path: Path = DEFAULT_ORDER_INTENTS,
+        campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
+        strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
+        market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
+        output_path: Path = DEFAULT_TRADER_DECISION,
+        report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
+    ) -> None:
+        self.intents_path = intents_path
+        self.campaign_plan_path = campaign_plan_path
+        self.strategy_profile_path = strategy_profile_path
+        self.market_story_profile_path = market_story_profile_path
+        self.output_path = output_path
+        self.report_path = report_path
+
+    def run(self, snapshot: BrokerSnapshot) -> TraderDecision:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        intents_payload = _load_json(self.intents_path)
+        campaign_payload = _load_json(self.campaign_plan_path)
+        strategy_payload = _load_json(self.strategy_profile_path)
+        story_payload = _load_json(self.market_story_profile_path)
+        strategies = _strategy_index(strategy_payload)
+        stories = _story_index(story_payload)
+        campaign = _campaign_index(campaign_payload)
+        positions = len(snapshot.positions)
+        orders = len(snapshot.orders)
+        exposure_blockers = _exposure_blockers(snapshot)
+        scores = tuple(
+            sorted(
+                (
+                    self._score_lane(result, strategies, stories, campaign, exposure_blockers)
+                    for result in intents_payload.get("results", [])
+                    if isinstance(result, dict) and isinstance(result.get("intent"), dict)
+                ),
+                key=lambda item: item.score,
+                reverse=True,
+            )
+        )
+        if positions or orders:
+            pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
+            decision = TraderDecision(
+                action=ACTION_MONITOR_EXISTING,
+                selected_lane_id=None,
+                generated_at_utc=generated_at,
+                reason="Existing broker exposure is open; evaluate but do not stack fresh risk.",
+                scores=scores,
+                positions=positions,
+                orders=orders,
+                pending_cancel_order_ids=pending_cancel_order_ids,
+            )
+        else:
+            selected = next((item for item in scores if item.action == ACTION_SEND_ENTRY), None)
+            if selected:
+                decision = TraderDecision(
+                    action=ACTION_SEND_ENTRY,
+                    selected_lane_id=selected.lane_id,
+                    generated_at_utc=generated_at,
+                    reason=f"Selected highest-scoring live-ready lane: {selected.lane_id}",
+                    scores=scores,
+                    positions=positions,
+                    orders=orders,
+                )
+            else:
+                decision = TraderDecision(
+                    action=ACTION_NO_TRADE,
+                    selected_lane_id=None,
+                    generated_at_utc=generated_at,
+                    reason="No lane cleared trader-brain score threshold and blockers.",
+                    scores=scores,
+                    positions=positions,
+                    orders=orders,
+                )
+        self._write(decision)
+        return decision
+
+    def _score_lane(
+        self,
+        result: dict[str, Any],
+        strategies: dict[tuple[str, str], dict[str, Any]],
+        stories: dict[str, dict[str, Any]],
+        campaign: dict[str, dict[str, Any]],
+        exposure_blockers: tuple[str, ...],
+    ) -> LaneScore:
+        intent = result["intent"]
+        lane_id = str(result.get("lane_id") or "")
+        pair = str(intent.get("pair") or "")
+        direction = str(intent.get("side") or "")
+        method = str((intent.get("market_context") or {}).get("method") or "")
+        order_type = str(intent.get("order_type") or "")
+        status = str(result.get("status") or "")
+        strategy = strategies.get((pair, direction), {})
+        story = stories.get(pair, {})
+        lane = campaign.get(lane_id, {})
+        blockers: list[str] = list(exposure_blockers)
+        rationale: list[str] = []
+        score = 0.0
+
+        if status == "LIVE_READY":
+            score += 100.0
+            rationale.append("live-ready risk/profile receipt")
+        elif status == "DRY_RUN_PASSED":
+            score += 35.0
+            blockers.append("strategy still has live blockers")
+        else:
+            score -= 250.0
+            blockers.append(f"intent status is {status}")
+
+        profile_status = str(strategy.get("status") or "")
+        if profile_status == "CANDIDATE":
+            score += 25.0
+            rationale.append("strategy profile candidate")
+        elif profile_status:
+            score -= 25.0
+            blockers.append(f"strategy profile is {profile_status}")
+        else:
+            score -= 40.0
+            blockers.append("missing strategy profile")
+
+        pretrade_net = float(strategy.get("pretrade_net_jpy") or 0.0)
+        live_net = float(strategy.get("live_net_jpy") or 0.0)
+        live_worst = _optional_float(strategy.get("live_worst_jpy"))
+        score += _clamp(pretrade_net / 1000.0, -25.0, 25.0)
+        score += _clamp(live_net / 500.0, -30.0, 30.0)
+        if pretrade_net > 0:
+            rationale.append(f"positive pretrade evidence {pretrade_net:.0f} JPY")
+        if live_net > 0:
+            rationale.append(f"positive live evidence {live_net:.0f} JPY")
+        if live_net < 0:
+            blockers.append(f"negative live execution history {live_net:.0f} JPY")
+            score -= 20.0
+        if live_worst is not None and live_worst <= -500:
+            rationale.append(f"old worst loss repaired only by current sizing: {live_worst:.0f} JPY")
+            score -= 8.0
+
+        method_pressure = int((story.get("methods") or {}).get(method, 0))
+        score += _clamp(method_pressure * 0.25, 0.0, 30.0)
+        if method_pressure:
+            rationale.append(f"market-story method pressure {method_pressure}")
+        themes = dict(story.get("themes") or {})
+        examples = tuple(str(item) for item in story.get("examples", [])[:4])
+        score += _method_theme_score(method, themes, rationale)
+        score += _campaign_score(lane, rationale)
+        score += _narrative_risk_score(pair, direction, method, themes, examples, blockers, rationale)
+        score += _direction_conflict_penalty(result, rationale)
+
+        if result.get("risk_issues"):
+            blockers.extend(str(issue.get("message") or issue.get("code")) for issue in result.get("risk_issues", []))
+            score -= 100.0
+        if result.get("live_blockers"):
+            blockers.extend(str(item) for item in result.get("live_blockers", []))
+            score -= 100.0
+
+        action = ACTION_SEND_ENTRY if status == "LIVE_READY" and score >= 115.0 and not blockers else ACTION_NO_TRADE
+        return LaneScore(
+            lane_id=lane_id,
+            pair=pair,
+            direction=direction,
+            method=method,
+            order_type=order_type,
+            status=status,
+            score=round(score, 2),
+            action=action,
+            blockers=tuple(blockers[:8]),
+            rationale=tuple(rationale[:8]),
+        )
+
+    def _write(self, decision: TraderDecision) -> None:
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path.write_text(
+            json.dumps(
+                {
+                    "action": decision.action,
+                    "selected_lane_id": decision.selected_lane_id,
+                    "generated_at_utc": decision.generated_at_utc,
+                    "reason": decision.reason,
+                    "positions": decision.positions,
+                    "orders": decision.orders,
+                    "pending_cancel_order_ids": list(decision.pending_cancel_order_ids),
+                    "scores": [asdict(item) for item in decision.scores],
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Trader Decision Report",
+            "",
+            f"- Generated at UTC: `{decision.generated_at_utc}`",
+            f"- Action: `{decision.action}`",
+            f"- Selected lane: `{decision.selected_lane_id}`",
+            f"- Positions: `{decision.positions}`",
+            f"- Orders: `{decision.orders}`",
+            f"- Pending cancel ids: `{', '.join(decision.pending_cancel_order_ids) if decision.pending_cancel_order_ids else 'none'}`",
+            f"- Reason: {decision.reason}",
+            "",
+            "## Ranked Lanes",
+            "",
+        ]
+        for item in decision.scores[:12]:
+            lines.append(
+                f"- `{item.lane_id}` score=`{item.score}` action=`{item.action}` "
+                f"`{item.pair} {item.direction} {item.method}`"
+            )
+            if item.rationale:
+                lines.append(f"  - why: {'; '.join(item.rationale)}")
+            if item.blockers:
+                lines.append(f"  - blockers: {'; '.join(item.blockers)}")
+        lines.extend(
+            [
+                "",
+                "## Trader-Brain Contract",
+                "",
+                "- This layer must compare lanes; it must not send the first live-ready candidate mechanically.",
+                "- Existing broker exposure makes fresh-entry action monitor-only.",
+                "- JPY-cross long trades are penalized when intervention / thin-liquidity themes are active.",
+                "- The execution gateway remains the final authority for live risk.",
+            ]
+        )
+        self.report_path.write_text("\n".join(lines) + "\n")
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def _strategy_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    for item in payload.get("profiles", []) or []:
+        if isinstance(item, dict):
+            pair = str(item.get("pair") or "")
+            direction = str(item.get("direction") or "")
+            if pair and direction:
+                index[(pair, direction)] = item
+    return index
+
+
+def _story_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for item in payload.get("pair_profiles", []) or []:
+        if isinstance(item, dict) and item.get("pair"):
+            index[str(item["pair"])] = item
+    return index
+
+
+def _campaign_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for lane in payload.get("lanes", []) or []:
+        if not isinstance(lane, dict):
+            continue
+        lane_id = f"{lane.get('desk')}:{lane.get('pair')}:{lane.get('direction')}:{lane.get('method')}"
+        index[lane_id] = lane
+    return index
+
+
+def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
+    blockers: list[str] = []
+    for position in snapshot.positions:
+        blockers.append(f"open position exists: {position.pair} {position.side.value} id={position.trade_id}")
+    for order in snapshot.orders:
+        if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES:
+            blockers.append(f"pending entry exists: {order.pair} {order.order_type} id={order.order_id}")
+    return tuple(blockers)
+
+
+def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[LaneScore, ...]) -> tuple[str, ...]:
+    score_by_key: dict[tuple[str, str], LaneScore] = {}
+    for score in scores:
+        key = (score.pair, score.direction)
+        current = score_by_key.get(key)
+        if current is None or score.score > current.score:
+            score_by_key[key] = score
+    contaminated: list[str] = []
+    for order in snapshot.orders:
+        if order.trade_id or order.order_type.upper() not in PENDING_ENTRY_TYPES:
+            continue
+        direction = _order_direction(order.units)
+        if not order.pair or direction is None:
+            continue
+        score = score_by_key.get((order.pair, direction))
+        if score is None:
+            contaminated.append(order.order_id)
+            continue
+        blocker_text = " ".join(score.blockers).upper()
+        if score.score < 115.0 or "INTERVENTION" in blocker_text or "VISUAL STORY" in blocker_text:
+            contaminated.append(order.order_id)
+    return tuple(contaminated)
+
+
+def _order_direction(units: int | None) -> str | None:
+    if units is None:
+        return None
+    if units > 0:
+        return Side.LONG.value
+    if units < 0:
+        return Side.SHORT.value
+    return None
+
+
+def _method_theme_score(method: str, themes: dict[str, Any], rationale: list[str]) -> float:
+    score = 0.0
+    if method == TradeMethod.TREND_CONTINUATION.value and int(themes.get("momentum") or 0) > 0:
+        score += 12.0
+        rationale.append("momentum theme supports trend")
+    if method == TradeMethod.RANGE_ROTATION.value and int(themes.get("range_rail") or 0) > 0:
+        score += 12.0
+        rationale.append("range rail theme supports rotation")
+    if method == TradeMethod.BREAKOUT_FAILURE.value and int(themes.get("breakout_failure") or 0) > 0:
+        score += 14.0
+        rationale.append("breakout-failure theme supports trap/reclaim")
+    if int(themes.get("event_risk") or 0) > 0:
+        score -= 8.0
+        rationale.append("event risk requires restraint")
+    if int(themes.get("spread_liquidity") or 0) > 0:
+        score -= 10.0
+        rationale.append("spread/liquidity theme reduces urgency")
+    return score
+
+
+def _campaign_score(lane: dict[str, Any], rationale: list[str]) -> float:
+    role = str(lane.get("campaign_role") or "")
+    adoption = str(lane.get("adoption") or "")
+    score = 0.0
+    if "NOW" in role:
+        score += 14.0
+        rationale.append(f"campaign role {role}")
+    elif "BACKUP" in role:
+        score += 6.0
+    if adoption == "ORDER_INTENT_REQUIRED":
+        score += 8.0
+    return score
+
+
+def _narrative_risk_score(
+    pair: str,
+    direction: str,
+    method: str,
+    themes: dict[str, Any],
+    examples: tuple[str, ...],
+    blockers: list[str],
+    rationale: list[str],
+) -> float:
+    text = " ".join(examples).upper()
+    score = 0.0
+    if pair in JPY_CROSSES and direction == Side.LONG.value:
+        intervention = int(themes.get("intervention") or 0)
+        liquidity = int(themes.get("spread_liquidity") or 0)
+        if intervention or "INTERVENTION" in text or "RATE CHECK" in text:
+            score -= 55.0
+            blockers.append("JPY-cross long faces intervention/rate-check narrative risk")
+        if liquidity or "GOLDEN WEEK" in text:
+            score -= 20.0
+            rationale.append("JPY liquidity theme requires smaller/fewer entries")
+    if "WAIT" in text:
+        score -= 18.0
+        rationale.append("recent narrative contained WAIT language")
+    if "NO:" in text and method == TradeMethod.RANGE_ROTATION.value:
+        score -= 28.0
+        blockers.append("visual story explicitly rejected range rotation")
+    if "TREND-BULL" in text and direction == Side.LONG.value:
+        score += 10.0
+    if "TREND-BEAR" in text and direction == Side.SHORT.value:
+        score += 10.0
+    return score
+
+
+def _direction_conflict_penalty(result: dict[str, Any], rationale: list[str]) -> float:
+    intent = result.get("intent") or {}
+    pair = str(intent.get("pair") or "")
+    direction = str(intent.get("side") or "")
+    context = intent.get("market_context") or {}
+    narrative = f"{context.get('narrative') or ''} {context.get('chart_story') or ''}".upper()
+    if pair == "EUR_USD" and "DIRECTIONLESS" in narrative:
+        rationale.append("EUR_USD narrative is directionless; require cleaner proof")
+        return -10.0 if direction else 0.0
+    return 0.0
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))

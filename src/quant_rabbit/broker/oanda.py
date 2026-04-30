@@ -80,6 +80,7 @@ class OandaReadOnlyClient:
                     trade_id=order.get("tradeID"),
                     price=_optional_float(order.get("price")),
                     state=order.get("state"),
+                    units=_optional_int(order.get("units")),
                     raw=order,
                 )
             )
@@ -115,6 +116,15 @@ def _optional_float(value: object) -> float | None:
         if value is None:
             return None
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(float(value))
     except (TypeError, ValueError):
         return None
 
@@ -163,6 +173,17 @@ class OandaExecutionClient(OandaReadOnlyClient):
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json",
             },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read())
+
+    def cancel_order(self, order_id: str) -> dict:
+        url = f"{self.base_url}/v3/accounts/{self.account_id}/orders/{urllib.parse.quote(order_id)}/cancel"
+        req = urllib.request.Request(
+            url,
+            data=b"",
+            method="PUT",
+            headers={"Authorization": f"Bearer {self.token}"},
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read())

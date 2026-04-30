@@ -31,6 +31,6 @@ PYTHONPATH=src python3 -m quant_rabbit.cli risk-dry-run --intent intent.json --s
 
 `stage-live-order` turns one live-ready intent into an OANDA order request after fetching fresh broker truth and rerunning live validation. It stages by default. A real send requires `--send --confirm-live`, `QR_LIVE_ENABLED=1`, and an explicit `--lane-id`.
 
-`autotrade-cycle` is the automation entrypoint. It fetches fresh broker truth first; if any position or pending order exists, it runs monitor-only and sends no fresh entry. If flat, it regenerates intents and sends one live-ready lane only when `QR_LIVE_ENABLED=1` and `--send` are present.
+`autotrade-cycle` is the automation entrypoint. It fetches fresh broker truth first; if any position or pending order exists, it runs monitor-only and sends no fresh entry. If a pending order came from a lane the current TraderBrain now vetoes, the cycle can cancel that pending order before waiting for the next cycle. If flat, it regenerates intents, asks TraderBrain to compare the live-ready lanes against mined history, market story, campaign role, narrative risk, and current broker state, then sends only the selected lane when `QR_LIVE_ENABLED=1` and `--send` are present.
 
 Live execution is guarded behind this gateway: strategy evidence, market story, campaign role, fresh broker truth, risk geometry, and explicit live enablement must all pass before any OANDA write occurs.

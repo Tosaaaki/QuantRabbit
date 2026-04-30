@@ -35,6 +35,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 client=client,
                 snapshot_path=root / "snapshot.json",
                 intents_path=root / "intents.json",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
                 report_path=root / "report.md",
                 live_enabled=True,
             ).run(send=True)
@@ -43,12 +45,14 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse(summary.sent)
             self.assertEqual(client.orders_sent, [])
             self.assertIn("monitor-only", (root / "report.md").read_text())
+            self.assertTrue((root / "decision.json").exists())
 
 
 class FakeCycleClient:
     def __init__(self, snapshot: BrokerSnapshot) -> None:
         self.snapshot_value = snapshot
         self.orders_sent: list[dict[str, Any]] = []
+        self.orders_canceled: list[str] = []
 
     def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
         return self.snapshot_value
@@ -56,6 +60,10 @@ class FakeCycleClient:
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
         self.orders_sent.append(order_request)
         return {"orderCreateTransaction": {"id": "1"}}
+
+    def cancel_order(self, order_id: str) -> dict[str, Any]:
+        self.orders_canceled.append(order_id)
+        return {"orderCancelTransaction": {"id": "2", "orderID": order_id}}
 
 
 if __name__ == "__main__":

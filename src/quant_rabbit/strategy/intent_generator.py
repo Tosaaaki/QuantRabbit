@@ -336,6 +336,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             trade_id=item.get("trade_id"),
             price=float(item["price"]) if item.get("price") is not None else None,
             state=item.get("state"),
+            units=int(item["units"]) if item.get("units") is not None else None,
         )
         for item in payload.get("orders", []) or []
     )

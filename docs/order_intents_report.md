@@ -1,8 +1,8 @@
 # Order Intents Report
 
-- Generated at UTC: `2026-04-30T16:39:25.787834+00:00`
+- Generated at UTC: `2026-04-30T16:55:02.939938+00:00`
 - Campaign plan: `/Users/tossaki/App/QuantRabbit/data/daily_campaign_plan.json`
-- Snapshot: `data/broker_snapshot.json`
+- Snapshot: `/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json`
 - Results: `12`
 
 ## Status Counts
@@ -13,40 +13,40 @@
 
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=1000 entry=112.576 tp=112.72 sl=112.48
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=1000 entry=112.492 tp=112.636 sl=112.396
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG STOP-ENTRY` units=1000 entry=1.17282 tp=1.17402 sl=1.17202
+  - intent: `EUR_USD LONG STOP-ENTRY` units=1000 entry=1.1729 tp=1.1741 sl=1.1721
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT STOP-ENTRY` units=1000 entry=1.17234 tp=1.17114 sl=1.17314
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=1000 entry=1.17242 tp=1.17122 sl=1.17322
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG LIMIT` units=1000 entry=112.496 tp=112.64 sl=112.4
+  - intent: `AUD_JPY LONG LIMIT` units=1000 entry=112.412 tp=112.556 sl=112.316
 - `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG LIMIT` units=1000 entry=1.17234 tp=1.17354 sl=1.17154
+  - intent: `EUR_USD LONG LIMIT` units=1000 entry=1.17242 tp=1.17362 sl=1.17162
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT LIMIT` units=1000 entry=1.17282 tp=1.17162 sl=1.17362
+  - intent: `EUR_USD SHORT LIMIT` units=1000 entry=1.1729 tp=1.1717 sl=1.1737
 - `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=1000 entry=112.576 tp=112.72 sl=112.48
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=1000 entry=112.492 tp=112.636 sl=112.396
 - `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG STOP-ENTRY` units=1000 entry=1.17282 tp=1.17402 sl=1.17202
+  - intent: `EUR_USD LONG STOP-ENTRY` units=1000 entry=1.1729 tp=1.1741 sl=1.1721
 - `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT STOP-ENTRY` units=1000 entry=1.17234 tp=1.17114 sl=1.17314
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=1000 entry=1.17242 tp=1.17122 sl=1.17322
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=1000 entry=183.792 tp=183.963 sl=183.678
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=1000 entry=183.684 tp=183.855 sl=183.57
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `GBP_USD LONG STOP-ENTRY` units=1000 entry=1.35812 tp=1.35932 sl=1.35732
+  - intent: `GBP_USD LONG STOP-ENTRY` units=1000 entry=1.35811 tp=1.35931 sl=1.35731
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG LIMIT` units=1000 entry=183.697 tp=183.868 sl=183.583
+  - intent: `EUR_JPY LONG LIMIT` units=1000 entry=183.589 tp=183.76 sl=183.475
 
 ## Completion Rule
 

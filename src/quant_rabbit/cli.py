@@ -213,13 +213,21 @@ def main(argv: list[str] | None = None) -> int:
                     "positions": summary.positions,
                     "orders": summary.orders,
                     "live_ready": summary.live_ready,
+                    "canceled_orders": list(summary.canceled_orders),
                 },
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
             )
         )
-        return 0 if summary.status in {"SENT", "STAGED", "MONITOR_ONLY_EXPOSURE_OPEN", "NO_LIVE_READY_INTENT"} else 2
+        return 0 if summary.status in {
+            "SENT",
+            "STAGED",
+            "MONITOR_ONLY_EXPOSURE_OPEN",
+            "CANCELED_CONTAMINATED_PENDING",
+            "NO_LIVE_READY_INTENT",
+            "NO_TRADE",
+        } else 2
     if args.command == "plan-campaign":
         summary = CampaignPlanner(
             strategy_profile=args.strategy_profile,
@@ -357,6 +365,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
                 "trade_id": order.trade_id,
                 "price": order.price,
                 "state": order.state,
+                "units": order.units,
             }
             for order in snapshot.orders
         ],
@@ -433,6 +442,7 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
                 trade_id=item.get("trade_id"),
                 price=float(item["price"]) if item.get("price") is not None else None,
                 state=item.get("state"),
+                units=int(item["units"]) if item.get("units") is not None else None,
             )
         )
     quotes = {}
