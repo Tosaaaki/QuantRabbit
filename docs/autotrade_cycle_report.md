@@ -1,13 +1,13 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T21:46:54.152196+00:00`
-- Status: `GPT_WAIT`
+- Generated at UTC: `2026-05-04T22:16:44.679577+00:00`
+- Status: `GPT_REJECTED`
 - Positions: `1`
 - Orders: `2`
-- Live-ready intents: `0`
+- Live-ready intents: `6`
 - Receipt promotions: `0`
 - Decision source: `gpt_trader`
-- Deterministic lane: `None`
+- Deterministic lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
 - Selected lane: `None`
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
@@ -15,10 +15,10 @@
 - Canceled orders: `none`
 - Position management: `HOLD_PROTECTED`
 - Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`18216.6665` progress_pct=`13.298`
-- GPT trader: status=`ACCEPTED` action=`WAIT` allowed=`True` issues=`0`
+- Daily target: `PURSUE_TARGET` remaining=`18093.9408` progress_pct=`13.8821`
+- GPT trader: status=`REJECTED` action=`WAIT` allowed=`False` issues=`1`
 - GPT error: `none`
-- GPT wait recovery attempts: `2`
+- GPT wait recovery attempts: `0`
 - GPT recovery source: `none`
 - Market story refresh: `True` (source: `/Users/tossaki/App/QuantRabbit/logs`)
 
