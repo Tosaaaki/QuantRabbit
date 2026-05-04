@@ -40,11 +40,15 @@ GEOMETRY_SPREAD_FLOOR_MULT = 6.0
 GEOMETRY_ATR_TIMEFRAME = "M5"
 
 
-def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
+def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
     """Return per-trade JPY cap from the daily target ledger, or None if unavailable.
 
-    No silent literal fallback: if the file is missing or the value is missing/zero,
-    return None and let the caller decide whether to raise.
+    Reads `per_trade_risk_budget_jpy` (= daily_risk_budget_jpy / target_trades_per_day),
+    written by DailyTargetLedger. Falling back to `daily_risk_budget_jpy` (the
+    whole-day total) would mean a single trade can burn the day's entire risk
+    budget, which is exactly the failure mode this split was built to remove.
+    Per AGENT_CONTRACT §3.5: no silent literal fallback; if the file is missing
+    or the value is missing/zero, return None and let the caller raise.
     """
     if not state_path.exists():
         return None
@@ -52,7 +56,7 @@ def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE)
         payload = json.loads(state_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    raw = payload.get("daily_risk_budget_jpy")
+    raw = payload.get("per_trade_risk_budget_jpy")
     try:
         value = float(raw) if raw is not None else 0.0
     except (TypeError, ValueError):
@@ -170,9 +174,12 @@ class IntentGenerator:
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
         strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
-        # Pull equity-derived cap from daily_target_state.json when neither
-        # explicit JPY nor pct arguments were supplied. No JPY literal fallback.
-        default_cap = _daily_risk_budget_from_state()
+        # Pull equity-derived per-trade cap from daily_target_state.json when
+        # neither explicit JPY nor pct arguments were supplied. This is the
+        # day's risk budget already divided by the target trade pace, so each
+        # generated lane sizes against one shot — not the whole day. No JPY
+        # literal fallback (§3.5).
+        default_cap = _per_trade_risk_from_state()
         max_loss_jpy = resolve_max_loss_jpy(
             max_loss_jpy=self.max_loss_jpy,
             max_loss_pct=self.max_loss_pct,

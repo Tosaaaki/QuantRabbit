@@ -242,6 +242,72 @@ class DailyTargetLedgerTest(unittest.TestCase):
 
             self.assertAlmostEqual(summary.target_jpy, 21_000.0, places=2)
 
+    def test_per_trade_risk_splits_daily_budget_by_target_trade_pace(self) -> None:
+        """Per-trade cap = daily_risk_budget / target_trades_per_day.
+
+        Decoupling per-trade from per-day is what makes 'fire many small shots
+        and let winners run' actually behave that way: a single losing trade
+        spends only 1/N of the day's risk, so the trader can keep firing.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+                target_trades_per_day=10,
+            )
+
+            self.assertEqual(summary.target_trades_per_day, 10)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 400.0)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["target_trades_per_day"], 10)
+            self.assertAlmostEqual(payload["per_trade_risk_budget_jpy"], 400.0)
+            self.assertIn("Per-trade risk cap", (root / "target.md").read_text())
+
+    def test_target_trades_per_day_falls_back_to_policy_default_with_documented_value(self) -> None:
+        """When neither caller arg nor previous state sets the pace, RiskPolicy's
+        documented default applies (currently 10) and is recorded in the snapshot.
+        Per §3.5 the constant is documented, not silent."""
+        from quant_rabbit.risk import RiskPolicy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(start_balance_jpy=200_000, daily_risk_budget_jpy=4000)
+
+            self.assertEqual(summary.target_trades_per_day, RiskPolicy().target_trades_per_day)
+            self.assertAlmostEqual(
+                summary.per_trade_risk_budget_jpy,
+                4000.0 / RiskPolicy().target_trades_per_day,
+            )
+
+    def test_target_trades_per_day_persists_across_runs(self) -> None:
+        """Once an operator sets a pace, subsequent ledger runs keep it
+        without requiring the flag again — mirrors how daily_risk_budget_jpy
+        already persists."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            )
+            ledger.run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+                target_trades_per_day=20,
+            )
+
+            summary = ledger.run(realized_pl_jpy=500)
+
+            self.assertEqual(summary.target_trades_per_day, 20)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 200.0)
+
     def test_explicit_start_balance_overrides_snapshot_account(self) -> None:
         from quant_rabbit.models import AccountSummary
 
