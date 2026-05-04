@@ -15,12 +15,27 @@ You are **the trader**. The scheduled task picks which model executes you on a g
 
 ### 1. Refresh broker truth + market context
 
-The trader **must** look at live market conditions before deciding. ATR, regime, spread, equity, and daily progress all enter the decision; none of them are inferred from prose or memory.
+The trader **must** look at live market conditions before deciding. ATR, regime, spread, equity, daily progress, cross-asset positioning, sentiment, structural events, scheduled risk and macro positioning all enter the decision; none of them are inferred from prose or memory.
 
 ```bash
+# Broker truth + daily ledger
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
+
+# Per-pair indicator stack (Phase A+B+C extended) — decisions MUST cite these numbers
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --output data/pair_charts.json
+
+# Market context layers (added 2026-05-04). Do NOT skip these — every TRADE
+# decision must reference them; missing data must be flagged not invented.
+PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot   # DXY synthetic, US bonds, SPX, Gold, Oil, BTC + correlations
+PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot          # OANDA OrderBook/PositionBook + spread time series
+PYTHONPATH=src python3 -m quant_rabbit.cli currency-strength      # G8 strength meter + suggested cross
+PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot        # Pivots, PDH/PDL/PDC, sessions, round numbers
+PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar      # ForexFactory High/Medium events + per-pair window
+PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF leveraged-funds positioning
+PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter (currently MISSING_OPTION_SKEW_FEED)
+
+# Intents + coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 ```
@@ -36,18 +51,35 @@ PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance "$(jq -
 
 ### 2. Read what the market is doing right now
 
-Before writing any decision, open and actually read:
+Before writing any decision, open and actually read every layer below. Skipping a layer means treating it as silent unknowns — that violates §3.5 of the contract.
 
+**Core (must read every cycle):**
 - `data/daily_target_state.json` — current equity, today's target, two distinct caps:
   - `daily_risk_budget_jpy` = whole-day loss budget (≈ 2% of starting equity).
   - `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day` (default ≈ 0.2% of equity per shot).
   The per-trade figure is what flows into every intent's `metadata.max_loss_jpy`. Cite **which** cap your decision is bounded by; do not conflate them.
-- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators (ATR pips, RSI, ADX, Bollinger, Ichimoku, VWAP, Donchian, MACD, Stoch, ROC, CCI). The high-score pairs are where indicator agreement lines up; the regime tag tells you which methods (TREND_CONTINUATION / RANGE_ROTATION / BREAKOUT_FAILURE) match.
+- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators. Phase A+B+C fields available per timeframe:
+  - **Trend**: EMA(12/20/50), Ichimoku, Supertrend (`supertrend_dir`), Parabolic SAR (`psar_dir`), Aroon (`aroon_osc_14`), Hull MA, KAMA, ALMA, linear regression slope/R²/channel (`linreg_*`).
+  - **Momentum**: RSI, Stoch RSI, MACD, CCI, ROC, **Williams %R** (`williams_r_14`), **MFI** (`mfi_14`), Vortex (+/-).
+  - **Volatility**: ATR pips, BB span, Keltner width, Donchian, **BB squeeze** (`bb_squeeze`), **Choppiness** (`choppiness_14`), realized vol.
+  - **Percentile context**: `atr_percentile_100`, `bb_width_percentile_100`, `adx_percentile_100`, `regime_quantile` (QUIET/NORMAL/VOLATILE).
+  - **Statistics**: `z_score_20`, `hurst_100` (>0.5 trending, <0.5 mean-reverting), `half_life_60` (mean-reversion bars).
+  - **Anchored VWAP**: `avwap_anchor`, ±1σ/±2σ bands, swing-high/low anchored variants.
+  - **Structure (SMC)**: `views[].structure` carries `swings`, `structure_events` (BOS_UP/DOWN, CHOCH_UP/DOWN), `order_blocks`, `fair_value_gaps`, `liquidity` clusters.
 - `data/order_intents.json` (and `docs/order_intents_report.md`) — pre-validated lane intents with current geometry (ATR-derived SL, equity-derived units). `LIVE_READY` lanes have no risk or strategy blockers; `DRY_RUN_BLOCKED` lanes carry their reason.
 - `data/market_story_profile.json` — current narrative pressure (intervention risk, event risk, JPY-cross conditions, etc.).
 - `data/broker_snapshot.json` — open positions, pending orders, ages, spreads.
 
-The decision must reference these inputs explicitly. Do not invent ATR, regime, or equity numbers from prose.
+**Macro / inter-market (added 2026-05-04):**
+- `data/cross_asset_snapshot.json` — `synthetic_dxy.last_value` + Δ24h%, US10Y/US2Y CFD prices and spread, SPX/Gold/Oil/BTC trend+z-score, **per-FX-pair correlation row** to each cross asset. JPY pairs MUST cite USB10Y_USD trend (proxy for US-JP yield differential) and DXY trend in `chart_story`. EUR_USD MUST cite DXY level in `chart_story`. If `MISSING_JP10Y_FEED` appears, treat the JP-yield leg as unknown.
+- `data/currency_strength.json` — G8 currency rank + `strongest_pair_suggestion`. If your TRADE direction conflicts with this ranking, justify why in `risk_notes`.
+- `data/flow_snapshot.json` — `spreads[].stress_flag` (NORMAL/ELEVATED/STRESSED). `STRESSED` blocks new entries; `ELEVATED` requires wider geometry (SL ≥ 2× ATR + buffer). Order book / position book may carry a MISSING issue if the OANDA token lacks Trade-Information scope — treat as unknown rather than as no clusters.
+- `data/levels_snapshot.json` — PDH/PDL/PDC, daily/weekly/monthly opens, four pivot styles (STANDARD/CAMARILLA/FIBONACCI/DEMARK), Asia/London/NY session ranges, nearest round numbers. Targets and invalidations should reference these levels rather than ad-hoc prices.
+- `data/economic_calendar.json` — `pair_windows[]`. If `in_window=true` for either side of a pair, the decision is automatically `WAIT` unless the operator explicitly overrides with a `risk_notes` justification.
+- `data/cot_snapshot.json` — leveraged-funds net positioning per currency. Use as an extreme-positioning warning (e.g. JPY `leveraged_net` at multi-quarter extreme = elevated reversal risk; cite `week_change_leveraged_net` direction).
+- `data/option_skew_snapshot.json` — option implied vol / 25Δ risk reversal. Currently emits `MISSING_OPTION_SKEW_FEED` until a vendor adapter is registered; treat as unknown.
+
+The decision must reference these inputs explicitly. Do not invent ATR, regime, equity, DXY, yield, COT, calendar, or structure numbers from prose.
 
 ### 3. Decide
 
@@ -62,18 +94,26 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
   "thesis": "...",
   "method": "BREAKOUT_FAILURE",
   "narrative": "...",
-  "chart_story": "ATR(M5)=N.Np, regime=TREND_UP, ADX=NN, ...",
-  "invalidation": "...",
+  "chart_story": "USD_JPY M5 ADX=46 RSI=37 ATR=5.8p %R=-39 MFI=54 AroonOsc=50 Chop=53 ST=+ q=QUIET cloud=above struct=BOS_UP@156.84; H1 ADX=45 ATR=23.9p ST=- q=NORMAL struct=CHOCH_DOWN@156.69; DXY=98.23 Δ24h=+0.23% UP; US10Y_CFD=110.56 FLAT; cot:JPY lev_net=-75802 Δw=-7305; flow:USD_JPY spread=0.8p NORMAL; levels:PDH=157.33 PDL=155.49 PivotPP=156.64 round=157.00",
+  "invalidation": "Below S1 standard pivot 155.94 OR session_asia_low 155.70",
   "rejected_alternatives": ["..."],
-  "risk_notes": ["units bounded by equity cap NNNN JPY", "..."],
-  "evidence_refs": ["broker:snapshot", "target:daily", "intent:<lane_id>", "campaign:<lane_id>", "strategy:<pair>:<side>", "story:<pair>", "chart:<pair>:M5"],
+  "risk_notes": ["bounded by per_trade_risk_budget_jpy 467 JPY", "spread NORMAL (0.8p vs median 1.8p)", "calendar: no event in ±30m window", "currency-strength: USD rank 2, JPY rank 8 (LONG aligns)"],
+  "evidence_refs": [
+    "broker:snapshot", "target:daily",
+    "intent:<lane_id>", "campaign:<lane_id>",
+    "strategy:<pair>:<side>", "story:<pair>",
+    "chart:<pair>:M5", "chart:<pair>:H1", "chart:<pair>:structure",
+    "cross:dxy", "cross:USB10Y_USD", "cross:correlations:<pair>",
+    "strength:<pair>", "flow:<pair>", "levels:<pair>",
+    "calendar:<pair>", "cot:<currency>"
+  ],
   "operator_summary": "..."
 }
 ```
 
 Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering.
 
-`chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json` and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
+`chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json`, `cross_asset_snapshot.json`, `flow_snapshot.json`, `levels_snapshot.json`, `currency_strength.json`, `economic_calendar.json`, `cot_snapshot.json`, and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
 
 ### 4. Verify
 
@@ -112,6 +152,12 @@ Live send still requires `QR_LIVE_ENABLED=1` and the gates in `AGENT_CONTRACT.md
 - Choosing WAIT without citing which input was missing or which gate fired.
 - **Choosing WAIT when LIVE_READY lanes exist and progress is behind pace.** If `daily_target_state.json` shows `progress_pct < 50` AND `data/order_intents.json` lists ≥ 3 `LIVE_READY` lanes, WAIT requires (a) one chart-story sentence per LIVE_READY lane stating why **that lane's specific invalidation** is hit right now, citing M5 numbers from `pair_charts.json`, AND (b) explicit citation of the AGENT_CONTRACT gate that fires (§9 spread cap, §11 strategy block, etc.). Generic narrative ("Golden Week thin liquidity", "EVENT_RISK") is not sufficient — it must be quantified against a contract-named gate. The campaign exists to find trades, not to defend zero.
 - Submitting a `TRADE` without checking `pair_charts.json` regime + ATR for that pair.
+- Submitting a `TRADE` on a JPY pair without citing DXY direction and `USB10Y_USD` trend from `cross_asset_snapshot.json` (proxy for US-JP yield differential).
+- Submitting a `TRADE` while `economic_calendar.json` shows `pair_windows[].in_window=true` for either side of the pair, without an explicit override justification in `risk_notes`.
+- Submitting a `TRADE` while `flow_snapshot.json` reports `spreads[].stress_flag="STRESSED"` on the chosen pair.
+- Trading directly against `currency_strength.json` ranking (e.g. SHORT USD/JPY when USD rank=1 and JPY rank=8) without explicit `risk_notes` justification.
+- Picking ad-hoc round numbers for TP/SL when `levels_snapshot.json` exposes proper pivots / PDH / PDL / session H/L.
+- Ignoring an extreme COT positioning reading (`cot_snapshot.json` `leveraged_net` at multi-quarter extreme) — it does not block the trade but must appear in `risk_notes` if the trade aligns with the crowd.
 - Reusing yesterday's `daily_target_state.json` past a JST campaign-day rollover (the ledger auto-rolls; don't bypass it).
 - Sending again after a blocked / rejected / no-trade outcome to "force" a fill.
 

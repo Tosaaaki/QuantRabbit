@@ -254,6 +254,18 @@ PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --start-balance 222781 --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 
+# Per-pair indicator stack (Phase A+B+C extended)
+PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --output data/pair_charts.json
+
+# Market context layers (must be refreshed before every trader cycle)
+PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot   # DXY synthetic, US bond CFDs, SPX/Gold/Oil/BTC, FX correlations
+PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot          # OANDA OrderBook/PositionBook + spread time series
+PYTHONPATH=src python3 -m quant_rabbit.cli currency-strength      # G8 strength meter
+PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot        # Pivots, PDH/PDL/PDC, sessions, round numbers
+PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar      # ForexFactory High/Medium events + per-pair window
+PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF leveraged-funds positioning
+PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter (currently MISSING_OPTION_SKEW_FEED)
+
 # Decision verification
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
     --snapshot data/broker_snapshot.json \
