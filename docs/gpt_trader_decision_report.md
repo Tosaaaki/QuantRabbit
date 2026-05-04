@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T13:21:46.243853+00:00`
+- Generated at UTC: `2026-05-04T13:39:59.668661+00:00`
 - Status: `ACCEPTED`
 - Action: `TRADE`
 - Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: TRADE failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE. Entry 1.17039 STOP, TP 1.16751 (28.8p), SL 1.17087 (4.8p), units 13k, risk 980 JPY, reward 5,881 JPY (5.99 RR). Currency strength (USD #1, EUR #7) + chart short bias (0.62) + M15 TREND_DOWN + DXY UP + spread NORMAL + no event risk = high confluence. STOP-ENTRY waits for breakout failure trigger. Progress 8.6% of target, this trade targets +30.6% of remaining gap.
+- Operator summary: EUR_USD SHORT via breakout failure: M15 TREND_DOWN (ADX=27.1) + H1 structure BOS_DOWN + DXY strength + COT flow shift (EUR longs reducing) + currency strength alignment (USD #1, EUR #7). STOP-ENTRY at 1.17139 captures failed upside breakout attempts before continuation to 1.16851. 5.99 RR, 5,880 JPY reward, 980 JPY risk. High conviction on multi-timeframe + cross-asset + institutional flow confluence.
 
 ## Verification Issues
 

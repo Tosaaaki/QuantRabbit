@@ -1,17 +1,17 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T13:21:45.159382+00:00`
-- Status: `STAGED`
+- Generated at UTC: `2026-05-04T13:39:58.548202+00:00`
+- Status: `SENT`
 - Positions: `0`
 - Orders: `0`
-- Live-ready intents: `12`
+- Live-ready intents: `9`
 - Receipt promotions: `0`
 - Decision source: `gpt_trader`
 - Deterministic lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
 - Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
 - Selected lane score: `186.44`
 - Selected lane size multiple: `1.0`
-- Sent: `False`
+- Sent: `True`
 - Canceled orders: `none`
 - Position management: `none`
 - Position execution: `none` sent=`False`
