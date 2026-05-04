@@ -1,11 +1,11 @@
 # Coverage Optimization Report
 
-- Generated at UTC: `2026-05-04T07:46:51.816515+00:00`
+- Generated at UTC: `2026-05-04T07:53:47.471471+00:00`
 - Status: `COVERAGE_REQUIRES_REPLAY_EVIDENCE`
 - Remaining target: `21011 JPY`
-- Live-ready reward: `27620 JPY` (`131.5%`)
-- Sequential ladder reward: `22217 JPY` (`105.7%`, steps=`8`)
-- Potential reward after promotions: `27620 JPY` (`131.5%`)
+- Live-ready reward: `27625 JPY` (`131.5%`)
+- Sequential ladder reward: `22221 JPY` (`105.8%`, steps=`8`)
+- Potential reward after promotions: `27625 JPY` (`131.5%`)
 - Remaining risk budget: `4202 JPY`
 
 ## Blockers
@@ -21,23 +21,23 @@
 ## Lanes
 
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`3264` risk=`408` rr=`8.00` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2146` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2711` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
+- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2147` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2712` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`3264` risk=`408` rr=`8.00` live_ready=`True` promotion_candidate=`False`
-- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`2146` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY` reward=`2711` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
+- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`2147` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
+- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY` reward=`2712` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
 - `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`3264` risk=`408` rr=`8.00` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`2146` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`LIVE_READY` reward=`2711` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
+- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`2147` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
+- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`LIVE_READY` reward=`2712` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`738` risk=`378` rr=`1.95` live_ready=`False` promotion_candidate=`False`
   - blocker: EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`1086` risk=`489` rr=`2.22` live_ready=`True` promotion_candidate=`False`
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`1086` risk=`490` rr=`2.22` live_ready=`True` promotion_candidate=`False`
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`738` risk=`378` rr=`1.95` live_ready=`False` promotion_candidate=`False`
   - blocker: EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`1086` risk=`489` rr=`2.22` live_ready=`True` promotion_candidate=`False`
+- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`1086` risk=`490` rr=`2.22` live_ready=`True` promotion_candidate=`False`
 - `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`738` risk=`378` rr=`1.95` live_ready=`False` promotion_candidate=`False`
   - blocker: EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
-- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`1086` risk=`489` rr=`2.22` live_ready=`True` promotion_candidate=`False`
+- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`1086` risk=`490` rr=`2.22` live_ready=`True` promotion_candidate=`False`
 
 ## Coverage Contract
 
