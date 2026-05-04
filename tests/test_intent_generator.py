@@ -120,6 +120,38 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(result["intent"]["metadata"]["target_reward_risk"], 4.0)
             self.assertAlmostEqual(result["risk_metrics"]["reward_risk"], 4.0)
 
+    def test_open_position_with_per_trade_sized_risk_does_not_block_new_entry(self) -> None:
+        # AGENT_CONTRACT §3.5 regression: portfolio cap is the WHOLE-DAY risk
+        # budget, not the per-trade slice. A previous bug fed `max_loss_jpy`
+        # (per-trade cap, e.g. 1050 JPY) into `max_portfolio_loss_jpy` so the
+        # second any position opened, every fresh-entry candidate failed
+        # `open_risk + candidate_risk > 1051` and the trader fell back to WAIT
+        # for the rest of the day. With the fix, when no whole-day cap is
+        # available (no daily_target_state.json on disk) the portfolio gate is
+        # a no-op — it does NOT silently inherit the per-trade cap.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            campaign = _campaign(root)
+            strategy = _strategy(root)
+            snapshot = _snapshot_with_position(root)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=campaign,
+                strategy_profile=strategy,
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=1050.0,
+            ).run(snapshot_path=snapshot)
+
+            payload = json.loads(output.read_text())
+            result = payload["results"][0]
+            issue_codes = {i["code"] for i in result["risk_issues"]}
+            # Per-trade cap (1050) is still enforced on the new candidate via
+            # `loss_cap`; portfolio cap (whole day) is absent in this test
+            # because no ledger exists, so the portfolio gate is a no-op.
+            self.assertNotIn("PORTFOLIO_LOSS_CAP_EXCEEDED", issue_codes)
+
     def test_sizes_units_with_percentage_risk_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -207,6 +239,38 @@ def _snapshot(root: Path, *, usd_jpy: float = 156.64) -> Path:
                 "quotes": {
                     "EUR_USD": {"bid": 1.17322, "ask": 1.17330, "timestamp_utc": now},
                     "USD_JPY": {"bid": usd_jpy, "ask": usd_jpy + 0.008, "timestamp_utc": now},
+                },
+            }
+        )
+    )
+    return path
+
+
+def _snapshot_with_position(root: Path) -> Path:
+    """Snapshot carrying an open trader position whose worst-case loss is
+    near the per-trade cap (≈1000 JPY @ 5000u EUR_USD with a 20-pip stop)."""
+    path = root / "snapshot.json"
+    now = datetime.now(timezone.utc).isoformat()
+    path.write_text(
+        json.dumps(
+            {
+                "fetched_at_utc": now,
+                "positions": [
+                    {
+                        "trade_id": "101",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 5000,
+                        "entry_price": 1.1710,
+                        "take_profit": 1.1750,
+                        "stop_loss": 1.1690,
+                        "owner": "trader",
+                    }
+                ],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {"bid": 1.17322, "ask": 1.17330, "timestamp_utc": now},
+                    "USD_JPY": {"bid": 156.64, "ask": 156.648, "timestamp_utc": now},
                 },
             }
         )

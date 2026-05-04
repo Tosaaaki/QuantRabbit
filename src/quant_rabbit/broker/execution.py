@@ -9,12 +9,14 @@ from typing import Any, Protocol
 
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
+    DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.risk import RiskEngine, RiskIssue, RiskPolicy, resolve_max_loss_jpy
+from quant_rabbit.strategy.intent_generator import _daily_risk_budget_from_state
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -49,6 +51,7 @@ class LiveOrderGateway:
         max_loss_jpy: float | None = None,
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
+        portfolio_loss_cap_jpy: float | None = None,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -58,6 +61,7 @@ class LiveOrderGateway:
         self.max_loss_jpy = max_loss_jpy
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
+        self.portfolio_loss_cap_jpy = portfolio_loss_cap_jpy
 
     def run(
         self,
@@ -101,11 +105,20 @@ class LiveOrderGateway:
             default_max_loss_jpy=RiskPolicy().max_loss_jpy,
             label="stage-live-order risk cap",
         )
+        # AGENT_CONTRACT §3.5: portfolio cap (open + candidate exposure for the
+        # day) is the whole-day risk budget, not the per-trade slice. Using
+        # `max_loss_jpy` here would treat the per-shot cap as a portfolio
+        # ceiling, blocking every additional shot once one position opens.
+        portfolio_loss_cap = (
+            self.portfolio_loss_cap_jpy
+            if self.portfolio_loss_cap_jpy is not None
+            else _daily_risk_budget_from_state(DEFAULT_DAILY_TARGET_STATE)
+        )
         validate_live_enabled = self.live_enabled if send else True
         risk = RiskEngine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
-                max_portfolio_loss_jpy=max_loss_jpy,
+                max_portfolio_loss_jpy=portfolio_loss_cap,
             ),
             live_enabled=validate_live_enabled,
         ).validate(intent, snapshot, for_live_send=True)

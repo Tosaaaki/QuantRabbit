@@ -74,6 +74,11 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(len(client.orders), 1)
 
     def test_existing_protected_position_blocks_when_portfolio_budget_exceeded(self) -> None:
+        # Per AGENT_CONTRACT §3.5: portfolio cap is the WHOLE-DAY risk budget,
+        # not the per-trade slice. We assert the gateway blocks new entries
+        # only when open_risk + candidate_risk exceeds the day's budget — set
+        # an explicit small portfolio cap to force that condition without
+        # relying on the per-trade resolver.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             client = FakeExecutionClient()
@@ -101,6 +106,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 output_path=root / "request.json",
                 report_path=root / "report.md",
                 live_enabled=True,
+                portfolio_loss_cap_jpy=500.0,
             ).run(
                 intents_path=_intents(root),
                 lane_id="lane:EUR_USD:LONG",
