@@ -1,6 +1,6 @@
 # Order Intents Report
 
-- Generated at UTC: `2026-05-04T14:09:07.389423+00:00`
+- Generated at UTC: `2026-05-04T14:24:01.300809+00:00`
 - Campaign plan: `/Users/tossaki/App/QuantRabbit/data/daily_campaign_plan.json`
 - Snapshot: `/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json`
 - Results: `12`
@@ -13,64 +13,64 @@
 
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.938 tp=113.706 sl=112.842
-  - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`1.6pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.941 tp=113.757 sl=112.839
+  - risk metrics: risk=`1020.0 JPY` reward=`8160.0 JPY` rr=`8.00` spread=`1.7pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 1020 JPY exceeds portfolio cap 1051 JPY
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=9000 entry=184.062 tp=184.273 sl=183.954
-  - risk metrics: risk=`972.0 JPY` reward=`1899.0 JPY` rr=`1.95` spread=`1.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 972 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=10000 entry=184.04 tp=184.227 sl=183.944
+  - risk metrics: risk=`960.0 JPY` reward=`1870.0 JPY` rr=`1.95` spread=`1.6pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG STOP-ENTRY` units=13000 entry=1.17118 tp=1.17346 sl=1.1707
-  - risk metrics: risk=`980.6 JPY` reward=`4657.8 JPY` rr=`4.75` spread=`0.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 981 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_USD LONG STOP-ENTRY` units=13000 entry=1.17165 tp=1.17393 sl=1.17117
+  - risk metrics: risk=`980.1 JPY` reward=`4655.5 JPY` rr=`4.75` spread=`0.8pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 980 JPY exceeds portfolio cap 1051 JPY
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT STOP-ENTRY` units=13000 entry=1.1707 tp=1.16782 sl=1.17118
-  - risk metrics: risk=`980.6 JPY` reward=`5883.5 JPY` rr=`6.00` spread=`0.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 981 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=13000 entry=1.17117 tp=1.16829 sl=1.17165
+  - risk metrics: risk=`980.1 JPY` reward=`5880.6 JPY` rr=`6.00` spread=`0.8pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 980 JPY exceeds portfolio cap 1051 JPY
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `GBP_USD LONG STOP-ENTRY` units=8000 entry=1.35568 tp=1.35741 sl=1.3549
-  - risk metrics: risk=`980.6 JPY` reward=`2174.9 JPY` rr=`2.22` spread=`1.3pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 981 JPY exceeds portfolio cap 1051 JPY
+  - intent: `GBP_USD LONG STOP-ENTRY` units=8000 entry=1.35683 tp=1.35856 sl=1.35605
+  - risk metrics: risk=`980.1 JPY` reward=`2173.8 JPY` rr=`2.22` spread=`1.3pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 980 JPY exceeds portfolio cap 1051 JPY
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG LIMIT` units=10000 entry=112.858 tp=113.626 sl=112.762
-  - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`1.6pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY
+  - intent: `AUD_JPY LONG LIMIT` units=10000 entry=112.856 tp=113.672 sl=112.754
+  - risk metrics: risk=`1020.0 JPY` reward=`8160.0 JPY` rr=`8.00` spread=`1.7pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 1020 JPY exceeds portfolio cap 1051 JPY
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG LIMIT` units=9000 entry=183.972 tp=184.183 sl=183.864
-  - risk metrics: risk=`972.0 JPY` reward=`1899.0 JPY` rr=`1.95` spread=`1.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 972 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_JPY LONG LIMIT` units=10000 entry=183.96 tp=184.147 sl=183.864
+  - risk metrics: risk=`960.0 JPY` reward=`1870.0 JPY` rr=`1.95` spread=`1.6pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY
 - `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG LIMIT` units=13000 entry=1.1707 tp=1.17298 sl=1.17022
-  - risk metrics: risk=`980.6 JPY` reward=`4657.8 JPY` rr=`4.75` spread=`0.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 981 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_USD LONG LIMIT` units=13000 entry=1.17117 tp=1.17345 sl=1.17069
+  - risk metrics: risk=`980.1 JPY` reward=`4655.5 JPY` rr=`4.75` spread=`0.8pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 980 JPY exceeds portfolio cap 1051 JPY
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT LIMIT` units=13000 entry=1.17118 tp=1.1683 sl=1.17166
-  - risk metrics: risk=`980.6 JPY` reward=`5883.5 JPY` rr=`6.00` spread=`0.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 981 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_USD SHORT LIMIT` units=13000 entry=1.17165 tp=1.16877 sl=1.17213
+  - risk metrics: risk=`980.1 JPY` reward=`5880.6 JPY` rr=`6.00` spread=`0.8pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 980 JPY exceeds portfolio cap 1051 JPY
 - `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `GBP_USD LONG LIMIT` units=8000 entry=1.35503 tp=1.35676 sl=1.35425
-  - risk metrics: risk=`980.6 JPY` reward=`2174.9 JPY` rr=`2.22` spread=`1.3pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 981 JPY exceeds portfolio cap 1051 JPY
+  - intent: `GBP_USD LONG LIMIT` units=8000 entry=1.35618 tp=1.35791 sl=1.3554
+  - risk metrics: risk=`980.1 JPY` reward=`2173.8 JPY` rr=`2.22` spread=`1.3pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 980 JPY exceeds portfolio cap 1051 JPY
 - `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.938 tp=113.706 sl=112.842
-  - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`1.6pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.941 tp=113.757 sl=112.839
+  - risk metrics: risk=`1020.0 JPY` reward=`8160.0 JPY` rr=`8.00` spread=`1.7pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 1020 JPY exceeds portfolio cap 1051 JPY
 - `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=9000 entry=184.062 tp=184.273 sl=183.954
-  - risk metrics: risk=`972.0 JPY` reward=`1899.0 JPY` rr=`1.95` spread=`1.8pip`
-  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 972 JPY exceeds portfolio cap 1051 JPY
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=10000 entry=184.04 tp=184.227 sl=183.944
+  - risk metrics: risk=`960.0 JPY` reward=`1870.0 JPY` rr=`1.95` spread=`1.6pip`
+  - risk BLOCK: PORTFOLIO_LOSS_CAP_EXCEEDED open risk 1001 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY
 
 ## Completion Rule
 

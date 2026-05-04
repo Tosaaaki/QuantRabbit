@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T14:09:07.398242+00:00`
+- Generated at UTC: `2026-05-04T14:24:01.295763+00:00`
 - Status: `ACCEPTED`
-- Action: `TIGHTEN_SL`
+- Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: TIGHTEN_SL on EUR_USD SHORT (trade_id 470154) from 1.17175 to 1.17100. Locks ~530 JPY minimum profit while preserving 28.7p upside to TP. All new entry lanes blocked by stale quotes (47+ sec old). Progress 9.22% of 10% target. Operator: Claude Sonnet 4.5.
+- Operator summary: WAIT due to hard STALE_QUOTE gate (contract §9). All quotes 40+ seconds old, exceeding 20s threshold. Portfolio cap saturated (1001 JPY open + 960-980 candidate > 1051 cap). Existing EUR_USD SHORT protected, profitable (+183 JPY), aligned with currency strength. No discretionary market concern — this is a contract-mandated fresh-data requirement.
 
 ## Verification Issues
 
