@@ -559,6 +559,12 @@ def _narrative_risk_score(
     blockers: list[str],
     rationale: list[str],
 ) -> float:
+    # AGENT_CONTRACT §6: discretionary narrative concerns size the lane down via
+    # score → size_multiple. They MUST NOT block the lane in prose. Per §3.5
+    # per_trade_risk_budget_jpy already shrinks the per-shot exposure; layering
+    # an "intervention narrative" or "visual story rejected" gate on top is an
+    # invented threshold not enumerated in §3.5/§9/§10/§11. Surface the concern
+    # in rationale so the operator/GPT sees it, but let the lane stay tradable.
     text = " ".join(examples).upper()
     score = 0.0
     if pair in JPY_CROSSES and direction == Side.LONG.value:
@@ -566,7 +572,7 @@ def _narrative_risk_score(
         liquidity = int(themes.get("spread_liquidity") or 0)
         if intervention or "INTERVENTION" in text or "RATE CHECK" in text:
             score -= 55.0
-            blockers.append("JPY-cross long faces intervention/rate-check narrative risk")
+            rationale.append("JPY-cross long under intervention/rate-check narrative — size multiple reduced")
         if liquidity or "GOLDEN WEEK" in text:
             score -= 20.0
             rationale.append("JPY liquidity theme requires smaller/fewer entries")
@@ -575,7 +581,7 @@ def _narrative_risk_score(
         rationale.append("recent narrative contained WAIT language")
     if "NO:" in text and method == TradeMethod.RANGE_ROTATION.value:
         score -= 28.0
-        blockers.append("visual story explicitly rejected range rotation")
+        rationale.append("visual story rejected range rotation — size multiple reduced")
     if "TREND-BULL" in text and direction == Side.LONG.value:
         score += 10.0
     if "TREND-BEAR" in text and direction == Side.SHORT.value:

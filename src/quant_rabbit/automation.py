@@ -39,11 +39,70 @@ from quant_rabbit.strategy.intent_generator import IntentGenerator
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.position_manager import PositionManager
 from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter
-from quant_rabbit.strategy.trader_brain import ACTION_SEND_ENTRY, TraderBrain, TraderDecision, load_trader_settings
+from quant_rabbit.strategy.trader_brain import (
+    ACTION_NO_TRADE,
+    ACTION_SEND_ENTRY,
+    LaneScore,
+    TraderBrain,
+    TraderDecision,
+    load_trader_settings,
+)
 
 
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
+
+# Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
+# only hard reasons to keep a LIVE_READY lane out of the GPT prefilter set.
+# Anything else (mining edge quality, narrative, capture-rate caution) is a
+# discretionary penalty that already sizes the lane down through score →
+# size_multiple, and must not be re-stacked as a prose veto. These patterns
+# are matched as substrings (case-sensitive) against LaneScore.blockers — they
+# come from `_score_lane`, `_discretionary_gate_check`, and
+# `_exposure_blockers` in `quant_rabbit.strategy.trader_brain`.
+_PREFILTER_HARD_BLOCKER_PATTERNS = (
+    # §7 lane completeness — every executable lane must include thesis,
+    # context, geometry, and units; missing any is a hard veto.
+    "missing trader thesis",
+    "missing market context",
+    "incomplete market context",
+    "missing TP/SL geometry",
+    "missing executable units",
+    # §11 strategy receipts — profile / lane gating.
+    "missing strategy profile",
+    "strategy profile is not live-eligible",
+    "campaign lane is not executable",
+    # §9 lane status — anything not LIVE_READY shouldn't be in the set anyway,
+    # but keep an explicit guard.
+    "intent status is",
+    "receipt is not live-ready",
+    # §9 exposure blockers — open or pending exposure must be reconciled
+    # before a fresh entry, regardless of GPT discretion.
+    "open position exists",
+    "pending entry exists",
+)
+
+
+def _is_hard_prefilter_blocker(blocker: str) -> bool:
+    return any(pattern in blocker for pattern in _PREFILTER_HARD_BLOCKER_PATTERNS)
+
+
+def _passes_gpt_prefilter(score: LaneScore) -> bool:
+    """Whether this lane is eligible to be picked by GPT.
+
+    Widens beyond ACTION_SEND_ENTRY so that LIVE_READY lanes carrying only
+    discretionary penalties (narrative, mined-edge caution, capture rate)
+    remain available — per AGENT_CONTRACT §6 those are sized down via
+    size_multiple, not blocked in prose. Hard structural blockers
+    (`_PREFILTER_HARD_BLOCKER_PATTERNS`) keep the lane out.
+    """
+    if score.status != "LIVE_READY":
+        return False
+    if score.action == ACTION_SEND_ENTRY:
+        return True
+    if score.action != ACTION_NO_TRADE:
+        return False
+    return not any(_is_hard_prefilter_blocker(b) for b in score.blockers)
 
 
 @dataclass(frozen=True)
@@ -569,7 +628,9 @@ class AutoTradeCycle:
                 return summary
         if selected_lane_id:
             if self.use_gpt_trader:
-                prefiltered_lane_ids = {item.lane_id for item in decision.scores if item.action == ACTION_SEND_ENTRY}
+                prefiltered_lane_ids = {
+                    item.lane_id for item in decision.scores if _passes_gpt_prefilter(item)
+                }
                 if gpt_summary is None:
                     gpt_summary = self._run_gpt_handoff()
                 if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed:
@@ -845,40 +906,63 @@ class AutoTradeCycle:
         )
 
     def _resolve_max_loss_jpy(self) -> float:
-        if self.max_loss_jpy is None and self.max_loss_pct is None:
-            settings = load_trader_settings(self.trader_settings_path)
-            max_loss_jpy = settings.default_max_loss_jpy
-            max_loss_pct = settings.default_max_loss_pct
-        else:
-            max_loss_jpy = self.max_loss_jpy
-            max_loss_pct = self.max_loss_pct
-        risk_equity_jpy = self._risk_equity_jpy_for_pct()
-        # Prefer the daily target ledger's equity-derived risk budget over a
-        # JPY literal fallback; only when the ledger is unavailable do we fall
-        # through to the policy library default (kept for test compatibility).
+        # AGENT_CONTRACT §3.5: per-trade JPY cap is *always* the
+        # equity-derived `per_trade_risk_budget_jpy` from the daily-target
+        # ledger when that file exists. The operator has only one knob for
+        # pacing — `target_trades_per_day` on `daily-target-state` — and the
+        # ledger's per-trade value is the authoritative answer for "how much
+        # JPY can a single shot risk today." A `max_loss_pct` setting in
+        # `trader_settings.json` is a *fallback floor* used only when the
+        # ledger is missing or the operator passes an explicit CLI override,
+        # otherwise it would silently shadow the per-trade split and let one
+        # losing trade spend more than its allotted slice.
+        explicit_jpy = self.max_loss_jpy
+        explicit_pct = self.max_loss_pct
+        if explicit_jpy is not None or explicit_pct is not None:
+            risk_equity_jpy = self._risk_equity_jpy_for_pct()
+            return resolve_max_loss_jpy(
+                max_loss_jpy=explicit_jpy,
+                max_loss_pct=explicit_pct,
+                equity_jpy=risk_equity_jpy,
+                default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+                label="autotrade-cycle risk cap",
+            )
         ledger_cap = self._daily_risk_budget_jpy_from_target_state()
+        if ledger_cap is not None:
+            return ledger_cap
+        # No CLI override and no ledger — fall through to trader_settings, then
+        # policy literal. Preserve first-run / test compatibility: when
+        # max_loss_pct is set but equity is unknown, fall back to the policy
+        # literal rather than raising. This branch never executes in
+        # production because the ledger is always present; it exists for the
+        # narrow window before `daily-target-state` first runs.
+        settings = load_trader_settings(self.trader_settings_path)
+        risk_equity_jpy = self._risk_equity_jpy_for_pct()
+        max_loss_jpy = settings.default_max_loss_jpy
+        max_loss_pct = settings.default_max_loss_pct
         if max_loss_jpy is None and max_loss_pct is not None and risk_equity_jpy is None:
-            # Daily-target-state path is unavailable: prefer ledger cap if present.
-            if ledger_cap is not None:
-                max_loss_jpy = ledger_cap
-                max_loss_pct = None
-            else:
-                max_loss_jpy = RiskPolicy().max_loss_jpy
-                max_loss_pct = None
-        default_cap = ledger_cap if ledger_cap is not None else RiskPolicy().max_loss_jpy
+            max_loss_jpy = RiskPolicy().max_loss_jpy
+            max_loss_pct = None
         return resolve_max_loss_jpy(
             max_loss_jpy=max_loss_jpy,
             max_loss_pct=max_loss_pct,
             equity_jpy=risk_equity_jpy,
-            default_max_loss_jpy=default_cap,
+            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
             label="autotrade-cycle risk cap",
         )
 
     def _daily_risk_budget_jpy_from_target_state(self) -> float | None:
-        """Return the equity-derived per-trade cap from the daily-target ledger.
+        """Return the equity-derived **per-trade** cap from the daily-target ledger.
 
-        No JPY literal fallback: returns None when the file is missing or empty,
-        letting the caller decide whether to use the policy library default.
+        Per AGENT_CONTRACT §3.5 the per-trade JPY cap is
+        `daily_risk_budget_jpy / target_trades_per_day` (i.e.
+        `per_trade_risk_budget_jpy`), and that is the value that must flow into
+        every intent's `metadata.max_loss_jpy`. Reading the whole-day
+        `daily_risk_budget_jpy` here would silently let one losing trade burn
+        the entire day's risk budget — exactly the failure mode this split was
+        built to remove. Fall back to `daily_risk_budget_jpy` only as a
+        last-resort floor for old state files that pre-date the per-trade
+        split, and never invent a JPY literal.
         """
         if self.target_state_path is None or not self.target_state_path.exists():
             return None
@@ -886,12 +970,20 @@ class AutoTradeCycle:
             payload = json.loads(self.target_state_path.read_text())
         except (OSError, json.JSONDecodeError, ValueError):
             return None
-        raw = payload.get("daily_risk_budget_jpy")
-        try:
-            value = float(raw) if raw is not None else 0.0
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
+        candidates = (
+            payload.get("per_trade_risk_budget_jpy"),
+            payload.get("daily_risk_budget_jpy"),
+        )
+        for raw in candidates:
+            if raw is None:
+                continue
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return None
 
     def _risk_equity_jpy_for_pct(self) -> float | None:
         if self.risk_equity_jpy is not None:

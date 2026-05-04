@@ -1257,11 +1257,22 @@ def _resolve_max_loss_from_args(
     risk_equity_jpy: float | None,
     label: str,
 ) -> float:
+    # Per AGENT_CONTRACT §3.5: per-trade JPY caps must be equity-derived from
+    # the daily target ledger, not from the RiskPolicy literal default
+    # (`RiskPolicy.max_loss_jpy = 500.0` is a library default for tests, not a
+    # production risk decision). Pull `per_trade_risk_budget_jpy` from
+    # `data/daily_target_state.json` first; only fall through to the policy
+    # literal when the ledger has no value (first-run / file missing) so the
+    # operator gets a non-silent, finite cap and a clear remediation path.
+    from quant_rabbit.strategy.intent_generator import _per_trade_risk_from_state
+    default_cap = _per_trade_risk_from_state()
+    if default_cap is None:
+        default_cap = RiskPolicy().max_loss_jpy
     return resolve_max_loss_jpy(
         max_loss_jpy=max_loss_jpy,
         max_loss_pct=max_loss_pct,
         equity_jpy=risk_equity_jpy,
-        default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+        default_max_loss_jpy=default_cap,
         label=label,
     )
 
