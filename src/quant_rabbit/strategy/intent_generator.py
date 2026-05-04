@@ -50,13 +50,31 @@ def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) ->
     Per AGENT_CONTRACT §3.5: no silent literal fallback; if the file is missing
     or the value is missing/zero, return None and let the caller raise.
     """
+    return _state_field(state_path, "per_trade_risk_budget_jpy")
+
+
+def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
+    """Return whole-day JPY risk budget from the daily target ledger.
+
+    Per AGENT_CONTRACT §3.5 the **portfolio** cap (open + candidate exposure)
+    must be the day's total budget, NOT the per-trade slice. Reusing the
+    per-trade cap as the portfolio cap silently blocks every additional shot
+    once one position opens, because `open_risk + candidate_risk` immediately
+    exceeds a per-shot limit. Returns None when the ledger is absent so the
+    caller can decide whether to skip the portfolio gate (no-op) rather than
+    invent a JPY literal.
+    """
+    return _state_field(state_path, "daily_risk_budget_jpy")
+
+
+def _state_field(state_path: Path, key: str) -> float | None:
     if not state_path.exists():
         return None
     try:
         payload = json.loads(state_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    raw = payload.get("per_trade_risk_budget_jpy")
+    raw = payload.get(key)
     try:
         value = float(raw) if raw is not None else 0.0
     except (TypeError, ValueError):
@@ -187,6 +205,14 @@ class IntentGenerator:
             default_max_loss_jpy=default_cap,
             label="generate-intents risk cap",
         )
+        # Whole-day cap on `open_risk + candidate_risk` (portfolio cap).
+        # Distinct from `max_loss_jpy` (per-trade cap). Per AGENT_CONTRACT §3.5
+        # these caps must not be conflated: feeding the per-trade slice as the
+        # portfolio cap blocks every additional shot once one position opens,
+        # because `open_risk` is already on that single-shot scale. None when
+        # the ledger is missing — the validator skips the portfolio gate
+        # rather than synthesizing a literal.
+        portfolio_loss_cap = _daily_risk_budget_from_state()
         # Load ATR / regime per pair from pair_charts.json. None when the file
         # is missing — _build_for_lane will surface MISSING_ATR_DATA so the
         # operator sees that geometry was built without market context.
@@ -199,6 +225,7 @@ class IntentGenerator:
                     snapshot,
                     strategy_profile,
                     max_loss_jpy=max_loss_jpy,
+                    portfolio_loss_cap=portfolio_loss_cap,
                     pair_charts=pair_charts,
                 )
             )
@@ -222,6 +249,7 @@ class IntentGenerator:
         strategy_profile: StrategyProfile | None,
         *,
         max_loss_jpy: float,
+        portfolio_loss_cap: float | None = None,
         pair_charts: dict[str, dict[str, Any]] | None = None,
     ) -> GeneratedIntent:
         lane_id = _lane_id(lane)
@@ -260,7 +288,7 @@ class IntentGenerator:
             policy=RiskPolicy(
                 block_new_entries_with_pending_entry_orders=False,
                 allow_protected_trader_position_adds=True,
-                max_portfolio_loss_jpy=max_loss_jpy,
+                max_portfolio_loss_jpy=portfolio_loss_cap,
             )
         ).validate(
             intent,
