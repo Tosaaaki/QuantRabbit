@@ -58,14 +58,35 @@ Before writing any decision, open and actually read every layer below. Skipping 
   - `daily_risk_budget_jpy` = whole-day loss budget (≈ 2% of starting equity).
   - `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day` (default ≈ 0.2% of equity per shot).
   The per-trade figure is what flows into every intent's `metadata.max_loss_jpy`. Cite **which** cap your decision is bounded by; do not conflate them.
-- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators. Phase A+B+C fields available per timeframe:
+- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators. Fields per timeframe:
   - **Trend**: EMA(12/20/50), Ichimoku, Supertrend (`supertrend_dir`), Parabolic SAR (`psar_dir`), Aroon (`aroon_osc_14`), Hull MA, KAMA, ALMA, linear regression slope/R²/channel (`linreg_*`).
   - **Momentum**: RSI, Stoch RSI, MACD, CCI, ROC, **Williams %R** (`williams_r_14`), **MFI** (`mfi_14`), Vortex (+/-).
   - **Volatility**: ATR pips, BB span, Keltner width, Donchian, **BB squeeze** (`bb_squeeze`), **Choppiness** (`choppiness_14`), realized vol.
   - **Percentile context**: `atr_percentile_100`, `bb_width_percentile_100`, `adx_percentile_100`, `regime_quantile` (QUIET/NORMAL/VOLATILE).
   - **Statistics**: `z_score_20`, `hurst_100` (>0.5 trending, <0.5 mean-reverting), `half_life_60` (mean-reversion bars).
   - **Anchored VWAP**: `avwap_anchor`, ±1σ/±2σ bands, swing-high/low anchored variants.
-  - **Structure (SMC)**: `views[].structure` carries `swings`, `structure_events` (BOS_UP/DOWN, CHOCH_UP/DOWN), `order_blocks`, `fair_value_gaps`, `liquidity` clusters.
+  - **Structure (legacy SMC)**: `views[].structure` carries `swings`, `structure_events` (BOS_UP/DOWN, CHOCH_UP/DOWN), `order_blocks`, `fair_value_gaps`, `liquidity` clusters.
+
+  **Reading layer (added 2026-05-05 per `docs/research/`).** Per timeframe, in addition to the raw indicators above:
+  - `views[].regime_reading` — formal 4-state classifier (Hurst+ADX+Choppiness+ATR_pct):
+    - `state` ∈ {`TREND_STRONG`, `TREND_WEAK`, `RANGE`, `BREAKOUT_PENDING`, `TRANSITION`, `UNKNOWN`}
+    - `hurst` (>0.55 trend, <0.45 mean-rev), `adx`, `choppiness`, `atr_percentile`, `confidence` (0..1)
+  - `views[].family_scores` — three composites grouped by indicator family (kills 6-momentum-vote inflation):
+    - `trend_score` (signed; positive = bullish trend strength), `mean_rev_score` (signed), `breakout_score`
+    - `disagreement` (std across the three signs). **`disagreement > 0.7` ⇒ stand-aside** unless one score is dominant and the regime gate explicitly favors it.
+    - `*_components` dicts show which raw indicators contributed.
+  - `views[].stat_filters` — price-stream filters (catches "market is broken right now"):
+    - `lee_mykland_jumps` (bar indices flagged as jumps in window), `last_jump_bars_ago`, `bipower_jump_share`
+    - `lag1_autocorr` (>0.05 momentum, <-0.05 mean-rev), `abs_return_acf_decay`, `rolling_kurtosis`/`skewness`, `hurst_returns`, `variance_ratio_2/4`
+    - **No new entry within 5 bars of `last_jump_bars_ago`.** Quote it if you do trade post-jump.
+  - `views[].smc` — extended SMC primitives. Counts of `sweeps`/`breakers`/`mitigations`/`inversion_fvgs`/`displacements`. The `dealing_range` (when present) carries `swing_high`, `swing_low`, `equilibrium` (50% line), `ote_sweet_spot` (0.705 retracement) — used to classify price as PREMIUM (sell zone) or DISCOUNT (buy zone).
+  - `chart.session` (per pair, M5-anchored, DST-aware NY local time):
+    - `current_tag` ∈ {`ASIA`, `LONDON_KILLZONE`, `JUDAS_WINDOW`, `NY_AM_KILLZONE`, `SILVER_BULLET`, `NY_PM_KILLZONE`, `OFF_HOURS`}
+    - `jp_holiday` (bool) + `holiday_name` — Golden Week / Obon / Year-end / statutory. **`jp_holiday=true` ⇒ JPY-pair size capped at 50% per memory `feedback_no_tight_sl_thin_market` and research §7.**
+    - `ny_midnight_open_price` (the "True Day Open") — bias reference; current price relative to this is one of the cleanest day-bias reads.
+    - `asian_range`, `london_range`, `ny_am_range` — session H/L for sweep targeting.
+    - `judas_armed` (bool) — Asian extreme already swept during the Judas window (00:00-05:00 NY); when true, fade the move back through midnight open with M5 confirmation.
+    - `next_killzone`, `minutes_to_next_killzone` — pacing.
 - `data/order_intents.json` (and `docs/order_intents_report.md`) — pre-validated lane intents with current geometry (ATR-derived SL, equity-derived units). `LIVE_READY` lanes have no risk or strategy blockers; `DRY_RUN_BLOCKED` lanes carry their reason.
 - `data/market_story_profile.json` — current narrative pressure (intervention risk, event risk, JPY-cross conditions, etc.).
 - `data/broker_snapshot.json` — open positions, pending orders, ages, spreads.
@@ -158,6 +179,10 @@ Live send still requires `QR_LIVE_ENABLED=1` and the gates in `AGENT_CONTRACT.md
 - Trading directly against `currency_strength.json` ranking (e.g. SHORT USD/JPY when USD rank=1 and JPY rank=8) without explicit `risk_notes` justification.
 - Picking ad-hoc round numbers for TP/SL when `levels_snapshot.json` exposes proper pivots / PDH / PDL / session H/L.
 - Ignoring an extreme COT positioning reading (`cot_snapshot.json` `leveraged_net` at multi-quarter extreme) — it does not block the trade but must appear in `risk_notes` if the trade aligns with the crowd.
+- **Citing raw indicator values as the conclusion.** "RSI=37 → SHORT bias" is forbidden — RSI 37 means different things on EUR_USD M5 vs AUD_JPY H1. Any indicator-based claim in `chart_story` must be backed by either the reading-layer fields (`regime_reading.state`, `family_scores.trend_score`, `stat_filters.last_jump_bars_ago`) or by a normalized z-score / percentile (`atr_percentile_100`, `bb_width_percentile_100`, `regime_quantile`). The reading layer is the answer to "what does this number mean here?".
+- **Ignoring `family_scores.disagreement`.** When `disagreement > 0.7` the trend, mean-rev, and breakout views disagree — that is a stand-aside signal, not a "pick the strongest" signal. Decide WAIT or REQUEST_EVIDENCE unless one composite is dominant AND the regime gate matches.
+- **Ignoring `chart.session`.** The killzone tag, `judas_armed` flag, `ny_midnight_open_price`, and `jp_holiday` flag are bias inputs every cycle MUST cite. JPY-pair entries during `jp_holiday=true` need explicit size-down justification in `risk_notes`.
+- **Trading inside `last_jump_bars_ago < 5`.** A Lee-Mykland jump in the last 5 bars means the spread/quote stream just had a microstructure event; new entry quality drops sharply. Cite the wait if you must trade.
 - Reusing yesterday's `daily_target_state.json` past a JST campaign-day rollover (the ledger auto-rolls; don't bypass it).
 - Sending again after a blocked / rejected / no-trade outcome to "force" a fill.
 

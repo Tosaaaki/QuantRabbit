@@ -113,6 +113,7 @@ def build_pair_chart(
 
     views: list[ChartView] = []
     warnings: list[str] = []
+    candles_by_tf_resolved: dict[str, tuple[Candle, ...]] = {}
     for tf in timeframes:
         if candles_by_tf is not None and tf in candles_by_tf:
             candles = tuple(candles_by_tf[tf])
@@ -122,6 +123,7 @@ def build_pair_chart(
             except Exception as exc:  # pragma: no cover - network path
                 warnings.append(f"{tf} fetch failed: {exc}")
                 continue
+        candles_by_tf_resolved[tf] = candles
         indicators = compute_indicators(pair, tf, candles)
         regime, long_bias, short_bias = _classify(indicators)
         structure = analyze_structure(
@@ -132,6 +134,9 @@ def build_pair_chart(
             eq_tolerance_pips=1.5,
             pip_size=indicators.pip_size,
         ) if len(candles) >= 30 else None
+        regime_reading, family_scores, stat_filters, smc_reading = _build_reading_layer(
+            candles=candles, indicators=indicators
+        )
         views.append(
             ChartView(
                 granularity=tf,
@@ -140,11 +145,18 @@ def build_pair_chart(
                 long_bias=long_bias,
                 short_bias=short_bias,
                 structure=structure,
+                regime_reading=regime_reading,
+                family_scores=family_scores,
+                stat_filters=stat_filters,
+                smc=smc_reading,
             )
         )
 
     long_score, short_score, dominant = _aggregate(views)
     chart_story = _build_chart_story(pair, views, dominant)
+    # Session context: derived from the M5 candles regardless of how they were
+    # obtained (caller-supplied or fetched).
+    session = _build_session_for_pair(timeframes, candles_by_tf_resolved, views)
     return PairChart(
         pair=pair,
         views=tuple(views),
@@ -153,7 +165,177 @@ def build_pair_chart(
         dominant_regime=dominant,
         chart_story=chart_story,
         warnings=tuple(warnings),
+        session=session,
     )
+
+
+def _build_reading_layer(
+    *, candles: tuple[Candle, ...], indicators: IndicatorSet
+) -> tuple[RegimeReading | None, FamilyScores | None, StatFilterReading | None, SMCReading | None]:
+    """Compute the four per-view reading-layer artifacts.
+
+    Each is fail-soft: returns None when input data is insufficient. Per
+    AGENT_CONTRACT §3.5 we never silently substitute literal fallbacks — the
+    trader either gets a real reading or sees None and acts accordingly.
+    """
+
+    if not candles:
+        return None, None, None, None
+    closes = [c.close for c in candles]
+    highs = [c.high for c in candles]
+    lows = [c.low for c in candles]
+
+    regime_reading: RegimeReading | None = None
+    try:
+        regime_reading = classify_regime(closes=closes, highs=highs, lows=lows)
+    except Exception:
+        regime_reading = None
+
+    family_scores: FamilyScores | None = None
+    try:
+        family_scores = compute_family_scores(indicators)
+    except Exception:
+        family_scores = None
+
+    stat_filters: StatFilterReading | None = None
+    try:
+        atr_for_flat = indicators.atr_pips * indicators.pip_size if indicators.atr_pips else None
+        stat_filters = compute_stat_filters(closes, atr_for_flat=atr_for_flat)
+    except Exception:
+        stat_filters = None
+
+    smc_reading: SMCReading | None = None
+    try:
+        if len(candles) >= 50:
+            smc_reading = analyze_smc(candles)
+    except Exception:
+        smc_reading = None
+
+    return regime_reading, family_scores, stat_filters, smc_reading
+
+
+def _build_session_for_pair(
+    timeframes: tuple[str, ...],
+    candles_by_tf: Mapping[str, tuple[Candle, ...]] | None,
+    views: list[ChartView],
+) -> SessionContext | None:
+    """Pull session context from the M5 candle stream when available."""
+
+    m5_candles: tuple[Candle, ...] | None = None
+    if candles_by_tf is not None and "M5" in candles_by_tf:
+        m5_candles = tuple(candles_by_tf["M5"])
+    if m5_candles is None or not m5_candles:
+        return None
+    try:
+        return build_session_context(m5_candles)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Reading-layer to_dict helpers (small, pure)
+# ---------------------------------------------------------------------------
+
+
+def _regime_reading_to_dict(r: RegimeReading | None) -> dict[str, object] | None:
+    if r is None:
+        return None
+    return {
+        "state": r.state,
+        "hurst": r.hurst,
+        "adx": r.adx,
+        "choppiness": r.choppiness,
+        "atr_percentile": r.atr_percentile,
+        "confidence": r.confidence,
+    }
+
+
+def _family_scores_to_dict(f: FamilyScores | None) -> dict[str, object] | None:
+    if f is None:
+        return None
+    return {
+        "trend_score": round(f.trend_score, 4),
+        "mean_rev_score": round(f.mean_rev_score, 4),
+        "breakout_score": round(f.breakout_score, 4),
+        "disagreement": round(f.disagreement, 4),
+        "trend_components": {k: round(v, 4) for k, v in f.trend_components.items()},
+        "mean_rev_components": {k: round(v, 4) for k, v in f.mean_rev_components.items()},
+        "breakout_components": {k: round(v, 4) for k, v in f.breakout_components.items()},
+    }
+
+
+def _stat_filters_to_dict(s: StatFilterReading | None) -> dict[str, object] | None:
+    if s is None:
+        return None
+    return {
+        "lag1_autocorr": s.lag1_autocorr,
+        "abs_return_acf_lag1": s.abs_return_acf_lag1,
+        "abs_return_acf_decay": s.abs_return_acf_decay,
+        "rolling_kurtosis": s.rolling_kurtosis,
+        "rolling_skewness": s.rolling_skewness,
+        "lee_mykland_jumps": list(s.lee_mykland_jumps),
+        "last_jump_bars_ago": s.last_jump_bars_ago,
+        "bipower_jump_share": s.bipower_jump_share,
+        "flat_spot_count": s.flat_spot_count,
+        "hurst_returns": s.hurst_returns,
+        "variance_ratio_2": s.variance_ratio_2,
+        "variance_ratio_4": s.variance_ratio_4,
+    }
+
+
+def _smc_to_dict(s: SMCReading | None) -> dict[str, object] | None:
+    if s is None:
+        return None
+    # Try the dataclass's own to_dict if present, else build a shallow summary.
+    if hasattr(s, "to_dict"):
+        try:
+            return s.to_dict()  # type: ignore[no-any-return]
+        except Exception:
+            pass
+    # Fall back to summary fields the trader cares about most.
+    summary: dict[str, object] = {
+        "swing_count": len(getattr(s, "swings", ()) or ()),
+        "structure_event_count": len(getattr(s, "structure_events", ()) or ()),
+        "order_block_count": len(getattr(s, "order_blocks", ()) or ()),
+        "fvg_count": len(getattr(s, "fair_value_gaps", ()) or ()),
+        "liquidity_count": len(getattr(s, "liquidity", ()) or ()),
+        "sweep_count": len(getattr(s, "sweeps", ()) or ()),
+        "breaker_count": len(getattr(s, "breakers", ()) or ()),
+        "mitigation_count": len(getattr(s, "mitigations", ()) or ()),
+        "inversion_fvg_count": len(getattr(s, "inversion_fvgs", ()) or ()),
+        "displacement_count": len(getattr(s, "displacements", ()) or ()),
+    }
+    dr = getattr(s, "dealing_range", None)
+    if dr is not None:
+        summary["dealing_range"] = {
+            "swing_high": dr.swing_high.price if hasattr(dr.swing_high, "price") else None,
+            "swing_low": dr.swing_low.price if hasattr(dr.swing_low, "price") else None,
+            "equilibrium": getattr(dr, "equilibrium", None),
+            "ote_sweet_spot": getattr(dr, "ote_sweet_spot", None),
+        }
+    return summary
+
+
+def _session_to_dict(s: SessionContext | None) -> dict[str, object] | None:
+    if s is None:
+        return None
+    current = s.current
+    return {
+        "current_tag": current.tag.value if hasattr(current.tag, "value") else str(current.tag),
+        "ny_local_hour": current.ny_local_hour,
+        "jp_holiday": current.jp_holiday,
+        "holiday_name": current.holiday_name,
+        "ny_midnight_open_utc": current.timestamp_utc.isoformat() if False else (
+            s.ny_midnight_open_utc.isoformat() if s.ny_midnight_open_utc else None
+        ),
+        "ny_midnight_open_price": s.ny_midnight_open_price,
+        "asian_range": list(s.asian_range) if s.asian_range else None,
+        "london_range": list(s.london_range) if s.london_range else None,
+        "ny_am_range": list(s.ny_am_range) if s.ny_am_range else None,
+        "judas_armed": s.judas_armed,
+        "next_killzone": s.next_killzone.value if (s.next_killzone and hasattr(s.next_killzone, "value")) else None,
+        "minutes_to_next_killzone": s.minutes_to_next_killzone,
+    }
 
 
 # ---------------------------------------------------------------------------
