@@ -1,6 +1,6 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T23:43:51.773106+00:00`
+- Generated at UTC: `2026-05-04T23:52:21.714012+00:00`
 - Status: `GPT_REJECTED`
 - Positions: `1`
 - Orders: `2`
@@ -15,7 +15,7 @@
 - Canceled orders: `none`
 - Position management: `HOLD_PROTECTED`
 - Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`18420.5763` progress_pct=`12.3275`
+- Daily target: `PURSUE_TARGET` remaining=`18420.6108` progress_pct=`12.3274`
 - GPT trader: status=`REJECTED` action=`WAIT` allowed=`False` issues=`1`
 - GPT error: `none`
 - GPT wait recovery attempts: `0`

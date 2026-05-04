@@ -1,6 +1,6 @@
 # Order Intents Report
 
-- Generated at UTC: `2026-05-04T23:43:52.769899+00:00`
+- Generated at UTC: `2026-05-04T23:52:22.726453+00:00`
 - Campaign plan: `/Users/tossaki/App/QuantRabbit/data/daily_campaign_plan.json`
 - Snapshot: `/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json`
 - Results: `12`
@@ -13,52 +13,52 @@
 
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.729 tp=113.497 sl=112.633
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.716 tp=113.484 sl=112.62
   - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`1.6pip`
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=9000 entry=183.862 tp=184.073 sl=183.754
-  - risk metrics: risk=`972.0 JPY` reward=`1899.0 JPY` rr=`1.95` spread=`1.8pip`
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=8000 entry=183.86 tp=184.094 sl=183.74
+  - risk metrics: risk=`960.0 JPY` reward=`1872.0 JPY` rr=`1.95` spread=`2.0pip`
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `EUR_USD LONG STOP-ENTRY` units=13000 entry=1.16938 tp=1.17166 sl=1.1689
-  - risk metrics: risk=`981.1 JPY` reward=`4660.0 JPY` rr=`4.75` spread=`0.8pip`
+  - risk metrics: risk=`981.0 JPY` reward=`4659.8 JPY` rr=`4.75` spread=`0.8pip`
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `EUR_USD SHORT STOP-ENTRY` units=13000 entry=1.1689 tp=1.16602 sl=1.16938
-  - risk metrics: risk=`981.1 JPY` reward=`5886.3 JPY` rr=`6.00` spread=`0.8pip`
+  - risk metrics: risk=`981.0 JPY` reward=`5886.1 JPY` rr=`6.00` spread=`0.8pip`
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `GBP_USD LONG STOP-ENTRY` units=8000 entry=1.35345 tp=1.35518 sl=1.35267
-  - risk metrics: risk=`981.1 JPY` reward=`2175.9 JPY` rr=`2.22` spread=`1.3pip`
+  - risk metrics: risk=`981.0 JPY` reward=`2175.8 JPY` rr=`2.22` spread=`1.3pip`
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG LIMIT` units=10000 entry=112.649 tp=113.417 sl=112.553
+  - intent: `AUD_JPY LONG LIMIT` units=10000 entry=112.636 tp=113.404 sl=112.54
   - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`1.6pip`
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG LIMIT` units=9000 entry=183.772 tp=183.983 sl=183.664
-  - risk metrics: risk=`972.0 JPY` reward=`1899.0 JPY` rr=`1.95` spread=`1.8pip`
+  - intent: `EUR_JPY LONG LIMIT` units=8000 entry=183.76 tp=183.994 sl=183.64
+  - risk metrics: risk=`960.0 JPY` reward=`1872.0 JPY` rr=`1.95` spread=`2.0pip`
 - `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `EUR_USD LONG LIMIT` units=13000 entry=1.1689 tp=1.17118 sl=1.16842
-  - risk metrics: risk=`981.1 JPY` reward=`4660.0 JPY` rr=`4.75` spread=`0.8pip`
+  - risk metrics: risk=`981.0 JPY` reward=`4659.8 JPY` rr=`4.75` spread=`0.8pip`
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `EUR_USD SHORT LIMIT` units=13000 entry=1.16938 tp=1.1665 sl=1.16986
-  - risk metrics: risk=`981.1 JPY` reward=`5886.3 JPY` rr=`6.00` spread=`0.8pip`
+  - risk metrics: risk=`981.0 JPY` reward=`5886.1 JPY` rr=`6.00` spread=`0.8pip`
 - `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
   - intent: `GBP_USD LONG LIMIT` units=8000 entry=1.3528 tp=1.35453 sl=1.35202
-  - risk metrics: risk=`981.1 JPY` reward=`2175.9 JPY` rr=`2.22` spread=`1.3pip`
+  - risk metrics: risk=`981.0 JPY` reward=`2175.8 JPY` rr=`2.22` spread=`1.3pip`
 - `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.729 tp=113.497 sl=112.633
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.716 tp=113.484 sl=112.62
   - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`1.6pip`
 - `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=9000 entry=183.862 tp=184.073 sl=183.754
-  - risk metrics: risk=`972.0 JPY` reward=`1899.0 JPY` rr=`1.95` spread=`1.8pip`
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=8000 entry=183.86 tp=184.094 sl=183.74
+  - risk metrics: risk=`960.0 JPY` reward=`1872.0 JPY` rr=`1.95` spread=`2.0pip`
 
 ## Completion Rule
 
