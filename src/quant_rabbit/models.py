@@ -97,11 +97,32 @@ class BrokerOrder:
 
 
 @dataclass(frozen=True)
+class AccountSummary:
+    """OANDA `/v3/accounts/{id}/summary` snapshot in JPY-denominated account currency.
+
+    `nav_jpy` is the canonical equity-after-PL value used to compute current equity and
+    today's start balance. `balance_jpy` is cash before unrealized PnL; on a new campaign
+    day with zero realized PnL it is also today's start balance.
+    """
+
+    nav_jpy: float
+    balance_jpy: float
+    unrealized_pl_jpy: float = 0.0
+    margin_used_jpy: float = 0.0
+    margin_available_jpy: float = 0.0
+    pl_jpy: float = 0.0
+    financing_jpy: float = 0.0
+    last_transaction_id: str = ""
+    fetched_at_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class BrokerSnapshot:
     fetched_at_utc: datetime
     positions: tuple[BrokerPosition, ...] = ()
     orders: tuple[BrokerOrder, ...] = ()
     quotes: dict[str, Quote] = field(default_factory=dict)
+    account: AccountSummary | None = None
 
 
 @dataclass(frozen=True)

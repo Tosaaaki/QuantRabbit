@@ -1,0 +1,266 @@
+"""Pair-level chart view that lets the trader rank pairs by edge.
+
+For each pair, fetch candles at M5/M15/H1, run the indicator stack, and emit:
+
+- A multi-timeframe regime tag (TREND_UP / TREND_DOWN / RANGE / IMPULSE / FAILURE_RISK)
+- A bias score per direction (long/short) from indicator agreement
+- A volatility/spread health flag
+- A short, deterministic chart_story string suitable for `MarketContext`
+
+The trader (Codex) consumes the score table to pick which pair to attack and
+the chart_story is what gets stamped on the order intent. The score is *not* a
+trading signal by itself — it shows where the indicators line up.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Iterable, Mapping
+
+from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
+from quant_rabbit.analysis.indicators import IndicatorSet, compute_indicators
+from quant_rabbit.broker.oanda import OandaReadOnlyClient
+
+
+DEFAULT_TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "H1")
+
+
+@dataclass(frozen=True)
+class ChartView:
+    """One timeframe slice of indicators + derived regime tags."""
+
+    granularity: str
+    indicators: IndicatorSet
+    regime: str  # TREND_UP / TREND_DOWN / RANGE / IMPULSE_UP / IMPULSE_DOWN / FAILURE_RISK / UNCLEAR
+    long_bias: float  # 0..1 — agreement strength toward long
+    short_bias: float  # 0..1 — agreement strength toward short
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "granularity": self.granularity,
+            "regime": self.regime,
+            "long_bias": round(self.long_bias, 4),
+            "short_bias": round(self.short_bias, 4),
+            "indicators": self.indicators.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class PairChart:
+    pair: str
+    views: tuple[ChartView, ...]
+    long_score: float
+    short_score: float
+    dominant_regime: str
+    chart_story: str
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "pair": self.pair,
+            "long_score": round(self.long_score, 4),
+            "short_score": round(self.short_score, 4),
+            "dominant_regime": self.dominant_regime,
+            "chart_story": self.chart_story,
+            "warnings": list(self.warnings),
+            "views": [view.to_dict() for view in self.views],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def build_pair_chart(
+    pair: str,
+    *,
+    client: OandaReadOnlyClient,
+    timeframes: tuple[str, ...] = DEFAULT_TIMEFRAMES,
+    candles_by_tf: Mapping[str, Iterable[Candle]] | None = None,
+    count: int = 200,
+) -> PairChart:
+    """Build a multi-timeframe view for a pair.
+
+    `candles_by_tf` lets tests inject prebuilt series; in production we go
+    through `client.get_json` via `fetch_candles_via_client`.
+    """
+
+    views: list[ChartView] = []
+    warnings: list[str] = []
+    for tf in timeframes:
+        if candles_by_tf is not None and tf in candles_by_tf:
+            candles = tuple(candles_by_tf[tf])
+        else:
+            try:
+                candles = fetch_candles_via_client(client, pair, tf, count=count)
+            except Exception as exc:  # pragma: no cover - network path
+                warnings.append(f"{tf} fetch failed: {exc}")
+                continue
+        indicators = compute_indicators(pair, tf, candles)
+        regime, long_bias, short_bias = _classify(indicators)
+        views.append(
+            ChartView(
+                granularity=tf,
+                indicators=indicators,
+                regime=regime,
+                long_bias=long_bias,
+                short_bias=short_bias,
+            )
+        )
+
+    long_score, short_score, dominant = _aggregate(views)
+    chart_story = _build_chart_story(pair, views, dominant)
+    return PairChart(
+        pair=pair,
+        views=tuple(views),
+        long_score=long_score,
+        short_score=short_score,
+        dominant_regime=dominant,
+        chart_story=chart_story,
+        warnings=tuple(warnings),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Regime classification
+# ---------------------------------------------------------------------------
+
+
+def _classify(ind: IndicatorSet) -> tuple[str, float, float]:
+    """Return (regime_tag, long_bias, short_bias) from a single indicator set.
+
+    The classification follows a small ruleset:
+
+    - ADX >= 25 and EMA12 > EMA26 → TREND_UP
+    - ADX >= 25 and EMA12 < EMA26 → TREND_DOWN
+    - BB span very wide and price beyond upper/lower → IMPULSE_UP/DOWN
+    - Donchian width small and ADX < 18 → RANGE
+    - Otherwise UNCLEAR
+
+    Bias is built from indicator agreement: each "long-leaning" reading adds to
+    long_bias, each "short-leaning" reading adds to short_bias. We normalize to
+    0..1 by dividing by the number of evaluated checks.
+    """
+
+    if not ind.valid:
+        return "UNCLEAR", 0.0, 0.0
+
+    long_signals = 0
+    short_signals = 0
+    total = 0
+
+    def vote(cond_long: bool, cond_short: bool) -> None:
+        nonlocal long_signals, short_signals, total
+        total += 1
+        if cond_long:
+            long_signals += 1
+        if cond_short:
+            short_signals += 1
+
+    if ind.ema_12 is not None and ind.ema_50 is not None:
+        vote(ind.ema_12 > ind.ema_50, ind.ema_12 < ind.ema_50)
+
+    if ind.ema_slope_5 is not None:
+        vote(ind.ema_slope_5 > 0, ind.ema_slope_5 < 0)
+
+    if ind.macd_hist is not None:
+        vote(ind.macd_hist > 0, ind.macd_hist < 0)
+
+    if ind.rsi_14 is not None:
+        vote(ind.rsi_14 > 55, ind.rsi_14 < 45)
+
+    if ind.plus_di_14 is not None and ind.minus_di_14 is not None:
+        vote(ind.plus_di_14 > ind.minus_di_14, ind.minus_di_14 > ind.plus_di_14)
+
+    if ind.ichimoku_cloud_pos:
+        vote(ind.ichimoku_cloud_pos > 0, ind.ichimoku_cloud_pos < 0)
+
+    if ind.vwap_gap_pips is not None:
+        vote(ind.vwap_gap_pips > 0, ind.vwap_gap_pips < 0)
+
+    if ind.roc_10 is not None:
+        vote(ind.roc_10 > 0, ind.roc_10 < 0)
+
+    long_bias = long_signals / total if total else 0.0
+    short_bias = short_signals / total if total else 0.0
+
+    adx = ind.adx_14 or 0.0
+    bb_pips = ind.bb_span_pips or 0.0
+    donch_pips = ind.donchian_width_pips or 0.0
+
+    regime = "UNCLEAR"
+    if adx >= 25:
+        regime = "TREND_UP" if long_bias > short_bias else "TREND_DOWN"
+    elif bb_pips and ind.atr_pips and bb_pips > ind.atr_pips * 6 and abs((ind.vwap_gap_pips or 0.0)) > (ind.atr_pips or 0.0) * 1.5:
+        regime = "IMPULSE_UP" if long_bias > short_bias else "IMPULSE_DOWN"
+    elif adx < 18 and donch_pips and ind.atr_pips and donch_pips < ind.atr_pips * 5:
+        regime = "RANGE"
+    elif _is_failure_risk(ind):
+        regime = "FAILURE_RISK"
+
+    return regime, long_bias, short_bias
+
+
+def _is_failure_risk(ind: IndicatorSet) -> bool:
+    """Detect a fading-momentum / failed-break setup.
+
+    Heuristic: price near a swing extreme but RSI/MACD diverging the wrong
+    way relative to direction, ADX rolling under 22, ROC10 contradicting ROC5.
+    """
+
+    if ind.rsi_14 is None or ind.adx_14 is None or ind.roc_5 is None or ind.roc_10 is None:
+        return False
+    fading_adx = ind.adx_14 < 22
+    momentum_split = (ind.roc_5 > 0 and ind.roc_10 < 0) or (ind.roc_5 < 0 and ind.roc_10 > 0)
+    overextended = (ind.rsi_14 > 70) or (ind.rsi_14 < 30)
+    return fading_adx and (momentum_split or overextended)
+
+
+# ---------------------------------------------------------------------------
+# Multi-timeframe aggregation + chart story
+# ---------------------------------------------------------------------------
+
+
+def _aggregate(views: list[ChartView]) -> tuple[float, float, str]:
+    """Aggregate per-timeframe biases. Higher timeframes weigh more."""
+
+    if not views:
+        return 0.0, 0.0, "UNCLEAR"
+    weight_map = {"M5": 1.0, "M15": 1.5, "H1": 2.5, "M30": 1.7, "H4": 3.0, "D": 4.0, "M1": 0.7}
+    total_w = 0.0
+    long_w = 0.0
+    short_w = 0.0
+    regime_votes: dict[str, float] = {}
+    for view in views:
+        w = weight_map.get(view.granularity, 1.0)
+        total_w += w
+        long_w += view.long_bias * w
+        short_w += view.short_bias * w
+        regime_votes[view.regime] = regime_votes.get(view.regime, 0.0) + w
+    long_score = long_w / total_w if total_w else 0.0
+    short_score = short_w / total_w if total_w else 0.0
+    dominant = max(regime_votes.items(), key=lambda kv: kv[1])[0]
+    return long_score, short_score, dominant
+
+
+def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
+    if not views:
+        return f"{pair}: no candles available"
+    fragments: list[str] = [f"{pair} {dominant}"]
+    for view in views:
+        ind = view.indicators
+        bits = []
+        if ind.adx_14 is not None:
+            bits.append(f"ADX={ind.adx_14:.1f}")
+        if ind.rsi_14 is not None:
+            bits.append(f"RSI={ind.rsi_14:.1f}")
+        if ind.atr_pips is not None:
+            bits.append(f"ATR={ind.atr_pips:.1f}p")
+        if ind.bb_span_pips is not None:
+            bits.append(f"BB={ind.bb_span_pips:.1f}p")
+        if ind.ichimoku_cloud_pos:
+            cloud = {1: "above", -1: "below", 0: "in"}.get(ind.ichimoku_cloud_pos, "?")
+            bits.append(f"cloud={cloud}")
+        fragments.append(f"{view.granularity}({view.regime}, {' '.join(bits)})")
+    return "; ".join(fragments)

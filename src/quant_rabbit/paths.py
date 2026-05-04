@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ENV_LOCAL = ROOT / ".env.local"
 DEFAULT_LEGACY_ARCHIVE = Path(
     os.environ.get(
         "QR_LEGACY_ARCHIVE",
@@ -19,6 +20,7 @@ DEFAULT_MARKET_STORY_PROFILE = ROOT / "data" / "market_story_profile.json"
 DEFAULT_MARKET_STORY_REPORT = ROOT / "docs" / "market_story_report.md"
 DEFAULT_CAMPAIGN_PLAN = ROOT / "data" / "daily_campaign_plan.json"
 DEFAULT_CAMPAIGN_REPORT = ROOT / "docs" / "daily_campaign_report.md"
+DEFAULT_TRADER_SETTINGS = ROOT / "data" / "trader_settings.json"
 DEFAULT_ORDER_INTENTS = ROOT / "data" / "order_intents.json"
 DEFAULT_ORDER_INTENT_REPORT = ROOT / "docs" / "order_intents_report.md"
 DEFAULT_RECEIPT_PROMOTION_REPORT = ROOT / "docs" / "receipt_promotion_report.md"
@@ -31,3 +33,21 @@ DEFAULT_POSITION_MANAGEMENT_REPORT = ROOT / "docs" / "position_management_report
 DEFAULT_POSITION_EXECUTION = ROOT / "data" / "position_execution.json"
 DEFAULT_POSITION_EXECUTION_REPORT = ROOT / "docs" / "position_execution_report.md"
 DEFAULT_BROKER_SNAPSHOT = ROOT / "data" / "broker_snapshot.json"
+DEFAULT_DAILY_TARGET_STATE = ROOT / "data" / "daily_target_state.json"
+DEFAULT_DAILY_TARGET_REPORT = ROOT / "docs" / "daily_target_report.md"
+DEFAULT_REPLAY_BACKTEST = ROOT / "data" / "replay_backtest.json"
+DEFAULT_REPLAY_BACKTEST_REPORT = ROOT / "docs" / "replay_backtest_report.md"
+DEFAULT_GPT_TRADER_DECISION = ROOT / "data" / "gpt_trader_decision.json"
+DEFAULT_GPT_TRADER_DECISION_REPORT = ROOT / "docs" / "gpt_trader_decision_report.md"
+DEFAULT_COVERAGE_OPTIMIZATION = ROOT / "data" / "coverage_optimization.json"
+DEFAULT_COVERAGE_OPTIMIZATION_REPORT = ROOT / "docs" / "coverage_optimization_report.md"
+DEFAULT_POST_TRADE_LEARNING = ROOT / "data" / "post_trade_learning.json"
+DEFAULT_POST_TRADE_LEARNING_REPORT = ROOT / "docs" / "post_trade_learning_report.md"
+DEFAULT_EXECUTION_REPLAY = ROOT / "data" / "execution_replay.json"
+DEFAULT_EXECUTION_REPLAY_REPORT = ROOT / "docs" / "execution_replay_report.md"
+DEFAULT_DRY_RUN_CERTIFICATION = ROOT / "data" / "dry_run_certification.json"
+DEFAULT_DRY_RUN_CERTIFICATION_REPORT = ROOT / "docs" / "dry_run_certification_report.md"
+DEFAULT_COMPLETION_STATUS = ROOT / "data" / "completion_status.json"
+DEFAULT_COMPLETION_STATUS_REPORT = ROOT / "docs" / "completion_status_report.md"
+DEFAULT_PAIR_CHARTS = ROOT / "data" / "pair_charts.json"
+DEFAULT_PAIR_CHARTS_REPORT = ROOT / "docs" / "pair_charts_report.md"

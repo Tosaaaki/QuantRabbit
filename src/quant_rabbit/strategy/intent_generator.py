@@ -13,7 +13,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
-from quant_rabbit.risk import RiskEngine, RiskPolicy
+from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -33,6 +33,7 @@ class GeneratedIntent:
     lane_id: str
     status: str
     intent: dict[str, Any] | None
+    risk_metrics: dict[str, Any] | None
     risk_allowed: bool | None
     risk_issues: tuple[dict[str, Any], ...]
     strategy_issues: tuple[dict[str, Any], ...]
@@ -59,20 +60,33 @@ class IntentGenerator:
         strategy_profile: Path = DEFAULT_STRATEGY_PROFILE,
         output_path: Path = DEFAULT_ORDER_INTENTS,
         report_path: Path = DEFAULT_ORDER_INTENT_REPORT,
+        max_loss_jpy: float | None = None,
+        max_loss_pct: float | None = None,
+        risk_equity_jpy: float | None = None,
     ) -> None:
         self.campaign_plan = campaign_plan
         self.strategy_profile = strategy_profile
         self.output_path = output_path
         self.report_path = report_path
+        self.max_loss_jpy = max_loss_jpy
+        self.max_loss_pct = max_loss_pct
+        self.risk_equity_jpy = risk_equity_jpy
 
     def run(self, *, snapshot_path: Path | None = None, max_candidates: int = 12) -> IntentGenerationSummary:
         plan = json.loads(self.campaign_plan.read_text())
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
         strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
+        max_loss_jpy = resolve_max_loss_jpy(
+            max_loss_jpy=self.max_loss_jpy,
+            max_loss_pct=self.max_loss_pct,
+            equity_jpy=self.risk_equity_jpy,
+            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+            label="generate-intents risk cap",
+        )
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
-            results.append(self._build_for_lane(lane, snapshot, strategy_profile))
+            results.append(self._build_for_lane(lane, snapshot, strategy_profile, max_loss_jpy=max_loss_jpy))
         generated_at = datetime.now(timezone.utc).isoformat()
         self._write_output(results, generated_at, snapshot_path)
         self._write_report(results, generated_at, snapshot_path)
@@ -91,6 +105,8 @@ class IntentGenerator:
         lane: dict[str, Any],
         snapshot: BrokerSnapshot | None,
         strategy_profile: StrategyProfile | None,
+        *,
+        max_loss_jpy: float,
     ) -> GeneratedIntent:
         lane_id = _lane_id(lane)
         pair = str(lane["pair"])
@@ -100,6 +116,7 @@ class IntentGenerator:
                 lane_id=lane_id,
                 status="NEEDS_BROKER_SNAPSHOT",
                 intent=None,
+                risk_metrics=None,
                 risk_allowed=None,
                 risk_issues=(),
                 strategy_issues=(),
@@ -112,14 +129,21 @@ class IntentGenerator:
                 lane_id=lane_id,
                 status="MISSING_QUOTE",
                 intent=None,
+                risk_metrics=None,
                 risk_allowed=False,
                 risk_issues=({"code": "MISSING_QUOTE", "message": f"missing quote for {pair}", "severity": "BLOCK"},),
                 strategy_issues=(),
                 live_blockers=(f"snapshot has no quote for {pair}",),
                 note="Cannot build priced intent without a live quote.",
             )
-        intent = _intent_from_lane(lane, quote)
-        risk = RiskEngine(policy=RiskPolicy(block_new_entries_with_pending_entry_orders=False)).validate(
+        intent = _intent_from_lane(lane, quote, snapshot, max_loss_jpy=max_loss_jpy)
+        risk = RiskEngine(
+            policy=RiskPolicy(
+                block_new_entries_with_pending_entry_orders=False,
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=max_loss_jpy,
+            )
+        ).validate(
             intent,
             snapshot,
             for_live_send=False,
@@ -142,6 +166,7 @@ class IntentGenerator:
             lane_id=lane_id,
             status=status,
             intent=_intent_to_json(intent),
+            risk_metrics=asdict(risk.metrics) if risk.metrics else None,
             risk_allowed=risk.allowed,
             risk_issues=risk_issues,
             strategy_issues=strategy_issues,
@@ -198,6 +223,12 @@ class IntentGenerator:
                     f"  - intent: `{intent['pair']} {intent['side']} {intent['order_type']}` "
                     f"units={intent['units']} entry={intent.get('entry')} tp={intent['tp']} sl={intent['sl']}"
                 )
+            if item.risk_metrics:
+                lines.append(
+                    f"  - risk metrics: risk=`{item.risk_metrics['risk_jpy']:.1f} JPY` "
+                    f"reward=`{item.risk_metrics['reward_jpy']:.1f} JPY` "
+                    f"rr=`{item.risk_metrics['reward_risk']:.2f}` spread=`{item.risk_metrics['spread_pips']:.1f}pip`"
+                )
             for issue in item.risk_issues:
                 lines.append(f"  - risk {issue['severity']}: {issue['code']} {issue['message']}")
             for issue in item.strategy_issues:
@@ -227,13 +258,21 @@ def _lane_id(lane: dict[str, Any]) -> str:
     return f"{lane.get('desk')}:{lane.get('pair')}:{lane.get('direction')}:{lane.get('method')}"
 
 
-def _intent_from_lane(lane: dict[str, Any], quote: Quote) -> OrderIntent:
+def _intent_from_lane(
+    lane: dict[str, Any],
+    quote: Quote,
+    snapshot: BrokerSnapshot,
+    *,
+    max_loss_jpy: float,
+) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
     method = TradeMethod.parse(str(lane["method"]))
     order_type = _order_type_for(method)
-    entry, tp, sl = _geometry(pair, side, order_type, quote)
-    thesis = f"{lane['desk']} {pair} {side.value} {method.value}: {lane['required_receipt']}"
+    target_reward_risk = _target_reward_risk(lane)
+    entry, tp, sl = _geometry(pair, side, order_type, quote, reward_risk=target_reward_risk)
+    units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
+    thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
     context = MarketContext(
         regime=f"{method.value} campaign lane",
         narrative=str(lane.get("reason") or ""),
@@ -247,7 +286,7 @@ def _intent_from_lane(lane: dict[str, Any], quote: Quote) -> OrderIntent:
         pair=pair,
         side=side,
         order_type=order_type,
-        units=1000,
+        units=units,
         entry=entry,
         tp=tp,
         sl=sl,
@@ -259,6 +298,11 @@ def _intent_from_lane(lane: dict[str, Any], quote: Quote) -> OrderIntent:
             "adoption": lane.get("adoption"),
             "campaign_role": lane.get("campaign_role"),
             "required_receipt": lane.get("required_receipt"),
+            "target_reward_risk": target_reward_risk,
+            "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
+            "evidence_best_jpy": lane.get("evidence_best_jpy"),
+            "sizing_rule": f"floor units to the largest broker size under the {max_loss_jpy:.0f} JPY loss cap",
+            "max_loss_jpy": max_loss_jpy,
         },
     )
 
@@ -269,12 +313,12 @@ def _order_type_for(method: TradeMethod) -> OrderType:
     return OrderType.STOP_ENTRY
 
 
-def _geometry(pair: str, side: Side, order_type: OrderType, quote: Quote) -> tuple[float, float, float]:
+def _geometry(pair: str, side: Side, order_type: OrderType, quote: Quote, *, reward_risk: float = 1.5) -> tuple[float, float, float]:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
     spread_pips = abs(quote.ask - quote.bid) * pip_factor
     stop_pips = max(spread_pips * 6.0, 8.0)
-    reward_pips = stop_pips * 1.5
+    reward_pips = stop_pips * reward_risk
     trigger_offset_pips = max(spread_pips * 2.0, 2.0)
     if order_type == OrderType.LIMIT:
         entry = quote.bid - trigger_offset_pips * pip if side == Side.LONG else quote.ask + trigger_offset_pips * pip
@@ -289,8 +333,40 @@ def _geometry(pair: str, side: Side, order_type: OrderType, quote: Quote) -> tup
     return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
 
 
+def _target_reward_risk(lane: dict[str, Any]) -> float:
+    try:
+        value = float(lane.get("target_reward_risk") or 1.5)
+    except (TypeError, ValueError):
+        value = 1.5
+    return round(min(8.0, max(1.2, value)), 2)
+
+
 def _round_price(pair: str, value: float) -> float:
     return round(value, 3 if pair.endswith("_JPY") else 5)
+
+
+def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: float, snapshot: BrokerSnapshot) -> int:
+    pip_factor = PIP_FACTORS[pair]
+    stop_pips = abs(entry - sl) * pip_factor
+    if stop_pips <= 0:
+        return 1
+    quote_to_jpy = _quote_to_jpy(pair, snapshot)
+    if quote_to_jpy is None:
+        return 1
+    max_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
+    if max_units >= 1000:
+        return max(1000, int(max_units // 1000) * 1000)
+    return max(1, int(max_units))
+
+
+def _quote_to_jpy(pair: str, snapshot: BrokerSnapshot) -> float | None:
+    quote_ccy = pair.split("_", 1)[1]
+    if quote_ccy == "JPY":
+        return 1.0
+    conversion_quote = snapshot.quotes.get(f"{quote_ccy}_JPY")
+    if conversion_quote is None:
+        return None
+    return max(conversion_quote.bid, conversion_quote.ask)
 
 
 def _intent_to_json(intent: OrderIntent) -> dict[str, Any]:
@@ -355,9 +431,32 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             timestamp_utc=datetime.fromisoformat(timestamp) if timestamp else datetime.now(timezone.utc),
         )
     fetched = payload.get("fetched_at_utc")
+    account = _account_summary_from_payload(payload.get("account"))
     return BrokerSnapshot(
         fetched_at_utc=datetime.fromisoformat(fetched) if fetched else datetime.now(timezone.utc),
         positions=positions,
         orders=orders,
         quotes=quotes,
+        account=account,
+    )
+
+
+def _account_summary_from_payload(payload: object):
+    from quant_rabbit.models import AccountSummary
+
+    if not isinstance(payload, dict):
+        return None
+    fetched = payload.get("fetched_at_utc")
+    return AccountSummary(
+        nav_jpy=float(payload.get("nav_jpy") or 0.0),
+        balance_jpy=float(payload.get("balance_jpy") or 0.0),
+        unrealized_pl_jpy=float(payload.get("unrealized_pl_jpy") or 0.0),
+        margin_used_jpy=float(payload.get("margin_used_jpy") or 0.0),
+        margin_available_jpy=float(payload.get("margin_available_jpy") or 0.0),
+        pl_jpy=float(payload.get("pl_jpy") or 0.0),
+        financing_jpy=float(payload.get("financing_jpy") or 0.0),
+        last_transaction_id=str(payload.get("last_transaction_id") or ""),
+        fetched_at_utc=(
+            datetime.fromisoformat(fetched) if isinstance(fetched, str) and fetched else datetime.now(timezone.utc)
+        ),
     )
