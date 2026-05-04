@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T06:15:01.716375+00:00`
+- Generated at UTC: `2026-05-04T06:32:42.703833+00:00`
 - Status: `ACCEPTED`
-- Action: `CLOSE`
+- Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: CLOSE trade 470130 to lock +1,690 JPY profit and restore risk budget. Position owner=unknown blocks protection gateway (NON_TRADER_POSITION blocker). RANGE regime with LONG bias supports hold thesis, but system cannot protect unowned positions. Professional capital management: lock profit, clear blocker, pursue fresh LIVE_READY opportunities in next cycle.
+- Operator summary: WAIT (EVENT_RISK): All 9 LIVE_READY lanes are RISK_REPAIR_CANDIDATE historical replays requiring evidence receipts, not fresh current-structure edges. JPY crosses show MTF divergence (M5 bounce vs M15/H1 down) with intervention risk. EUR_USD regime UNCLEAR. Golden Week liquidity thinning. Professional wait for high-conviction fresh setup. Flat account, 4,202 JPY budget, pursuing 21,011 JPY target. Dry-run environment.
 
 ## Verification Issues
 

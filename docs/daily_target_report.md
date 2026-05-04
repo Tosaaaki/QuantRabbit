@@ -1,25 +1,25 @@
 # Daily Target Report
 
-- Generated at UTC: `2026-05-04T06:15:09.532904+00:00`
-- Status: `REPAIR_REQUIRED`
+- Generated at UTC: `2026-05-04T06:32:42.603094+00:00`
+- Status: `PURSUE_TARGET`
 - Start equity: `210107 JPY`
 - Campaign day (JST9): `2026-05-04`
 - Target: `21011 JPY` (`10.0%`)
 - Realized PnL: `0 JPY`
-- Unrealized PnL: `1972 JPY`
-- Progress: `1972 JPY` (`9.4%` of target)
-- Remaining target: `19039 JPY`
+- Unrealized PnL: `0 JPY`
+- Progress: `0 JPY` (`0.0%` of target)
+- Remaining target: `21011 JPY`
 - Open risk: `0 JPY`
-- Remaining risk budget: `0 JPY`
-- Current equity estimate: `212079 JPY`
+- Remaining risk budget: `4202 JPY`
+- Current equity estimate: `210107 JPY`
 
 ## Blockers
 
-- open position 470130 EUR_USD lacks TP/SL; repair before fresh risk
+- remaining target 21011 JPY still needs live-ready campaign coverage
 
 ## Open Positions
 
-- `470130` `EUR_USD LONG` units=`20000` upl=`1972` risk=`unknown` missing=`TP/SL`
+- none
 
 ## Target Contract
 

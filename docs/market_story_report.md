@@ -1,6 +1,6 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-04T06:15:09.621993+00:00`
+- Generated at UTC: `2026-05-04T06:32:42.695882+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
 - Market story profile JSON: `/Users/tossaki/App/QuantRabbit/data/market_story_profile.json`
 - Story artifacts read: `19`
@@ -32,8 +32,8 @@
 
 - `breakout_failure`: `567`
 - `range_rail`: `563`
-- `intervention`: `368`
-- `central_bank`: `285`
+- `intervention`: `369`
+- `central_bank`: `287`
 - `spread_liquidity`: `265`
 - `event_risk`: `160`
 - `position_risk`: `97`
@@ -49,14 +49,14 @@
 
 ## Pair Story Profiles
 
+- `USD_JPY` methods: BREAKOUT_FAILURE=103, EVENT_RISK=91, RANGE_ROTATION=87, POSITION_MANAGEMENT=40; themes: intervention=140, breakout_failure=97, range_rail=94, central_bank=60, spread_liquidity=29
+  - news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
+  - news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
+  - news_digest: USD/JPY**: Near 160. Rate check = intervention warning. Avoid being short JPY with tight SLs. If BOJ intervenes, move is fast (-200–300 pip in minutes). Rollover guard critical tonight.
 - `EUR_USD` methods: RANGE_ROTATION=142, BREAKOUT_FAILURE=126, TREND_CONTINUATION=43, POSITION_MANAGEMENT=22; themes: range_rail=167, breakout_failure=105, spread_liquidity=40, intervention=28, event_risk=17
   - news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
   - news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
   - news_flow: WATCH: EUR/USD ~1.1725
-- `USD_JPY` methods: BREAKOUT_FAILURE=103, EVENT_RISK=90, RANGE_ROTATION=87, POSITION_MANAGEMENT=40; themes: intervention=139, breakout_failure=97, range_rail=94, central_bank=57, spread_liquidity=29
-  - news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
-  - news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
-  - news_digest: USD/JPY**: Near 160. Rate check = intervention warning. Avoid being short JPY with tight SLs. If BOJ intervenes, move is fast (-200–300 pip in minutes). Rollover guard critical tonight.
 - `EUR_JPY` methods: RANGE_ROTATION=86, BREAKOUT_FAILURE=83, TREND_CONTINUATION=23, POSITION_MANAGEMENT=8; themes: intervention=108, range_rail=90, breakout_failure=79, spread_liquidity=34, position_risk=5
   - news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
