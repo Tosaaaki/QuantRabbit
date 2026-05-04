@@ -1,68 +1,103 @@
 # Order Intents Report
 
-- Generated at UTC: `2026-05-04T20:27:03.227346+00:00`
+- Generated at UTC: `2026-05-04T20:45:54.336190+00:00`
 - Campaign plan: `/Users/tossaki/App/QuantRabbit/data/daily_campaign_plan.json`
-- Snapshot: `/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json`
-- Results: `12`
+- Snapshot: `data/broker_snapshot.json`
+- Results: `15`
 
 ## Status Counts
 
-- `DRY_RUN_BLOCKED`: `3`
-- `LIVE_READY`: `9`
+- `DRY_RUN_BLOCKED`: `15`
 
 ## Candidates
 
-- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
+- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.703 tp=113.519 sl=112.601
-  - risk metrics: risk=`1020.0 JPY` reward=`8160.0 JPY` rr=`8.00` spread=`1.7pip`
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=8000 entry=112.716 tp=113.676 sl=112.596
+  - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`2.0pip`
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 40.5s > 20s
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=8000 entry=183.836 tp=184.082 sl=183.71
-  - risk metrics: risk=`1008.0 JPY` reward=`1968.0 JPY` rr=`1.95` spread=`2.1pip`
-  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=6000 entry=183.889 tp=184.193 sl=183.733
+  - risk metrics: risk=`936.0 JPY` reward=`1824.0 JPY` rr=`1.95` spread=`2.6pip`
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 39.4s > 20s
+  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.6pip exceeds 2.5x normal 0.8pip
+- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG STOP-ENTRY` units=13000 entry=1.16902 tp=1.1713 sl=1.16854
-  - risk metrics: risk=`981.2 JPY` reward=`4660.5 JPY` rr=`4.75` spread=`0.8pip`
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY`
+  - intent: `EUR_USD LONG STOP-ENTRY` units=13000 entry=1.16938 tp=1.17166 sl=1.1689
+  - risk metrics: risk=`981.1 JPY` reward=`4660.0 JPY` rr=`4.75` spread=`0.8pip`
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 49.6s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT STOP-ENTRY` units=13000 entry=1.16854 tp=1.16566 sl=1.16902
-  - risk metrics: risk=`981.2 JPY` reward=`5886.9 JPY` rr=`6.00` spread=`0.8pip`
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY`
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=13000 entry=1.1689 tp=1.16602 sl=1.16938
+  - risk metrics: risk=`981.1 JPY` reward=`5886.3 JPY` rr=`6.00` spread=`0.8pip`
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 49.6s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `GBP_USD LONG STOP-ENTRY` units=8000 entry=1.3532 tp=1.35493 sl=1.35242
-  - risk metrics: risk=`981.2 JPY` reward=`2176.1 JPY` rr=`2.22` spread=`1.3pip`
-- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY`
+  - intent: `GBP_USD LONG STOP-ENTRY` units=8000 entry=1.35347 tp=1.3552 sl=1.35269
+  - risk metrics: risk=`981.1 JPY` reward=`2175.9 JPY` rr=`2.22` spread=`1.3pip`
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 39.5s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG LIMIT` units=10000 entry=112.618 tp=113.434 sl=112.516
-  - risk metrics: risk=`1020.0 JPY` reward=`8160.0 JPY` rr=`8.00` spread=`1.7pip`
+  - intent: `AUD_JPY LONG LIMIT` units=8000 entry=112.616 tp=113.576 sl=112.496
+  - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`2.0pip`
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 40.5s > 20s
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG LIMIT` units=8000 entry=183.731 tp=183.977 sl=183.605
-  - risk metrics: risk=`1008.0 JPY` reward=`1968.0 JPY` rr=`1.95` spread=`2.1pip`
-  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
-- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY`
+  - intent: `EUR_JPY LONG LIMIT` units=6000 entry=183.759 tp=184.063 sl=183.603
+  - risk metrics: risk=`936.0 JPY` reward=`1824.0 JPY` rr=`1.95` spread=`2.6pip`
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 39.4s > 20s
+  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.6pip exceeds 2.5x normal 0.8pip
+- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG LIMIT` units=13000 entry=1.16854 tp=1.17082 sl=1.16806
-  - risk metrics: risk=`981.2 JPY` reward=`4660.5 JPY` rr=`4.75` spread=`0.8pip`
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY`
+  - intent: `EUR_USD LONG LIMIT` units=13000 entry=1.1689 tp=1.17118 sl=1.16842
+  - risk metrics: risk=`981.1 JPY` reward=`4660.0 JPY` rr=`4.75` spread=`0.8pip`
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 49.6s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT LIMIT` units=13000 entry=1.16902 tp=1.16614 sl=1.1695
-  - risk metrics: risk=`981.2 JPY` reward=`5886.9 JPY` rr=`6.00` spread=`0.8pip`
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`LIVE_READY`
+  - intent: `EUR_USD SHORT LIMIT` units=13000 entry=1.16938 tp=1.1665 sl=1.16986
+  - risk metrics: risk=`981.1 JPY` reward=`5886.3 JPY` rr=`6.00` spread=`0.8pip`
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 49.6s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `GBP_USD LONG LIMIT` units=8000 entry=1.35255 tp=1.35428 sl=1.35177
-  - risk metrics: risk=`981.2 JPY` reward=`2176.1 JPY` rr=`2.22` spread=`1.3pip`
-- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY`
+  - intent: `GBP_USD LONG LIMIT` units=8000 entry=1.35282 tp=1.35455 sl=1.35204
+  - risk metrics: risk=`981.1 JPY` reward=`2175.9 JPY` rr=`2.22` spread=`1.3pip`
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 39.5s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=10000 entry=112.703 tp=113.519 sl=112.601
-  - risk metrics: risk=`1020.0 JPY` reward=`8160.0 JPY` rr=`8.00` spread=`1.7pip`
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=8000 entry=112.716 tp=113.676 sl=112.596
+  - risk metrics: risk=`960.0 JPY` reward=`7680.0 JPY` rr=`8.00` spread=`2.0pip`
+  - risk BLOCK: STALE_QUOTE AUD_JPY quote is stale: 40.5s > 20s
 - `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=8000 entry=183.836 tp=184.082 sl=183.71
-  - risk metrics: risk=`1008.0 JPY` reward=`1968.0 JPY` rr=`1.95` spread=`2.1pip`
-  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=6000 entry=183.889 tp=184.193 sl=183.733
+  - risk metrics: risk=`936.0 JPY` reward=`1824.0 JPY` rr=`1.95` spread=`2.6pip`
+  - risk BLOCK: STALE_QUOTE EUR_JPY quote is stale: 39.4s > 20s
+  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.6pip exceeds 2.5x normal 0.8pip
+- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
+  - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
+  - intent: `EUR_USD LONG STOP-ENTRY` units=13000 entry=1.16938 tp=1.17166 sl=1.1689
+  - risk metrics: risk=`981.1 JPY` reward=`4660.0 JPY` rr=`4.75` spread=`0.8pip`
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 49.6s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
+  - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=13000 entry=1.1689 tp=1.16602 sl=1.16938
+  - risk metrics: risk=`981.1 JPY` reward=`5886.3 JPY` rr=`6.00` spread=`0.8pip`
+  - risk BLOCK: STALE_QUOTE EUR_USD quote is stale: 49.6s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
+- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
+  - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
+  - intent: `GBP_USD LONG STOP-ENTRY` units=8000 entry=1.35347 tp=1.3552 sl=1.35269
+  - risk metrics: risk=`981.1 JPY` reward=`2175.9 JPY` rr=`2.22` spread=`1.3pip`
+  - risk BLOCK: STALE_QUOTE GBP_USD quote is stale: 39.5s > 20s
+  - risk BLOCK: STALE_CONVERSION_QUOTE USD_JPY conversion quote is stale: 39.8s > 20s
 
 ## Completion Rule
 
