@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T09:20:51.953518+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-04T09:29:35.916468+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `range_trader:AUD_JPY:LONG:RANGE_ROTATION`
 - Cancel order ids: `none`
-- Confidence: `HIGH`
-- Operator summary: WAIT decision due to weekend market closure. All quotes are 58-64s stale (fetched Sunday 09:15 UTC during closure period). All 15 trade lanes blocked by RiskEngine STALE_QUOTE validation. Market reopens Sunday 22:00 UTC. Contract gate: AGENT_CONTRACT §3.5 stale-persistence prohibition. Next cycle should execute after market open when fresh quotes available. Progress: 8.6% of daily target, flat account.
+- Confidence: `MEDIUM`
+- Operator summary: TRADE decision: AUD_JPY LONG via range_trader LIMIT entry at 112.948, TP 113.764, SL 112.846, risk 408 JPY (RR=8.00). Thesis: currency strength differential (AUD rank 2, JPY rank 8) + M15 uptrend (ADX=44.4) + M5 overbought pullback setup. Risk: MTF conflict (H1 downtrend ADX=34.8), trading with COT crowd (LONG AUD +48k, SHORT JPY -76k). Only lane under per-trade cap 420 JPY; other lanes blocked by sizing. Progress 8.64% of target, 15 LIVE_READY lanes, no event windows — TRADE justified.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
