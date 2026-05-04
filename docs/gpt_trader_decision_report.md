@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T19:36:16.065118+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-04T19:46:22.444887+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
 - Cancel order ids: `none`
-- Confidence: `HIGH`
-- Operator summary: WAIT: Market closed until Sunday 17:00 EDT. All 15 lanes blocked by STALE_QUOTE (quotes 45-47s old). No action required. Next cycle at/after market open will refresh broker-snapshot and re-evaluate live-ready coverage. Daily campaign: 8.6% progress (1815/21011 JPY), 0 open risk, 4202 JPY daily budget remaining.
+- Confidence: `MEDIUM`
+- Operator summary: EUR_USD SHORT via judas_armed reversal setup: Asian high swept, price now 36 pips below midnight open in NY PM killzone. H1 bearish structure (BOS_DOWN, RSI=43, %R=-65, AroonOsc=-71) supports downside despite M5 bullish family scores. STOP entry 1.16969 (2p below current) with tight 4.8p SL and 28.8p TP for 6:1 R:R. Risk 980 JPY (within 1050 budget). All JPY-cross lanes rejected for directional conflict with TREND_DOWN regimes.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
