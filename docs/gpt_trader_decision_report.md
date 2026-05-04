@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T06:32:42.703833+00:00`
+- Generated at UTC: `2026-05-04T07:35:35.024164+00:00`
 - Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT (EVENT_RISK): All 9 LIVE_READY lanes are RISK_REPAIR_CANDIDATE historical replays requiring evidence receipts, not fresh current-structure edges. JPY crosses show MTF divergence (M5 bounce vs M15/H1 down) with intervention risk. EUR_USD regime UNCLEAR. Golden Week liquidity thinning. Professional wait for high-conviction fresh setup. Flat account, 4,202 JPY budget, pursuing 21,011 JPY target. Dry-run environment.
+- Operator summary: WAIT (EVENT_RISK): All 15 LIVE_READY lanes violate thin-market SL prohibition during Golden Week + Sunday session. Every lane uses 9-10 pip SL vs ATR×2 requirement (AUD_JPY needs 12.4p+, EUR_JPY needs 16.4p+). All setups counter-trend LONG against TREND_DOWN bias with intervention risk. QR_LIVE_ENABLED not set. Professional wait for post-Golden Week normal liquidity with trend-aligned ATR-appropriate setups. Flat account, 4,202 JPY risk budget, 21,011 JPY target.
 
 ## Verification Issues
 
