@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T21:15:22.059496+00:00`
+- Generated at UTC: `2026-05-04T21:21:39.531083+00:00`
 - Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to universal STALE_QUOTE blocker (quotes 56.9-97.4s old, exceeds 20s risk threshold per contract §9 by 2.8-4.9x) and SPREAD_TOO_WIDE (spreads 2-15x normal across all pairs). EUR_USD SHORT position protected at breakeven with FAILURE_RISK SHORT thesis intact (+244.75 JPY unrealized). Daily progress 9.80% near 10% target. 0 LIVE_READY lanes. Session OFF_HOURS / Asia boundary (Monday 06:10 JST) during Golden Week jp_holiday=true. Market quality absent; cannot validate geometry with stale quotes per contract §3.5 market-derived requirement. Quotes fresher than previous cycle (was 378s) but still exceed gate. Next cycle will fetch fresh data when liquidity restores.
+- Operator summary: WAIT due to universal STALE_QUOTE blocker (quotes 43-47s old, exceeds 20s risk threshold per contract §9 by 2.1-2.4×) and SPREAD_TOO_WIDE (spreads 5-17× normal across all pairs, exceeds 2.5× cap). EUR_USD SHORT position protected at breakeven SL with FAILURE_RISK thesis intact, unrealized +346.77 JPY (improved from +244.75 JPY previous cycle). Daily progress 10.29% (target achieved). 0 LIVE_READY lanes. Session OFF_HOURS (Sunday 17:25 NY time, Monday 06:17 JST) during Golden Week jp_holiday=true, 525 minutes until London open. Market quality absent; cannot validate geometry with stale quotes per contract §3.5 market-derived requirement. Quotes fresher than previous cycle (43-47s vs 56-97s) but still exceed gate. Next cycle will fetch fresh data when liquidity restores.
 
 ## Verification Issues
 

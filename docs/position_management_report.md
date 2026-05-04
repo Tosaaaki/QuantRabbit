@@ -1,12 +1,12 @@
 # Position Management Report
 
-- Generated at UTC: `2026-05-04T21:15:22.046791+00:00`
+- Generated at UTC: `2026-05-04T21:21:39.517946+00:00`
 - Action: `HOLD_PROTECTED`
 - Positions: `1`
 
 ## Positions
 
-- `470188` `EUR_USD SHORT` units=`13000` action=`HOLD_PROTECTED` upl=`489.5`
+- `470188` `EUR_USD SHORT` units=`13000` action=`HOLD_PROTECTED` upl=`244.8`
   - scores: same=`-270.56` opposite=`-253.15`
   - protection plan: sl=`None` tp=`None`
   - reason: TP/SL present and current thesis is not contradicted enough to force exit
