@@ -1,22 +1,22 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T23:29:36.130687+00:00`
-- Status: `SENT`
+- Generated at UTC: `2026-05-04T23:36:45.480310+00:00`
+- Status: `CANCELED_CONTAMINATED_PENDING`
 - Positions: `1`
-- Orders: `2`
-- Live-ready intents: `7`
+- Orders: `3`
+- Live-ready intents: `2`
 - Receipt promotions: `0`
-- Decision source: `gpt_trader`
-- Deterministic lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
-- Selected lane: `range_trader:AUD_JPY:LONG:RANGE_ROTATION`
-- Selected lane score: `78.71`
-- Selected lane size multiple: `0.9`
-- Sent: `True`
-- Canceled orders: `none`
+- Decision source: `deterministic`
+- Deterministic lane: `None`
+- Selected lane: `None`
+- Selected lane score: `None`
+- Selected lane size multiple: `None`
+- Sent: `False`
+- Canceled orders: `470194`
 - Position management: `HOLD_PROTECTED`
 - Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`18502.2048` progress_pct=`11.939`
-- GPT trader: status=`ACCEPTED` action=`TRADE` allowed=`True` issues=`0`
+- Daily target: `PURSUE_TARGET` remaining=`18604.2301` progress_pct=`11.4534`
+- GPT trader: status=`not used` action=`None` allowed=`None` issues=`None`
 - GPT error: `none`
 - GPT wait recovery attempts: `0`
 - GPT recovery source: `none`
