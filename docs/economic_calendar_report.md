@@ -1,20 +1,20 @@
 # Economic Calendar
 
-- Generated at UTC: `2026-05-04T21:23:50.314568+00:00`
+- Generated at UTC: `2026-05-04T21:42:47.669765+00:00`
 - Source: `https://nfs.faireconomy.media/ff_calendar_thisweek.xml`
-- Events parsed: 114
+- Events parsed: 115
 
 ## Pair Windows
 
 | Pair | In Window | Reason |
 |---|---|---|
-| `USD_JPY` | no | next event in 1236min: USD High 'ISM Services PMI' |
-| `EUR_USD` | no | next event in 1146min: EUR Medium 'ECB President Lagarde Speaks' |
-| `GBP_USD` | no | next event in 1236min: USD High 'ISM Services PMI' |
-| `AUD_USD` | no | next event in 666min: AUD High 'Cash Rate' |
-| `EUR_JPY` | no | next event in 1146min: EUR Medium 'ECB President Lagarde Speaks' |
-| `GBP_JPY` | no | next event in 5456min: GBP High 'BOE Gov Bailey Speaks' |
-| `AUD_JPY` | no | next event in 666min: AUD High 'Cash Rate' |
+| `USD_JPY` | no | next event in 1217min: USD High 'ISM Services PMI' |
+| `EUR_USD` | no | next event in 1127min: EUR Medium 'ECB President Lagarde Speaks' |
+| `GBP_USD` | no | next event in 1217min: USD High 'ISM Services PMI' |
+| `AUD_USD` | no | next event in 647min: AUD High 'Cash Rate' |
+| `EUR_JPY` | no | next event in 1127min: EUR Medium 'ECB President Lagarde Speaks' |
+| `GBP_JPY` | no | next event in 5437min: GBP High 'BOE Gov Bailey Speaks' |
+| `AUD_JPY` | no | next event in 647min: AUD High 'Cash Rate' |
 
 ## Upcoming High/Medium Events (first 30)
 
