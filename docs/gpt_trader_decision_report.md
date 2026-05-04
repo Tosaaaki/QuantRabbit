@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T19:59:58.035535+00:00`
+- Generated at UTC: `2026-05-04T20:06:41.464846+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to STALE_QUOTE blocking all 15 lanes. Broker-snapshot quotes (fetched 19:55:08 UTC) aged to 50-54s by the time intents were validated (19:55:58 UTC), exceeding the 20s contract threshold. Market is open (NY PM session, Golden Week holiday thin liquidity). EUR_USD SHORT -225 JPY is protected and within noise; no action needed. Coverage gap (0 LIVE_READY, 0 reward vs 19421 JPY target) is a product blocker. Next cycle: consider refreshing broker-snapshot immediately before intents, or accept dry-run staleness since live sends re-fetch anyway. Progress 7.57%, 3221 JPY risk budget remaining.
+- Operator summary: WAIT due to STALE_QUOTE blocking all 15 lanes (40.9s-42.2s quote age vs <20s contract threshold). Broker-snapshot fetched 20:02:39 UTC, intents validated 20:03:21 UTC = 42s pipeline latency. Market is open (Monday 05:02 JST, Asian session) but Japanese Bank Holiday (Golden Week) contributes to thin liquidity. EUR_USD SHORT trade 470188 is protected (+245 JPY unrealized, SL/TP set) with no invalidation signal; no action needed. Progress 9.8% of 10% target (2060 JPY realized, 18951 JPY remaining). Coverage gap (0 LIVE_READY, 0 reward) is a product blocker but fixable: next cycle can refresh broker-snapshot immediately before intents to close staleness window, or accept that dry-run staleness is expected since live sends will refresh quotes at send time anyway. Currency strength + pair_charts align on AUD_USD SHORT / JPY-cross SHORT themes, but execution gated by quote freshness.
 
 ## Verification Issues
 
