@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T20:06:41.464846+00:00`
-- Status: `REJECTED`
+- Generated at UTC: `2026-05-04T20:15:09.131437+00:00`
+- Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to STALE_QUOTE blocking all 15 lanes (40.9s-42.2s quote age vs <20s contract threshold). Broker-snapshot fetched 20:02:39 UTC, intents validated 20:03:21 UTC = 42s pipeline latency. Market is open (Monday 05:02 JST, Asian session) but Japanese Bank Holiday (Golden Week) contributes to thin liquidity. EUR_USD SHORT trade 470188 is protected (+245 JPY unrealized, SL/TP set) with no invalidation signal; no action needed. Progress 9.8% of 10% target (2060 JPY realized, 18951 JPY remaining). Coverage gap (0 LIVE_READY, 0 reward) is a product blocker but fixable: next cycle can refresh broker-snapshot immediately before intents to close staleness window, or accept that dry-run staleness is expected since live sends will refresh quotes at send time anyway. Currency strength + pair_charts align on AUD_USD SHORT / JPY-cross SHORT themes, but execution gated by quote freshness.
+- Operator summary: WAIT decision. Market closed (Sunday 16:09 ET pre-open), daily 10% target already achieved (10.58%), all 15 lanes blocked by STALE_QUOTE gate (quotes 46-52s old violate §9 20s threshold). One protected EUR_USD SHORT holding +408 JPY unrealized. Contract §5 protection-first behavior: with target achieved, no reason to force entries. Next cycle after market reopens ~17:00 ET will refresh quotes and reassess.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 

@@ -1,22 +1,22 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T20:06:40.524556+00:00`
-- Status: `GPT_REJECTED`
+- Generated at UTC: `2026-05-04T20:15:13.463604+00:00`
+- Status: `POSITION_ACTION_SENT`
 - Positions: `1`
 - Orders: `2`
 - Live-ready intents: `9`
 - Receipt promotions: `0`
-- Decision source: `gpt_trader`
-- Deterministic lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
+- Decision source: `deterministic`
+- Deterministic lane: `None`
 - Selected lane: `None`
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
 - Sent: `False`
 - Canceled orders: `none`
-- Position management: `HOLD_PROTECTED`
-- Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`18849.1028` progress_pct=`10.2879`
-- GPT trader: status=`REJECTED` action=`WAIT` allowed=`False` issues=`1`
+- Position management: `PROFIT_PROTECT_REQUIRED`
+- Position execution: `SENT` sent=`True`
+- Daily target: `PURSUE_TARGET` remaining=`18339.1073` progress_pct=`12.7153`
+- GPT trader: status=`not used` action=`None` allowed=`None` issues=`None`
 - GPT error: `none`
 - GPT wait recovery attempts: `0`
 - GPT recovery source: `none`
