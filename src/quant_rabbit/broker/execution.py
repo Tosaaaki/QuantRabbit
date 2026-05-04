@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
@@ -13,7 +14,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
-from quant_rabbit.risk import RiskEngine, RiskIssue
+from quant_rabbit.risk import RiskEngine, RiskIssue, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -45,18 +46,25 @@ class LiveOrderGateway:
         output_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         report_path: Path = DEFAULT_LIVE_ORDER_STAGE_REPORT,
         live_enabled: bool = False,
+        max_loss_jpy: float | None = None,
+        max_loss_pct: float | None = None,
+        risk_equity_jpy: float | None = None,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
         self.output_path = output_path
         self.report_path = report_path
         self.live_enabled = live_enabled
+        self.max_loss_jpy = max_loss_jpy
+        self.max_loss_pct = max_loss_pct
+        self.risk_equity_jpy = risk_equity_jpy
 
     def run(
         self,
         *,
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         lane_id: str | None = None,
+        size_multiple: float = 1.0,
         send: bool = False,
         confirm_live: bool = False,
     ) -> LiveOrderStageSummary:
@@ -81,24 +89,45 @@ class LiveOrderGateway:
 
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
+        requested_units = intent.units
+        scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
+        if scaled_units is not None:
+            intent = replace(intent, units=scaled_units)
         snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, intent))
+        max_loss_jpy = resolve_max_loss_jpy(
+            max_loss_jpy=self.max_loss_jpy,
+            max_loss_pct=self.max_loss_pct,
+            equity_jpy=self.risk_equity_jpy,
+            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+            label="stage-live-order risk cap",
+        )
         validate_live_enabled = self.live_enabled if send else True
-        risk = RiskEngine(live_enabled=validate_live_enabled).validate(intent, snapshot, for_live_send=True)
+        risk = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=max_loss_jpy,
+            ),
+            live_enabled=validate_live_enabled,
+        ).validate(intent, snapshot, for_live_send=True)
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
         risk_issues = [issue.__dict__ for issue in risk.issues]
+        intent_status_issues = _intent_status_issues(selected)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
+            or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
+            or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
-        order_request = _oanda_order_request(intent)
+        order_request, order_build_issues = _build_order_request(intent)
+        all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
         response = None
         sent = False
         status = "BLOCKED" if all_blocked else "STAGED"
-        if send and not all_blocked:
+        if send and order_request is not None and not all_blocked:
             response = self.client.post_order_json(order_request)
             sent = True
             status = "SENT"
@@ -107,7 +136,14 @@ class LiveOrderGateway:
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
-            "risk_issues": [*risk_issues, *send_issues],
+            "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
+            "risk_issues": [
+                *risk_issues,
+                *intent_status_issues,
+                *send_issues,
+                *order_build_issues,
+                *[issue.__dict__ for issue in scale_issues],
+            ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
             "sent": sent,
@@ -118,6 +154,9 @@ class LiveOrderGateway:
                 "orders": len(snapshot.orders),
                 "quotes": len(snapshot.quotes),
             },
+            "size_multiple": size_multiple,
+            "requested_units": requested_units,
+            "scaled_units": scaled_units,
         }
         self._write_result(result)
         self._write_report(result)
@@ -143,6 +182,7 @@ class LiveOrderGateway:
             f"- Generated at UTC: `{result['generated_at_utc']}`",
             f"- Status: `{result['status']}`",
             f"- Lane: `{result.get('lane_id')}`",
+            f"- Requested units: `{result.get('requested_units')}` size multiple: `{result.get('size_multiple')}` scaled units:`{result.get('scaled_units')}`",
             f"- Send requested: `{result.get('send_requested')}`",
             f"- Sent: `{result.get('sent')}`",
             "",
@@ -156,6 +196,12 @@ class LiveOrderGateway:
                 lines.append(f"- price: `{order['price']}`")
             lines.append(f"- takeProfitOnFill: `{order['takeProfitOnFill']['price']}`")
             lines.append(f"- stopLossOnFill: `{order['stopLossOnFill']['price']}`")
+            metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else None
+            if metrics:
+                lines.append(
+                    f"- broker-truth risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
+                    f"rr=`{metrics['reward_risk']:.2f}` spread=`{metrics['spread_pips']:.1f}pip`"
+                )
         else:
             lines.append("- none")
         lines.extend(["", "## Issues", ""])
@@ -200,6 +246,16 @@ def _snapshot_pairs(payload: dict[str, Any], intent: OrderIntent) -> tuple[str, 
     return tuple(sorted(pairs))
 
 
+def _scaled_units(units: int, size_multiple: float) -> tuple[int | None, list[RiskIssue]]:
+    if not math.isfinite(size_multiple) or size_multiple <= 0:
+        return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")]
+    scaled_abs = abs(int(round(units * size_multiple)))
+    if scaled_abs < 1:
+        return None, [RiskIssue("SIZE_MULTIPLIER_TOO_SMALL", "scaled units would round to zero")]
+    scaled = scaled_abs if units >= 0 else -scaled_abs
+    return scaled, []
+
+
 def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -> list[dict[str, str]]:
     issues: list[RiskIssue] = []
     if send and not confirm_live:
@@ -207,6 +263,25 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
     if send and not lane_id:
         issues.append(RiskIssue("LANE_ID_REQUIRED_FOR_SEND", "live send requires an explicit --lane-id"))
     return [issue.__dict__ for issue in issues]
+
+
+def _intent_status_issues(selected: dict[str, Any]) -> list[dict[str, str]]:
+    status = str(selected.get("status") or "")
+    if status == "LIVE_READY":
+        return []
+    return [
+        RiskIssue(
+            "INTENT_NOT_LIVE_READY",
+            f"stage-live-order requires a LIVE_READY receipt, got {status or 'missing'}",
+        ).__dict__
+    ]
+
+
+def _build_order_request(intent: OrderIntent) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
+    try:
+        return _oanda_order_request(intent), []
+    except ValueError as exc:
+        return None, [RiskIssue("ORDER_REQUEST_INVALID", str(exc)).__dict__]
 
 
 def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:

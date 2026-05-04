@@ -1,0 +1,255 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from quant_rabbit.coverage import CoverageOptimizer
+
+
+class CoverageOptimizerTest(unittest.TestCase):
+    def test_certifies_live_ready_reward_against_remaining_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            replay = root / "replay.json"
+            intents.write_text(json.dumps({"results": [_result("LIVE_READY")]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 150.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+            replay.write_text(json.dumps({"summary": {"days": 1, "evidence_target_covered": 1}}))
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=replay,
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "LIVE_READY_COVERAGE_READY")
+            self.assertEqual(summary.live_ready_lanes, 1)
+            self.assertGreaterEqual(summary.live_ready_reward_jpy, 150)
+            self.assertIn("Coverage Contract", (root / "coverage.md").read_text())
+
+    def test_names_target_gap_and_promotion_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(json.dumps({"results": [_result("DRY_RUN_PASSED", live_blocker="needs profile promotion")]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_GAP")
+            self.assertEqual(summary.promotion_candidate_lanes, 1)
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertTrue(any("live-ready reward misses" in item for item in payload["blockers"]))
+            self.assertTrue(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
+
+    def test_uses_receipted_risk_metrics_instead_of_static_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(json.dumps({"results": [_result("LIVE_READY", risk_metrics={"risk_jpy": 480.0, "reward_jpy": 720.0, "reward_risk": 1.5, "spread_pips": 0.8})]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 700.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "LIVE_READY_COVERAGE_READY")
+            self.assertEqual(summary.live_ready_reward_jpy, 720.0)
+
+    def test_blocks_live_ready_lane_when_broker_truth_risk_metrics_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(json.dumps({"results": [_result("LIVE_READY", include_risk_metrics=False)]}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_GAP")
+            self.assertEqual(summary.live_ready_lanes, 0)
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertIn("broker-truth risk metrics are missing", payload["lanes"][0]["blockers"][0])
+
+    def test_missing_target_state_is_not_treated_as_target_reached(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            intents.write_text(json.dumps({"results": [_result("LIVE_READY")]}))
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=root / "missing_target.json",
+                replay_path=root / "missing_replay.json",
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_GAP")
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertTrue(any("daily target state is missing" in item for item in payload["blockers"]))
+            self.assertNotEqual(payload["status"], "TARGET_REACHED_PROTECT")
+
+    def test_sequential_ladder_can_cover_target_without_simultaneous_risk_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            replay = root / "replay.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "LIVE_READY",
+                                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                risk_metrics={"risk_jpy": 480.0, "reward_jpy": 4000.0, "reward_risk": 8.33, "spread_pips": 0.8},
+                            ),
+                            _result(
+                                "LIVE_READY",
+                                lane_id="failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+                                risk_metrics={"risk_jpy": 480.0, "reward_jpy": 4000.0, "reward_risk": 8.33, "spread_pips": 0.8},
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 7000.0, "remaining_risk_budget_jpy": 500.0}))
+            replay.write_text(json.dumps({"summary": {"days": 1, "evidence_target_covered": 1}}))
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=replay,
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "LIVE_READY_COVERAGE_READY")
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertEqual(payload["sequential_ladder_steps"], 2)
+            self.assertFalse(any("simultaneous" in item for item in payload["blockers"]))
+
+    def test_names_replay_gap_instead_of_profile_promotion_when_live_ready_coverage_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            replay = root / "replay.json"
+            intents.write_text(json.dumps({"results": [_result("LIVE_READY", risk_metrics={"risk_jpy": 480.0, "reward_jpy": 9000.0, "reward_risk": 18.75, "spread_pips": 0.8})]}))
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 7000.0, "remaining_risk_budget_jpy": 500.0}))
+            replay.write_text(json.dumps({"summary": {"days": 3, "evidence_target_covered": 1}}))
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=replay,
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_REQUIRES_REPLAY_EVIDENCE")
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertTrue(any("replay evidence" in item for item in payload["blockers"]))
+
+
+def _result(
+    status: str,
+    *,
+    lane_id: str = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+    live_blocker: str | None = None,
+    risk_metrics: dict | None = None,
+    include_risk_metrics: bool = True,
+) -> dict:
+    payload = {
+        "lane_id": lane_id,
+        "status": status,
+        "risk_allowed": True,
+        "risk_issues": [],
+        "strategy_issues": [],
+        "live_blockers": [live_blocker] if live_blocker else [],
+        "intent": {
+            "pair": "EUR_USD",
+            "side": "LONG",
+            "order_type": "STOP-ENTRY",
+            "units": 1000,
+            "entry": 1.1000,
+            "tp": 1.1010,
+            "sl": 1.0995,
+            "thesis": "test continuation",
+            "market_context": {
+                "regime": "TREND_CONTINUATION campaign lane",
+                "narrative": "trend continuation pressure",
+                "chart_story": "trend staircase",
+                "method": "TREND_CONTINUATION",
+                "invalidation": "SL trades",
+            },
+        },
+    }
+    if include_risk_metrics:
+        payload["risk_metrics"] = risk_metrics or {
+            "risk_jpy": 78.5,
+            "reward_jpy": 157.0,
+            "reward_risk": 2.0,
+            "spread_pips": 0.8,
+        }
+    return payload
+
+
+if __name__ == "__main__":
+    unittest.main()

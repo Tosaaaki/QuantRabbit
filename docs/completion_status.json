@@ -1,0 +1,84 @@
+{
+  "artifact_paths": {
+    "broker_snapshot": "data/broker_snapshot.json",
+    "coverage": "data/coverage_optimization.json",
+    "dry_run_certification": "/Users/tossaki/App/QuantRabbit/data/dry_run_certification.json",
+    "execution_replay": "/Users/tossaki/App/QuantRabbit/data/execution_replay.json",
+    "live_order": "data/live_order_request.json",
+    "order_intents": "data/order_intents.json",
+    "replay_backtest": "/Users/tossaki/App/QuantRabbit/data/replay_backtest.json",
+    "target_state": "/Users/tossaki/App/QuantRabbit/data/daily_target_state.json"
+  },
+  "blockers": [
+    {
+      "code": "COVERAGE_BLOCKER",
+      "message": "replay evidence covers target on 3/50 days"
+    },
+    {
+      "code": "REPLAY_COVERAGE_GAP",
+      "message": "legacy replay covers target on 3/50 days"
+    },
+    {
+      "code": "EXECUTION_REPLAY_MISSING",
+      "message": "execution replay receipt is missing"
+    },
+    {
+      "code": "CERTIFICATION_BLOCKER",
+      "message": "coverage optimization still has blockers"
+    },
+    {
+      "code": "CERTIFICATION_BLOCKER",
+      "message": "execution replay receipt is missing"
+    },
+    {
+      "code": "CERTIFICATION_BLOCKER",
+      "message": "dry-run certification found an entry send request or send"
+    }
+  ],
+  "broker": {
+    "orders": 0,
+    "pending_entries": 0,
+    "positions": 0
+  },
+  "coverage": {
+    "live_ready_reward_jpy": 24511.8362,
+    "potential_reward_jpy": 24511.8362,
+    "stale": false,
+    "status": "COVERAGE_REQUIRES_REPLAY_EVIDENCE"
+  },
+  "generated_at_utc": "2026-05-04T02:53:20.419892+00:00",
+  "live_ready_lanes": 10,
+  "next_actions": [
+    {
+      "code": "COVERAGE_ACTION",
+      "message": "execute coverage as a sequential ladder; do not deploy all live-ready lanes as simultaneous exposure"
+    },
+    {
+      "code": "COVERAGE_ACTION",
+      "message": "repair blockers for: EUR_JPY"
+    },
+    {
+      "code": "COVERAGE_ACTION",
+      "message": "rerun replay/backtest after coverage changes and keep gap reasons as product blockers"
+    },
+    {
+      "code": "RUN_EXECUTION_REPLAY",
+      "message": "run replay-execution with a quote path after at least one LIVE_READY intent exists"
+    },
+    {
+      "code": "RERUN_CERTIFICATION",
+      "message": "rerun certify-dry-run after coverage, replay, learning, and no-send artifacts pass"
+    }
+  ],
+  "replay": {
+    "days": 50,
+    "evidence_target_covered": 3,
+    "historical_target_hits": 0
+  },
+  "status": "BLOCKED",
+  "target": {
+    "remaining_risk_budget_jpy": 500.0,
+    "remaining_target_jpy": 22278.1,
+    "status": "PURSUE_TARGET"
+  }
+}

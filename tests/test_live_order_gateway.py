@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.broker.execution import LiveOrderGateway
-from quant_rabbit.models import BrokerSnapshot, Quote
+from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 
 
 class LiveOrderGatewayTest(unittest.TestCase):
@@ -73,6 +73,135 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
 
+    def test_existing_protected_position_blocks_when_portfolio_budget_exceeded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=client.snapshot_value.fetched_at_utc,
+                positions=(
+                    BrokerPosition(
+                        trade_id="101",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=5000,
+                        entry_price=1.1710,
+                        take_profit=1.1750,
+                        stop_loss=1.1690,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=(),
+                quotes=client.snapshot_value.quotes,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(
+                intents_path=_intents(root),
+                lane_id="lane:EUR_USD:LONG",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn("PORTFOLIO_LOSS_CAP_EXCEEDED", {issue["code"] for issue in payload["risk_issues"]})
+
+    def test_existing_break_even_trader_position_allows_portfolio_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=client.snapshot_value.fetched_at_utc,
+                positions=(
+                    BrokerPosition(
+                        trade_id="101",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3000,
+                        entry_price=1.1710,
+                        take_profit=1.1750,
+                        stop_loss=1.1710,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=(),
+                quotes=client.snapshot_value.quotes,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertFalse(summary.sent)
+            payload = json.loads((root / "request.json").read_text())
+            self.assertNotIn("OPEN_POSITION_EXISTS", {issue["code"] for issue in payload["risk_issues"]})
+
+    def test_non_live_ready_intent_is_not_staged_even_if_fresh_risk_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(
+                intents_path=_intents(root, status="DRY_RUN_BLOCKED"),
+                lane_id="lane:EUR_USD:LONG",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn("INTENT_NOT_LIVE_READY", {issue["code"] for issue in payload["risk_issues"]})
+
+    def test_invalid_pending_entry_writes_blocked_receipt_instead_of_raising(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            intents = _intents(root)
+            payload = json.loads(intents.read_text())
+            payload["results"][0]["intent"]["entry"] = None
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(
+                intents_path=intents,
+                lane_id="lane:EUR_USD:LONG",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            result = json.loads((root / "request.json").read_text())
+            self.assertIsNone(result["order_request"])
+            self.assertIn("ORDER_REQUEST_INVALID", {issue["code"] for issue in result["risk_issues"]})
+
 
 class FakeExecutionClient:
     def __init__(self) -> None:
@@ -115,7 +244,7 @@ def _profile(root: Path) -> Path:
     return path
 
 
-def _intents(root: Path) -> Path:
+def _intents(root: Path, *, status: str = "LIVE_READY") -> Path:
     path = root / "intents.json"
     path.write_text(
         json.dumps(
@@ -123,7 +252,7 @@ def _intents(root: Path) -> Path:
                 "results": [
                     {
                         "lane_id": "lane:EUR_USD:LONG",
-                        "status": "LIVE_READY",
+                        "status": status,
                         "risk_allowed": True,
                         "intent": {
                             "pair": "EUR_USD",

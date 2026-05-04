@@ -11,6 +11,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_TRADER_SETTINGS,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_DECISION_REPORT,
@@ -37,6 +38,8 @@ class LaneScore:
     action: str
     blockers: tuple[str, ...]
     rationale: tuple[str, ...]
+    size_multiple: float = 1.0
+    judgment: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -48,7 +51,21 @@ class TraderDecision:
     scores: tuple[LaneScore, ...]
     positions: int
     orders: int
+    selected_lane_score: float | None = None
+    selected_lane_size_multiple: float | None = None
     pending_cancel_order_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class TraderSettings:
+    score_bias: float = 0.0
+    score_size_enabled: bool = True
+    size_multiple_min: float = 0.7
+    size_multiple_max: float = 1.8
+    size_multiple_anchor_score: float = 110.0
+    size_multiple_per_score_point: float = 0.005
+    default_max_loss_jpy: float | None = None
+    default_max_loss_pct: float | None = None
 
 
 class TraderBrain:
@@ -61,6 +78,7 @@ class TraderBrain:
         campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
+        trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
         output_path: Path = DEFAULT_TRADER_DECISION,
         report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
     ) -> None:
@@ -68,6 +86,7 @@ class TraderBrain:
         self.campaign_plan_path = campaign_plan_path
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
+        self.trader_settings_path = trader_settings_path
         self.output_path = output_path
         self.report_path = report_path
 
@@ -80,13 +99,16 @@ class TraderBrain:
         strategies = _strategy_index(strategy_payload)
         stories = _story_index(story_payload)
         campaign = _campaign_index(campaign_payload)
+        trader_settings = _load_trader_settings(self.trader_settings_path)
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
-        exposure_blockers = _exposure_blockers(snapshot)
+        pending_entries = _pending_entry_order_count(snapshot)
+        portfolio_add_allowed = _portfolio_add_allowed(snapshot)
+        exposure_blockers = () if portfolio_add_allowed else _exposure_blockers(snapshot)
         scores = tuple(
             sorted(
                 (
-                    self._score_lane(result, strategies, stories, campaign, exposure_blockers)
+                    self._score_lane(result, strategies, stories, campaign, exposure_blockers, trader_settings)
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
                 ),
@@ -94,13 +116,15 @@ class TraderBrain:
                 reverse=True,
             )
         )
-        if positions or orders:
+        if (positions and not portfolio_add_allowed) or pending_entries:
             pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
                 selected_lane_id=None,
+                selected_lane_score=None,
+                selected_lane_size_multiple=None,
                 generated_at_utc=generated_at,
-                reason="Existing broker exposure is open; evaluate but do not stack fresh risk.",
+                reason="Pending entry or non-layerable exposure is open; evaluate but do not add fresh risk.",
                 scores=scores,
                 positions=positions,
                 orders=orders,
@@ -112,6 +136,8 @@ class TraderBrain:
                 decision = TraderDecision(
                     action=ACTION_SEND_ENTRY,
                     selected_lane_id=selected.lane_id,
+                    selected_lane_score=selected.score,
+                    selected_lane_size_multiple=selected.size_multiple,
                     generated_at_utc=generated_at,
                     reason=f"Selected highest-scoring live-ready lane: {selected.lane_id}",
                     scores=scores,
@@ -122,8 +148,10 @@ class TraderBrain:
                 decision = TraderDecision(
                     action=ACTION_NO_TRADE,
                     selected_lane_id=None,
+                    selected_lane_score=None,
+                    selected_lane_size_multiple=None,
                     generated_at_utc=generated_at,
-                    reason="No lane cleared trader-brain score threshold and blockers.",
+                    reason="No lane cleared trader-brain discretionary gates.",
                     scores=scores,
                     positions=positions,
                     orders=orders,
@@ -138,6 +166,7 @@ class TraderBrain:
         stories: dict[str, dict[str, Any]],
         campaign: dict[str, dict[str, Any]],
         exposure_blockers: tuple[str, ...],
+        settings: TraderSettings,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -200,6 +229,18 @@ class TraderBrain:
         score += _method_theme_score(method, themes, rationale)
         score += _campaign_score(lane, rationale)
         score += _narrative_risk_score(pair, direction, method, themes, examples, blockers, rationale)
+        score += _technical_consensus_score(
+            intent=intent,
+            method=method,
+            status=status,
+            strategy=strategy,
+            story=story,
+            lane=lane,
+            risk_metrics=result.get("risk_metrics"),
+            method_pressure=method_pressure,
+            rationale=rationale,
+            blockers=blockers,
+        )
         score += _direction_conflict_penalty(result, rationale)
 
         if result.get("risk_issues"):
@@ -209,7 +250,20 @@ class TraderBrain:
             blockers.extend(str(item) for item in result.get("live_blockers", []))
             score -= 100.0
 
-        action = ACTION_SEND_ENTRY if status == "LIVE_READY" and score >= 115.0 and not blockers else ACTION_NO_TRADE
+        gate_blockers, judgment = _discretionary_gate_check(
+            intent=intent,
+            status=status,
+            profile_status=profile_status,
+            strategy=strategy,
+            lane=lane,
+            method=method,
+            method_pressure=method_pressure,
+        )
+        blockers.extend(gate_blockers)
+
+        adjusted_score = round(score + settings.score_bias, 2)
+        size_multiple = _size_multiple(adjusted_score, settings)
+        action = ACTION_SEND_ENTRY if status == "LIVE_READY" and not blockers else ACTION_NO_TRADE
         return LaneScore(
             lane_id=lane_id,
             pair=pair,
@@ -218,10 +272,12 @@ class TraderBrain:
             order_type=order_type,
             entry=entry,
             status=status,
-            score=round(score, 2),
+            score=adjusted_score,
+            size_multiple=size_multiple,
             action=action,
             blockers=tuple(blockers[:8]),
             rationale=tuple(rationale[:8]),
+            judgment=tuple(judgment[:8]),
         )
 
     def _write(self, decision: TraderDecision) -> None:
@@ -231,6 +287,8 @@ class TraderBrain:
                 {
                     "action": decision.action,
                     "selected_lane_id": decision.selected_lane_id,
+                    "selected_lane_score": decision.selected_lane_score,
+                    "selected_lane_size_multiple": decision.selected_lane_size_multiple,
                     "generated_at_utc": decision.generated_at_utc,
                     "reason": decision.reason,
                     "positions": decision.positions,
@@ -251,6 +309,8 @@ class TraderBrain:
             f"- Generated at UTC: `{decision.generated_at_utc}`",
             f"- Action: `{decision.action}`",
             f"- Selected lane: `{decision.selected_lane_id}`",
+            f"- Selected lane score: `{decision.selected_lane_score}`",
+            f"- Selected lane size multiple: `{decision.selected_lane_size_multiple}`",
             f"- Positions: `{decision.positions}`",
             f"- Orders: `{decision.orders}`",
             f"- Pending cancel ids: `{', '.join(decision.pending_cancel_order_ids) if decision.pending_cancel_order_ids else 'none'}`",
@@ -264,8 +324,11 @@ class TraderBrain:
                 f"- `{item.lane_id}` score=`{item.score}` action=`{item.action}` "
                 f"`{item.pair} {item.direction} {item.method}`"
             )
+            lines.append(f"  - size_multiple: `{item.size_multiple}`")
             if item.rationale:
                 lines.append(f"  - why: {'; '.join(item.rationale)}")
+            if item.judgment:
+                lines.append(f"  - judgment: {'; '.join(item.judgment)}")
             if item.blockers:
                 lines.append(f"  - blockers: {'; '.join(item.blockers)}")
         lines.extend(
@@ -274,7 +337,8 @@ class TraderBrain:
                 "## Trader-Brain Contract",
                 "",
                 "- This layer must compare lanes; it must not send the first live-ready candidate mechanically.",
-                "- Existing broker exposure makes fresh-entry action monitor-only.",
+                "- Scores rank attention only; live entry requires explicit discretionary gates, not a single score threshold.",
+                "- Pending entry or non-layerable exposure makes fresh-entry action monitor-only.",
                 "- JPY-cross long trades are penalized when intervention / thin-liquidity themes are active.",
                 "- The execution gateway remains the final authority for live risk.",
             ]
@@ -286,6 +350,60 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     return json.loads(path.read_text())
+
+
+def load_trader_settings(path: Path) -> TraderSettings:
+    return _load_trader_settings(path)
+
+
+def _load_trader_settings(path: Path) -> TraderSettings:
+    payload = _load_json(path)
+    settings_payload = payload.get("size_by_score")
+    if not isinstance(settings_payload, dict):
+        settings_payload = {}
+    risk_payload = payload.get("risk")
+    if not isinstance(risk_payload, dict):
+        risk_payload = {}
+    score_bias = _coalesce_float(settings_payload.get("score_bias"), 0.0)
+    score_size_enabled = settings_payload.get("enabled")
+    if not isinstance(score_size_enabled, bool):
+        score_size_enabled = True
+    size_multiple_min = _coalesce_float(settings_payload.get("size_multiple_min"), 0.7)
+    size_multiple_max = _coalesce_float(settings_payload.get("size_multiple_max"), 1.8)
+    if size_multiple_max < size_multiple_min:
+        size_multiple_min, size_multiple_max = size_multiple_max, size_multiple_min
+    if size_multiple_min <= 0:
+        size_multiple_min = 0.05
+    size_multiple_anchor_score = _coalesce_float(settings_payload.get("size_multiple_anchor_score"), 110.0)
+    size_multiple_per_score_point = _coalesce_float(
+        settings_payload.get("size_multiple_per_score_point"), 0.005
+    )
+    if size_multiple_per_score_point < 0:
+        size_multiple_per_score_point = 0.0
+    default_max_loss_jpy = _optional_float(risk_payload.get("max_loss_jpy"))
+    default_max_loss_pct = _optional_float(risk_payload.get("max_loss_pct"))
+    return TraderSettings(
+        score_bias=score_bias,
+        score_size_enabled=bool(score_size_enabled),
+        size_multiple_min=size_multiple_min,
+        size_multiple_max=size_multiple_max,
+        size_multiple_anchor_score=size_multiple_anchor_score,
+        size_multiple_per_score_point=size_multiple_per_score_point,
+        default_max_loss_jpy=default_max_loss_jpy,
+        default_max_loss_pct=default_max_loss_pct,
+    )
+
+
+def _size_multiple(score: float, settings: TraderSettings) -> float:
+    if not settings.score_size_enabled:
+        return 1.0
+    multiple = 1.0 + ((score - settings.size_multiple_anchor_score) * settings.size_multiple_per_score_point)
+    return round(_clamp(multiple, settings.size_multiple_min, settings.size_multiple_max), 2)
+
+
+def _coalesce_float(value: object, default: float) -> float:
+    parsed = _optional_float(value)
+    return default if parsed is None else parsed
 
 
 def _strategy_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -327,6 +445,23 @@ def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
     return tuple(blockers)
 
 
+def _pending_entry_order_count(snapshot: BrokerSnapshot) -> int:
+    return sum(
+        1
+        for order in snapshot.orders
+        if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES
+    )
+
+
+def _portfolio_add_allowed(snapshot: BrokerSnapshot) -> bool:
+    if not snapshot.positions:
+        return False
+    return all(
+        position.owner == Owner.TRADER and position.stop_loss is not None and position.take_profit is not None
+        for position in snapshot.positions
+    )
+
+
 def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[LaneScore, ...]) -> tuple[str, ...]:
     score_by_key: dict[tuple[str, str], LaneScore] = {}
     for score in scores:
@@ -349,7 +484,7 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
             continue
         blocker_text = " ".join(score.blockers).upper()
         if (
-            score.score < 115.0
+            score.action != ACTION_SEND_ENTRY
             or "INTERVENTION" in blocker_text
             or "VISUAL STORY" in blocker_text
             or not _same_entry_type(order.order_type, score.order_type)
@@ -448,6 +583,219 @@ def _narrative_risk_score(
     return score
 
 
+def _technical_consensus_score(
+    *,
+    intent: dict[str, Any],
+    method: str,
+    status: str,
+    strategy: dict[str, Any],
+    story: dict[str, Any],
+    lane: dict[str, Any],
+    risk_metrics: dict[str, Any] | None,
+    method_pressure: int,
+    rationale: list[str],
+    blockers: list[str],
+) -> float:
+    score = 0.0
+    support_ticks = 0
+    evidence_ticks = 0
+
+    positive_evidence_n = int(strategy.get("positive_evidence_n") or 0)
+    positive_tail_jpy = float(strategy.get("positive_tail_jpy") or 0.0)
+    positive_best_jpy = float(strategy.get("positive_best_jpy") or 0.0)
+    seat_discovered = int(strategy.get("seat_discovered") or 0)
+    seat_orderable = int(strategy.get("seat_orderable") or 0)
+    seat_captured = int(strategy.get("seat_captured") or 0)
+    live_worst = _optional_float(strategy.get("live_worst_jpy"))
+    required_fix = str(strategy.get("required_fix") or "")
+
+    # Evidence depth and quality are one pillar.
+    if positive_evidence_n >= 120:
+        score += 8.0
+        evidence_ticks += 1
+        rationale.append(f"broad positive evidence count={positive_evidence_n}")
+    elif positive_evidence_n >= 40:
+        score += 5.0
+        evidence_ticks += 1
+        rationale.append(f"positive evidence count={positive_evidence_n}")
+    elif positive_evidence_n > 0:
+        score += 1.0
+        rationale.append(f"some positive evidence count={positive_evidence_n}")
+    else:
+        score -= 3.0
+        blockers.append("missing positive mined evidence on this pair/direction")
+
+    if seat_orderable > 0 and seat_discovered > 0:
+        capture_rate = seat_captured / seat_discovered
+        if capture_rate >= 0.50:
+            score += 4.0
+            support_ticks += 1
+            rationale.append(f"high capture quality={capture_rate:.0%} ({seat_captured}/{seat_discovered})")
+        elif capture_rate >= 0.30:
+            score += 2.0
+            support_ticks += 1
+        elif capture_rate >= 0.10:
+            score += 0.0
+        else:
+            score -= 4.0
+            blockers.append(f"low capture rate={capture_rate:.0%} ({seat_captured}/{seat_discovered})")
+    if positive_tail_jpy > 0:
+        score += 2.0
+    if positive_best_jpy > 0:
+        score += 1.5
+
+    # Risk geometry quality is second pillar.
+    risk_metrics = risk_metrics or {}
+    reward_risk = _optional_float(risk_metrics.get("reward_risk"))
+    spread_pips = _optional_float(risk_metrics.get("spread_pips"))
+    risk_jpy = _optional_float(risk_metrics.get("risk_jpy"))
+    reward_jpy = _optional_float(risk_metrics.get("reward_jpy"))
+    plan_rr = _optional_float(lane.get("target_reward_risk"))
+
+    if reward_risk is None or spread_pips is None or risk_jpy is None:
+        score -= 2.5
+        blockers.append("missing dry-run risk geometry metric")
+    else:
+        if reward_risk >= 1.2:
+            score += 2.0
+            support_ticks += 1
+        else:
+            score -= 6.0
+            blockers.append(f"reward/risk below minimum floor: {reward_risk:.2f}R")
+        if reward_risk >= 2.0:
+            score += 2.5
+            rationale.append(f"reward/risk geometry supports edge: {reward_risk:.2f}R")
+        if spread_pips <= 1.2:
+            score += 2.0
+            support_ticks += 1
+            rationale.append(f"tight spread={spread_pips:.1f}pip")
+        elif spread_pips <= 2.0:
+            score += 0.8
+        else:
+            score -= 2.0
+            blockers.append(f"wide spread for fresh edge={spread_pips:.1f}pip")
+        if risk_jpy <= 300:
+            score += 2.0
+            support_ticks += 1
+        elif risk_jpy <= 450:
+            score += 1.0
+        else:
+            score -= 2.0
+        if plan_rr is not None and reward_risk >= plan_rr * 0.85:
+            score += 1.5
+            rationale.append(f"geometry reward/risk {reward_risk:.2f}R matches lane target {plan_rr:.2f}R")
+        if reward_jpy is not None and reward_jpy > risk_jpy:
+            score += 1.0
+
+    # Strategy context and campaign contract consistency is third pillar.
+    if method_pressure <= 0 and not story.get("methods"):
+        if status == "LIVE_READY" and support_ticks >= 2 and evidence_ticks >= 1:
+            rationale.append("entry can still pass with strong statistical edge despite weak live story pressure")
+        else:
+            score -= 5.0
+            blockers.append("live technical story lacks method pressure for this setup")
+
+    if required_fix and "watch-only" in required_fix.lower():
+        score -= 2.0
+        blockers.append("strategy required_fix still mentions watch-only restrictions")
+
+    if live_worst is not None and live_worst <= -900:
+        score -= 2.0
+        blockers.append(f"historical live worst loss is large: {live_worst:.0f} JPY")
+
+    if status == "LIVE_READY" and intent.get("order_type"):
+        support_ratio = (support_ticks + 1) / 5.0
+        if support_ratio >= 0.7:
+            score += 3.0
+        elif support_ratio <= 0.2:
+            score -= 3.0
+
+    score += _story_fusion_score(
+        method=method,
+        direction=str(intent.get("side") or ""),
+        examples=tuple(str(item) for item in story.get("examples", ())),
+        score=score,
+        rationale=rationale,
+        blockers=blockers,
+        support_ticks=support_ticks,
+    )
+
+    return score
+
+
+def _story_fusion_score(
+    *,
+    method: str,
+    direction: str,
+    examples: tuple[str, ...],
+    score: float,
+    rationale: list[str],
+    blockers: list[str],
+    support_ticks: int,
+) -> float:
+    delta = 0.0
+    if not examples:
+        blockers.append("story has no concrete technical/news/chart examples")
+        return -3.0
+
+    source_counts: dict[str, int] = {}
+    for item in examples:
+        upper = item.upper()
+        source = "OTHER"
+        if upper.startswith("NEWS_DIGEST"):
+            source = "NEWS"
+        elif upper.startswith("NEWS_FLOW"):
+            source = "FLOW"
+        elif upper.startswith("QUALITY_AUDIT"):
+            source = "QUALITY"
+        source_counts[source] = source_counts.get(source, 0) + 1
+        if "TREND-BULL" in upper and direction == Side.LONG.value:
+            delta += 1.5
+            support_ticks += 1
+        elif "TREND-BEAR" in upper and direction == Side.SHORT.value:
+            delta += 1.5
+            support_ticks += 1
+        elif "TREND-BULL" in upper and direction == Side.SHORT.value:
+            delta -= 1.2
+        elif "TREND-BEAR" in upper and direction == Side.LONG.value:
+            delta -= 1.2
+
+    method_token = {
+        "TREND_CONTINUATION": "TREND",
+        "RANGE_ROTATION": "RANGE",
+        "BREAKOUT_FAILURE": "BREAKOUT",
+        "EVENT_RISK": "EVENT",
+        "POSITION_MANAGEMENT": "POSITION",
+    }.get(method, "")
+
+    source_diversity = len(source_counts)
+    if source_diversity >= 2:
+        delta += 2.0
+        rationale.append(f"multi-source story coverage ({', '.join(sorted(source_counts))})")
+        if source_counts.get("QUALITY", 0) > 0 and source_counts.get("NEWS", 0) > 0:
+            delta += 1.0
+            rationale.append("news and chart-quality evidence agree on setup")
+    else:
+        delta -= 1.0
+        blockers.append("story evidence lacks source diversity")
+
+    conflict_hits = sum(1 for item in examples if "NO:" in item.upper())
+    if conflict_hits >= 2:
+        delta -= 2.5
+        blockers.append("story explicitly contains mixed rejection markers")
+    elif conflict_hits == 1:
+        delta -= 1.0
+
+    if method_token and any(method_token in item.upper() for item in examples):
+        delta += 2.0
+        support_ticks += 1
+        rationale.append(f"story examples confirm method token={method_token}")
+
+    if support_ticks >= 3 and score >= 80:
+        delta += 1.0
+    return delta
+
+
 def _direction_conflict_penalty(result: dict[str, Any], rationale: list[str]) -> float:
     intent = result.get("intent") or {}
     pair = str(intent.get("pair") or "")
@@ -458,6 +806,76 @@ def _direction_conflict_penalty(result: dict[str, Any], rationale: list[str]) ->
         rationale.append("EUR_USD narrative is directionless; require cleaner proof")
         return -10.0 if direction else 0.0
     return 0.0
+
+
+def _discretionary_gate_check(
+    *,
+    intent: dict[str, Any],
+    status: str,
+    profile_status: str,
+    strategy: dict[str, Any],
+    lane: dict[str, Any],
+    method: str,
+    method_pressure: int,
+) -> tuple[list[str], list[str]]:
+    blockers: list[str] = []
+    judgment: list[str] = []
+    if status == "LIVE_READY":
+        judgment.append("fresh live-ready receipt exists")
+    else:
+        blockers.append(f"receipt is not live-ready: {status}")
+
+    if profile_status == "CANDIDATE":
+        judgment.append("strategy profile is live-eligible")
+    elif profile_status:
+        blockers.append(f"strategy profile is not live-eligible: {profile_status}")
+    else:
+        blockers.append("missing strategy profile")
+
+    if not str(intent.get("thesis") or "").strip():
+        blockers.append("missing trader thesis")
+    context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else None
+    if context is None:
+        blockers.append("missing market context")
+    else:
+        missing_context = [
+            name
+            for name in ("regime", "narrative", "chart_story", "method", "invalidation")
+            if not str(context.get(name) or "").strip()
+        ]
+        if missing_context:
+            blockers.append(f"incomplete market context: {', '.join(missing_context)}")
+        else:
+            judgment.append("thesis, narrative, chart story, method, and invalidation are explicit")
+
+    if _optional_float(intent.get("tp")) is None or _optional_float(intent.get("sl")) is None:
+        blockers.append("missing TP/SL geometry")
+    if int(intent.get("units") or 0) <= 0:
+        blockers.append("missing executable units")
+
+    adoption = str(lane.get("adoption") or "")
+    if adoption in {"ORDER_INTENT_REQUIRED", "RISK_REPAIR_DRY_RUN", "TRIGGER_RECEIPT_REQUIRED"}:
+        judgment.append(f"campaign lane is executable after receipts: {adoption}")
+    else:
+        blockers.append(f"campaign lane is not executable: {adoption or 'missing'}")
+
+    pretrade_net = float(strategy.get("pretrade_net_jpy") or 0.0)
+    live_net = float(strategy.get("live_net_jpy") or 0.0)
+    if pretrade_net > 0 or live_net > 0 or strategy.get("receipt_promotion"):
+        judgment.append("mined or repaired edge evidence is positive")
+    else:
+        blockers.append("no positive mined or repaired edge evidence")
+
+    if method and method_pressure > 0:
+        judgment.append(f"current story contains method pressure for {method}")
+    elif method and (
+        int(strategy.get("positive_evidence_n") or 0) >= 40
+        or str(strategy.get("status")) == "CANDIDATE"
+    ):
+        judgment.append("market story is weak, but evidence is strong enough to keep under review")
+    else:
+        blockers.append("market story does not support the selected method")
+    return blockers, judgment
 
 
 def _optional_float(value: object) -> float | None:

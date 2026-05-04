@@ -22,6 +22,10 @@ class PairDirectionProfile:
     live_net_jpy: float = 0.0
     live_avg_jpy: float = 0.0
     live_worst_jpy: float | None = None
+    positive_evidence_n: int = 0
+    positive_best_jpy: float = 0.0
+    positive_tail_jpy: float = 0.0
+    target_reward_risk: float = 1.5
     seat_discovered: int = 0
     seat_orderable: int = 0
     seat_deployed: int = 0
@@ -163,6 +167,14 @@ class StrategyMiner:
 
         for key, reasons in block_reasons.items():
             profiles[key].top_block_reasons = [f"{count}x {reason}" for reason, count in reasons.most_common(3)]
+
+        for key, values in _positive_evidence(conn).items():
+            item = profile(*key)
+            positives = sorted(values)
+            item.positive_evidence_n = len(positives)
+            item.positive_best_jpy = _round(max(positives)) if positives else 0.0
+            item.positive_tail_jpy = _round(_percentile(positives, 0.90)) if positives else 0.0
+            item.target_reward_risk = _target_reward_risk(item.positive_best_jpy, item.positive_tail_jpy)
 
         for item in profiles.values():
             self._classify(item)
@@ -341,3 +353,44 @@ def _load_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _positive_evidence(conn: sqlite3.Connection) -> dict[tuple[str, str], list[float]]:
+    values: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for row in conn.execute(
+        """
+        SELECT pair, direction, pl
+        FROM legacy_records
+        WHERE pair IS NOT NULL AND direction IS NOT NULL AND pl > 0
+          AND source_table IN ('trades', 'pretrade_outcomes', 'seat_outcomes')
+        """
+    ):
+        values[(str(row["pair"]), str(row["direction"]))].append(float(row["pl"]))
+    for row in conn.execute(
+        """
+        SELECT pair, direction, pl_jpy
+        FROM live_trade_events
+        WHERE pair IS NOT NULL AND direction IS NOT NULL AND pl_jpy > 0
+        """
+    ):
+        values[(str(row["pair"]), str(row["direction"]))].append(float(row["pl_jpy"]))
+    return values
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    if len(values) == 1:
+        return values[0]
+    pct = max(0.0, min(1.0, pct))
+    idx = round((len(values) - 1) * pct)
+    return values[int(idx)]
+
+
+def _target_reward_risk(best_jpy: float, tail_jpy: float) -> float:
+    evidence_jpy = max(tail_jpy, best_jpy)
+    return _round(min(8.0, max(1.5, evidence_jpy / 500.0)))
+
+
+def _round(value: float) -> float:
+    return round(value, 4)

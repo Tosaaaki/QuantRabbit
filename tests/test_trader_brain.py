@@ -6,8 +6,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
-from quant_rabbit.strategy.trader_brain import ACTION_MONITOR_EXISTING, ACTION_SEND_ENTRY, TraderBrain
+from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.strategy.trader_brain import ACTION_MONITOR_EXISTING, ACTION_NO_TRADE, ACTION_SEND_ENTRY, TraderBrain
 
 
 class TraderBrainTest(unittest.TestCase):
@@ -62,11 +62,68 @@ class TraderBrainTest(unittest.TestCase):
             self.assertIsNone(decision.selected_lane_id)
             self.assertEqual(decision.pending_cancel_order_ids, ("1",))
 
+    def test_protected_trader_position_can_still_select_portfolio_add(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_intents(root),
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_strategy(root),
+                market_story_profile_path=_stories(root),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                positions=(
+                    BrokerPosition(
+                        trade_id="101",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3000,
+                        entry_price=1.1710,
+                        take_profit=1.1750,
+                        stop_loss=1.1710,
+                        owner=Owner.TRADER,
+                    ),
+                )
+            )
 
-def _snapshot(*, orders=()) -> BrokerSnapshot:
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+
+    def test_refuses_live_ready_lane_without_trader_thesis_and_market_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            payload = {"results": [_result("trend_trader:EUR_USD:LONG:TREND_CONTINUATION", "EUR_USD", "LONG", "TREND_CONTINUATION")]}
+            payload["results"][0]["intent"]["thesis"] = ""
+            payload["results"][0]["intent"].pop("market_context")
+            path.write_text(json.dumps(payload))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_strategy(root),
+                market_story_profile_path=_stories(root),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            self.assertEqual(decision.action, ACTION_NO_TRADE)
+            lane = decision.scores[0]
+            self.assertEqual(lane.action, ACTION_NO_TRADE)
+            self.assertIn("missing trader thesis", " ".join(lane.blockers))
+            self.assertIn("missing market context", " ".join(lane.blockers))
+
+
+def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
         fetched_at_utc=now,
+        positions=tuple(positions),
         orders=tuple(orders),
         quotes={
             "AUD_JPY": Quote("AUD_JPY", 112.49, 112.50, timestamp_utc=now),

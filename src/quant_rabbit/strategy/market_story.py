@@ -29,6 +29,7 @@ STORY_FILES = (
     "collab_trade/state.md",
     "collab_trade/strategy_memory.md",
 )
+NEWS_FILES = ("news_digest.md", "news_flow_log.md")
 
 
 @dataclass
@@ -62,15 +63,65 @@ class MarketStoryMiner:
         archive: Path = DEFAULT_LEGACY_ARCHIVE,
         report_path: Path = DEFAULT_MARKET_STORY_REPORT,
         profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
+        news_root: Path | None = None,
     ) -> None:
         self.archive = archive
         self.report_path = report_path
         self.profile_path = profile_path
+        self.news_root = news_root
 
     def run(self) -> MarketStorySummary:
-        if not self.archive.exists():
+        if not self.archive.exists() and self.news_root is None:
             raise FileNotFoundError(f"legacy archive not found: {self.archive}")
         artifacts = list(self._story_artifacts())
+        if not artifacts:
+            self.report_path.parent.mkdir(parents=True, exist_ok=True)
+            profile = {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "archive": str(self.archive),
+                "artifacts": [],
+                "global_themes": {},
+                "global_methods": {},
+                "pair_profiles": [],
+                "order_intent_contract": {
+                    "required_market_context_fields": [
+                        "regime",
+                        "narrative",
+                        "chart_story",
+                        "method",
+                        "invalidation",
+                    ],
+                    "methods": [method.value for method in TradeMethod],
+                },
+            }
+            self.profile_path.parent.mkdir(parents=True, exist_ok=True)
+            self.profile_path.write_text(json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            self.report_path.write_text(
+                "\n".join(
+                    [
+                        "# Market Story Report",
+                        "",
+                        f"- Generated at UTC: `{profile['generated_at_utc']}`",
+                        f"- Archive: `{self.archive}`",
+                        "- Story artifacts read: `0`",
+                        "- Narrative/chart lines mined: `0`",
+                        "",
+                        "## Market Story Contract",
+                        "",
+                        "- No compatible story artifacts found. Profile intentionally empty.",
+                        "- Fill with `logs/news_digest.md` or `logs/news_flow_log.md` content to activate fresh narrative pressure.",
+                    ]
+                )
+                + "\n"
+            )
+            return MarketStorySummary(
+                archive=self.archive,
+                report_path=self.report_path,
+                profile_path=self.profile_path,
+                artifacts=0,
+                story_lines=0,
+                pairs=0,
+            )
         pair_profiles, theme_counts, method_counts, story_lines = self._mine(artifacts)
         generated_at = datetime.now(timezone.utc).isoformat()
         self._write_profile(pair_profiles, theme_counts, method_counts, artifacts, generated_at)
@@ -85,12 +136,19 @@ class MarketStoryMiner:
         )
 
     def _story_artifacts(self) -> Iterable[tuple[Path, StoryArtifact]]:
-        for rel in STORY_FILES:
-            path = self.archive / rel
-            if path.exists():
-                yield path, StoryArtifact(rel_path=rel, kind=_kind_from_path(rel), lines=_line_count(path))
+        if self.archive.exists():
+            for rel in STORY_FILES:
+                path = self.archive / rel
+                if path.exists():
+                    yield path, StoryArtifact(rel_path=rel, kind=_kind_from_path(rel), lines=_line_count(path))
+        if self.news_root is not None and self.news_root.exists():
+            for name in NEWS_FILES:
+                path = self.news_root / name
+                if path.exists():
+                    rel_path = f"news/{path.name}"
+                    yield path, StoryArtifact(rel_path=rel_path, kind=_kind_from_path(rel_path), lines=_line_count(path))
         daily_root = self.archive / "collab_trade" / "daily"
-        if daily_root.exists():
+        if self.archive.exists() and daily_root.exists():
             for path in sorted(daily_root.glob("*/state.md")):
                 rel = path.relative_to(self.archive).as_posix()
                 yield path, StoryArtifact(rel_path=rel, kind="daily_state", lines=_line_count(path))

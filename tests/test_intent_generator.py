@@ -53,10 +53,84 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(result["status"], "DRY_RUN_PASSED")
             self.assertEqual(result["intent"]["pair"], "EUR_USD")
             self.assertEqual(result["intent"]["market_context"]["method"], "TREND_CONTINUATION")
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 500.0)
+            self.assertGreater(result["risk_metrics"]["spread_pips"], 0.0)
             self.assertTrue(result["live_blockers"])
 
+    def test_sizes_repair_receipt_to_use_loss_budget_without_breaking_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            campaign = _campaign(root)
+            strategy = _strategy(root)
+            snapshot = _snapshot(root)
+            output = root / "intents.json"
 
-def _campaign(root: Path) -> Path:
+            IntentGenerator(
+                campaign_plan=campaign,
+                strategy_profile=strategy,
+                output_path=output,
+                report_path=root / "intents.md",
+            ).run(snapshot_path=snapshot)
+
+            payload = json.loads(output.read_text())
+            intent = payload["results"][0]["intent"]
+            self.assertEqual(intent["units"], 3000)
+
+    def test_sizes_usd_quote_pair_from_snapshot_conversion_not_static_rate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+            ).run(snapshot_path=_snapshot(root, usd_jpy=300.0))
+
+            result = json.loads(output.read_text())["results"][0]
+            self.assertEqual(result["status"], "DRY_RUN_PASSED")
+            self.assertEqual(result["intent"]["units"], 2000)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 500.0)
+
+    def test_uses_campaign_runner_reward_risk_for_tp_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root, target_reward_risk=4.0),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+            ).run(snapshot_path=_snapshot(root))
+
+            result = json.loads(output.read_text())["results"][0]
+            self.assertEqual(result["intent"]["metadata"]["target_reward_risk"], 4.0)
+            self.assertAlmostEqual(result["risk_metrics"]["reward_risk"], 4.0)
+
+    def test_sizes_units_with_percentage_risk_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_pct=1.0,
+                risk_equity_jpy=100_000.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = payload["results"][0]
+            self.assertEqual(result["status"], "DRY_RUN_PASSED")
+            self.assertEqual(result["intent"]["units"], 7000)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
+
+
+def _campaign(root: Path, *, target_reward_risk: float | None = None) -> Path:
     path = root / "campaign.json"
     path.write_text(
         json.dumps(
@@ -71,6 +145,7 @@ def _campaign(root: Path) -> Path:
                         "campaign_role": "NOW_IF_REPAIRED",
                         "reason": "trend continuation pressure",
                         "required_receipt": "dry-run under loss cap",
+                        **({"target_reward_risk": target_reward_risk} if target_reward_risk is not None else {}),
                         "blockers": ["old sizing broke the loss cap"],
                         "story_examples": ["quality_audit: green staircase into upper band"],
                     },
@@ -107,7 +182,7 @@ def _strategy(root: Path) -> Path:
     return path
 
 
-def _snapshot(root: Path) -> Path:
+def _snapshot(root: Path, *, usd_jpy: float = 156.64) -> Path:
     path = root / "snapshot.json"
     now = datetime.now(timezone.utc).isoformat()
     path.write_text(
@@ -118,7 +193,7 @@ def _snapshot(root: Path) -> Path:
                 "orders": [],
                 "quotes": {
                     "EUR_USD": {"bid": 1.17322, "ask": 1.17330, "timestamp_utc": now},
-                    "USD_JPY": {"bid": 156.64, "ask": 156.648, "timestamp_utc": now},
+                    "USD_JPY": {"bid": usd_jpy, "ask": usd_jpy + 0.008, "timestamp_utc": now},
                 },
             }
         )

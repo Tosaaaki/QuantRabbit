@@ -28,6 +28,9 @@ class CampaignPlannerTest(unittest.TestCase):
                                 "pretrade_net_jpy": 1000,
                                 "live_net_jpy": 500,
                                 "live_worst_jpy": -700,
+                                "positive_best_jpy": 2500,
+                                "positive_tail_jpy": 1800,
+                                "target_reward_risk": 3.6,
                             },
                             {
                                 "pair": "USD_JPY",
@@ -77,6 +80,9 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertIn("RISK_REPAIR_DRY_RUN", adoptions)
             self.assertIn("RISK_OVERLAY", adoptions)
             self.assertIn("REJECTED", adoptions)
+            runner = next(lane for lane in payload["lanes"] if lane["pair"] == "EUR_USD")
+            self.assertGreaterEqual(runner["target_reward_risk"], 3.6)
+            self.assertIn("RUNNER", runner["campaign_role"])
             self.assertIn("target, not a profit guarantee", payload["operating_rule"])
             self.assertIn("Portfolio Director Rules", report.read_text())
 

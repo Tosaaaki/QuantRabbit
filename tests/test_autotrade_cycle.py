@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -7,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.automation import AutoTradeCycle
-from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
+from quant_rabbit.gpt_trader import StaticTraderProvider
+from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 
 
 class AutoTradeCycleTest(unittest.TestCase):
@@ -54,6 +56,426 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertIn("monitor-only", (root / "report.md").read_text())
             self.assertTrue((root / "decision.json").exists())
 
+    def test_protected_position_can_cancel_contaminated_pending_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(
+                        BrokerPosition(
+                            trade_id="t-protected",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=1000,
+                            entry_price=1.1700,
+                            unrealized_pl_jpy=40.0,
+                            take_profit=1.1730,
+                            stop_loss=1.1700,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    orders=(
+                        BrokerOrder(
+                            order_id="stale-pending",
+                            pair="EUR_USD",
+                            order_type="STOP",
+                            price=1.1800,
+                            state="PENDING",
+                            units=1000,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.1710, 1.17108, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "CANCELED_CONTAMINATED_PENDING")
+            self.assertEqual(summary.canceled_orders, ("stale-pending",))
+            self.assertEqual(client.orders_canceled, ["stale-pending"])
+            self.assertEqual(client.orders_sent, [])
+            self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
+            self.assertFalse((root / "live_order.json").exists())
+
+    def test_flat_cycle_promotes_repair_receipt_before_trader_brain_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+            profile = _repair_profile(root)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=profile,
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            payload = json.loads(profile.read_text())
+            statuses = {(item["pair"], item["direction"]): item["status"] for item in payload["profiles"]}
+            self.assertEqual(statuses[("EUR_USD", "LONG")], "CANDIDATE")
+
+    def test_protected_profitable_position_is_managed_before_new_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(
+                        BrokerPosition(
+                            trade_id="t-profit",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=1000,
+                            entry_price=1.1700,
+                            unrealized_pl_jpy=500.0,
+                            take_profit=1.1730,
+                            stop_loss=1.1690,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.1710, 1.17108, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "POSITION_ACTION_STAGED")
+            self.assertEqual(summary.position_management_action, "PROFIT_PROTECT_REQUIRED")
+            self.assertEqual(summary.position_execution_status, "STAGED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+            position_execution = json.loads((root / "pe.json").read_text())
+            self.assertEqual(position_execution["actions"][0]["request"]["type"], "DEPENDENT_ORDER_REPLACE")
+            self.assertIn('"stopLoss"', (root / "pe.md").read_text())
+
+    def test_flat_cycle_does_not_enter_after_daily_target_reached(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = root / "target.json"
+            target_state.write_text(
+                json.dumps(
+                    {
+                        "start_balance_jpy": 100_000,
+                        "target_return_pct": 10.0,
+                        "realized_pl_jpy": 10_250,
+                        "daily_risk_budget_jpy": 500,
+                    }
+                )
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "TARGET_REACHED_PROTECT")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+            self.assertFalse((root / "decision.json").exists())
+            self.assertIn("protection-first no-send", (root / "report.md").read_text())
+
+    def test_trade_attached_protection_orders_do_not_block_flat_entry_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(
+                        BrokerOrder(
+                            order_id="sl-1",
+                            pair=None,
+                            order_type="STOP_LOSS",
+                            trade_id="closed-or-attached-trade",
+                            price=1.17100,
+                            state="PENDING",
+                            owner=Owner.UNKNOWN,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.orders, 1)
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertFalse(summary.sent)
+            self.assertFalse((root / "pm.json").exists())
+
+    def test_flat_cycle_uses_accepted_gpt_trade_before_gateway(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.decision_source, "gpt_trader")
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertIn("GPT trader", (root / "report.md").read_text())
+
+    def test_gpt_rejection_blocks_prefiltered_live_ready_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+            decision = _gpt_trade_decision()
+            decision["evidence_refs"] = ["broker:snapshot", "legacy:invented"]
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(decision),
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "GPT_REJECTED")
+            self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertIn("UNKNOWN_EVIDENCE_REF", {issue["code"] for issue in payload["verification_issues"]})
+
+    def test_gpt_cannot_resurrect_lane_rejected_by_deterministic_prefilter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "AUD_JPY": Quote("AUD_JPY", 113.100, 113.108, timestamp_utc=now),
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+            rejected_lane = "failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE"
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_two_lane_campaign(root),
+                strategy_profile_path=_two_lane_profile(root),
+                market_story_profile_path=_two_lane_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(
+                    _gpt_trade_decision(lane_id=rejected_lane, pair="AUD_JPY", method="BREAKOUT_FAILURE")
+                ),
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "GPT_DECISION_NOT_PREFILTERED")
+            self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertIsNone(summary.selected_lane_id)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
+
 
 class FakeCycleClient:
     def __init__(self, snapshot: BrokerSnapshot) -> None:
@@ -71,6 +493,216 @@ class FakeCycleClient:
     def cancel_order(self, order_id: str) -> dict[str, Any]:
         self.orders_canceled.append(order_id)
         return {"orderCancelTransaction": {"id": "2", "orderID": order_id}}
+
+
+def _campaign(root: Path) -> Path:
+    path = root / "campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "desk": "trend_trader",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "TREND_CONTINUATION",
+                        "adoption": "RISK_REPAIR_DRY_RUN",
+                        "campaign_role": "NOW_IF_REPAIRED",
+                        "reason": "RISK_REPAIR_CANDIDATE; pretrade_net=5000, live_net=800, worst=-798",
+                        "required_receipt": "prove current loss cap repair",
+                        "blockers": ["old sizing broke the loss cap"],
+                        "story_examples": ["quality_audit: EUR_USD trend-bull staircase continuation"],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _two_lane_campaign(root: Path) -> Path:
+    path = root / "campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "desk": "failure_trader",
+                        "pair": "AUD_JPY",
+                        "direction": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                        "campaign_role": "NOW_IF_CLEAN",
+                        "reason": "positive legacy evidence, but JPY intervention narrative must veto weak longs",
+                        "required_receipt": "live-ready failure receipt",
+                        "blockers": [],
+                        "story_examples": ["JPY intervention risk and rate check; WAIT on crosses"],
+                    },
+                    {
+                        "desk": "trend_trader",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "TREND_CONTINUATION",
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                        "campaign_role": "NOW_IF_CLEAN",
+                        "reason": "EUR_USD trend-bull continuation pressure",
+                        "required_receipt": "live-ready continuation receipt",
+                        "blockers": [],
+                        "story_examples": ["EUR_USD trend-bull staircase continuation"],
+                    },
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _repair_profile(root: Path) -> Path:
+    path = root / "profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "RISK_REPAIR_CANDIDATE",
+                        "required_fix": "old sizing broke the loss cap",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 800,
+                        "live_worst_jpy": -798,
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _candidate_profile(root: Path) -> Path:
+    path = root / "profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "required_fix": "eligible after receipt promotion",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 800,
+                        "live_worst_jpy": -350,
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _two_lane_profile(root: Path) -> Path:
+    path = root / "profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "AUD_JPY",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "required_fix": "eligible but narrative-sensitive",
+                        "pretrade_net_jpy": 3000,
+                        "live_net_jpy": 2000,
+                        "live_worst_jpy": -300,
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "required_fix": "eligible",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 2500,
+                        "live_worst_jpy": -350,
+                    },
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _stories(root: Path) -> Path:
+    path = root / "stories.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pair_profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "methods": {"TREND_CONTINUATION": 20},
+                        "themes": {"momentum": 6},
+                        "examples": ["EUR_USD trend-bull staircase continuation"],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _two_lane_stories(root: Path) -> Path:
+    path = root / "stories.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pair_profiles": [
+                    {
+                        "pair": "AUD_JPY",
+                        "methods": {"BREAKOUT_FAILURE": 30},
+                        "themes": {"breakout_failure": 4, "intervention": 3},
+                        "examples": ["JPY intervention risk and rate check; WAIT on crosses"],
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "methods": {"TREND_CONTINUATION": 35},
+                        "themes": {"momentum": 5},
+                        "examples": ["EUR_USD trend-bull staircase continuation"],
+                    },
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _gpt_trade_decision(
+    *,
+    lane_id: str = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+    pair: str = "EUR_USD",
+    method: str = "TREND_CONTINUATION",
+) -> dict:
+    return {
+        "action": "TRADE",
+        "selected_lane_id": lane_id,
+        "confidence": "HIGH",
+        "thesis": "The live-ready EUR_USD continuation lane has current story and repaired risk geometry.",
+        "method": method,
+        "narrative": "Momentum and campaign role align with a controlled stop-entry.",
+        "chart_story": "Higher lows press into the trigger shelf.",
+        "invalidation": "Do not trade if the shelf fails before entry or the SL level trades.",
+        "rejected_alternatives": ["WAIT rejected because a verified lane exists under the loss cap."],
+        "risk_notes": ["Use only the verified lane units, TP, and SL."],
+        "evidence_refs": [
+            "broker:snapshot",
+            "target:daily",
+            f"intent:{lane_id}",
+            f"campaign:{lane_id}",
+            f"strategy:{pair}:LONG",
+            f"story:{pair}",
+        ],
+        "operator_summary": "Accept the verified EUR_USD continuation lane.",
+    }
 
 
 if __name__ == "__main__":

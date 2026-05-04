@@ -70,8 +70,8 @@ class PositionManager:
     ) -> ManagedPosition:
         same_score = scores.get((position.pair, position.side.value))
         opposite_score = scores.get((position.pair, _opposite(position.side)))
-        remaining_risk = _remaining_risk_jpy(position)
-        remaining_reward = _remaining_reward_jpy(position)
+        remaining_risk = _remaining_risk_jpy(position, snapshot.quotes)
+        remaining_reward = _remaining_reward_jpy(position, snapshot.quotes)
         reasons: list[str] = []
         quote = snapshot.quotes.get(position.pair)
         recommended_stop_loss: float | None = None
@@ -85,7 +85,7 @@ class PositionManager:
                 missing.append("SL")
             reasons.append(f"missing {'/'.join(missing)}")
             if position.stop_loss is None:
-                recommended_stop_loss = _repair_stop_loss(position, quote)
+                recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes)
                 if recommended_stop_loss is None:
                     reasons.append("no market-valid capped SL repair is available; exposure needs exit review")
                     action = ACTION_REVIEW_EXIT
@@ -116,8 +116,12 @@ class PositionManager:
 
         if remaining_risk is not None:
             reasons.append(f"remaining risk about {remaining_risk:.0f} JPY")
+        elif position.stop_loss is not None:
+            reasons.append("remaining risk cannot be converted to JPY from current broker snapshot")
         if remaining_reward is not None:
             reasons.append(f"remaining reward about {remaining_reward:.0f} JPY")
+        elif position.take_profit is not None:
+            reasons.append("remaining reward cannot be converted to JPY from current broker snapshot")
 
         return ManagedPosition(
             trade_id=position.trade_id,
@@ -212,22 +216,28 @@ def _aggregate_action(positions: tuple[ManagedPosition, ...]) -> str:
     return "NO_POSITION"
 
 
-def _remaining_risk_jpy(position: BrokerPosition) -> float | None:
+def _remaining_risk_jpy(position: BrokerPosition, quotes) -> float | None:
     if position.stop_loss is None:
         return None
     pips = (position.entry_price - position.stop_loss) * _pip_factor(position.pair)
     if position.side == Side.SHORT:
         pips = (position.stop_loss - position.entry_price) * _pip_factor(position.pair)
-    return max(0.0, pips) * _jpy_per_pip(position)
+    jpy_per_pip = _jpy_per_pip(position, quotes)
+    if jpy_per_pip is None:
+        return None
+    return max(0.0, pips) * jpy_per_pip
 
 
-def _remaining_reward_jpy(position: BrokerPosition) -> float | None:
+def _remaining_reward_jpy(position: BrokerPosition, quotes) -> float | None:
     if position.take_profit is None:
         return None
     pips = (position.take_profit - position.entry_price) * _pip_factor(position.pair)
     if position.side == Side.SHORT:
         pips = (position.entry_price - position.take_profit) * _pip_factor(position.pair)
-    return max(0.0, pips) * _jpy_per_pip(position)
+    jpy_per_pip = _jpy_per_pip(position, quotes)
+    if jpy_per_pip is None:
+        return None
+    return max(0.0, pips) * jpy_per_pip
 
 
 def _profit_protection_needed(position: BrokerPosition, remaining_risk: float | None) -> bool:
@@ -254,9 +264,9 @@ def _break_even_stop(position: BrokerPosition, quote) -> float | None:
     return position.entry_price
 
 
-def _repair_stop_loss(position: BrokerPosition, quote) -> float | None:
-    jpy_per_pip = _jpy_per_pip(position)
-    if jpy_per_pip <= 0:
+def _repair_stop_loss(position: BrokerPosition, quote, quotes) -> float | None:
+    jpy_per_pip = _jpy_per_pip(position, quotes)
+    if jpy_per_pip is None or jpy_per_pip <= 0:
         return None
     cap_pips = 500.0 / jpy_per_pip
     repair_pips = min(cap_pips, _default_repair_stop_pips(position.pair))
@@ -311,8 +321,11 @@ def _price_precision(pair: str) -> int:
     return 3 if pair.endswith("_JPY") else 5
 
 
-def _jpy_per_pip(position: BrokerPosition) -> float:
+def _jpy_per_pip(position: BrokerPosition, quotes) -> float | None:
     if position.pair.endswith("_JPY"):
         return position.units / 100
-    # Conservative USDJPY proxy. RiskEngine uses the same production fallback.
-    return (position.units / 10000) * 157.0
+    quote_ccy = position.pair.split("_", 1)[1]
+    conversion_quote = quotes.get(f"{quote_ccy}_JPY")
+    if conversion_quote is None:
+        return None
+    return (position.units / _pip_factor(position.pair)) * max(conversion_quote.bid, conversion_quote.ask)

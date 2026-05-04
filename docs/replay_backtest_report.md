@@ -1,0 +1,225 @@
+# Replay Backtest Report
+
+- Generated at UTC: `2026-05-01T02:36:13.943460+00:00`
+- History DB: `/Users/tossaki/App/QuantRabbit/data/legacy_history.db`
+- Start balance: `222781 JPY`
+- Target: `22278 JPY` (`10.0%`)
+- Days replayed: `50`
+- Historical target hits: `0`
+- Evidence target covered: `3`
+- Risk repair days: `25`
+- Missed-edge days: `8`
+- Total historical net: `-41483 JPY`
+- Total risk-capped net: `21215 JPY`
+
+## Replay Contract
+
+- This is an evidence replay over imported legacy trade outcomes, not tick-level execution replay.
+- Losses worse than the current vNext loss cap are marked as risk-repair requirements.
+- Positive pretrade and missed-seat outcomes are counted as coverage evidence, not automatic live permission.
+- A day is complete only when target coverage becomes executable receipts under broker truth and risk gates.
+
+## Daily Results
+
+- `2026-03-02` status=`RISK_REPAIR_REQUIRED` hist=`-7696` risk_capped=`-500` coverage=`0` coverage_pct=`0.0` trades=`1`
+  - blocker: historical net missed target by 29974 JPY
+  - blocker: evidence coverage missed target by 22278 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -7696 JPY requires risk repair
+- `2026-03-03` status=`EDGE_CAPTURE_GAP` hist=`-91` risk_capped=`-91` coverage=`30` coverage_pct=`0.1` trades=`35`
+  - blocker: historical net missed target by 22369 JPY
+  - blocker: evidence coverage missed target by 22248 JPY
+- `2026-03-04` status=`EDGE_CAPTURE_GAP` hist=`-337` risk_capped=`-337` coverage=`203` coverage_pct=`0.9` trades=`786`
+  - blocker: historical net missed target by 22615 JPY
+  - blocker: evidence coverage missed target by 22075 JPY
+- `2026-03-05` status=`EDGE_CAPTURE_GAP` hist=`-4934` risk_capped=`-4934` coverage=`9297` coverage_pct=`41.7` trades=`2043`
+  - blocker: historical net missed target by 27213 JPY
+  - blocker: evidence coverage missed target by 12981 JPY
+- `2026-03-06` status=`EDGE_CAPTURE_GAP` hist=`-6283` risk_capped=`-6283` coverage=`6244` coverage_pct=`28.0` trades=`1590`
+  - blocker: historical net missed target by 28561 JPY
+  - blocker: evidence coverage missed target by 16034 JPY
+- `2026-03-08` status=`EDGE_CAPTURE_GAP` hist=`-243` risk_capped=`-243` coverage=`242` coverage_pct=`1.1` trades=`57`
+  - blocker: historical net missed target by 22521 JPY
+  - blocker: evidence coverage missed target by 22037 JPY
+- `2026-03-09` status=`EDGE_CAPTURE_GAP` hist=`-1642` risk_capped=`-1642` coverage=`2073` coverage_pct=`9.3` trades=`398`
+  - blocker: historical net missed target by 23920 JPY
+  - blocker: evidence coverage missed target by 20206 JPY
+- `2026-03-10` status=`EDGE_CAPTURE_GAP` hist=`-434` risk_capped=`-434` coverage=`290` coverage_pct=`1.3` trades=`269`
+  - blocker: historical net missed target by 22712 JPY
+  - blocker: evidence coverage missed target by 21988 JPY
+- `2026-03-11` status=`EDGE_CAPTURE_GAP` hist=`38` risk_capped=`38` coverage=`459` coverage_pct=`2.1` trades=`196`
+  - blocker: historical net missed target by 22240 JPY
+  - blocker: evidence coverage missed target by 21819 JPY
+- `2026-03-12` status=`EDGE_CAPTURE_GAP` hist=`-317` risk_capped=`-317` coverage=`219` coverage_pct=`1.0` trades=`105`
+  - blocker: historical net missed target by 22595 JPY
+  - blocker: evidence coverage missed target by 22059 JPY
+- `2026-03-13` status=`EDGE_CAPTURE_GAP` hist=`-314` risk_capped=`-314` coverage=`545` coverage_pct=`2.4` trades=`155`
+  - blocker: historical net missed target by 22592 JPY
+  - blocker: evidence coverage missed target by 21733 JPY
+- `2026-03-15` status=`EDGE_CAPTURE_GAP` hist=`15` risk_capped=`15` coverage=`31` coverage_pct=`0.1` trades=`7`
+  - blocker: historical net missed target by 22263 JPY
+  - blocker: evidence coverage missed target by 22247 JPY
+- `2026-03-16` status=`EDGE_CAPTURE_GAP` hist=`-224` risk_capped=`-224` coverage=`489` coverage_pct=`2.2` trades=`147`
+  - blocker: historical net missed target by 22502 JPY
+  - blocker: evidence coverage missed target by 21789 JPY
+- `2026-03-17` status=`EDGE_CAPTURE_GAP` hist=`-1137` risk_capped=`-1137` coverage=`2906` coverage_pct=`13.0` trades=`94`
+  - blocker: historical net missed target by 23415 JPY
+  - blocker: evidence coverage missed target by 19372 JPY
+- `2026-03-18` status=`RISK_REPAIR_REQUIRED` hist=`-4299` risk_capped=`-2622` coverage=`3445` coverage_pct=`15.5` trades=`51`
+  - blocker: historical net missed target by 26577 JPY
+  - blocker: evidence coverage missed target by 18834 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2176 JPY requires risk repair
+- `2026-03-19` status=`EDGE_CAPTURE_GAP` hist=`-2043` risk_capped=`-2043` coverage=`2184` coverage_pct=`9.8` trades=`83`
+  - blocker: historical net missed target by 24321 JPY
+  - blocker: evidence coverage missed target by 20094 JPY
+- `2026-03-20` status=`EDGE_CAPTURE_GAP` hist=`1187` risk_capped=`1187` coverage=`2623` coverage_pct=`11.8` trades=`34`
+  - blocker: historical net missed target by 21091 JPY
+  - blocker: evidence coverage missed target by 19655 JPY
+- `2026-03-22` status=`EDGE_CAPTURE_GAP` hist=`-170` risk_capped=`-170` coverage=`35` coverage_pct=`0.2` trades=`5`
+  - blocker: historical net missed target by 22449 JPY
+  - blocker: evidence coverage missed target by 22243 JPY
+- `2026-03-23` status=`RISK_REPAIR_REQUIRED` hist=`-4115` risk_capped=`16` coverage=`4165` coverage_pct=`18.7` trades=`47`
+  - blocker: historical net missed target by 26393 JPY
+  - blocker: evidence coverage missed target by 18113 JPY
+  - blocker: 4 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -3832 JPY requires risk repair
+- `2026-03-24` status=`RISK_REPAIR_REQUIRED` hist=`2116` risk_capped=`2121` coverage=`3209` coverage_pct=`14.4` trades=`21`
+  - blocker: historical net missed target by 20162 JPY
+  - blocker: evidence coverage missed target by 19069 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -504 JPY requires risk repair
+- `2026-03-25` status=`EDGE_CAPTURE_GAP` hist=`2191` risk_capped=`2191` coverage=`3498` coverage_pct=`15.7` trades=`47`
+  - blocker: historical net missed target by 20087 JPY
+  - blocker: evidence coverage missed target by 18780 JPY
+- `2026-03-26` status=`RISK_REPAIR_REQUIRED` hist=`-1006` risk_capped=`-336` coverage=`6099` coverage_pct=`27.4` trades=`85`
+  - blocker: historical net missed target by 23284 JPY
+  - blocker: evidence coverage missed target by 16179 JPY
+  - blocker: 2 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -1027 JPY requires risk repair
+- `2026-03-27` status=`RISK_REPAIR_REQUIRED` hist=`-148` risk_capped=`238` coverage=`1967` coverage_pct=`8.8` trades=`11`
+  - blocker: historical net missed target by 22427 JPY
+  - blocker: evidence coverage missed target by 20311 JPY
+  - blocker: 2 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -792 JPY requires risk repair
+- `2026-03-30` status=`RISK_REPAIR_REQUIRED` hist=`-21717` risk_capped=`-4791` coverage=`1885` coverage_pct=`8.5` trades=`25`
+  - blocker: historical net missed target by 43995 JPY
+  - blocker: evidence coverage missed target by 20393 JPY
+  - blocker: 9 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -3631 JPY requires risk repair
+- `2026-03-31` status=`RISK_REPAIR_REQUIRED` hist=`1574` risk_capped=`5265` coverage=`11249` coverage_pct=`50.5` trades=`25`
+  - blocker: historical net missed target by 20704 JPY
+  - blocker: evidence coverage missed target by 11029 JPY
+  - blocker: 9 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -1200 JPY requires risk repair
+- `2026-04-01` status=`RISK_REPAIR_REQUIRED` hist=`3134` risk_capped=`4830` coverage=`11970` coverage_pct=`53.7` trades=`15`
+  - blocker: historical net missed target by 19144 JPY
+  - blocker: evidence coverage missed target by 10308 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2196 JPY requires risk repair
+- `2026-04-02` status=`RISK_REPAIR_REQUIRED` hist=`-6397` risk_capped=`-133` coverage=`2360` coverage_pct=`10.6` trades=`9`
+  - blocker: historical net missed target by 28676 JPY
+  - blocker: evidence coverage missed target by 19918 JPY
+  - blocker: 3 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -3436 JPY requires risk repair
+- `2026-04-03` status=`NO_EVIDENCE_COVERAGE` hist=`-1021` risk_capped=`-1021` coverage=`0` coverage_pct=`0.0` trades=`4`
+  - blocker: historical net missed target by 23299 JPY
+  - blocker: evidence coverage missed target by 22278 JPY
+- `2026-04-06` status=`RISK_REPAIR_REQUIRED` hist=`2531` risk_capped=`2647` coverage=`9631` coverage_pct=`43.2` trades=`13`
+  - blocker: historical net missed target by 19747 JPY
+  - blocker: evidence coverage missed target by 12647 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -616 JPY requires risk repair
+- `2026-04-07` status=`EDGE_CAPTURE_GAP` hist=`11493` risk_capped=`11493` coverage=`21318` coverage_pct=`95.7` trades=`29`
+  - blocker: historical net missed target by 10786 JPY
+  - blocker: evidence coverage missed target by 960 JPY
+- `2026-04-08` status=`RISK_REPAIR_REQUIRED` hist=`-4441` risk_capped=`1559` coverage=`12659` coverage_pct=`56.8` trades=`22`
+  - blocker: historical net missed target by 26720 JPY
+  - blocker: evidence coverage missed target by 9619 JPY
+  - blocker: 11 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2540 JPY requires risk repair
+- `2026-04-09` status=`RISK_REPAIR_REQUIRED` hist=`1937` risk_capped=`4136` coverage=`13704` coverage_pct=`61.5` trades=`14`
+  - blocker: historical net missed target by 20341 JPY
+  - blocker: evidence coverage missed target by 8574 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2699 JPY requires risk repair
+- `2026-04-10` status=`RISK_REPAIR_REQUIRED` hist=`3082` risk_capped=`3935` coverage=`5935` coverage_pct=`26.6` trades=`16`
+  - blocker: historical net missed target by 19196 JPY
+  - blocker: evidence coverage missed target by 16343 JPY
+  - blocker: 4 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -805 JPY requires risk repair
+- `2026-04-13` status=`EDGE_CAPTURE_GAP` hist=`8639` risk_capped=`8639` coverage=`9541` coverage_pct=`42.8` trades=`16`
+  - blocker: historical net missed target by 13639 JPY
+  - blocker: evidence coverage missed target by 12737 JPY
+- `2026-04-14` status=`RISK_REPAIR_REQUIRED` hist=`1408` risk_capped=`4223` coverage=`6869` coverage_pct=`30.8` trades=`18`
+  - blocker: historical net missed target by 20870 JPY
+  - blocker: evidence coverage missed target by 15409 JPY
+  - blocker: 3 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2583 JPY requires risk repair
+- `2026-04-15` status=`RISK_REPAIR_REQUIRED` hist=`-1818` risk_capped=`-1467` coverage=`2503` coverage_pct=`11.2` trades=`18`
+  - blocker: historical net missed target by 24096 JPY
+  - blocker: evidence coverage missed target by 19775 JPY
+  - blocker: 3 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -684 JPY requires risk repair
+- `2026-04-16` status=`RISK_REPAIR_REQUIRED` hist=`-3138` risk_capped=`-3084` coverage=`3970` coverage_pct=`17.8` trades=`31`
+  - blocker: historical net missed target by 25416 JPY
+  - blocker: evidence coverage missed target by 18308 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -555 JPY requires risk repair
+- `2026-04-17` status=`RISK_REPAIR_REQUIRED` hist=`403` risk_capped=`428` coverage=`6305` coverage_pct=`28.3` trades=`21`
+  - blocker: historical net missed target by 21875 JPY
+  - blocker: evidence coverage missed target by 15973 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -525 JPY requires risk repair
+- `2026-04-18` status=`NO_EVIDENCE_COVERAGE` hist=`0` risk_capped=`0` coverage=`0` coverage_pct=`0.0` trades=`0`
+  - blocker: historical net missed target by 22278 JPY
+  - blocker: evidence coverage missed target by 22278 JPY
+- `2026-04-19` status=`RISK_REPAIR_REQUIRED` hist=`-654` risk_capped=`-500` coverage=`0` coverage_pct=`0.0` trades=`1`
+  - blocker: historical net missed target by 22932 JPY
+  - blocker: evidence coverage missed target by 22278 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -654 JPY requires risk repair
+- `2026-04-20` status=`RISK_REPAIR_REQUIRED` hist=`-1238` risk_capped=`-1120` coverage=`20333` coverage_pct=`91.3` trades=`19`
+  - blocker: historical net missed target by 23516 JPY
+  - blocker: evidence coverage missed target by 1945 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -618 JPY requires risk repair
+- `2026-04-21` status=`EVIDENCE_COVERS_TARGET` hist=`-878` risk_capped=`-878` coverage=`24491` coverage_pct=`109.9` trades=`14`
+  - blocker: historical net missed target by 23156 JPY
+  - blocker: missed-seat positive evidence exceeded captured profit by 22281 JPY
+- `2026-04-22` status=`EDGE_CAPTURE_GAP` hist=`-689` risk_capped=`-689` coverage=`3979` coverage_pct=`17.9` trades=`8`
+  - blocker: historical net missed target by 22967 JPY
+  - blocker: evidence coverage missed target by 18299 JPY
+  - blocker: missed-seat positive evidence exceeded captured profit by 3401 JPY
+- `2026-04-23` status=`EVIDENCE_COVERS_TARGET` hist=`-309` risk_capped=`1510` coverage=`51185` coverage_pct=`229.8` trades=`15`
+  - blocker: historical net missed target by 22587 JPY
+  - blocker: 2 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2077 JPY requires risk repair
+  - blocker: missed-seat positive evidence exceeded captured profit by 44442 JPY
+- `2026-04-24` status=`EDGE_CAPTURE_GAP` hist=`-472` risk_capped=`-472` coverage=`2228` coverage_pct=`10.0` trades=`11`
+  - blocker: historical net missed target by 22750 JPY
+  - blocker: evidence coverage missed target by 20051 JPY
+  - blocker: missed-seat positive evidence exceeded captured profit by 295 JPY
+- `2026-04-26` status=`EDGE_CAPTURE_GAP` hist=`272` risk_capped=`272` coverage=`272` coverage_pct=`1.2` trades=`1`
+  - blocker: historical net missed target by 22006 JPY
+  - blocker: evidence coverage missed target by 22006 JPY
+- `2026-04-27` status=`RISK_REPAIR_REQUIRED` hist=`-682` risk_capped=`-463` coverage=`3685` coverage_pct=`16.5` trades=`4`
+  - blocker: historical net missed target by 22960 JPY
+  - blocker: evidence coverage missed target by 18593 JPY
+  - blocker: 1 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -719 JPY requires risk repair
+- `2026-04-28` status=`RISK_REPAIR_REQUIRED` hist=`3127` risk_capped=`4678` coverage=`15718` coverage_pct=`70.6` trades=`13`
+  - blocker: historical net missed target by 19151 JPY
+  - blocker: evidence coverage missed target by 6560 JPY
+  - blocker: 3 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -1439 JPY requires risk repair
+- `2026-04-29` status=`EVIDENCE_COVERS_TARGET` hist=`-1681` risk_capped=`-147` coverage=`28925` coverage_pct=`129.8` trades=`10`
+  - blocker: historical net missed target by 23959 JPY
+  - blocker: 3 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -1272 JPY requires risk repair
+  - blocker: missed-seat positive evidence exceeded captured profit by 24812 JPY
+- `2026-04-30` status=`RISK_REPAIR_REQUIRED` hist=`-4061` risk_capped=`-1814` coverage=`5131` coverage_pct=`23.0` trades=`11`
+  - blocker: historical net missed target by 26339 JPY
+  - blocker: evidence coverage missed target by 17147 JPY
+  - blocker: 2 losses breached current 500 JPY cap
+  - blocker: worst legacy loss -2740 JPY requires risk repair

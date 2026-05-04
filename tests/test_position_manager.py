@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Quote, Side
-from quant_rabbit.strategy.position_manager import ACTION_HOLD_PROTECTED, ACTION_PROFIT_PROTECT, ACTION_REPAIR_PROTECTION, PositionManager
+from quant_rabbit.strategy.position_manager import (
+    ACTION_HOLD_PROTECTED,
+    ACTION_PROFIT_PROTECT,
+    ACTION_REPAIR_PROTECTION,
+    ACTION_REVIEW_EXIT,
+    PositionManager,
+)
 
 
 class PositionManagerTest(unittest.TestCase):
@@ -91,6 +97,89 @@ class PositionManagerTest(unittest.TestCase):
             self.assertEqual(result.action, ACTION_PROFIT_PROTECT)
             self.assertEqual(result.positions[0].recommended_stop_loss, 1.1729)
 
+    def test_usd_quote_position_risk_uses_snapshot_conversion_not_static_proxy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="1",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.2000,
+                    unrealized_pl_jpy=0,
+                    take_profit=1.2020,
+                    stop_loss=1.1990,
+                ),
+                usd_jpy_bid=199.99,
+                usd_jpy_ask=200.0,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.positions[0].remaining_risk_jpy, 200.0)
+            self.assertEqual(result.positions[0].remaining_reward_jpy, 400.0)
+
+    def test_usd_quote_position_risk_does_not_use_static_conversion_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="1",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.2000,
+                    unrealized_pl_jpy=0,
+                    take_profit=1.2020,
+                    stop_loss=1.1990,
+                ),
+                include_usd_jpy=False,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertIsNone(result.positions[0].remaining_risk_jpy)
+            self.assertIn("cannot be converted", (root / "pm.md").read_text())
+
+    def test_missing_stop_without_conversion_routes_to_exit_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="1",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.2000,
+                    unrealized_pl_jpy=-20,
+                    take_profit=1.2020,
+                    stop_loss=None,
+                ),
+                include_usd_jpy=False,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_REVIEW_EXIT)
+            self.assertIsNone(result.positions[0].recommended_stop_loss)
+            self.assertIn("needs exit review", (root / "pm.md").read_text())
+
 
 def _decision(root: Path, *, long_score: float, short_score: float) -> Path:
     path = root / "decision.json"
@@ -107,12 +196,23 @@ def _decision(root: Path, *, long_score: float, short_score: float) -> Path:
     return path
 
 
-def _snapshot(position: BrokerPosition, *, bid: float = 1.1728, ask: float = 1.1729) -> BrokerSnapshot:
+def _snapshot(
+    position: BrokerPosition,
+    *,
+    bid: float = 1.1728,
+    ask: float = 1.1729,
+    usd_jpy_bid: float = 156.99,
+    usd_jpy_ask: float = 157.0,
+    include_usd_jpy: bool = True,
+) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
+    quotes = {"EUR_USD": Quote("EUR_USD", bid, ask, timestamp_utc=now)}
+    if include_usd_jpy:
+        quotes["USD_JPY"] = Quote("USD_JPY", usd_jpy_bid, usd_jpy_ask, timestamp_utc=now)
     return BrokerSnapshot(
         fetched_at_utc=now,
         positions=(position,),
-        quotes={"EUR_USD": Quote("EUR_USD", bid, ask, timestamp_utc=now)},
+        quotes=quotes,
     )
 
 

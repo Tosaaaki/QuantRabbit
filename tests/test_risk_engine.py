@@ -161,6 +161,113 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("UNPROTECTED_POSITION", {issue.code for issue in decision.issues})
 
+    def test_protected_trader_position_still_blocks_fresh_entries(self) -> None:
+        protected = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1760,
+            stop_loss=1.1680,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="USD_JPY",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=2000,
+            entry=156.645,
+            tp=156.445,
+            sl=156.789,
+            thesis="fresh_entry_must_not_stack_on_protected_position",
+        )
+        decision = RiskEngine().validate(intent, snapshot(positions=(protected,)))
+        self.assertFalse(decision.allowed)
+        self.assertIn("OPEN_POSITION_EXISTS", {issue.code for issue in decision.issues})
+
+    def test_portfolio_policy_allows_protected_trader_add_within_budget(self) -> None:
+        protected_break_even = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1760,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="portfolio_add_must_stay_inside_budget",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="protected runner plus fresh continuation trigger",
+                chart_story="trend continuation after break-even protection",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="SL trades",
+            ),
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=500.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_break_even,)))
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("OPEN_POSITION_EXISTS", {issue.code for issue in decision.issues})
+
+    def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
+        protected_at_risk = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1760,
+            stop_loss=1.1690,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="portfolio_add_must_not_exceed_budget",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="protected but still risked position",
+                chart_story="trend continuation trigger",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="SL trades",
+            ),
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=500.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_at_risk,)))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("PORTFOLIO_LOSS_CAP_EXCEEDED", {issue.code for issue in decision.issues})
+
     def test_pending_entry_order_blocks_duplicate_fresh_entries(self) -> None:
         pending = BrokerOrder(
             order_id="123",
@@ -184,6 +291,60 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("PENDING_ENTRY_ORDER_OPEN", {issue.code for issue in decision.issues})
 
+    def test_pending_entry_price_must_be_on_executable_side(self) -> None:
+        long_stop_below_market = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.17300,
+            tp=1.17450,
+            sl=1.17250,
+            thesis="buy_stop_must_not_be_parked_below_current_ask",
+        )
+        short_limit_below_market = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.17300,
+            tp=1.17150,
+            sl=1.17350,
+            thesis="sell_limit_must_not_be_parked_below_current_bid",
+        )
+
+        long_decision = RiskEngine().validate(long_stop_below_market, snapshot())
+        short_decision = RiskEngine().validate(short_limit_below_market, snapshot())
+
+        self.assertFalse(long_decision.allowed)
+        self.assertIn("STOP_ENTRY_NOT_ABOVE_MARKET", {issue.code for issue in long_decision.issues})
+        self.assertFalse(short_decision.allowed)
+        self.assertIn("LIMIT_ENTRY_NOT_ABOVE_MARKET", {issue.code for issue in short_decision.issues})
+
+    def test_live_market_intent_blocks_stale_expected_entry(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.17000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="market_order_expected_entry_must_match_fresh_broker_truth",
+            market_context=MarketContext(
+                regime="TREND-BULL continuation",
+                narrative="USD softness lets EUR squeeze higher",
+                chart_story="green staircase into upper band with shallow pullbacks",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="1.1716 loses on M5 bodies",
+            ),
+        )
+
+        decision = RiskEngine(live_enabled=True).validate(intent, snapshot(), for_live_send=True)
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("MARKET_ENTRY_DRIFT", {issue.code for issue in decision.issues})
+
     def test_bad_reward_risk_blocks(self) -> None:
         intent = OrderIntent(
             pair="USD_JPY",
@@ -198,6 +359,60 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine().validate(intent, snapshot())
         self.assertFalse(decision.allowed)
         self.assertIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
+
+    def test_usd_quote_risk_uses_snapshot_usd_jpy_conversion(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=10000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="risk_must_use_current_usdjpy_conversion",
+        )
+        low_conversion = snapshot()
+        high_conversion = BrokerSnapshot(
+            fetched_at_utc=low_conversion.fetched_at_utc,
+            positions=low_conversion.positions,
+            orders=low_conversion.orders,
+            quotes={
+                **low_conversion.quotes,
+                "USD_JPY": Quote("USD_JPY", bid=200.000, ask=200.010, timestamp_utc=low_conversion.fetched_at_utc),
+            },
+        )
+
+        low = RiskEngine().validate(intent, low_conversion)
+        high = RiskEngine().validate(intent, high_conversion)
+
+        self.assertIsNotNone(low.metrics)
+        self.assertIsNotNone(high.metrics)
+        assert low.metrics is not None
+        assert high.metrics is not None
+        self.assertGreater(high.metrics.risk_jpy, low.metrics.risk_jpy * 1.2)
+
+    def test_usd_quote_risk_blocks_when_conversion_quote_missing(self) -> None:
+        base = snapshot()
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="missing_conversion_must_not_use_static_157",
+        )
+        missing_conversion = BrokerSnapshot(
+            fetched_at_utc=base.fetched_at_utc,
+            positions=base.positions,
+            orders=base.orders,
+            quotes={"EUR_USD": base.quotes["EUR_USD"]},
+        )
+
+        decision = RiskEngine().validate(intent, missing_conversion)
+
+        self.assertFalse(decision.allowed)
+        self.assertIsNone(decision.metrics)
+        self.assertIn("MISSING_CONVERSION_QUOTE", {issue.code for issue in decision.issues})
 
 
 if __name__ == "__main__":

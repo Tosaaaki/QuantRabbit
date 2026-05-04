@@ -93,10 +93,13 @@ class StrategyMinerTest(unittest.TestCase):
             self.assertEqual(summary.mined_missed_edges, 1)
             payload = json.loads(profile.read_text())
             statuses = {f"{item['pair']} {item['direction']}": item["status"] for item in payload["profiles"]}
+            profiles = {f"{item['pair']} {item['direction']}": item for item in payload["profiles"]}
             self.assertEqual(statuses["EUR_USD LONG"], "CANDIDATE")
             self.assertEqual(statuses["GBP_USD LONG"], "RISK_REPAIR_CANDIDATE")
             self.assertEqual(statuses["USD_JPY LONG"], "BLOCK_UNTIL_NEW_EVIDENCE")
             self.assertEqual(statuses["AUD_USD LONG"], "MINE_MISSED_EDGE")
+            self.assertEqual(profiles["GBP_USD LONG"]["positive_best_jpy"], 1000.0)
+            self.assertGreaterEqual(profiles["GBP_USD LONG"]["target_reward_risk"], 1.5)
             self.assertIn("Generated System Rules", report.read_text())
 
 

@@ -13,6 +13,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_STRATEGY_PROFILE,
 )
+from quant_rabbit.risk import RiskPolicy
 
 
 DESK_METHODS: dict[str, TradeMethod] = {
@@ -33,6 +34,10 @@ class StrategyEvidence:
     pretrade_net_jpy: float = 0.0
     live_net_jpy: float = 0.0
     live_worst_jpy: float | None = None
+    positive_evidence_n: int = 0
+    positive_best_jpy: float = 0.0
+    positive_tail_jpy: float = 0.0
+    target_reward_risk: float = 1.5
     seat_missed: int = 0
     seat_captured: int = 0
 
@@ -59,6 +64,9 @@ class DeskLane:
     campaign_role: str
     reason: str
     required_receipt: str
+    target_reward_risk: float = 1.5
+    evidence_tail_jpy: float = 0.0
+    evidence_best_jpy: float = 0.0
     blockers: tuple[str, ...] = ()
     story_examples: tuple[str, ...] = ()
 
@@ -173,7 +181,7 @@ class CampaignPlanner:
         for lane in plan.lanes:
             lines.append(
                 f"- `{lane.desk}` `{lane.pair} {lane.direction}` method=`{lane.method}` "
-                f"adoption=`{lane.adoption}` role=`{lane.campaign_role}`"
+                f"adoption=`{lane.adoption}` role=`{lane.campaign_role}` target_rr=`{lane.target_reward_risk:.2f}`"
             )
             lines.append(f"  - reason: {lane.reason}")
             lines.append(f"  - receipt: {lane.required_receipt}")
@@ -202,11 +210,16 @@ def _strategy_lane(
     strategy: StrategyEvidence,
 ) -> DeskLane:
     adoption, campaign_role, receipt, blockers = _adoption_for_strategy(strategy, method)
+    target_rr = _lane_target_reward_risk(strategy, adoption)
     reason = (
         f"{strategy.status}; pretrade_net={strategy.pretrade_net_jpy:.1f}, "
         f"live_net={strategy.live_net_jpy:.1f}, worst={strategy.live_worst_jpy}; "
+        f"positive_tail={strategy.positive_tail_jpy:.1f}, target_rr={target_rr:.2f}; "
         f"story method pressure={story.methods.get(method.value, 0)}"
     )
+    if adoption in {"ORDER_INTENT_REQUIRED", "RISK_REPAIR_DRY_RUN", "TRIGGER_RECEIPT_REQUIRED"} and target_rr >= 3.0:
+        campaign_role = f"{campaign_role}_RUNNER"
+        receipt = f"{receipt} Runner TP should target about {target_rr:.2f}R only when current tape supports the hold."
     return DeskLane(
         desk=desk,
         pair=strategy.pair,
@@ -216,6 +229,9 @@ def _strategy_lane(
         campaign_role=campaign_role,
         reason=reason,
         required_receipt=receipt,
+        target_reward_risk=target_rr,
+        evidence_tail_jpy=strategy.positive_tail_jpy,
+        evidence_best_jpy=strategy.positive_best_jpy,
         blockers=blockers,
         story_examples=story.examples[:2],
     )
@@ -232,6 +248,7 @@ def _overlay_lane(desk: str, pair: str, method: TradeMethod, story: MarketStoryE
         campaign_role="VETO_OR_RESIZE",
         reason=f"overlay from market story themes: {theme_text}",
         required_receipt="Any other desk must name how this overlay changes size, timing, stop, or pass decision.",
+        target_reward_risk=1.0,
         story_examples=story.examples[:2],
     )
 
@@ -330,6 +347,10 @@ def _load_strategy_profile(path: Path) -> dict[str, list[StrategyEvidence]]:
             pretrade_net_jpy=float(item.get("pretrade_net_jpy") or 0.0),
             live_net_jpy=float(item.get("live_net_jpy") or 0.0),
             live_worst_jpy=_optional_float(item.get("live_worst_jpy")),
+            positive_evidence_n=int(item.get("positive_evidence_n") or 0),
+            positive_best_jpy=float(item.get("positive_best_jpy") or 0.0),
+            positive_tail_jpy=float(item.get("positive_tail_jpy") or 0.0),
+            target_reward_risk=float(item.get("target_reward_risk") or 1.5),
             seat_missed=int(item.get("seat_missed") or 0),
             seat_captured=int(item.get("seat_captured") or 0),
         )
@@ -364,3 +385,15 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _lane_target_reward_risk(strategy: StrategyEvidence, adoption: str) -> float:
+    if adoption in {"WATCH_ONLY", "REJECTED", "RISK_OVERLAY"}:
+        return 1.0
+    policy = RiskPolicy()
+    evidence_rr = float(strategy.target_reward_risk or 1.5)
+    if strategy.positive_tail_jpy > 0:
+        evidence_rr = max(evidence_rr, strategy.positive_tail_jpy / policy.max_loss_jpy)
+    if strategy.positive_best_jpy > 0:
+        evidence_rr = max(evidence_rr, strategy.positive_best_jpy / policy.max_loss_jpy)
+    return round(min(8.0, max(1.5, evidence_rr)), 2)

@@ -1,13 +1,13 @@
 # Position Execution Report
 
-- Generated at UTC: `2026-04-30T17:09:48.286074+00:00`
+- Generated at UTC: `2026-05-04T04:16:47.208487+00:00`
 - Status: `NO_ACTION`
 - Send requested: `True`
 - Sent: `False`
 
 ## Actions
 
-- `470024` `EUR_USD` management=`HOLD_PROTECTED` request=`none` sent=`False`
+- `470122` `EUR_USD` management=`HOLD_PROTECTED` request=`none` sent=`False`
 
 ## Execution Contract
 
