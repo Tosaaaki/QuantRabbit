@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T22:49:54.517134+00:00`
-- Status: `ACCEPTED`
-- Action: `TRADE`
-- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
+- Generated at UTC: `2026-05-04T22:56:17.562614+00:00`
+- Status: `REJECTED`
+- Action: `WAIT`
+- Selected lane: `None`
 - Cancel order ids: `none`
-- Confidence: `MEDIUM`
-- Operator summary: TRADE decision (MEDIUM conviction): EUR_USD SHORT BREAKOUT_FAILURE STOP-ENTRY 1.16891 → TP 1.16603 (5,886 JPY, 6.00 RR) SL 1.16939 (981 JPY risk, 0.46% equity). Reinforces existing EUR_USD SHORT thesis (13k units protected at BE +754.68 JPY). SHORT score 0.800 > LONG 0.171, M5/M15/H1 all ST=- bearish. Entry below CHOCH_DOWN@1.1691. DXY +0.42% supports USD strength. 9 LIVE_READY lanes, progress 12.23% < 50%, verifier requires TRADE. Pre-Tokyo-open volatile quote state (Mon 07:46 JST). Adding 13k SHORT to 13k existing → 26k total EUR_USD SHORT exposure if both fill.
+- Confidence: `HIGH`
+- Operator summary: WAIT decision: all 15 intents blocked by STALE_QUOTE risk gate (quotes 51-66s stale, threshold 20s). Market in OFF_HOURS during Golden Week. Existing EUR_USD SHORT position protected at breakeven with +979 JPY unrealized. No actionable lanes until London killzone (430 min). Progress 13.3% of target (2794/21011 JPY), campaign pursuit continues when quotes refresh.
 
 ## Verification Issues
 
-- none
+- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
 
 ## Decision Contract
 
