@@ -1,12 +1,12 @@
 # Trader Decision Report
 
-- Generated at UTC: `2026-05-04T19:46:22.442306+00:00`
+- Generated at UTC: `2026-05-04T19:59:58.033400+00:00`
 - Action: `SEND_ENTRY`
 - Selected lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
 - Selected lane score: `200.85`
 - Selected lane size multiple: `1.0`
-- Positions: `0`
-- Orders: `0`
+- Positions: `1`
+- Orders: `2`
 - Pending cancel ids: `none`
 - Reason: Selected highest-scoring live-ready lane: failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE
 
