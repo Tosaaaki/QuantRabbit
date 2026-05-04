@@ -1,7 +1,7 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T14:03:25.424643+00:00`
-- Status: `GPT_WAIT`
+- Generated at UTC: `2026-05-04T14:09:06.201048+00:00`
+- Status: `GPT_TIGHTEN_SL`
 - Positions: `1`
 - Orders: `2`
 - Live-ready intents: `0`
@@ -15,10 +15,10 @@
 - Canceled orders: `none`
 - Position management: `HOLD_PROTECTED`
 - Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`19400.2303` progress_pct=`7.6649`
-- GPT trader: status=`ACCEPTED` action=`WAIT` allowed=`True` issues=`0`
+- Daily target: `PURSUE_TARGET` remaining=`18624.8171` progress_pct=`11.3554`
+- GPT trader: status=`ACCEPTED` action=`TIGHTEN_SL` allowed=`True` issues=`0`
 - GPT error: `none`
-- GPT wait recovery attempts: `2`
+- GPT wait recovery attempts: `0`
 - GPT recovery source: `none`
 - Market story refresh: `True` (source: `/Users/tossaki/App/QuantRabbit/logs`)
 
