@@ -42,7 +42,14 @@ DEFAULT_SPECS: dict[str, InstrumentSpec] = {
 
 @dataclass(frozen=True)
 class RiskPolicy:
-    max_loss_jpy: float = 500.0
+    # Library default for tests and ad-hoc construction. Production code MUST
+    # NOT rely on this literal: target.py derives daily_risk_budget_jpy from
+    # equity * daily_risk_pct, intent_generator pulls that into intent.metadata,
+    # and validate() prefers metadata over policy when both are present.
+    max_loss_jpy: float | None = 500.0
+    # Equity-percent cap used by daily-target-state to derive the day's risk
+    # budget from starting balance (e.g. 2.0 = 2% of equity per trading day).
+    daily_risk_pct: float | None = 2.0
     min_reward_risk: float = 1.2
     max_quote_age_seconds: int = 20
     max_spread_multiple: float = 2.5
@@ -189,11 +196,20 @@ class RiskEngine:
             issues.append(RiskIssue("SL_NOT_LOSS_SIDE", f"SL is not on the loss side for {intent.side.value}"))
         if metrics.reward_pips <= 0:
             issues.append(RiskIssue("TP_NOT_REWARD_SIDE", f"TP is not on the reward side for {intent.side.value}"))
-        if metrics.risk_jpy > self.policy.max_loss_jpy:
+        loss_cap = self._resolved_loss_cap(intent)
+        if loss_cap is None:
+            issues.append(
+                RiskIssue(
+                    "LOSS_CAP_MISSING",
+                    "no per-trade loss cap available: pass policy.max_loss_jpy or "
+                    "intent.metadata['max_loss_jpy'] (equity-derived); refusing to validate without one.",
+                )
+            )
+        elif metrics.risk_jpy > loss_cap:
             issues.append(
                 RiskIssue(
                     "LOSS_CAP_EXCEEDED",
-                    f"planned worst-case loss {metrics.risk_jpy:.0f} JPY exceeds cap {self.policy.max_loss_jpy:.0f} JPY",
+                    f"planned worst-case loss {metrics.risk_jpy:.0f} JPY exceeds cap {loss_cap:.0f} JPY",
                 )
             )
         if metrics.reward_risk < self.policy.min_reward_risk:
@@ -243,6 +259,27 @@ class RiskEngine:
             return self.specs[pair]
         except KeyError as exc:
             raise ValueError(f"unsupported instrument: {pair}") from exc
+
+    def _resolved_loss_cap(self, intent: OrderIntent) -> float | None:
+        """Return the per-trade loss cap to enforce.
+
+        Resolution order (no JPY literal fallback):
+            1. intent.metadata['max_loss_jpy'] — caller (intent generator) injected an
+               equity-derived cap for this specific lane.
+            2. policy.max_loss_jpy — explicit policy-wide cap from CLI / config.
+            3. None — validator emits LOSS_CAP_MISSING and refuses the trade.
+        """
+        meta = intent.metadata or {}
+        cap = meta.get("max_loss_jpy")
+        if cap is not None:
+            try:
+                cap_value = float(cap)
+            except (TypeError, ValueError):
+                return None
+            return cap_value if cap_value > 0 else None
+        if self.policy.max_loss_jpy is not None and self.policy.max_loss_jpy > 0:
+            return float(self.policy.max_loss_jpy)
+        return None
 
     def _entry_price(self, intent: OrderIntent, quote: Quote) -> float:
         if intent.order_type == OrderType.MARKET:
@@ -522,5 +559,9 @@ def resolve_max_loss_jpy(
             raise ValueError(f"{label}: --risk-equity-jpy must be positive")
         return equity_jpy * (max_loss_pct / 100.0)
     if default_max_loss_jpy is None:
-        return RiskPolicy().max_loss_jpy
+        raise ValueError(
+            f"{label}: no risk cap available. Provide --max-loss-jpy, "
+            f"--max-loss-pct + --risk-equity-jpy, or have the daily-target ledger emit "
+            f"daily_risk_budget_jpy from current equity. No JPY literal fallback."
+        )
     return float(default_max_loss_jpy)

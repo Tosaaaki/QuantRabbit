@@ -154,7 +154,9 @@ class DailyTargetLedgerTest(unittest.TestCase):
                 quotes={"USD_JPY": Quote("USD_JPY", 156.99, 157.0, timestamp_utc=now)},
             )
             ledger = DailyTargetLedger(state_path=root / "target.json", report_path=root / "target.md")
-            ledger.run(start_balance_jpy=200_000, snapshot=snapshot)
+            # Pass an explicit daily_risk_budget so the persistence assertion is unaffected
+            # by the equity-derived default (which would otherwise be 200_000 * 2% = 4000).
+            ledger.run(start_balance_jpy=200_000, daily_risk_budget_jpy=500, snapshot=snapshot)
 
             summary = ledger.run(start_balance_jpy=210_000)
 

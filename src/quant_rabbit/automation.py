@@ -853,17 +853,45 @@ class AutoTradeCycle:
             max_loss_jpy = self.max_loss_jpy
             max_loss_pct = self.max_loss_pct
         risk_equity_jpy = self._risk_equity_jpy_for_pct()
+        # Prefer the daily target ledger's equity-derived risk budget over a
+        # JPY literal fallback; only when the ledger is unavailable do we fall
+        # through to the policy library default (kept for test compatibility).
+        ledger_cap = self._daily_risk_budget_jpy_from_target_state()
         if max_loss_jpy is None and max_loss_pct is not None and risk_equity_jpy is None:
-            # keep legacy behavior when daily equity state is not yet initialized
-            max_loss_jpy = RiskPolicy().max_loss_jpy
-            max_loss_pct = None
+            # Daily-target-state path is unavailable: prefer ledger cap if present.
+            if ledger_cap is not None:
+                max_loss_jpy = ledger_cap
+                max_loss_pct = None
+            else:
+                max_loss_jpy = RiskPolicy().max_loss_jpy
+                max_loss_pct = None
+        default_cap = ledger_cap if ledger_cap is not None else RiskPolicy().max_loss_jpy
         return resolve_max_loss_jpy(
             max_loss_jpy=max_loss_jpy,
             max_loss_pct=max_loss_pct,
             equity_jpy=risk_equity_jpy,
-            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+            default_max_loss_jpy=default_cap,
             label="autotrade-cycle risk cap",
         )
+
+    def _daily_risk_budget_jpy_from_target_state(self) -> float | None:
+        """Return the equity-derived per-trade cap from the daily-target ledger.
+
+        No JPY literal fallback: returns None when the file is missing or empty,
+        letting the caller decide whether to use the policy library default.
+        """
+        if self.target_state_path is None or not self.target_state_path.exists():
+            return None
+        try:
+            payload = json.loads(self.target_state_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
+        raw = payload.get("daily_risk_budget_jpy")
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
 
     def _risk_equity_jpy_for_pct(self) -> float | None:
         if self.risk_equity_jpy is not None:

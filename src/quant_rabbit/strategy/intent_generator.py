@@ -9,12 +9,33 @@ from typing import Any
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.strategy.profile import StrategyProfile
+
+
+def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
+    """Return per-trade JPY cap from the daily target ledger, or None if unavailable.
+
+    No silent literal fallback: if the file is missing or the value is missing/zero,
+    return None and let the caller decide whether to raise.
+    """
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw = payload.get("daily_risk_budget_jpy")
+    try:
+        value = float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 PIP_FACTORS = {
@@ -77,11 +98,14 @@ class IntentGenerator:
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
         strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
+        # Pull equity-derived cap from daily_target_state.json when neither
+        # explicit JPY nor pct arguments were supplied. No JPY literal fallback.
+        default_cap = _daily_risk_budget_from_state()
         max_loss_jpy = resolve_max_loss_jpy(
             max_loss_jpy=self.max_loss_jpy,
             max_loss_pct=self.max_loss_pct,
             equity_jpy=self.risk_equity_jpy,
-            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+            default_max_loss_jpy=default_cap,
             label="generate-intents risk cap",
         )
         results: list[GeneratedIntent] = []

@@ -120,7 +120,22 @@ class DailyTargetLedger:
             realized = 0.0
         else:
             realized = _coalesce_float(realized_pl_jpy, previous.get("realized_pl_jpy"), 0.0)
-        risk_budget = _coalesce_float(daily_risk_budget_jpy, previous.get("daily_risk_budget_jpy"), RiskPolicy().max_loss_jpy)
+        # Equity-derived risk budget: per-trade worst-case loss cap is sized to the day's
+        # starting equity, not a hardcoded JPY literal. Default uses RiskPolicy.daily_risk_pct
+        # (% of starting equity); explicit caller override and previous-day persistence
+        # both still win. No silent JPY fallback — if percent and explicit value are both
+        # missing, the policy default percent applies but is recorded in the snapshot.
+        explicit_budget = _coalesce_float(daily_risk_budget_jpy, previous.get("daily_risk_budget_jpy"))
+        if explicit_budget is not None:
+            risk_budget = explicit_budget
+        else:
+            policy = RiskPolicy()
+            if policy.daily_risk_pct is None or policy.daily_risk_pct <= 0:
+                raise ValueError(
+                    "daily-target-state: cannot derive daily_risk_budget_jpy. "
+                    "Pass --daily-risk-budget explicitly, or set RiskPolicy.daily_risk_pct."
+                )
+            risk_budget = round(start_balance * (policy.daily_risk_pct / 100.0), 4)
 
         positions = (
             tuple(_position_risk(position, snapshot.quotes) for position in snapshot.positions)
