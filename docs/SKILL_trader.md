@@ -4,7 +4,7 @@ Codex automation is the discretionary GPT trader. QuantRabbit code is the broker
 
 ## Contract
 
-- Read `AGENTS.md` before acting.
+- Read `docs/AGENT_CONTRACT.md` before acting (single source of truth; `AGENTS.md` and `CLAUDE.md` are stubs to it).
 - Use OANDA only through the vNext CLI and gateways.
 - Do not print secrets.
 - Do not use VM/deploy scripts.
