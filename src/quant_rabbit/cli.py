@@ -174,6 +174,12 @@ def main(argv: list[str] | None = None) -> int:
     p_target.add_argument("--target-return-pct", type=float, default=None)
     p_target.add_argument("--realized-pl", type=float, default=None)
     p_target.add_argument("--daily-risk-budget", type=float, default=None)
+    p_target.add_argument(
+        "--target-trades-per-day",
+        type=int,
+        default=None,
+        help="Override expected trade pace (per_trade cap = daily_risk_budget / pace).",
+    )
     p_target.add_argument("--snapshot", type=Path, default=None)
     p_target.add_argument("--state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_target.add_argument("--report", type=Path, default=DEFAULT_DAILY_TARGET_REPORT)
@@ -970,6 +976,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_return_pct=args.target_return_pct,
                 realized_pl_jpy=args.realized_pl,
                 daily_risk_budget_jpy=args.daily_risk_budget,
+                target_trades_per_day=args.target_trades_per_day,
                 snapshot_path=args.snapshot,
             )
         except ValueError as exc:
@@ -986,6 +993,8 @@ def main(argv: list[str] | None = None) -> int:
                     "progress_pct": summary.progress_pct,
                     "remaining_target_jpy": summary.remaining_target_jpy,
                     "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
+                    "target_trades_per_day": summary.target_trades_per_day,
+                    "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
                     "unprotected_positions": summary.unprotected_positions,
                 },
                 ensure_ascii=False,
