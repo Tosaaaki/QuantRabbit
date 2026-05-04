@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T17:01:31.814285+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-04T17:18:16.794093+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT: FX market closed (Sunday 16:55 UTC, opens 22:00 UTC in ~5h). All 15 lanes blocked by STALE_QUOTE (55-59s vs 20s threshold) due to OANDA weekend suspension. Daily target exceeded at 13.4%. EUR_USD SHORT position protected at break-even (SL=1.1689=entry, TP=1.1653). Would tighten SL to 1.1685 to lock profit before oversold bounce when market opens (EUR at Camarilla S4, Williams %R -97.9), but cannot act on stale quotes per contract §3.5. Next cycle after market opens Monday 07:00 JST.
+- Operator summary: Selected EUR_USD SHORT (failure_trader BREAKOUT_FAILURE lane) from 15 LIVE_READY candidates. Strongest confluence: USD rank 1 (G8 strongest) vs EUR rank 4, pair chart TREND_DOWN with 0.975 SHORT score (97.5% indicator agreement), MTF cascade of BOS_DOWN structure (M5/M15/H1), DXY climbing +0.38%, COT showing EUR long-reduction (-8.7k week_change). Entry at 1.16864 STOP-ENTRY (S1 pivot area), SL 1.16913 (49 pips), TP 1.16571 (S3 target, 293 pips), 5.99R reward/risk. Risk 1,001 JPY < per_trade_cap 1,050 JPY (compliant). Spread 0.8pip NORMAL. No calendar event risk. Campaign progress 8.64% (behind pace), need high-R shots. Rejected AUD_JPY LONG 8.00R (counter-trend, AUD rank 8 weakest), EUR_USD LONG (against regime), GBP_USD LONG (weaker confluence). Decision verified against contract §9 (fresh broker truth), §3.5 (ATR-derived geometry, equity-derived units, no hardcoded caps), SKILL_trader anti-patterns (no invented thresholds, explicit gate citations). Proceeding to gpt-trader-decision verification then autotrade-cycle gateway send.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
