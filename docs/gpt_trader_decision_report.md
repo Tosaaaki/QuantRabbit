@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T16:22:33.732437+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-04T16:32:44.111428+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to market closure (STALE_QUOTE gate). All 15 generated intents blocked by quotes aged 49+ seconds exceeding 20s freshness threshold. Current time 01:20 JST Tuesday in FX weekend gap between NY close and Sydney open (~5h 40m). Chart structure shows strong directional bias (EUR/AUD/GBP shorts, USD_JPY long) with NORMAL spreads. Campaign at 8.64% of 10% target with full risk budget intact. Next cycle after Sydney 07:00 JST open when quotes refresh.
+- Operator summary: TRADE EUR_USD SHORT via failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE. Macro: USD strength (DXY +0.36%, rank #1), EUR weakness (rank #4, COT reducing longs), risk-off (equities down, gold down, oil spiking). Technical: M5 TREND_DOWN (ADX=27.5, AroonOsc=-93, ST=-), H1 RANGE but bearish bias (%R=-80, MFI=27.7 weak). Breakout-failure method waits for failed bounce near S1 1.1696, then SHORT. Spread tight (0.8p), calendar clear, per-trade risk 1,050.53 JPY caps loss, RR 6.00 offers 6,225 JPY (29.6% of remaining target). Campaign 8.64% progress, aggressive pursuit needed. autotrade-cycle will refresh snapshot and re-validate geometry before send.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
