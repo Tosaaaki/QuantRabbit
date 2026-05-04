@@ -1,6 +1,6 @@
 # Trader Decision Report
 
-- Generated at UTC: `2026-05-04T09:12:57.691407+00:00`
+- Generated at UTC: `2026-05-04T09:20:51.951417+00:00`
 - Action: `SEND_ENTRY`
 - Selected lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
 - Selected lane score: `192.85`
