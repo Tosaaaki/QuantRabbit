@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T20:52:58.629113+00:00`
-- Status: `REJECTED`
+- Generated at UTC: `2026-05-04T21:03:05.227068+00:00`
+- Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to universal STALE_QUOTE blocker (quotes 54-62s old, exceeds 20s risk threshold per contract §9). EUR_USD SHORT position protected at breakeven with M5 IMPULSE_DOWN thesis intact (+734 JPY unrealized). Daily progress 12.13% ahead of pace. 0 LIVE_READY lanes. Cannot validate geometry with stale quotes per contract §3.5 market-derived requirement. Next cycle will fetch fresh data and re-evaluate.
+- Operator summary: WAIT due to universal STALE_QUOTE blocker (quotes 51-69s old, exceeds 20s risk threshold per contract §9). EUR_USD SHORT position protected at breakeven with M5 IMPULSE_DOWN thesis intact (+653 JPY unrealized). Daily progress 11.74% above 10% target. 0 LIVE_READY lanes. Session OFF_HOURS (pre-Tokyo Golden Week). Family disagreement 0.94 (stand-aside threshold 0.7). Cannot validate geometry with stale quotes per contract §3.5 market-derived requirement. Next cycle will fetch fresh data during actionable session (Tokyo open or later).
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
