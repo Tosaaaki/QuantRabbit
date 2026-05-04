@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T15:33:19.466765+00:00`
+- Generated at UTC: `2026-05-04T15:43:30.158419+00:00`
 - Status: `ACCEPTED`
-- Action: `TRADE`
-- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
+- Action: `WAIT`
+- Selected lane: `None`
 - Cancel order ids: `none`
-- Confidence: `HIGH`
-- Operator summary: TRADE failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE. Selling EUR_USD on break below 1.16976 support. DXY rally +0.44%, USD#1 vs EUR#4 strength divergence, and M5/M15/H1 CHOCH_DOWN/BOS_DOWN structure support SHORT bias within RANGE regime. STOP-ENTRY at -2.0p from current bid, TP 1.16653 (-32.3p = 2.2×ATR), SL 1.1703 (+5.4p = 0.37×ATR). Risk 1018.5 JPY (96.9% of per-trade budget), RR 5.98. Potential reward 6092 JPY = 31.7% of remaining daily target. Campaign progress 8.64%, this is trade #1 of target 4/day. No contract gate fires: spread NORMAL, no event window, risk within budget. Among available LIVE_READY lanes, EUR_USD SHORT shows strongest confluence (regime, structure, currency strength, DXY, COT flow).
+- Confidence: `LOW`
+- Operator summary: WAIT: All lanes blocked by STALE_QUOTE timing artifact (quotes 46-47s old > 20s threshold, broker snapshot fetch vs intent generation gap). Existing EUR_USD SHORT STOP pending order @ 1.16958 (order 470161, -12000u) from previous cycle remains strategically valid: USD rank 1, EUR rank 5, SHORT score 1.0, DXY +0.45%, downside structure intact across M5/M15/H1. No action until fresh broker snapshot available. Progress 1,815 JPY / 21,011 JPY target (8.64%), per-trade cap 1,051 JPY ready after pending resolves.
 
 ## Verification Issues
 
