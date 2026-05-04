@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T12:46:32.967942+00:00`
+- Generated at UTC: `2026-05-04T13:11:30.699120+00:00`
 - Status: `ACCEPTED`
-- Action: `CANCEL_PENDING`
+- Action: `WAIT`
 - Selected lane: `None`
-- Cancel order ids: `470147`
-- Confidence: `HIGH`
-- Operator summary: CANCEL order 470147. Golden Week thin liquidity + STALE_QUOTE blocker (quotes 46-55s old > 20s threshold) on all 15 lanes. Cannot validate pending order risk with 55s-stale broker truth. EUR_JPY spread 2.625x normal confirms stress. Better to cancel and re-enter when market provides fresh pricing. Progress 8.64% of target.
+- Cancel order ids: `none`
+- Confidence: `MEDIUM`
+- Operator summary: WAIT: all 15 lanes blocked by STALE_QUOTE (quotes 59-65s old > 20s threshold per AGENT_CONTRACT §9). Pending EUR_USD SHORT stop @ 1.1704 aligns with USD strength (rank 1), EUR weakness (rank 7), RANGE/SHORT regime (score 0.746), and NORMAL spread (0.8p). No cancellation warranted. Progress 8.64% of target; coverage gap remains a product blocker.
 
 ## Verification Issues
 

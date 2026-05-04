@@ -1,6 +1,6 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T12:46:38.970460+00:00`
+- Generated at UTC: `2026-05-04T13:11:35.742200+00:00`
 - Status: `CANCELED_CONTAMINATED_PENDING`
 - Positions: `0`
 - Orders: `1`
@@ -12,7 +12,7 @@
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
 - Sent: `False`
-- Canceled orders: `470147`
+- Canceled orders: `470149`
 - Position management: `NO_POSITION`
 - Position execution: `NO_ACTION` sent=`False`
 - Daily target: `PURSUE_TARGET` remaining=`19195.67` progress_pct=`8.6385`
