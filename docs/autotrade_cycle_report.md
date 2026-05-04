@@ -1,22 +1,22 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T11:43:28.860586+00:00`
-- Status: `GPT_TIGHTEN_SL`
+- Generated at UTC: `2026-05-04T11:54:20.328916+00:00`
+- Status: `POSITION_ACTION_STAGED`
 - Positions: `1`
 - Orders: `2`
 - Live-ready intents: `0`
 - Receipt promotions: `0`
-- Decision source: `gpt_trader`
+- Decision source: `deterministic`
 - Deterministic lane: `None`
 - Selected lane: `None`
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
 - Sent: `False`
 - Canceled orders: `none`
-- Position management: `HOLD_PROTECTED`
-- Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`19120.3879` progress_pct=`8.9968`
-- GPT trader: status=`ACCEPTED` action=`TIGHTEN_SL` allowed=`True` issues=`0`
+- Position management: `PROFIT_PROTECT_REQUIRED`
+- Position execution: `STAGED` sent=`False`
+- Daily target: `PURSUE_TARGET` remaining=`18216.9654` progress_pct=`13.2966`
+- GPT trader: status=`not used` action=`None` allowed=`None` issues=`None`
 - GPT error: `none`
 - GPT wait recovery attempts: `0`
 - GPT recovery source: `none`
