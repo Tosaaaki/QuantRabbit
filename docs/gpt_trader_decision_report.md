@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T15:52:04.220546+00:00`
-- Status: `ACCEPTED`
+- Generated at UTC: `2026-05-04T15:57:45.545757+00:00`
+- Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT (second consecutive cycle): systemic STALE_QUOTE blocker per §9. All 15 lanes fail freshness (40-41s quote age > 20s threshold). Root cause: sequential CLI architecture creates inherent lag between broker-snapshot fetch (15:48:28) and intent validation (15:49:09). Product blocker confirmed: automated cycles cannot generate LIVE_READY lanes. Pending EUR_USD SHORT@1.16958 (order 470161) kept—strategically valid (USD rank 1, EUR rank 4, RANGE SHORT score 1.0, no event windows). Flagged for operator action: architectural fix required (broker-snapshot atomicity, increased staleness threshold, or parallel fetches).
+- Operator summary: WAIT due to STALE_QUOTE blocker (contract §3.5 gate). Market closed (Sunday 15:53 UTC) - all 15 intents blocked by quotes aged 51-52s > 20s threshold. Previous cycle's EUR_USD SHORT order (470161) gone from broker (0 orders, 0 positions). Progress 8.64% of daily target (1,815 JPY realized, 19,196 JPY remaining). Chart bias for next open: strong SHORT on EUR_USD/AUD_JPY (scores 1.0, UNCLEAR/TREND_DOWN regimes), LONG on USD_JPY (score 0.750, TREND_UP). Currency strength: USD #1, JPY #3, EUR #4. DXY +0.47% UP, US10Y FLAT (z=-2.96). Spreads NORMAL. Next event: AUD Cash Rate HIGH in 16.6hr. Coverage gap: 0 LIVE_READY lanes. Next cycle: wait for market open Monday Asia session.
 
 ## Verification Issues
 
-- none
+- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
 
 ## Decision Contract
 
