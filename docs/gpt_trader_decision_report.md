@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T13:47:55.803752+00:00`
+- Generated at UTC: `2026-05-04T14:03:26.629093+00:00`
 - Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `MEDIUM`
-- Operator summary: Technical WAIT: all 15 intent lanes blocked by STALE_QUOTE (52s age > 20s gate). Playbook structure (broker-snapshot at top → context layers → intents) creates timing artifact. Existing EUR_USD SHORT order 470151 @ 1.17139 remains valid - M5 overbought, USD strength, BOS_DOWN structure intact. No cancellation needed. Cannot place new trades on stale data per §9. Next cycle should consider refreshing broker-snapshot immediately before intent generation to avoid this blocker.
+- Operator summary: WAIT: deterministic STALE_QUOTE gate blocks all 15 lanes (timing artifact in refresh pipeline, quotes ~41s > 20s threshold). Pending EUR_USD SHORT order 470153 kept (H1/M15 bearish structure + USD rank 1 + DXY rising support SHORT thesis at higher timeframes; M5 CHOCH_UP is lower-timeframe countertrend; STOP order below market is self-limiting). Daily progress 8.64%, remaining target 19195.67 JPY, per-trade budget 1050.53 JPY. Next cycle will resolve with fresh quotes.
 
 ## Verification Issues
 

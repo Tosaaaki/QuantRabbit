@@ -1,24 +1,24 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T13:48:01.746217+00:00`
-- Status: `CANCELED_CONTAMINATED_PENDING`
-- Positions: `0`
-- Orders: `1`
-- Live-ready intents: `12`
+- Generated at UTC: `2026-05-04T14:03:25.424643+00:00`
+- Status: `GPT_WAIT`
+- Positions: `1`
+- Orders: `2`
+- Live-ready intents: `0`
 - Receipt promotions: `0`
-- Decision source: `deterministic`
+- Decision source: `gpt_trader`
 - Deterministic lane: `None`
 - Selected lane: `None`
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
 - Sent: `False`
-- Canceled orders: `470151`
-- Position management: `NO_POSITION`
+- Canceled orders: `none`
+- Position management: `HOLD_PROTECTED`
 - Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`19195.67` progress_pct=`8.6385`
-- GPT trader: status=`not used` action=`None` allowed=`None` issues=`None`
+- Daily target: `PURSUE_TARGET` remaining=`19400.2303` progress_pct=`7.6649`
+- GPT trader: status=`ACCEPTED` action=`WAIT` allowed=`True` issues=`0`
 - GPT error: `none`
-- GPT wait recovery attempts: `0`
+- GPT wait recovery attempts: `2`
 - GPT recovery source: `none`
 - Market story refresh: `True` (source: `/Users/tossaki/App/QuantRabbit/logs`)
 
