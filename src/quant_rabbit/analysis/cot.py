@@ -25,7 +25,9 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
-CFTC_URL = "https://publicreporting.cftc.gov/resource/72hh-3qpy.csv"
+# Traders in Financial Futures (TFF) — designed for currencies / equities /
+# bonds and exposes the leveraged-funds + asset-managers split we want.
+CFTC_URL = "https://publicreporting.cftc.gov/resource/gpe5-46if.csv"
 
 # Map CFTC market name → FX currency code
 CFTC_MARKET_MAP: dict[str, str] = {
@@ -88,7 +90,13 @@ class COTSnapshot:
         }
 
 
-def fetch_cot_csv(*, url: str = CFTC_URL, limit: int = 50, timeout: int = 30) -> bytes:
+def fetch_cot_csv(*, url: str = CFTC_URL, limit: int = 400, timeout: int = 30) -> bytes:
+    """Pull the most recent rows from the TFF Socrata endpoint.
+
+    A higher default limit (400) ensures we capture both the latest and prior
+    week for every G10 currency future plus DXY — enough to compute the
+    week-on-week change in leveraged-funds net positioning.
+    """
     query = urlencode({"$limit": str(limit), "$order": "report_date_as_yyyy_mm_dd DESC"})
     full_url = f"{url}?{query}"
     req = Request(full_url, headers={"User-Agent": "QuantRabbit/1.0 (research)"})
@@ -126,8 +134,9 @@ def parse_cot_csv(payload: bytes) -> tuple[COTReport, ...]:
             except (TypeError, ValueError):
                 return None
 
-        lev_long = _i(latest, "lev_money_positions_long_all")
-        lev_short = _i(latest, "lev_money_positions_short_all")
+        # TFF schema: lev_money_positions_long / lev_money_positions_short
+        lev_long = _i(latest, "lev_money_positions_long")
+        lev_short = _i(latest, "lev_money_positions_short")
         lev_net = (lev_long - lev_short) if (lev_long is not None and lev_short is not None) else None
         am_long = _i(latest, "asset_mgr_positions_long")
         am_short = _i(latest, "asset_mgr_positions_short")
@@ -135,8 +144,8 @@ def parse_cot_csv(payload: bytes) -> tuple[COTReport, ...]:
         oi = _i(latest, "open_interest_all")
         prev_lev_net = None
         if prev is not None:
-            pll = _i(prev, "lev_money_positions_long_all")
-            pls = _i(prev, "lev_money_positions_short_all")
+            pll = _i(prev, "lev_money_positions_long")
+            pls = _i(prev, "lev_money_positions_short")
             if pll is not None and pls is not None:
                 prev_lev_net = pll - pls
         week_change = (lev_net - prev_lev_net) if (lev_net is not None and prev_lev_net is not None) else None

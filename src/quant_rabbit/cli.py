@@ -56,6 +56,20 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_REPORT,
     DEFAULT_TRADER_SETTINGS,
     DEFAULT_TRADER_DECISION,
+    DEFAULT_CROSS_ASSET_SNAPSHOT,
+    DEFAULT_CROSS_ASSET_REPORT,
+    DEFAULT_FLOW_SNAPSHOT,
+    DEFAULT_FLOW_REPORT,
+    DEFAULT_CURRENCY_STRENGTH,
+    DEFAULT_CURRENCY_STRENGTH_REPORT,
+    DEFAULT_LEVELS_SNAPSHOT,
+    DEFAULT_LEVELS_REPORT,
+    DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_CALENDAR_REPORT,
+    DEFAULT_COT_SNAPSHOT,
+    DEFAULT_COT_REPORT,
+    DEFAULT_OPTION_SKEW,
+    DEFAULT_OPTION_SKEW_REPORT,
 )
 from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider
 from quant_rabbit.replay import ReplayBacktester
@@ -88,6 +102,53 @@ def main(argv: list[str] | None = None) -> int:
     p_charts.add_argument("--count", type=int, default=200)
     p_charts.add_argument("--output", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_charts.add_argument("--report", type=Path, default=DEFAULT_PAIR_CHARTS_REPORT)
+
+    p_cross = sub.add_parser("cross-asset-snapshot", help="Cross-asset/inter-market snapshot (DXY, US bonds, SPX, Gold, Oil, BTC).")
+    p_cross.add_argument("--instruments", default="")  # empty → use defaults
+    p_cross.add_argument("--correlation-pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_cross.add_argument("--granularity", default="H1")
+    p_cross.add_argument("--count", type=int, default=200)
+    p_cross.add_argument("--output", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
+    p_cross.add_argument("--report", type=Path, default=DEFAULT_CROSS_ASSET_REPORT)
+
+    p_flow = sub.add_parser("flow-snapshot", help="OANDA order book + position book + spread time-series per pair.")
+    p_flow.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_flow.add_argument("--top-n", type=int, default=5)
+    p_flow.add_argument("--spread-lookback-minutes", type=int, default=60)
+    p_flow.add_argument("--output", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
+    p_flow.add_argument("--report", type=Path, default=DEFAULT_FLOW_REPORT)
+
+    p_strength = sub.add_parser("currency-strength", help="G8 currency strength meter from a 28-pair matrix.")
+    p_strength.add_argument("--granularity", default="H1")
+    p_strength.add_argument("--lookback-bars", type=int, default=24)
+    p_strength.add_argument("--fetch-count", type=int, default=50)
+    p_strength.add_argument("--output", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
+    p_strength.add_argument("--report", type=Path, default=DEFAULT_CURRENCY_STRENGTH_REPORT)
+
+    p_levels = sub.add_parser("levels-snapshot", help="Pivots, PDH/PDL/PDC, session ranges, round-numbers per pair.")
+    p_levels.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_levels.add_argument("--output", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
+    p_levels.add_argument("--report", type=Path, default=DEFAULT_LEVELS_REPORT)
+
+    p_cal = sub.add_parser("economic-calendar", help="ForexFactory weekly XML feed + per-pair event-window flags.")
+    p_cal.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_cal.add_argument("--pre-minutes", type=int, default=30)
+    p_cal.add_argument("--post-minutes", type=int, default=30)
+    p_cal.add_argument("--impact", default="High,Medium")
+    p_cal.add_argument("--no-fetch", action="store_true", help="Skip fetching (for offline tests).")
+    p_cal.add_argument("--output", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
+    p_cal.add_argument("--report", type=Path, default=DEFAULT_CALENDAR_REPORT)
+
+    p_cot = sub.add_parser("cot-snapshot", help="CFTC Commitments of Traders weekly disaggregated report.")
+    p_cot.add_argument("--no-fetch", action="store_true")
+    p_cot.add_argument("--output", type=Path, default=DEFAULT_COT_SNAPSHOT)
+    p_cot.add_argument("--report", type=Path, default=DEFAULT_COT_REPORT)
+
+    p_opt = sub.add_parser("option-skew", help="Option-skew (RR/IV) adapter — placeholder until vendor feed is wired.")
+    p_opt.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_opt.add_argument("--tenors", default="1W,1M,3M")
+    p_opt.add_argument("--output", type=Path, default=DEFAULT_OPTION_SKEW)
+    p_opt.add_argument("--report", type=Path, default=DEFAULT_OPTION_SKEW_REPORT)
 
     p_mine = sub.add_parser("mine-strategy", help="Mine legacy evidence into a strategy profile.")
     p_mine.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
@@ -593,6 +654,290 @@ def main(argv: list[str] | None = None) -> int:
                  "long": round(c["long_score"], 3), "short": round(c["short_score"], 3), "regime": c["dominant_regime"]}
                 for c in chart_payloads[:5]
             ],
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "cross-asset-snapshot":
+        from quant_rabbit.analysis.cross_asset import (
+            DEFAULT_CROSS_ASSET_INSTRUMENTS,
+            DEFAULT_CORRELATION_PAIRS,
+            build_cross_asset_snapshot,
+        )
+        try:
+            client = OandaReadOnlyClient()
+        except RuntimeError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        instruments = (
+            tuple(p.strip() for p in args.instruments.split(",") if p.strip())
+            if args.instruments else DEFAULT_CROSS_ASSET_INSTRUMENTS
+        )
+        corr_pairs = tuple(p.strip().upper() for p in args.correlation_pairs.split(",") if p.strip())
+        snap = build_cross_asset_snapshot(
+            client=client, instruments=instruments, correlation_pairs=corr_pairs,
+            granularity=args.granularity, count=int(args.count),
+        )
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# Cross-Asset Snapshot",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                f"- Granularity: `{snap.granularity}`",
+                f"- Candles per series: `{snap.candle_count}`",
+                "",
+                "## Synthetic DXY",
+            ]
+            sd = snap.synthetic_dxy
+            if sd:
+                lines.append(f"- last={sd.last_value}, Δ24h={sd.change_pct_24h}%, Δ5d={sd.change_pct_5d}%, components={list(sd.components_used)}")
+            else:
+                lines.append("- (insufficient basket coverage)")
+            lines.extend(["", "## Yield Spreads", ""])
+            for y in snap.yield_spreads:
+                lines.append(f"- **{y.name}**: a={y.a_last}, b={y.b_last}, spread={y.spread_last}, Δ24h={y.spread_change_24h}, issue={y.issue}")
+            lines.extend(["", "## Asset Readings", "", "| Instrument | Last | Δ24h% | Δ5d% | Z(60) | RV(60) | Trend |", "|---|---|---|---|---|---|---|"])
+            for a in snap.assets:
+                lines.append(f"| `{a.instrument}` | {a.last_price} | {a.change_pct_24h} | {a.change_pct_5d} | {a.z_score_60} | {a.realized_vol_60} | {a.trend_label} |")
+            if snap.issues:
+                lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output),
+            "report_path": str(args.report),
+            "assets_fetched": sum(1 for a in snap.assets if a.fetched),
+            "issues": list(snap.issues),
+            "synthetic_dxy_last": snap.synthetic_dxy.last_value if snap.synthetic_dxy else None,
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "flow-snapshot":
+        from quant_rabbit.analysis.flow import build_flow_snapshot
+        try:
+            client = OandaReadOnlyClient()
+        except RuntimeError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        pairs = tuple(p.strip().upper() for p in args.pairs.split(",") if p.strip())
+        snap = build_flow_snapshot(
+            client=client, pairs=pairs,
+            top_n=int(args.top_n), spread_lookback_minutes=int(args.spread_lookback_minutes),
+        )
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# Flow Snapshot (OrderBook + PositionBook + Spread)",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                "",
+                "## Spread State",
+                "",
+                "| Pair | Current(p) | Median(p) | P90(p) | Max(p) | Samples | Stress |",
+                "|---|---|---|---|---|---|---|",
+            ]
+            for s in snap.spreads:
+                lines.append(f"| `{s.instrument}` | {s.current_pips} | {s.median_pips} | {s.p90_pips} | {s.max_pips} | {s.sample_size} | `{s.stress_flag}` |")
+            lines.extend(["", "## Position Book Top Clusters", ""])
+            for pb in snap.position_books:
+                if pb.issue:
+                    lines.append(f"- `{pb.instrument}` issue: {pb.issue}")
+                    continue
+                top_long = ", ".join(f"{b.price}@{b.long_pct:.1f}%" for b in pb.top_long_clusters[:3])
+                top_short = ", ".join(f"{b.price}@{b.short_pct:.1f}%" for b in pb.top_short_clusters[:3])
+                lines.append(f"- `{pb.instrument}` price={pb.price} long_total={pb.long_total_pct:.1f}% short_total={pb.short_total_pct:.1f}% top_long=[{top_long}] top_short=[{top_short}]")
+            if snap.issues:
+                lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output), "report_path": str(args.report),
+            "pairs": len(pairs), "issues": list(snap.issues),
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "currency-strength":
+        from quant_rabbit.analysis.strength import build_strength_snapshot
+        try:
+            client = OandaReadOnlyClient()
+        except RuntimeError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        snap = build_strength_snapshot(
+            client=client, granularity=args.granularity,
+            lookback_bars=int(args.lookback_bars), fetch_count=int(args.fetch_count),
+        )
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# Currency Strength",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                f"- Granularity: `{snap.granularity}` over `{snap.lookback_bars}` bars",
+                f"- Pairs used: {len(snap.pairs_used)} / missing {len(snap.pairs_missing)}",
+                f"- Suggested cross: `{snap.strongest_pair_suggestion}`",
+                "",
+                "| Rank | Currency | Score (%) |",
+                "|---|---|---|",
+            ]
+            for s in snap.scores:
+                lines.append(f"| {s.rank} | `{s.currency}` | {s.score_pct:.3f} |")
+            if snap.issues:
+                lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output), "report_path": str(args.report),
+            "suggestion": snap.strongest_pair_suggestion,
+            "issues": list(snap.issues)[:5],
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "levels-snapshot":
+        from quant_rabbit.analysis.levels import build_levels_snapshot
+        try:
+            client = OandaReadOnlyClient()
+        except RuntimeError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        pairs = tuple(p.strip().upper() for p in args.pairs.split(",") if p.strip())
+        snap = build_levels_snapshot(client=client, pairs=pairs)
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# Levels Snapshot",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                "",
+                "## Per-Pair",
+                "",
+            ]
+            for p in snap.pairs:
+                lines.append(f"### `{p.pair}`")
+                lines.append(f"- last={p.last_close}, PDH={p.pdh}, PDL={p.pdl}, PDC={p.pdc}, daily_open={p.daily_open}, weekly_open={p.weekly_open}, monthly_open={p.monthly_open}")
+                for piv in p.pivots:
+                    lines.append(f"- `{piv.style}`: PP={piv.pp}, R1={piv.r1}, R2={piv.r2}, R3={piv.r3}, S1={piv.s1}, S2={piv.s2}, S3={piv.s3}")
+                for s in p.sessions:
+                    lines.append(f"- session `{s.name}`: H={s.high}, L={s.low}, range={s.range_pips}p")
+                rn_near = [r for r in p.round_numbers if abs(r.distance_pips) < 50][:5]
+                lines.append(f"- nearby round-numbers: " + ", ".join(f"{r.price}({r.distance_pips:.1f}p)" for r in rn_near))
+                lines.append("")
+            if snap.issues:
+                lines.extend(["## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output), "report_path": str(args.report),
+            "pairs": len(snap.pairs), "issues": list(snap.issues),
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "economic-calendar":
+        from quant_rabbit.analysis.calendar import build_calendar_snapshot
+        pairs = tuple(p.strip().upper() for p in args.pairs.split(",") if p.strip())
+        impact = tuple(p.strip() for p in args.impact.split(",") if p.strip())
+        snap = build_calendar_snapshot(
+            pairs=pairs, pre_minutes=int(args.pre_minutes), post_minutes=int(args.post_minutes),
+            impact_filter=impact, fetch=not args.no_fetch,
+        )
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# Economic Calendar",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                f"- Source: `{snap.source_url}`",
+                f"- Events parsed: {len(snap.events)}",
+                "",
+                "## Pair Windows",
+                "",
+                "| Pair | In Window | Reason |",
+                "|---|---|---|",
+            ]
+            for w in snap.pair_windows:
+                lines.append(f"| `{w.pair}` | {'YES' if w.in_window else 'no'} | {w.reason} |")
+            lines.extend(["", "## Upcoming High/Medium Events (first 30)", "", "| Time UTC | Currency | Impact | Title | Forecast | Previous |", "|---|---|---|---|---|---|"])
+            for e in list(snap.events)[:30]:
+                if e.impact in ("High", "Medium"):
+                    lines.append(f"| `{e.timestamp_utc}` | `{e.currency}` | `{e.impact}` | {e.title} | {e.forecast or ''} | {e.previous or ''} |")
+            if snap.issues:
+                lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output), "report_path": str(args.report),
+            "events": len(snap.events),
+            "in_window_pairs": [w.pair for w in snap.pair_windows if w.in_window],
+            "issues": list(snap.issues),
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "cot-snapshot":
+        from quant_rabbit.analysis.cot import build_cot_snapshot
+        snap = build_cot_snapshot(fetch=not args.no_fetch)
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# COT Snapshot",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                f"- Source: `{snap.source_url}`",
+                f"- Reports: {len(snap.reports)}",
+                "",
+                "| Currency | Report Date | Lev Long | Lev Short | Lev Net | Δw Lev Net | OI |",
+                "|---|---|---|---|---|---|---|",
+            ]
+            for r in snap.reports:
+                lines.append(f"| `{r.currency}` | `{r.report_date}` | {r.leveraged_long} | {r.leveraged_short} | {r.leveraged_net} | {r.week_change_leveraged_net} | {r.open_interest} |")
+            if snap.issues:
+                lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output), "report_path": str(args.report),
+            "reports": len(snap.reports), "issues": list(snap.issues),
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "option-skew":
+        from quant_rabbit.analysis.options import build_option_skew_snapshot
+        pairs = tuple(p.strip().upper() for p in args.pairs.split(",") if p.strip())
+        tenors = tuple(t.strip() for t in args.tenors.split(",") if t.strip())
+        snap = build_option_skew_snapshot(pairs=pairs, tenors=tenors)
+        payload = snap.to_dict()
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            lines = [
+                "# Option Skew Snapshot",
+                "",
+                f"- Generated at UTC: `{snap.generated_at_utc}`",
+                f"- Provider: `{snap.provider}`",
+                "",
+                "| Pair | Tenor | ATM IV | RR 25Δ | BF 25Δ | Source | Issue |",
+                "|---|---|---|---|---|---|---|",
+            ]
+            for r in snap.readings:
+                lines.append(f"| `{r.pair}` | `{r.tenor}` | {r.atm_iv} | {r.rr_25d} | {r.bf_25d} | {r.source or ''} | {r.issue or ''} |")
+            if snap.issues:
+                lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps({
+            "output_path": str(args.output), "report_path": str(args.report),
+            "readings": len(snap.readings), "issues": list(snap.issues),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "mine-strategy":

@@ -19,6 +19,7 @@ from typing import Iterable, Mapping
 
 from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
 from quant_rabbit.analysis.indicators import IndicatorSet, compute_indicators
+from quant_rabbit.analysis.structure import StructureReading, analyze_structure
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
 
@@ -34,6 +35,7 @@ class ChartView:
     regime: str  # TREND_UP / TREND_DOWN / RANGE / IMPULSE_UP / IMPULSE_DOWN / FAILURE_RISK / UNCLEAR
     long_bias: float  # 0..1 — agreement strength toward long
     short_bias: float  # 0..1 — agreement strength toward short
+    structure: StructureReading | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -42,6 +44,7 @@ class ChartView:
             "long_bias": round(self.long_bias, 4),
             "short_bias": round(self.short_bias, 4),
             "indicators": self.indicators.to_dict(),
+            "structure": self.structure.to_dict() if self.structure else None,
         }
 
 
@@ -99,6 +102,14 @@ def build_pair_chart(
                 continue
         indicators = compute_indicators(pair, tf, candles)
         regime, long_bias, short_bias = _classify(indicators)
+        structure = analyze_structure(
+            candles,
+            pivot_strength=3,
+            impulse_atr_mult=1.0,
+            fvg_lookback=60,
+            eq_tolerance_pips=1.5,
+            pip_size=indicators.pip_size,
+        ) if len(candles) >= 30 else None
         views.append(
             ChartView(
                 granularity=tf,
@@ -106,6 +117,7 @@ def build_pair_chart(
                 regime=regime,
                 long_bias=long_bias,
                 short_bias=short_bias,
+                structure=structure,
             )
         )
 
@@ -245,6 +257,13 @@ def _aggregate(views: list[ChartView]) -> tuple[float, float, str]:
 
 
 def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
+    """Compact chart_story citing ADX/RSI/ATR/BB/Williams/MFI/Aroon/Choppiness/Supertrend
+    plus the most recent structure event (BOS / CHoCH) and quantile regime tag.
+
+    The trader cites this string in `chart_story` of the decision receipt; the
+    contract (§3.5) requires that decision numbers be sourced from this output
+    rather than invented.
+    """
     if not views:
         return f"{pair}: no candles available"
     fragments: list[str] = [f"{pair} {dominant}"]
@@ -259,8 +278,23 @@ def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
             bits.append(f"ATR={ind.atr_pips:.1f}p")
         if ind.bb_span_pips is not None:
             bits.append(f"BB={ind.bb_span_pips:.1f}p")
+        if ind.williams_r_14 is not None:
+            bits.append(f"%R={ind.williams_r_14:.1f}")
+        if ind.mfi_14 is not None:
+            bits.append(f"MFI={ind.mfi_14:.1f}")
+        if ind.aroon_osc_14 is not None:
+            bits.append(f"AroonOsc={ind.aroon_osc_14:.0f}")
+        if ind.choppiness_14 is not None:
+            bits.append(f"Chop={ind.choppiness_14:.0f}")
+        if ind.supertrend_dir is not None:
+            bits.append(f"ST={'+' if ind.supertrend_dir > 0 else '-'}")
+        if ind.regime_quantile is not None:
+            bits.append(f"q={ind.regime_quantile}")
         if ind.ichimoku_cloud_pos:
             cloud = {1: "above", -1: "below", 0: "in"}.get(ind.ichimoku_cloud_pos, "?")
             bits.append(f"cloud={cloud}")
+        if view.structure and view.structure.last_event:
+            ev = view.structure.last_event
+            bits.append(f"struct={ev.kind}@{ev.broken_pivot_price:.4f}")
         fragments.append(f"{view.granularity}({view.regime}, {' '.join(bits)})")
     return "; ".join(fragments)

@@ -7,13 +7,18 @@ OANDA exposes two endpoints that show where retail orders cluster:
 - `/v3/instruments/{pair}/positionBook` — currently open positions distribution
   (where retail is long vs short).
 
-These are read-only public-facing endpoints and require the same OANDA token
-the trader already uses. We snapshot them per pair and write a compact summary
-the trader can cite: "57 % of retail SHORT at AUD/JPY 113.10, biggest cluster
-of stops at 113.40 — sweep risk to the upside".
+NOTE on access: these endpoints require an OANDA API token with the "Trade
+Information" entitlement. Many live retail tokens return 401 Invalid
+authentication for them even though `/candles` and `/pricing` work with the
+same credential. When that happens, the module emits `MISSING_ORDERBOOK_*`
+or `MISSING_POSITIONBOOK_*` issues per pair so the trader knows the data is
+unavailable, instead of silently treating the absence as "no clusters".
+To enable, regenerate the OANDA token with order book scope, or upgrade the
+account tier.
 
-We also build a spread time-series proxy from M1 candle ranges + the latest
-quote spread, so the trader can see how spread looks vs the recent average.
+We also build a spread time-series proxy from M1 bid/ask candle ranges + the
+latest quote spread, so the trader can see how spread looks vs the recent
+average. This part works on every account.
 """
 
 from __future__ import annotations
