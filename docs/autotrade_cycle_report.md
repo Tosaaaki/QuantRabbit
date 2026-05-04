@@ -1,10 +1,10 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T19:19:00.472536+00:00`
+- Generated at UTC: `2026-05-04T19:27:47.617344+00:00`
 - Status: `GPT_REJECTED`
 - Positions: `0`
 - Orders: `0`
-- Live-ready intents: `12`
+- Live-ready intents: `9`
 - Receipt promotions: `0`
 - Decision source: `gpt_trader`
 - Deterministic lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`

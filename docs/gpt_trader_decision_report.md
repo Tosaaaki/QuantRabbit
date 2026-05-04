@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T19:19:01.484043+00:00`
+- Generated at UTC: `2026-05-04T19:27:48.570950+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT decision due to STALE_QUOTE blocker (§9 fresh broker truth requirement). All 15 generated lanes (across failure_trader/range_trader/trend_trader × AUD_JPY/EUR_JPY/EUR_USD/GBP_USD + partial USD_JPY) blocked by quote staleness 41-42s > 20s threshold. EUR_JPY additionally blocked by SPREAD_TOO_WIDE. Market context: Golden Week (Children's Day), Tokyo early morning 04:14 JST, pre-London thin session. Regime landscape favors SHORT on JPY crosses (GBP_JPY/AUD_JPY/EUR_JPY all TREND_DOWN), currency strength confirms AUD_JPY:SHORT as top suggestion, but quote freshness gate takes precedence over strategy preference. Campaign progress 8.6% of target (1815/21011 JPY), per-trade risk budget 1051 JPY at 4-trade/day pace. No positions open. Next cycle requires fresh broker snapshot to clear staleness blocker. If quotes remain stale (market effectively closed for holiday), WAIT continues until liquidity returns. Gap report deferred to post-session review - holiday thin trading is expected per memory feedback and research notes.
+- Operator summary: WAIT decision due to STALE_QUOTE technical blocker on all 15 candidate lanes. Quotes fetched at 19:23:30 UTC exceeded 20-second freshness threshold (35+ seconds stale) when validated at 19:24:06 UTC. This is AGENT_CONTRACT §9 gate (fresh broker truth required for live send). Market context shows active cross-assets (DXY 98.39, US10Y DOWN, oil/BTC UP) and strong JPY-cross SHORT setups (GBP_JPY 0.875, AUD_JPY 0.864 SHORT scores, VOLATILE regimes, M5/H1 ADX 35-52, all TREND_DOWN). Campaign progress 8.64% of 10% target, per-trade risk budget 1051 JPY. Next cycle should eliminate timing gap by refreshing snapshot immediately before intent generation.
 
 ## Verification Issues
 
