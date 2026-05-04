@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T22:56:17.562614+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-04T23:29:37.112500+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `range_trader:AUD_JPY:LONG:RANGE_ROTATION`
 - Cancel order ids: `none`
-- Confidence: `HIGH`
-- Operator summary: WAIT decision: all 15 intents blocked by STALE_QUOTE risk gate (quotes 51-66s stale, threshold 20s). Market in OFF_HOURS during Golden Week. Existing EUR_USD SHORT position protected at breakeven with +979 JPY unrealized. No actionable lanes until London killzone (430 min). Progress 13.3% of target (2794/21011 JPY), campaign pursuit continues when quotes refresh.
+- Confidence: `MEDIUM`
+- Operator summary: TRADE: AUD_JPY LONG LIMIT mean-reversion from M5 oversold (%R -71, mean_rev 1.73). Counter-trend in H1 downtrend (trend -0.79, ADX 46) but M5 bounce setup valid. Entry 112.637, TP 113.405 (RR 8.00), SL 112.541 (960 JPY risk << 1050 budget). ASIA Golden Week thin session acknowledged; size conservative, LIMIT order reduces chase. Best available setup, campaign requires action (progress 12.52%).
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
