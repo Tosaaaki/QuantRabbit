@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T14:24:01.295763+00:00`
+- Generated at UTC: `2026-05-04T14:31:14.516886+00:00`
 - Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to hard STALE_QUOTE gate (contract §9). All quotes 40+ seconds old, exceeding 20s threshold. Portfolio cap saturated (1001 JPY open + 960-980 candidate > 1051 cap). Existing EUR_USD SHORT protected, profitable (+183 JPY), aligned with currency strength. No discretionary market concern — this is a contract-mandated fresh-data requirement.
+- Operator summary: WAIT due to hard STALE_QUOTE gate (contract §9). All quotes 46-50 seconds old, exceeding 20s threshold. Portfolio cap saturated (1001 JPY open + 960-980 candidate > 1051 cap). Existing EUR_USD SHORT protected, now -409 JPY unrealized. Position still aligned with currency strength. Next cycle requires fresh broker snapshot (<20s quote age) before any trade decision.
 
 ## Verification Issues
 
