@@ -49,6 +49,25 @@ In automation, "GPT" means whichever model (Codex or Claude) is currently the en
 - Enforce broker gateway and risk contracts in code before prompt or strategy-prose optimization.
 - Express discretionary autonomy as executable receipts, not vague market prose.
 - Default to dry-run / read-only behavior unless live gates are explicitly satisfied.
+- **Adapt to live market conditions, not to fixed numbers.** Sizing, stop distance, target distance, spread tolerance, exposure budget, and pacing must all be derived from current ATR, regime, spread, equity, daily progress, and liquidity — not from JPY / pip / multiplier literals baked into code or prompts.
+
+---
+
+## 3.5. No Thoughtless Hardcodes or Fallbacks
+
+This rule applies to every file the trader reads or writes — `src/quant_rabbit/**`, `tools/**`, CLI flags, scheduled-task SKILLs, prompts, and config.
+
+- **Hardcoded JPY / pip / multiplier values are forbidden** unless they are documented, named (`InstrumentSpec.normal_spread_pips`, `RiskPolicy.daily_risk_pct`, etc.), and clearly marked as a *test default* or a *broker-spec constant* — not as a production risk decision.
+- **Silent fallbacks to a literal are forbidden.** If a required input is missing, raise (or emit a `*_MISSING` issue with severity `BLOCK`) so the operator sees it. Falling through to `RiskPolicy().max_loss_jpy` or `8 pips` or `1.5 R` quietly is the failure mode this contract was written to prevent.
+- **Risk caps must be equity-derived.** Per-trade and per-day caps come from the daily-target ledger (`start_balance × daily_risk_pct`) or an explicit CLI argument — never from a JPY literal stored in code or in a stale state file.
+- **Geometry must be ATR-derived.** SL distance and TP distance must scale with current ATR (per pair, per timeframe, per regime). `spread × N` is a *floor*, not the geometry. If pair-charts data is unavailable, the cycle waits — it does not invent numbers.
+- **Reward / risk targets must be regime-derived.** A single fixed `target_reward_risk` for all conditions is the same anti-pattern as a fixed loss cap. Trend regimes deserve wider targets; range regimes deserve faster rotation.
+- **Spread tolerance must be liquidity-derived.** A static `2.5 ×` multiplier across all sessions ignores Tokyo open vs London close. Tighten in liquid hours, loosen in thin hours, and BLOCK above session-aware caps.
+- **No "default-to-yesterday" stale persistence.** State files (e.g. `data/daily_target_state.json`) must invalidate on a new campaign day or when the snapshot post-dates the file by more than one cycle. Reading a stale value and pretending it is current is a silent fallback in disguise.
+- **Every numeric constant in production code requires a docstring or comment** stating: (a) what market reality it represents, (b) why it is constant rather than market-derived, and (c) what should replace it if it ever needs to be changed. If you cannot write that comment, the value should not be a constant.
+- **When in doubt, fail loud.** A `BLOCK` issue with a clear message is always preferable to a guess. The operator can act on a blocker; the operator cannot recover from a silent miscalculation.
+
+This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a `pip` constant, a fixed multiplier, or a silent `or default_value` in trader code MUST flag it before merging.
 
 ---
 
