@@ -1,13 +1,14 @@
 # Position Execution Report
 
-- Generated at UTC: `2026-05-04T04:16:47.208487+00:00`
-- Status: `NO_ACTION`
+- Generated at UTC: `2026-05-04T06:15:09.632684+00:00`
+- Status: `BLOCKED`
 - Send requested: `True`
 - Sent: `False`
 
 ## Actions
 
-- `470122` `EUR_USD` management=`HOLD_PROTECTED` request=`none` sent=`False`
+- `470130` `EUR_USD` management=`REPAIR_PROTECTION_REQUIRED` request=`none` sent=`False`
+  - `BLOCK` NON_TRADER_POSITION: refusing to modify unknown position id=470130
 
 ## Execution Contract
 

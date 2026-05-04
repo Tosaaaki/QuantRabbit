@@ -1,6 +1,6 @@
 # Order Intents Report
 
-- Generated at UTC: `2026-05-04T05:50:24.574183+00:00`
+- Generated at UTC: `2026-05-04T06:15:09.625184+00:00`
 - Campaign plan: `/Users/tossaki/App/QuantRabbit/data/daily_campaign_plan.json`
 - Snapshot: `/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json`
 - Results: `12`
@@ -13,99 +13,101 @@
 
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=19000 entry=113.026 tp=113.89 sl=112.918
-  - risk metrics: risk=`2052.0 JPY` reward=`16416.0 JPY` rr=`8.00` spread=`1.8pip`
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=18000 entry=113.091 tp=114.003 sl=112.977
+  - risk metrics: risk=`2052.0 JPY` reward=`16416.0 JPY` rr=`8.00` spread=`1.9pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG STOP-ENTRY` units=16000 entry=1.17318 tp=1.17698 sl=1.17238
-  - risk metrics: risk=`2007.2 JPY` reward=`9534.4 JPY` rr=`4.75` spread=`0.8pip`
+  - intent: `EUR_USD LONG STOP-ENTRY` units=28000 entry=1.17381 tp=1.17609 sl=1.17333
+  - risk metrics: risk=`2107.7 JPY` reward=`10011.6 JPY` rr=`4.75` spread=`0.8pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT STOP-ENTRY` units=16000 entry=1.1727 tp=1.16791 sl=1.1735
-  - risk metrics: risk=`2007.2 JPY` reward=`12018.3 JPY` rr=`5.99` spread=`0.8pip`
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=28000 entry=1.17333 tp=1.17045 sl=1.17381
+  - risk metrics: risk=`2107.7 JPY` reward=`12646.3 JPY` rr=`6.00` spread=`0.8pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG LIMIT` units=19000 entry=112.936 tp=113.8 sl=112.828
-  - risk metrics: risk=`2052.0 JPY` reward=`16416.0 JPY` rr=`8.00` spread=`1.8pip`
+  - intent: `AUD_JPY LONG LIMIT` units=18000 entry=112.996 tp=113.908 sl=112.882
+  - risk metrics: risk=`2052.0 JPY` reward=`16416.0 JPY` rr=`8.00` spread=`1.9pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG LIMIT` units=16000 entry=1.1727 tp=1.1765 sl=1.1719
-  - risk metrics: risk=`2007.2 JPY` reward=`9534.4 JPY` rr=`4.75` spread=`0.8pip`
+  - intent: `EUR_USD LONG LIMIT` units=28000 entry=1.17333 tp=1.17561 sl=1.17285
+  - risk metrics: risk=`2107.7 JPY` reward=`10011.6 JPY` rr=`4.75` spread=`0.8pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT LIMIT` units=16000 entry=1.17318 tp=1.16839 sl=1.17398
-  - risk metrics: risk=`2007.2 JPY` reward=`12018.3 JPY` rr=`5.99` spread=`0.8pip`
+  - intent: `EUR_USD SHORT LIMIT` units=28000 entry=1.17381 tp=1.17093 sl=1.17429
+  - risk metrics: risk=`2107.7 JPY` reward=`12646.3 JPY` rr=`6.00` spread=`0.8pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `AUD_JPY LONG STOP-ENTRY` units=19000 entry=113.026 tp=113.89 sl=112.918
-  - risk metrics: risk=`2052.0 JPY` reward=`16416.0 JPY` rr=`8.00` spread=`1.8pip`
+  - intent: `AUD_JPY LONG STOP-ENTRY` units=18000 entry=113.091 tp=114.003 sl=112.977
+  - risk metrics: risk=`2052.0 JPY` reward=`16416.0 JPY` rr=`8.00` spread=`1.9pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD LONG STOP-ENTRY` units=16000 entry=1.17318 tp=1.17698 sl=1.17238
-  - risk metrics: risk=`2007.2 JPY` reward=`9534.4 JPY` rr=`4.75` spread=`0.8pip`
+  - intent: `EUR_USD LONG STOP-ENTRY` units=28000 entry=1.17381 tp=1.17609 sl=1.17333
+  - risk metrics: risk=`2107.7 JPY` reward=`10011.6 JPY` rr=`4.75` spread=`0.8pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_USD SHORT STOP-ENTRY` units=16000 entry=1.1727 tp=1.16791 sl=1.1735
-  - risk metrics: risk=`2007.2 JPY` reward=`12018.3 JPY` rr=`5.99` spread=`0.8pip`
+  - intent: `EUR_USD SHORT STOP-ENTRY` units=28000 entry=1.17333 tp=1.17045 sl=1.17381
+  - risk metrics: risk=`2107.7 JPY` reward=`12646.3 JPY` rr=`6.00` spread=`0.8pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG STOP-ENTRY` units=18000 entry=183.992 tp=184.214 sl=183.878
-  - risk metrics: risk=`2052.0 JPY` reward=`3996.0 JPY` rr=`1.95` spread=`1.9pip`
+  - intent: `EUR_JPY LONG STOP-ENTRY` units=16000 entry=184.109 tp=184.355 sl=183.983
+  - risk metrics: risk=`2016.0 JPY` reward=`3936.0 JPY` rr=`1.95` spread=`2.1pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
+  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `GBP_USD LONG STOP-ENTRY` units=16000 entry=1.35936 tp=1.36114 sl=1.35856
-  - risk metrics: risk=`2007.2 JPY` reward=`4466.1 JPY` rr=`2.23` spread=`1.3pip`
+  - intent: `GBP_USD LONG STOP-ENTRY` units=17000 entry=1.35996 tp=1.36169 sl=1.35918
+  - risk metrics: risk=`2079.5 JPY` reward=`4612.2 JPY` rr=`2.22` spread=`1.3pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 - `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED`
   - note: Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.
-  - intent: `EUR_JPY LONG LIMIT` units=18000 entry=183.897 tp=184.119 sl=183.783
-  - risk metrics: risk=`2052.0 JPY` reward=`3996.0 JPY` rr=`1.95` spread=`1.9pip`
+  - intent: `EUR_JPY LONG LIMIT` units=16000 entry=184.004 tp=184.25 sl=183.878
+  - risk metrics: risk=`2016.0 JPY` reward=`3936.0 JPY` rr=`1.95` spread=`2.1pip`
   - risk BLOCK: OPEN_POSITION_EXISTS only protected trader-owned positions can be layered; EUR_USD LONG id=470130 is not eligible
   - risk BLOCK: EXTERNAL_RISK_OPEN external/manual risk is open: EUR_USD LONG id=470130 20000u; adopt or close before new entries
   - risk BLOCK: UNPROTECTED_POSITION open position lacks TP/SL: EUR_USD LONG id=470130 20000u
+  - risk BLOCK: SPREAD_TOO_WIDE EUR_JPY spread 2.1pip exceeds 2.5x normal 0.8pip
   - risk BLOCK: PORTFOLIO_RISK_UNKNOWN open position 470130 has no SL; cannot compute portfolio risk
 
 ## Completion Rule

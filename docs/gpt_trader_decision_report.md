@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T04:16:47.218829+00:00`
+- Generated at UTC: `2026-05-04T06:15:01.716375+00:00`
 - Status: `ACCEPTED`
-- Action: `WAIT`
+- Action: `CLOSE`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT to preserve discretionary rigor while replay-campaign integrity and lane quality constraints remain unmet for live execution.
+- Operator summary: CLOSE trade 470130 to lock +1,690 JPY profit and restore risk budget. Position owner=unknown blocks protection gateway (NON_TRADER_POSITION blocker). RANGE regime with LONG bias supports hold thesis, but system cannot protect unowned positions. Professional capital management: lock profit, clear blocker, pursue fresh LIVE_READY opportunities in next cycle.
 
 ## Verification Issues
 

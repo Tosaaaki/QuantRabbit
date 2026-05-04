@@ -1,24 +1,24 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T04:16:46.286798+00:00`
-- Status: `GPT_WAIT`
+- Generated at UTC: `2026-05-04T06:15:08.468086+00:00`
+- Status: `POSITION_ACTION_BLOCKED`
 - Positions: `1`
-- Orders: `2`
+- Orders: `0`
 - Live-ready intents: `0`
 - Receipt promotions: `0`
-- Decision source: `gpt_trader`
+- Decision source: `deterministic`
 - Deterministic lane: `None`
 - Selected lane: `None`
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
 - Sent: `False`
 - Canceled orders: `none`
-- Position management: `HOLD_PROTECTED`
-- Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`22132.8229` progress_pct=`0.6521`
-- GPT trader: status=`ACCEPTED` action=`WAIT` allowed=`True` issues=`0`
+- Position management: `REPAIR_PROTECTION_REQUIRED`
+- Position execution: `BLOCKED` sent=`False`
+- Daily target: `REPAIR_REQUIRED` remaining=`19038.7024` progress_pct=`9.3856`
+- GPT trader: status=`not used` action=`None` allowed=`None` issues=`None`
 - GPT error: `none`
-- GPT wait recovery attempts: `2`
+- GPT wait recovery attempts: `0`
 - GPT recovery source: `none`
 - Market story refresh: `True` (source: `/Users/tossaki/App/QuantRabbit/logs`)
 

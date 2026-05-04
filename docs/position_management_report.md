@@ -1,17 +1,16 @@
 # Position Management Report
 
-- Generated at UTC: `2026-05-04T04:16:47.207889+00:00`
-- Action: `HOLD_PROTECTED`
+- Generated at UTC: `2026-05-04T06:15:09.632045+00:00`
+- Action: `REPAIR_PROTECTION_REQUIRED`
 - Positions: `1`
 
 ## Positions
 
-- `470122` `EUR_USD LONG` units=`3000` action=`HOLD_PROTECTED` upl=`145.3`
+- `470130` `EUR_USD LONG` units=`20000` action=`REPAIR_PROTECTION_REQUIRED` upl=`1972.0`
   - scores: same=`-257.15` opposite=`-274.56`
-  - protection plan: sl=`None` tp=`None`
-  - reason: TP/SL present and current thesis is not contradicted enough to force exit
-  - reason: remaining risk about 0 JPY
-  - reason: remaining reward about 1784 JPY
+  - protection plan: sl=`1.17274` tp=`None`
+  - reason: missing TP/SL
+  - reason: repair SL candidate 1.17274
 
 ## Management Contract
 
