@@ -445,17 +445,57 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
 
 
 def _allowed_refs(*, snapshot: dict[str, Any], target: dict[str, Any], lanes: list[dict[str, Any]]) -> list[str]:
+    # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
+    # refs than the base broker/target/lane triple — the trader is required to
+    # cite per-pair charts, cross-asset, flow, levels, currency strength,
+    # economic calendar, and COT data. The verifier therefore must accept these
+    # refs as known; otherwise every well-formed decision is rejected with
+    # UNKNOWN_EVIDENCE_REF and the cycle never reaches the gateway.
+    timeframes = ("M5", "M15", "H1")
+    structure_keys = ("structure",)
+    cross_assets = ("dxy", "USB10Y_USD", "USB02Y_USD", "spx", "gold", "oil", "btc")
     refs = ["broker:snapshot", "target:daily"]
+    pairs: set[str] = set()
+    currencies: set[str] = set()
     for lane in lanes:
         lane_id = lane["lane_id"]
+        pair = str(lane.get("pair") or "")
+        direction = str(lane.get("direction") or "")
+        if pair:
+            pairs.add(pair)
+            for currency in pair.split("_"):
+                if currency:
+                    currencies.add(currency)
         refs.extend(
             [
                 str(lane["evidence_ref"]),
                 f"campaign:{lane_id}",
-                f"strategy:{lane['pair']}:{lane['direction']}",
-                f"story:{lane['pair']}",
+                f"strategy:{pair}:{direction}",
+                f"story:{pair}",
+                f"intent:{lane_id}",
             ]
         )
+    for pair in pairs:
+        for tf in timeframes:
+            refs.append(f"chart:{pair}:{tf}")
+        for key in structure_keys:
+            refs.append(f"chart:{pair}:{key}")
+        refs.extend(
+            [
+                f"flow:{pair}",
+                f"levels:{pair}",
+                f"calendar:{pair}",
+                f"strength:{pair}",
+                f"cross:correlations:{pair}",
+            ]
+        )
+    for currency in currencies:
+        refs.append(f"cot:{currency}")
+        refs.append(f"strength:{currency}")
+        refs.append(f"calendar:{currency}")
+    for asset in cross_assets:
+        refs.append(f"cross:{asset}")
+    refs.extend(["cross:dxy", "cross:correlations"])
     return sorted(set(refs))
 
 

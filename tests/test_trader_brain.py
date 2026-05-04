@@ -11,7 +11,12 @@ from quant_rabbit.strategy.trader_brain import ACTION_MONITOR_EXISTING, ACTION_N
 
 
 class TraderBrainTest(unittest.TestCase):
-    def test_penalizes_jpy_intervention_and_selects_direct_usd_lane(self) -> None:
+    def test_jpy_intervention_sizes_down_but_does_not_block(self) -> None:
+        # Per AGENT_CONTRACT §6, narrative concerns must size the lane down via
+        # size_multiple, not block it in prose. The AUD_JPY lane MUST NOT
+        # carry an "intervention" blocker that would drop it from the GPT
+        # prefilter set; the concern surfaces in rationale + lower size_multiple
+        # instead.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             brain = TraderBrain(
@@ -23,13 +28,18 @@ class TraderBrainTest(unittest.TestCase):
                 report_path=root / "decision.md",
             )
 
-            decision = brain.run(_snapshot())
+            brain.run(_snapshot())
 
-            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
-            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             ranked = json.loads((root / "decision.json").read_text())["scores"]
             aud = next(item for item in ranked if item["pair"] == "AUD_JPY")
-            self.assertIn("JPY-cross long faces intervention", " ".join(aud["blockers"]))
+            eur = next(item for item in ranked if item["pair"] == "EUR_USD")
+            blocker_text = " ".join(aud["blockers"])
+            self.assertNotIn("JPY-cross long faces intervention", blocker_text)
+            self.assertNotIn("visual story explicitly rejected", blocker_text)
+            # Score penalty must be deep enough that AUD_JPY ranks well below the
+            # unaffected EUR_USD lane (intervention contributes ≥55 of the gap).
+            self.assertGreater(eur["score"] - aud["score"], 50.0)
+            self.assertLess(aud["size_multiple"], 1.0)
 
     def test_existing_pending_order_forces_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
