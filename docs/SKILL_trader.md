@@ -1,10 +1,10 @@
 # QuantRabbit vNext Trader Playbook
 
-Codex automation is the discretionary GPT trader. QuantRabbit code is the broker-truth, risk, receipt, and gateway layer. Do not call any API-key model path from QuantRabbit.
+You are **the trader**. The scheduled task picks which model executes you on a given cycle (Codex or Claude); the playbook is identical for both. QuantRabbit code is the broker-truth, risk, receipt, and gateway layer. Do not call any API-key model path from QuantRabbit.
 
 ## Contract
 
-- Read `docs/AGENT_CONTRACT.md` before acting (single source of truth; `AGENTS.md` and `CLAUDE.md` are stubs to it).
+- Read `docs/AGENT_CONTRACT.md` before acting (single source of truth; `AGENTS.md` and `CLAUDE.md` are stubs to it). Pay particular attention to §3.5 (no thoughtless hardcodes / fallbacks) — every numeric input on the risk path must be market-derived.
 - Use OANDA only through the vNext CLI and gateways.
 - Do not print secrets.
 - Do not use VM/deploy scripts.
@@ -13,11 +13,14 @@ Codex automation is the discretionary GPT trader. QuantRabbit code is the broker
 
 ## Runtime
 
-1. Refresh broker truth:
+### 1. Refresh broker truth + market context
+
+The trader **must** look at live market conditions before deciding. ATR, regime, spread, equity, and daily progress all enter the decision; none of them are inferred from prose or memory.
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --output data/pair_charts.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 ```
@@ -29,14 +32,23 @@ PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-strategy
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories
 PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
-PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --output data/pair_charts.json
 ```
 
-Daily start balance is sourced from the latest broker snapshot via `daily-target-state` (OANDA `/v3/accounts/{id}/summary` → `balance`). Do not hardcode a JPY figure here. If `data/daily_target_state.json` is missing or you need to bootstrap, run `broker-snapshot` then `daily-target-state --snapshot data/broker_snapshot.json` (without `--start-balance`) before `plan-campaign` so the value is auto-derived.
+### 2. Read what the market is doing right now
 
-`pair-charts` writes per-pair indicator scores (M5/M15/H1: ATR/EMA/RSI/ADX/Bollinger/Ichimoku/VWAP/Donchian/MACD/Stoch/ROC/CCI) and a regime tag (TREND_UP/DOWN, RANGE, IMPULSE_UP/DOWN, FAILURE_RISK, UNCLEAR) to `data/pair_charts.json` and a sortable score table to `docs/pair_charts_report.md`. The trader reads this to pick which pair to attack — high-score pairs are where indicator agreement lines up.
+Before writing any decision, open and actually read:
 
-2. Decide as Codex. Write `data/codex_trader_decision_response.json` with:
+- `data/daily_target_state.json` — current equity, today's target, **daily_risk_budget_jpy** (per-trade JPY cap, equity-derived; no fixed literal). Use this cap when sizing; it flows into every intent's `metadata.max_loss_jpy`.
+- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators (ATR pips, RSI, ADX, Bollinger, Ichimoku, VWAP, Donchian, MACD, Stoch, ROC, CCI). The high-score pairs are where indicator agreement lines up; the regime tag tells you which methods (TREND_CONTINUATION / RANGE_ROTATION / BREAKOUT_FAILURE) match.
+- `data/order_intents.json` (and `docs/order_intents_report.md`) — pre-validated lane intents with current geometry (ATR-derived SL, equity-derived units). `LIVE_READY` lanes have no risk or strategy blockers; `DRY_RUN_BLOCKED` lanes carry their reason.
+- `data/market_story_profile.json` — current narrative pressure (intervention risk, event risk, JPY-cross conditions, etc.).
+- `data/broker_snapshot.json` — open positions, pending orders, ages, spreads.
+
+The decision must reference these inputs explicitly. Do not invent ATR, regime, or equity numbers from prose.
+
+### 3. Decide
+
+Write `data/codex_trader_decision_response.json` (the filename is kept for compatibility regardless of which model wrote it):
 
 ```json
 {
@@ -47,18 +59,20 @@ Daily start balance is sourced from the latest broker snapshot via `daily-target
   "thesis": "...",
   "method": "BREAKOUT_FAILURE",
   "narrative": "...",
-  "chart_story": "...",
+  "chart_story": "ATR(M5)=N.Np, regime=TREND_UP, ADX=NN, ...",
   "invalidation": "...",
   "rejected_alternatives": ["..."],
-  "risk_notes": ["..."],
-  "evidence_refs": ["broker:snapshot", "target:daily", "intent:<lane_id>", "campaign:<lane_id>", "strategy:<pair>:<side>", "story:<pair>"],
+  "risk_notes": ["units bounded by equity cap NNNN JPY", "..."],
+  "evidence_refs": ["broker:snapshot", "target:daily", "intent:<lane_id>", "campaign:<lane_id>", "strategy:<pair>:<side>", "story:<pair>", "chart:<pair>:M5"],
   "operator_summary": "..."
 }
 ```
 
-Use `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, or `CANCEL_PENDING` when the trade is not clean. For `CANCEL_PENDING`, put the current pending-entry OANDA order ids in `cancel_order_ids`. For `TRADE`, choose only a current `LIVE_READY` lane that can survive deterministic prefiltering.
+Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering.
 
-3. Verify the Codex decision:
+`chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json` and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
+
+### 4. Verify
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
@@ -66,7 +80,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --decision-response data/codex_trader_decision_response.json
 ```
 
-4. Run one gateway cycle:
+### 5. Run one gateway cycle
 
 ```bash
 ./scripts/run-autotrade-live.sh \
@@ -75,4 +89,22 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --send
 ```
 
-Report final status, sent flag, selected lane, target progress, GPT verification status, blockers, and report paths.
+Live send still requires `QR_LIVE_ENABLED=1` and the gates in `AGENT_CONTRACT.md §9`. Without them the cycle stays dry-run.
+
+## Report at end
+
+- Final status (TRADE / WAIT / PROTECT / TIGHTEN_SL / CLOSE / CANCEL_PENDING / REQUEST_EVIDENCE)
+- Sent flag (true / false / dry-run)
+- Selected lane id
+- Daily target progress (% of target, current vs starting equity)
+- gpt-trader-decision verification result
+- Blockers (if any) — including any `MISSING_*` issues that surfaced
+- Report paths under `docs/*_report.md`
+
+## Anti-patterns the contract forbids
+
+- Inventing JPY caps, pip distances, or reward/risk multipliers from memory.
+- Choosing WAIT without citing which input was missing or which gate fired.
+- Submitting a `TRADE` without checking `pair_charts.json` regime + ATR for that pair.
+- Reusing yesterday's `daily_target_state.json` past a JST campaign-day rollover (the ledger auto-rolls; don't bypass it).
+- Sending again after a blocked / rejected / no-trade outcome to "force" a fill.

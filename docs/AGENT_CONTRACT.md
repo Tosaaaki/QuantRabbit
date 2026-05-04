@@ -26,20 +26,18 @@ If a sub-doc disagrees with this contract, **this contract wins**. Update the su
 
 ---
 
-## 2. Operator Model (Codex / Claude switchable)
+## 2. Operator Model
 
-The discretionary trader role can be filled by **either** the Codex automation or the Claude scheduled task. They share the same playbook (`docs/SKILL_trader.md`), the same gateways, and the same broker account.
+The trader is a single role with one playbook (`docs/SKILL_trader.md`). The scheduled task picks which model executes a given cycle; the playbook, the gateways, and the broker account are identical regardless of which model runs. There is no "Codex trader" vs "Claude trader" — there is **the trader**, and a scheduler that dispatches it.
 
 Rules:
 
-- **Exactly one operator enabled at a time.** Never both. Two operators on the same OANDA account = duplicate orders, double-counted exposure, contradictory protection actions.
-- **Switch by enabling/disabling the scheduled task** on each side. No code changes required to switch.
-- **Both operators read the same `docs/SKILL_trader.md`.** Changes there affect both.
-- **Codex remains the production default** unless the user explicitly switches to Claude. Claude is a peer operator, not a replacement.
-- **Operator identity must appear in every receipt** (`operator: "codex"` or `operator: "claude"`) so the audit trail stays clean across switches.
-- **Handoff discipline.** When switching operators, the incoming operator must (1) refresh `broker-snapshot`, (2) read the most recent `data/codex_trader_decision_response.json` or equivalent, (3) inherit any open trader-owned positions and pending orders, (4) not cancel the other operator's pending orders without an explicit reason recorded in the next decision receipt.
+- **Exactly one trader scheduled task enabled at a time.** Two tasks against the same OANDA account = duplicate orders, double-counted exposure, contradictory protection actions.
+- **Switch by enabling / disabling scheduled tasks.** No code, prompt, or playbook changes are required to swap the executing model.
+- **Every cycle reads the same `docs/SKILL_trader.md`.** Changes there affect every subsequent cycle whichever model runs.
+- **Handoff discipline.** When the active scheduled task changes, the next cycle must (1) refresh `broker-snapshot`, (2) read the most recent `data/codex_trader_decision_response.json` (the filename is kept for compatibility, not as an attribution), (3) inherit any open trader-owned positions and pending orders, (4) not cancel another cycle's pending orders without an explicit reason recorded in the next decision receipt.
 
-In automation, "GPT" means whichever model (Codex or Claude) is currently the enabled operator. **Do not call any API-key model path from QuantRabbit code** (`QR_OPENAI_API_KEY`, `OPENAI_API_KEY`). Live discretion lives in the scheduled-task model, not in a library call.
+In automation, "GPT" means whichever model is currently dispatched by the scheduler. **Do not call any API-key model path from QuantRabbit code** (`QR_OPENAI_API_KEY`, `OPENAI_API_KEY`). Live discretion lives in the scheduled-task model, not in a library call.
 
 ---
 
