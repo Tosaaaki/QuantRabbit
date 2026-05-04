@@ -1,6 +1,6 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-04T13:11:36.857177+00:00`
+- Generated at UTC: `2026-05-04T13:21:46.233662+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
 - Market story profile JSON: `/Users/tossaki/App/QuantRabbit/data/market_story_profile.json`
 - Story artifacts read: `19`
@@ -30,9 +30,9 @@
 
 ## Global Themes
 
-- `breakout_failure`: `568`
+- `breakout_failure`: `567`
 - `range_rail`: `565`
-- `intervention`: `377`
+- `intervention`: `376`
 - `central_bank`: `289`
 - `spread_liquidity`: `262`
 - `event_risk`: `156`
@@ -41,15 +41,15 @@
 
 ## Method Pressure
 
-- `BREAKOUT_FAILURE`: `614`
+- `BREAKOUT_FAILURE`: `613`
 - `RANGE_ROTATION`: `516`
-- `EVENT_RISK`: `317`
+- `EVENT_RISK`: `318`
 - `TREND_CONTINUATION`: `190`
 - `POSITION_MANAGEMENT`: `140`
 
 ## Pair Story Profiles
 
-- `USD_JPY` methods: EVENT_RISK=103, BREAKOUT_FAILURE=103, RANGE_ROTATION=91, POSITION_MANAGEMENT=40; themes: intervention=150, range_rail=98, breakout_failure=97, central_bank=71, spread_liquidity=29
+- `USD_JPY` methods: EVENT_RISK=104, BREAKOUT_FAILURE=103, RANGE_ROTATION=91, POSITION_MANAGEMENT=40; themes: intervention=149, range_rail=98, breakout_failure=97, central_bank=71, spread_liquidity=29
   - news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
   - news_digest: USD/JPY**: Near 160. Rate check = intervention warning. Avoid being short JPY with tight SLs. If BOJ intervenes, move is fast (-200–300 pip in minutes). Rollover guard critical tonight.
@@ -61,7 +61,7 @@
   - news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - quality_audit: No range trades: the live scanner rails on `EUR_USD`, `GBP_JPY`, `EUR_JPY`, and `AUD_JPY` are not visually confirmed as stable two-way boxes. The direct-USD charts are breakout-continuation structures, and the JPY crosses are repair-first,
-- `GBP_USD` methods: RANGE_ROTATION=66, BREAKOUT_FAILURE=52, TREND_CONTINUATION=28, EVENT_RISK=10; themes: range_rail=68, breakout_failure=51, spread_liquidity=28, momentum=16, intervention=9
+- `GBP_USD` methods: RANGE_ROTATION=66, BREAKOUT_FAILURE=51, TREND_CONTINUATION=28, EVENT_RISK=10; themes: range_rail=68, breakout_failure=50, spread_liquidity=28, momentum=16, intervention=9
   - news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
   - quality_audit: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
