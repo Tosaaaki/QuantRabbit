@@ -1,11 +1,11 @@
 # Coverage Optimization Report
 
-- Generated at UTC: `2026-05-04T08:38:46.440313+00:00`
+- Generated at UTC: `2026-05-04T09:08:08.905378+00:00`
 - Status: `COVERAGE_REQUIRES_REPLAY_EVIDENCE`
 - Remaining target: `19196 JPY`
-- Live-ready reward: `30434 JPY` (`158.5%`)
-- Sequential ladder reward: `20074 JPY` (`104.6%`, steps=`7`)
-- Potential reward after promotions: `30434 JPY` (`158.5%`)
+- Live-ready reward: `31981 JPY` (`166.6%`)
+- Sequential ladder reward: `19656 JPY` (`102.4%`, steps=`6`)
+- Potential reward after promotions: `31981 JPY` (`166.6%`)
 - Remaining risk budget: `4202 JPY`
 
 ## Blockers
@@ -19,20 +19,20 @@
 
 ## Lanes
 
-- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`3264` risk=`408` rr=`8.00` live_ready=`True` promotion_candidate=`False`
+- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`3840` risk=`480` rr=`8.00` live_ready=`True` promotion_candidate=`False`
 - `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2147` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
 - `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`2712` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
-- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`3264` risk=`408` rr=`8.00` live_ready=`True` promotion_candidate=`False`
+- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`3840` risk=`480` rr=`8.00` live_ready=`True` promotion_candidate=`False`
 - `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`2147` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
 - `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`LIVE_READY` reward=`2712` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`3264` risk=`408` rr=`8.00` live_ready=`True` promotion_candidate=`False`
+- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`3840` risk=`480` rr=`8.00` live_ready=`True` promotion_candidate=`False`
 - `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`2147` risk=`452` rr=`4.75` live_ready=`True` promotion_candidate=`False`
 - `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`LIVE_READY` reward=`2712` risk=`452` rr=`6.00` live_ready=`True` promotion_candidate=`False`
-- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`936` risk=`480` rr=`1.95` live_ready=`True` promotion_candidate=`False`
+- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`875` risk=`450` rr=`1.94` live_ready=`True` promotion_candidate=`False`
 - `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`LIVE_READY` reward=`1086` risk=`490` rr=`2.22` live_ready=`True` promotion_candidate=`False`
-- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`936` risk=`480` rr=`1.95` live_ready=`True` promotion_candidate=`False`
+- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`875` risk=`450` rr=`1.94` live_ready=`True` promotion_candidate=`False`
 - `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`LIVE_READY` reward=`1086` risk=`490` rr=`2.22` live_ready=`True` promotion_candidate=`False`
-- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`936` risk=`480` rr=`1.95` live_ready=`True` promotion_candidate=`False`
+- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`875` risk=`450` rr=`1.94` live_ready=`True` promotion_candidate=`False`
 - `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`LIVE_READY` reward=`1086` risk=`490` rr=`2.22` live_ready=`True` promotion_candidate=`False`
 
 ## Coverage Contract
