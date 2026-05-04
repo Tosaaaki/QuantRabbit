@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T15:57:45.545757+00:00`
+- Generated at UTC: `2026-05-04T16:04:37.742331+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to STALE_QUOTE blocker (contract §3.5 gate). Market closed (Sunday 15:53 UTC) - all 15 intents blocked by quotes aged 51-52s > 20s threshold. Previous cycle's EUR_USD SHORT order (470161) gone from broker (0 orders, 0 positions). Progress 8.64% of daily target (1,815 JPY realized, 19,196 JPY remaining). Chart bias for next open: strong SHORT on EUR_USD/AUD_JPY (scores 1.0, UNCLEAR/TREND_DOWN regimes), LONG on USD_JPY (score 0.750, TREND_UP). Currency strength: USD #1, JPY #3, EUR #4. DXY +0.47% UP, US10Y FLAT (z=-2.96). Spreads NORMAL. Next event: AUD Cash Rate HIGH in 16.6hr. Coverage gap: 0 LIVE_READY lanes. Next cycle: wait for market open Monday Asia session.
+- Operator summary: WAIT due to STALE_QUOTE blocker. All 15 generated lanes (failure_trader/range_trader/trend_trader across EUR_USD/GBP_USD/AUD_USD/EUR_JPY/GBP_JPY/AUD_JPY) are blocked because quote age (48.0s) exceeds the 20s freshness threshold enforced by RiskEngine.validate(for_live_send=True). This is a data pipeline timing issue, not a strategy deficiency. JPY bank holiday likely contributing to reduced quote update frequency. Market context shows USD strength (DXY +0.48%, rank #1), commodity volatility (Oil +4.7%, Gold -2.4%), and directional trends in AUD_JPY/GBP_JPY. All spreads NORMAL. Progress at 8.64% of daily 10% target. Next cycle should refresh quotes and re-evaluate the same 15 lanes - their geometry and reward/risk profiles remain valid if quotes freshen.
 
 ## Verification Issues
 
