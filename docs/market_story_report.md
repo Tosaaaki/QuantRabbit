@@ -1,10 +1,10 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-04T21:03:05.204262+00:00`
+- Generated at UTC: `2026-05-04T21:15:22.037796+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
 - Market story profile JSON: `/Users/tossaki/App/QuantRabbit/data/market_story_profile.json`
 - Story artifacts read: `19`
-- Narrative/chart lines mined: `2151`
+- Narrative/chart lines mined: `2142`
 
 ## Artifacts
 
@@ -13,7 +13,7 @@
 - `logs/quality_audit.md` kind=`quality_audit` lines=105
 - `collab_trade/state.md` kind=`state` lines=294
 - `collab_trade/strategy_memory.md` kind=`strategy_memory` lines=347
-- `news/news_digest.md` kind=`news_digest` lines=69
+- `news/news_digest.md` kind=`news_digest` lines=51
 - `news/news_flow_log.md` kind=`news_flow` lines=240
 - `collab_trade/daily/2026-04-18/state.md` kind=`daily_state` lines=181
 - `collab_trade/daily/2026-04-19/state.md` kind=`daily_state` lines=230
@@ -31,29 +31,29 @@
 ## Global Themes
 
 - `breakout_failure`: `566`
-- `range_rail`: `564`
-- `intervention`: `375`
-- `central_bank`: `297`
-- `spread_liquidity`: `270`
-- `event_risk`: `157`
+- `range_rail`: `562`
+- `intervention`: `373`
+- `central_bank`: `291`
+- `spread_liquidity`: `264`
+- `event_risk`: `154`
 - `position_risk`: `97`
-- `momentum`: `92`
+- `momentum`: `94`
 
 ## Method Pressure
 
 - `BREAKOUT_FAILURE`: `612`
-- `RANGE_ROTATION`: `515`
-- `EVENT_RISK`: `324`
+- `RANGE_ROTATION`: `513`
+- `EVENT_RISK`: `317`
 - `TREND_CONTINUATION`: `191`
 - `POSITION_MANAGEMENT`: `140`
 
 ## Pair Story Profiles
 
-- `USD_JPY` methods: BREAKOUT_FAILURE=104, EVENT_RISK=97, RANGE_ROTATION=90, POSITION_MANAGEMENT=40; themes: intervention=144, breakout_failure=98, range_rail=97, central_bank=67, spread_liquidity=32
+- `USD_JPY` methods: BREAKOUT_FAILURE=105, EVENT_RISK=99, RANGE_ROTATION=89, POSITION_MANAGEMENT=40; themes: intervention=145, breakout_failure=99, range_rail=96, central_bank=70, spread_liquidity=30
   - news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
   - news_digest: USD/JPY**: Near 160. Rate check = intervention warning. Avoid being short JPY with tight SLs. If BOJ intervenes, move is fast (-200–300 pip in minutes). Rollover guard critical tonight.
-- `EUR_USD` methods: RANGE_ROTATION=141, BREAKOUT_FAILURE=127, TREND_CONTINUATION=43, POSITION_MANAGEMENT=22; themes: range_rail=166, breakout_failure=106, spread_liquidity=40, intervention=28, event_risk=17
+- `EUR_USD` methods: RANGE_ROTATION=141, BREAKOUT_FAILURE=126, TREND_CONTINUATION=43, POSITION_MANAGEMENT=22; themes: range_rail=166, breakout_failure=105, spread_liquidity=40, intervention=28, event_risk=17
   - news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
   - news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
   - news_flow: WATCH: EUR/USD ~1.1725
@@ -61,7 +61,7 @@
   - news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
   - quality_audit: No range trades: the live scanner rails on `EUR_USD`, `GBP_JPY`, `EUR_JPY`, and `AUD_JPY` are not visually confirmed as stable two-way boxes. The direct-USD charts are breakout-continuation structures, and the JPY crosses are repair-first,
-- `GBP_USD` methods: RANGE_ROTATION=66, BREAKOUT_FAILURE=49, TREND_CONTINUATION=28, EVENT_RISK=10; themes: range_rail=68, breakout_failure=48, spread_liquidity=28, momentum=15, intervention=9
+- `GBP_USD` methods: RANGE_ROTATION=66, BREAKOUT_FAILURE=49, TREND_CONTINUATION=28, EVENT_RISK=10; themes: range_rail=68, breakout_failure=48, spread_liquidity=28, momentum=17, intervention=9
   - news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
   - quality_audit: | GBP_USD | TREND-BULL | TREND-BULL | TREND-BULL | a short mid-chart pause resolves into two strong green thrusts and a final push to highs, with almost no counter-wick rejection = trend walk | NO: breakout continuation, not range rotation
