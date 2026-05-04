@@ -1,16 +1,15 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T15:00:21.615555+00:00`
+- Generated at UTC: `2026-05-04T15:18:46.353155+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT — 9 LIVE_READY lanes exist after fresh snapshot, but all contradict chart regime or currency strength. AUD_JPY LONG lanes: counter to TREND_DOWN H1 ADX=38.8 + strength (AUD rank 5 weak, JPY rank 2 strong). EUR_USD LONG lanes: counter to strength (EUR rank 8 weak, USD rank 1 strong). EUR_USD SHORT lanes: align with thesis but concentration risk (existing EUR_USD SHORT 13k units running +1528 JPY). GBP_USD LONG lanes: counter to strength (GBP rank 6 weak, USD rank 1 strong). Existing EUR_USD SHORT protected at breakeven, advancing toward TP 1.16839 (22.9p away). Daily progress 15.91% above 4-trade pace. Per contract §6 WAIT discipline: cited MTF regime + currency strength contradictions for each LIVE_READY lane, not invented thresholds. Week-open thin liquidity (23:57 JST) is context not a gate.
+- Operator summary: WAIT: All 15 lanes blocked by STALE_QUOTE timing artifact (broker quotes aged 52-53s during sequential CLI execution, exceeding 20s RiskEngine gate). Market structure shows clear SHORT edges (AUD_JPY score 0.9 H1 TREND_DOWN, currency strength USD#1 JPY#2 AUD#6, DXY 98.3 UP), but cannot override the formal stale-quote blocker. If quotes were fresh, would pursue AUD_JPY SHORT or EUR_USD SHORT. Next cycle should fetch broker-snapshot immediately before generate-intents to avoid staleness, or refactor CLI to parallelize data fetches. Progress 8.6% (1815/21011 JPY) behind pace, per-trade budget 1050.5 JPY. Flat account, no positions/orders to protect. All spreads NORMAL, no event windows active.
 
 ## Verification Issues
 
-- `BLOCK` UNKNOWN_EVIDENCE_REF: unknown evidence refs: lane:failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE, lane:failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE, lane:failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE, lane:failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE, lane:range_trader:AUD_JPY:LONG:RANGE_ROTATION, lane:range_trader:EUR_USD:LONG:RANGE_ROTATION, lane:range_trader:EUR_USD:SHORT:RANGE_ROTATION, lane:range_trader:GBP_USD:LONG:RANGE_ROTATION, lane:trend_trader:AUD_JPY:LONG:TREND_CONTINUATION
 - `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
 
 ## Decision Contract

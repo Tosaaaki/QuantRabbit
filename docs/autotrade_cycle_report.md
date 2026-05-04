@@ -1,9 +1,9 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T15:00:20.550093+00:00`
+- Generated at UTC: `2026-05-04T15:18:45.246809+00:00`
 - Status: `GPT_REJECTED`
-- Positions: `1`
-- Orders: `2`
+- Positions: `0`
+- Orders: `0`
 - Live-ready intents: `12`
 - Receipt promotions: `0`
 - Decision source: `gpt_trader`
@@ -13,10 +13,10 @@
 - Selected lane size multiple: `None`
 - Sent: `False`
 - Canceled orders: `none`
-- Position management: `HOLD_PROTECTED`
-- Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`17850.2937` progress_pct=`15.0418`
-- GPT trader: status=`REJECTED` action=`WAIT` allowed=`False` issues=`2`
+- Position management: `none`
+- Position execution: `none` sent=`False`
+- Daily target: `PURSUE_TARGET` remaining=`19195.67` progress_pct=`8.6385`
+- GPT trader: status=`REJECTED` action=`WAIT` allowed=`False` issues=`1`
 - GPT error: `none`
 - GPT wait recovery attempts: `0`
 - GPT recovery source: `none`

@@ -1,12 +1,12 @@
 # Trader Decision Report
 
-- Generated at UTC: `2026-05-04T15:00:21.612939+00:00`
+- Generated at UTC: `2026-05-04T15:18:46.350113+00:00`
 - Action: `SEND_ENTRY`
 - Selected lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
 - Selected lane score: `200.85`
 - Selected lane size multiple: `1.0`
-- Positions: `1`
-- Orders: `2`
+- Positions: `0`
+- Orders: `0`
 - Pending cancel ids: `none`
 - Reason: Selected highest-scoring live-ready lane: failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE
 
@@ -30,9 +30,9 @@
   - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1605 JPY; positive live evidence 767 JPY; old worst loss repaired only by current sizing: -2077 JPY; market-story method pressure 141; range rail theme supports rotation; event risk requires restraint
   - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
   - blockers: historical live worst loss is large: -2077 JPY
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` score=`130.77` action=`NO_TRADE` `GBP_USD LONG BREAKOUT_FAILURE`
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` score=`130.52` action=`NO_TRADE` `GBP_USD LONG BREAKOUT_FAILURE`
   - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1342 JPY; old worst loss repaired only by current sizing: -2583 JPY; market-story method pressure 50; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency
+  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1342 JPY; old worst loss repaired only by current sizing: -2583 JPY; market-story method pressure 49; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency
   - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
   - blockers: negative live execution history -3935 JPY; low capture rate=5% (9/167); historical live worst loss is large: -2583 JPY
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` score=`111.21` action=`NO_TRADE` `AUD_JPY LONG BREAKOUT_FAILURE`
