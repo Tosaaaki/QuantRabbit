@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T12:38:05.338856+00:00`
+- Generated at UTC: `2026-05-04T12:46:32.967942+00:00`
 - Status: `ACCEPTED`
-- Action: `WAIT`
+- Action: `CANCEL_PENDING`
 - Selected lane: `None`
-- Cancel order ids: `none`
+- Cancel order ids: `470147`
 - Confidence: `HIGH`
-- Operator summary: WAIT. Pending EUR_USD SHORT order 470147 (@1.17049) blocks new trade. Current bid 1.17088 (3.9p above order). M5 pullback in M15/H1 downtrend - order remains valid. MONITOR mode per AGENT_CONTRACT §9. Progress 8.64% of target.
+- Operator summary: CANCEL order 470147. Golden Week thin liquidity + STALE_QUOTE blocker (quotes 46-55s old > 20s threshold) on all 15 lanes. Cannot validate pending order risk with 55s-stale broker truth. EUR_JPY spread 2.625x normal confirms stress. Better to cancel and re-enter when market provides fresh pricing. Progress 8.64% of target.
 
 ## Verification Issues
 
