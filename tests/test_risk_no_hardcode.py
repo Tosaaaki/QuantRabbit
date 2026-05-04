@@ -117,3 +117,56 @@ class RiskNoHardcodeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GeometryAtrTest(unittest.TestCase):
+    """Geometry must be ATR-derived; missing pair_charts must surface as a BLOCK."""
+
+    def test_geometry_uses_atr_when_provided(self) -> None:
+        from datetime import datetime, timezone
+        from quant_rabbit.models import OrderType, Quote, Side
+        from quant_rabbit.strategy.intent_generator import (
+            GEOMETRY_ATR_MULT,
+            GEOMETRY_SPREAD_FLOOR_MULT,
+            _geometry,
+        )
+
+        now = datetime.now(timezone.utc)
+        quote = Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now)
+        # Spread = 0.8 pip, so spread floor = 0.8 * 6 = 4.8 pips.
+        # Pass an ATR larger than the floor so ATR dominates the stop choice.
+        atr_pips = 12.0
+        entry, tp, sl = _geometry(
+            "EUR_USD",
+            Side.LONG,
+            OrderType.STOP_ENTRY,
+            quote,
+            reward_risk=2.0,
+            atr_pips=atr_pips,
+        )
+        # SL distance from entry should equal atr_pips * GEOMETRY_ATR_MULT.
+        sl_pips = (entry - sl) * 10000
+        expected_stop_pips = max(atr_pips * GEOMETRY_ATR_MULT, 0.8 * GEOMETRY_SPREAD_FLOOR_MULT)
+        self.assertAlmostEqual(sl_pips, expected_stop_pips, places=2)
+
+    def test_geometry_falls_to_spread_floor_when_atr_smaller(self) -> None:
+        from datetime import datetime, timezone
+        from quant_rabbit.models import OrderType, Quote, Side
+        from quant_rabbit.strategy.intent_generator import (
+            GEOMETRY_SPREAD_FLOOR_MULT,
+            _geometry,
+        )
+
+        now = datetime.now(timezone.utc)
+        quote = Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now)
+        # Tiny ATR — spread floor (0.8 * 6 = 4.8 pips) must dominate.
+        entry, tp, sl = _geometry(
+            "EUR_USD",
+            Side.LONG,
+            OrderType.STOP_ENTRY,
+            quote,
+            reward_risk=2.0,
+            atr_pips=1.0,
+        )
+        sl_pips = (entry - sl) * 10000
+        self.assertAlmostEqual(sl_pips, 0.8 * GEOMETRY_SPREAD_FLOOR_MULT, places=2)

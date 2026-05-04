@@ -12,10 +12,32 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_PAIR_CHARTS,
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.strategy.profile import StrategyProfile
+
+
+# Geometry tuning constants. Per AGENT_CONTRACT §3.5, every constant on the
+# trader risk path needs a market-reality reason. These are *minimums* / floors,
+# not the truth — the actual stop distance is the larger of ATR-derived and
+# spread-derived candidates.
+#
+# - GEOMETRY_ATR_MULT: 1.0 ATR is a "typical move" of the timeframe. Trader
+#   takes a setup expecting the next ATR to either prove the thesis (toward TP)
+#   or invalidate it (through SL). Tighter than 1.0 means routine noise hits SL;
+#   wider would needlessly enlarge worst-case loss.
+# - GEOMETRY_SPREAD_FLOOR_MULT: 6.0 × spread protects against broker fill jitter
+#   and wick noise around the entry. Must be >= RiskPolicy.min_stop_spread_multiple
+#   (currently 5.0) — the validator rejects stops thinner than 5× spread, so the
+#   generator pre-emptively floors at 6× to leave a small safety margin.
+# - GEOMETRY_ATR_TIMEFRAME: M5 is the operating timeframe of the scalp / swing
+#   trader. M15 / H1 ATR is also available in pair_charts but reflects slower
+#   structure than the trader is reacting to.
+GEOMETRY_ATR_MULT = 1.0
+GEOMETRY_SPREAD_FLOOR_MULT = 6.0
+GEOMETRY_ATR_TIMEFRAME = "M5"
 
 
 def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
@@ -31,6 +53,54 @@ def _daily_risk_budget_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE)
     except (OSError, json.JSONDecodeError):
         return None
     raw = payload.get("daily_risk_budget_jpy")
+    try:
+        value = float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]] | None:
+    """Load pair_charts.json indexed by pair name.
+
+    Returns a dict like {"EUR_USD": {"M5": {"atr_pips": 5.2, "regime": ...}, ...}, ...}.
+    Returns None when the file is absent / malformed — the caller must decide
+    whether to BLOCK the cycle (production) or proceed without ATR (tests).
+    """
+    if not charts_path.exists():
+        return None
+    try:
+        payload = json.loads(charts_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw_charts = payload.get("charts")
+    if not isinstance(raw_charts, list):
+        return None
+    indexed: dict[str, dict[str, Any]] = {}
+    for chart in raw_charts:
+        pair = chart.get("pair")
+        if not isinstance(pair, str):
+            continue
+        per_tf: dict[str, Any] = {"dominant_regime": chart.get("dominant_regime")}
+        for view in chart.get("views", []) or []:
+            granularity = view.get("granularity")
+            if isinstance(granularity, str):
+                per_tf[granularity] = view.get("indicators", {}) or {}
+        indexed[pair] = per_tf
+    return indexed if indexed else None
+
+
+def _atr_pips_for(pair: str, charts: dict[str, dict[str, Any]] | None, timeframe: str = GEOMETRY_ATR_TIMEFRAME) -> float | None:
+    """Look up ATR(pips) for a pair on the given timeframe. None when missing."""
+    if charts is None:
+        return None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return None
+    indicators = per_tf.get(timeframe)
+    if not isinstance(indicators, dict):
+        return None
+    raw = indicators.get("atr_pips")
     try:
         value = float(raw) if raw is not None else 0.0
     except (TypeError, ValueError):
@@ -81,6 +151,7 @@ class IntentGenerator:
         strategy_profile: Path = DEFAULT_STRATEGY_PROFILE,
         output_path: Path = DEFAULT_ORDER_INTENTS,
         report_path: Path = DEFAULT_ORDER_INTENT_REPORT,
+        pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         max_loss_jpy: float | None = None,
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
@@ -89,6 +160,7 @@ class IntentGenerator:
         self.strategy_profile = strategy_profile
         self.output_path = output_path
         self.report_path = report_path
+        self.pair_charts_path = pair_charts_path
         self.max_loss_jpy = max_loss_jpy
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
@@ -108,9 +180,21 @@ class IntentGenerator:
             default_max_loss_jpy=default_cap,
             label="generate-intents risk cap",
         )
+        # Load ATR / regime per pair from pair_charts.json. None when the file
+        # is missing — _build_for_lane will surface MISSING_ATR_DATA so the
+        # operator sees that geometry was built without market context.
+        pair_charts = _load_pair_charts(self.pair_charts_path)
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
-            results.append(self._build_for_lane(lane, snapshot, strategy_profile, max_loss_jpy=max_loss_jpy))
+            results.append(
+                self._build_for_lane(
+                    lane,
+                    snapshot,
+                    strategy_profile,
+                    max_loss_jpy=max_loss_jpy,
+                    pair_charts=pair_charts,
+                )
+            )
         generated_at = datetime.now(timezone.utc).isoformat()
         self._write_output(results, generated_at, snapshot_path)
         self._write_report(results, generated_at, snapshot_path)
@@ -131,6 +215,7 @@ class IntentGenerator:
         strategy_profile: StrategyProfile | None,
         *,
         max_loss_jpy: float,
+        pair_charts: dict[str, dict[str, Any]] | None = None,
     ) -> GeneratedIntent:
         lane_id = _lane_id(lane)
         pair = str(lane["pair"])
@@ -160,7 +245,10 @@ class IntentGenerator:
                 live_blockers=(f"snapshot has no quote for {pair}",),
                 note="Cannot build priced intent without a live quote.",
             )
-        intent = _intent_from_lane(lane, quote, snapshot, max_loss_jpy=max_loss_jpy)
+        atr_pips = _atr_pips_for(pair, pair_charts)
+        intent = _intent_from_lane(
+            lane, quote, snapshot, max_loss_jpy=max_loss_jpy, atr_pips=atr_pips
+        )
         risk = RiskEngine(
             policy=RiskPolicy(
                 block_new_entries_with_pending_entry_orders=False,
@@ -179,10 +267,30 @@ class IntentGenerator:
             issue.__dict__ for issue in (strategy_profile.validate(intent, for_live_send=True) if strategy_profile else ())
         )
         live_blockers = tuple(issue["message"] for issue in live_strategy_issues if issue.get("severity") == "BLOCK")
-        risk_issues = tuple(issue.__dict__ for issue in risk.issues)
-        if risk.allowed and not live_blockers:
+        risk_issues = list(issue.__dict__ for issue in risk.issues)
+        # Per AGENT_CONTRACT §3.5: surface MISSING_ATR_DATA as a BLOCK issue so
+        # the operator sees that geometry was built without market context.
+        # No silent fallback — the lane is blocked from going LIVE_READY until
+        # pair_charts are refreshed.
+        if atr_pips is None:
+            risk_issues.append(
+                {
+                    "code": "MISSING_ATR_DATA",
+                    "message": (
+                        f"pair_charts.json has no atr_pips for {pair} {GEOMETRY_ATR_TIMEFRAME}; "
+                        "geometry is using spread-only floor (no ATR scaling)."
+                    ),
+                    "severity": "BLOCK",
+                }
+            )
+            # Force DRY_RUN_BLOCKED downstream.
+            risk_allowed = False
+        else:
+            risk_allowed = risk.allowed
+        risk_issues = tuple(risk_issues)
+        if risk_allowed and not live_blockers:
             status = "LIVE_READY"
-        elif risk.allowed:
+        elif risk_allowed:
             status = "DRY_RUN_PASSED"
         else:
             status = "DRY_RUN_BLOCKED"
@@ -191,7 +299,7 @@ class IntentGenerator:
             status=status,
             intent=_intent_to_json(intent),
             risk_metrics=asdict(risk.metrics) if risk.metrics else None,
-            risk_allowed=risk.allowed,
+            risk_allowed=risk_allowed,
             risk_issues=risk_issues,
             strategy_issues=strategy_issues,
             live_blockers=live_blockers,
@@ -288,13 +396,16 @@ def _intent_from_lane(
     snapshot: BrokerSnapshot,
     *,
     max_loss_jpy: float,
+    atr_pips: float | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
     method = TradeMethod.parse(str(lane["method"]))
     order_type = _order_type_for(method)
     target_reward_risk = _target_reward_risk(lane)
-    entry, tp, sl = _geometry(pair, side, order_type, quote, reward_risk=target_reward_risk)
+    entry, tp, sl = _geometry(
+        pair, side, order_type, quote, reward_risk=target_reward_risk, atr_pips=atr_pips
+    )
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
     context = MarketContext(
@@ -337,11 +448,32 @@ def _order_type_for(method: TradeMethod) -> OrderType:
     return OrderType.STOP_ENTRY
 
 
-def _geometry(pair: str, side: Side, order_type: OrderType, quote: Quote, *, reward_risk: float = 1.5) -> tuple[float, float, float]:
+def _geometry(
+    pair: str,
+    side: Side,
+    order_type: OrderType,
+    quote: Quote,
+    *,
+    reward_risk: float = 1.5,
+    atr_pips: float | None = None,
+) -> tuple[float, float, float]:
+    """Build (entry, tp, sl) prices.
+
+    Stop distance comes from market reality, not a fixed pip literal:
+        stop_pips = max(atr_pips * GEOMETRY_ATR_MULT, spread_pips * GEOMETRY_SPREAD_FLOOR_MULT)
+
+    When atr_pips is None (pair_charts missing), we fall back to a *spread-only*
+    distance; the caller is responsible for emitting MISSING_ATR so the operator
+    sees that geometry was built without the primary market input.
+    """
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
     spread_pips = abs(quote.ask - quote.bid) * pip_factor
-    stop_pips = max(spread_pips * 6.0, 8.0)
+    spread_floor = spread_pips * GEOMETRY_SPREAD_FLOOR_MULT
+    if atr_pips is not None and atr_pips > 0:
+        stop_pips = max(atr_pips * GEOMETRY_ATR_MULT, spread_floor)
+    else:
+        stop_pips = spread_floor
     reward_pips = stop_pips * reward_risk
     trigger_offset_pips = max(spread_pips * 2.0, 2.0)
     if order_type == OrderType.LIMIT:
