@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T14:31:14.516886+00:00`
+- Generated at UTC: `2026-05-04T14:36:17.031125+00:00`
 - Status: `ACCEPTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT due to hard STALE_QUOTE gate (contract §9). All quotes 46-50 seconds old, exceeding 20s threshold. Portfolio cap saturated (1001 JPY open + 960-980 candidate > 1051 cap). Existing EUR_USD SHORT protected, now -409 JPY unrealized. Position still aligned with currency strength. Next cycle requires fresh broker snapshot (<20s quote age) before any trade decision.
+- Operator summary: WAIT due to hard STALE_QUOTE gate (contract §9). All quotes 47-52 seconds old at intent generation, exceeding 20s threshold. JPY Bank Holiday thin liquidity artifact. Portfolio cap saturated (1000 JPY open + 960-980 candidate > 1051 cap). Existing EUR_USD SHORT protected, now -654 JPY unrealized (deteriorated from -409 previous cycle). Position still aligned with USD strength. Next cycle requires fresh broker snapshot (<20s quote age) before any trade or protection decision.
 
 ## Verification Issues
 
