@@ -1,17 +1,17 @@
 # Coverage Optimization Report
 
-- Generated at UTC: `2026-05-04T18:54:44.714567+00:00`
+- Generated at UTC: `2026-05-04T19:08:35.456399+00:00`
 - Status: `COVERAGE_GAP`
-- Remaining target: `18971 JPY`
+- Remaining target: `19196 JPY`
 - Live-ready reward: `0 JPY` (`0.0%`)
 - Sequential ladder reward: `0 JPY` (`0.0%`, steps=`0`)
 - Potential reward after promotions: `0 JPY` (`0.0%`)
-- Remaining risk budget: `3221 JPY`
+- Remaining risk budget: `4202 JPY`
 
 ## Blockers
 
-- live-ready reward misses remaining target by 18971 JPY
-- even promoted dry-run reward misses remaining target by 18971 JPY
+- live-ready reward misses remaining target by 19196 JPY
+- even promoted dry-run reward misses remaining target by 19196 JPY
 - no LIVE_READY lanes exist
 - replay evidence covers target on 3/50 days
 
@@ -25,47 +25,44 @@
 ## Lanes
 
 - `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`7680` risk=`960` rr=`8.00` live_ready=`False` promotion_candidate=`False`
-  - blocker: AUD_JPY quote is stale: 53.0s > 20s
-- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`1967` risk=`1008` rr=`1.95` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_JPY quote is stale: 53.0s > 20s
-  - blocker: EUR_JPY spread 2.4pip exceeds 2.5x normal 0.8pip
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`4659` risk=`981` rr=`4.75` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_USD quote is stale: 53.6s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`5885` risk=`981` rr=`6.00` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_USD quote is stale: 53.6s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`2175` risk=`981` rr=`2.22` live_ready=`False` promotion_candidate=`False`
-  - blocker: GBP_USD quote is stale: 53.0s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
+  - blocker: AUD_JPY quote is stale: 49.9s > 20s
+- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`2050` risk=`1050` rr=`1.95` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY quote is stale: 50.0s > 20s
+- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`4656` risk=`980` rr=`4.75` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`5881` risk=`980` rr=`6.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` status=`DRY_RUN_BLOCKED` reward=`2174` risk=`980` rr=`2.22` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
 - `range_trader:AUD_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`7680` risk=`960` rr=`8.00` live_ready=`False` promotion_candidate=`False`
-  - blocker: AUD_JPY quote is stale: 53.0s > 20s
-- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`1967` risk=`1008` rr=`1.95` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_JPY quote is stale: 53.0s > 20s
-  - blocker: EUR_JPY spread 2.4pip exceeds 2.5x normal 0.8pip
-- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`4659` risk=`981` rr=`4.75` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_USD quote is stale: 53.6s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`5885` risk=`981` rr=`6.00` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_USD quote is stale: 53.6s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`2175` risk=`981` rr=`2.22` live_ready=`False` promotion_candidate=`False`
-  - blocker: GBP_USD quote is stale: 53.0s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
+  - blocker: AUD_JPY quote is stale: 49.9s > 20s
+- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`2050` risk=`1050` rr=`1.95` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY quote is stale: 50.0s > 20s
+- `range_trader:EUR_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`4656` risk=`980` rr=`4.75` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
+- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`5881` risk=`980` rr=`6.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
+- `range_trader:GBP_USD:LONG:RANGE_ROTATION` status=`DRY_RUN_BLOCKED` reward=`2174` risk=`980` rr=`2.22` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
 - `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`7680` risk=`960` rr=`8.00` live_ready=`False` promotion_candidate=`False`
-  - blocker: AUD_JPY quote is stale: 53.0s > 20s
-- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`1967` risk=`1008` rr=`1.95` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_JPY quote is stale: 53.0s > 20s
-  - blocker: EUR_JPY spread 2.4pip exceeds 2.5x normal 0.8pip
-- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`4659` risk=`981` rr=`4.75` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_USD quote is stale: 53.6s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
-- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`5885` risk=`981` rr=`6.00` live_ready=`False` promotion_candidate=`False`
-  - blocker: EUR_USD quote is stale: 53.6s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
-- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`2175` risk=`981` rr=`2.22` live_ready=`False` promotion_candidate=`False`
-  - blocker: GBP_USD quote is stale: 53.0s > 20s
-  - blocker: USD_JPY conversion quote is stale: 53.0s > 20s
+  - blocker: AUD_JPY quote is stale: 49.9s > 20s
+- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`2050` risk=`1050` rr=`1.95` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_JPY quote is stale: 50.0s > 20s
+- `trend_trader:EUR_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`4656` risk=`980` rr=`4.75` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
+- `trend_trader:EUR_USD:SHORT:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`5881` risk=`980` rr=`6.00` live_ready=`False` promotion_candidate=`False`
+  - blocker: EUR_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
+- `trend_trader:GBP_USD:LONG:TREND_CONTINUATION` status=`DRY_RUN_BLOCKED` reward=`2174` risk=`980` rr=`2.22` live_ready=`False` promotion_candidate=`False`
+  - blocker: GBP_USD quote is stale: 50.0s > 20s
+  - blocker: USD_JPY conversion quote is stale: 50.1s > 20s
 
 ## Coverage Contract
 
