@@ -22,20 +22,36 @@ from quant_rabbit.analysis.indicators import IndicatorSet, compute_indicators
 from quant_rabbit.analysis.structure import StructureReading, analyze_structure
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
+# Reading-layer additions (phases 1-3 per docs/research/ + AGENT_CONTRACT §6).
+# These are fail-soft: when underlying data is insufficient the readings are
+# emitted as None, never silently faked.
+from quant_rabbit.analysis.regime import RegimeReading, classify_regime
+from quant_rabbit.analysis.families import FamilyScores, compute_family_scores
+from quant_rabbit.analysis.statfilters import StatFilterReading, compute_stat_filters
+from quant_rabbit.analysis.sessions import SessionContext, build_session_context
+from quant_rabbit.analysis.smc import SMCReading, analyze_smc
+
 
 DEFAULT_TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "H1")
 
 
 @dataclass(frozen=True)
 class ChartView:
-    """One timeframe slice of indicators + derived regime tags."""
+    """One timeframe slice of indicators + derived regime tags + reading layer."""
 
     granularity: str
     indicators: IndicatorSet
-    regime: str  # TREND_UP / TREND_DOWN / RANGE / IMPULSE_UP / IMPULSE_DOWN / FAILURE_RISK / UNCLEAR
+    regime: str  # legacy heuristic regime (TREND_UP/TREND_DOWN/RANGE/IMPULSE_*/FAILURE_RISK/UNCLEAR)
     long_bias: float  # 0..1 — agreement strength toward long
     short_bias: float  # 0..1 — agreement strength toward short
     structure: StructureReading | None = None
+    # Reading layer (phases 1-3). See docs/research/03-quant-ensemble-regime.md
+    # and AGENT_CONTRACT §6: trader MUST cite these in `chart_story`, not raw
+    # indicator values, when present.
+    regime_reading: RegimeReading | None = None  # Hurst+ADX+Choppiness+ATR_pct → 4-state
+    family_scores: FamilyScores | None = None  # Trend/MeanRev/Breakout composites
+    stat_filters: StatFilterReading | None = None  # jumps / autocorr / ACF / kurt
+    smc: SMCReading | None = None  # SwingPivot/BOS/OB/FVG/Sweep/Breaker/iFVG/Displacement/DealingRange/OTE
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -45,6 +61,10 @@ class ChartView:
             "short_bias": round(self.short_bias, 4),
             "indicators": self.indicators.to_dict(),
             "structure": self.structure.to_dict() if self.structure else None,
+            "regime_reading": _regime_reading_to_dict(self.regime_reading),
+            "family_scores": _family_scores_to_dict(self.family_scores),
+            "stat_filters": _stat_filters_to_dict(self.stat_filters),
+            "smc": _smc_to_dict(self.smc),
         }
 
 
@@ -57,6 +77,7 @@ class PairChart:
     dominant_regime: str
     chart_story: str
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    session: SessionContext | None = None  # killzone / Judas / Silver Bullet / JP holiday
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -67,6 +88,7 @@ class PairChart:
             "chart_story": self.chart_story,
             "warnings": list(self.warnings),
             "views": [view.to_dict() for view in self.views],
+            "session": _session_to_dict(self.session),
         }
 
 

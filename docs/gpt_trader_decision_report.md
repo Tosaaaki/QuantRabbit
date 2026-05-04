@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T17:32:19.397394+00:00`
+- Generated at UTC: `2026-05-04T17:58:41.221776+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT decision at JST 02:27 Monday early Asia session. All 15 lanes blocked by STALE_QUOTE (quotes aged 49-51s during sequential command execution, exceeding 20s threshold). Market structure shows SHORT bias across EUR_USD (0.82), AUD_JPY (0.814), GBP_USD (0.752). Currency strength confirms USD strongest, AUD weakest. EUR_JPY additionally blocked by wide spread (2.3p vs 0.8p normal). Campaign progress 8.64% of 10% target. Next cycle should consider refreshing broker-snapshot immediately before intent generation to minimize staleness gap.
+- Operator summary: WAIT: all 15 lanes blocked by STALE_QUOTE (45-47s vs 20s threshold). Market technically open (Mon 17:54 UTC) but Golden Week thin liquidity. Campaign 8.6% progress, 19196 JPY remaining. Cannot trade without fresh broker truth per contract §9. Persistent condition from previous cycle.
 
 ## Verification Issues
 
