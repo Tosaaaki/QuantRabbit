@@ -1,10 +1,10 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-04T18:02:12.422072+00:00`
+- Generated at UTC: `2026-05-04T18:11:56.099568+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
-- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmpd0zlh7ak/stories.json`
+- Market story profile JSON: `/Users/tossaki/App/QuantRabbit/data/market_story_profile.json`
 - Story artifacts read: `19`
-- Narrative/chart lines mined: `2145`
+- Narrative/chart lines mined: `2147`
 
 ## Artifacts
 
@@ -13,7 +13,7 @@
 - `logs/quality_audit.md` kind=`quality_audit` lines=105
 - `collab_trade/state.md` kind=`state` lines=294
 - `collab_trade/strategy_memory.md` kind=`strategy_memory` lines=347
-- `news/news_digest.md` kind=`news_digest` lines=55
+- `news/news_digest.md` kind=`news_digest` lines=59
 - `news/news_flow_log.md` kind=`news_flow` lines=240
 - `collab_trade/daily/2026-04-18/state.md` kind=`daily_state` lines=181
 - `collab_trade/daily/2026-04-19/state.md` kind=`daily_state` lines=230
@@ -31,10 +31,10 @@
 ## Global Themes
 
 - `breakout_failure`: `564`
-- `range_rail`: `563`
+- `range_rail`: `562`
 - `intervention`: `374`
-- `central_bank`: `294`
-- `spread_liquidity`: `262`
+- `central_bank`: `296`
+- `spread_liquidity`: `264`
 - `event_risk`: `156`
 - `position_risk`: `97`
 - `momentum`: `92`
@@ -42,14 +42,14 @@
 ## Method Pressure
 
 - `BREAKOUT_FAILURE`: `610`
-- `RANGE_ROTATION`: `514`
-- `EVENT_RISK`: `323`
+- `RANGE_ROTATION`: `513`
+- `EVENT_RISK`: `325`
 - `TREND_CONTINUATION`: `190`
 - `POSITION_MANAGEMENT`: `140`
 
 ## Pair Story Profiles
 
-- `USD_JPY` methods: BREAKOUT_FAILURE=104, EVENT_RISK=99, RANGE_ROTATION=89, POSITION_MANAGEMENT=40; themes: intervention=145, breakout_failure=98, range_rail=96, central_bank=65, spread_liquidity=28
+- `USD_JPY` methods: BREAKOUT_FAILURE=104, EVENT_RISK=99, RANGE_ROTATION=89, POSITION_MANAGEMENT=40; themes: intervention=145, breakout_failure=98, range_rail=96, central_bank=65, spread_liquidity=29
   - news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
   - news_digest: USD/JPY**: Near 160. Rate check = intervention warning. Avoid being short JPY with tight SLs. If BOJ intervenes, move is fast (-200–300 pip in minutes). Rollover guard critical tonight.

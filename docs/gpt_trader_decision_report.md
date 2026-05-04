@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T17:58:41.221776+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-04T18:11:56.109041+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
 - Cancel order ids: `none`
-- Confidence: `HIGH`
-- Operator summary: WAIT: all 15 lanes blocked by STALE_QUOTE (45-47s vs 20s threshold). Market technically open (Mon 17:54 UTC) but Golden Week thin liquidity. Campaign 8.6% progress, 19196 JPY remaining. Cannot trade without fresh broker truth per contract §9. Persistent condition from previous cycle.
+- Confidence: `MEDIUM`
+- Operator summary: Selected failure_trader EUR_USD SHORT STOP-ENTRY at 1.16928 (3.3p below current) for breakdown confirmation. Regime is UNCLEAR/RANGE making BREAKOUT_FAILURE strategy appropriate. All timeframes show bearish structure (ST=-, BOS_DOWN) but low ADX confirms non-trending consolidation. DXY strength and declining COT EUR long positioning support SHORT thesis. Risk 981 JPY for 5,886 JPY potential reward (rr=6.00, 30.6% of remaining daily target). STOP-ENTRY filters noise better than LIMIT in this regime.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- none
 
 ## Decision Contract
 
