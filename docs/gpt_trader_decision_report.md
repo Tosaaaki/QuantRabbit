@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T19:27:48.570950+00:00`
+- Generated at UTC: `2026-05-04T19:36:16.065118+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT decision due to STALE_QUOTE technical blocker on all 15 candidate lanes. Quotes fetched at 19:23:30 UTC exceeded 20-second freshness threshold (35+ seconds stale) when validated at 19:24:06 UTC. This is AGENT_CONTRACT §9 gate (fresh broker truth required for live send). Market context shows active cross-assets (DXY 98.39, US10Y DOWN, oil/BTC UP) and strong JPY-cross SHORT setups (GBP_JPY 0.875, AUD_JPY 0.864 SHORT scores, VOLATILE regimes, M5/H1 ADX 35-52, all TREND_DOWN). Campaign progress 8.64% of 10% target, per-trade risk budget 1051 JPY. Next cycle should eliminate timing gap by refreshing snapshot immediately before intent generation.
+- Operator summary: WAIT: Market closed until Sunday 17:00 EDT. All 15 lanes blocked by STALE_QUOTE (quotes 45-47s old). No action required. Next cycle at/after market open will refresh broker-snapshot and re-evaluate live-ready coverage. Daily campaign: 8.6% progress (1815/21011 JPY), 0 open risk, 4202 JPY daily budget remaining.
 
 ## Verification Issues
 
