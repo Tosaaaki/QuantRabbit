@@ -1,18 +1,19 @@
 # Live Order Stage Report
 
-- Generated at UTC: `2026-05-04T02:53:37.071307+00:00`
+- Generated at UTC: `2026-05-04T10:59:07.377202+00:00`
 - Status: `SENT`
-- Lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
+- Lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
+- Requested units: `12000` size multiple: `1.0` scaled units:`12000`
 - Send requested: `True`
 - Sent: `True`
 
 ## Order Request
 
-- `EUR_USD` `STOP` units=`3000`
-- price: `1.17290`
-- takeProfitOnFill: `1.17670`
-- stopLossOnFill: `1.17210`
-- broker-truth risk: `377.3 JPY` reward=`1792.0 JPY` rr=`4.75` spread=`0.8pip`
+- `EUR_USD` `STOP` units=`-12000`
+- price: `1.17016`
+- takeProfitOnFill: `1.16702`
+- stopLossOnFill: `1.17068`
+- broker-truth risk: `980.5 JPY` reward=`5920.7 JPY` rr=`6.04` spread=`0.8pip`
 
 ## Issues
 
