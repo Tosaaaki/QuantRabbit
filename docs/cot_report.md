@@ -1,6 +1,6 @@
 # COT Snapshot
 
-- Generated at UTC: `2026-05-04T20:42:40.308358+00:00`
+- Generated at UTC: `2026-05-04T20:48:18.302466+00:00`
 - Source: `https://publicreporting.cftc.gov/resource/gpe5-46if.csv`
 - Reports: 7
 
