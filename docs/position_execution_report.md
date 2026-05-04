@@ -1,14 +1,13 @@
 # Position Execution Report
 
-- Generated at UTC: `2026-05-04T14:46:31.684577+00:00`
-- Status: `SENT`
+- Generated at UTC: `2026-05-04T14:52:04.714921+00:00`
+- Status: `NO_ACTION`
 - Send requested: `True`
-- Sent: `True`
+- Sent: `False`
 
 ## Actions
 
-- `470154` `EUR_USD` management=`PROFIT_PROTECT_REQUIRED` request=`DEPENDENT_ORDER_REPLACE` sent=`True`
-  - order_request: `{"stopLoss": {"price": "1.17126", "timeInForce": "GTC"}}`
+- `470154` `EUR_USD` management=`HOLD_PROTECTED` request=`none` sent=`False`
 
 ## Execution Contract
 

@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T14:46:16.440611+00:00`
-- Status: `ACCEPTED`
+- Generated at UTC: `2026-05-04T14:52:04.718730+00:00`
+- Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT — stale-quote timing artifact blocks all 15 intents (quotes 50-55s old > 20s threshold, contract §9 gate). Secondary blocker: existing EUR_USD SHORT position (1,000 JPY risk) exhausts the 1,051 JPY per-trade portfolio cap, leaving insufficient headroom (51 JPY) for any new intent (924-980 JPY range). Both are deterministic risk gates, not invented thresholds. The existing position is protected and only 4 pips underwater (-81.80 JPY), no TIGHTEN_SL or CLOSE action warranted on stale quotes. Daily progress 8.2% (1,733/21,010 JPY). Currency strength confirms existing EUR_USD SHORT alignment (EUR rank 7, USD rank 1). Next cycle requires fresh broker snapshot before intent generation to avoid stale-quote blocker.
+- Operator summary: WAIT — STALE_QUOTE blocker (contract §9 gate) prevents all 15 intent validations (quotes 53-56s old > 20s threshold). Market at week-open transition (23:49 JST Sunday). Existing EUR_USD SHORT position improved to +1181 JPY unrealized with breakeven SL (0 remaining risk), advancing daily progress from 8.2% to 14.26% (2996/21010 JPY). Currency strength confirms thesis alignment (EUR rank 7, USD rank 1). No invented thresholds — citing deterministic RiskEngine STALE_QUOTE gate. Next cycle requires fresh broker snapshot before intent generation to resolve stale-quote timing.
 
 ## Verification Issues
 
-- none
+- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
 
 ## Decision Contract
 
