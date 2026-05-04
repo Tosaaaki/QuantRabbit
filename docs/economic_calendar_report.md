@@ -1,6 +1,6 @@
 # Economic Calendar
 
-- Generated at UTC: `2026-05-04T08:30:34.337417+00:00`
+- Generated at UTC: `2026-05-04T08:40:59.554051+00:00`
 - Source: `https://nfs.faireconomy.media/ff_calendar_thisweek.xml`
 - Events parsed: 114
 
@@ -8,8 +8,13 @@
 
 | Pair | In Window | Reason |
 |---|---|---|
-| `USD_JPY` | no | next event in 2009min: USD High 'ISM Services PMI' |
-| `EUR_USD` | no | next event in 1919min: EUR Medium 'ECB President Lagarde Speaks' |
+| `USD_JPY` | no | next event in 1999min: USD High 'ISM Services PMI' |
+| `EUR_USD` | no | next event in 1909min: EUR Medium 'ECB President Lagarde Speaks' |
+| `GBP_USD` | no | next event in 1999min: USD High 'ISM Services PMI' |
+| `AUD_USD` | no | next event in 1429min: AUD High 'Cash Rate' |
+| `EUR_JPY` | no | next event in 1909min: EUR Medium 'ECB President Lagarde Speaks' |
+| `GBP_JPY` | no | next event in 6219min: GBP High 'BOE Gov Bailey Speaks' |
+| `AUD_JPY` | no | next event in 1429min: AUD High 'Cash Rate' |
 
 ## Upcoming High/Medium Events (first 30)
 
