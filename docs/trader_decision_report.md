@@ -1,77 +1,77 @@
 # Trader Decision Report
 
-- Generated at UTC: `2026-05-04T15:43:45.138826+00:00`
-- Action: `MONITOR_EXISTING_EXPOSURE`
+- Generated at UTC: `2026-05-04T15:52:04.227439+00:00`
+- Action: `NO_TRADE`
 - Selected lane: `None`
 - Selected lane score: `None`
 - Selected lane size multiple: `None`
-- Positions: `0`
-- Orders: `1`
-- Pending cancel ids: `470161`
-- Reason: Pending entry or non-layerable exposure is open; evaluate but do not add fresh risk.
+- Positions: `1`
+- Orders: `2`
+- Pending cancel ids: `none`
+- Reason: No lane cleared trader-brain discretionary gates.
 
 ## Ranked Lanes
 
-- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` score=`200.85` action=`NO_TRADE` `EUR_USD LONG BREAKOUT_FAILURE`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 16174 JPY; positive live evidence 839 JPY; old worst loss repaired only by current sizing: -798 JPY; market-story method pressure 126; breakout-failure theme supports trap/reclaim; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
-  - blockers: pending entry exists: EUR_USD STOP id=470161
-- `range_trader:EUR_USD:LONG:RANGE_ROTATION` score=`196.85` action=`NO_TRADE` `EUR_USD LONG RANGE_ROTATION`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 16174 JPY; positive live evidence 839 JPY; old worst loss repaired only by current sizing: -798 JPY; market-story method pressure 141; range rail theme supports rotation; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161
-- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` score=`186.44` action=`NO_TRADE` `EUR_USD SHORT BREAKOUT_FAILURE`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1605 JPY; positive live evidence 767 JPY; old worst loss repaired only by current sizing: -2077 JPY; market-story method pressure 126; breakout-failure theme supports trap/reclaim; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
-  - blockers: pending entry exists: EUR_USD STOP id=470161; historical live worst loss is large: -2077 JPY
-- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` score=`182.44` action=`NO_TRADE` `EUR_USD SHORT RANGE_ROTATION`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1605 JPY; positive live evidence 767 JPY; old worst loss repaired only by current sizing: -2077 JPY; market-story method pressure 141; range rail theme supports rotation; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161; historical live worst loss is large: -2077 JPY
-- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` score=`130.52` action=`NO_TRADE` `GBP_USD LONG BREAKOUT_FAILURE`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1342 JPY; old worst loss repaired only by current sizing: -2583 JPY; market-story method pressure 49; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
-  - blockers: pending entry exists: EUR_USD STOP id=470161; negative live execution history -3935 JPY; low capture rate=5% (9/167); historical live worst loss is large: -2583 JPY
-- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` score=`111.21` action=`NO_TRADE` `AUD_JPY LONG BREAKOUT_FAILURE`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 3152 JPY; positive live evidence 2129 JPY; old worst loss repaired only by current sizing: -856 JPY; market-story method pressure 56; breakout-failure theme supports trap/reclaim; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
-  - blockers: pending entry exists: EUR_USD STOP id=470161; low capture rate=2% (2/126)
-- `range_trader:GBP_USD:LONG:RANGE_ROTATION` score=`104.77` action=`NO_TRADE` `GBP_USD LONG RANGE_ROTATION`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 1342 JPY; old worst loss repaired only by current sizing: -2583 JPY; market-story method pressure 66; range rail theme supports rotation; event risk requires restraint; spread/liquidity theme reduces urgency
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161; negative live execution history -3935 JPY; low capture rate=5% (9/167); historical live worst loss is large: -2583 JPY
-- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` score=`103.71` action=`NO_TRADE` `AUD_JPY LONG TREND_CONTINUATION`
-  - size_multiple: `1.0`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 3152 JPY; positive live evidence 2129 JPY; old worst loss repaired only by current sizing: -856 JPY; market-story method pressure 34; momentum theme supports trend; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for TREND_CONTINUATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161; low capture rate=2% (2/126)
-- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` score=`78.71` action=`NO_TRADE` `AUD_JPY LONG RANGE_ROTATION`
+- `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE` score=`-249.15` action=`NO_TRADE` `EUR_USD LONG BREAKOUT_FAILURE`
   - size_multiple: `0.9`
-  - why: live-ready risk/profile receipt; strategy profile candidate; positive pretrade evidence 3152 JPY; positive live evidence 2129 JPY; old worst loss repaired only by current sizing: -856 JPY; market-story method pressure 46; range rail theme supports rotation; event risk requires restraint
-  - judgment: fresh live-ready receipt exists; strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161; low capture rate=2% (2/126)
-- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` score=`-363.11` action=`NO_TRADE` `EUR_JPY LONG BREAKOUT_FAILURE`
+  - why: strategy profile candidate; positive pretrade evidence 16174 JPY; positive live evidence 839 JPY; old worst loss repaired only by current sizing: -798 JPY; market-story method pressure 126; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
+  - blockers: intent status is DRY_RUN_BLOCKED; open risk 1019 JPY + candidate risk 1043 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `range_trader:EUR_USD:LONG:RANGE_ROTATION` score=`-253.15` action=`NO_TRADE` `EUR_USD LONG RANGE_ROTATION`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 16174 JPY; positive live evidence 839 JPY; old worst loss repaired only by current sizing: -798 JPY; market-story method pressure 141; range rail theme supports rotation; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
+  - blockers: intent status is DRY_RUN_BLOCKED; open risk 1019 JPY + candidate risk 1043 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE` score=`-266.56` action=`NO_TRADE` `EUR_USD SHORT BREAKOUT_FAILURE`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 1605 JPY; positive live evidence 767 JPY; old worst loss repaired only by current sizing: -2077 JPY; market-story method pressure 126; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
+  - blockers: intent status is DRY_RUN_BLOCKED; historical live worst loss is large: -2077 JPY; open risk 1019 JPY + candidate risk 1043 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `range_trader:EUR_USD:SHORT:RANGE_ROTATION` score=`-270.56` action=`NO_TRADE` `EUR_USD SHORT RANGE_ROTATION`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 1605 JPY; positive live evidence 767 JPY; old worst loss repaired only by current sizing: -2077 JPY; market-story method pressure 141; range rail theme supports rotation; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
+  - blockers: intent status is DRY_RUN_BLOCKED; historical live worst loss is large: -2077 JPY; open risk 1019 JPY + candidate risk 1043 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE` score=`-319.48` action=`NO_TRADE` `GBP_USD LONG BREAKOUT_FAILURE`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 1342 JPY; old worst loss repaired only by current sizing: -2583 JPY; market-story method pressure 49; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency; campaign role NOW_OR_BACKUP
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
+  - blockers: intent status is DRY_RUN_BLOCKED; negative live execution history -3935 JPY; low capture rate=5% (9/167); historical live worst loss is large: -2583 JPY; open risk 1019 JPY + candidate risk 982 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE` score=`-338.79` action=`NO_TRADE` `AUD_JPY LONG BREAKOUT_FAILURE`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 3152 JPY; positive live evidence 2129 JPY; old worst loss repaired only by current sizing: -856 JPY; market-story method pressure 56; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
+  - blockers: intent status is DRY_RUN_BLOCKED; low capture rate=2% (2/126); open risk 1019 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `range_trader:GBP_USD:LONG:RANGE_ROTATION` score=`-345.23` action=`NO_TRADE` `GBP_USD LONG RANGE_ROTATION`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 1342 JPY; old worst loss repaired only by current sizing: -2583 JPY; market-story method pressure 66; range rail theme supports rotation; event risk requires restraint; spread/liquidity theme reduces urgency; campaign role NOW_OR_BACKUP
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
+  - blockers: intent status is DRY_RUN_BLOCKED; negative live execution history -3935 JPY; low capture rate=5% (9/167); historical live worst loss is large: -2583 JPY; open risk 1019 JPY + candidate risk 982 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `trend_trader:AUD_JPY:LONG:TREND_CONTINUATION` score=`-346.29` action=`NO_TRADE` `AUD_JPY LONG TREND_CONTINUATION`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 3152 JPY; positive live evidence 2129 JPY; old worst loss repaired only by current sizing: -856 JPY; market-story method pressure 34; momentum theme supports trend; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for TREND_CONTINUATION
+  - blockers: intent status is DRY_RUN_BLOCKED; low capture rate=2% (2/126); open risk 1019 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE` score=`-360.31` action=`NO_TRADE` `EUR_JPY LONG BREAKOUT_FAILURE`
   - size_multiple: `0.9`
   - why: strategy profile candidate; positive pretrade evidence 3158 JPY; old worst loss repaired only by current sizing: -1272 JPY; market-story method pressure 83; breakout-failure theme supports trap/reclaim; event risk requires restraint; spread/liquidity theme reduces urgency; campaign role NOW_OR_BACKUP
   - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for BREAKOUT_FAILURE
-  - blockers: pending entry exists: EUR_USD STOP id=470161; intent status is DRY_RUN_BLOCKED; negative live execution history -1758 JPY; wide spread for fresh edge=2.5pip; historical live worst loss is large: -1272 JPY; EUR_JPY spread 2.5pip exceeds 2.5x normal 0.8pip; receipt is not live-ready: DRY_RUN_BLOCKED
-- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` score=`-380.11` action=`NO_TRADE` `EUR_JPY LONG TREND_CONTINUATION`
+  - blockers: intent status is DRY_RUN_BLOCKED; negative live execution history -1758 JPY; historical live worst loss is large: -1272 JPY; open risk 1019 JPY + candidate risk 972 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `range_trader:AUD_JPY:LONG:RANGE_ROTATION` score=`-371.29` action=`NO_TRADE` `AUD_JPY LONG RANGE_ROTATION`
+  - size_multiple: `0.9`
+  - why: strategy profile candidate; positive pretrade evidence 3152 JPY; positive live evidence 2129 JPY; old worst loss repaired only by current sizing: -856 JPY; market-story method pressure 46; range rail theme supports rotation; event risk requires restraint; spread/liquidity theme reduces urgency
+  - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
+  - blockers: intent status is DRY_RUN_BLOCKED; low capture rate=2% (2/126); open risk 1019 JPY + candidate risk 960 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `trend_trader:EUR_JPY:LONG:TREND_CONTINUATION` score=`-377.31` action=`NO_TRADE` `EUR_JPY LONG TREND_CONTINUATION`
   - size_multiple: `0.9`
   - why: strategy profile candidate; positive pretrade evidence 3158 JPY; old worst loss repaired only by current sizing: -1272 JPY; market-story method pressure 23; momentum theme supports trend; event risk requires restraint; spread/liquidity theme reduces urgency; campaign role NOW_OR_BACKUP
   - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for TREND_CONTINUATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161; intent status is DRY_RUN_BLOCKED; negative live execution history -1758 JPY; wide spread for fresh edge=2.5pip; historical live worst loss is large: -1272 JPY; EUR_JPY spread 2.5pip exceeds 2.5x normal 0.8pip; receipt is not live-ready: DRY_RUN_BLOCKED
-- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` score=`-392.36` action=`NO_TRADE` `EUR_JPY LONG RANGE_ROTATION`
+  - blockers: intent status is DRY_RUN_BLOCKED; negative live execution history -1758 JPY; historical live worst loss is large: -1272 JPY; open risk 1019 JPY + candidate risk 972 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
+- `range_trader:EUR_JPY:LONG:RANGE_ROTATION` score=`-389.56` action=`NO_TRADE` `EUR_JPY LONG RANGE_ROTATION`
   - size_multiple: `0.9`
   - why: strategy profile candidate; positive pretrade evidence 3158 JPY; old worst loss repaired only by current sizing: -1272 JPY; market-story method pressure 86; range rail theme supports rotation; event risk requires restraint; spread/liquidity theme reduces urgency; campaign role NOW_OR_BACKUP
   - judgment: strategy profile is live-eligible; thesis, narrative, chart story, method, and invalidation are explicit; campaign lane is executable after receipts: ORDER_INTENT_REQUIRED; mined or repaired edge evidence is positive; current story contains method pressure for RANGE_ROTATION
-  - blockers: pending entry exists: EUR_USD STOP id=470161; intent status is DRY_RUN_BLOCKED; negative live execution history -1758 JPY; wide spread for fresh edge=2.5pip; historical live worst loss is large: -1272 JPY; EUR_JPY spread 2.5pip exceeds 2.5x normal 0.8pip; receipt is not live-ready: DRY_RUN_BLOCKED
+  - blockers: intent status is DRY_RUN_BLOCKED; negative live execution history -1758 JPY; historical live worst loss is large: -1272 JPY; open risk 1019 JPY + candidate risk 972 JPY exceeds portfolio cap 1051 JPY; receipt is not live-ready: DRY_RUN_BLOCKED
 
 ## Trader-Brain Contract
 
