@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T23:36:20.456953+00:00`
+- Generated at UTC: `2026-05-04T23:43:52.778394+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT. Daily target already exceeded (11.9% vs 10%). Golden Week thin market. All lanes blocked by stale quotes. EUR_USD SHORT protected at break-even, running toward TP. AUD_JPY LIMIT 470194 pending from prior cycle. Protection-first stance per contract §5. No new risk warranted.
+- Operator summary: WAIT decision. Market OFF_HOURS (Sunday 19:38 NY, pre-Tokyo Monday open). All quotes STALE (50-54s > 20s), blocking all 15 lane intents. Daily target exceeded (12.13% > 10%), triggering protection-first behavior per contract §5. Existing EUR_USD SHORT position protected at breakeven (+734 JPY unrealized, remaining_risk=0.0). No action until fresh quotes available. Next cycle: refresh broker-snapshot when Tokyo opens (~00:00 UTC Monday).
 
 ## Verification Issues
 
-- `BLOCK` BAD_METHOD: unsupported method ''
+- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
 
 ## Decision Contract
 
