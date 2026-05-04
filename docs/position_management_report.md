@@ -1,17 +1,18 @@
 # Position Management Report
 
-- Generated at UTC: `2026-05-04T14:40:34.967516+00:00`
-- Action: `HOLD_PROTECTED`
+- Generated at UTC: `2026-05-04T14:46:31.684155+00:00`
+- Action: `PROFIT_PROTECT_REQUIRED`
 - Positions: `1`
 
 ## Positions
 
-- `470154` `EUR_USD SHORT` units=`13000` action=`HOLD_PROTECTED` upl=`-572.4`
+- `470154` `EUR_USD SHORT` units=`13000` action=`PROFIT_PROTECT_REQUIRED` upl=`937.4`
   - scores: same=`-266.56` opposite=`-249.15`
-  - protection plan: sl=`None` tp=`None`
-  - reason: TP/SL present and current thesis is not contradicted enough to force exit
-  - reason: remaining risk about 1000 JPY
-  - reason: remaining reward about 5856 JPY
+  - protection plan: sl=`1.17126` tp=`None`
+  - reason: profit is large enough to require break-even/trailing review
+  - reason: break-even SL candidate 1.17126
+  - reason: remaining risk about 1001 JPY
+  - reason: remaining reward about 5860 JPY
 
 ## Management Contract
 
