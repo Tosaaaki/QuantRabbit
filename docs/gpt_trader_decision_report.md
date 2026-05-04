@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T20:15:09.131437+00:00`
-- Status: `ACCEPTED`
+- Generated at UTC: `2026-05-04T20:27:03.236142+00:00`
+- Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT decision. Market closed (Sunday 16:09 ET pre-open), daily 10% target already achieved (10.58%), all 15 lanes blocked by STALE_QUOTE gate (quotes 46-52s old violate §9 20s threshold). One protected EUR_USD SHORT holding +408 JPY unrealized. Contract §5 protection-first behavior: with target achieved, no reason to force entries. Next cycle after market reopens ~17:00 ET will refresh quotes and reassess.
+- Operator summary: WAIT decision. All 15 lanes blocked by STALE_QUOTE gate (quotes 43-45s old vs 20s threshold, contract §9). Golden Week + OFF_HOURS session creating thin quote flow. Open EUR_USD SHORT protected at breakeven (+1571 JPY unrealized, +654 JPY since last cycle). Progress 16.1% toward daily 10% return target (3386/21011 JPY). Next cycle should refresh broker-snapshot for fresh quotes.
 
 ## Verification Issues
 
-- none
+- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
 
 ## Decision Contract
 
