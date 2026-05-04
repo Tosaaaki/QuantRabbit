@@ -1,6 +1,6 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T11:18:21.285812+00:00`
+- Generated at UTC: `2026-05-04T11:26:34.622409+00:00`
 - Status: `ACCEPTED`
 - Action: `TIGHTEN_SL`
 - Selected lane: `None`

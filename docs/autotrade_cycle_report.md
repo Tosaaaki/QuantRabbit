@@ -1,6 +1,6 @@
 # Autotrade Cycle Report
 
-- Generated at UTC: `2026-05-04T11:18:20.284575+00:00`
+- Generated at UTC: `2026-05-04T11:26:33.522941+00:00`
 - Status: `GPT_TIGHTEN_SL`
 - Positions: `1`
 - Orders: `2`
@@ -15,7 +15,7 @@
 - Canceled orders: `none`
 - Position management: `HOLD_PROTECTED`
 - Position execution: `NO_ACTION` sent=`False`
-- Daily target: `PURSUE_TARGET` remaining=`19082.7655` progress_pct=`9.1758`
+- Daily target: `PURSUE_TARGET` remaining=`19007.4983` progress_pct=`9.5341`
 - GPT trader: status=`ACCEPTED` action=`TIGHTEN_SL` allowed=`True` issues=`0`
 - GPT error: `none`
 - GPT wait recovery attempts: `0`
