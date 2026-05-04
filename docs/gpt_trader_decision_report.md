@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-04T12:28:23.099572+00:00`
+- Generated at UTC: `2026-05-04T12:38:05.338856+00:00`
 - Status: `ACCEPTED`
-- Action: `TRADE`
-- Selected lane: `failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE`
+- Action: `WAIT`
+- Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: EUR_USD SHORT at 1.17056 via failure_trader desk. Currency strength divergence (USD #1, EUR #6) + DXY momentum (+0.42%) + MTF downtrend structure + excellent spread (0.8p) + no event risk = HIGH conviction. Risk 1021 JPY, reward 6146 JPY, RR 6.02. This represents 32% of remaining daily target in a single trade with per-trade risk budget compliance.
+- Operator summary: WAIT. Pending EUR_USD SHORT order 470147 (@1.17049) blocks new trade. Current bid 1.17088 (3.9p above order). M5 pullback in M15/H1 downtrend - order remains valid. MONITOR mode per AGENT_CONTRACT §9. Progress 8.64% of target.
 
 ## Verification Issues
 
