@@ -1,14 +1,14 @@
 # Trader Decision Report
 
-- Generated at UTC: `2026-05-05T01:42:51.381464+00:00`
-- Action: `MONITOR_EXISTING_EXPOSURE`
-- Selected lane: `None`
-- Selected lane score: `None`
-- Selected lane size multiple: `None`
+- Generated at UTC: `2026-05-05T01:58:26.064957+00:00`
+- Action: `SEND_ENTRY`
+- Selected lane: `failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE`
+- Selected lane score: `200.85`
+- Selected lane size multiple: `1.0`
 - Positions: `1`
-- Orders: `3`
-- Pending cancel ids: `470196`
-- Reason: Pending entry or non-layerable exposure is open; evaluate but do not add fresh risk.
+- Orders: `2`
+- Pending cancel ids: `none`
+- Reason: Selected highest-scoring live-ready lane: failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE
 
 ## Ranked Lanes
 
