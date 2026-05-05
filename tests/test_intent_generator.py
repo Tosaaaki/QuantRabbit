@@ -120,6 +120,32 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(result["intent"]["metadata"]["target_reward_risk"], 4.0)
             self.assertAlmostEqual(result["risk_metrics"]["reward_risk"], 4.0)
 
+    def test_range_rotation_uses_rail_limit_geometry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            result = json.loads(output.read_text())["results"][0]
+            intent = result["intent"]
+            metadata = intent["metadata"]
+            self.assertEqual(result["status"], "LIVE_READY")
+            self.assertEqual(intent["order_type"], "LIMIT")
+            self.assertEqual(metadata["geometry_model"], "RANGE_RAIL_LIMIT")
+            self.assertAlmostEqual(metadata["range_support"], 1.17100)
+            self.assertAlmostEqual(metadata["range_resistance"], 1.17600)
+            self.assertLess(abs(intent["entry"] - metadata["range_support"]), 0.0002)
+            self.assertLess(intent["sl"], metadata["range_support"])
+            self.assertTrue(metadata["range_tp_is_inside_box"])
+
     def test_open_position_with_per_trade_sized_risk_does_not_block_new_entry(self) -> None:
         # AGENT_CONTRACT §3.5 regression: portfolio cap is the WHOLE-DAY risk
         # budget, not the per-trade slice. A previous bug fed `max_loss_jpy`
@@ -208,7 +234,33 @@ def _campaign(root: Path, *, target_reward_risk: float | None = None) -> Path:
     return path
 
 
-def _strategy(root: Path) -> Path:
+def _range_campaign(root: Path) -> Path:
+    path = root / "range_campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "desk": "range_trader",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "RANGE_ROTATION",
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                        "campaign_role": "NOW",
+                        "reason": "range rail rotation pressure",
+                        "required_receipt": "enter only at lower rail and rotate toward box interior",
+                        "target_reward_risk": 2.0,
+                        "blockers": [],
+                        "story_examples": ["quality_audit: lower rail box reclaim into midpoint"],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _strategy(root: Path, *, status: str = "RISK_REPAIR_CANDIDATE") -> Path:
     path = root / "strategy.json"
     path.write_text(
         json.dumps(
@@ -217,8 +269,45 @@ def _strategy(root: Path) -> Path:
                     {
                         "pair": "EUR_USD",
                         "direction": "LONG",
-                        "status": "RISK_REPAIR_CANDIDATE",
+                        "status": status,
                         "required_fix": "edge exists but old sizing broke the loss cap",
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _pair_charts(root: Path) -> Path:
+    path = root / "pair_charts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "indicators": {
+                                    "atr_pips": 8.0,
+                                    "bb_lower": 1.1710,
+                                    "bb_upper": 1.1760,
+                                    "bb_middle": 1.1735,
+                                    "donchian_low": 1.1707,
+                                    "donchian_high": 1.1764,
+                                    "vwap": 1.1738,
+                                    "avwap_anchor": 1.1734,
+                                    "avwap_lower_1sd": 1.1712,
+                                    "avwap_upper_1sd": 1.1758,
+                                    "linreg_channel_lower": 1.1709,
+                                    "linreg_channel_upper": 1.1761,
+                                    "swing_low": 1.1705,
+                                    "swing_high": 1.1767,
+                                },
+                            }
+                        ],
                     }
                 ]
             }

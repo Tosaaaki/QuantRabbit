@@ -533,6 +533,7 @@ def _account_summary_from_payload(payload: object) -> AccountSummary | None:
         pl_jpy=float(payload.get("pl_jpy") or 0.0),
         financing_jpy=float(payload.get("financing_jpy") or 0.0),
         last_transaction_id=str(payload.get("last_transaction_id") or ""),
+        hedging_enabled=bool(payload.get("hedging_enabled") or False),
         fetched_at_utc=(
             datetime.fromisoformat(fetched) if isinstance(fetched, str) and fetched else datetime.now(timezone.utc)
         ),

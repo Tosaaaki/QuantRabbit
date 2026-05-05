@@ -140,13 +140,17 @@ class RiskEngine:
                             f"{position.pair} {position.side.value} id={position.trade_id} is not eligible",
                         )
                     )
-                elif position.pair == intent.pair and position.side != intent.side:
+                elif (
+                    position.pair == intent.pair
+                    and position.side != intent.side
+                    and not _account_hedging_enabled(snapshot)
+                ):
                     issues.append(
                         RiskIssue(
-                            "OPPOSING_POSITION_EXISTS",
+                            "OPPOSING_POSITION_NEEDS_HEDGING",
                             f"fresh {intent.pair} {intent.side.value} entry opposes protected "
-                            f"{position.pair} {position.side.value} id={position.trade_id}; "
-                            "use position management instead of a new entry order",
+                            f"{position.pair} {position.side.value} id={position.trade_id}, but broker snapshot "
+                            "does not prove account hedging is enabled",
                         )
                     )
 
@@ -560,6 +564,10 @@ class RiskEngine:
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:
+    return bool(snapshot.account and snapshot.account.hedging_enabled)
 
 
 def _is_pending_entry_order(order: BrokerOrder) -> bool:

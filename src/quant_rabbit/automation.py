@@ -1070,6 +1070,7 @@ def _snapshot_to_json(snapshot) -> str:
             "pl_jpy": account.pl_jpy,
             "financing_jpy": account.financing_jpy,
             "last_transaction_id": account.last_transaction_id,
+            "hedging_enabled": account.hedging_enabled,
             "fetched_at_utc": account.fetched_at_utc.isoformat(),
         }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)

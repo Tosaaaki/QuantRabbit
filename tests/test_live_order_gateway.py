@@ -73,6 +73,30 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
 
+    def test_hedge_intent_uses_open_only_position_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(
+                intents_path=_intents(
+                    root,
+                    metadata={
+                        "desk": "range_trader",
+                        "campaign_role": "BACKUP_OR_RELOAD",
+                        "position_intent": "HEDGE",
+                    },
+                )
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertEqual(payload["order_request"]["positionFill"], "OPEN_ONLY")
+
     def test_existing_protected_position_blocks_when_portfolio_budget_exceeded(self) -> None:
         # Per AGENT_CONTRACT §3.5: portfolio cap is the WHOLE-DAY risk budget,
         # not the per-trade slice. We assert the gateway blocks new entries
@@ -250,7 +274,7 @@ def _profile(root: Path) -> Path:
     return path
 
 
-def _intents(root: Path, *, status: str = "LIVE_READY") -> Path:
+def _intents(root: Path, *, status: str = "LIVE_READY", metadata: dict[str, str] | None = None) -> Path:
     path = root / "intents.json"
     path.write_text(
         json.dumps(
@@ -277,7 +301,8 @@ def _intents(root: Path, *, status: str = "LIVE_READY") -> Path:
                                 "method": "TREND_CONTINUATION",
                                 "invalidation": "SL trades",
                             },
-                            "metadata": {
+                            "metadata": metadata
+                            or {
                                 "desk": "trend_trader",
                                 "campaign_role": "NOW",
                             },

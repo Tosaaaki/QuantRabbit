@@ -89,6 +89,7 @@ class OandaAccountSummaryTest(unittest.TestCase):
                 "pl": "-247578.3592",
                 "financing": "-122416.9538",
                 "lastTransactionID": "470126",
+                "hedgingEnabled": True,
             }
         }
         now = datetime(2026, 5, 4, 4, 0, tzinfo=timezone.utc)
@@ -100,6 +101,7 @@ class OandaAccountSummaryTest(unittest.TestCase):
         self.assertAlmostEqual(summary.unrealized_pl_jpy, 159.3494)
         self.assertAlmostEqual(summary.margin_used_jpy, 22042.32)
         self.assertEqual(summary.last_transaction_id, "470126")
+        self.assertTrue(summary.hedging_enabled)
         self.assertEqual(summary.fetched_at_utc, now)
 
     def test_snapshot_continues_when_summary_call_fails(self) -> None:

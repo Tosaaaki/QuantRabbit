@@ -113,6 +113,9 @@ class AccountSummary:
     pl_jpy: float = 0.0
     financing_jpy: float = 0.0
     last_transaction_id: str = ""
+    # OANDA v20 account-level hedge mode. When true, opposite-side same-pair
+    # orders can open a separate trade instead of reducing the existing side.
+    hedging_enabled: bool = False
     fetched_at_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 

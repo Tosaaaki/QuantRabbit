@@ -39,6 +39,26 @@ GEOMETRY_ATR_MULT = 1.0
 GEOMETRY_SPREAD_FLOOR_MULT = 6.0
 GEOMETRY_ATR_TIMEFRAME = "M5"
 
+# Range rotation needs an actual rail, not a generic "a few pips away" limit.
+# The buffer places the pending order just inside the rail so a touch can fill
+# before the exact support/resistance tick. It is spread-derived because broker
+# cost is the immediate market reality around a limit fill.
+RANGE_RAIL_ENTRY_BUFFER_SPREAD_MULT = 0.5
+RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT = 0.5
+
+# A range LIMIT must still be pending, not effectively marketable. The minimum
+# distance from current bid/ask is expressed in current spread multiples so it
+# tightens and loosens with live liquidity rather than a fixed pip literal.
+PENDING_ENTRY_OFFSET_SPREAD_MULT = 2.0
+
+# Structural range rails. 1σ VWAP bands are deliberately excluded here: they
+# are often the box interior / magnet zone, not the actual fail point. Treating
+# them as rails creates tiny spread-dominated boxes and makes range trades look
+# worse than they are. Use outer bands, Donchian rails, swing extremes, and
+# linear-regression channel edges as the executable rotation boundaries.
+RANGE_SUPPORT_LEVEL_KEYS = ("bb_lower", "donchian_low", "avwap_lower_2sd", "swing_low", "linreg_channel_lower")
+RANGE_RESISTANCE_LEVEL_KEYS = ("bb_upper", "donchian_high", "avwap_upper_2sd", "swing_high", "linreg_channel_upper")
+
 
 def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
     """Return per-trade JPY cap from the daily target ledger, or None if unavailable.
@@ -128,6 +148,20 @@ def _atr_pips_for(pair: str, charts: dict[str, dict[str, Any]] | None, timeframe
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _range_indicators_for(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+    timeframe: str = GEOMETRY_ATR_TIMEFRAME,
+) -> dict[str, Any] | None:
+    if charts is None:
+        return None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return None
+    indicators = per_tf.get(timeframe)
+    return indicators if isinstance(indicators, dict) and indicators else None
 
 
 PIP_FACTORS = {
@@ -281,8 +315,14 @@ class IntentGenerator:
                 note="Cannot build priced intent without a live quote.",
             )
         atr_pips = _atr_pips_for(pair, pair_charts)
+        range_indicators = _range_indicators_for(pair, pair_charts)
         intent = _intent_from_lane(
-            lane, quote, snapshot, max_loss_jpy=max_loss_jpy, atr_pips=atr_pips
+            lane,
+            quote,
+            snapshot,
+            max_loss_jpy=max_loss_jpy,
+            atr_pips=atr_pips,
+            range_indicators=range_indicators,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -432,6 +472,7 @@ def _intent_from_lane(
     *,
     max_loss_jpy: float,
     atr_pips: float | None = None,
+    range_indicators: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -439,7 +480,24 @@ def _intent_from_lane(
     order_type = _order_type_for(method)
     target_reward_risk = _target_reward_risk(lane)
     entry, tp, sl = _geometry(
-        pair, side, order_type, quote, reward_risk=target_reward_risk, atr_pips=atr_pips
+        pair,
+        side,
+        order_type,
+        quote,
+        reward_risk=target_reward_risk,
+        atr_pips=atr_pips,
+        range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+    )
+    position_metadata = _position_intent_metadata(pair, side, snapshot)
+    geometry_metadata = _geometry_metadata(
+        pair,
+        side,
+        order_type,
+        quote,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
     )
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
@@ -473,6 +531,8 @@ def _intent_from_lane(
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": f"floor units to the largest broker size under the {max_loss_jpy:.0f} JPY loss cap",
             "max_loss_jpy": max_loss_jpy,
+            **position_metadata,
+            **geometry_metadata,
         },
     )
 
@@ -491,6 +551,7 @@ def _geometry(
     *,
     reward_risk: float = 1.5,
     atr_pips: float | None = None,
+    range_indicators: dict[str, Any] | None = None,
 ) -> tuple[float, float, float]:
     """Build (entry, tp, sl) prices.
 
@@ -501,6 +562,29 @@ def _geometry(
     distance; the caller is responsible for emitting MISSING_ATR so the operator
     sees that geometry was built without the primary market input.
     """
+    if order_type == OrderType.LIMIT and range_indicators:
+        range_geometry = _range_geometry(
+            pair,
+            side,
+            quote,
+            reward_risk=reward_risk,
+            atr_pips=atr_pips,
+            indicators=range_indicators,
+        )
+        if range_geometry is not None:
+            return range_geometry
+    return _generic_geometry(pair, side, order_type, quote, reward_risk=reward_risk, atr_pips=atr_pips)
+
+
+def _generic_geometry(
+    pair: str,
+    side: Side,
+    order_type: OrderType,
+    quote: Quote,
+    *,
+    reward_risk: float,
+    atr_pips: float | None,
+) -> tuple[float, float, float]:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
     spread_pips = abs(quote.ask - quote.bid) * pip_factor
@@ -510,7 +594,7 @@ def _geometry(
     else:
         stop_pips = spread_floor
     reward_pips = stop_pips * reward_risk
-    trigger_offset_pips = max(spread_pips * 2.0, 2.0)
+    trigger_offset_pips = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT
     if order_type == OrderType.LIMIT:
         entry = quote.bid - trigger_offset_pips * pip if side == Side.LONG else quote.ask + trigger_offset_pips * pip
     else:
@@ -522,6 +606,166 @@ def _geometry(
         tp = entry - reward_pips * pip
         sl = entry + stop_pips * pip
     return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
+
+
+def _range_geometry(
+    pair: str,
+    side: Side,
+    quote: Quote,
+    *,
+    reward_risk: float,
+    atr_pips: float | None,
+    indicators: dict[str, Any],
+) -> tuple[float, float, float] | None:
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    spread_pips = abs(quote.ask - quote.bid) * pip_factor
+    support_levels = _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS)
+    resistance_levels = _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS)
+    support = _nearest_below(quote.ask, support_levels)
+    resistance = _nearest_above(quote.bid, resistance_levels)
+    if support is None or resistance is None:
+        return None
+
+    spread_buffer = spread_pips * RANGE_RAIL_ENTRY_BUFFER_SPREAD_MULT * pip
+    pending_offset = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT * pip
+    stop_pips = max((atr_pips or 0.0) * GEOMETRY_ATR_MULT, spread_pips * GEOMETRY_SPREAD_FLOOR_MULT)
+    if stop_pips <= 0:
+        return None
+
+    if side == Side.LONG:
+        entry = min(support + spread_buffer, quote.ask - pending_offset)
+        resistance = _target_resistance(entry, stop_pips, spread_pips, resistance_levels, pip)
+        if resistance is None or resistance <= support:
+            return None
+        opposing_rail = resistance - (spread_pips * RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT * pip)
+        rr_target = entry + (stop_pips * reward_risk * pip)
+        tp = min(rr_target, opposing_rail)
+        if tp <= entry:
+            return None
+        sl = entry - (stop_pips * pip)
+    else:
+        entry = max(resistance - spread_buffer, quote.bid + pending_offset)
+        support = _target_support(entry, stop_pips, spread_pips, support_levels, pip)
+        if support is None or resistance <= support:
+            return None
+        opposing_rail = support + (spread_pips * RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT * pip)
+        rr_target = entry - (stop_pips * reward_risk * pip)
+        tp = max(rr_target, opposing_rail)
+        if tp >= entry:
+            return None
+        sl = entry + (stop_pips * pip)
+    return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
+
+
+def _numeric_levels(indicators: dict[str, Any], keys: tuple[str, ...]) -> tuple[float, ...]:
+    levels: list[float] = []
+    for key in keys:
+        raw = indicators.get(key)
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            levels.append(value)
+    return tuple(levels)
+
+
+def _nearest_below(price: float, levels: tuple[float, ...]) -> float | None:
+    candidates = [level for level in levels if level < price]
+    return max(candidates) if candidates else None
+
+
+def _nearest_above(price: float, levels: tuple[float, ...]) -> float | None:
+    candidates = [level for level in levels if level > price]
+    return min(candidates) if candidates else None
+
+
+def _target_resistance(
+    entry: float,
+    stop_pips: float,
+    spread_pips: float,
+    levels: tuple[float, ...],
+    pip: float,
+) -> float | None:
+    min_target_pips = _minimum_range_target_pips(stop_pips, spread_pips)
+    candidates = sorted(level for level in levels if level > entry)
+    if not candidates:
+        return None
+    threshold = entry + (min_target_pips * pip)
+    for level in candidates:
+        if level >= threshold:
+            return level
+    return candidates[-1]
+
+
+def _target_support(
+    entry: float,
+    stop_pips: float,
+    spread_pips: float,
+    levels: tuple[float, ...],
+    pip: float,
+) -> float | None:
+    min_target_pips = _minimum_range_target_pips(stop_pips, spread_pips)
+    candidates = sorted((level for level in levels if level < entry), reverse=True)
+    if not candidates:
+        return None
+    threshold = entry - (min_target_pips * pip)
+    for level in candidates:
+        if level <= threshold:
+            return level
+    return candidates[-1]
+
+
+def _minimum_range_target_pips(stop_pips: float, spread_pips: float) -> float:
+    policy = RiskPolicy()
+    return max(stop_pips * policy.min_reward_risk, spread_pips * policy.min_target_spread_multiple)
+
+
+def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -> dict[str, Any]:
+    same_pair = [position for position in snapshot.positions if position.pair == pair and position.owner == Owner.TRADER]
+    if not same_pair:
+        return {}
+    if any(position.side != side for position in same_pair):
+        return {"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"}
+    return {"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"}
+
+
+def _geometry_metadata(
+    pair: str,
+    side: Side,
+    order_type: OrderType,
+    quote: Quote,
+    *,
+    entry: float,
+    tp: float,
+    sl: float,
+    range_indicators: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if order_type != OrderType.LIMIT or not range_indicators:
+        return {"geometry_model": "ATR_SPREAD"}
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    spread_pips = abs(quote.ask - quote.bid) * pip_factor
+    stop_pips = abs(entry - sl) * pip_factor
+    support_levels = _numeric_levels(range_indicators, RANGE_SUPPORT_LEVEL_KEYS)
+    resistance_levels = _numeric_levels(range_indicators, RANGE_RESISTANCE_LEVEL_KEYS)
+    support = _nearest_below(quote.ask, support_levels)
+    resistance = _nearest_above(quote.bid, resistance_levels)
+    if support is None or resistance is None:
+        return {"geometry_model": "ATR_SPREAD"}
+    if side == Side.LONG:
+        resistance = _target_resistance(entry, stop_pips, spread_pips, resistance_levels, pip) or resistance
+    else:
+        support = _target_support(entry, stop_pips, spread_pips, support_levels, pip) or support
+    return {
+        "geometry_model": "RANGE_RAIL_LIMIT",
+        "range_support": round(support, 3 if pair.endswith("_JPY") else 5),
+        "range_resistance": round(resistance, 3 if pair.endswith("_JPY") else 5),
+        "range_entry_side": "support" if side == Side.LONG else "resistance",
+        "range_tp_is_inside_box": support < tp < resistance,
+        "range_sl_outside_box": sl < support if side == Side.LONG else sl > resistance,
+    }
 
 
 def _target_reward_risk(lane: dict[str, Any]) -> float:
@@ -651,6 +895,7 @@ def _account_summary_from_payload(payload: object):
         pl_jpy=float(payload.get("pl_jpy") or 0.0),
         financing_jpy=float(payload.get("financing_jpy") or 0.0),
         last_transaction_id=str(payload.get("last_transaction_id") or ""),
+        hedging_enabled=bool(payload.get("hedging_enabled") or False),
         fetched_at_utc=(
             datetime.fromisoformat(fetched) if isinstance(fetched, str) and fetched else datetime.now(timezone.utc)
         ),

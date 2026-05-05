@@ -1,19 +1,19 @@
 # Daily Target Report
 
-- Generated at UTC: `2026-05-05T03:22:14.371414+00:00`
+- Generated at UTC: `2026-05-05T03:40:04.511502+00:00`
 - Status: `PURSUE_TARGET`
 - Start equity: `208946 JPY`
 - Campaign day (JST9): `2026-05-05`
 - Target: `20895 JPY` (`10.0%`)
 - Realized PnL: `0 JPY`
-- Unrealized PnL: `1550 JPY`
-- Progress: `1550 JPY` (`7.4%` of target)
-- Remaining target: `19344 JPY`
+- Unrealized PnL: `1938 JPY`
+- Progress: `1938 JPY` (`9.3%` of target)
+- Remaining target: `18956 JPY`
 - Open risk: `0 JPY`
 - Remaining risk budget: `4202 JPY`
 - Target trades per day: `4`
 - Per-trade risk cap: `1051 JPY`
-- Current equity estimate: `210496 JPY`
+- Current equity estimate: `210884 JPY`
 
 ## Blockers
 
@@ -21,7 +21,7 @@
 
 ## Open Positions
 
-- `470188` `EUR_USD SHORT` units=`13000` upl=`1550` risk=`0 JPY` missing=`none`
+- `470188` `EUR_USD SHORT` units=`13000` upl=`1938` risk=`0 JPY` missing=`none`
 
 ## Target Contract
 

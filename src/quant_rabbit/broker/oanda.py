@@ -150,6 +150,7 @@ def _account_summary_from_payload(payload: dict, *, now_utc: datetime) -> Accoun
         pl_jpy=float(account.get("pl") or 0.0),
         financing_jpy=float(account.get("financing") or 0.0),
         last_transaction_id=str(account.get("lastTransactionID") or ""),
+        hedging_enabled=bool(account.get("hedgingEnabled") or False),
         fetched_at_utc=now_utc,
     )
 

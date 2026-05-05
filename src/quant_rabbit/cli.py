@@ -584,6 +584,7 @@ def main(argv: list[str] | None = None) -> int:
                     "unrealized_pl_jpy": snapshot.account.unrealized_pl_jpy,
                     "margin_used_jpy": snapshot.account.margin_used_jpy,
                     "margin_available_jpy": snapshot.account.margin_available_jpy,
+                    "hedging_enabled": snapshot.account.hedging_enabled,
                 }
             print(
                 json.dumps(
@@ -1342,6 +1343,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
             "pl_jpy": account.pl_jpy,
             "financing_jpy": account.financing_jpy,
             "last_transaction_id": account.last_transaction_id,
+            "hedging_enabled": account.hedging_enabled,
             "fetched_at_utc": account.fetched_at_utc.isoformat(),
         }
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
@@ -1448,6 +1450,7 @@ def _account_summary_from_payload(payload: object):
         pl_jpy=float(payload.get("pl_jpy") or 0.0),
         financing_jpy=float(payload.get("financing_jpy") or 0.0),
         last_transaction_id=str(payload.get("last_transaction_id") or ""),
+        hedging_enabled=bool(payload.get("hedging_enabled") or False),
         fetched_at_utc=(
             datetime.fromisoformat(fetched) if isinstance(fetched, str) and fetched else datetime.now(timezone.utc)
         ),

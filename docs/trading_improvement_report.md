@@ -13,11 +13,11 @@
 
 ## Current State
 
-- Daily target state: target `20,894.58 JPY`, progress `1,550.2960 JPY`, remaining `19,344.2840 JPY`.
+- Daily target state: target `20,894.58 JPY`, progress `1,938.1288 JPY`, remaining `18,956.4512 JPY`.
 - Risk budget: remaining `4,202.1337 JPY`, per-trade cap `1,050.5334 JPY`, target pace `4` trades/day.
-- Broker truth: one protected trader-owned `EUR_USD SHORT` remains open with SL at breakeven and TP attached.
-- Order intents: `9` lanes are `LIVE_READY`; opposing `EUR_USD LONG` lanes are now blocked by `OPPOSING_POSITION_EXISTS`; `STALE_CONVERSION_QUOTE` is `0`.
-- Coverage optimizer: live-ready reward `23,881.2039 JPY`; sequential ladder reward `19,457.4399 JPY` over `6` steps.
+- Broker truth: one protected trader-owned `EUR_USD SHORT` remains open with SL at breakeven and TP attached; OANDA account snapshot reports `hedging_enabled=true`.
+- Order intents: `12` lanes are `LIVE_READY`; all current range lanes use `RANGE_RAIL_LIMIT` geometry, and `EUR_USD LONG RANGE_ROTATION` is a hedge intent with OANDA `OPEN_ONLY`.
+- Coverage optimizer: live-ready reward `25,585.2312 JPY`; sequential ladder reward `18,991.9304 JPY` over `7` steps.
 - Replay: `50` days, historical target hits `0`, evidence target covered `4`, total historical net `-41,482.8194 JPY`, risk-capped net `-3,002.4926 JPY`.
 
 ## Root Causes Found
@@ -30,11 +30,14 @@
 
 4. Market data gaps remain material: OANDA order/position book calls returned `401 Unauthorized`, and option skew has no configured feed. These are product blockers for flow/skew-driven filters, not reasons to invent signals.
 
-5. The deterministic trader could select a fresh `EUR_USD LONG` while a protected `EUR_USD SHORT` was open. That is not a clean portfolio add; on OANDA it can become unintended netting/position management. Fixed by blocking same-pair opposing entries in `RiskEngine` and keeping them out of `LIVE_READY`.
+5. The previous same-pair opposing guard was overcorrected. OANDA hedge-enabled accounts can open opposite-side trades as separate hedge trades, so blocking all opposite-side entries removed valid intraday hedge/range opportunities. Fixed by persisting broker `hedgingEnabled`, allowing opposite-side same-pair entries only when broker truth proves hedging is enabled, and staging hedge entries with `positionFill=OPEN_ONLY`.
+
+6. Range rotation geometry was not actually range-aware. `RANGE_ROTATION` used a generic spread/ATR offset, so it either chased near-market noise or aimed beyond the executable box. Fixed by anchoring range LIMIT orders to structural rails from BB/Donchian/swing/linear-regression/outer AVWAP bands, then capping TP inside the opposing rail.
 
 ## Research Synthesis
 
 - OANDA official v20 pricing defines `HomeConversions` for converting currency gains, losses, and position value into account home currency. That supports using broker-provided conversion factors for risk/P&L instead of treating a stale conversion pair as the source of truth: https://developer.oanda.com/rest-live-v20/pricing-df/
+- OANDA official v20 order schema exposes `positionFill`; hedge/pyramid intents should be staged as `OPEN_ONLY` instead of relying on ambiguous default behavior: https://developer.oanda.com/rest-live-v20/order-df/
 - CFTC COT reports are weekly Tuesday open-interest snapshots, typically released Friday. They are useful as slow macro positioning context, not an intraday entry trigger: https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm
 - BIS 2025 Triennial FX data is the structural source for FX turnover/currency mix. BIS says preliminary results were released on September 30, 2025 and final data with the December 2025 Quarterly Review. This supports treating retail candle volume as a weak proxy rather than actual decentralized FX volume: https://www.bis.org/statistics/rpfx25.htm
 - FRED API and series such as `VIXCLS` and `BAMLH0A0HYM2` are suitable for risk-regime features around vol and credit stress: https://fred.stlouisfed.org/docs/api/fred/series_observations.html
@@ -71,14 +74,28 @@
 
 - Opposing-position protection:
   - `src/quant_rabbit/risk.py`
-  - protected same-pair positions may be layered only in the same direction; opposite-direction fresh entries now emit `OPPOSING_POSITION_EXISTS` and must route through position management.
+  - protected same-pair opposite entries now require broker `hedging_enabled=true`; without that proof they emit `OPPOSING_POSITION_NEEDS_HEDGING`.
+
+- OANDA hedge execution:
+  - `src/quant_rabbit/models.py`
+  - `src/quant_rabbit/broker/oanda.py`
+  - `src/quant_rabbit/broker/execution.py`
+  - `src/quant_rabbit/automation.py`
+  - broker snapshots now persist `hedging_enabled`, and hedge/pyramid intents stage with `positionFill=OPEN_ONLY`.
+
+- Range rail geometry:
+  - `src/quant_rabbit/strategy/intent_generator.py`
+  - `src/quant_rabbit/strategy/trader_brain.py`
+  - `RANGE_ROTATION` LIMIT entries now use structural rails and score higher only when a real `RANGE_RAIL_LIMIT` receipt exists.
+  - Current range lanes: `AUD_JPY LONG`, `EUR_USD LONG` hedge, `EUR_USD SHORT` pyramid, and `GBP_USD LONG` are `LIVE_READY`; `EUR_JPY LONG` is still blocked by wide spread.
 
 - Test coverage:
   - OANDA home conversion parsing.
   - Risk engine false stale-conversion prevention.
   - Intent, target, position, strategy, replay, trader-brain, and autotrade cycles.
-  - Opposing same-pair portfolio entries are blocked before live staging.
-  - Full suite: `280` tests passed.
+  - Opposing same-pair entries require hedge-enabled broker truth and can pass as `OPEN_ONLY` hedge intents.
+  - Range rotation rail geometry regression coverage.
+  - Full suite: `283` tests passed.
 
 ## Remaining Blockers
 
@@ -87,7 +104,7 @@
 - Flow data is incomplete until OANDA orderBook/positionBook authorization is fixed or the feature is explicitly disabled.
 - Option skew is unavailable until a provider is configured.
 - Backtest promotion still needs explicit trial-count accounting and deflated/validated edge reporting before increasing risk.
-- The current external GPT decision response is stale and was rejected (`BAD_METHOD`); it cited 15 live-ready lanes while the current post-fix packet has 9. A fresh decision receipt is required before any send path.
+- The current external GPT decision response is stale and was rejected; the deterministic lane is now `range_trader:EUR_USD:LONG:RANGE_ROTATION`, but the external response still returns `WAIT`. A fresh accepted `TRADE` receipt is required before any send path.
 
 ## Next Engineering Actions
 

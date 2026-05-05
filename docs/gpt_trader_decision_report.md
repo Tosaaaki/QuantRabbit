@@ -1,6 +1,6 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-05T03:20:09.261223+00:00`
+- Generated at UTC: `2026-05-05T03:40:04.613308+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
@@ -11,6 +11,7 @@
 ## Verification Issues
 
 - `BLOCK` BAD_METHOD: unsupported method ''
+- `BLOCK` UNKNOWN_EVIDENCE_REF: unknown evidence refs: intent:failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE
 
 ## Decision Contract
 

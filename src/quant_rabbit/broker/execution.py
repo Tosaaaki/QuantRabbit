@@ -304,7 +304,7 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         "type": order_type,
         "instrument": intent.pair,
         "units": str(signed_units),
-        "positionFill": "DEFAULT",
+        "positionFill": _position_fill(intent),
         "takeProfitOnFill": {"price": _price(intent.pair, intent.tp)},
         "stopLossOnFill": {"price": _price(intent.pair, intent.sl)},
         "clientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
@@ -324,6 +324,15 @@ def _oanda_order_type(order_type: OrderType) -> str:
     if order_type == OrderType.STOP_ENTRY:
         return "STOP"
     return order_type.value
+
+
+def _position_fill(intent: OrderIntent) -> str:
+    raw = str(intent.metadata.get("position_fill") or "").upper()
+    if raw in {"DEFAULT", "OPEN_ONLY", "REDUCE_FIRST", "REDUCE_ONLY"}:
+        return raw
+    if str(intent.metadata.get("position_intent") or "").upper() in {"HEDGE", "PYRAMID"}:
+        return "OPEN_ONLY"
+    return "DEFAULT"
 
 
 def _price(pair: str, value: float) -> str:

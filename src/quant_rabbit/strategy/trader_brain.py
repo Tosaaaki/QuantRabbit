@@ -755,6 +755,14 @@ def _technical_consensus_score(
         score -= 2.5
         blockers.append("missing dry-run risk geometry metric")
     else:
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        if method == TradeMethod.RANGE_ROTATION.value and metadata.get("geometry_model") == "RANGE_RAIL_LIMIT":
+            score += 8.0
+            support_ticks += 1
+            rationale.append(
+                f"range LIMIT is anchored to {metadata.get('range_entry_side')} rail "
+                f"{metadata.get('range_support')}–{metadata.get('range_resistance')}"
+            )
         if reward_risk >= 1.2:
             score += 2.0
             support_ticks += 1

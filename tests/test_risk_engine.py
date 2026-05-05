@@ -3,11 +3,11 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskEngine
 
 
-def snapshot(*, positions=(), orders=()) -> BrokerSnapshot:
+def snapshot(*, positions=(), orders=(), hedging_enabled: bool = False) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
         fetched_at_utc=now,
@@ -17,6 +17,12 @@ def snapshot(*, positions=(), orders=()) -> BrokerSnapshot:
             "EUR_USD": Quote("EUR_USD", bid=1.17322, ask=1.17330, timestamp_utc=now),
             "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=now),
         },
+        account=AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            hedging_enabled=hedging_enabled,
+            fetched_at_utc=now,
+        ),
     )
 
 
@@ -227,7 +233,7 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("OPEN_POSITION_EXISTS", {issue.code for issue in decision.issues})
 
-    def test_portfolio_policy_blocks_opposing_same_pair_entry(self) -> None:
+    def test_portfolio_policy_blocks_opposing_same_pair_entry_without_hedging_proof(self) -> None:
         protected_short = BrokerPosition(
             trade_id="2",
             pair="EUR_USD",
@@ -266,7 +272,49 @@ class RiskEngineTest(unittest.TestCase):
         ).validate(intent, snapshot(positions=(protected_short,)))
 
         self.assertFalse(decision.allowed)
-        self.assertIn("OPPOSING_POSITION_EXISTS", {issue.code for issue in decision.issues})
+        self.assertIn("OPPOSING_POSITION_NEEDS_HEDGING", {issue.code for issue in decision.issues})
+
+    def test_portfolio_policy_allows_opposing_same_pair_hedge_when_account_hedging_enabled(self) -> None:
+        protected_short = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1640,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1710,
+            tp=1.1730,
+            sl=1.1702,
+            thesis="intraday_range_hedge_against_swing_short",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION campaign lane",
+                narrative="M5 lower-rail rotation while existing short remains protected on slower thesis",
+                chart_story="box rail reclaim into midpoint",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=500.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_short,), hedging_enabled=True))
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("OPPOSING_POSITION_NEEDS_HEDGING", {issue.code for issue in decision.issues})
 
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(
