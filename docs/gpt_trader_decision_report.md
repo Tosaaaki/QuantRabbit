@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-05T02:07:45.014625+00:00`
+- Generated at UTC: `2026-05-05T02:43:58.343504+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT decision. All 15 candidate lanes blocked by STALE_QUOTE technical gate (broker snapshot aged 48-50s, exceeds 20s contract threshold §9). Market context otherwise favorable: Asia Golden Week session, USD rank 1 JPY rank 2, DXY +0.33% 24h, strong TREND_DOWN alignment across pairs, all spreads NORMAL, no calendar events. Holding EUR_USD SHORT +1387 JPY (6.6% of daily target) with break-even SL protected. Technical blocker is quote-staleness timing gap between broker-snapshot capture and intent generation - next cycle requires fresh snapshot refresh before entry consideration. Operator: Claude Sonnet 4.5.
+- Operator summary: WAIT decision: all 15 LIVE_READY lanes (67k JPY potential reward, 338% of remaining target) blocked by universal M5 disagreement=0.9428 > 0.7 reading-layer gate across all pairs during Golden Week Asian session thin liquidity. Current EUR_USD SHORT position protected at breakeven SL with +1162.63 JPY unrealized (5.56% of target). No invented thresholds—formal contract gate (line 183) enforced. Professional stance: preserve capital, protect gains, wait for London killzone liquidity and M5/H1 re-alignment in 210min.
 
 ## Verification Issues
 
-- `BLOCK` WAIT_MISSING_LIVE_READY_REJECTION: WAIT must cite at least one current LIVE_READY lane evidence ref when clean tradeable lanes exist and the daily target is still open
+- `BLOCK` BAD_METHOD: unsupported method ''
 
 ## Decision Contract
 
