@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.paths import DEFAULT_HISTORY_DB, DEFAULT_STRATEGY_PROFILE, DEFAULT_STRATEGY_REPORT
+from quant_rabbit.paths import DEFAULT_DAILY_TARGET_STATE, DEFAULT_HISTORY_DB, DEFAULT_STRATEGY_PROFILE, DEFAULT_STRATEGY_REPORT
+from quant_rabbit.risk import RiskPolicy
 
 
 @dataclass
@@ -54,27 +55,38 @@ class StrategyMiningSummary:
     mined_missed_edges: int
 
 
+@dataclass(frozen=True)
+class ResolvedStrategyLossCap:
+    loss_cap_jpy: float
+    source: str
+
+
 class StrategyMiner:
     def __init__(
         self,
         db_path: Path = DEFAULT_HISTORY_DB,
         report_path: Path = DEFAULT_STRATEGY_REPORT,
         profile_path: Path = DEFAULT_STRATEGY_PROFILE,
+        loss_cap_jpy: float | None = None,
+        target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
     ) -> None:
         self.db_path = db_path
         self.report_path = report_path
         self.profile_path = profile_path
+        self.loss_cap_jpy = loss_cap_jpy
+        self.target_state_path = target_state_path
 
     def run(self) -> StrategyMiningSummary:
         if not self.db_path.exists():
             raise FileNotFoundError(f"legacy history DB not found: {self.db_path}")
+        cap = _resolve_strategy_loss_cap(self.loss_cap_jpy, self.target_state_path)
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            profiles = self._build_profiles(conn)
+            profiles = self._build_profiles(conn, cap.loss_cap_jpy)
             coverage = self._coverage(conn)
             generated_at = datetime.now(timezone.utc).isoformat()
-            self._write_profile(profiles, coverage, generated_at)
-            self._write_report(profiles, coverage, generated_at)
+            self._write_profile(profiles, coverage, generated_at, cap)
+            self._write_report(profiles, coverage, generated_at, cap)
         return StrategyMiningSummary(
             db_path=self.db_path,
             report_path=self.report_path,
@@ -86,7 +98,7 @@ class StrategyMiner:
             mined_missed_edges=sum(1 for item in profiles if item.status == "MINE_MISSED_EDGE"),
         )
 
-    def _build_profiles(self, conn: sqlite3.Connection) -> list[PairDirectionProfile]:
+    def _build_profiles(self, conn: sqlite3.Connection, loss_cap_jpy: float) -> list[PairDirectionProfile]:
         profiles: dict[tuple[str, str], PairDirectionProfile] = {}
 
         def profile(pair: str, direction: str) -> PairDirectionProfile:
@@ -174,30 +186,31 @@ class StrategyMiner:
             item.positive_evidence_n = len(positives)
             item.positive_best_jpy = _round(max(positives)) if positives else 0.0
             item.positive_tail_jpy = _round(_percentile(positives, 0.90)) if positives else 0.0
-            item.target_reward_risk = _target_reward_risk(item.positive_best_jpy, item.positive_tail_jpy)
+            item.target_reward_risk = _target_reward_risk(item.positive_best_jpy, item.positive_tail_jpy, loss_cap_jpy)
 
         for item in profiles.values():
-            self._classify(item)
+            self._classify(item, loss_cap_jpy)
         return sorted(profiles.values(), key=_profile_sort_key)
 
-    def _classify(self, item: PairDirectionProfile) -> None:
+    def _classify(self, item: PairDirectionProfile, loss_cap_jpy: float) -> None:
         worst_loss = item.live_worst_jpy if item.live_worst_jpy is not None else 0.0
         positive_pretrade = item.pretrade_n >= 5 and item.pretrade_net_jpy > 0
         positive_live = item.live_n > 0 and item.live_net_jpy > 0
         missed_pressure = item.seat_missed >= 2 and item.seat_directionally_correct > item.seat_captured
-        if worst_loss <= -500.0 and positive_pretrade and positive_live:
+        cap_text = f"{loss_cap_jpy:.0f} JPY"
+        if worst_loss <= -loss_cap_jpy and positive_pretrade and positive_live:
             item.status = "RISK_REPAIR_CANDIDATE"
-            item.required_fix = "edge exists but old sizing broke the loss cap; require <=500 JPY dry-run receipt before live use"
+            item.required_fix = f"edge exists but old sizing broke the loss cap; require <={cap_text} dry-run receipt before live use"
             return
         if missed_pressure and not (item.live_n >= 3 and item.live_net_jpy < 0 and item.pretrade_net_jpy <= 0):
             item.status = "MINE_MISSED_EDGE"
             item.required_fix = "missed seats paid more often than captured; build trigger/pending-entry receipts before live execution"
-            if worst_loss <= -500.0:
-                item.required_fix += "; every receipt must be risk-resized under the 500 JPY cap"
+            if worst_loss <= -loss_cap_jpy:
+                item.required_fix += f"; every receipt must be risk-resized under the {cap_text} cap"
             return
-        if worst_loss <= -500.0:
+        if worst_loss <= -loss_cap_jpy:
             item.status = "BLOCK_UNTIL_NEW_EVIDENCE"
-            item.required_fix = "historical live loss exceeded the 500 JPY cap; only risk-resized dry-run receipts can reopen it"
+            item.required_fix = f"historical live loss exceeded the {cap_text} cap; only risk-resized dry-run receipts can reopen it"
             return
         if item.live_n >= 3 and item.live_net_jpy < 0 and item.pretrade_net_jpy <= 0:
             item.status = "BLOCK_UNTIL_NEW_EVIDENCE"
@@ -240,6 +253,7 @@ class StrategyMiner:
         profiles: list[PairDirectionProfile],
         coverage: dict[str, Any],
         generated_at: str,
+        cap: ResolvedStrategyLossCap,
     ) -> None:
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
@@ -249,7 +263,8 @@ class StrategyMiner:
             "profiles": [asdict(item) for item in profiles],
             "system_contract": {
                 "live_execution": "disabled until RiskEngine and strategy profile both pass",
-                "loss_cap_jpy": 500,
+                "loss_cap_jpy": cap.loss_cap_jpy,
+                "loss_cap_source": cap.source,
                 "minimum_reward_risk": 1.2,
                 "blocked_status": "BLOCK_UNTIL_NEW_EVIDENCE",
                 "risk_repair_status": "RISK_REPAIR_CANDIDATE",
@@ -262,6 +277,7 @@ class StrategyMiner:
         profiles: list[PairDirectionProfile],
         coverage: dict[str, Any],
         generated_at: str,
+        cap: ResolvedStrategyLossCap,
     ) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         candidates = [item for item in profiles if item.status == "CANDIDATE"]
@@ -275,6 +291,7 @@ class StrategyMiner:
             f"- Generated at UTC: `{generated_at}`",
             f"- History DB: `{self.db_path}`",
             f"- Strategy profile JSON: `{self.profile_path}`",
+            f"- Per-trade loss cap: `{cap.loss_cap_jpy:.0f} JPY` (`{cap.source}`)",
             "",
             "## Evidence Coverage",
             "",
@@ -317,7 +334,7 @@ class StrategyMiner:
                 "## Generated System Rules",
                 "",
                 "- A strategy candidate is not an order; it becomes an order intent only after current tape supplies entry, TP, SL, and thesis.",
-                "- Any pair/direction with a historical live loss worse than -500 JPY needs fresh risk-resized dry-run receipts before live use, even when expectancy is positive.",
+                f"- Any pair/direction with a historical live loss worse than -{cap.loss_cap_jpy:.0f} JPY needs fresh risk-resized dry-run receipts before live use, even when expectancy is positive.",
                 "- Missed directional seats are not chased at market; they require trigger or pending-entry receipts.",
                 "- Mixed or weak evidence remains watch-only even if the latest prompt wants action.",
             ]
@@ -377,6 +394,35 @@ def _positive_evidence(conn: sqlite3.Connection) -> dict[tuple[str, str], list[f
     return values
 
 
+def _resolve_strategy_loss_cap(explicit_loss_cap_jpy: float | None, target_state_path: Path) -> ResolvedStrategyLossCap:
+    if explicit_loss_cap_jpy is not None:
+        if explicit_loss_cap_jpy <= 0:
+            raise ValueError("mine-strategy loss cap must be positive")
+        return ResolvedStrategyLossCap(round(float(explicit_loss_cap_jpy), 4), "explicit loss_cap_jpy")
+    state_cap = _loss_cap_from_target_state(target_state_path)
+    if state_cap is not None:
+        return ResolvedStrategyLossCap(state_cap, f"daily target state {target_state_path}")
+    policy_cap = RiskPolicy().max_loss_jpy
+    if policy_cap is None or policy_cap <= 0:
+        raise ValueError("mine-strategy cannot derive a positive loss cap")
+    return ResolvedStrategyLossCap(round(float(policy_cap), 4), "RiskPolicy.max_loss_jpy library default")
+
+
+def _loss_cap_from_target_state(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    raw = payload.get("per_trade_risk_budget_jpy") if isinstance(payload, dict) else None
+    try:
+        value = float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return round(value, 4) if value > 0 else None
+
+
 def _percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0
@@ -387,9 +433,9 @@ def _percentile(values: list[float], pct: float) -> float:
     return values[int(idx)]
 
 
-def _target_reward_risk(best_jpy: float, tail_jpy: float) -> float:
+def _target_reward_risk(best_jpy: float, tail_jpy: float, loss_cap_jpy: float) -> float:
     evidence_jpy = max(tail_jpy, best_jpy)
-    return _round(min(8.0, max(1.5, evidence_jpy / 500.0)))
+    return _round(min(8.0, max(1.5, evidence_jpy / loss_cap_jpy)))
 
 
 def _round(value: float) -> float:

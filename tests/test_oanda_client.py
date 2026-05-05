@@ -128,7 +128,10 @@ class OandaAccountSummaryTest(unittest.TestCase):
                 return {"orders": []}
             if "/pricing" in path:
                 now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-                return {"prices": [{"instrument": "USD_JPY", "bids": [{"price": "157.0"}], "asks": [{"price": "157.01"}], "time": now}]}
+                return {
+                    "prices": [{"instrument": "USD_JPY", "bids": [{"price": "157.0"}], "asks": [{"price": "157.01"}], "time": now}],
+                    "homeConversions": [{"currency": "USD", "accountGain": "156.9", "accountLoss": "157.1", "positionValue": "157.0"}],
+                }
             return {}
 
         with patch.object(client, "get_json", side_effect=_raise_on_summary):
@@ -137,6 +140,7 @@ class OandaAccountSummaryTest(unittest.TestCase):
         self.assertIsInstance(snapshot, BrokerSnapshot)
         self.assertIsNone(snapshot.account)
         self.assertEqual(len(snapshot.quotes), 1)
+        self.assertAlmostEqual(snapshot.home_conversions["USD"], 157.1)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,7 @@ class OandaReadOnlyClient:
         fetched_at = datetime.now(timezone.utc)
         positions = tuple(self._open_positions())
         orders = tuple(self._pending_orders())
-        quotes = self._quotes(tuple(pairs))
+        quotes, home_conversions = self._pricing(tuple(pairs))
         account = self._account_summary_safe(fetched_at)
         return BrokerSnapshot(
             fetched_at_utc=fetched_at,
@@ -59,6 +59,7 @@ class OandaReadOnlyClient:
             orders=orders,
             quotes=quotes,
             account=account,
+            home_conversions=home_conversions,
         )
 
     def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
@@ -116,12 +117,15 @@ class OandaReadOnlyClient:
             )
         return orders
 
-    def _quotes(self, pairs: tuple[str, ...]) -> dict[str, Quote]:
+    def _pricing(self, pairs: tuple[str, ...]) -> tuple[dict[str, Quote], dict[str, float]]:
         if not pairs:
-            return {}
+            return {}, {}
         payload = self.get_json(
             f"/v3/accounts/{self.account_id}/pricing",
-            {"instruments": ",".join(sorted(set(pairs)))},
+            {
+                "instruments": ",".join(sorted(set(pairs))),
+                "includeHomeConversions": "true",
+            },
         )
         quotes: dict[str, Quote] = {}
         for price in payload.get("prices", []) or []:
@@ -132,7 +136,7 @@ class OandaReadOnlyClient:
                 continue
             ts = _parse_oanda_time(price.get("time")) or datetime.now(timezone.utc)
             quotes[pair] = Quote(pair=pair, bid=float(bids[0]["price"]), ask=float(asks[0]["price"]), timestamp_utc=ts)
-        return quotes
+        return quotes, _home_conversions_from_payload(payload)
 
 
 def _account_summary_from_payload(payload: dict, *, now_utc: datetime) -> AccountSummary:
@@ -148,6 +152,22 @@ def _account_summary_from_payload(payload: dict, *, now_utc: datetime) -> Accoun
         last_transaction_id=str(account.get("lastTransactionID") or ""),
         fetched_at_utc=now_utc,
     )
+
+
+def _home_conversions_from_payload(payload: dict) -> dict[str, float]:
+    conversions: dict[str, float] = {}
+    for item in payload.get("homeConversions", []) or []:
+        currency = str(item.get("currency") or "").upper()
+        if not currency:
+            continue
+        value = _optional_float(item.get("accountLoss"))
+        if value is None:
+            value = _optional_float(item.get("positionValue"))
+        if value is None:
+            value = _optional_float(item.get("accountGain"))
+        if value is not None and value > 0:
+            conversions[currency] = value
+    return conversions
 
 
 def _nested_price(payload: object) -> float | None:

@@ -123,6 +123,11 @@ class BrokerSnapshot:
     orders: tuple[BrokerOrder, ...] = ()
     quotes: dict[str, Quote] = field(default_factory=dict)
     account: AccountSummary | None = None
+    # Account-home conversion factors keyed by quote currency, e.g. {"USD": 157.0}
+    # from OANDA pricing `homeConversions`. These are broker-provided factors
+    # for converting quote-currency P/L into the account home currency and avoid
+    # treating an unchanged USD_JPY quote as stale conversion evidence.
+    home_conversions: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

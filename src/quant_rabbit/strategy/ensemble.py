@@ -81,6 +81,8 @@ class DailyCampaignPlan:
     director_verdict: str
     coverage_gap: str
     operating_rule: str
+    loss_cap_jpy: float
+    loss_cap_source: str
 
 
 @dataclass(frozen=True)
@@ -109,8 +111,9 @@ class CampaignPlanner:
 
     def run(self, *, start_balance_jpy: float, target_return_pct: float = 10.0) -> CampaignSummary:
         strategies = _load_strategy_profile(self.strategy_profile)
+        loss_cap_jpy, loss_cap_source = _load_strategy_loss_cap(self.strategy_profile)
         stories = _load_market_story_profile(self.market_story_profile)
-        lanes = tuple(self._build_lanes(strategies, stories))
+        lanes = tuple(self._build_lanes(strategies, stories, loss_cap_jpy=loss_cap_jpy))
         target_jpy = round(start_balance_jpy * (target_return_pct / 100.0), 2)
         plan = DailyCampaignPlan(
             generated_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -122,8 +125,10 @@ class CampaignPlanner:
             coverage_gap=_coverage_gap(lanes, target_jpy),
             operating_rule=(
                 "The 10% number is a campaign target, not a profit guarantee. "
-                "No lane becomes live without current market_context, entry, TP, SL, <=500 JPY risk, and >=1.2R."
+                f"No lane becomes live without current market_context, entry, TP, SL, <={loss_cap_jpy:.0f} JPY risk, and >=1.2R."
             ),
+            loss_cap_jpy=loss_cap_jpy,
+            loss_cap_source=loss_cap_source,
         )
         self._write_plan(plan)
         self._write_report(plan)
@@ -140,6 +145,8 @@ class CampaignPlanner:
         self,
         strategies: dict[str, list[StrategyEvidence]],
         stories: dict[str, MarketStoryEvidence],
+        *,
+        loss_cap_jpy: float,
     ) -> list[DeskLane]:
         lanes: list[DeskLane] = []
         for desk, method in DESK_METHODS.items():
@@ -151,7 +158,7 @@ class CampaignPlanner:
                     lanes.append(_overlay_lane(desk, pair, method, story))
                     continue
                 for strategy in strategies.get(pair, []):
-                    lanes.append(_strategy_lane(desk, method, story, strategy))
+                    lanes.append(_strategy_lane(desk, method, story, strategy, loss_cap_jpy=loss_cap_jpy))
         return sorted(lanes, key=_lane_sort_key)
 
     def _write_plan(self, plan: DailyCampaignPlan) -> None:
@@ -168,6 +175,7 @@ class CampaignPlanner:
             f"- Start balance: `{plan.start_balance_jpy:.0f} JPY`",
             f"- Target return: `{plan.target_return_pct:.1f}%`",
             f"- Target JPY: `{plan.target_jpy:.0f} JPY`",
+            f"- Per-trade loss cap: `{plan.loss_cap_jpy:.0f} JPY` (`{plan.loss_cap_source}`)",
             f"- Director verdict: `{plan.director_verdict}`",
             f"- Coverage gap: {plan.coverage_gap}",
             "",
@@ -208,9 +216,11 @@ def _strategy_lane(
     method: TradeMethod,
     story: MarketStoryEvidence,
     strategy: StrategyEvidence,
+    *,
+    loss_cap_jpy: float,
 ) -> DeskLane:
-    adoption, campaign_role, receipt, blockers = _adoption_for_strategy(strategy, method)
-    target_rr = _lane_target_reward_risk(strategy, adoption)
+    adoption, campaign_role, receipt, blockers = _adoption_for_strategy(strategy, method, loss_cap_jpy=loss_cap_jpy)
+    target_rr = _lane_target_reward_risk(strategy, adoption, loss_cap_jpy=loss_cap_jpy)
     reason = (
         f"{strategy.status}; pretrade_net={strategy.pretrade_net_jpy:.1f}, "
         f"live_net={strategy.live_net_jpy:.1f}, worst={strategy.live_worst_jpy}; "
@@ -253,19 +263,25 @@ def _overlay_lane(desk: str, pair: str, method: TradeMethod, story: MarketStoryE
     )
 
 
-def _adoption_for_strategy(strategy: StrategyEvidence, method: TradeMethod) -> tuple[str, str, str, tuple[str, ...]]:
+def _adoption_for_strategy(
+    strategy: StrategyEvidence,
+    method: TradeMethod,
+    *,
+    loss_cap_jpy: float,
+) -> tuple[str, str, str, tuple[str, ...]]:
+    cap_text = f"{loss_cap_jpy:.0f} JPY"
     if strategy.status == "CANDIDATE":
         return (
             "ORDER_INTENT_REQUIRED",
             "NOW_OR_BACKUP",
-            "Create a current order intent with market_context, entry, TP, SL, risk <=500 JPY, and >=1.2R.",
+            f"Create a current order intent with market_context, entry, TP, SL, risk <={cap_text}, and >=1.2R.",
             (),
         )
     if strategy.status == "RISK_REPAIR_CANDIDATE":
         return (
             "RISK_REPAIR_DRY_RUN",
             "NOW_IF_REPAIRED",
-            "Produce a dry-run receipt proving old edge survives with <=500 JPY risk before live use.",
+            f"Produce a dry-run receipt proving old edge survives with <={cap_text} risk before live use.",
             ("old sizing broke the loss cap", strategy.required_fix),
         )
     if strategy.status == "MINE_MISSED_EDGE":
@@ -360,6 +376,23 @@ def _load_strategy_profile(path: Path) -> dict[str, list[StrategyEvidence]]:
     return by_pair
 
 
+def _load_strategy_loss_cap(path: Path) -> tuple[float, str]:
+    payload = json.loads(path.read_text())
+    contract = payload.get("system_contract", {}) if isinstance(payload, dict) else {}
+    raw = contract.get("loss_cap_jpy") if isinstance(contract, dict) else None
+    try:
+        cap = float(raw) if raw is not None else 0.0
+    except (TypeError, ValueError):
+        cap = 0.0
+    if cap > 0:
+        source = str(contract.get("loss_cap_source") or "strategy profile system_contract")
+        return round(cap, 4), source
+    policy_cap = RiskPolicy().max_loss_jpy
+    if policy_cap is None or policy_cap <= 0:
+        raise ValueError(f"strategy profile has no usable loss cap: {path}")
+    return round(float(policy_cap), 4), "RiskPolicy.max_loss_jpy library default"
+
+
 def _load_market_story_profile(path: Path) -> dict[str, MarketStoryEvidence]:
     payload = json.loads(path.read_text())
     stories: dict[str, MarketStoryEvidence] = {}
@@ -387,13 +420,12 @@ def _optional_float(value: object) -> float | None:
         return None
 
 
-def _lane_target_reward_risk(strategy: StrategyEvidence, adoption: str) -> float:
+def _lane_target_reward_risk(strategy: StrategyEvidence, adoption: str, *, loss_cap_jpy: float) -> float:
     if adoption in {"WATCH_ONLY", "REJECTED", "RISK_OVERLAY"}:
         return 1.0
-    policy = RiskPolicy()
     evidence_rr = float(strategy.target_reward_risk or 1.5)
     if strategy.positive_tail_jpy > 0:
-        evidence_rr = max(evidence_rr, strategy.positive_tail_jpy / policy.max_loss_jpy)
+        evidence_rr = max(evidence_rr, strategy.positive_tail_jpy / loss_cap_jpy)
     if strategy.positive_best_jpy > 0:
-        evidence_rr = max(evidence_rr, strategy.positive_best_jpy / policy.max_loss_jpy)
+        evidence_rr = max(evidence_rr, strategy.positive_best_jpy / loss_cap_jpy)
     return round(min(8.0, max(1.5, evidence_rr)), 2)

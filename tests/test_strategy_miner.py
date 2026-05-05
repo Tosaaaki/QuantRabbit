@@ -85,7 +85,7 @@ class StrategyMinerTest(unittest.TestCase):
 
             report = root / "strategy.md"
             profile = root / "profile.json"
-            summary = StrategyMiner(db_path, report, profile).run()
+            summary = StrategyMiner(db_path, report, profile, loss_cap_jpy=500).run()
 
             self.assertEqual(summary.candidates, 1)
             self.assertEqual(summary.risk_repair_candidates, 1)

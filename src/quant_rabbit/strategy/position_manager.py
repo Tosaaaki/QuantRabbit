@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Side
-from quant_rabbit.paths import DEFAULT_POSITION_MANAGEMENT, DEFAULT_POSITION_MANAGEMENT_REPORT, DEFAULT_TRADER_DECISION
+from quant_rabbit.paths import DEFAULT_DAILY_TARGET_STATE, DEFAULT_POSITION_MANAGEMENT, DEFAULT_POSITION_MANAGEMENT_REPORT, DEFAULT_TRADER_DECISION
+from quant_rabbit.risk import RiskPolicy
 
 
 ACTION_HOLD_PROTECTED = "HOLD_PROTECTED"
@@ -70,8 +71,8 @@ class PositionManager:
     ) -> ManagedPosition:
         same_score = scores.get((position.pair, position.side.value))
         opposite_score = scores.get((position.pair, _opposite(position.side)))
-        remaining_risk = _remaining_risk_jpy(position, snapshot.quotes)
-        remaining_reward = _remaining_reward_jpy(position, snapshot.quotes)
+        remaining_risk = _remaining_risk_jpy(position, snapshot.quotes, snapshot.home_conversions)
+        remaining_reward = _remaining_reward_jpy(position, snapshot.quotes, snapshot.home_conversions)
         reasons: list[str] = []
         quote = snapshot.quotes.get(position.pair)
         recommended_stop_loss: float | None = None
@@ -85,7 +86,7 @@ class PositionManager:
                 missing.append("SL")
             reasons.append(f"missing {'/'.join(missing)}")
             if position.stop_loss is None:
-                recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes)
+                recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes, snapshot.home_conversions)
                 if recommended_stop_loss is None:
                     reasons.append("no market-valid capped SL repair is available; exposure needs exit review")
                     action = ACTION_REVIEW_EXIT
@@ -216,25 +217,25 @@ def _aggregate_action(positions: tuple[ManagedPosition, ...]) -> str:
     return "NO_POSITION"
 
 
-def _remaining_risk_jpy(position: BrokerPosition, quotes) -> float | None:
+def _remaining_risk_jpy(position: BrokerPosition, quotes, home_conversions=None) -> float | None:
     if position.stop_loss is None:
         return None
     pips = (position.entry_price - position.stop_loss) * _pip_factor(position.pair)
     if position.side == Side.SHORT:
         pips = (position.stop_loss - position.entry_price) * _pip_factor(position.pair)
-    jpy_per_pip = _jpy_per_pip(position, quotes)
+    jpy_per_pip = _jpy_per_pip(position, quotes, home_conversions or {})
     if jpy_per_pip is None:
         return None
     return max(0.0, pips) * jpy_per_pip
 
 
-def _remaining_reward_jpy(position: BrokerPosition, quotes) -> float | None:
+def _remaining_reward_jpy(position: BrokerPosition, quotes, home_conversions=None) -> float | None:
     if position.take_profit is None:
         return None
     pips = (position.take_profit - position.entry_price) * _pip_factor(position.pair)
     if position.side == Side.SHORT:
         pips = (position.entry_price - position.take_profit) * _pip_factor(position.pair)
-    jpy_per_pip = _jpy_per_pip(position, quotes)
+    jpy_per_pip = _jpy_per_pip(position, quotes, home_conversions or {})
     if jpy_per_pip is None:
         return None
     return max(0.0, pips) * jpy_per_pip
@@ -264,11 +265,14 @@ def _break_even_stop(position: BrokerPosition, quote) -> float | None:
     return position.entry_price
 
 
-def _repair_stop_loss(position: BrokerPosition, quote, quotes) -> float | None:
-    jpy_per_pip = _jpy_per_pip(position, quotes)
+def _repair_stop_loss(position: BrokerPosition, quote, quotes, home_conversions=None) -> float | None:
+    jpy_per_pip = _jpy_per_pip(position, quotes, home_conversions or {})
     if jpy_per_pip is None or jpy_per_pip <= 0:
         return None
-    cap_pips = 500.0 / jpy_per_pip
+    cap = _repair_loss_cap_jpy()
+    if cap is None:
+        return None
+    cap_pips = cap / jpy_per_pip
     repair_pips = min(cap_pips, _default_repair_stop_pips(position.pair))
     distance = repair_pips / _pip_factor(position.pair)
     candidate = position.entry_price - distance if position.side == Side.LONG else position.entry_price + distance
@@ -321,11 +325,34 @@ def _price_precision(pair: str) -> int:
     return 3 if pair.endswith("_JPY") else 5
 
 
-def _jpy_per_pip(position: BrokerPosition, quotes) -> float | None:
+def _jpy_per_pip(position: BrokerPosition, quotes, home_conversions) -> float | None:
     if position.pair.endswith("_JPY"):
         return position.units / 100
     quote_ccy = position.pair.split("_", 1)[1]
+    home_conversion = home_conversions.get(quote_ccy)
+    if home_conversion is not None and home_conversion > 0:
+        return (position.units / _pip_factor(position.pair)) * float(home_conversion)
     conversion_quote = quotes.get(f"{quote_ccy}_JPY")
     if conversion_quote is None:
         return None
     return (position.units / _pip_factor(position.pair)) * max(conversion_quote.bid, conversion_quote.ask)
+
+
+def _repair_loss_cap_jpy() -> float | None:
+    """Return the current per-trade cap for capped SL repair.
+
+    Position repair must not widen exposure from a stale literal. Prefer the
+    daily target ledger's equity-derived per-trade cap; use RiskPolicy's
+    documented library default only when the ledger is absent in tests/ad-hoc
+    runs.
+    """
+    if DEFAULT_DAILY_TARGET_STATE.exists():
+        try:
+            payload = json.loads(DEFAULT_DAILY_TARGET_STATE.read_text())
+            value = float(payload.get("per_trade_risk_budget_jpy") or 0.0)
+            if value > 0:
+                return value
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+    policy_cap = RiskPolicy().max_loss_jpy
+    return float(policy_cap) if policy_cap is not None and policy_cap > 0 else None

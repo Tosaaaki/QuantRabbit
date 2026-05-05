@@ -35,6 +35,7 @@ Rules:
 - **Exactly one trader scheduled task enabled at a time.** Two tasks against the same OANDA account = duplicate orders, double-counted exposure, contradictory protection actions.
 - **Switch by enabling / disabling scheduled tasks.** No code, prompt, or playbook changes are required to swap the executing model.
 - **Every cycle reads the same `docs/SKILL_trader.md`.** Changes there affect every subsequent cycle whichever model runs.
+- **No VM deployment path.** QuantRabbit production operation is the local scheduled-task/workspace flow. Do not use VM deploy scripts, SSH deploys, or cloud instance restarts for this project unless the operator explicitly changes the infrastructure model in this contract first.
 - **Handoff discipline.** When the active scheduled task changes, the next cycle must (1) refresh `broker-snapshot`, (2) read the most recent `data/codex_trader_decision_response.json` (the filename is kept for compatibility, not as an attribution), (3) inherit any open trader-owned positions and pending orders, (4) not cancel another cycle's pending orders without an explicit reason recorded in the next decision receipt.
 
 In automation, "GPT" means whichever model is currently dispatched by the scheduler. **Do not call any API-key model path from QuantRabbit code** (`QR_OPENAI_API_KEY`, `OPENAI_API_KEY`). Live discretion lives in the scheduled-task model, not in a library call.

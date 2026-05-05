@@ -154,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
     p_mine.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
     p_mine.add_argument("--report", type=Path, default=DEFAULT_STRATEGY_REPORT)
     p_mine.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_mine.add_argument("--loss-cap-jpy", type=float, default=None)
+    p_mine.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
 
     p_story = sub.add_parser("mine-market-stories", help="Mine narrative, market regime, and chart-story evidence.")
     p_story.add_argument("--archive", type=Path, default=DEFAULT_LEGACY_ARCHIVE)
@@ -189,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
     p_replay.add_argument("--start-balance", type=float, required=True)
     p_replay.add_argument("--target-return-pct", type=float, default=10.0)
     p_replay.add_argument("--max-loss", type=float, default=None)
+    p_replay.add_argument("--daily-risk-pct", type=float, default=None)
+    p_replay.add_argument("--target-trades-per-day", type=int, default=None)
+    p_replay.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_replay.add_argument("--max-days", type=int, default=None)
     p_replay.add_argument("--output", type=Path, default=DEFAULT_REPLAY_BACKTEST)
     p_replay.add_argument("--report", type=Path, default=DEFAULT_REPLAY_BACKTEST_REPORT)
@@ -947,7 +952,13 @@ def main(argv: list[str] | None = None) -> int:
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "mine-strategy":
-        summary = StrategyMiner(args.db, args.report, args.profile).run()
+        summary = StrategyMiner(
+            args.db,
+            args.report,
+            args.profile,
+            loss_cap_jpy=args.loss_cap_jpy,
+            target_state_path=args.target_state,
+        ).run()
         print(
             json.dumps(
                 {
@@ -1008,7 +1019,10 @@ def main(argv: list[str] | None = None) -> int:
             db_path=args.db,
             output_path=args.output,
             report_path=args.report,
-            max_loss_jpy=args.max_loss if args.max_loss is not None else RiskPolicy().max_loss_jpy,
+            max_loss_jpy=args.max_loss,
+            daily_risk_pct=args.daily_risk_pct,
+            target_trades_per_day=args.target_trades_per_day,
+            target_state_path=args.target_state,
         ).run(
             start_balance_jpy=args.start_balance,
             target_return_pct=args.target_return_pct,
@@ -1315,6 +1329,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
             }
             for pair, quote in snapshot.quotes.items()
         },
+        "home_conversions": snapshot.home_conversions,
     }
     if getattr(snapshot, "account", None) is not None:
         account = snapshot.account
@@ -1414,6 +1429,7 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
         orders=tuple(orders),
         quotes=quotes,
         account=account,
+        home_conversions={str(k).upper(): float(v) for k, v in (payload.get("home_conversions") or {}).items()},
     )
 
 

@@ -554,6 +554,9 @@ def _quote_to_jpy(pair: str, snapshot: BrokerSnapshot) -> float | None:
     quote_ccy = pair.split("_", 1)[1]
     if quote_ccy == "JPY":
         return 1.0
+    home_conversion = snapshot.home_conversions.get(quote_ccy)
+    if home_conversion is not None and home_conversion > 0:
+        return float(home_conversion)
     conversion_quote = snapshot.quotes.get(f"{quote_ccy}_JPY")
     if conversion_quote is None:
         return None
@@ -629,6 +632,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
         orders=orders,
         quotes=quotes,
         account=account,
+        home_conversions={str(k).upper(): float(v) for k, v in (payload.get("home_conversions") or {}).items()},
     )
 
 

@@ -161,7 +161,7 @@ class DailyTargetLedger:
         per_trade_risk_budget = round(risk_budget / explicit_pace, 4)
 
         positions = (
-            tuple(_position_risk(position, snapshot.quotes) for position in snapshot.positions)
+            tuple(_position_risk(position, snapshot.quotes, snapshot.home_conversions) for position in snapshot.positions)
             if snapshot
             else _previous_positions(previous.get("positions"))
         )
@@ -284,13 +284,17 @@ class DailyTargetLedger:
         self.report_path.write_text("\n".join(lines) + "\n")
 
 
-def _position_risk(position: BrokerPosition, quotes: dict[str, Quote]) -> TargetPositionRisk:
+def _position_risk(
+    position: BrokerPosition,
+    quotes: dict[str, Quote],
+    home_conversions: dict[str, float] | None = None,
+) -> TargetPositionRisk:
     missing = []
     if position.take_profit is None:
         missing.append("TP")
     if position.stop_loss is None:
         missing.append("SL")
-    remaining_risk = _remaining_risk_jpy(position, quotes)
+    remaining_risk = _remaining_risk_jpy(position, quotes, home_conversions or {})
     if position.stop_loss is not None and remaining_risk is None:
         missing.append("JPY_CONVERSION")
     return TargetPositionRisk(
@@ -327,7 +331,7 @@ def _previous_positions(payload: object) -> tuple[TargetPositionRisk, ...]:
     return tuple(positions)
 
 
-def _remaining_risk_jpy(position: BrokerPosition, quotes: dict[str, Quote]) -> float | None:
+def _remaining_risk_jpy(position: BrokerPosition, quotes: dict[str, Quote], home_conversions: dict[str, float]) -> float | None:
     if position.stop_loss is None:
         return None
     factor = _pip_factor(position.pair)
@@ -335,7 +339,7 @@ def _remaining_risk_jpy(position: BrokerPosition, quotes: dict[str, Quote]) -> f
         pips = (position.entry_price - position.stop_loss) * factor
     else:
         pips = (position.stop_loss - position.entry_price) * factor
-    jpy_per_pip = _jpy_per_pip(position, quotes)
+    jpy_per_pip = _jpy_per_pip(position, quotes, home_conversions or {})
     if jpy_per_pip is None:
         return None
     return round(max(0.0, pips) * jpy_per_pip, 4)
@@ -454,10 +458,13 @@ def _pip_factor(pair: str) -> int:
     return 100 if pair.endswith("_JPY") else 10000
 
 
-def _jpy_per_pip(position: BrokerPosition, quotes: dict[str, Quote]) -> float | None:
+def _jpy_per_pip(position: BrokerPosition, quotes: dict[str, Quote], home_conversions: dict[str, float]) -> float | None:
     if position.pair.endswith("_JPY"):
         return position.units / 100
     quote_ccy = position.pair.split("_", 1)[1]
+    home_conversion = home_conversions.get(quote_ccy)
+    if home_conversion is not None and home_conversion > 0:
+        return (position.units / _pip_factor(position.pair)) * float(home_conversion)
     conversion_quote = quotes.get(f"{quote_ccy}_JPY")
     if conversion_quote is None:
         return None
@@ -509,6 +516,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
         orders=orders,
         quotes=quotes,
         account=account,
+        home_conversions={str(k).upper(): float(v) for k, v in (payload.get("home_conversions") or {}).items()},
     )
 
 

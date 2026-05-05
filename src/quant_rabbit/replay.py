@@ -8,7 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from quant_rabbit.paths import DEFAULT_HISTORY_DB, DEFAULT_REPLAY_BACKTEST, DEFAULT_REPLAY_BACKTEST_REPORT
+from quant_rabbit.paths import (
+    DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_HISTORY_DB,
+    DEFAULT_REPLAY_BACKTEST,
+    DEFAULT_REPLAY_BACKTEST_REPORT,
+)
 from quant_rabbit.risk import RiskPolicy
 
 
@@ -47,6 +52,14 @@ class ReplayBacktestSummary:
     total_risk_capped_net_jpy: float
 
 
+@dataclass(frozen=True)
+class ResolvedReplayLossCap:
+    loss_cap_jpy: float
+    source: str
+    daily_risk_pct: float
+    target_trades_per_day: int
+
+
 class ReplayBacktester:
     """Replay legacy daily evidence against the vNext target and risk contract."""
 
@@ -56,12 +69,18 @@ class ReplayBacktester:
         db_path: Path = DEFAULT_HISTORY_DB,
         output_path: Path = DEFAULT_REPLAY_BACKTEST,
         report_path: Path = DEFAULT_REPLAY_BACKTEST_REPORT,
-        max_loss_jpy: float = RiskPolicy().max_loss_jpy,
+        max_loss_jpy: float | None = None,
+        daily_risk_pct: float | None = None,
+        target_trades_per_day: int | None = None,
+        target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
     ) -> None:
         self.db_path = db_path
         self.output_path = output_path
         self.report_path = report_path
         self.max_loss_jpy = max_loss_jpy
+        self.daily_risk_pct = daily_risk_pct
+        self.target_trades_per_day = target_trades_per_day
+        self.target_state_path = target_state_path
 
     def run(
         self,
@@ -71,7 +90,14 @@ class ReplayBacktester:
         max_days: int | None = None,
     ) -> ReplayBacktestSummary:
         target_jpy = round(start_balance_jpy * (target_return_pct / 100.0), 2)
-        days = tuple(self._load_days(target_jpy=target_jpy, max_days=max_days))
+        cap = _resolve_replay_loss_cap(
+            start_balance_jpy=start_balance_jpy,
+            explicit_max_loss_jpy=self.max_loss_jpy,
+            explicit_daily_risk_pct=self.daily_risk_pct,
+            explicit_target_trades_per_day=self.target_trades_per_day,
+            target_state_path=self.target_state_path,
+        )
+        days = tuple(self._load_days(target_jpy=target_jpy, max_days=max_days, max_loss_jpy=cap.loss_cap_jpy))
         generated_at = datetime.now(timezone.utc).isoformat()
         payload = {
             "generated_at_utc": generated_at,
@@ -79,12 +105,15 @@ class ReplayBacktester:
             "start_balance_jpy": start_balance_jpy,
             "target_return_pct": target_return_pct,
             "target_jpy": target_jpy,
-            "max_loss_jpy": self.max_loss_jpy,
+            "max_loss_jpy": cap.loss_cap_jpy,
+            "loss_cap_source": cap.source,
+            "daily_risk_pct": cap.daily_risk_pct,
+            "target_trades_per_day": cap.target_trades_per_day,
             "days": [asdict(day) for day in days],
             "summary": _summary_payload(days, target_jpy),
         }
         self._write_output(payload)
-        self._write_report(generated_at, start_balance_jpy, target_return_pct, target_jpy, days)
+        self._write_report(generated_at, start_balance_jpy, target_return_pct, target_jpy, days, cap)
         summary_payload = payload["summary"]
         return ReplayBacktestSummary(
             output_path=self.output_path,
@@ -99,12 +128,12 @@ class ReplayBacktester:
             total_risk_capped_net_jpy=float(summary_payload["total_risk_capped_net_jpy"]),
         )
 
-    def _load_days(self, *, target_jpy: float, max_days: int | None) -> Iterable[ReplayDay]:
+    def _load_days(self, *, target_jpy: float, max_days: int | None, max_loss_jpy: float) -> Iterable[ReplayDay]:
         if not self.db_path.exists():
             raise FileNotFoundError(f"legacy history DB not found: {self.db_path}")
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            trade_days = _query_trade_days(conn, self.max_loss_jpy)
+            trade_days = _query_trade_days(conn, max_loss_jpy)
             pretrade = _query_positive_by_day(conn, "pretrade_outcomes")
             missed = _query_positive_by_day(conn, "seat_outcomes")
             live_log = _query_live_log_by_day(conn)
@@ -134,7 +163,7 @@ class ReplayBacktester:
                     captured_profit=captured_profit,
                     over_cap_loss_count=int(trade.get("over_cap_loss_count") or 0),
                     worst_loss=_optional_float(trade.get("worst_loss_jpy")),
-                    max_loss_jpy=self.max_loss_jpy,
+                    max_loss_jpy=max_loss_jpy,
                 )
             )
             yield ReplayDay(
@@ -174,6 +203,7 @@ class ReplayBacktester:
         target_return_pct: float,
         target_jpy: float,
         days: tuple[ReplayDay, ...],
+        cap: "ResolvedReplayLossCap",
     ) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         summary = _summary_payload(days, target_jpy)
@@ -184,6 +214,7 @@ class ReplayBacktester:
             f"- History DB: `{self.db_path}`",
             f"- Start balance: `{start_balance_jpy:.0f} JPY`",
             f"- Target: `{target_jpy:.0f} JPY` (`{target_return_pct:.1f}%`)",
+            f"- Per-trade loss cap: `{cap.loss_cap_jpy:.0f} JPY` (`{cap.source}`)",
             f"- Days replayed: `{summary['days']}`",
             f"- Historical target hits: `{summary['historical_target_hits']}`",
             f"- Evidence target covered: `{summary['evidence_target_covered']}`",
@@ -195,7 +226,7 @@ class ReplayBacktester:
             "## Replay Contract",
             "",
             "- This is an evidence replay over imported legacy trade outcomes, not tick-level execution replay.",
-            "- Losses worse than the current vNext loss cap are marked as risk-repair requirements.",
+            "- Losses worse than the current equity-derived per-trade loss cap are marked as risk-repair requirements.",
             "- Positive pretrade and missed-seat outcomes are counted as coverage evidence, not automatic live permission.",
             "- A day is complete only when target coverage becomes executable receipts under broker truth and risk gates.",
             "",
@@ -232,6 +263,110 @@ def _query_trade_days(conn: sqlite3.Connection, max_loss_jpy: float) -> dict[str
         (-max_loss_jpy, -max_loss_jpy, -max_loss_jpy),
     ).fetchall()
     return {str(row["session_date"]): dict(row) for row in rows}
+
+
+def _resolve_replay_loss_cap(
+    *,
+    start_balance_jpy: float,
+    explicit_max_loss_jpy: float | None,
+    explicit_daily_risk_pct: float | None,
+    explicit_target_trades_per_day: int | None,
+    target_state_path: Path,
+) -> ResolvedReplayLossCap:
+    """Resolve replay's per-trade loss cap without falling back to a JPY literal.
+
+    Replay is a campaign diagnostic, so its cap must move with the campaign:
+    `start_balance * daily_risk_pct / target_trades_per_day`. The persisted
+    daily target state supplies the current pacing policy when available; the
+    documented RiskPolicy percentages are the ad-hoc/test fallback.
+    """
+    policy = RiskPolicy()
+    state = _load_target_state(target_state_path)
+    if explicit_max_loss_jpy is not None:
+        if explicit_max_loss_jpy <= 0:
+            raise ValueError("replay-backtest --max-loss must be positive")
+        daily_risk_pct = _positive_float(
+            explicit_daily_risk_pct,
+            _state_daily_risk_pct(state),
+            policy.daily_risk_pct,
+        )
+        target_trades = _positive_int(
+            explicit_target_trades_per_day,
+            state.get("target_trades_per_day"),
+            policy.target_trades_per_day,
+        )
+        return ResolvedReplayLossCap(
+            loss_cap_jpy=round(float(explicit_max_loss_jpy), 4),
+            source="explicit --max-loss",
+            daily_risk_pct=daily_risk_pct,
+            target_trades_per_day=target_trades,
+        )
+    daily_risk_pct = _positive_float(
+        explicit_daily_risk_pct,
+        _state_daily_risk_pct(state),
+        policy.daily_risk_pct,
+    )
+    target_trades = _positive_int(
+        explicit_target_trades_per_day,
+        state.get("target_trades_per_day"),
+        policy.target_trades_per_day,
+    )
+    cap = round(start_balance_jpy * (daily_risk_pct / 100.0) / target_trades, 4)
+    source = (
+        f"equity-derived {daily_risk_pct:g}% daily risk / "
+        f"{target_trades} target trades per day"
+    )
+    return ResolvedReplayLossCap(
+        loss_cap_jpy=cap,
+        source=source,
+        daily_risk_pct=daily_risk_pct,
+        target_trades_per_day=target_trades,
+    )
+
+
+def _load_target_state(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _state_daily_risk_pct(state: dict) -> float | None:
+    budget = _optional_positive_float(state.get("daily_risk_budget_jpy"))
+    start = _optional_positive_float(state.get("start_balance_jpy"))
+    if budget is None or start is None:
+        return None
+    return round((budget / start) * 100.0, 6)
+
+
+def _positive_float(*values: object) -> float:
+    for value in values:
+        parsed = _optional_positive_float(value)
+        if parsed is not None:
+            return parsed
+    raise ValueError("replay-backtest cannot derive a positive daily_risk_pct")
+
+
+def _positive_int(*values: object) -> int:
+    for value in values:
+        try:
+            parsed = int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return parsed
+    raise ValueError("replay-backtest cannot derive a positive target_trades_per_day")
+
+
+def _optional_positive_float(value: object) -> float | None:
+    try:
+        parsed = float(value) if value is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _query_positive_by_day(conn: sqlite3.Connection, source_table: str) -> dict[str, dict[str, float]]:

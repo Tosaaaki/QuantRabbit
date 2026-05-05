@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.risk import RiskEngine
@@ -413,6 +413,34 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIsNone(decision.metrics)
         self.assertIn("MISSING_CONVERSION_QUOTE", {issue.code for issue in decision.issues})
+
+    def test_home_conversion_prevents_false_stale_conversion_block(self) -> None:
+        base = snapshot()
+        old = datetime.now(timezone.utc) - timedelta(seconds=120)
+        snap = BrokerSnapshot(
+            fetched_at_utc=base.fetched_at_utc,
+            positions=base.positions,
+            orders=base.orders,
+            quotes={
+                **base.quotes,
+                "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=old),
+            },
+            home_conversions={"USD": 157.0},
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="home_conversion_is_broker_truth",
+        )
+
+        decision = RiskEngine().validate(intent, snap)
+
+        self.assertIsNotNone(decision.metrics)
+        self.assertNotIn("STALE_CONVERSION_QUOTE", {issue.code for issue in decision.issues})
 
 
 if __name__ == "__main__":

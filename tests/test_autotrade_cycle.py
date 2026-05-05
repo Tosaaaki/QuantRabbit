@@ -112,6 +112,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_candidate_profile(root),
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=True)
 
@@ -155,6 +156,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=profile,
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
 
@@ -211,6 +213,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_candidate_profile(root),
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
 
@@ -268,6 +271,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 market_story_profile_path=_stories(root),
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=True)
 
@@ -321,6 +325,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 strategy_profile_path=_candidate_profile(root),
                 market_story_profile_path=_stories(root),
                 receipt_promotion_report_path=root / "promotion.md",
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
 
@@ -366,6 +371,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 receipt_promotion_report_path=root / "promotion.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
 
@@ -415,6 +421,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 receipt_promotion_report_path=root / "promotion.md",
                 use_gpt_trader=True,
                 gpt_provider=StaticTraderProvider(decision),
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
 
@@ -427,7 +434,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertIn("UNKNOWN_EVIDENCE_REF", {issue["code"] for issue in payload["verification_issues"]})
 
-    def test_gpt_cannot_resurrect_lane_rejected_by_deterministic_prefilter(self) -> None:
+    def test_gpt_can_select_prefiltered_discretionary_penalty_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -467,14 +474,17 @@ class AutoTradeCycleTest(unittest.TestCase):
                 gpt_provider=StaticTraderProvider(
                     _gpt_trade_decision(lane_id=rejected_lane, pair="AUD_JPY", method="BREAKOUT_FAILURE")
                 ),
+                refresh_market_story=False,
                 live_enabled=True,
             ).run(send=False)
 
-            self.assertEqual(summary.status, "GPT_DECISION_NOT_PREFILTERED")
+            self.assertEqual(summary.status, "STAGED")
             self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
-            self.assertIsNone(summary.selected_lane_id)
+            self.assertEqual(summary.selected_lane_id, rejected_lane)
+            self.assertEqual(summary.decision_source, "gpt_trader")
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
             self.assertEqual(client.orders_sent, [])
-            self.assertFalse((root / "live_order.json").exists())
+            self.assertTrue((root / "live_order.json").exists())
 
 
 class FakeCycleClient:
@@ -511,7 +521,10 @@ def _campaign(root: Path) -> Path:
                         "reason": "RISK_REPAIR_CANDIDATE; pretrade_net=5000, live_net=800, worst=-798",
                         "required_receipt": "prove current loss cap repair",
                         "blockers": ["old sizing broke the loss cap"],
-                        "story_examples": ["quality_audit: EUR_USD trend-bull staircase continuation"],
+                        "story_examples": [
+                            "news_digest: EUR_USD trend-bull macro continuation",
+                            "quality_audit: EUR_USD trend-bull staircase continuation",
+                        ],
                     }
                 ]
             }
@@ -536,7 +549,10 @@ def _two_lane_campaign(root: Path) -> Path:
                         "reason": "positive legacy evidence, but JPY intervention narrative must veto weak longs",
                         "required_receipt": "live-ready failure receipt",
                         "blockers": [],
-                        "story_examples": ["JPY intervention risk and rate check; WAIT on crosses"],
+                        "story_examples": [
+                            "news_digest: JPY intervention risk and rate check; WAIT on crosses",
+                            "quality_audit: AUD_JPY trend-bull but intervention-sensitive",
+                        ],
                     },
                     {
                         "desk": "trend_trader",
@@ -548,7 +564,10 @@ def _two_lane_campaign(root: Path) -> Path:
                         "reason": "EUR_USD trend-bull continuation pressure",
                         "required_receipt": "live-ready continuation receipt",
                         "blockers": [],
-                        "story_examples": ["EUR_USD trend-bull staircase continuation"],
+                        "story_examples": [
+                            "news_digest: EUR_USD trend-bull macro continuation",
+                            "quality_audit: EUR_USD trend-bull staircase continuation",
+                        ],
                     },
                 ]
             }
@@ -571,6 +590,12 @@ def _repair_profile(root: Path) -> Path:
                         "pretrade_net_jpy": 5000,
                         "live_net_jpy": 800,
                         "live_worst_jpy": -798,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
                     }
                 ]
             }
@@ -593,6 +618,12 @@ def _candidate_profile(root: Path) -> Path:
                         "pretrade_net_jpy": 5000,
                         "live_net_jpy": 800,
                         "live_worst_jpy": -350,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
                     }
                 ]
             }
@@ -615,6 +646,12 @@ def _two_lane_profile(root: Path) -> Path:
                         "pretrade_net_jpy": 3000,
                         "live_net_jpy": 2000,
                         "live_worst_jpy": -300,
+                        "positive_evidence_n": 80,
+                        "positive_tail_jpy": 900,
+                        "positive_best_jpy": 1500,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 4,
                     },
                     {
                         "pair": "EUR_USD",
@@ -624,6 +661,12 @@ def _two_lane_profile(root: Path) -> Path:
                         "pretrade_net_jpy": 5000,
                         "live_net_jpy": 2500,
                         "live_worst_jpy": -350,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
                     },
                 ]
             }
@@ -642,7 +685,10 @@ def _stories(root: Path) -> Path:
                         "pair": "EUR_USD",
                         "methods": {"TREND_CONTINUATION": 20},
                         "themes": {"momentum": 6},
-                        "examples": ["EUR_USD trend-bull staircase continuation"],
+                        "examples": [
+                            "news_digest: EUR_USD trend-bull macro continuation",
+                            "quality_audit: EUR_USD trend-bull staircase continuation",
+                        ],
                     }
                 ]
             }
@@ -661,13 +707,19 @@ def _two_lane_stories(root: Path) -> Path:
                         "pair": "AUD_JPY",
                         "methods": {"BREAKOUT_FAILURE": 30},
                         "themes": {"breakout_failure": 4, "intervention": 3},
-                        "examples": ["JPY intervention risk and rate check; WAIT on crosses"],
+                        "examples": [
+                            "news_digest: JPY intervention risk and rate check; WAIT on crosses",
+                            "quality_audit: AUD_JPY trend-bull but intervention-sensitive",
+                        ],
                     },
                     {
                         "pair": "EUR_USD",
                         "methods": {"TREND_CONTINUATION": 35},
                         "themes": {"momentum": 5},
-                        "examples": ["EUR_USD trend-bull staircase continuation"],
+                        "examples": [
+                            "news_digest: EUR_USD trend-bull macro continuation",
+                            "quality_audit: EUR_USD trend-bull staircase continuation",
+                        ],
                     },
                 ]
             }

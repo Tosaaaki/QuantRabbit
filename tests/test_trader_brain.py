@@ -24,6 +24,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
             )
@@ -49,6 +50,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
             )
@@ -80,6 +82,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
             )
@@ -116,6 +119,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
             )
@@ -173,6 +177,7 @@ def _result(lane_id: str, pair: str, side: str, method: str) -> dict:
         "lane_id": lane_id,
         "status": "LIVE_READY",
         "risk_allowed": True,
+        "risk_metrics": {"risk_jpy": 100.0, "reward_jpy": 220.0, "reward_risk": 2.2, "spread_pips": 0.8},
         "risk_issues": [],
         "live_blockers": [],
         "intent": {
@@ -235,6 +240,12 @@ def _strategy(root: Path) -> Path:
                         "pretrade_net_jpy": 3000,
                         "live_net_jpy": 2000,
                         "live_worst_jpy": -700,
+                        "positive_evidence_n": 80,
+                        "positive_tail_jpy": 900,
+                        "positive_best_jpy": 1500,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 4,
                     },
                     {
                         "pair": "EUR_USD",
@@ -243,6 +254,12 @@ def _strategy(root: Path) -> Path:
                         "pretrade_net_jpy": 5000,
                         "live_net_jpy": 2500,
                         "live_worst_jpy": -400,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
                     },
                 ]
             }
@@ -261,13 +278,19 @@ def _stories(root: Path) -> Path:
                         "pair": "AUD_JPY",
                         "methods": {"BREAKOUT_FAILURE": 30},
                         "themes": {"breakout_failure": 4, "intervention": 3, "spread_liquidity": 2},
-                        "examples": ["JPY intervention risk and rate check; WAIT on crosses"],
+                        "examples": [
+                            "news_digest: JPY intervention risk and rate check; WAIT on crosses",
+                            "quality_audit: AUD_JPY trend-bull continuation but narrative-sensitive",
+                        ],
                     },
                     {
                         "pair": "EUR_USD",
                         "methods": {"TREND_CONTINUATION": 35},
                         "themes": {"momentum": 5},
-                        "examples": ["EUR_USD trend-bull staircase continuation"],
+                        "examples": [
+                            "news_digest: EUR_USD trend-bull macro continuation",
+                            "quality_audit: EUR_USD trend-bull staircase continuation",
+                        ],
                     },
                 ]
             }
