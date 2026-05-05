@@ -1,12 +1,12 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-05T01:58:26.067145+00:00`
+- Generated at UTC: `2026-05-05T02:07:45.014625+00:00`
 - Status: `REJECTED`
 - Action: `WAIT`
 - Selected lane: `None`
 - Cancel order ids: `none`
 - Confidence: `HIGH`
-- Operator summary: WAIT decision. All 15 lane candidates are DRY_RUN_BLOCKED by STALE_QUOTE (quote ages 47-58s > 20s threshold). Current state: Golden Week (jp_holiday=true), Asian session, thin liquidity. Broker quote feed aging beyond risk validation gates. Contract forbids silent fallbacks; when required inputs are stale, the cycle waits. Existing EUR_USD SHORT protected at breakeven (+1509 JPY unrealized, 7.2% of daily target). No action required until fresh broker truth is available.
+- Operator summary: WAIT decision. All 15 candidate lanes blocked by STALE_QUOTE technical gate (broker snapshot aged 48-50s, exceeds 20s contract threshold §9). Market context otherwise favorable: Asia Golden Week session, USD rank 1 JPY rank 2, DXY +0.33% 24h, strong TREND_DOWN alignment across pairs, all spreads NORMAL, no calendar events. Holding EUR_USD SHORT +1387 JPY (6.6% of daily target) with break-even SL protected. Technical blocker is quote-staleness timing gap between broker-snapshot capture and intent generation - next cycle requires fresh snapshot refresh before entry consideration. Operator: Claude Sonnet 4.5.
 
 ## Verification Issues
 
