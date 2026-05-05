@@ -1,17 +1,17 @@
 # Currency Strength
 
-- Generated at UTC: `2026-05-04T23:49:03.051912+00:00`
+- Generated at UTC: `2026-05-05T00:10:50.590885+00:00`
 - Granularity: `H1` over `24` bars
 - Pairs used: 28 / missing 0
 - Suggested cross: `AUD_USD:SHORT`
 
 | Rank | Currency | Score (%) |
 |---|---|---|
-| 1 | `USD` | 0.368 |
-| 2 | `JPY` | 0.159 |
-| 3 | `CAD` | 0.086 |
-| 4 | `EUR` | 0.038 |
-| 5 | `CHF` | -0.033 |
-| 6 | `GBP` | -0.046 |
-| 7 | `NZD` | -0.283 |
-| 8 | `AUD` | -0.289 |
+| 1 | `USD` | 0.367 |
+| 2 | `JPY` | 0.147 |
+| 3 | `CAD` | 0.105 |
+| 4 | `EUR` | 0.032 |
+| 5 | `GBP` | -0.083 |
+| 6 | `CHF` | -0.088 |
+| 7 | `NZD` | -0.234 |
+| 8 | `AUD` | -0.245 |
