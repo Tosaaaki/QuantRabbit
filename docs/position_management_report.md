@@ -1,17 +1,17 @@
 # Position Management Report
 
-- Generated at UTC: `2026-05-05T02:43:58.337725+00:00`
+- Generated at UTC: `2026-05-05T03:20:09.249623+00:00`
 - Action: `HOLD_PROTECTED`
 - Positions: `1`
 
 ## Positions
 
-- `470188` `EUR_USD SHORT` units=`13000` action=`HOLD_PROTECTED` upl=`917.8`
-  - scores: same=`186.44` opposite=`200.85`
+- `470188` `EUR_USD SHORT` units=`13000` action=`HOLD_PROTECTED` upl=`1529.8`
+  - scores: same=`-40.44` opposite=`-23.81`
   - protection plan: sl=`None` tp=`None`
   - reason: TP/SL present and current thesis is not contradicted enough to force exit
   - reason: remaining risk about 0 JPY
-  - reason: remaining reward about 5886 JPY
+  - reason: remaining reward about 5898 JPY
 
 ## Management Contract
 

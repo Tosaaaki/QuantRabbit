@@ -140,6 +140,15 @@ class RiskEngine:
                             f"{position.pair} {position.side.value} id={position.trade_id} is not eligible",
                         )
                     )
+                elif position.pair == intent.pair and position.side != intent.side:
+                    issues.append(
+                        RiskIssue(
+                            "OPPOSING_POSITION_EXISTS",
+                            f"fresh {intent.pair} {intent.side.value} entry opposes protected "
+                            f"{position.pair} {position.side.value} id={position.trade_id}; "
+                            "use position management instead of a new entry order",
+                        )
+                    )
 
         if self.policy.block_new_entries_with_external_risk:
             for position in snapshot.positions:

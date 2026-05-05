@@ -1,6 +1,6 @@
 # Replay Backtest Report
 
-- Generated at UTC: `2026-05-05T02:57:03.804958+00:00`
+- Generated at UTC: `2026-05-05T03:19:11.634711+00:00`
 - History DB: `/Users/tossaki/App/QuantRabbit/data/legacy_history.db`
 - Start balance: `208946 JPY`
 - Target: `20895 JPY` (`10.0%`)

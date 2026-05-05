@@ -1,6 +1,6 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-05T03:15:56.598016+00:00`
+- Generated at UTC: `2026-05-05T03:24:52.267593+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
 - Market story profile JSON: `/Users/tossaki/App/QuantRabbit/data/market_story_profile.json`
 - Story artifacts read: `19`
@@ -49,7 +49,7 @@
 
 ## Pair Story Profiles
 
-- `USD_JPY` methods: BREAKOUT_FAILURE=104, EVENT_RISK=95, RANGE_ROTATION=90, POSITION_MANAGEMENT=40; themes: intervention=144, breakout_failure=98, range_rail=97, central_bank=63, spread_liquidity=31
+- `USD_JPY` methods: BREAKOUT_FAILURE=104, EVENT_RISK=96, RANGE_ROTATION=90, POSITION_MANAGEMENT=40; themes: intervention=145, breakout_failure=98, range_rail=97, central_bank=63, spread_liquidity=31
   - news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
   - news_digest: USD/JPY**: Near 160. Rate check = intervention warning. Avoid being short JPY with tight SLs. If BOJ intervenes, move is fast (-200–300 pip in minutes). Rollover guard critical tonight.

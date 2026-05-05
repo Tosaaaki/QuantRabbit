@@ -9,6 +9,7 @@ from typing import Any
 from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_TRADER_SETTINGS,
@@ -23,6 +24,19 @@ PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_
 ACTION_SEND_ENTRY = "SEND_ENTRY"
 ACTION_MONITOR_EXISTING = "MONITOR_EXISTING_EXPOSURE"
 ACTION_NO_TRADE = "NO_TRADE"
+
+# A historical worst loss becomes "large" only after it exceeds 1.8x the
+# current per-trade cap. This preserves the old proportional warning behavior
+# (-900 JPY when the cap was 500 JPY), while keeping the threshold tied to the
+# active campaign cap instead of a stale JPY literal.
+HISTORICAL_LARGE_LOSS_CAP_MULTIPLE = 1.8
+
+# Risk-geometry scoring buckets are fractions of the current per-trade cap:
+# <=60% is high-quality unused risk budget, <=90% is acceptable, above 90%
+# leaves little room for spread/slippage drift. These are scoring weights only;
+# the RiskEngine remains the executable risk authority.
+LOW_RISK_CAP_FRACTION = 0.60
+MEDIUM_RISK_CAP_FRACTION = 0.90
 
 
 @dataclass(frozen=True)
@@ -54,6 +68,8 @@ class TraderDecision:
     selected_lane_score: float | None = None
     selected_lane_size_multiple: float | None = None
     pending_cancel_order_ids: tuple[str, ...] = ()
+    loss_cap_jpy: float | None = None
+    loss_cap_source: str = ""
 
 
 @dataclass(frozen=True)
@@ -79,6 +95,7 @@ class TraderBrain:
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
         trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
+        target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         output_path: Path = DEFAULT_TRADER_DECISION,
         report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
     ) -> None:
@@ -87,6 +104,7 @@ class TraderBrain:
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
         self.trader_settings_path = trader_settings_path
+        self.target_state_path = target_state_path
         self.output_path = output_path
         self.report_path = report_path
 
@@ -100,6 +118,12 @@ class TraderBrain:
         stories = _story_index(story_payload)
         campaign = _campaign_index(campaign_payload)
         trader_settings = _load_trader_settings(self.trader_settings_path)
+        loss_cap_jpy, loss_cap_source = _resolve_trader_loss_cap(
+            strategy_payload=strategy_payload,
+            settings=trader_settings,
+            target_state_path=self.target_state_path,
+            snapshot=snapshot,
+        )
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
@@ -108,7 +132,15 @@ class TraderBrain:
         scores = tuple(
             sorted(
                 (
-                    self._score_lane(result, strategies, stories, campaign, exposure_blockers, trader_settings)
+                    self._score_lane(
+                        result,
+                        strategies,
+                        stories,
+                        campaign,
+                        exposure_blockers,
+                        trader_settings,
+                        loss_cap_jpy=loss_cap_jpy,
+                    )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
                 ),
@@ -129,6 +161,8 @@ class TraderBrain:
                 positions=positions,
                 orders=orders,
                 pending_cancel_order_ids=pending_cancel_order_ids,
+                loss_cap_jpy=loss_cap_jpy,
+                loss_cap_source=loss_cap_source,
             )
         else:
             selected = next((item for item in scores if item.action == ACTION_SEND_ENTRY), None)
@@ -143,6 +177,8 @@ class TraderBrain:
                     scores=scores,
                     positions=positions,
                     orders=orders,
+                    loss_cap_jpy=loss_cap_jpy,
+                    loss_cap_source=loss_cap_source,
                 )
             else:
                 decision = TraderDecision(
@@ -155,6 +191,8 @@ class TraderBrain:
                     scores=scores,
                     positions=positions,
                     orders=orders,
+                    loss_cap_jpy=loss_cap_jpy,
+                    loss_cap_source=loss_cap_source,
                 )
         self._write(decision)
         return decision
@@ -167,6 +205,8 @@ class TraderBrain:
         campaign: dict[str, dict[str, Any]],
         exposure_blockers: tuple[str, ...],
         settings: TraderSettings,
+        *,
+        loss_cap_jpy: float | None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -207,8 +247,11 @@ class TraderBrain:
         pretrade_net = float(strategy.get("pretrade_net_jpy") or 0.0)
         live_net = float(strategy.get("live_net_jpy") or 0.0)
         live_worst = _optional_float(strategy.get("live_worst_jpy"))
-        score += _clamp(pretrade_net / 1000.0, -25.0, 25.0)
-        score += _clamp(live_net / 500.0, -30.0, 30.0)
+        if loss_cap_jpy is None:
+            blockers.append("trader loss cap missing for historical evidence scaling")
+        else:
+            score += _clamp(pretrade_net / loss_cap_jpy, -25.0, 25.0)
+            score += _clamp(live_net / loss_cap_jpy, -30.0, 30.0)
         if pretrade_net > 0:
             rationale.append(f"positive pretrade evidence {pretrade_net:.0f} JPY")
         if live_net > 0:
@@ -216,7 +259,7 @@ class TraderBrain:
         if live_net < 0:
             blockers.append(f"negative live execution history {live_net:.0f} JPY")
             score -= 20.0
-        if live_worst is not None and live_worst <= -500:
+        if loss_cap_jpy is not None and live_worst is not None and live_worst <= -loss_cap_jpy:
             rationale.append(f"old worst loss repaired only by current sizing: {live_worst:.0f} JPY")
             score -= 8.0
 
@@ -238,6 +281,7 @@ class TraderBrain:
             lane=lane,
             risk_metrics=result.get("risk_metrics"),
             method_pressure=method_pressure,
+            loss_cap_jpy=loss_cap_jpy,
             rationale=rationale,
             blockers=blockers,
         )
@@ -294,6 +338,8 @@ class TraderBrain:
                     "positions": decision.positions,
                     "orders": decision.orders,
                     "pending_cancel_order_ids": list(decision.pending_cancel_order_ids),
+                    "loss_cap_jpy": decision.loss_cap_jpy,
+                    "loss_cap_source": decision.loss_cap_source,
                     "scores": [asdict(item) for item in decision.scores],
                 },
                 ensure_ascii=False,
@@ -314,6 +360,7 @@ class TraderBrain:
             f"- Positions: `{decision.positions}`",
             f"- Orders: `{decision.orders}`",
             f"- Pending cancel ids: `{', '.join(decision.pending_cancel_order_ids) if decision.pending_cancel_order_ids else 'none'}`",
+            f"- Loss cap: `{decision.loss_cap_jpy if decision.loss_cap_jpy is not None else 'missing'}` (`{decision.loss_cap_source or 'missing'}`)",
             f"- Reason: {decision.reason}",
             "",
             "## Ranked Lanes",
@@ -404,6 +451,51 @@ def _size_multiple(score: float, settings: TraderSettings) -> float:
 def _coalesce_float(value: object, default: float) -> float:
     parsed = _optional_float(value)
     return default if parsed is None else parsed
+
+
+def _resolve_trader_loss_cap(
+    *,
+    strategy_payload: dict[str, Any],
+    settings: TraderSettings,
+    target_state_path: Path,
+    snapshot: BrokerSnapshot,
+) -> tuple[float | None, str]:
+    cap = _loss_cap_from_strategy_payload(strategy_payload)
+    if cap is not None:
+        return cap, "strategy profile system_contract.loss_cap_jpy"
+    cap = _loss_cap_from_target_state(target_state_path)
+    if cap is not None:
+        return cap, f"daily target state {target_state_path}"
+    if settings.default_max_loss_jpy is not None and settings.default_max_loss_jpy > 0:
+        return round(settings.default_max_loss_jpy, 4), "trader settings risk.max_loss_jpy"
+    if (
+        settings.default_max_loss_pct is not None
+        and settings.default_max_loss_pct > 0
+        and snapshot.account is not None
+        and snapshot.account.balance_jpy > 0
+    ):
+        cap = snapshot.account.balance_jpy * (settings.default_max_loss_pct / 100.0)
+        return round(cap, 4), "trader settings risk.max_loss_pct of broker balance"
+    return None, "missing loss cap"
+
+
+def _loss_cap_from_strategy_payload(payload: dict[str, Any]) -> float | None:
+    contract = payload.get("system_contract")
+    if not isinstance(contract, dict):
+        return None
+    return _positive_float(contract.get("loss_cap_jpy"))
+
+
+def _loss_cap_from_target_state(path: Path) -> float | None:
+    payload = _load_json(path)
+    return _positive_float(payload.get("per_trade_risk_budget_jpy"))
+
+
+def _positive_float(value: object) -> float | None:
+    parsed = _optional_float(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return round(parsed, 4)
 
 
 def _strategy_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
@@ -599,6 +691,7 @@ def _technical_consensus_score(
     lane: dict[str, Any],
     risk_metrics: dict[str, Any] | None,
     method_pressure: int,
+    loss_cap_jpy: float | None,
     rationale: list[str],
     blockers: list[str],
 ) -> float:
@@ -680,13 +773,17 @@ def _technical_consensus_score(
         else:
             score -= 2.0
             blockers.append(f"wide spread for fresh edge={spread_pips:.1f}pip")
-        if risk_jpy <= 300:
-            score += 2.0
-            support_ticks += 1
-        elif risk_jpy <= 450:
-            score += 1.0
+        if loss_cap_jpy is None:
+            blockers.append("trader loss cap missing for risk geometry ranking")
         else:
-            score -= 2.0
+            risk_fraction = risk_jpy / loss_cap_jpy
+            if risk_fraction <= LOW_RISK_CAP_FRACTION:
+                score += 2.0
+                support_ticks += 1
+            elif risk_fraction <= MEDIUM_RISK_CAP_FRACTION:
+                score += 1.0
+            else:
+                score -= 2.0
         if plan_rr is not None and reward_risk >= plan_rr * 0.85:
             score += 1.5
             rationale.append(f"geometry reward/risk {reward_risk:.2f}R matches lane target {plan_rr:.2f}R")
@@ -705,7 +802,11 @@ def _technical_consensus_score(
         score -= 2.0
         blockers.append("strategy required_fix still mentions watch-only restrictions")
 
-    if live_worst is not None and live_worst <= -900:
+    if (
+        loss_cap_jpy is not None
+        and live_worst is not None
+        and live_worst <= -(loss_cap_jpy * HISTORICAL_LARGE_LOSS_CAP_MULTIPLE)
+    ):
         score -= 2.0
         blockers.append(f"historical live worst loss is large: {live_worst:.0f} JPY")
 

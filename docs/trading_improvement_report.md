@@ -13,10 +13,11 @@
 
 ## Current State
 
-- Daily target state: target `20,894.58 JPY`, progress `1,795.1594 JPY`, remaining `19,099.4206 JPY`.
+- Daily target state: target `20,894.58 JPY`, progress `1,550.2960 JPY`, remaining `19,344.2840 JPY`.
 - Risk budget: remaining `4,202.1337 JPY`, per-trade cap `1,050.5334 JPY`, target pace `4` trades/day.
-- Order intents: `15` lanes are `LIVE_READY`; `STALE_CONVERSION_QUOTE` is now `0`.
-- Coverage optimizer: live-ready reward `35,133.9738 JPY`; sequential ladder reward `19,457.4933 JPY` over `6` steps.
+- Broker truth: one protected trader-owned `EUR_USD SHORT` remains open with SL at breakeven and TP attached.
+- Order intents: `9` lanes are `LIVE_READY`; opposing `EUR_USD LONG` lanes are now blocked by `OPPOSING_POSITION_EXISTS`; `STALE_CONVERSION_QUOTE` is `0`.
+- Coverage optimizer: live-ready reward `23,881.2039 JPY`; sequential ladder reward `19,457.4399 JPY` over `6` steps.
 - Replay: `50` days, historical target hits `0`, evidence target covered `4`, total historical net `-41,482.8194 JPY`, risk-capped net `-3,002.4926 JPY`.
 
 ## Root Causes Found
@@ -29,11 +30,13 @@
 
 4. Market data gaps remain material: OANDA order/position book calls returned `401 Unauthorized`, and option skew has no configured feed. These are product blockers for flow/skew-driven filters, not reasons to invent signals.
 
+5. The deterministic trader could select a fresh `EUR_USD LONG` while a protected `EUR_USD SHORT` was open. That is not a clean portfolio add; on OANDA it can become unintended netting/position management. Fixed by blocking same-pair opposing entries in `RiskEngine` and keeping them out of `LIVE_READY`.
+
 ## Research Synthesis
 
 - OANDA official v20 pricing defines `HomeConversions` for converting currency gains, losses, and position value into account home currency. That supports using broker-provided conversion factors for risk/P&L instead of treating a stale conversion pair as the source of truth: https://developer.oanda.com/rest-live-v20/pricing-df/
 - CFTC COT reports are weekly Tuesday open-interest snapshots, typically released Friday. They are useful as slow macro positioning context, not an intraday entry trigger: https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm
-- BIS Triennial FX data is the structural source for FX turnover/currency mix. This supports treating retail candle volume as a weak proxy rather than actual decentralized FX volume: https://www.bis.org/statistics/rpfx22.htm
+- BIS 2025 Triennial FX data is the structural source for FX turnover/currency mix. BIS says preliminary results were released on September 30, 2025 and final data with the December 2025 Quarterly Review. This supports treating retail candle volume as a weak proxy rather than actual decentralized FX volume: https://www.bis.org/statistics/rpfx25.htm
 - FRED API and series such as `VIXCLS` and `BAMLH0A0HYM2` are suitable for risk-regime features around vol and credit stress: https://fred.stlouisfed.org/docs/api/fred/series_observations.html
 - Bailey and Lopez de Prado's Deflated Sharpe Ratio work warns that selection bias, backtest overfitting, and non-normal returns inflate apparent strategy quality. QuantRabbit should track trial count and deflated/validated performance before promoting mined edges: https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf
 - Lee and Mykland's jump-test work supports adding high-frequency jump/event filters around macro releases and sudden gap risk instead of assuming smooth intraday diffusion: https://galton.uchicago.edu/~mykland/paperlinks/leemykland_103106.pdf
@@ -62,11 +65,20 @@
   - `src/quant_rabbit/strategy/position_manager.py`
   - repair SL sizing now reads `per_trade_risk_budget_jpy` from daily target state before falling back to policy defaults.
 
+- TraderBrain dynamic cap scoring:
+  - `src/quant_rabbit/strategy/trader_brain.py`
+  - historical pretrade/live P&L scaling, repaired-worst-loss warnings, and risk geometry ranking now use the current per-trade cap rather than fixed `500/900/300/450 JPY` thresholds.
+
+- Opposing-position protection:
+  - `src/quant_rabbit/risk.py`
+  - protected same-pair positions may be layered only in the same direction; opposite-direction fresh entries now emit `OPPOSING_POSITION_EXISTS` and must route through position management.
+
 - Test coverage:
   - OANDA home conversion parsing.
   - Risk engine false stale-conversion prevention.
   - Intent, target, position, strategy, replay, trader-brain, and autotrade cycles.
-  - Full suite: `278` tests passed.
+  - Opposing same-pair portfolio entries are blocked before live staging.
+  - Full suite: `280` tests passed.
 
 ## Remaining Blockers
 
@@ -75,6 +87,7 @@
 - Flow data is incomplete until OANDA orderBook/positionBook authorization is fixed or the feature is explicitly disabled.
 - Option skew is unavailable until a provider is configured.
 - Backtest promotion still needs explicit trial-count accounting and deflated/validated edge reporting before increasing risk.
+- The current external GPT decision response is stale and was rejected (`BAD_METHOD`); it cited 15 live-ready lanes while the current post-fix packet has 9. A fresh decision receipt is required before any send path.
 
 ## Next Engineering Actions
 

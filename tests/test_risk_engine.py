@@ -227,6 +227,47 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("OPEN_POSITION_EXISTS", {issue.code for issue in decision.issues})
 
+    def test_portfolio_policy_blocks_opposing_same_pair_entry(self) -> None:
+        protected_short = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1640,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="opposing_entry_must_route_to_position_management",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE campaign lane",
+                narrative="fresh long would oppose the protected short",
+                chart_story="failed break reclaim",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=500.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_short,)))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("OPPOSING_POSITION_EXISTS", {issue.code for issue in decision.issues})
+
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(
             trade_id="2",

@@ -132,6 +132,27 @@ class TraderBrainTest(unittest.TestCase):
             self.assertIn("missing trader thesis", " ".join(lane.blockers))
             self.assertIn("missing market context", " ".join(lane.blockers))
 
+    def test_historical_worst_loss_is_scaled_by_current_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy_path = _strategy(root, loss_cap_jpy=1000.0)
+            brain = TraderBrain(
+                intents_path=_intents(root),
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=strategy_path,
+                market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            brain.run(_snapshot())
+
+            payload = json.loads((root / "decision.json").read_text())
+            aud = next(item for item in payload["scores"] if item["pair"] == "AUD_JPY")
+            self.assertEqual(payload["loss_cap_jpy"], 1000.0)
+            self.assertNotIn("old worst loss repaired", " ".join(aud["rationale"]))
+
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
@@ -227,11 +248,15 @@ def _lane(desk: str, pair: str, direction: str, method: str) -> dict:
     }
 
 
-def _strategy(root: Path) -> Path:
+def _strategy(root: Path, *, loss_cap_jpy: float = 500.0) -> Path:
     path = root / "strategy.json"
     path.write_text(
         json.dumps(
             {
+                "system_contract": {
+                    "loss_cap_jpy": loss_cap_jpy,
+                    "loss_cap_source": "test current campaign cap",
+                },
                 "profiles": [
                     {
                         "pair": "AUD_JPY",
