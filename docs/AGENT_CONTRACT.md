@@ -142,6 +142,8 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Pending orders vetoed by the current `TraderBrain` can be canceled before the next cycle.
 - Trader decisions compare mined history, market story, campaign role, narrative risk, current broker state, risk geometry, and live exposure.
 - Portfolio Director records which desk wins and why when trader desks disagree.
+- Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but exactly one final trader receipt may select a lane, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
+- Strategy-review identity is `lane_id` plus `method`, not a loose desk alias. A review for `TREND_CONTINUATION` cannot authorize a `RANGE_ROTATION` or `BREAKOUT_FAILURE` lane.
 
 ---
 
@@ -183,6 +185,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Reuse strong legacy mechanisms only after they are converted into vNext tests, receipts, risk checks, or read-only evidence pipelines.
 - `risk-dry-run` reads `data/strategy_profile.json` when present.
 - `promote-receipts` feeds passing dry-run receipts back into `data/strategy_profile.json`.
+- Strategy profile history is at least pair/direction scoped, and may become method-scoped when a receipt proves a specific method. When method-scoped evidence exists for a pair/direction, another method must not reuse that evidence to become live-ready.
 - `RISK_REPAIR_CANDIDATE` can reopen only when the current receipt passes risk geometry.
 - `MINE_MISSED_EDGE` can reopen only from a LIMIT or STOP-ENTRY receipt.
 - `BLOCK_UNTIL_NEW_EVIDENCE` is **never auto-promoted**.

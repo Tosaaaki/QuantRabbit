@@ -12,18 +12,19 @@ from quant_rabbit.models import OrderIntent, RiskIssue
 class StrategyProfileEntry:
     pair: str
     direction: str
+    method: str | None
     status: str
     required_fix: str
 
 
 class StrategyProfile:
-    def __init__(self, entries: dict[tuple[str, str], StrategyProfileEntry]) -> None:
+    def __init__(self, entries: dict[tuple[str, str, str | None], StrategyProfileEntry]) -> None:
         self.entries = entries
 
     @classmethod
     def load(cls, path: Path) -> "StrategyProfile":
         payload = json.loads(path.read_text())
-        entries: dict[tuple[str, str], StrategyProfileEntry] = {}
+        entries: dict[tuple[str, str, str | None], StrategyProfileEntry] = {}
         for item in payload.get("profiles", []):
             if not isinstance(item, dict):
                 continue
@@ -31,16 +32,37 @@ class StrategyProfile:
             direction = str(item.get("direction") or "")
             if not pair or not direction:
                 continue
-            entries[(pair, direction)] = StrategyProfileEntry(
+            method = str(item.get("method") or "").strip().upper() or None
+            entries[(pair, direction, method)] = StrategyProfileEntry(
                 pair=pair,
                 direction=direction,
+                method=method,
                 status=str(item.get("status") or "WATCH_ONLY"),
                 required_fix=str(item.get("required_fix") or ""),
             )
         return cls(entries)
 
     def validate(self, intent: OrderIntent, *, for_live_send: bool = False) -> tuple[RiskIssue, ...]:
-        entry = self.entries.get((intent.pair, intent.side.value))
+        method = _intent_method(intent)
+        entry = self.entries.get((intent.pair, intent.side.value, method))
+        if entry is None and method is not None and _has_method_specific_entry(
+            self.entries,
+            intent.pair,
+            intent.side.value,
+        ):
+            severity = "BLOCK" if for_live_send else "WARN"
+            return (
+                RiskIssue(
+                    "STRATEGY_METHOD_PROFILE_MISSING",
+                    (
+                        f"{intent.pair} {intent.side.value} {method} has no method-specific mined profile; "
+                        "do not reuse another strategy method's evidence for this lane"
+                    ),
+                    severity=severity,
+                ),
+            )
+        if entry is None:
+            entry = self.entries.get((intent.pair, intent.side.value, None))
         if entry is None:
             severity = "BLOCK" if for_live_send else "WARN"
             return (
@@ -73,10 +95,31 @@ class StrategyProfile:
         return (
             RiskIssue(
                 "STRATEGY_NOT_ELIGIBLE",
-                f"{entry.pair} {entry.direction} is {entry.status}: {entry.required_fix}",
+                f"{entry.pair} {entry.direction}{_method_suffix(entry)} is {entry.status}: {entry.required_fix}",
             ),
         )
 
 
 def issues_to_dicts(issues: tuple[RiskIssue, ...] | list[RiskIssue]) -> list[dict[str, Any]]:
     return [issue.__dict__ for issue in issues]
+
+
+def _intent_method(intent: OrderIntent) -> str | None:
+    if intent.market_context is None:
+        return None
+    return intent.market_context.method.value
+
+
+def _has_method_specific_entry(
+    entries: dict[tuple[str, str, str | None], StrategyProfileEntry],
+    pair: str,
+    direction: str,
+) -> bool:
+    return any(
+        entry_pair == pair and entry_direction == direction and method is not None
+        for entry_pair, entry_direction, method in entries
+    )
+
+
+def _method_suffix(entry: StrategyProfileEntry) -> str:
+    return f" {entry.method}" if entry.method else ""

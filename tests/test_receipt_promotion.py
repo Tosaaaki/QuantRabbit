@@ -22,9 +22,12 @@ class ReceiptPromotionTest(unittest.TestCase):
             self.assertEqual(summary.promoted, 2)
             payload = json.loads(profile.read_text())
             statuses = {(item["pair"], item["direction"]): item["status"] for item in payload["profiles"]}
+            methods = {(item["pair"], item["direction"]): item.get("method") for item in payload["profiles"]}
             self.assertEqual(statuses[("EUR_USD", "LONG")], "CANDIDATE")
             self.assertEqual(statuses[("EUR_JPY", "LONG")], "CANDIDATE")
             self.assertEqual(statuses[("USD_JPY", "SHORT")], "BLOCK_UNTIL_NEW_EVIDENCE")
+            self.assertEqual(methods[("EUR_USD", "LONG")], "TREND_CONTINUATION")
+            self.assertEqual(methods[("EUR_JPY", "LONG")], "RANGE_ROTATION")
             loaded = StrategyProfile.load(profile)
             self.assertEqual(loaded.validate(_intent("EUR_USD", "LONG"), for_live_send=True), ())
             self.assertIn("RISK_REPAIR_CANDIDATE -> CANDIDATE", report.read_text())
@@ -138,12 +141,15 @@ def _receipt(
             "sl": 1.0,
             "thesis": "test",
             "owner": "trader",
+            "market_context": {
+                "method": "RANGE_ROTATION" if order_type == "LIMIT" else "TREND_CONTINUATION",
+            },
         },
     }
 
 
 def _intent(pair: str, direction: str):
-    from quant_rabbit.models import OrderIntent, OrderType, Owner, Side
+    from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
 
     return OrderIntent(
         pair=pair,
@@ -155,6 +161,13 @@ def _intent(pair: str, direction: str):
         sl=1.0,
         thesis="test",
         owner=Owner.TRADER,
+        market_context=MarketContext(
+            regime="TREND_CONTINUATION test",
+            narrative="test",
+            chart_story="test",
+            method=TradeMethod.TREND_CONTINUATION,
+            invalidation="test",
+        ),
     )
 
 

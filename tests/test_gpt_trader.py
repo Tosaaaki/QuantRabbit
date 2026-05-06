@@ -262,6 +262,49 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn(LANE_ID, packet_lane_ids)
             self.assertGreater(len(packet_lane_ids), 12)
 
+    def test_packet_includes_market_context_payloads_not_only_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            brain = _brain(root, files, _trade_decision())
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            market_context = payload["input_packet"]["market_context"]
+            eur = market_context["pairs"]["EUR_USD"]
+
+            self.assertEqual(eur["chart"]["dominant_regime"], "TREND_UP")
+            self.assertEqual(eur["chart"]["views"]["M5"]["atr_pips"], 5.3)
+            self.assertEqual(eur["chart"]["views"]["M5"]["regime_state"], "TREND_STRONG")
+            self.assertEqual(eur["flow"]["spread"]["stress_flag"], "NORMAL")
+            self.assertEqual(eur["levels"]["pdh"], 1.18)
+            self.assertFalse(eur["calendar"]["in_window"])
+            self.assertEqual(market_context["currency_strength"]["USD"]["rank"], 2)
+            self.assertEqual(market_context["cot"]["USD"]["leveraged_net"], 1234)
+
+    def test_rejects_strategy_review_that_uses_wrong_method_for_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["strategy_reviews"] = [
+                {
+                    "lane_id": LANE_ID,
+                    "method": "RANGE_ROTATION",
+                    "verdict": "SUPPORTS",
+                    "summary": "wrong review method should not authorize the selected trend lane",
+                }
+            ]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("STRATEGY_REVIEW_METHOD_MISMATCH", codes)
+
 
 def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int | None = None) -> GPTTraderBrain:
     return GPTTraderBrain(
@@ -273,6 +316,14 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         target_state_path=files["target"],
         output_path=root / "gpt_decision.json",
         report_path=root / "gpt_decision.md",
+        pair_charts_path=files["pair_charts"],
+        cross_asset_path=files["cross_asset"],
+        flow_path=files["flow"],
+        currency_strength_path=files["currency_strength"],
+        levels_path=files["levels"],
+        calendar_path=files["calendar"],
+        cot_path=files["cot"],
+        option_skew_path=files["option_skew"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -285,6 +336,14 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "strategy": root / "strategy.json",
         "story": root / "story.json",
         "target": root / "target.json",
+        "pair_charts": root / "pair_charts.json",
+        "cross_asset": root / "cross_asset.json",
+        "flow": root / "flow.json",
+        "currency_strength": root / "currency_strength.json",
+        "levels": root / "levels.json",
+        "calendar": root / "calendar.json",
+        "cot": root / "cot.json",
+        "option_skew": root / "option_skew.json",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
@@ -353,6 +412,156 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
                 "progress_jpy": 0.0,
                 "remaining_target_jpy": 22278.1,
                 "remaining_risk_budget_jpy": 500.0,
+            }
+        )
+    )
+    files["pair_charts"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "dominant_regime": "TREND_UP",
+                        "chart_story": "EUR_USD trend-up test story",
+                        "long_score": 0.8,
+                        "short_score": 0.2,
+                        "session": {
+                            "current_tag": "NY_AM_KILLZONE",
+                            "jp_holiday": False,
+                            "judas_armed": False,
+                            "ny_midnight_open_price": 1.17,
+                        },
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "indicators": {
+                                    "atr_pips": 5.3,
+                                    "adx_14": 42.0,
+                                    "rsi_14": 61.0,
+                                    "choppiness_14": 39.0,
+                                    "bb_width_percentile_100": 0.62,
+                                    "atr_percentile_100": 0.71,
+                                },
+                                "regime_reading": {
+                                    "state": "TREND_STRONG",
+                                    "confidence": 0.82,
+                                    "hurst": 0.58,
+                                },
+                                "family_scores": {
+                                    "trend_score": 1.2,
+                                    "mean_rev_score": -0.4,
+                                    "breakout_score": 0.3,
+                                    "disagreement": 0.35,
+                                },
+                                "stat_filters": {
+                                    "last_jump_bars_ago": 8,
+                                    "lag1_autocorr": 0.12,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    files["cross_asset"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "synthetic_dxy": {"last_value": 98.1, "change_pct_24h": -0.2},
+                "yield_spreads": [{"name": "US10Y_minus_US2Y", "spread_last": 7.4}],
+                "assets": [{"instrument": "USB10Y_USD", "trend_label": "UP", "last_price": 110.5}],
+                "correlations": {"EUR_USD": {"USB10Y_USD": 0.15}},
+                "issues": [],
+            }
+        )
+    )
+    files["flow"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "spreads": [
+                    {
+                        "instrument": "EUR_USD",
+                        "current_pips": 0.8,
+                        "median_pips": 1.2,
+                        "p90_pips": 1.7,
+                        "stress_flag": "NORMAL",
+                    }
+                ],
+                "issues": [],
+            }
+        )
+    )
+    files["currency_strength"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "scores": [
+                    {"currency": "EUR", "rank": 1, "score_pct": 0.4},
+                    {"currency": "USD", "rank": 2, "score_pct": 0.2},
+                ],
+                "strongest_pair_suggestion": "EUR_USD",
+                "issues": [],
+            }
+        )
+    )
+    files["levels"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "pairs": [
+                    {
+                        "pair": "EUR_USD",
+                        "pdh": 1.18,
+                        "pdl": 1.16,
+                        "pdc": 1.17,
+                        "daily_open": 1.171,
+                        "pivots": [{"style": "STANDARD", "pp": 1.17, "r1": 1.18, "s1": 1.16}],
+                        "round_numbers": [{"price": 1.18, "distance_pips": 8.0}],
+                    }
+                ],
+                "issues": [],
+            }
+        )
+    )
+    files["calendar"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "pair_windows": [
+                    {
+                        "pair": "EUR_USD",
+                        "in_window": False,
+                        "reason": "next event outside window",
+                        "next_event": {"currency": "USD", "impact": "Medium", "title": "ADP"},
+                    }
+                ],
+                "issues": [],
+            }
+        )
+    )
+    files["cot"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "reports": [
+                    {"currency": "USD", "leveraged_net": 1234, "week_change_leveraged_net": 56},
+                    {"currency": "EUR", "leveraged_net": -789, "week_change_leveraged_net": -12},
+                ],
+                "issues": [],
+            }
+        )
+    )
+    files["option_skew"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "readings": [
+                    {"pair": "EUR_USD", "tenor": "1W", "rr_25d": None, "issue": "MISSING_OPTION_SKEW_FEED"}
+                ],
+                "issues": ["MISSING_OPTION_SKEW_FEED"],
             }
         )
     )

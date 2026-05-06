@@ -8,11 +8,19 @@ from typing import Any, Protocol
 
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_COT_SNAPSHOT,
+    DEFAULT_CROSS_ASSET_SNAPSHOT,
+    DEFAULT_CURRENCY_STRENGTH,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
+    DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_PAIR_CHARTS,
     DEFAULT_STRATEGY_PROFILE,
 )
 
@@ -41,6 +49,7 @@ class GPTTraderDecision:
     risk_notes: tuple[str, ...]
     evidence_refs: tuple[str, ...]
     operator_summary: str
+    strategy_reviews: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -91,6 +100,14 @@ class GPTTraderBrain:
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+        cross_asset_path: Path = DEFAULT_CROSS_ASSET_SNAPSHOT,
+        flow_path: Path = DEFAULT_FLOW_SNAPSHOT,
+        currency_strength_path: Path = DEFAULT_CURRENCY_STRENGTH,
+        levels_path: Path = DEFAULT_LEVELS_SNAPSHOT,
+        calendar_path: Path = DEFAULT_CALENDAR_SNAPSHOT,
+        cot_path: Path = DEFAULT_COT_SNAPSHOT,
+        option_skew_path: Path = DEFAULT_OPTION_SKEW,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         max_lanes: int = DEFAULT_GPT_MAX_LANES,
@@ -101,6 +118,14 @@ class GPTTraderBrain:
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
         self.target_state_path = target_state_path
+        self.pair_charts_path = pair_charts_path
+        self.cross_asset_path = cross_asset_path
+        self.flow_path = flow_path
+        self.currency_strength_path = currency_strength_path
+        self.levels_path = levels_path
+        self.calendar_path = calendar_path
+        self.cot_path = cot_path
+        self.option_skew_path = option_skew_path
         self.output_path = output_path
         self.report_path = report_path
         self.max_lanes = max_lanes
@@ -142,6 +167,8 @@ class GPTTraderBrain:
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         refs = _allowed_refs(snapshot=snapshot, target=target, lanes=lanes)
+        pairs = _pairs_from_lanes(lanes)
+        currencies = _currencies_from_pairs(pairs)
         return {
             "contract": {
                 "allowed_actions": list(ALLOWED_ACTIONS),
@@ -149,10 +176,23 @@ class GPTTraderBrain:
                 "pending_entry_blocks_new_trade": True,
                 "protected_trader_position_adds_require_portfolio_validation": True,
                 "model_output_is_advisory_until_verified": True,
+                "strategy_reviews_must_use_lane_id_not_desk_alias": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
+            "market_context": _market_context_packet(
+                pairs=pairs,
+                currencies=currencies,
+                pair_charts_path=self.pair_charts_path,
+                cross_asset_path=self.cross_asset_path,
+                flow_path=self.flow_path,
+                currency_strength_path=self.currency_strength_path,
+                levels_path=self.levels_path,
+                calendar_path=self.calendar_path,
+                cot_path=self.cot_path,
+                option_skew_path=self.option_skew_path,
+            ),
             "allowed_evidence_refs": refs,
         }
 
@@ -215,6 +255,7 @@ class DecisionVerifier:
         unknown_refs = sorted(set(decision.evidence_refs) - self.allowed_refs)
         if unknown_refs:
             issues.append(VerificationIssue("UNKNOWN_EVIDENCE_REF", f"unknown evidence refs: {', '.join(unknown_refs)}"))
+        self._verify_strategy_reviews(decision, issues)
 
         broker = self.packet.get("broker_snapshot", {})
         positions = int(broker.get("positions") or 0)
@@ -302,6 +343,30 @@ class DecisionVerifier:
 
         return VerificationResult(allowed=not any(issue.severity == "BLOCK" for issue in issues), issues=tuple(issues))
 
+    def _verify_strategy_reviews(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
+        for review in decision.strategy_reviews:
+            lane_id = str(review.get("lane_id") or "")
+            method = str(review.get("method") or "")
+            verdict = str(review.get("verdict") or "")
+            if not lane_id:
+                issues.append(VerificationIssue("STRATEGY_REVIEW_LANE_REQUIRED", "strategy review requires lane_id"))
+                continue
+            lane = self.lanes.get(lane_id)
+            if lane is None:
+                issues.append(VerificationIssue("UNKNOWN_STRATEGY_REVIEW_LANE", f"review lane is not in packet: {lane_id}"))
+                continue
+            if method not in ALLOWED_METHODS:
+                issues.append(VerificationIssue("BAD_STRATEGY_REVIEW_METHOD", f"unsupported strategy review method {method!r}"))
+            elif lane.get("method") != method:
+                issues.append(
+                    VerificationIssue(
+                        "STRATEGY_REVIEW_METHOD_MISMATCH",
+                        f"review method {method} does not match lane {lane_id} method {lane.get('method')}",
+                    )
+                )
+            if verdict and verdict not in {"SUPPORTS", "REJECTS", "BLOCKED", "WATCH"}:
+                issues.append(VerificationIssue("BAD_STRATEGY_REVIEW_VERDICT", f"unsupported strategy review verdict {verdict!r}"))
+
 
 GPT_TRADER_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -334,6 +399,20 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "risk_notes": {"type": "array", "items": {"type": "string"}},
         "evidence_refs": {"type": "array", "items": {"type": "string"}},
         "operator_summary": {"type": "string"},
+        "strategy_reviews": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["lane_id", "method", "verdict", "summary"],
+                "properties": {
+                    "lane_id": {"type": "string"},
+                    "method": {"type": "string", "enum": list(ALLOWED_METHODS)},
+                    "verdict": {"type": "string", "enum": ["SUPPORTS", "REJECTS", "BLOCKED", "WATCH"]},
+                    "summary": {"type": "string"},
+                },
+            },
+        },
     },
 }
 
@@ -354,6 +433,11 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
         risk_notes=tuple(str(item) for item in payload.get("risk_notes", []) or []),
         evidence_refs=tuple(str(item) for item in payload.get("evidence_refs", []) or []),
         operator_summary=str(payload.get("operator_summary") or ""),
+        strategy_reviews=tuple(
+            dict(item)
+            for item in payload.get("strategy_reviews", []) or []
+            if isinstance(item, dict)
+        ),
     )
 
 
@@ -621,6 +705,264 @@ def _tradeable_live_ready_lanes(packet: dict[str, Any]) -> list[str]:
 def _cited_live_ready_lanes(decision: GPTTraderDecision, lane_ids: list[str]) -> list[str]:
     refs = set(decision.evidence_refs)
     return [lane_id for lane_id in lane_ids if f"intent:{lane_id}" in refs]
+
+
+def _pairs_from_lanes(lanes: list[dict[str, Any]]) -> tuple[str, ...]:
+    return tuple(sorted({str(lane.get("pair") or "") for lane in lanes if lane.get("pair")}))
+
+
+def _currencies_from_pairs(pairs: tuple[str, ...]) -> tuple[str, ...]:
+    currencies: set[str] = set()
+    for pair in pairs:
+        for currency in pair.split("_"):
+            if currency:
+                currencies.add(currency)
+    return tuple(sorted(currencies))
+
+
+def _market_context_packet(
+    *,
+    pairs: tuple[str, ...],
+    currencies: tuple[str, ...],
+    pair_charts_path: Path,
+    cross_asset_path: Path,
+    flow_path: Path,
+    currency_strength_path: Path,
+    levels_path: Path,
+    calendar_path: Path,
+    cot_path: Path,
+    option_skew_path: Path,
+) -> dict[str, Any]:
+    artifacts = {
+        "pair_charts": _load_optional_json(pair_charts_path),
+        "cross_asset": _load_optional_json(cross_asset_path),
+        "flow": _load_optional_json(flow_path),
+        "currency_strength": _load_optional_json(currency_strength_path),
+        "levels": _load_optional_json(levels_path),
+        "calendar": _load_optional_json(calendar_path),
+        "cot": _load_optional_json(cot_path),
+        "option_skew": _load_optional_json(option_skew_path),
+    }
+    missing = [
+        f"MISSING_{name.upper()}_ARTIFACT"
+        for name, payload in artifacts.items()
+        if payload is None
+    ]
+    pair_payloads = {
+        pair: {
+            "chart": _chart_summary(artifacts["pair_charts"], pair),
+            "flow": _flow_summary(artifacts["flow"], pair),
+            "levels": _levels_summary(artifacts["levels"], pair),
+            "calendar": _calendar_summary(artifacts["calendar"], pair),
+            "option_skew": _option_skew_summary(artifacts["option_skew"], pair),
+            "cross_correlations": _cross_correlations(artifacts["cross_asset"], pair),
+        }
+        for pair in pairs
+    }
+    issues = list(missing)
+    for payload in artifacts.values():
+        if isinstance(payload, dict):
+            issues.extend(str(issue) for issue in payload.get("issues", [])[:12])
+    return {
+        "pairs": pair_payloads,
+        "cross_asset": _cross_asset_summary(artifacts["cross_asset"]),
+        "currency_strength": _currency_strength_summary(artifacts["currency_strength"], currencies),
+        "cot": _cot_summary(artifacts["cot"], currencies),
+        "issues": issues[:40],
+    }
+
+
+def _chart_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    chart = _first_by_key(payload, "charts", "pair", pair)
+    if not chart:
+        return {}
+    views: dict[str, Any] = {}
+    for view in chart.get("views", []) or []:
+        if not isinstance(view, dict):
+            continue
+        granularity = str(view.get("granularity") or "")
+        if not granularity:
+            continue
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        regime = view.get("regime_reading") if isinstance(view.get("regime_reading"), dict) else {}
+        family = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
+        stat = view.get("stat_filters") if isinstance(view.get("stat_filters"), dict) else {}
+        views[granularity] = {
+            **_small_dict(
+                indicators,
+                (
+                    "atr_pips",
+                    "atr_percentile_100",
+                    "adx_14",
+                    "adx_percentile_100",
+                    "rsi_14",
+                    "williams_r_14",
+                    "mfi_14",
+                    "choppiness_14",
+                    "bb_width_percentile_100",
+                    "hurst_100",
+                    "close",
+                ),
+            ),
+            "regime_state": regime.get("state"),
+            "regime_confidence": regime.get("confidence"),
+            "trend_score": family.get("trend_score"),
+            "mean_rev_score": family.get("mean_rev_score"),
+            "breakout_score": family.get("breakout_score"),
+            "disagreement": family.get("disagreement"),
+            "last_jump_bars_ago": stat.get("last_jump_bars_ago"),
+            "lag1_autocorr": stat.get("lag1_autocorr"),
+        }
+    return {
+        "dominant_regime": chart.get("dominant_regime"),
+        "long_score": chart.get("long_score"),
+        "short_score": chart.get("short_score"),
+        "chart_story": chart.get("chart_story"),
+        "session": _small_dict(
+            chart.get("session"),
+            (
+                "current_tag",
+                "jp_holiday",
+                "holiday_name",
+                "judas_armed",
+                "ny_midnight_open_price",
+                "next_killzone",
+                "minutes_to_next_killzone",
+            ),
+        ),
+        "views": views,
+    }
+
+
+def _flow_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    spread = _first_by_key(payload, "spreads", "instrument", pair)
+    return {"spread": _small_dict(spread, ("current_pips", "median_pips", "p90_pips", "stress_flag", "sample_size"))}
+
+
+def _levels_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    levels = _first_by_key(payload, "pairs", "pair", pair)
+    if not levels:
+        return {}
+    standard_pivot = None
+    for pivot in levels.get("pivots", []) or []:
+        if isinstance(pivot, dict) and pivot.get("style") == "STANDARD":
+            standard_pivot = pivot
+            break
+    return {
+        **_small_dict(levels, ("daily_open", "weekly_open", "monthly_open", "pdh", "pdl", "pdc", "last_close")),
+        "standard_pivot": _small_dict(standard_pivot, ("pp", "r1", "r2", "s1", "s2")),
+        "nearest_round_numbers": [
+            _small_dict(item, ("price", "distance_pips"))
+            for item in (levels.get("round_numbers", []) or [])[:3]
+            if isinstance(item, dict)
+        ],
+    }
+
+
+def _calendar_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    window = _first_by_key(payload, "pair_windows", "pair", pair)
+    if not window:
+        return {}
+    next_event = window.get("next_event") if isinstance(window.get("next_event"), dict) else {}
+    return {
+        "in_window": window.get("in_window"),
+        "reason": window.get("reason"),
+        "next_event": _small_dict(next_event, ("timestamp_utc", "currency", "impact", "title")),
+    }
+
+
+def _option_skew_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    readings = [
+        _small_dict(item, ("tenor", "rr_25d", "atm_iv", "bf_25d", "issue"))
+        for item in (payload or {}).get("readings", []) or []
+        if isinstance(item, dict) and item.get("pair") == pair
+    ]
+    return {"readings": readings[:3]}
+
+
+def _cross_asset_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    assets = {}
+    for asset in payload.get("assets", []) or []:
+        if not isinstance(asset, dict):
+            continue
+        instrument = str(asset.get("instrument") or "")
+        if instrument in {"USB10Y_USD", "USB02Y_USD", "SPX500_USD", "XAU_USD", "WTICO_USD", "BTC_USD"}:
+            assets[instrument] = _small_dict(asset, ("last_price", "trend_label", "change_pct_24h", "z_score_60", "issue"))
+    return {
+        "synthetic_dxy": _small_dict(payload.get("synthetic_dxy"), ("last_value", "change_pct_24h", "change_pct_5d")),
+        "yield_spreads": [
+            _small_dict(item, ("name", "spread_last", "spread_change_24h", "issue"))
+            for item in (payload.get("yield_spreads", []) or [])[:3]
+            if isinstance(item, dict)
+        ],
+        "assets": assets,
+    }
+
+
+def _cross_correlations(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    correlations = payload.get("correlations")
+    if not isinstance(correlations, dict):
+        return {}
+    return _small_dict(
+        correlations.get(pair),
+        ("USB10Y_USD", "USB02Y_USD", "SPX500_USD", "XAU_USD", "WTICO_USD", "BTC_USD"),
+    )
+
+
+def _currency_strength_summary(payload: dict[str, Any] | None, currencies: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    summaries: dict[str, Any] = {
+        "strongest_pair_suggestion": payload.get("strongest_pair_suggestion"),
+    }
+    wanted = set(currencies)
+    for item in payload.get("scores", []) or []:
+        if not isinstance(item, dict):
+            continue
+        currency = str(item.get("currency") or "")
+        if currency in wanted:
+            summaries[currency] = _small_dict(item, ("rank", "score_pct"))
+    return summaries
+
+
+def _cot_summary(payload: dict[str, Any] | None, currencies: tuple[str, ...]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    wanted = set(currencies)
+    summaries: dict[str, Any] = {}
+    for item in payload.get("reports", []) or []:
+        if not isinstance(item, dict):
+            continue
+        currency = str(item.get("currency") or "")
+        if currency in wanted:
+            summaries[currency] = _small_dict(
+                item,
+                ("report_date", "leveraged_net", "week_change_leveraged_net", "asset_mgr_net", "open_interest"),
+            )
+    return summaries
+
+
+def _first_by_key(payload: dict[str, Any] | None, list_key: str, item_key: str, value: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    for item in payload.get(list_key, []) or []:
+        if isinstance(item, dict) and item.get(item_key) == value:
+            return item
+    return {}
+
+
+def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _load_json(path: Path) -> dict[str, Any]:

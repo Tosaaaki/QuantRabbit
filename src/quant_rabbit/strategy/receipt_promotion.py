@@ -21,6 +21,7 @@ PENDING_ENTRY_TYPES = {"LIMIT", "STOP-ENTRY"}
 class Promotion:
     pair: str
     direction: str
+    method: str | None
     old_status: str
     new_status: str
     lane_id: str
@@ -67,14 +68,17 @@ class ReceiptPromoter:
                 continue
             pair = str(item.get("pair") or "")
             direction = str(item.get("direction") or "")
+            method = str(item.get("method") or "").strip().upper() or None
             status = str(item.get("status") or "")
-            receipt = receipts.get((pair, direction))
+            receipt = _receipt_for(receipts, pair, direction, method)
             promotion = _promotion_for(item, receipt)
             if promotion is None:
                 if status in {"RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
                     still_blocked += 1
                 continue
             item["status"] = "CANDIDATE"
+            if promotion.method:
+                item["method"] = promotion.method
             item["required_fix"] = (
                 f"promoted from {promotion.old_status} by {promotion.reason}; "
                 f"source lane {promotion.lane_id}; receipt_at_utc={generated_at}"
@@ -83,6 +87,7 @@ class ReceiptPromoter:
                 "promoted_at_utc": generated_at,
                 "from_status": promotion.old_status,
                 "lane_id": promotion.lane_id,
+                "method": promotion.method,
                 "reason": promotion.reason,
             }
             promotions.append(promotion)
@@ -128,7 +133,7 @@ class ReceiptPromoter:
         if promotions:
             for item in promotions:
                 lines.append(
-                    f"- `{item.pair} {item.direction}` {item.old_status} -> {item.new_status} "
+                    f"- `{item.pair} {item.direction}{_method_suffix(item.method)}` {item.old_status} -> {item.new_status} "
                     f"via `{item.lane_id}`"
                 )
                 lines.append(f"  - reason: {item.reason}")
@@ -147,8 +152,8 @@ class ReceiptPromoter:
         self.report_path.write_text("\n".join(lines) + "\n")
 
 
-def _eligible_receipts(intents_payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
-    receipts: dict[tuple[str, str], dict[str, Any]] = {}
+def _eligible_receipts(intents_payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    receipts: dict[tuple[str, str, str], dict[str, Any]] = {}
     for result in intents_payload.get("results", []) or []:
         if not isinstance(result, dict):
             continue
@@ -161,13 +166,32 @@ def _eligible_receipts(intents_payload: dict[str, Any]) -> dict[tuple[str, str],
             continue
         pair = str(intent.get("pair") or "")
         direction = str(intent.get("side") or "")
-        if not pair or not direction:
+        method = _receipt_method(result)
+        if not pair or not direction or not method:
             continue
-        key = (pair, direction)
+        key = (pair, direction, method)
         current = receipts.get(key)
         if current is None or _receipt_rank(result) > _receipt_rank(current):
             receipts[key] = result
     return receipts
+
+
+def _receipt_for(
+    receipts: dict[tuple[str, str, str], dict[str, Any]],
+    pair: str,
+    direction: str,
+    method: str | None,
+) -> dict[str, Any] | None:
+    if method:
+        return receipts.get((pair, direction, method))
+    candidates = [
+        receipt
+        for (receipt_pair, receipt_direction, _), receipt in receipts.items()
+        if receipt_pair == pair and receipt_direction == direction
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=_receipt_rank)
 
 
 def _has_blocking_risk(result: dict[str, Any]) -> bool:
@@ -193,11 +217,13 @@ def _promotion_for(item: dict[str, Any], receipt: dict[str, Any] | None) -> Prom
     intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
     pair = str(item.get("pair") or "")
     direction = str(item.get("direction") or "")
+    method = _receipt_method(receipt)
     order_type = str(intent.get("order_type") or "")
     if status == "RISK_REPAIR_CANDIDATE":
         return Promotion(
             pair=pair,
             direction=direction,
+            method=method,
             old_status=status,
             new_status="CANDIDATE",
             lane_id=lane_id,
@@ -207,9 +233,27 @@ def _promotion_for(item: dict[str, Any], receipt: dict[str, Any] | None) -> Prom
         return Promotion(
             pair=pair,
             direction=direction,
+            method=method,
             old_status=status,
             new_status="CANDIDATE",
             lane_id=lane_id,
             reason=f"missed edge converted into {order_type} trigger receipt",
         )
     return None
+
+
+def _receipt_method(result: dict[str, Any]) -> str | None:
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    method = str(context.get("method") or "").strip().upper()
+    if method:
+        return method
+    lane_id = str(result.get("lane_id") or "")
+    parts = lane_id.split(":")
+    if len(parts) >= 4:
+        return parts[3].strip().upper() or None
+    return None
+
+
+def _method_suffix(method: str | None) -> str:
+    return f" {method}" if method else ""

@@ -114,6 +114,13 @@ The decision must reference these inputs explicitly. Do not invent ATR, regime, 
 
 ### 3. Decide
 
+Use a single top-level Portfolio Director pass, then optional strategy-review passes, then one final decision receipt:
+
+1. Top layer: read broker truth, daily target, exposure, all `LIVE_READY` lanes, and hard gates.
+2. Indicator layer: use the `market_context` packet plus source files for pair charts, flow, levels, calendar, cross-asset, currency strength, COT, and option skew. Do not cite only evidence refs when the data body is available.
+3. Strategy-review layer: review lanes by `lane_id` / `method`, not by a loose desk name. Trend, range, and breakout-failure reviews may run in parallel, but they must only emit advisory `strategy_reviews`.
+4. Final integration: write exactly one decision JSON. Only the final JSON can select a lane; execution remains gated by `gpt-trader-decision`, `TraderBrain` prefilter, `RiskEngine`, `StrategyProfile`, and `LiveOrderGateway`.
+
 Write `data/codex_trader_decision_response.json` (the filename is kept for compatibility regardless of which model wrote it):
 
 ```json
@@ -138,11 +145,19 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
     "strength:<pair>", "flow:<pair>", "levels:<pair>",
     "calendar:<pair>", "cot:<currency>", "option:skew:<pair>"
   ],
+  "strategy_reviews": [
+    {
+      "lane_id": "trend_trader:USD_JPY:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "verdict": "SUPPORTS",
+      "summary": "Trend review supports only this lane because M5/M15 trend_score and levels align; it does not authorize range/failure lanes."
+    }
+  ],
   "operator_summary": "..."
 }
 ```
 
-Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped.
+Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped. `strategy_reviews` is optional but, when present, each review's `lane_id` and `method` must match the lane it reviews; a trend review cannot authorize a range or breakout-failure lane.
 
 `chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json`, `cross_asset_snapshot.json`, `flow_snapshot.json`, `levels_snapshot.json`, `currency_strength.json`, `economic_calendar.json`, `cot_snapshot.json`, and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
 
