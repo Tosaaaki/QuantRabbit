@@ -346,15 +346,21 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 200.0)
 
     def test_backtest_required_trade_pace_overrides_stale_default_pace(self) -> None:
+        from quant_rabbit.risk import RiskPolicy
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             backtest = root / "ai_test_bot.json"
+            # Use a backtest pace under the policy cap so we still verify that
+            # backtest evidence is preferred over a stale CLI default. The
+            # absurd-pace branch is covered separately by
+            # test_backtest_required_pace_is_capped_to_policy_ceiling.
             backtest.write_text(
                 json.dumps(
                     {
                         "firepower": {
-                            "avg_selected_trades_per_day": 6.1892,
-                            "required_trades_per_day_at_observed_expectancy": 229,
+                            "avg_selected_trades_per_day": 12.0,
+                            "required_trades_per_day_at_observed_expectancy": 25,
                         }
                     }
                 )
@@ -373,10 +379,88 @@ class DailyTargetLedgerTest(unittest.TestCase):
             summary = ledger.run(realized_pl_jpy=0)
             payload = json.loads((root / "target.json").read_text())
 
-            self.assertEqual(summary.target_trades_per_day, 229)
+            self.assertLessEqual(25, RiskPolicy().max_target_trades_per_day or 25)
+            self.assertEqual(summary.target_trades_per_day, 25)
             self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades")
-            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 229, places=4)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 25, places=4)
             self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades")
+
+    def test_backtest_required_pace_is_capped_to_policy_ceiling(self) -> None:
+        """An absurd ai-test-bot pace must not silently shrink per-trade sizing.
+
+        Regression: ai-test-bot.firepower returned 229 required trades/day when
+        observed expectancy was too thin to hit the 10% target. That number
+        flowed through unfiltered to per_trade_risk_budget_jpy ≈ 18 JPY, which
+        sized live EUR_USD orders at ~200 units (≈0.02 standard lot), making
+        execution operationally meaningless. The cap keeps sizing tradable;
+        the strategy/expectancy gap is still surfaced by ai_test_bot.firepower.
+        """
+        from quant_rabbit.risk import RiskPolicy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "firepower": {
+                            "avg_selected_trades_per_day": 6.1892,
+                            "required_trades_per_day_at_observed_expectancy": 229,
+                        }
+                    }
+                )
+            )
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            )
+
+            summary = ledger.run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            cap = RiskPolicy().max_target_trades_per_day
+            self.assertIsNotNone(cap)
+            self.assertEqual(summary.target_trades_per_day, cap)
+            self.assertEqual(
+                summary.target_trades_per_day_source,
+                "ai_test_bot_required_trades_capped",
+            )
+            self.assertAlmostEqual(
+                summary.per_trade_risk_budget_jpy,
+                4000.0 / cap,
+                places=4,
+            )
+            self.assertEqual(
+                payload["target_trades_per_day_source"],
+                "ai_test_bot_required_trades_capped",
+            )
+
+    def test_explicit_cli_pace_is_not_capped(self) -> None:
+        """Operator-set pace via --target-trades-per-day must pass through.
+
+        The cap exists to prevent silent backtest-driven sabotage. An explicit
+        operator override is the documented way to declare a higher pace
+        (e.g. for chance-time S-size attacks); the cap must not clip it.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            )
+
+            summary = ledger.run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+                target_trades_per_day=200,
+            )
+
+            self.assertEqual(summary.target_trades_per_day, 200)
+            self.assertEqual(summary.target_trades_per_day_source, "cli")
 
     def test_explicit_start_balance_overrides_snapshot_account(self) -> None:
         from quant_rabbit.models import AccountSummary

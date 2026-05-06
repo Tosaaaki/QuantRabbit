@@ -167,6 +167,26 @@ class DailyTargetLedger:
             elif previous_pace is not None:
                 explicit_pace = previous_pace
                 pace_source = "previous_state"
+            cap = policy.max_target_trades_per_day
+            if (
+                explicit_pace is not None
+                and cap is not None
+                and cap > 0
+                and explicit_pace > cap
+            ):
+                # ai-test-bot.firepower can demand 100+ trades/day when current
+                # strategy expectancy is too thin to hit the daily target. That
+                # number flowing straight into per_trade_risk_budget_jpy sizes
+                # each order into the noise floor; cap to the operator's
+                # declared practical maximum so execution stays meaningful.
+                # The expectancy gap itself is still surfaced via
+                # ai_test_bot.firepower so the operator sees it.
+                explicit_pace = int(cap)
+                pace_source = (
+                    f"{pace_source}_capped"
+                    if pace_source
+                    else "policy_cap"
+                )
         if explicit_pace is None:
             if policy.target_trades_per_day is None or policy.target_trades_per_day <= 0:
                 raise ValueError(

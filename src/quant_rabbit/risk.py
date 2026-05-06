@@ -82,6 +82,26 @@ class RiskPolicy:
     # (c) replace via: --target-trades-per-day on daily-target-state, or by
     #     improving ai-test-bot firepower/expectancy wiring.
     target_trades_per_day: int | None = 10
+    # Sanity ceiling on the pace divisor used to derive per_trade_risk_budget_jpy.
+    # ai-test-bot.firepower can return required_trades_per_day_at_observed_expectancy
+    # values into the hundreds when current strategy expectancy is too thin to
+    # hit the daily target at any practical pace (e.g. 229 trades/day). Dividing
+    # daily_risk_budget_jpy by such a number sizes each order at ~10–20 JPY
+    # worst-case loss, which floors out near broker minimum units and silently
+    # makes execution operationally meaningless.
+    #
+    # Per AGENT_CONTRACT §3.5:
+    # (a) market reality: a sustained autonomous FX scalp/swing day rarely
+    #     supports more than ~30 independent risk-bounded shots before slippage,
+    #     spread cost, and decision-quality degradation dominate edge.
+    # (b) constant rather than derived: this is the operator's declared maximum
+    #     practical attempt count, not market output. Backtest expectancy gaps
+    #     are still surfaced in ai_test_bot.firepower so the operator sees the
+    #     gap; the cap only prevents the gap from silently sabotaging sizing.
+    # (c) replace via: pass --target-trades-per-day on daily-target-state for an
+    #     explicit operator pace, or improve strategy expectancy so backtest
+    #     pace falls naturally below the cap.
+    max_target_trades_per_day: int | None = 30
     min_reward_risk: float = 1.2
     max_quote_age_seconds: int = 20
     max_spread_multiple: float = 2.5
