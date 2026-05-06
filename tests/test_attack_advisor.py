@@ -137,7 +137,7 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertFalse(payload["live_permission"])
             self.assertTrue(report.exists())
 
-    def test_archive_outcome_mart_boosts_method_specific_lane(self) -> None:
+    def test_archive_outcome_mart_boosts_condition_specific_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             intents = root / "intents.json"
@@ -148,12 +148,22 @@ class AttackAdvisorTest(unittest.TestCase):
             intents.write_text(
                 json.dumps(
                     {
+                        "generated_at_utc": "2026-05-06T08:30:00+00:00",
                         "results": [
                             _result(
                                 lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
                                 pair="EUR_USD",
                                 side="LONG",
                                 method="TREND_CONTINUATION",
+                                context={
+                                    "method": "TREND_CONTINUATION",
+                                    "narrative": "test",
+                                    "chart_story": "test",
+                                    "invalidation": "test",
+                                    "regime": "TREND_CONTINUATION campaign lane",
+                                    "session": "generated dry-run",
+                                },
+                                metadata={"regime_state": "TREND_UP"},
                                 reward_jpy=900.0,
                                 risk_jpy=300.0,
                                 rr=3.0,
@@ -163,6 +173,15 @@ class AttackAdvisorTest(unittest.TestCase):
                                 pair="EUR_USD",
                                 side="LONG",
                                 method="RANGE_ROTATION",
+                                context={
+                                    "method": "RANGE_ROTATION",
+                                    "narrative": "test",
+                                    "chart_story": "test",
+                                    "invalidation": "test",
+                                    "regime": "RANGE_ROTATION campaign lane",
+                                    "session": "generated dry-run",
+                                },
+                                metadata={"regime_state": "TREND_UP"},
                                 reward_jpy=900.0,
                                 risk_jpy=300.0,
                                 rr=3.0,
@@ -177,6 +196,28 @@ class AttackAdvisorTest(unittest.TestCase):
             outcome_mart.write_text(
                 json.dumps(
                     {
+                        "condition_edges": [
+                            {
+                                "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TREND_UP",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "MARKET",
+                                "session_bucket": "LONDON",
+                                "regime": "TREND_UP",
+                                "net_jpy": 500.0,
+                                "avg_jpy": 50.0,
+                                "outcome_n": 10,
+                            },
+                            {
+                                "key": "ALL:ALL:TREND_CONTINUATION:MARKET:LONDON:TREND_UP",
+                                "method": "TREND_CONTINUATION",
+                                "order_type": "MARKET",
+                                "session_bucket": "LONDON",
+                                "regime": "TREND_UP",
+                                "net_jpy": -100.0,
+                                "avg_jpy": -10.0,
+                                "outcome_n": 10,
+                            },
+                        ],
                         "method_edges": [
                             {
                                 "key": "EUR_USD:LONG:RANGE_ROTATION:ALL:ALL:ALL",
@@ -214,8 +255,11 @@ class AttackAdvisorTest(unittest.TestCase):
             payload = json.loads((root / "advice.json").read_text())
             self.assertEqual(payload["recommended_now_lane_ids"][0], "range_trader:EUR_USD:LONG:RANGE_ROTATION")
             lane = payload["lanes"][0]
+            self.assertEqual(lane["archive_condition_edge_jpy"], 500.0)
+            self.assertEqual(lane["archive_condition_trials"], 10)
+            self.assertEqual(lane["archive_condition_key"], "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TREND_UP")
             self.assertEqual(lane["archive_method_edge_jpy"], 500.0)
-            self.assertEqual(lane["archive_method_trials"], 10)
+            self.assertIn("condition=`ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TREND_UP`", (root / "advice.md").read_text())
 
 
 def _result(
@@ -229,6 +273,8 @@ def _result(
     risk_jpy: float = 300.0,
     rr: float = 3.0,
     risk_metrics: dict | None = None,
+    context: dict | None = None,
+    metadata: dict | None = None,
 ) -> dict:
     metrics = risk_metrics if risk_metrics is not None else {"reward_jpy": reward_jpy, "risk_jpy": risk_jpy, "reward_risk": rr, "spread_pips": 0.8}
     return {
@@ -246,7 +292,10 @@ def _result(
             "entry": 1.1,
             "tp": 1.2,
             "sl": 1.0,
-            "market_context": {"method": method, "narrative": "test", "chart_story": "test", "invalidation": "test"},
+            "market_context": context
+            if context is not None
+            else {"method": method, "narrative": "test", "chart_story": "test", "invalidation": "test"},
+            "metadata": metadata or {},
         },
     }
 

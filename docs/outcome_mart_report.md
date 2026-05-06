@@ -1,6 +1,6 @@
 # Outcome Mart Report
 
-- Generated at UTC: `2026-05-06T15:12:01.665708+00:00`
+- Generated at UTC: `2026-05-06T15:33:26.287857+00:00`
 - Status: `OUTCOME_MART_READY`
 - History DB: `/Users/tossaki/App/QuantRabbit/data/legacy_history.db`
 - Execution ledger DB: `None`
@@ -8,7 +8,44 @@
 - Execution ledger outcomes: `0`
 - Story observations: `2674`
 
-## Top Method Edges
+## Winning Conditions (>= 5 outcomes)
+
+| Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `ALL:ALL:RANGE_ROTATION:UNSPECIFIED:NY:UNSPECIFIED` | 20 | 129 | 18433.3 | 921.7 | 80.0 | -270.0 | 2259.0 |
+| `ALL:ALL:TREND_CONTINUATION:STOP_ENTRY:LONDON:UNSPECIFIED` | 9 | 39 | 2052.0 | 228.0 | 66.7 | -351.0 | 483.0 |
+| `ALL:ALL:RANGE_ROTATION:MARKET:LONDON:UNSPECIFIED` | 18 | 39 | 1836.1 | 102.0 | 66.7 | -723.0 | 576.0 |
+| `ALL:ALL:RANGE_ROTATION:MARKET:ASIA:UNSPECIFIED` | 10 | 49 | 1376.8 | 137.7 | 60.0 | -48.0 | 261.5 |
+| `ALL:ALL:BREAKOUT_FAILURE:MARKET:LONDON:UNSPECIFIED` | 17 | 55 | 1031.4 | 60.7 | 52.9 | -414.0 | 409.4 |
+| `ALL:ALL:UNSPECIFIED:LIMIT:LONDON:QUIET` | 6 | 0 | 798.8 | 133.1 | 50.0 | -347.2 | 600.0 |
+| `ALL:ALL:RANGE_ROTATION:UNSPECIFIED:LONDON:UNSPECIFIED` | 9 | 54 | 699.6 | 77.7 | 55.6 | -459.2 | 562.8 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:LONDON:BEAR` | 6 | 0 | 530.5 | 88.4 | 50.0 | -384.0 | 477.6 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ROLLOVER:TRENDING` | 6 | 0 | 364.1 | 60.7 | 33.3 | -2196.0 | 2199.9 |
+| `ALL:ALL:BREAKOUT_FAILURE:LIMIT:LONDON:UNSPECIFIED` | 5 | 45 | 300.8 | 60.2 | 80.0 | -31.0 | 97.9 |
+| `ALL:ALL:BREAKOUT_FAILURE:MARKET:ASIA:UNSPECIFIED` | 6 | 2 | 192.1 | 32.0 | 50.0 | -618.0 | 556.0 |
+
+## Losing Conditions (>= 5 outcomes)
+
+| Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `ALL:ALL:UNSPECIFIED:MARKET:NY:UNSPECIFIED` | 2382 | 33 | -30996.8 | -13.0 | 48.2 | -2235.6 | 1721.7 |
+| `ALL:ALL:UNSPECIFIED:LIMIT:NY:UNSPECIFIED` | 124 | 62 | -20894.2 | -168.5 | 25.0 | -1097.6 | 3365.8 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:LONDON:UNSPECIFIED` | 106 | 6 | -16960.3 | -160.0 | 30.2 | -2768.0 | 1876.4 |
+| `ALL:ALL:UNSPECIFIED:STOP_ENTRY:NY:UNSPECIFIED` | 41 | 62 | -15475.0 | -377.4 | 39.0 | -1821.1 | 768.3 |
+| `ALL:ALL:UNSPECIFIED:MARKET:ASIA:UNSPECIFIED` | 1987 | 17 | -13345.3 | -6.7 | 38.8 | -7696.0 | 1300.0 |
+| `ALL:ALL:UNSPECIFIED:MARKET:LONDON:UNSPECIFIED` | 1823 | 15 | -9767.2 | -5.4 | 37.3 | -2740.0 | 1154.9 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ASIA:UNSPECIFIED` | 36 | 43 | -7687.3 | -213.5 | 33.3 | -3631.4 | 2375.5 |
+| `ALL:ALL:UNSPECIFIED:MARKET:ROLLOVER:UNSPECIFIED` | 222 | 20 | -7332.3 | -33.0 | 32.0 | -2699.5 | 357.2 |
+| `ALL:ALL:BREAKOUT_FAILURE:UNSPECIFIED:LONDON:UNSPECIFIED` | 12 | 31 | -6529.6 | -544.1 | 16.7 | -1003.6 | 97.9 |
+| `ALL:ALL:UNSPECIFIED:LIMIT:LONDON:UNSPECIFIED` | 139 | 43 | -6254.8 | -45.0 | 40.3 | -1447.0 | 1213.2 |
+| `ALL:ALL:BREAKOUT_FAILURE:UNSPECIFIED:ROLLOVER:UNSPECIFIED` | 5 | 9 | -5776.5 | -1155.3 | 20.0 | -2235.6 | 85.0 |
+| `ALL:ALL:RANGE_ROTATION:LIMIT:NY:UNSPECIFIED` | 24 | 189 | -5420.1 | -225.8 | 0.0 | -372.0 | -23.8 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:ROLLOVER:UNSPECIFIED` | 56 | 18 | -4926.0 | -88.0 | 46.4 | -3516.3 | 4020.0 |
+| `ALL:ALL:UNSPECIFIED:UNSPECIFIED:NY:TRENDING` | 30 | 0 | -4593.3 | -153.1 | 30.0 | -1026.6 | 756.0 |
+| `ALL:ALL:TREND_CONTINUATION:UNSPECIFIED:NY:UNSPECIFIED` | 35 | 14 | -4420.2 | -126.3 | 31.4 | -1821.1 | 280.6 |
+| `ALL:ALL:BREAKOUT_FAILURE:STOP_ENTRY:NY:UNSPECIFIED` | 5 | 61 | -4278.2 | -855.6 | 0.0 | -1821.1 | -126.0 |
+
+## Pair/Method Drilldown
 
 | Key | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -29,30 +66,10 @@
 | `GBP_JPY:SHORT:TREND_CONTINUATION:ALL:ALL:ALL` | 2 | 3 | 44.0 | 22.0 | 50.0 | -31.0 | 75.0 |
 | `AUD_USD:SHORT:BREAKOUT_FAILURE:ALL:ALL:ALL` | 0 | 46 | 0.0 |  |  |  |  |
 
-## Negative Method Edges
-
-| Key | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `EUR_USD:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 283 | 102 | -33980.2 | -120.1 | 50.2 | -2235.6 | 2992.5 |
-| `USD_JPY:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 2411 | 9 | -26382.1 | -10.9 | 33.2 | -7696.0 | 652.0 |
-| `EUR_JPY:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 151 | 90 | -19179.5 | -127.0 | 17.9 | -1144.0 | 1300.0 |
-| `AUD_USD:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 69 | 41 | -18446.5 | -267.3 | 18.8 | -2699.5 | 624.1 |
-| `GBP_USD:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 61 | 25 | -18248.7 | -299.2 | 23.0 | -3832.3 | 881.7 |
-| `GBP_USD:LONG:UNSPECIFIED:ALL:ALL:ALL` | 116 | 47 | -17456.8 | -150.5 | 43.1 | -3631.4 | 1109.8 |
-| `USD_JPY:LONG:UNSPECIFIED:ALL:ALL:ALL` | 3655 | 37 | -13350.8 | -3.7 | 46.5 | -2740.0 | 1220.0 |
-| `AUD_JPY:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 148 | 10 | -12195.3 | -82.4 | 36.5 | -2768.0 | 1256.0 |
-| `GBP_JPY:SHORT:UNSPECIFIED:ALL:ALL:ALL` | 42 | 23 | -9625.5 | -229.2 | 23.8 | -2196.0 | 906.0 |
-| `EUR_USD:SHORT:BREAKOUT_FAILURE:ALL:ALL:ALL` | 34 | 232 | -9531.8 | -280.3 | 50.0 | -2235.6 | 989.6 |
-| `GBP_USD:SHORT:BREAKOUT_FAILURE:ALL:ALL:ALL` | 13 | 72 | -9083.2 | -698.7 | 7.7 | -1227.7 | 159.3 |
-| `AUD_JPY:SHORT:RANGE_ROTATION:ALL:ALL:ALL` | 39 | 102 | -6708.0 | -172.0 | 20.5 | -723.0 | 576.0 |
-| `AUD_USD:LONG:UNSPECIFIED:ALL:ALL:ALL` | 38 | 4 | -6444.8 | -169.6 | 34.2 | -2699.5 | 3365.8 |
-| `GBP_USD:LONG:TREND_CONTINUATION:ALL:ALL:ALL` | 23 | 64 | -6302.4 | -274.0 | 17.4 | -2583.1 | 85.0 |
-| `USD_JPY:LONG:RANGE_ROTATION:ALL:ALL:ALL` | 18 | 149 | -3886.0 | -215.9 | 11.1 | -270.0 | 200.0 |
-| `GBP_USD:SHORT:TREND_CONTINUATION:ALL:ALL:ALL` | 5 | 14 | -3705.5 | -741.1 | 20.0 | -1227.7 | 401.8 |
-
 ## Contract
 
-- This mart is read-only archive evidence for ranking and review.
+- This mart is read-only archive condition evidence for ranking and review.
 - It never places, stages, resizes, or authorizes broker orders.
 - Current broker truth, RiskEngine, strategy-profile validation, and gateways remain authoritative.
 - Story observations without P/L increase coverage counts only; they do not create expectancy.
+- Pair/method drilldown is secondary; the primary question is which conditions paid or failed.

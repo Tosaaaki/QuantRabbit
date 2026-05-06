@@ -1300,6 +1300,7 @@ def main(argv: list[str] | None = None) -> int:
                     "archive_outcomes": summary.archive_outcomes,
                     "execution_ledger_outcomes": summary.execution_ledger_outcomes,
                     "story_observations": summary.story_observations,
+                    "condition_edges": summary.condition_edges,
                     "method_edges": summary.method_edges,
                     "setup_buckets": summary.setup_buckets,
                     "live_permission": False,

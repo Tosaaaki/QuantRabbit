@@ -28,6 +28,7 @@ ADVISORY_POSITIVE_EDGE_SCORE = 25.0
 ADVISORY_NEGATIVE_EDGE_PENALTY = 25.0
 ADVISORY_OUTCOME_MART_EDGE_SCORE = 15.0
 ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY = 15.0
+ADVISORY_OUTCOME_MART_MIN_TRIALS = 5
 ADVISORY_MARKET_PARTICIPATION_SCORE = 5.0
 REPORT_LANE_LIMIT = 12
 
@@ -51,6 +52,10 @@ class AttackLaneAdvice:
     archive_method_avg_jpy: float | None
     archive_method_trials: int
     archive_method_key: str | None
+    archive_condition_edge_jpy: float | None
+    archive_condition_avg_jpy: float | None
+    archive_condition_trials: int
+    archive_condition_key: str | None
     rationale: tuple[str, ...]
     blockers: tuple[str, ...] = ()
 
@@ -104,6 +109,8 @@ class AttackAdvisor:
         coverage = _load_optional_json(self.coverage_path)
         edge_index = _edge_index(ai_backtest or {})
         outcome_index = _outcome_index(outcome_mart or {})
+        condition_index = _condition_index(outcome_mart or {})
+        intent_session_bucket = _session_bucket_from_timestamp(intents.get("generated_at_utc"))
         remaining_target = _positive_float(target.get("remaining_target_jpy"))
         remaining_risk = _positive_float(target.get("remaining_risk_budget_jpy"))
         lanes = tuple(
@@ -111,6 +118,8 @@ class AttackAdvisor:
                 item,
                 edge_index=edge_index,
                 outcome_index=outcome_index,
+                condition_index=condition_index,
+                intent_session_bucket=intent_session_bucket,
                 remaining_target_jpy=remaining_target,
             )
             for item in intents.get("results", []) or []
@@ -142,6 +151,7 @@ class AttackAdvisor:
                 live_ready=live_ready,
                 edge_index=edge_index,
                 outcome_index=outcome_index,
+                condition_index=condition_index,
                 coverage=coverage or {},
             )
         )
@@ -222,7 +232,9 @@ class AttackAdvisor:
                     f"- `{lane_id}` score=`{lane['score']:.1f}` reward=`{lane['reward_jpy']:.0f}` "
                     f"risk=`{lane['risk_jpy']:.0f}` rr=`{lane['reward_risk']:.2f}` "
                     f"hist_edge=`{lane['historical_edge_jpy']}` "
-                    f"archive_edge=`{lane['archive_method_edge_jpy']}`"
+                    f"condition=`{lane['archive_condition_key']}` "
+                    f"condition_edge=`{lane['archive_condition_edge_jpy']}` "
+                    f"method_edge=`{lane['archive_method_edge_jpy']}`"
                 )
         else:
             lines.append("- none")
@@ -260,6 +272,8 @@ def _attack_lane(
     *,
     edge_index: dict[tuple[str, str], dict[str, Any]],
     outcome_index: dict[tuple[str, str, str], dict[str, Any]],
+    condition_index: dict[tuple[str, str, str, str], dict[str, Any]],
+    intent_session_bucket: str,
     remaining_target_jpy: float | None,
 ) -> AttackLaneAdvice:
     intent = item["intent"]
@@ -267,6 +281,7 @@ def _attack_lane(
     pair = str(intent.get("pair") or "")
     direction = str(intent.get("side") or "")
     context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
     method = str(context.get("method") or "")
     order_type = str(intent.get("order_type") or "")
     status = str(item.get("status") or "")
@@ -287,6 +302,26 @@ def _attack_lane(
     archive_avg_jpy = _optional_float(archive_edge.get("avg_jpy")) if archive_edge else None
     archive_trials = int(archive_edge.get("outcome_n") or 0) if archive_edge else 0
     archive_key = str(archive_edge.get("key") or "") if archive_edge else None
+    condition_edge = _best_condition_edge(
+        condition_index,
+        method=method,
+        order_type=order_type,
+        session=_first_condition_token(
+            context.get("session_bucket"),
+            metadata.get("session_bucket"),
+            context.get("session"),
+            intent_session_bucket,
+        ),
+        regime=_first_condition_token(
+            metadata.get("regime_state"),
+            context.get("regime_state"),
+            context.get("regime"),
+        ),
+    )
+    condition_net_jpy = _optional_float(condition_edge.get("net_jpy")) if condition_edge else None
+    condition_avg_jpy = _optional_float(condition_edge.get("avg_jpy")) if condition_edge else None
+    condition_trials = int(condition_edge.get("outcome_n") or 0) if condition_edge else 0
+    condition_key = str(condition_edge.get("key") or "") if condition_edge else None
     rationale: list[str] = []
     score = 0.0
     if reward is not None:
@@ -304,12 +339,15 @@ def _attack_lane(
     elif edge_jpy is not None and edge_jpy < 0:
         score -= ADVISORY_NEGATIVE_EDGE_PENALTY
         rationale.append("negative AI-test-bot pair/direction edge")
-    if archive_net_jpy is not None and archive_net_jpy > 0:
+    condition_is_actionable = condition_trials >= ADVISORY_OUTCOME_MART_MIN_TRIALS
+    if condition_net_jpy is not None and condition_is_actionable and condition_net_jpy > 0:
         score += ADVISORY_OUTCOME_MART_EDGE_SCORE
-        rationale.append("positive archive method edge")
-    elif archive_net_jpy is not None and archive_net_jpy < 0:
+        rationale.append("positive archive condition edge")
+    elif condition_net_jpy is not None and condition_is_actionable and condition_net_jpy < 0:
         score -= ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY
-        rationale.append("negative archive method edge")
+        rationale.append("negative archive condition edge")
+    elif condition_net_jpy is not None and not condition_is_actionable:
+        rationale.append("archive condition edge below sample floor")
     if order_type == "MARKET":
         score += ADVISORY_MARKET_PARTICIPATION_SCORE
         rationale.append("immediate market participation")
@@ -331,6 +369,10 @@ def _attack_lane(
         archive_method_avg_jpy=_round(archive_avg_jpy) if archive_avg_jpy is not None else None,
         archive_method_trials=archive_trials,
         archive_method_key=archive_key,
+        archive_condition_edge_jpy=_round(condition_net_jpy) if condition_net_jpy is not None else None,
+        archive_condition_avg_jpy=_round(condition_avg_jpy) if condition_avg_jpy is not None else None,
+        archive_condition_trials=condition_trials,
+        archive_condition_key=condition_key,
         rationale=tuple(rationale),
         blockers=tuple(blockers),
     )
@@ -410,6 +452,21 @@ def _outcome_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[s
     return index
 
 
+def _condition_index(payload: dict[str, Any]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for item in payload.get("condition_edges", []) or []:
+        if not isinstance(item, dict):
+            continue
+        method = _condition_token(item.get("method"))
+        order_type = _condition_token(item.get("order_type"))
+        session = _condition_token(item.get("session_bucket"))
+        regime = _condition_token(item.get("regime"))
+        if not method:
+            continue
+        index[(method, order_type or "UNSPECIFIED", session or "UNSPECIFIED", regime or "UNSPECIFIED")] = item
+    return index
+
+
 def _best_outcome_edge(
     index: dict[tuple[str, str, str], dict[str, Any]],
     *,
@@ -421,6 +478,73 @@ def _best_outcome_edge(
     if exact:
         return exact
     return index.get((pair, direction, "UNSPECIFIED"), {})
+
+
+def _best_condition_edge(
+    index: dict[tuple[str, str, str, str], dict[str, Any]],
+    *,
+    method: str,
+    order_type: str,
+    session: str,
+    regime: str,
+) -> dict[str, Any]:
+    method_key = _condition_token(method)
+    order_key = _condition_token(order_type) or "UNSPECIFIED"
+    session_key = _condition_token(session) or "UNSPECIFIED"
+    regime_key = _condition_token(regime) or "UNSPECIFIED"
+    for key in (
+        (method_key, order_key, session_key, regime_key),
+        (method_key, order_key, session_key, "UNSPECIFIED"),
+        (method_key, order_key, "UNSPECIFIED", regime_key),
+        (method_key, order_key, "UNSPECIFIED", "UNSPECIFIED"),
+        (method_key, "UNSPECIFIED", session_key, regime_key),
+        (method_key, "UNSPECIFIED", session_key, "UNSPECIFIED"),
+        (method_key, "UNSPECIFIED", "UNSPECIFIED", regime_key),
+        (method_key, "UNSPECIFIED", "UNSPECIFIED", "UNSPECIFIED"),
+    ):
+        edge = index.get(key)
+        if edge:
+            return edge
+    return {}
+
+
+def _condition_token(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().upper().replace("/", "_").replace(" ", "_")
+    if not text or text == "GENERATED_DRY-RUN":
+        return ""
+    if "CAMPAIGN_LANE" in text:
+        return ""
+    if text == "NEWYORK":
+        return "NY"
+    return text
+
+
+def _first_condition_token(*values: object) -> str:
+    for value in values:
+        token = _condition_token(value)
+        if token:
+            return token
+    return ""
+
+
+def _session_bucket_from_timestamp(value: object) -> str:
+    if not value:
+        return ""
+    text = str(value).replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return ""
+    hour = parsed.hour
+    if 0 <= hour < 7:
+        return "ASIA"
+    if 7 <= hour < 13:
+        return "LONDON"
+    if 13 <= hour < 21:
+        return "NY"
+    return "ROLLOVER"
 
 
 def _blockers(
@@ -451,6 +575,7 @@ def _action_items(
     live_ready: tuple[AttackLaneAdvice, ...],
     edge_index: dict[tuple[str, str], dict[str, Any]],
     outcome_index: dict[tuple[str, str, str], dict[str, Any]],
+    condition_index: dict[tuple[str, str, str, str], dict[str, Any]],
     coverage: dict[str, Any],
 ) -> Iterator[str]:
     if remaining_target and live_ready_reward < remaining_target:
@@ -460,8 +585,10 @@ def _action_items(
         yield "use recommended_now as the first verified basket, then keep generating sequential ladder receipts"
     if not edge_index:
         yield "run ai-test-bot-backtest before advice so pair/direction history is grounded"
-    if not outcome_index:
-        yield "run build-outcome-mart before advice so archive method history is grounded"
+    if not condition_index and not outcome_index:
+        yield "run build-outcome-mart before advice so archive condition history is grounded"
+    if condition_index and live_ready and not any(lane.archive_condition_key for lane in live_ready):
+        yield "current LIVE_READY lanes lack usable session/regime condition keys; archive condition edges are report-only until intents carry current market buckets"
     coverage_status = str(coverage.get("status") or "")
     if coverage_status and coverage_status != "LIVE_READY_COVERAGE_READY":
         yield f"resolve coverage optimizer status {coverage_status} before treating attack advice as certified"
@@ -505,7 +632,7 @@ def _settings_advice() -> dict[str, Any]:
             "lane ranking",
             "archive outcome feature weighting",
             "selected_lane_ids basket",
-            "method/pair priority",
+            "condition priority",
             "additional receipt backlog priority",
         ],
     }

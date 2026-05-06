@@ -32,6 +32,11 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertTrue(payload["read_only"])
             self.assertEqual(payload["source_coverage"]["archive_outcomes"], 3)
             self.assertEqual(payload["source_coverage"]["story_observations"], 2)
+            conditions = {item["key"]: item for item in payload["condition_edges"]}
+            condition_key = "ALL:ALL:TREND_CONTINUATION:MARKET:LONDON:UNSPECIFIED"
+            self.assertEqual(conditions[condition_key]["outcome_n"], 2)
+            self.assertEqual(conditions[condition_key]["net_jpy"], 40.0)
+            self.assertEqual(conditions[condition_key]["evidence_state"], "POSITIVE_ARCHIVE_EDGE")
             edges = {item["key"]: item for item in payload["method_edges"]}
             eur_key = "EUR_USD:LONG:TREND_CONTINUATION:ALL:ALL:ALL"
             aud_key = "AUD_JPY:SHORT:RANGE_ROTATION:ALL:ALL:ALL"
@@ -39,7 +44,9 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertEqual(edges[eur_key]["net_jpy"], 40.0)
             self.assertEqual(edges[eur_key]["evidence_state"], "POSITIVE_ARCHIVE_EDGE")
             self.assertEqual(edges[aud_key]["story_observation_n"], 1)
-            self.assertIn("read-only archive evidence", (root / "outcome_mart.md").read_text())
+            report = (root / "outcome_mart.md").read_text()
+            self.assertIn("Winning Conditions", report)
+            self.assertIn("Pair/Method Drilldown", report)
 
     def test_cli_builds_outcome_mart_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -67,6 +74,7 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["status"], "OUTCOME_MART_READY")
             self.assertEqual(payload["archive_outcomes"], 3)
+            self.assertGreater(payload["condition_edges"], 0)
             self.assertFalse(payload["live_permission"])
 
 

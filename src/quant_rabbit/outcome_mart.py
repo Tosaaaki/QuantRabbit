@@ -24,6 +24,7 @@ NEGATIVE_TAIL_PERCENTILE = 0.25
 # Report length only; the JSON output keeps every bucket so downstream tools do
 # not depend on a display limit.
 REPORT_ROW_LIMIT = 16
+REPORT_MIN_CONDITION_OUTCOMES = 5
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class OutcomeMartSummary:
     archive_outcomes: int
     execution_ledger_outcomes: int
     story_observations: int
+    condition_edges: int
     method_edges: int
     setup_buckets: int
 
@@ -126,7 +128,7 @@ class OutcomeMartBuilder:
 
     The mart is an offline feature packet. It never grants live permission,
     changes risk budgets, or blocks lanes; it gives the operator and advisory
-    ranking code a method-aware view of historical outcomes.
+    ranking code a condition-aware view of historical outcomes.
     """
 
     def __init__(
@@ -152,6 +154,7 @@ class OutcomeMartBuilder:
 
         method_edges: dict[tuple[str, str, str], _Bucket] = {}
         pair_edges: dict[tuple[str, str], _Bucket] = {}
+        condition_edges: dict[tuple[str, str, str, str], _Bucket] = {}
         setup_buckets: dict[tuple[str, str, str, str, str, str], _Bucket] = {}
 
         def method_bucket(pair: str, direction: str, method: str) -> _Bucket:
@@ -165,6 +168,19 @@ class OutcomeMartBuilder:
             if key not in pair_edges:
                 pair_edges[key] = _Bucket(pair=pair, direction=direction)
             return pair_edges[key]
+
+        def condition_bucket(item: OutcomeRow | StoryObservation) -> _Bucket:
+            key = (item.method, item.order_type, item.session_bucket, item.regime)
+            if key not in condition_edges:
+                condition_edges[key] = _Bucket(
+                    pair="ALL",
+                    direction="ALL",
+                    method=item.method,
+                    order_type=item.order_type,
+                    session_bucket=item.session_bucket,
+                    regime=item.regime,
+                )
+            return condition_edges[key]
 
         def setup_bucket(item: OutcomeRow | StoryObservation) -> _Bucket:
             key = (item.pair, item.direction, item.method, item.order_type, item.session_bucket, item.regime)
@@ -180,11 +196,13 @@ class OutcomeMartBuilder:
             return setup_buckets[key]
 
         for row in (*archive_outcomes, *execution_outcomes):
+            condition_bucket(row).add_outcome(row.pl_jpy, source=row.source)
             method_bucket(row.pair, row.direction, row.method).add_outcome(row.pl_jpy, source=row.source)
             pair_bucket(row.pair, row.direction).add_outcome(row.pl_jpy, source=row.source)
             setup_bucket(row).add_outcome(row.pl_jpy, source=row.source)
 
         for observation in story_observations:
+            condition_bucket(observation).add_observation()
             method_bucket(observation.pair, observation.direction, observation.method).add_observation()
             pair_bucket(observation.pair, observation.direction).add_observation()
             setup_bucket(observation).add_observation()
@@ -201,11 +219,12 @@ class OutcomeMartBuilder:
                 "execution_ledger_outcomes": len(execution_outcomes),
                 "story_observations": len(story_observations),
             },
+            "condition_edges": _sorted_bucket_dicts(condition_edges.values()),
             "pair_direction_edges": _sorted_bucket_dicts(pair_edges.values()),
             "method_edges": _sorted_bucket_dicts(method_edges.values()),
             "setup_buckets": _sorted_bucket_dicts(setup_buckets.values()),
             "contract": {
-                "purpose": "read-only archive outcome features for lane ranking and review",
+                "purpose": "read-only archive condition/outcome features for lane ranking and review",
                 "does_not": [
                     "grant live permission",
                     "resize risk",
@@ -224,6 +243,7 @@ class OutcomeMartBuilder:
             archive_outcomes=len(archive_outcomes),
             execution_ledger_outcomes=len(execution_outcomes),
             story_observations=len(story_observations),
+            condition_edges=len(condition_edges),
             method_edges=len(method_edges),
             setup_buckets=len(setup_buckets),
         )
@@ -246,29 +266,52 @@ class OutcomeMartBuilder:
             f"- Execution ledger outcomes: `{coverage['execution_ledger_outcomes']}`",
             f"- Story observations: `{coverage['story_observations']}`",
             "",
-            "## Top Method Edges",
+            f"## Winning Conditions (>= {REPORT_MIN_CONDITION_OUTCOMES} outcomes)",
             "",
-            "| Key | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |",
+            "| Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |",
             "|---|---:|---:|---:|---:|---:|---:|---:|",
         ]
-        for item in payload["method_edges"][:REPORT_ROW_LIMIT]:
+        winning_conditions = [
+            item
+            for item in payload["condition_edges"]
+            if (item.get("net_jpy") or 0) > 0 and item["outcome_n"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
+        for item in winning_conditions[:REPORT_ROW_LIMIT]:
             lines.append(_edge_table_row(item))
-        if not payload["method_edges"]:
+        if not winning_conditions:
             lines.append("| none | 0 | 0 | 0 |  |  |  |  |")
 
-        negative_edges = [item for item in payload["method_edges"] if (item.get("net_jpy") or 0) < 0]
+        negative_conditions = [
+            item
+            for item in payload["condition_edges"]
+            if (item.get("net_jpy") or 0) < 0 and item["outcome_n"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
         lines.extend(
             [
                 "",
-                "## Negative Method Edges",
+                f"## Losing Conditions (>= {REPORT_MIN_CONDITION_OUTCOMES} outcomes)",
+                "",
+                "| Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(negative_conditions, key=lambda value: (value["net_jpy"], -value["outcome_n"]))[:REPORT_ROW_LIMIT]:
+            lines.append(_edge_table_row(item))
+        if not negative_conditions:
+            lines.append("| none | 0 | 0 | 0 |  |  |  |  |")
+
+        lines.extend(
+            [
+                "",
+                "## Pair/Method Drilldown",
                 "",
                 "| Key | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |",
                 "|---|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
-        for item in sorted(negative_edges, key=lambda value: (value["net_jpy"], -value["outcome_n"]))[:REPORT_ROW_LIMIT]:
+        for item in payload["method_edges"][:REPORT_ROW_LIMIT]:
             lines.append(_edge_table_row(item))
-        if not negative_edges:
+        if not payload["method_edges"]:
             lines.append("| none | 0 | 0 | 0 |  |  |  |  |")
 
         lines.extend(
@@ -276,10 +319,11 @@ class OutcomeMartBuilder:
                 "",
                 "## Contract",
                 "",
-                "- This mart is read-only archive evidence for ranking and review.",
+                "- This mart is read-only archive condition evidence for ranking and review.",
                 "- It never places, stages, resizes, or authorizes broker orders.",
                 "- Current broker truth, RiskEngine, strategy-profile validation, and gateways remain authoritative.",
                 "- Story observations without P/L increase coverage counts only; they do not create expectancy.",
+                "- Pair/method drilldown is secondary; the primary question is which conditions paid or failed.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
