@@ -72,6 +72,7 @@ from quant_rabbit.paths import (
     DEFAULT_OPTION_SKEW_REPORT,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS_ARG
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.strategy.ensemble import CampaignPlanner
@@ -93,11 +94,11 @@ def main(argv: list[str] | None = None) -> int:
     p_import.add_argument("--report", type=Path, default=DEFAULT_IMPORT_REPORT)
 
     p_snapshot = sub.add_parser("broker-snapshot", help="Read current broker truth without placing orders.")
-    p_snapshot.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_snapshot.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_snapshot.add_argument("--output", type=Path, default=None)
 
     p_charts = sub.add_parser("pair-charts", help="Compute multi-timeframe indicator scores per pair.")
-    p_charts.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_charts.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_charts.add_argument("--timeframes", default="M5,M15,H1")
     p_charts.add_argument("--count", type=int, default=200)
     p_charts.add_argument("--output", type=Path, default=DEFAULT_PAIR_CHARTS)
@@ -105,14 +106,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p_cross = sub.add_parser("cross-asset-snapshot", help="Cross-asset/inter-market snapshot (DXY, US bonds, SPX, Gold, Oil, BTC).")
     p_cross.add_argument("--instruments", default="")  # empty → use defaults
-    p_cross.add_argument("--correlation-pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_cross.add_argument("--correlation-pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_cross.add_argument("--granularity", default="H1")
     p_cross.add_argument("--count", type=int, default=200)
     p_cross.add_argument("--output", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
     p_cross.add_argument("--report", type=Path, default=DEFAULT_CROSS_ASSET_REPORT)
 
     p_flow = sub.add_parser("flow-snapshot", help="OANDA order book + position book + spread time-series per pair.")
-    p_flow.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_flow.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_flow.add_argument("--top-n", type=int, default=5)
     p_flow.add_argument("--spread-lookback-minutes", type=int, default=60)
     p_flow.add_argument("--output", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
@@ -126,12 +127,12 @@ def main(argv: list[str] | None = None) -> int:
     p_strength.add_argument("--report", type=Path, default=DEFAULT_CURRENCY_STRENGTH_REPORT)
 
     p_levels = sub.add_parser("levels-snapshot", help="Pivots, PDH/PDL/PDC, session ranges, round-numbers per pair.")
-    p_levels.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_levels.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_levels.add_argument("--output", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
     p_levels.add_argument("--report", type=Path, default=DEFAULT_LEVELS_REPORT)
 
     p_cal = sub.add_parser("economic-calendar", help="ForexFactory weekly XML feed + per-pair event-window flags.")
-    p_cal.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_cal.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_cal.add_argument("--pre-minutes", type=int, default=30)
     p_cal.add_argument("--post-minutes", type=int, default=30)
     p_cal.add_argument("--impact", default="High,Medium")
@@ -145,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     p_cot.add_argument("--report", type=Path, default=DEFAULT_COT_REPORT)
 
     p_opt = sub.add_parser("option-skew", help="Option-skew (RR/IV) adapter — placeholder until vendor feed is wired.")
-    p_opt.add_argument("--pairs", default="USD_JPY,EUR_USD,GBP_USD,AUD_USD,EUR_JPY,GBP_JPY,AUD_JPY")
+    p_opt.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_opt.add_argument("--tenors", default="1W,1M,3M")
     p_opt.add_argument("--output", type=Path, default=DEFAULT_OPTION_SKEW)
     p_opt.add_argument("--report", type=Path, default=DEFAULT_OPTION_SKEW_REPORT)

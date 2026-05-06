@@ -71,8 +71,8 @@ class OandaReadOnlyClient:
             return self.account_summary(now_utc=now_utc)
         except Exception:
             # Account summary is best-effort: snapshot must still return positions/orders/quotes
-            # even if the summary call fails (e.g. transient network error). Downstream code
-            # treats `account is None` as "fall back to legacy semantics".
+            # even if the summary call fails (e.g. transient network error). Downstream risk
+            # gates treat `account is None` as a margin-data blocker for live entries.
             return None
 
     def _open_positions(self) -> list[BrokerPosition]:

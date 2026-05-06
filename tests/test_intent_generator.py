@@ -153,6 +153,49 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertLess(intent["sl"], metadata["range_support"])
             self.assertTrue(metadata["range_tp_is_inside_box"])
 
+    def test_range_rotation_adds_market_reclaim_when_quote_is_at_rail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root, eur_bid=1.17110, eur_ask=1.17118))
+
+            payload = json.loads(output.read_text())
+            market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
+
+            self.assertEqual(market["status"], "LIVE_READY")
+            self.assertEqual(market["intent"]["order_type"], "MARKET")
+            self.assertEqual(market["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_MARKET")
+            self.assertTrue(market["intent"]["metadata"]["range_tp_is_inside_box"])
+
+    def test_range_rotation_market_variant_blocks_when_quote_is_mid_box(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
+            issue_codes = {issue["code"] for issue in market["risk_issues"]}
+
+            self.assertEqual(market["status"], "DRY_RUN_BLOCKED")
+            self.assertIn("RANGE_MARKET_NOT_AT_RAIL", issue_codes)
+
     def test_open_position_with_per_trade_sized_risk_does_not_block_new_entry(self) -> None:
         # AGENT_CONTRACT §3.5 regression: portfolio cap is the WHOLE-DAY risk
         # budget, not the per-trade slice. A previous bug fed `max_loss_jpy`
@@ -206,6 +249,36 @@ class IntentGeneratorTest(unittest.TestCase):
             # the (now ATR-aware) SL distance; assert risk respects the cap.
             self.assertGreater(result["intent"]["units"], 0)
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1000.0)
+
+    def test_sizes_units_to_margin_budget_before_live_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=5_000.0,
+            ).run(
+                snapshot_path=_snapshot(
+                    root,
+                    nav_jpy=220_145.7765,
+                    balance_jpy=208_945.7765,
+                    margin_used_jpy=156_414.0,
+                    margin_available_jpy=63_831.7765,
+                )
+            )
+
+            payload = json.loads(output.read_text())
+            for result in payload["results"]:
+                self.assertLessEqual(result["intent"]["units"], 6000)
+                self.assertLessEqual(result["risk_metrics"]["margin_utilization_after_pct"], 92.0)
+                issue_codes = {issue["code"] for issue in result["risk_issues"]}
+                self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
+                self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", issue_codes)
 
 
 def _campaign(root: Path, *, target_reward_risk: float | None = None) -> Path:
@@ -323,7 +396,17 @@ def _pair_charts(root: Path) -> Path:
     return path
 
 
-def _snapshot(root: Path, *, usd_jpy: float = 156.64) -> Path:
+def _snapshot(
+    root: Path,
+    *,
+    usd_jpy: float = 156.64,
+    eur_bid: float = 1.17322,
+    eur_ask: float = 1.17330,
+    nav_jpy: float = 200_000.0,
+    balance_jpy: float = 200_000.0,
+    margin_used_jpy: float = 0.0,
+    margin_available_jpy: float = 200_000.0,
+) -> Path:
     path = root / "snapshot.json"
     now = datetime.now(timezone.utc).isoformat()
     path.write_text(
@@ -333,8 +416,15 @@ def _snapshot(root: Path, *, usd_jpy: float = 156.64) -> Path:
                 "positions": [],
                 "orders": [],
                 "quotes": {
-                    "EUR_USD": {"bid": 1.17322, "ask": 1.17330, "timestamp_utc": now},
+                    "EUR_USD": {"bid": eur_bid, "ask": eur_ask, "timestamp_utc": now},
                     "USD_JPY": {"bid": usd_jpy, "ask": usd_jpy + 0.008, "timestamp_utc": now},
+                },
+                "account": {
+                    "nav_jpy": nav_jpy,
+                    "balance_jpy": balance_jpy,
+                    "margin_used_jpy": margin_used_jpy,
+                    "margin_available_jpy": margin_available_jpy,
+                    "fetched_at_utc": now,
                 },
             }
         )
@@ -367,6 +457,13 @@ def _snapshot_with_position(root: Path) -> Path:
                 "quotes": {
                     "EUR_USD": {"bid": 1.17322, "ask": 1.17330, "timestamp_utc": now},
                     "USD_JPY": {"bid": 156.64, "ask": 156.648, "timestamp_utc": now},
+                },
+                "account": {
+                    "nav_jpy": 200_000.0,
+                    "balance_jpy": 200_000.0,
+                    "margin_used_jpy": 0.0,
+                    "margin_available_jpy": 200_000.0,
+                    "fetched_at_utc": now,
                 },
             }
         )

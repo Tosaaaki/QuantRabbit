@@ -8,20 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.models import TradeMethod
 from quant_rabbit.paths import DEFAULT_LEGACY_ARCHIVE, DEFAULT_MARKET_STORY_PROFILE, DEFAULT_MARKET_STORY_REPORT
 
 
 PAIR_RE = re.compile(r"\b([A-Z]{3})[_/]([A-Z]{3})\b")
-VALID_PAIRS = {
-    "USD_JPY",
-    "EUR_USD",
-    "GBP_USD",
-    "AUD_USD",
-    "EUR_JPY",
-    "GBP_JPY",
-    "AUD_JPY",
-}
+VALID_PAIRS = set(DEFAULT_TRADER_PAIRS)
 STORY_FILES = (
     "logs/news_digest.md",
     "logs/news_flow_log.md",

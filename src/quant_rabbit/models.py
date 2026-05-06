@@ -177,6 +177,12 @@ class RiskMetrics:
     reward_risk: float
     spread_pips: float
     jpy_per_pip: float
+    estimated_margin_jpy: float = 0.0
+    margin_used_jpy: float | None = None
+    margin_available_jpy: float | None = None
+    margin_budget_jpy: float | None = None
+    margin_utilization_after_pct: float | None = None
+    max_margin_utilization_pct: float | None = None
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .models import (
+    AccountSummary,
     BrokerOrder,
     BrokerSnapshot,
     OrderIntent,
@@ -16,6 +17,14 @@ from .models import (
     Side,
     TradeMethod,
 )
+from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pip_factor
+
+# OANDA Japan retail FX margin in the current account is 25:1 leverage, i.e.
+# 4% initial margin. Recent broker truth confirms the same scale: USD_JPY
+# 25,000u filled near 155.962 required roughly 155,954 JPY initial margin.
+# This is broker/account policy, not market data; replace it with per-instrument
+# `/accounts/{id}/instruments` marginRate once that adapter is wired.
+OANDA_JP_RETAIL_FX_MARGIN_RATE = 0.04
 
 
 @dataclass(frozen=True)
@@ -23,6 +32,7 @@ class InstrumentSpec:
     pair: str
     pip_factor: int
     normal_spread_pips: float
+    margin_rate: float = OANDA_JP_RETAIL_FX_MARGIN_RATE
 
     @property
     def pip_size(self) -> float:
@@ -30,14 +40,20 @@ class InstrumentSpec:
 
 
 DEFAULT_SPECS: dict[str, InstrumentSpec] = {
-    "USD_JPY": InstrumentSpec("USD_JPY", 100, 0.4),
-    "EUR_JPY": InstrumentSpec("EUR_JPY", 100, 0.8),
-    "GBP_JPY": InstrumentSpec("GBP_JPY", 100, 1.5),
-    "AUD_JPY": InstrumentSpec("AUD_JPY", 100, 0.8),
-    "EUR_USD": InstrumentSpec("EUR_USD", 10000, 0.5),
-    "GBP_USD": InstrumentSpec("GBP_USD", 10000, 0.9),
-    "AUD_USD": InstrumentSpec("AUD_USD", 10000, 0.5),
+    pair: InstrumentSpec(pair, instrument_pip_factor(pair), NORMAL_SPREAD_PIPS[pair])
+    for pair in DEFAULT_TRADER_PAIRS
 }
+
+
+def estimate_required_margin_jpy(*, units: int, entry_price: float, quote_to_jpy: float, spec: InstrumentSpec) -> float:
+    """Estimate initial margin in account JPY for a candidate FX order."""
+    return max(0.0, abs(units) * abs(entry_price) * quote_to_jpy * spec.margin_rate)
+
+
+def margin_budget_jpy(account: AccountSummary, *, max_margin_utilization_pct: float) -> float:
+    """Return the smaller of broker free margin and operator utilization headroom."""
+    utilization_budget = account.nav_jpy * (max_margin_utilization_pct / 100.0) - account.margin_used_jpy
+    return min(account.margin_available_jpy, utilization_budget)
 
 
 @dataclass(frozen=True)
@@ -79,6 +95,17 @@ class RiskPolicy:
     block_new_entries_with_pending_entry_orders: bool = True
     require_live_enabled_for_send: bool = True
     require_market_context_for_live_send: bool = True
+    # Operator-set margin utilization ceiling for autonomous entries.
+    # (a) market reality: OANDA rejects orders when marginAvailable cannot
+    #     cover initial margin; capping marginUsed keeps the rejection in our
+    #     risk gate instead of in broker-side order cancellation.
+    # (b) constant rather than derived: this is the current operator policy.
+    #     92% means the system may use most NAV while leaving 8% headroom for
+    #     spread, slippage, and mark-to-market movement.
+    # (c) replace via: pass RiskPolicy(max_margin_utilization_pct=...) from
+    #     CLI/config when an operator-facing knob is introduced.
+    max_margin_utilization_pct: float | None = 92.0
+    require_margin_account: bool = True
     allow_protected_trader_position_adds: bool = False
     # OANDA trades without the vNext trader tag are operator-managed manual
     # exposure. They remain visible in broker truth, but the autonomous trader
@@ -188,7 +215,7 @@ class RiskEngine:
 
         if self.policy.block_new_entries_with_pending_entry_orders:
             for order in snapshot.orders:
-                if _is_pending_entry_order(order):
+                if _is_pending_entry_order(order) and not _is_operator_managed_manual_order(order):
                     issues.append(
                         RiskIssue(
                             "PENDING_ENTRY_ORDER_OPEN",
@@ -227,7 +254,8 @@ class RiskEngine:
         if quote_to_jpy is None:
             return RiskDecision(False, None, tuple(issues))
 
-        metrics = self._metrics(intent, quote, spec, entry_price, quote_to_jpy)
+        metrics = self._metrics(intent, quote, spec, entry_price, quote_to_jpy, snapshot)
+        issues.extend(self._margin_issues(snapshot, metrics))
         if metrics.loss_pips <= 0:
             issues.append(RiskIssue("SL_NOT_LOSS_SIDE", f"SL is not on the loss side for {intent.side.value}"))
         if metrics.reward_pips <= 0:
@@ -476,6 +504,7 @@ class RiskEngine:
         spec: InstrumentSpec,
         entry_price: float,
         quote_to_jpy: float,
+        snapshot: BrokerSnapshot,
     ) -> RiskMetrics:
         if intent.side == Side.LONG:
             loss_pips = (entry_price - intent.sl) * spec.pip_factor
@@ -488,6 +517,24 @@ class RiskEngine:
         risk_jpy = max(0.0, loss_pips) * jpy_per_pip
         reward_jpy = max(0.0, reward_pips) * jpy_per_pip
         reward_risk = reward_jpy / risk_jpy if risk_jpy > 0 else 0.0
+        estimated_margin = estimate_required_margin_jpy(
+            units=intent.units,
+            entry_price=entry_price,
+            quote_to_jpy=quote_to_jpy,
+            spec=spec,
+        )
+        account = snapshot.account
+        max_margin_pct = self.policy.max_margin_utilization_pct
+        margin_budget = None
+        margin_after_utilization = None
+        margin_used = None
+        margin_available = None
+        if account is not None:
+            margin_used = account.margin_used_jpy
+            margin_available = account.margin_available_jpy
+            if max_margin_pct is not None and account.nav_jpy > 0:
+                margin_budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+                margin_after_utilization = (account.margin_used_jpy + estimated_margin) / account.nav_jpy * 100.0
         return RiskMetrics(
             entry_price=entry_price,
             loss_pips=loss_pips,
@@ -497,7 +544,89 @@ class RiskEngine:
             reward_risk=reward_risk,
             spread_pips=spread_pips,
             jpy_per_pip=jpy_per_pip,
+            estimated_margin_jpy=estimated_margin,
+            margin_used_jpy=margin_used,
+            margin_available_jpy=margin_available,
+            margin_budget_jpy=margin_budget,
+            margin_utilization_after_pct=margin_after_utilization,
+            max_margin_utilization_pct=max_margin_pct,
         )
+
+    def _margin_issues(self, snapshot: BrokerSnapshot, metrics: RiskMetrics) -> list[RiskIssue]:
+        max_margin_pct = self.policy.max_margin_utilization_pct
+        if max_margin_pct is None:
+            return []
+        if max_margin_pct <= 0 or max_margin_pct > 100:
+            return [
+                RiskIssue(
+                    "INVALID_MARGIN_POLICY",
+                    f"max_margin_utilization_pct must be within 0-100, got {max_margin_pct}",
+                )
+            ]
+        account = snapshot.account
+        if account is None:
+            if not self.policy.require_margin_account:
+                return []
+            return [
+                RiskIssue(
+                    "MARGIN_ACCOUNT_MISSING",
+                    "broker account summary is required to enforce margin availability and utilization cap",
+                )
+            ]
+        issues: list[RiskIssue] = []
+        if account.nav_jpy <= 0:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_NAV_INVALID",
+                    f"account NAV must be positive to enforce {max_margin_pct:.1f}% margin cap; got {account.nav_jpy:.0f} JPY",
+                )
+            )
+        if account.margin_used_jpy < 0:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_USED_INVALID",
+                    f"account margin_used_jpy must be non-negative; got {account.margin_used_jpy:.0f} JPY",
+                )
+            )
+        if account.margin_available_jpy < 0:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_AVAILABLE_INVALID",
+                    f"account margin_available_jpy must be non-negative; got {account.margin_available_jpy:.0f} JPY",
+                )
+            )
+        if issues:
+            return issues
+
+        budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+        cap_jpy = account.nav_jpy * (max_margin_pct / 100.0)
+        if metrics.estimated_margin_jpy > account.margin_available_jpy:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_AVAILABLE_EXCEEDED",
+                    f"estimated initial margin {metrics.estimated_margin_jpy:.0f} JPY exceeds "
+                    f"broker marginAvailable {account.margin_available_jpy:.0f} JPY",
+                )
+            )
+        if budget <= 0 and metrics.estimated_margin_jpy > 0:
+            issues.append(
+                RiskIssue(
+                    "MARGIN_UTILIZATION_CAP_REACHED",
+                    f"current marginUsed {account.margin_used_jpy:.0f} JPY already reaches/exceeds "
+                    f"{max_margin_pct:.1f}% NAV cap {cap_jpy:.0f} JPY",
+                )
+            )
+        elif metrics.estimated_margin_jpy > budget:
+            after = account.margin_used_jpy + metrics.estimated_margin_jpy
+            issues.append(
+                RiskIssue(
+                    "MARGIN_UTILIZATION_CAP_EXCEEDED",
+                    f"candidate margin {metrics.estimated_margin_jpy:.0f} JPY would raise marginUsed to "
+                    f"{after:.0f} JPY, above {max_margin_pct:.1f}% NAV cap {cap_jpy:.0f} JPY "
+                    f"(remaining budget {budget:.0f} JPY)",
+                )
+            )
+        return issues
 
     def _conversion_quote_issues(self, pair: str, snapshot: BrokerSnapshot) -> list[RiskIssue]:
         quote_ccy = pair.split("_", 1)[1]
@@ -582,6 +711,10 @@ def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:
 
 def _is_operator_managed_manual(position: BrokerPosition) -> bool:
     return position.owner in {Owner.MANUAL, Owner.UNKNOWN}
+
+
+def _is_operator_managed_manual_order(order: BrokerOrder) -> bool:
+    return order.owner in {Owner.MANUAL, Owner.UNKNOWN}
 
 
 def _is_pending_entry_order(order: BrokerOrder) -> bool:

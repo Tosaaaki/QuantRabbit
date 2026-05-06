@@ -185,7 +185,7 @@ class CompletionAuditor:
                 "## Completion Contract",
                 "",
                 "- Completion requires broker truth, live-ready coverage, execution replay, learning receipts, and dry-run certification to pass together.",
-                "- Only unprotected, external/manual, non-trader, over-budget, or pending-entry exposure blocks fresh entries.",
+                "- Only unprotected trader-owned, external, over-budget, or trader/external pending-entry exposure blocks fresh entries; manual/tagless operator exposure is observed only.",
                 "- Protected trader-owned exposure may add only through portfolio risk validation.",
                 "- The 10% daily target remains a risk-bounded product KPI, not permission to force trades.",
             ]
@@ -210,7 +210,11 @@ def _blockers(
     blockers: list[dict[str, str]] = []
     if not broker:
         blockers.append(_item("BROKER_SNAPSHOT_MISSING", "broker snapshot is missing; run broker-snapshot"))
-    blocking_positions = [item for item in positions if isinstance(item, dict) and not _is_layerable_position(item)]
+    blocking_positions = [
+        item
+        for item in positions
+        if isinstance(item, dict) and not _is_operator_managed_manual(item) and not _is_layerable_position(item)
+    ]
     if blocking_positions:
         summaries = ", ".join(
             f"{item.get('pair')} {item.get('side')} id={item.get('trade_id')}" for item in blocking_positions[:3]
@@ -269,7 +273,11 @@ def _next_actions(
     live_order: dict[str, Any],
 ) -> list[dict[str, str]]:
     actions: list[dict[str, str]] = []
-    blocking_positions = [item for item in positions if isinstance(item, dict) and not _is_layerable_position(item)]
+    blocking_positions = [
+        item
+        for item in positions
+        if isinstance(item, dict) and not _is_operator_managed_manual(item) and not _is_layerable_position(item)
+    ]
     if blocking_positions:
         actions.append(
             _item(
@@ -302,6 +310,7 @@ def _pending_entries(broker: dict[str, Any]) -> list[dict[str, Any]]:
         for item in orders
         if isinstance(item, dict)
         and not item.get("trade_id")
+        and not _is_operator_managed_manual(item)
         and str(item.get("order_type") or "").upper() in pending_types
     ]
 
@@ -312,6 +321,10 @@ def _is_layerable_position(position: dict[str, Any]) -> bool:
         and position.get("take_profit") is not None
         and position.get("stop_loss") is not None
     )
+
+
+def _is_operator_managed_manual(item: dict[str, Any]) -> bool:
+    return str(item.get("owner") or "").lower() in {"manual", "unknown"}
 
 
 def _live_ready_lanes(intents: dict[str, Any]) -> int:

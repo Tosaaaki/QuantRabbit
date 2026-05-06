@@ -20,6 +20,8 @@ def snapshot(*, positions=(), orders=(), hedging_enabled: bool = False) -> Broke
         account=AccountSummary(
             nav_jpy=200_000.0,
             balance_jpy=200_000.0,
+            margin_used_jpy=0.0,
+            margin_available_jpy=200_000.0,
             hedging_enabled=hedging_enabled,
             fetched_at_utc=now,
         ),
@@ -117,6 +119,78 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine().validate(intent, snapshot())
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_CAP_EXCEEDED", {issue.code for issue in decision.issues})
+
+    def test_margin_cap_blocks_trade_before_broker_rejects_it(self) -> None:
+        now = datetime.now(timezone.utc)
+        snap = BrokerSnapshot(
+            fetched_at_utc=now,
+            quotes={
+                "EUR_USD": Quote("EUR_USD", bid=1.17338, ask=1.17346, timestamp_utc=now),
+                "USD_JPY": Quote("USD_JPY", bid=156.410, ask=156.418, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=220_145.7765,
+                balance_jpy=208_945.7765,
+                margin_used_jpy=156_414.0,
+                margin_available_jpy=63_831.7765,
+                fetched_at_utc=now,
+            ),
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=13_000,
+            tp=1.17430,
+            sl=1.17274,
+            thesis="eurusd_must_fit_margin_before_send",
+        )
+
+        decision = RiskEngine().validate(intent, snap)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("MARGIN_UTILIZATION_CAP_EXCEEDED", codes)
+        self.assertIn("MARGIN_AVAILABLE_EXCEEDED", codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertGreater(decision.metrics.margin_utilization_after_pct or 0.0, 92.0)
+
+    def test_margin_cap_allows_trade_inside_92_percent_budget(self) -> None:
+        now = datetime.now(timezone.utc)
+        snap = BrokerSnapshot(
+            fetched_at_utc=now,
+            quotes={
+                "EUR_USD": Quote("EUR_USD", bid=1.17338, ask=1.17346, timestamp_utc=now),
+                "USD_JPY": Quote("USD_JPY", bid=156.410, ask=156.418, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=220_145.7765,
+                balance_jpy=208_945.7765,
+                margin_used_jpy=156_414.0,
+                margin_available_jpy=63_831.7765,
+                fetched_at_utc=now,
+            ),
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=6_000,
+            tp=1.17430,
+            sl=1.17274,
+            thesis="eurusd_can_use_margin_up_to_92_percent",
+            metadata={"max_loss_jpy": 1_000.0},
+        )
+
+        decision = RiskEngine().validate(intent, snap)
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", codes)
+        self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertLessEqual(decision.metrics.margin_utilization_after_pct or 100.0, 92.0)
 
     def test_external_position_blocks_fresh_entries(self) -> None:
         external = BrokerPosition(
@@ -392,6 +466,7 @@ class RiskEngineTest(unittest.TestCase):
             trade_id=None,
             price=112.576,
             state="PENDING",
+            owner=Owner.TRADER,
         )
         intent = OrderIntent(
             pair="EUR_USD",
@@ -406,6 +481,31 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine().validate(intent, snapshot(orders=(pending,)))
         self.assertFalse(decision.allowed)
         self.assertIn("PENDING_ENTRY_ORDER_OPEN", {issue.code for issue in decision.issues})
+
+    def test_operator_manual_pending_entry_does_not_block_trader_entry(self) -> None:
+        pending = BrokerOrder(
+            order_id="manual-pending",
+            pair="AUD_JPY",
+            order_type="STOP",
+            trade_id=None,
+            price=112.576,
+            state="PENDING",
+            owner=Owner.UNKNOWN,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17450,
+            sl=1.17250,
+            thesis="operator pending order is parallel manual exposure",
+        )
+
+        decision = RiskEngine().validate(intent, snapshot(orders=(pending,)))
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("PENDING_ENTRY_ORDER_OPEN", {issue.code for issue in decision.issues})
 
     def test_pending_entry_price_must_be_on_executable_side(self) -> None:
         long_stop_below_market = OrderIntent(
@@ -495,6 +595,7 @@ class RiskEngineTest(unittest.TestCase):
                 **low_conversion.quotes,
                 "USD_JPY": Quote("USD_JPY", bid=200.000, ask=200.010, timestamp_utc=low_conversion.fetched_at_utc),
             },
+            account=low_conversion.account,
         )
 
         low = RiskEngine().validate(intent, low_conversion)
@@ -522,6 +623,7 @@ class RiskEngineTest(unittest.TestCase):
             positions=base.positions,
             orders=base.orders,
             quotes={"EUR_USD": base.quotes["EUR_USD"]},
+            account=base.account,
         )
 
         decision = RiskEngine().validate(intent, missing_conversion)
@@ -541,6 +643,7 @@ class RiskEngineTest(unittest.TestCase):
                 **base.quotes,
                 "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=old),
             },
+            account=base.account,
             home_conversions={"USD": 157.0},
         )
         intent = OrderIntent(

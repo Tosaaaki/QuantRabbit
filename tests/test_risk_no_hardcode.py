@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.models import (
+    AccountSummary,
     BrokerSnapshot,
     MarketContext,
     OrderIntent,
@@ -64,6 +65,13 @@ def _snapshot() -> BrokerSnapshot:
             "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
             "USD_JPY": Quote("USD_JPY", 156.99, 157.0, timestamp_utc=now),
         },
+        account=AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            margin_used_jpy=0.0,
+            margin_available_jpy=200_000.0,
+            fetched_at_utc=now,
+        ),
     )
 
 

@@ -30,6 +30,7 @@ from typing import Iterable, Mapping, Sequence
 
 from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 
 # OANDA CFD instruments. Anything not tradable on the account simply errors
@@ -55,9 +56,7 @@ DXY_BASKET: tuple[tuple[str, float], ...] = (
 )
 DXY_CONSTANT = 50.14348112
 
-DEFAULT_CORRELATION_PAIRS: tuple[str, ...] = (
-    "USD_JPY", "EUR_USD", "GBP_USD", "AUD_USD", "EUR_JPY", "GBP_JPY", "AUD_JPY", "USD_CAD", "USD_CHF", "NZD_USD",
-)
+DEFAULT_CORRELATION_PAIRS = DEFAULT_TRADER_PAIRS
 
 
 @dataclass(frozen=True)

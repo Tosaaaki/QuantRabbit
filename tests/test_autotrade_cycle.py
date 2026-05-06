@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from quant_rabbit.automation import AutoTradeCycle, _snapshot_to_json
 from quant_rabbit.gpt_trader import StaticTraderProvider
-from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 
 
 class AutoTradeCycleTest(unittest.TestCase):
@@ -443,6 +444,58 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse((root / "pm.json").exists())
             self.assertTrue((root / "live_order.json").exists())
 
+    def test_operator_manual_pending_order_does_not_stop_fresh_entry_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(
+                        BrokerOrder(
+                            order_id="manual-pending",
+                            pair="USD_JPY",
+                            order_type="STOP",
+                            price=160.0,
+                            state="PENDING",
+                            units=25000,
+                            owner=Owner.UNKNOWN,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.orders, 1)
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
+            self.assertTrue((root / "live_order.json").exists())
+
     def test_flat_cycle_uses_accepted_gpt_trade_before_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -658,10 +711,90 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(len(client.snapshot_calls), 1)
             self.assertIn("reuse_existing", (root / "report.md").read_text())
 
+    def test_reuse_market_artifacts_does_not_promote_then_reprice_stale_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            stale = now - timedelta(seconds=180)
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(
+                _snapshot_to_json(
+                    BrokerSnapshot(
+                        fetched_at_utc=stale,
+                        quotes={
+                            "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=stale),
+                            "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=stale),
+                        },
+                    )
+                )
+                + "\n"
+            )
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            pinned_intents = intents_path.read_text()
+            profile = _repair_then_candidate_profile(root)
+            target_state = root / "target.json"
+            target_state.write_text(
+                json.dumps(
+                    {
+                        "start_balance_jpy": 100_000,
+                        "target_return_pct": 10.0,
+                        "daily_risk_budget_jpy": 2_000,
+                        "target_trades_per_day": 10,
+                    }
+                )
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=profile,
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                reuse_market_artifacts=True,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.receipt_promotions, 0)
+            self.assertEqual(intents_path.read_text(), pinned_intents)
+            profile_payload = json.loads(profile.read_text())
+            self.assertEqual(profile_payload["profiles"][0]["status"], "RISK_REPAIR_CANDIDATE")
+            self.assertFalse((root / "promotion.md").exists())
+
 
 class FakeCycleClient:
     def __init__(self, snapshot: BrokerSnapshot) -> None:
-        self.snapshot_value = snapshot
+        self.snapshot_value = _with_account(snapshot)
         self.snapshot_calls: list[tuple[str, ...]] = []
         self.orders_sent: list[dict[str, Any]] = []
         self.orders_canceled: list[str] = []
@@ -681,13 +814,30 @@ class FakeCycleClient:
 
 class SequenceCycleClient(FakeCycleClient):
     def __init__(self, snapshots: tuple[BrokerSnapshot, ...]) -> None:
-        super().__init__(snapshots[-1])
-        self.snapshots = snapshots
+        snapshots_with_account = tuple(_with_account(snapshot) for snapshot in snapshots)
+        super().__init__(snapshots_with_account[-1])
+        self.snapshots = snapshots_with_account
 
     def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
         self.snapshot_calls.append(pairs)
         index = min(len(self.snapshot_calls) - 1, len(self.snapshots) - 1)
         return self.snapshots[index]
+
+
+def _with_account(snapshot: BrokerSnapshot) -> BrokerSnapshot:
+    if snapshot.account is not None:
+        return snapshot
+    now = snapshot.fetched_at_utc
+    return replace(
+        snapshot,
+        account=AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            margin_used_jpy=0.0,
+            margin_available_jpy=200_000.0,
+            fetched_at_utc=now,
+        ),
+    )
 
 
 def _campaign(root: Path) -> Path:
@@ -810,6 +960,43 @@ def _candidate_profile(root: Path) -> Path:
                         "seat_orderable": 8,
                         "seat_captured": 5,
                     }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _repair_then_candidate_profile(root: Path) -> Path:
+    path = root / "profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "RISK_REPAIR_CANDIDATE",
+                        "required_fix": "would be promoted if reuse mode mutated pinned artifacts",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 800,
+                        "live_worst_jpy": -798,
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "required_fix": "eligible after prior repair",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 800,
+                        "live_worst_jpy": -350,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
+                    },
                 ]
             }
         )

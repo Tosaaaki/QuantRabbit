@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.broker.execution import LiveOrderGateway
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 
 
 class LiveOrderGatewayTest(unittest.TestCase):
@@ -92,6 +92,44 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
 
+    def test_send_blocks_when_candidate_exceeds_margin_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            now = client.snapshot_value.fetched_at_utc
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(),
+                orders=(),
+                quotes=client.snapshot_value.quotes,
+                account=AccountSummary(
+                    nav_jpy=220_145.7765,
+                    balance_jpy=208_945.7765,
+                    margin_used_jpy=156_414.0,
+                    margin_available_jpy=63_831.7765,
+                    fetched_at_utc=now,
+                ),
+            )
+            intents = _intents(root, order_type="MARKET")
+            payload = json.loads(intents.read_text())
+            payload["results"][0]["intent"]["units"] = 13_000
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                max_loss_jpy=2_000.0,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:LONG", send=True, confirm_live=True)
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            result = json.loads((root / "request.json").read_text())
+            self.assertIn("MARGIN_UTILIZATION_CAP_EXCEEDED", {issue["code"] for issue in result["risk_issues"]})
+
     def test_hedge_intent_uses_open_only_position_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -141,6 +179,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 ),
                 orders=(),
                 quotes=client.snapshot_value.quotes,
+                account=client.snapshot_value.account,
             )
 
             summary = LiveOrderGateway(
@@ -183,6 +222,7 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 ),
                 orders=(),
                 quotes=client.snapshot_value.quotes,
+                account=client.snapshot_value.account,
             )
 
             summary = LiveOrderGateway(
@@ -263,6 +303,13 @@ class FakeExecutionClient:
                 "EUR_USD": Quote("EUR_USD", bid=1.17298, ask=1.17306, timestamp_utc=now),
                 "USD_JPY": Quote("USD_JPY", bid=157.0, ask=157.01, timestamp_utc=now),
             },
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=0.0,
+                margin_available_jpy=200_000.0,
+                fetched_at_utc=now,
+            ),
         )
         self.orders: list[dict[str, Any]] = []
 

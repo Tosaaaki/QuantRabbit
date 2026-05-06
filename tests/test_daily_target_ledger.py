@@ -148,8 +148,11 @@ class DailyTargetLedgerTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "PURSUE_TARGET")
             self.assertEqual(summary.remaining_risk_budget_jpy, 500.0)
+            self.assertEqual(summary.progress_jpy, 0.0)
+            self.assertEqual(summary.remaining_target_jpy, 10_000.0)
             self.assertEqual(summary.unprotected_positions, 0)
             payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["unrealized_pl_jpy"], 0.0)
             self.assertEqual(payload["positions"][0]["owner"], "unknown")
             self.assertIn("TP", payload["positions"][0]["missing"])
             self.assertIn("SL", payload["positions"][0]["missing"])

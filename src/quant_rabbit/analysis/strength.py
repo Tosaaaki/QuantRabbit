@@ -16,20 +16,10 @@ from typing import Iterable, Mapping, Sequence
 
 from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, G8_CURRENCIES
 
 
-G8_CURRENCIES: tuple[str, ...] = ("USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD")
-
-# 28 unique pairs across G8 (n*(n-1)/2)
-DEFAULT_PAIR_UNIVERSE: tuple[str, ...] = (
-    "EUR_USD", "GBP_USD", "AUD_USD", "NZD_USD", "USD_JPY", "USD_CAD", "USD_CHF",
-    "EUR_GBP", "EUR_JPY", "EUR_AUD", "EUR_CAD", "EUR_CHF", "EUR_NZD",
-    "GBP_JPY", "GBP_AUD", "GBP_CAD", "GBP_CHF", "GBP_NZD",
-    "AUD_JPY", "AUD_CAD", "AUD_CHF", "AUD_NZD",
-    "CAD_JPY", "CAD_CHF",
-    "CHF_JPY",
-    "NZD_JPY", "NZD_CAD", "NZD_CHF",
-)
+DEFAULT_PAIR_UNIVERSE = DEFAULT_TRADER_PAIRS
 
 
 @dataclass(frozen=True)

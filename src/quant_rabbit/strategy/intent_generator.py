@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, instrument_pip_factor
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
@@ -15,7 +16,14 @@ from quant_rabbit.paths import (
     DEFAULT_PAIR_CHARTS,
     DEFAULT_STRATEGY_PROFILE,
 )
-from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
+from quant_rabbit.risk import (
+    DEFAULT_SPECS,
+    RiskEngine,
+    RiskPolicy,
+    estimate_required_margin_jpy,
+    margin_budget_jpy,
+    resolve_max_loss_jpy,
+)
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -50,6 +58,14 @@ RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT = 0.5
 # distance from current bid/ask is expressed in current spread multiples so it
 # tightens and loosens with live liquidity rather than a fixed pip literal.
 PENDING_ENTRY_OFFSET_SPREAD_MULT = 2.0
+
+# Range MARKET participation is only valid when the current executable price is
+# already in the rail zone. The zone is market-derived: the larger of current
+# spread noise and a fraction of current M5 ATR. It is a trigger-shape
+# constant, not a risk gate; risk still comes from ATR/spread geometry and
+# RiskEngine.
+RANGE_MARKET_EDGE_ZONE_SPREAD_MULT = 2.0
+RANGE_MARKET_EDGE_ZONE_ATR_MULT = 0.25
 
 # Structural range rails. 1σ VWAP bands are deliberately excluded here: they
 # are often the box interior / magnet zone, not the actual fail point. Treating
@@ -164,15 +180,7 @@ def _range_indicators_for(
     return indicators if isinstance(indicators, dict) and indicators else None
 
 
-PIP_FACTORS = {
-    "USD_JPY": 100,
-    "EUR_JPY": 100,
-    "GBP_JPY": 100,
-    "AUD_JPY": 100,
-    "EUR_USD": 10000,
-    "GBP_USD": 10000,
-    "AUD_USD": 10000,
-}
+PIP_FACTORS = {pair: instrument_pip_factor(pair) for pair in DEFAULT_TRADER_PAIRS}
 
 
 @dataclass(frozen=True)
@@ -369,6 +377,23 @@ class IntentGenerator:
             risk_allowed = False
         else:
             risk_allowed = risk.allowed
+        method = TradeMethod.parse(str(lane["method"]))
+        if (
+            method == TradeMethod.RANGE_ROTATION
+            and order_type_override == OrderType.MARKET
+            and intent.metadata.get("geometry_model") != "RANGE_RAIL_MARKET"
+        ):
+            risk_issues.append(
+                {
+                    "code": "RANGE_MARKET_NOT_AT_RAIL",
+                    "message": (
+                        f"{pair} range MARKET lane is not inside the rail zone; "
+                        "keep the pending LIMIT rail order instead of chasing the box interior."
+                    ),
+                    "severity": "BLOCK",
+                }
+            )
+            risk_allowed = False
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -438,10 +463,18 @@ class IntentGenerator:
                     f"units={intent['units']} entry={intent.get('entry')} tp={intent['tp']} sl={intent['sl']}"
                 )
             if item.risk_metrics:
+                margin_tail = ""
+                if item.risk_metrics.get("estimated_margin_jpy") is not None:
+                    margin_tail = f" margin=`{item.risk_metrics['estimated_margin_jpy']:.1f} JPY`"
+                    after = item.risk_metrics.get("margin_utilization_after_pct")
+                    cap = item.risk_metrics.get("max_margin_utilization_pct")
+                    if after is not None and cap is not None:
+                        margin_tail += f" margin_after=`{after:.1f}%/{cap:.1f}%`"
                 lines.append(
                     f"  - risk metrics: risk=`{item.risk_metrics['risk_jpy']:.1f} JPY` "
                     f"reward=`{item.risk_metrics['reward_jpy']:.1f} JPY` "
                     f"rr=`{item.risk_metrics['reward_risk']:.2f}` spread=`{item.risk_metrics['spread_pips']:.1f}pip`"
+                    f"{margin_tail}"
                 )
             for issue in item.risk_issues:
                 lines.append(f"  - risk {issue['severity']}: {issue['code']} {issue['message']}")
@@ -481,8 +514,6 @@ def _variant_lane_id(parent_lane_id: str, order_type: OrderType | None) -> str:
 def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
     method = TradeMethod.parse(str(lane["method"]))
     base = _order_type_for(method)
-    if method == TradeMethod.RANGE_ROTATION:
-        return (base,)
     return (base, OrderType.MARKET)
 
 
@@ -523,6 +554,7 @@ def _intent_from_lane(
         range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
     )
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
+    margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
     context = MarketContext(
         regime=f"{method.value} campaign lane",
@@ -552,12 +584,16 @@ def _intent_from_lane(
             "target_reward_risk": target_reward_risk,
             "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
-            "sizing_rule": f"floor units to the largest broker size under the {max_loss_jpy:.0f} JPY loss cap",
+            "sizing_rule": (
+                f"floor units to the largest broker size under the {max_loss_jpy:.0f} JPY loss cap "
+                f"and {RiskPolicy().max_margin_utilization_pct:.1f}% margin utilization cap"
+            ),
             "max_loss_jpy": max_loss_jpy,
             "parent_lane_id": parent_lane_id or _lane_id(lane),
             "order_timing": "NOW_MARKET" if order_type == OrderType.MARKET else "PENDING_TRIGGER",
             **position_metadata,
             **geometry_metadata,
+            **margin_metadata,
         },
     )
 
@@ -587,10 +623,11 @@ def _geometry(
     distance; the caller is responsible for emitting MISSING_ATR so the operator
     sees that geometry was built without the primary market input.
     """
-    if order_type == OrderType.LIMIT and range_indicators:
+    if order_type in {OrderType.LIMIT, OrderType.MARKET} and range_indicators:
         range_geometry = _range_geometry(
             pair,
             side,
+            order_type,
             quote,
             reward_risk=reward_risk,
             atr_pips=atr_pips,
@@ -638,6 +675,7 @@ def _generic_geometry(
 def _range_geometry(
     pair: str,
     side: Side,
+    order_type: OrderType,
     quote: Quote,
     *,
     reward_risk: float,
@@ -661,28 +699,48 @@ def _range_geometry(
         return None
 
     if side == Side.LONG:
-        entry = min(support + spread_buffer, quote.ask - pending_offset)
-        resistance = _target_resistance(entry, stop_pips, spread_pips, resistance_levels, pip)
+        if order_type == OrderType.MARKET:
+            edge_zone = _range_market_edge_zone_pips(atr_pips, stop_pips, spread_pips)
+            if quote.ask > support + (edge_zone * pip):
+                return None
+            entry = quote.ask
+        else:
+            entry = min(support + spread_buffer, quote.ask - pending_offset)
+        sl = min(entry - (stop_pips * pip), support - spread_buffer)
+        loss_pips = abs(entry - sl) * pip_factor
+        resistance = _target_resistance(entry, loss_pips, spread_pips, resistance_levels, pip)
         if resistance is None or resistance <= support:
             return None
         opposing_rail = resistance - (spread_pips * RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT * pip)
-        rr_target = entry + (stop_pips * reward_risk * pip)
+        rr_target = entry + (loss_pips * reward_risk * pip)
         tp = min(rr_target, opposing_rail)
         if tp <= entry:
             return None
-        sl = entry - (stop_pips * pip)
     else:
-        entry = max(resistance - spread_buffer, quote.bid + pending_offset)
-        support = _target_support(entry, stop_pips, spread_pips, support_levels, pip)
+        if order_type == OrderType.MARKET:
+            edge_zone = _range_market_edge_zone_pips(atr_pips, stop_pips, spread_pips)
+            if quote.bid < resistance - (edge_zone * pip):
+                return None
+            entry = quote.bid
+        else:
+            entry = max(resistance - spread_buffer, quote.bid + pending_offset)
+        sl = max(entry + (stop_pips * pip), resistance + spread_buffer)
+        loss_pips = abs(entry - sl) * pip_factor
+        support = _target_support(entry, loss_pips, spread_pips, support_levels, pip)
         if support is None or resistance <= support:
             return None
         opposing_rail = support + (spread_pips * RANGE_OPPOSING_RAIL_BUFFER_SPREAD_MULT * pip)
-        rr_target = entry - (stop_pips * reward_risk * pip)
+        rr_target = entry - (loss_pips * reward_risk * pip)
         tp = max(rr_target, opposing_rail)
         if tp >= entry:
             return None
-        sl = entry + (stop_pips * pip)
     return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
+
+
+def _range_market_edge_zone_pips(atr_pips: float | None, stop_pips: float, spread_pips: float) -> float:
+    atr_component = (atr_pips if atr_pips is not None and atr_pips > 0 else stop_pips) * RANGE_MARKET_EDGE_ZONE_ATR_MULT
+    spread_component = spread_pips * RANGE_MARKET_EDGE_ZONE_SPREAD_MULT
+    return max(atr_component, spread_component)
 
 
 def _numeric_levels(indicators: dict[str, Any], keys: tuple[str, ...]) -> tuple[float, ...]:
@@ -769,7 +827,7 @@ def _geometry_metadata(
     sl: float,
     range_indicators: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    if order_type != OrderType.LIMIT or not range_indicators:
+    if order_type not in {OrderType.LIMIT, OrderType.MARKET} or not range_indicators:
         return {"geometry_model": "ATR_SPREAD"}
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
@@ -785,13 +843,24 @@ def _geometry_metadata(
         resistance = _target_resistance(entry, stop_pips, spread_pips, resistance_levels, pip) or resistance
     else:
         support = _target_support(entry, stop_pips, spread_pips, support_levels, pip) or support
+    inside_box = support < tp < resistance
+    outside_box = sl < support if side == Side.LONG else sl > resistance
+    if order_type == OrderType.MARKET:
+        edge_zone = _range_market_edge_zone_pips(None, stop_pips, spread_pips)
+        if side == Side.LONG:
+            at_rail = quote.ask <= support + (edge_zone * pip)
+        else:
+            at_rail = quote.bid >= resistance - (edge_zone * pip)
+        model = "RANGE_RAIL_MARKET" if at_rail and inside_box and outside_box else "ATR_SPREAD"
+    else:
+        model = "RANGE_RAIL_LIMIT"
     return {
-        "geometry_model": "RANGE_RAIL_LIMIT",
+        "geometry_model": model,
         "range_support": round(support, 3 if pair.endswith("_JPY") else 5),
         "range_resistance": round(resistance, 3 if pair.endswith("_JPY") else 5),
         "range_entry_side": "support" if side == Side.LONG else "resistance",
-        "range_tp_is_inside_box": support < tp < resistance,
-        "range_sl_outside_box": sl < support if side == Side.LONG else sl > resistance,
+        "range_tp_is_inside_box": inside_box,
+        "range_sl_outside_box": outside_box,
     }
 
 
@@ -815,10 +884,60 @@ def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: fl
     quote_to_jpy = _quote_to_jpy(pair, snapshot)
     if quote_to_jpy is None:
         return 1
-    max_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
+    loss_budget_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
+    margin_budget_units = _margin_budgeted_units(pair, entry, snapshot)
+    max_units = min(loss_budget_units, margin_budget_units) if margin_budget_units is not None else loss_budget_units
     if max_units >= 1000:
         return max(1000, int(max_units // 1000) * 1000)
     return max(1, int(max_units))
+
+
+def _margin_budgeted_units(pair: str, entry: float, snapshot: BrokerSnapshot) -> float | None:
+    account = snapshot.account
+    if account is None:
+        return None
+    policy = RiskPolicy()
+    max_margin_pct = policy.max_margin_utilization_pct
+    if max_margin_pct is None or max_margin_pct <= 0:
+        return None
+    quote_to_jpy = _quote_to_jpy(pair, snapshot)
+    spec = DEFAULT_SPECS.get(pair)
+    if quote_to_jpy is None or spec is None or spec.margin_rate <= 0:
+        return None
+    budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+    if budget <= 0:
+        return 0.0
+    margin_per_unit = estimate_required_margin_jpy(units=1, entry_price=entry, quote_to_jpy=quote_to_jpy, spec=spec)
+    if margin_per_unit <= 0:
+        return 0.0
+    return budget / margin_per_unit
+
+
+def _margin_sizing_metadata(pair: str, entry: float, units: int, snapshot: BrokerSnapshot) -> dict[str, Any]:
+    policy = RiskPolicy()
+    max_margin_pct = policy.max_margin_utilization_pct
+    metadata: dict[str, Any] = {"max_margin_utilization_pct": max_margin_pct}
+    account = snapshot.account
+    quote_to_jpy = _quote_to_jpy(pair, snapshot)
+    spec = DEFAULT_SPECS.get(pair)
+    if account is None or quote_to_jpy is None or spec is None or max_margin_pct is None:
+        return metadata
+    estimated_margin = estimate_required_margin_jpy(units=units, entry_price=entry, quote_to_jpy=quote_to_jpy, spec=spec)
+    metadata.update(
+        {
+            "estimated_margin_jpy": round(estimated_margin, 3),
+            "margin_budget_jpy": round(margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct), 3),
+            "margin_used_jpy": round(account.margin_used_jpy, 3),
+            "margin_available_jpy": round(account.margin_available_jpy, 3),
+            "margin_utilization_after_pct": (
+                round((account.margin_used_jpy + estimated_margin) / account.nav_jpy * 100.0, 3)
+                if account.nav_jpy > 0
+                else None
+            ),
+            "margin_rate": spec.margin_rate,
+        }
+    )
+    return metadata
 
 
 def _quote_to_jpy(pair: str, snapshot: BrokerSnapshot) -> float | None:

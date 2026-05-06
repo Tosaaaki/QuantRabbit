@@ -554,6 +554,8 @@ def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
             continue
         blockers.append(f"open position exists: {position.pair} {position.side.value} id={position.trade_id}")
     for order in snapshot.orders:
+        if order.owner in {Owner.MANUAL, Owner.UNKNOWN}:
+            continue
         if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES:
             blockers.append(f"pending entry exists: {order.pair} {order.order_type} id={order.order_id}")
     return tuple(blockers)
@@ -564,6 +566,7 @@ def _pending_entry_order_count(snapshot: BrokerSnapshot) -> int:
         1
         for order in snapshot.orders
         if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES
+        and order.owner not in {Owner.MANUAL, Owner.UNKNOWN}
     )
 
 

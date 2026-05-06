@@ -34,6 +34,7 @@ class MarketStoryMinerTest(unittest.TestCase):
             )
             (daily / "state.md").write_text(
                 "GBP_USD breakout failure requires rejection price and trapped side.\n"
+                "NZD_USD range rail rotation is valid only at the box edge.\n"
             )
 
             report = root / "market_story.md"
@@ -49,6 +50,8 @@ class MarketStoryMinerTest(unittest.TestCase):
             self.assertIn("TREND_CONTINUATION", pairs["EUR_USD"]["methods"])
             self.assertIn("AUD_JPY", pairs)
             self.assertIn("RANGE_ROTATION", pairs["AUD_JPY"]["methods"])
+            self.assertIn("NZD_USD", pairs)
+            self.assertIn("RANGE_ROTATION", pairs["NZD_USD"]["methods"])
             self.assertIn("Method Switching Contract", report.read_text())
 
 

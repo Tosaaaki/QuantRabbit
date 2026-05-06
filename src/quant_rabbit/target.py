@@ -166,8 +166,12 @@ class DailyTargetLedger:
             if snapshot
             else _previous_positions(previous.get("positions"))
         )
+        # The daily 10% campaign measures the autonomous trader's progress.
+        # Operator-managed manual/tagless positions stay visible in the
+        # positions table, but their open P/L must not make the trader look
+        # closer to target or further from it.
         unrealized = (
-            round(sum(position.unrealized_pl_jpy for position in snapshot.positions), 4)
+            round(sum(position.unrealized_pl_jpy for position in snapshot.positions if position.owner == Owner.TRADER), 4)
             if snapshot
             else float(previous.get("unrealized_pl_jpy") or 0.0)
         )
@@ -251,7 +255,7 @@ class DailyTargetLedger:
             f"- Campaign day (JST9): `{state.campaign_day_jst}`",
             f"- Target: `{state.target_jpy:.0f} JPY` (`{state.target_return_pct:.1f}%`)",
             f"- Realized PnL: `{state.realized_pl_jpy:.0f} JPY`",
-            f"- Unrealized PnL: `{state.unrealized_pl_jpy:.0f} JPY`",
+            f"- Trader unrealized PnL: `{state.unrealized_pl_jpy:.0f} JPY`",
             f"- Progress: `{state.progress_jpy:.0f} JPY` (`{state.progress_pct:.1f}%` of target)",
             f"- Remaining target: `{state.remaining_target_jpy:.0f} JPY`",
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",

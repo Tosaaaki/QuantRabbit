@@ -211,9 +211,16 @@ class LiveOrderGateway:
             lines.append(f"- stopLossOnFill: `{order['stopLossOnFill']['price']}`")
             metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else None
             if metrics:
+                margin_tail = ""
+                if metrics.get("estimated_margin_jpy") is not None:
+                    margin_tail = f" margin=`{metrics['estimated_margin_jpy']:.1f} JPY`"
+                    after = metrics.get("margin_utilization_after_pct")
+                    cap = metrics.get("max_margin_utilization_pct")
+                    if after is not None and cap is not None:
+                        margin_tail += f" margin_after=`{after:.1f}%/{cap:.1f}%`"
                 lines.append(
                     f"- broker-truth risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
-                    f"rr=`{metrics['reward_risk']:.2f}` spread=`{metrics['spread_pips']:.1f}pip`"
+                    f"rr=`{metrics['reward_risk']:.2f}` spread=`{metrics['spread_pips']:.1f}pip`{margin_tail}"
                 )
         else:
             lines.append("- none")

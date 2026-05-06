@@ -33,12 +33,13 @@ from quant_rabbit.paths import (
     ROOT,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.risk import RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.position_manager import PositionManager
-from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter
+from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter, ReceiptPromotionSummary
 from quant_rabbit.strategy.trader_brain import (
     ACTION_NO_TRADE,
     ACTION_SEND_ENTRY,
@@ -229,7 +230,7 @@ class AutoTradeCycle:
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
-        pairs = ("AUD_JPY", "AUD_USD", "EUR_JPY", "EUR_USD", "GBP_JPY", "GBP_USD", "USD_JPY")
+        pairs = DEFAULT_TRADER_PAIRS
         if self.reuse_market_artifacts:
             snapshot = self._load_snapshot_artifact()
         else:
@@ -248,7 +249,7 @@ class AutoTradeCycle:
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
         resolved_max_loss_jpy = self._resolve_max_loss_jpy()
-        if not positions and not pending_entries and target_summary and target_summary.status == "TARGET_REACHED_PROTECT":
+        if not trader_positions and not pending_entries and target_summary and target_summary.status == "TARGET_REACHED_PROTECT":
             summary = AutoTradeCycleSummary(
                 status="TARGET_REACHED_PROTECT",
                 report_path=self.report_path,
@@ -349,7 +350,7 @@ class AutoTradeCycle:
                 status = "POSITION_ACTION_STAGED"
             elif position_execution.status == "BLOCKED":
                 status = "POSITION_ACTION_BLOCKED"
-            if send and self.live_enabled and positions == 0 and decision.pending_cancel_order_ids:
+            if send and self.live_enabled and trader_positions == 0 and decision.pending_cancel_order_ids:
                 for order_id in decision.pending_cancel_order_ids:
                     self.client.cancel_order(order_id)
                     canceled_orders.append(order_id)
@@ -377,8 +378,11 @@ class AutoTradeCycle:
             self._write_report(summary, generated_at)
             return summary
 
-        promotion_summary = self._receipt_promoter().run()
-        if promotion_summary.promoted:
+        if self.reuse_market_artifacts:
+            promotion_summary = self._skipped_receipt_promotion_summary()
+        else:
+            promotion_summary = self._receipt_promoter().run()
+        if promotion_summary.promoted and not self.reuse_market_artifacts:
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         decision = self._brain().run(snapshot)
         deterministic_lane_id = decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
@@ -894,6 +898,17 @@ class AutoTradeCycle:
             report_path=self.receipt_promotion_report_path,
         )
 
+    def _skipped_receipt_promotion_summary(self) -> ReceiptPromotionSummary:
+        return ReceiptPromotionSummary(
+            profile_path=self.strategy_profile_path,
+            intents_path=self.intents_path,
+            report_path=self.receipt_promotion_report_path,
+            profiles_seen=0,
+            receipts_seen=0,
+            promoted=0,
+            still_blocked=0,
+        )
+
     def _brain(self) -> TraderBrain:
         return TraderBrain(
             intents_path=self.intents_path,
@@ -1127,6 +1142,7 @@ def _pending_entry_order_count(snapshot) -> int:
         1
         for order in snapshot.orders
         if not order.trade_id and str(order.order_type or "").upper() in PENDING_ENTRY_TYPES
+        and order.owner.value not in {"manual", "unknown"}
     )
 
 
