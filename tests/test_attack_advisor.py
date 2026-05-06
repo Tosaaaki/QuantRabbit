@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import io
+import json
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
+
+from quant_rabbit.attack_advisor import AttackAdvisor
+from quant_rabbit.cli import main
+
+
+class AttackAdvisorTest(unittest.TestCase):
+    def test_recommends_positive_edge_live_ready_lane_without_live_permission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                reward_jpy=900.0,
+                                risk_jpy=300.0,
+                                rr=3.0,
+                            ),
+                            _result(
+                                lane_id="failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+                                pair="AUD_JPY",
+                                side="SHORT",
+                                reward_jpy=1200.0,
+                                risk_jpy=350.0,
+                                rr=3.42,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1500.0, "remaining_risk_budget_jpy": 800.0}))
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "bucket_contributions": [
+                            {"bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED", "managed_net_jpy": 3000.0, "trades": 12},
+                            {"bucket": "trades:AUD_JPY:SHORT:UNSPECIFIED:UNSPECIFIED", "managed_net_jpy": -500.0, "trades": 8},
+                        ]
+                    }
+                )
+            )
+            coverage.write_text(json.dumps({"status": "COVERAGE_GAP"}))
+
+            summary = AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(summary.status, "ATTACK_COVERAGE_READY")
+            self.assertFalse(payload["live_permission"])
+            self.assertTrue(payload["read_only"])
+            self.assertEqual(payload["recommended_now_lane_ids"][0], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertIn("do_not_raise_loss_cap", payload["settings_advice"])
+            self.assertIn("AI Attack Advice Report", (root / "advice.md").read_text())
+
+    def test_blocks_when_live_ready_metrics_are_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(json.dumps({"results": [_result(risk_metrics={})]}))
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+
+            summary = AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=root / "missing_backtest.json",
+                coverage_path=root / "missing_coverage.json",
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(summary.status, "NO_ATTACK_ADVICE")
+            self.assertTrue(any("no LIVE_READY lanes" in item for item in payload["blockers"]))
+            self.assertEqual(payload["recommended_now_lane_ids"], [])
+
+    def test_cli_writes_read_only_advice_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            output = root / "advice.json"
+            report = root / "advice.md"
+            intents.write_text(json.dumps({"results": [_result()]}))
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "ai-attack-advice",
+                        "--intents",
+                        str(intents),
+                        "--target-state",
+                        str(target),
+                        "--ai-backtest",
+                        str(root / "missing_backtest.json"),
+                        "--coverage",
+                        str(root / "missing_coverage.json"),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["recommended_now_lanes"], 1)
+            payload = json.loads(output.read_text())
+            self.assertTrue(payload["read_only"])
+            self.assertFalse(payload["live_permission"])
+            self.assertTrue(report.exists())
+
+
+def _result(
+    *,
+    lane_id: str = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    method: str = "TREND_CONTINUATION",
+    order_type: str = "MARKET",
+    reward_jpy: float = 900.0,
+    risk_jpy: float = 300.0,
+    rr: float = 3.0,
+    risk_metrics: dict | None = None,
+) -> dict:
+    metrics = risk_metrics if risk_metrics is not None else {"reward_jpy": reward_jpy, "risk_jpy": risk_jpy, "reward_risk": rr, "spread_pips": 0.8}
+    return {
+        "lane_id": lane_id,
+        "status": "LIVE_READY",
+        "risk_metrics": metrics,
+        "risk_issues": [],
+        "strategy_issues": [],
+        "live_blockers": [],
+        "intent": {
+            "pair": pair,
+            "side": side,
+            "order_type": order_type,
+            "units": 1000,
+            "entry": 1.1,
+            "tp": 1.2,
+            "sl": 1.0,
+            "market_context": {"method": method, "narrative": "test", "chart_story": "test", "invalidation": "test"},
+        },
+    }
+
+
+if __name__ == "__main__":
+    unittest.main()

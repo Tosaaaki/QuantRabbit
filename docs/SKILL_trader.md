@@ -47,6 +47,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
+PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 ```
 
 If strategy artifacts are missing or stale, refresh evidence first:
@@ -97,6 +98,7 @@ Before writing any decision, open and actually read every layer below. Skipping 
     - `judas_armed` (bool) — Asian extreme already swept during the Judas window (00:00-05:00 NY); when true, fade the move back through midnight open with M5 confirmation.
     - `next_killzone`, `minutes_to_next_killzone` — pacing.
 - `data/order_intents.json` (and `docs/order_intents_report.md`) — pre-validated lane intents with current geometry (ATR-derived SL, equity-derived units). `LIVE_READY` lanes have no risk or strategy blockers; `DRY_RUN_BLOCKED` lanes carry their reason.
+- `data/ai_attack_advice.json` (and `docs/ai_attack_advice_report.md`) — read-only AI parameter/attack advice over current `LIVE_READY` lanes. It ranks lane/basket priority using current coverage and AI-test-bot history, but it is not an order authority, cannot grant live permission, and cannot raise loss caps. Cite `attack:advice` and `attack:lane:<lane_id>` when it supports a selected lane.
 - `data/market_story_profile.json` — current narrative pressure (intervention risk, event risk, JPY-cross conditions, etc.).
 - `data/broker_snapshot.json` — open positions, pending orders, ages, spreads.
   - Operator-managed manual/tagless positions (`owner=manual` or `owner=unknown`) are for operator awareness only. Do not protect, close, cancel around, or use them as a reason to block a valid trader-owned entry; cite them only as parallel manual exposure.
@@ -116,7 +118,7 @@ The decision must reference these inputs explicitly. Do not invent ATR, regime, 
 
 Use a single top-level Portfolio Director pass, then optional strategy-review passes, then one final decision receipt:
 
-1. Top layer: read broker truth, daily target, exposure, all `LIVE_READY` lanes, and hard gates.
+1. Top layer: read broker truth, daily target, exposure, all `LIVE_READY` lanes, `ai_attack_advice`, and hard gates.
 2. Indicator layer: use the `market_context` packet plus source files for pair charts, flow, levels, calendar, cross-asset, currency strength, COT, and option skew. Do not cite only evidence refs when the data body is available.
 3. Strategy-review layer: review lanes by `lane_id` / `method`, not by a loose desk name. Trend, range, and breakout-failure reviews may run in parallel, but they must only emit advisory `strategy_reviews`.
 4. Final integration: write exactly one decision JSON. Only the final JSON can select the primary `selected_lane_id` and, when multiple current `LIVE_READY` lanes should fire in the same cycle, `selected_lane_ids`. Execution remains gated by `gpt-trader-decision`, `TraderBrain` prefilter, `RiskEngine`, `StrategyProfile`, and `LiveOrderGateway`.
@@ -144,7 +146,8 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
     "chart:<pair>:M5", "chart:<pair>:H1", "chart:<pair>:structure",
     "cross:dxy", "cross:USB10Y_USD", "cross:correlations:<pair>",
     "strength:<pair>", "flow:<pair>", "levels:<pair>",
-    "calendar:<pair>", "cot:<currency>", "option:skew:<pair>"
+    "calendar:<pair>", "cot:<currency>", "option:skew:<pair>",
+    "attack:advice", "attack:lane:<lane_id>"
   ],
   "strategy_reviews": [
     {
@@ -201,6 +204,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 - **Choosing WAIT when LIVE_READY lanes exist and progress is behind pace.** If `daily_target_state.json` shows `progress_pct < 50` AND `data/order_intents.json` lists ≥ 3 `LIVE_READY` lanes, WAIT requires (a) one chart-story sentence per LIVE_READY lane stating why **that lane's specific invalidation** is hit right now, citing M5 numbers from `pair_charts.json`, AND (b) explicit citation of the AGENT_CONTRACT gate that fires (§9 spread cap, §11 strategy block, etc.). Generic narrative ("Golden Week thin liquidity", "EVENT_RISK") is not sufficient — it must be quantified against a contract-named gate. The campaign exists to find trades, not to defend zero.
 - **Leaving the target-open campaign flat when a prefiltered LIVE_READY lane exists.** If `daily_target_state.json` is `PURSUE_TARGET`, `remaining_target_jpy > 0`, no trader-owned position exists, and a deterministic prefiltered `LIVE_READY` lane exists, WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE is invalid unless every lane is blocked by a named contract gate. Existing trader-owned pending entries must be counted by basket risk/margin/geometry validation; they are not a blanket reason to stop adding when capacity remains. Manual/tagless operator exposure does not count as trader exposure and does not block the campaign lane.
 - Treating old worst loss or weak past evidence as a veto after current risk repair. Once the current `LIVE_READY` receipt fits `per_trade_risk_budget_jpy`, negative `live_net`, missing positive mined evidence, low capture rate, old `WAIT` language, and stale story rejection markers are audit context only. Do not use them to block, reduce size, or lower rank.
+- Treating `ai_attack_advice` as execution permission. It is a read-only ranker for already validated lanes; it cannot place/stage orders, enable a second trader, raise `daily_risk_budget_jpy` / `per_trade_risk_budget_jpy`, or override `gpt-trader-decision` and gateway validation.
 - Submitting a `TRADE` without checking `pair_charts.json` regime + ATR for that pair.
 - Submitting a `TRADE` on a JPY pair without citing DXY direction and `USB10Y_USD` trend from `cross_asset_snapshot.json` (proxy for US-JP yield differential).
 - Submitting a `TRADE` while `economic_calendar.json` shows `pair_windows[].in_window=true` for either side of the pair, without an explicit override justification in `risk_notes`.

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from quant_rabbit.paths import (
+    DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_COT_SNAPSHOT,
@@ -110,6 +111,7 @@ class GPTTraderBrain:
         calendar_path: Path = DEFAULT_CALENDAR_SNAPSHOT,
         cot_path: Path = DEFAULT_COT_SNAPSHOT,
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
+        attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         max_lanes: int = DEFAULT_GPT_MAX_LANES,
@@ -128,6 +130,7 @@ class GPTTraderBrain:
         self.calendar_path = calendar_path
         self.cot_path = cot_path
         self.option_skew_path = option_skew_path
+        self.attack_advice_path = attack_advice_path
         self.output_path = output_path
         self.report_path = report_path
         self.max_lanes = max_lanes
@@ -169,7 +172,8 @@ class GPTTraderBrain:
         story = _load_json(self.market_story_profile_path)
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
-        refs = _allowed_refs(snapshot=snapshot, target=target, lanes=lanes)
+        attack_advice = _load_optional_json(self.attack_advice_path)
+        refs = _allowed_refs(snapshot=snapshot, target=target, lanes=lanes, attack_advice=attack_advice)
         pairs = _pairs_from_lanes(lanes)
         currencies = _currencies_from_pairs(pairs)
         return {
@@ -185,6 +189,7 @@ class GPTTraderBrain:
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
+            "ai_attack_advice": _attack_advice_packet(attack_advice),
             "market_context": _market_context_packet(
                 pairs=pairs,
                 currencies=currencies,
@@ -595,7 +600,13 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _allowed_refs(*, snapshot: dict[str, Any], target: dict[str, Any], lanes: list[dict[str, Any]]) -> list[str]:
+def _allowed_refs(
+    *,
+    snapshot: dict[str, Any],
+    target: dict[str, Any],
+    lanes: list[dict[str, Any]],
+    attack_advice: dict[str, Any] | None,
+) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
     # refs than the base broker/target/lane triple — the trader is required to
     # cite per-pair charts, cross-asset, flow, levels, currency strength,
@@ -648,7 +659,30 @@ def _allowed_refs(*, snapshot: dict[str, Any], target: dict[str, Any], lanes: li
     for asset in cross_assets:
         refs.append(f"cross:{asset}")
     refs.extend(["cross:dxy", "cross:correlations", "option:skew", "option:skew:unknown"])
+    if attack_advice:
+        refs.append("attack:advice")
+        for lane_id in attack_advice.get("recommended_now_lane_ids", []) or []:
+            refs.append(f"attack:lane:{lane_id}")
+        for lane_id in attack_advice.get("watchlist_lane_ids", []) or []:
+            refs.append(f"attack:lane:{lane_id}")
     return sorted(set(refs))
+
+
+def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {"evidence_ref": "attack:advice", "status": "missing"}
+    return {
+        "evidence_ref": "attack:advice",
+        "status": payload.get("status"),
+        "read_only": payload.get("read_only"),
+        "live_permission": payload.get("live_permission"),
+        "coverage_pct": payload.get("coverage_pct"),
+        "recommended_now_lane_ids": list(payload.get("recommended_now_lane_ids", []) or []),
+        "recommended_now_reward_jpy": payload.get("recommended_now_reward_jpy"),
+        "recommended_now_risk_jpy": payload.get("recommended_now_risk_jpy"),
+        "required_additional_reward_jpy": payload.get("required_additional_reward_jpy"),
+        "settings_advice": payload.get("settings_advice") if isinstance(payload.get("settings_advice"), dict) else {},
+    }
 
 
 def _block_issues(items: object) -> list[str]:

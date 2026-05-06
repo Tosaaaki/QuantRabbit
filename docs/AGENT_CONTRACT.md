@@ -144,6 +144,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Trader decisions compare mined history, market story, campaign role, narrative risk, current broker state, risk geometry, and live exposure.
 - Portfolio Director records which desk wins and why when trader desks disagree.
 - Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but only the final trader receipt may select a lane or `selected_lane_ids` basket, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
+- `ai-attack-advice` is also read-only. It may rank current `LIVE_READY` lanes and expose advisory parameter surfaces to Codex automation, but it cannot grant live permission, raise risk budgets, stage orders, or create a second trader loop.
 - Strategy-review identity is `lane_id` plus `method`, not a loose desk alias. A review for `TREND_CONTINUATION` cannot authorize a `RANGE_ROTATION` or `BREAKOUT_FAILURE` lane.
 
 ---
@@ -284,6 +285,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapte
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --start-balance 222781 --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
+PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 
 # Decision verification
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
@@ -293,7 +296,6 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # Risk / receipts
 PYTHONPATH=src python3 -m quant_rabbit.cli risk-dry-run --intent intent.json --snapshot snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli promote-receipts
-PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 
 # Stage / send
 PYTHONPATH=src python3 -m quant_rabbit.cli stage-live-order \

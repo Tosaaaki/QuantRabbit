@@ -256,6 +256,8 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(files["story"]),
                         "--target-state",
                         str(files["target"]),
+                        "--attack-advice",
+                        str(files["attack_advice"]),
                         "--decision-response",
                         str(decision_response),
                         "--output",
@@ -330,6 +332,34 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(market_context["currency_strength"]["USD"]["rank"], 2)
             self.assertEqual(market_context["cot"]["USD"]["leveraged_net"], 1234)
 
+    def test_accepts_attack_advice_evidence_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "coverage_pct": 49.0,
+                        "recommended_now_lane_ids": [LANE_ID],
+                        "recommended_now_reward_jpy": 900.0,
+                        "recommended_now_risk_jpy": 300.0,
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["input_packet"]["ai_attack_advice"]["recommended_now_lane_ids"], [LANE_ID])
+            self.assertFalse(payload["input_packet"]["ai_attack_advice"]["live_permission"])
+
     def test_rejects_strategy_review_that_uses_wrong_method_for_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -371,6 +401,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         calendar_path=files["calendar"],
         cot_path=files["cot"],
         option_skew_path=files["option_skew"],
+        attack_advice_path=files["attack_advice"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -391,6 +422,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "calendar": root / "calendar.json",
         "cot": root / "cot.json",
         "option_skew": root / "option_skew.json",
+        "attack_advice": root / "attack_advice.json",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
@@ -612,6 +644,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
             }
         )
     )
+    files["attack_advice"].write_text(json.dumps({}))
     return files
 
 

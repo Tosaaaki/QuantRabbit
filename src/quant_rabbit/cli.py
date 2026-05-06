@@ -16,6 +16,7 @@ from quant_rabbit.ai_test_bot import (
     DEFAULT_SOURCE_TABLES,
     DEFAULT_TRAINING_DAYS,
 )
+from quant_rabbit.attack_advisor import AttackAdvisor
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
@@ -30,6 +31,8 @@ from quant_rabbit.paths import (
     ROOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
+    DEFAULT_AI_ATTACK_ADVICE,
+    DEFAULT_AI_ATTACK_ADVICE_REPORT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAMPAIGN_REPORT,
@@ -249,6 +252,14 @@ def main(argv: list[str] | None = None) -> int:
     p_coverage.add_argument("--output", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_coverage.add_argument("--report", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION_REPORT)
 
+    p_attack = sub.add_parser("ai-attack-advice", help="Rank current LIVE_READY lanes using read-only AI parameter advice.")
+    p_attack.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_attack.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_attack.add_argument("--ai-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
+    p_attack.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
+    p_attack.add_argument("--output", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_attack.add_argument("--report", type=Path, default=DEFAULT_AI_ATTACK_ADVICE_REPORT)
+
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_exec_replay.add_argument("--prices", type=Path, required=True)
@@ -296,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_gpt.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_gpt.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_gpt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
@@ -1327,6 +1339,37 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == "COMPLETE" else 2
+    if args.command == "ai-attack-advice":
+        try:
+            summary = AttackAdvisor(
+                intents_path=args.intents,
+                target_state_path=args.target_state,
+                ai_backtest_path=args.ai_backtest,
+                coverage_path=args.coverage,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "live_ready_lanes": summary.live_ready_lanes,
+                    "recommended_now_lanes": summary.recommended_now_lanes,
+                    "recommended_reward_jpy": summary.recommended_reward_jpy,
+                    "coverage_pct": summary.coverage_pct,
+                    "blockers": summary.blockers,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.recommended_now_lanes > 0 else 2
     if args.command == "gpt-trader-decision":
         try:
             provider = _static_gpt_provider(
@@ -1340,6 +1383,7 @@ def main(argv: list[str] | None = None) -> int:
                 strategy_profile_path=args.strategy_profile,
                 market_story_profile_path=args.market_story_profile,
                 target_state_path=args.target_state,
+                attack_advice_path=args.attack_advice,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,
