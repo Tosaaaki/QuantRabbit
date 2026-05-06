@@ -47,6 +47,45 @@ GEOMETRY_ATR_MULT = 1.0
 GEOMETRY_SPREAD_FLOOR_MULT = 6.0
 GEOMETRY_ATR_TIMEFRAME = "M5"
 
+# Regime-derived reward/risk multipliers per AGENT_CONTRACT §3.5: "Trend regimes
+# deserve wider targets; range regimes deserve faster rotation." Applied after
+# the lane's base target_reward_risk to convert regime context into geometry
+# without forcing the lane definition to encode regime in advance.
+#
+# (a) market reality: range markets revert to mid before reaching distant targets,
+#     so close TP captures more of the available rotation. Trend markets keep
+#     extending, so wider TP rides the move. Impulse continuation goes furthest.
+# (b) constants rather than derived: these are the operator's regime-handling
+#     policy. The regime detector itself is data-derived; the *response* to a
+#     regime is a deliberate policy choice and is intentionally constant.
+# (c) replace via: switch a regime to a different multiplier here when post-trade
+#     learning shows the current value mis-fits realized R distribution per
+#     regime. Per-pair overrides should land in pair_charts metadata, not here.
+REGIME_REWARD_RISK_RANGE_MULT = 0.6
+REGIME_REWARD_RISK_TREND_MULT = 1.3
+REGIME_REWARD_RISK_IMPULSE_MULT = 1.5
+REGIME_REWARD_RISK_UNCLEAR_MULT = 1.0
+
+# Regime-derived stop widening per AGENT_CONTRACT §3.5 + feedback_no_tight_sl_thin_market.md.
+# Wider SL is engaged when noise/uncertainty is elevated so the trade is not
+# stopped out by the wick-noise floor of an unclear regime.
+#
+# (a) market reality: low-confidence regime classification means the four
+#     constituent signals (Hurst/ADX/Choppiness/ATR percentile) disagree.
+#     High atr_percentile means current ATR sits above its long-window
+#     distribution — bigger candles, deeper wicks. Either condition expands
+#     the realistic invalidation distance.
+# (b) constants rather than derived: these are operator knobs for converting
+#     measured noise into a stop multiplier. The detector outputs are derived;
+#     the *response* is policy.
+# (c) replace via: tune via post-trade-learning evidence — if SL hits cluster
+#     near M5 wick range during low-confidence cycles, raise the multiplier.
+REGIME_LOW_CONFIDENCE_THRESHOLD = 0.5  # below this fraction of agreeing signals
+REGIME_LOW_CONFIDENCE_STOP_MULT = 1.3
+REGIME_HIGH_VOL_PCTILE = 0.8  # ATR sits in the top 20% of trailing year
+REGIME_HIGH_VOL_STOP_MULT = 1.4
+REGIME_MAX_STOP_WIDEN = 1.5  # ceiling — never widen more than 1.5× ATR floor
+
 # Range rotation needs an actual rail, not a generic "a few pips away" limit.
 # The buffer places the pending order just inside the rail so a touch can fill
 # before the exact support/resistance tick. It is spread-derived because broker
@@ -150,6 +189,13 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             granularity = view.get("granularity")
             if isinstance(granularity, str):
                 per_tf[granularity] = view.get("indicators", {}) or {}
+                # Expose regime_reading per timeframe so geometry can read
+                # confidence / atr_percentile for regime-aware SL widening.
+                # Per AGENT_CONTRACT §3.5: data-derived; no silent literal
+                # replaces a missing reading — caller falls back to base stop.
+                regime_reading = view.get("regime_reading")
+                if isinstance(regime_reading, dict):
+                    per_tf[f"{granularity}__regime_reading"] = regime_reading
         indexed[pair] = per_tf
     return indexed if indexed else None
 
@@ -170,6 +216,93 @@ def _atr_pips_for(pair: str, charts: dict[str, dict[str, Any]] | None, timeframe
     except (TypeError, ValueError):
         return None
     return value if value > 0 else None
+
+
+def _regime_state_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> str | None:
+    """Return the chart-level dominant_regime string for a pair, or None.
+
+    The dominant_regime aggregates the per-timeframe reading layer into a
+    single classification (TREND_UP/TREND_DOWN/RANGE/IMPULSE_*/FAILURE_RISK/
+    UNCLEAR). It is the operator's primary signal for choosing whether the
+    current cycle is rotation territory or trend continuation territory.
+    Per AGENT_CONTRACT §3.5: returning None when missing forces the caller
+    to fall back to the lane's base reward_risk — no silent literal swap.
+    """
+    if charts is None:
+        return None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return None
+    raw = per_tf.get("dominant_regime")
+    if isinstance(raw, str) and raw:
+        return raw
+    return None
+
+
+def _regime_reading_for(
+    pair: str,
+    charts: dict[str, dict[str, Any]] | None,
+    timeframe: str = GEOMETRY_ATR_TIMEFRAME,
+) -> dict[str, Any] | None:
+    """Return the per-timeframe regime_reading dict, or None when absent.
+
+    Used by stop-widening to access regime confidence + atr_percentile from
+    the chart reader's reading layer (Hurst/ADX/Choppiness/ATR-percentile).
+    """
+    if charts is None:
+        return None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return None
+    raw = per_tf.get(f"{timeframe}__regime_reading")
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
+def _regime_reward_risk_multiplier(regime_state: str | None) -> float:
+    """Return the regime-derived multiplier on a lane's base target_reward_risk.
+
+    Per AGENT_CONTRACT §3.5: trend regimes deserve wider targets, range regimes
+    deserve faster rotation. Returns 1.0 when regime is unknown so missing data
+    never silently shortens or extends targets.
+    """
+    if not regime_state:
+        return 1.0
+    upper = regime_state.upper()
+    if "RANGE" in upper:
+        return REGIME_REWARD_RISK_RANGE_MULT
+    if "IMPULSE" in upper:
+        return REGIME_REWARD_RISK_IMPULSE_MULT
+    if "TREND" in upper:
+        return REGIME_REWARD_RISK_TREND_MULT
+    # FAILURE_RISK / UNCLEAR / TRANSITION fall through unchanged so the lane's
+    # base target_reward_risk governs. Operator can size down via lane defs.
+    return REGIME_REWARD_RISK_UNCLEAR_MULT
+
+
+def _regime_stop_widening_multiplier(regime_reading: dict[str, Any] | None) -> float:
+    """Return >=1.0 stop-widening multiplier based on regime confidence & vol.
+
+    Widens (never narrows) when:
+      - regime confidence is below `REGIME_LOW_CONFIDENCE_THRESHOLD` (signals
+        disagree → realistic invalidation is wider than the cleanest case),
+      - ATR percentile is above `REGIME_HIGH_VOL_PCTILE` (top of trailing-year
+        volatility distribution → wick noise is structurally bigger).
+
+    Returns 1.0 when the reading is missing — geometry stays on the ATR/spread
+    floor without inventing a multiplier.
+    """
+    if not regime_reading:
+        return 1.0
+    multiplier = 1.0
+    confidence = regime_reading.get("confidence")
+    if isinstance(confidence, (int, float)) and confidence < REGIME_LOW_CONFIDENCE_THRESHOLD:
+        multiplier = max(multiplier, REGIME_LOW_CONFIDENCE_STOP_MULT)
+    atr_pct = regime_reading.get("atr_percentile")
+    if isinstance(atr_pct, (int, float)) and atr_pct > REGIME_HIGH_VOL_PCTILE:
+        multiplier = max(multiplier, REGIME_HIGH_VOL_STOP_MULT)
+    return min(REGIME_MAX_STOP_WIDEN, multiplier)
 
 
 def _range_indicators_for(
@@ -335,6 +468,8 @@ class IntentGenerator:
             )
         atr_pips = _atr_pips_for(pair, pair_charts)
         range_indicators = _range_indicators_for(pair, pair_charts)
+        regime_state = _regime_state_for(pair, pair_charts)
+        regime_reading = _regime_reading_for(pair, pair_charts)
         intent = _intent_from_lane(
             lane,
             quote,
@@ -344,6 +479,8 @@ class IntentGenerator:
             range_indicators=range_indicators,
             order_type_override=order_type_override,
             parent_lane_id=parent_lane_id,
+            regime_state=regime_state,
+            regime_reading=regime_reading,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -550,12 +687,20 @@ def _intent_from_lane(
     range_indicators: dict[str, Any] | None = None,
     order_type_override: OrderType | None = None,
     parent_lane_id: str | None = None,
+    regime_state: str | None = None,
+    regime_reading: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
     method = TradeMethod.parse(str(lane["method"]))
     order_type = order_type_override or _order_type_for(method)
-    target_reward_risk = _target_reward_risk(lane)
+    base_reward_risk = _target_reward_risk(lane)
+    # Regime-derived reward_risk per AGENT_CONTRACT §3.5: range → close TP for
+    # rotation, trend → wider TP to ride. The lane's base value is preserved
+    # for audit; the active geometry reflects current regime.
+    rr_multiplier = _regime_reward_risk_multiplier(regime_state)
+    target_reward_risk = round(base_reward_risk * rr_multiplier, 2)
+    stop_widen_mult = _regime_stop_widening_multiplier(regime_reading)
     entry, tp, sl = _geometry(
         pair,
         side,
@@ -565,6 +710,7 @@ def _intent_from_lane(
         atr_pips=atr_pips,
         range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
         chart_indicators=range_indicators,
+        stop_widen_mult=stop_widen_mult,
     )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
     geometry_metadata = _geometry_metadata(
@@ -607,6 +753,10 @@ def _intent_from_lane(
             "campaign_role": lane.get("campaign_role"),
             "required_receipt": lane.get("required_receipt"),
             "target_reward_risk": target_reward_risk,
+            "base_target_reward_risk": base_reward_risk,
+            "regime_reward_risk_mult": rr_multiplier,
+            "regime_state": regime_state,
+            "regime_stop_widen_mult": stop_widen_mult,
             "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": (
@@ -639,11 +789,18 @@ def _geometry(
     atr_pips: float | None = None,
     range_indicators: dict[str, Any] | None = None,
     chart_indicators: dict[str, Any] | None = None,
+    stop_widen_mult: float = 1.0,
 ) -> tuple[float, float, float]:
     """Build (entry, tp, sl) prices.
 
     Stop distance comes from market reality, not a fixed pip literal:
         stop_pips = max(atr_pips * GEOMETRY_ATR_MULT, spread_pips * GEOMETRY_SPREAD_FLOOR_MULT)
+
+    `stop_widen_mult` (≥1.0) lets a regime-aware caller widen the stop when
+    confidence is low or ATR sits in the top of its trailing distribution —
+    per AGENT_CONTRACT §3.5 the response to noise is wider invalidation, not
+    a narrower target. Defaults to 1.0 so callers without regime context get
+    the previous behavior unchanged.
 
     When atr_pips is None (pair_charts missing), we fall back to a *spread-only*
     distance; the caller is responsible for emitting MISSING_ATR so the operator
@@ -658,6 +815,7 @@ def _geometry(
             reward_risk=reward_risk,
             atr_pips=atr_pips,
             indicators=range_indicators,
+            stop_widen_mult=stop_widen_mult,
         )
         if range_geometry is not None:
             return range_geometry
@@ -669,6 +827,7 @@ def _geometry(
         reward_risk=reward_risk,
         atr_pips=atr_pips,
         chart_indicators=chart_indicators,
+        stop_widen_mult=stop_widen_mult,
     )
 
 
@@ -681,6 +840,7 @@ def _generic_geometry(
     reward_risk: float,
     atr_pips: float | None,
     chart_indicators: dict[str, Any] | None = None,
+    stop_widen_mult: float = 1.0,
 ) -> tuple[float, float, float]:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
@@ -690,6 +850,10 @@ def _generic_geometry(
         stop_pips = max(atr_pips * GEOMETRY_ATR_MULT, spread_floor)
     else:
         stop_pips = spread_floor
+    # Regime-aware stop widening: noise / low-confidence regimes get a wider
+    # invalidation distance so wick noise does not stop the trade prematurely.
+    # Floor at the spread-only distance to keep the spread guarantee.
+    stop_pips = max(stop_pips * max(stop_widen_mult, 1.0), spread_floor)
     trigger_offset_pips = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT
     if order_type == OrderType.LIMIT:
         entry = quote.bid - trigger_offset_pips * pip if side == Side.LONG else quote.ask + trigger_offset_pips * pip
@@ -752,6 +916,7 @@ def _range_geometry(
     reward_risk: float,
     atr_pips: float | None,
     indicators: dict[str, Any],
+    stop_widen_mult: float = 1.0,
 ) -> tuple[float, float, float] | None:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
@@ -765,7 +930,10 @@ def _range_geometry(
 
     spread_buffer = spread_pips * RANGE_RAIL_ENTRY_BUFFER_SPREAD_MULT * pip
     pending_offset = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT * pip
-    stop_pips = max((atr_pips or 0.0) * GEOMETRY_ATR_MULT, spread_pips * GEOMETRY_SPREAD_FLOOR_MULT)
+    spread_floor = spread_pips * GEOMETRY_SPREAD_FLOOR_MULT
+    stop_pips = max((atr_pips or 0.0) * GEOMETRY_ATR_MULT, spread_floor)
+    # Regime-aware stop widening keeps SL outside wick noise; floor at spread.
+    stop_pips = max(stop_pips * max(stop_widen_mult, 1.0), spread_floor)
     if stop_pips <= 0:
         return None
 
@@ -874,8 +1042,15 @@ def _target_support(
 
 
 def _minimum_range_target_pips(stop_pips: float, spread_pips: float) -> float:
+    # RANGE geometry uses the regime-specific floor so rail-tagged rotations
+    # are not pushed past the opposite rail just to satisfy a 1.2R floor.
+    # Spread-multiple floor still applies; the overall target distance is the
+    # max of the two so spread cost is always covered.
     policy = RiskPolicy()
-    return max(stop_pips * policy.min_reward_risk, spread_pips * policy.min_target_spread_multiple)
+    return max(
+        stop_pips * policy.range_min_reward_risk,
+        spread_pips * policy.min_target_spread_multiple,
+    )
 
 
 def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -> dict[str, Any]:

@@ -60,6 +60,19 @@ DEFAULT_GPT_MAX_LANES = 56
 # gateway still re-validates portfolio risk and margin before send.
 BASKET_PAIR_COVERAGE_TARGET = 4
 
+# Rank ceiling for "primary attack" lanes when computing basket pair
+# coverage. ai_attack_advice sorts recommended_now_lane_ids by descending
+# score, so the top N ranks represent the highest-conviction setups for
+# the cycle. Pairs whose first appearance in the advised list is below
+# this rank are treated as low-conviction repair candidates rather than
+# primary-basket coverage requirements; the rank gap is the deterministic
+# conviction gate that satisfies AGENT_CONTRACT §5–§6 without forcing the
+# trader to paste boilerplate skip-rationale per lower-ranked pair. This
+# keeps the bot-grinding defense (single low-conviction lane spam) while
+# unblocking high-conviction concentrated attacks (per
+# feedback_high_conviction_execution.md).
+PRIMARY_ATTACK_RANK_CEILING = 4
+
 
 @dataclass(frozen=True)
 class GPTTraderDecision:
@@ -337,29 +350,48 @@ class DecisionVerifier:
                         pair = _pair_from_lane_id(advised_lane_id)
                         if pair and pair not in advised_pairs:
                             advised_pairs.append(pair)
+                    # Restrict primary basket coverage to pairs whose top-ranked
+                    # advised lane sits within the rank ceiling. attack_lane_ids
+                    # is already sorted by descending score, so a pair whose
+                    # first appearance is rank > ceiling has been ranked below
+                    # PRIMARY_ATTACK_RANK_CEILING higher-conviction lanes — the
+                    # rank gap itself is the deterministic conviction gate, and
+                    # bot-grinding the lower-ranked pair would defeat the very
+                    # ranking ai_attack_advice exists to express.
+                    primary_advised_pairs: list[str] = []
+                    for rank, advised_lane_id in enumerate(attack_lane_ids):
+                        if rank >= PRIMARY_ATTACK_RANK_CEILING:
+                            break
+                        pair = _pair_from_lane_id(advised_lane_id)
+                        if pair and pair not in primary_advised_pairs:
+                            primary_advised_pairs.append(pair)
                     selected_pairs: set[str] = set()
                     for chosen_lane_id in selected_lane_ids:
                         pair = _pair_from_lane_id(chosen_lane_id)
                         if pair:
                             selected_pairs.add(pair)
                     expected_basket_pairs = min(
-                        len(advised_pairs),
+                        len(primary_advised_pairs),
                         BASKET_PAIR_COVERAGE_TARGET,
                     )
                     if len(selected_pairs) < expected_basket_pairs:
                         skipped_pairs = [
-                            pair for pair in advised_pairs if pair not in selected_pairs
+                            pair for pair in primary_advised_pairs if pair not in selected_pairs
                         ][:expected_basket_pairs]
                         issues.append(
                             VerificationIssue(
                                 "BASKET_PAIR_COVERAGE_INCOMPLETE",
-                                "ai_attack_advice recommends tradeable LIVE_READY lanes across "
-                                f"{len(advised_pairs)} distinct pair(s) ({', '.join(advised_pairs)}); "
-                                f"basket only covers {len(selected_pairs) or 'no'} pair(s) "
+                                "ai_attack_advice recommends top-ranked tradeable LIVE_READY lanes across "
+                                f"{len(primary_advised_pairs)} primary pair(s) "
+                                f"({', '.join(primary_advised_pairs)}); basket only covers "
+                                f"{len(selected_pairs) or 'no'} pair(s) "
                                 f"({', '.join(sorted(selected_pairs)) or 'none'}). Per AGENT_CONTRACT "
-                                "§5–§6 campaign exposure occupancy: include one lane per advised pair "
-                                f"up to max_portfolio_positions, or cite a named deterministic gate per "
-                                f"skipped pair in risk_notes: {', '.join(skipped_pairs)}",
+                                "§5–§6 campaign exposure occupancy: include one lane per primary "
+                                "advised pair (those whose top-ranked lane is within rank "
+                                f"{PRIMARY_ATTACK_RANK_CEILING}), or cite a named deterministic gate "
+                                f"per skipped primary pair in risk_notes: {', '.join(skipped_pairs)}. "
+                                "Pairs whose top advised lane ranks lower than the ceiling are gated "
+                                "by the rank/conviction gap itself.",
                                 severity="WARN",
                             )
                         )

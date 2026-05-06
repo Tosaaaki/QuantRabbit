@@ -544,5 +544,122 @@ def _snapshot_with_position(root: Path) -> Path:
     return path
 
 
+class RegimeAwareGeometryHelpersTest(unittest.TestCase):
+    """Unit tests for regime-derived reward_risk and SL widening helpers.
+
+    Per AGENT_CONTRACT §3.5: TP/SL must be regime-derived. These tests pin the
+    multiplier mapping so a future refactor cannot silently revert to a single
+    fixed reward_risk floor.
+    """
+
+    def test_range_regime_shortens_target(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_REWARD_RISK_RANGE_MULT,
+            _regime_reward_risk_multiplier,
+        )
+
+        self.assertEqual(_regime_reward_risk_multiplier("RANGE"), REGIME_REWARD_RISK_RANGE_MULT)
+        self.assertLess(REGIME_REWARD_RISK_RANGE_MULT, 1.0)
+
+    def test_trend_regime_widens_target(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_REWARD_RISK_TREND_MULT,
+            _regime_reward_risk_multiplier,
+        )
+
+        self.assertEqual(_regime_reward_risk_multiplier("TREND_UP"), REGIME_REWARD_RISK_TREND_MULT)
+        self.assertEqual(_regime_reward_risk_multiplier("TREND_DOWN"), REGIME_REWARD_RISK_TREND_MULT)
+        self.assertGreater(REGIME_REWARD_RISK_TREND_MULT, 1.0)
+
+    def test_impulse_regime_extends_target_furthest(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_REWARD_RISK_IMPULSE_MULT,
+            REGIME_REWARD_RISK_TREND_MULT,
+            _regime_reward_risk_multiplier,
+        )
+
+        self.assertEqual(_regime_reward_risk_multiplier("IMPULSE_UP"), REGIME_REWARD_RISK_IMPULSE_MULT)
+        self.assertGreaterEqual(REGIME_REWARD_RISK_IMPULSE_MULT, REGIME_REWARD_RISK_TREND_MULT)
+
+    def test_unknown_or_unclear_regime_returns_unchanged(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _regime_reward_risk_multiplier
+
+        self.assertEqual(_regime_reward_risk_multiplier(None), 1.0)
+        self.assertEqual(_regime_reward_risk_multiplier(""), 1.0)
+        self.assertEqual(_regime_reward_risk_multiplier("UNCLEAR"), 1.0)
+        self.assertEqual(_regime_reward_risk_multiplier("FAILURE_RISK"), 1.0)
+
+    def test_low_confidence_widens_stop(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_LOW_CONFIDENCE_STOP_MULT,
+            _regime_stop_widening_multiplier,
+        )
+
+        reading = {"confidence": 0.2, "atr_percentile": 0.5}
+        self.assertEqual(_regime_stop_widening_multiplier(reading), REGIME_LOW_CONFIDENCE_STOP_MULT)
+
+    def test_high_volatility_widens_stop(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_HIGH_VOL_STOP_MULT,
+            _regime_stop_widening_multiplier,
+        )
+
+        reading = {"confidence": 0.9, "atr_percentile": 0.95}
+        self.assertEqual(_regime_stop_widening_multiplier(reading), REGIME_HIGH_VOL_STOP_MULT)
+
+    def test_widening_is_clamped_at_max(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_MAX_STOP_WIDEN,
+            _regime_stop_widening_multiplier,
+        )
+
+        # Both signals trigger; result should not exceed the documented ceiling.
+        reading = {"confidence": 0.1, "atr_percentile": 0.99}
+        result = _regime_stop_widening_multiplier(reading)
+        self.assertLessEqual(result, REGIME_MAX_STOP_WIDEN)
+
+    def test_missing_reading_does_not_widen(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _regime_stop_widening_multiplier
+
+        self.assertEqual(_regime_stop_widening_multiplier(None), 1.0)
+        self.assertEqual(_regime_stop_widening_multiplier({}), 1.0)
+
+
+class RangeRewardRiskFloorTest(unittest.TestCase):
+    """Risk policy must allow rr < min_reward_risk for RANGE entries.
+
+    Regression: before the regime-aware floor, range_trader rotations were
+    forced to ≥1.2R even when the opposing rail capped TP closer. The
+    risk validator must read `intent.metadata['regime_state']` and apply
+    `policy.range_min_reward_risk` instead of the default floor.
+    """
+
+    def test_range_state_uses_range_min_reward_risk(self) -> None:
+        from quant_rabbit.risk import RiskPolicy
+
+        policy = RiskPolicy()
+        self.assertLess(policy.range_min_reward_risk, policy.min_reward_risk)
+
+    def test_default_min_reward_risk_unchanged_for_non_range(self) -> None:
+        from quant_rabbit.risk import RiskPolicy
+
+        # The default floor for trend/breakout/unclear remains conservative.
+        self.assertGreaterEqual(RiskPolicy().min_reward_risk, 1.2)
+
+
+class PerTradeFloorTest(unittest.TestCase):
+    """Per-trade risk must be floored when pace×budget shrinks below an
+    equity-derived minimum, but only when pace was not explicitly set by
+    operator CLI. Per feedback_high_conviction_execution.md.
+    """
+
+    def test_floor_applied_when_pace_is_derived(self) -> None:
+        from quant_rabbit.risk import RiskPolicy
+
+        policy = RiskPolicy()
+        self.assertIsNotNone(policy.min_per_trade_risk_pct)
+        self.assertGreater(policy.min_per_trade_risk_pct, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

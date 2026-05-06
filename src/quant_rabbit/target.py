@@ -197,6 +197,28 @@ class DailyTargetLedger:
             explicit_pace = int(policy.target_trades_per_day)
             pace_source = "risk_policy_default"
         per_trade_risk_budget = round(risk_budget / explicit_pace, 4)
+        # Per AGENT_CONTRACT §3.5 + feedback_high_conviction_execution.md:
+        # if pace × budget drives per-trade below an equity-derived floor,
+        # the math has broken — every lane will exceed cap and lock the
+        # campaign out. Apply the policy floor (% of starting equity) ONLY
+        # when the pace came from automated derivation (backtest / previous
+        # state / policy default). Operator-explicit CLI pace is treated as
+        # a deliberate override; do not silently mutate it.
+        per_trade_floor_applied = False
+        if (
+            policy.min_per_trade_risk_pct is not None
+            and policy.min_per_trade_risk_pct > 0
+            and pace_source != "cli"
+        ):
+            equity_floor = round(start_balance * (policy.min_per_trade_risk_pct / 100.0), 4)
+            if equity_floor > per_trade_risk_budget:
+                per_trade_risk_budget = equity_floor
+                per_trade_floor_applied = True
+                pace_source = (
+                    f"{pace_source}_floored_by_min_per_trade_pct"
+                    if pace_source
+                    else "min_per_trade_pct_floor"
+                )
 
         positions = (
             tuple(_position_risk(position, snapshot.quotes, snapshot.home_conversions) for position in snapshot.positions)
