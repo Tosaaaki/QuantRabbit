@@ -50,6 +50,25 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertIn("blocking dirty development path", result.stderr)
             self.assertEqual(_git(repo, "rev-parse", "main"), _git(live, "rev-parse", "HEAD"))
 
+    def test_blocks_live_source_dirty_before_advancing_main(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            main_before = _git(repo, "rev-parse", "main")
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (live / "src" / "app.py").write_text("print('live dirty')\n")
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 3)
+            self.assertIn("blocking dirty live path", result.stderr)
+            self.assertEqual(_git(repo, "rev-parse", "main"), main_before)
+
     def test_live_only_syncs_runtime_from_main_without_source_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

@@ -1,6 +1,6 @@
 # Economic Calendar
 
-- Generated at UTC: `2026-05-06T05:31:39.565053+00:00`
+- Generated at UTC: `2026-05-06T10:52:21.310329+00:00`
 - Source: `https://nfs.faireconomy.media/ff_calendar_thisweek.xml`
 - Events parsed: 115
 
@@ -8,13 +8,34 @@
 
 | Pair | In Window | Reason |
 |---|---|---|
-| `USD_JPY` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
-| `EUR_USD` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
-| `GBP_USD` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
-| `AUD_USD` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
-| `EUR_JPY` | no | next event in 3208min: EUR Medium 'ECB President Lagarde Speaks' |
-| `GBP_JPY` | no | next event in 3528min: GBP High 'BOE Gov Bailey Speaks' |
+| `EUR_USD` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `GBP_USD` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `AUD_USD` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `NZD_USD` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `USD_JPY` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `USD_CAD` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `USD_CHF` | no | next event in 323min: USD Medium 'ADP Non-Farm Employment Change' |
+| `EUR_GBP` | no | next event in 2888min: EUR Medium 'ECB President Lagarde Speaks' |
+| `EUR_JPY` | no | next event in 2888min: EUR Medium 'ECB President Lagarde Speaks' |
+| `EUR_AUD` | no | next event in 2888min: EUR Medium 'ECB President Lagarde Speaks' |
+| `EUR_CAD` | no | next event in 428min: CAD Medium 'Ivey PMI' |
+| `EUR_CHF` | no | next event in 2888min: EUR Medium 'ECB President Lagarde Speaks' |
+| `EUR_NZD` | no | next event in 858min: NZD Medium 'RBNZ Gov Breman Speaks' |
+| `GBP_JPY` | no | next event in 3208min: GBP High 'BOE Gov Bailey Speaks' |
+| `GBP_AUD` | no | next event in 3208min: GBP High 'BOE Gov Bailey Speaks' |
+| `GBP_CAD` | no | next event in 428min: CAD Medium 'Ivey PMI' |
+| `GBP_CHF` | no | next event in 3208min: GBP High 'BOE Gov Bailey Speaks' |
+| `GBP_NZD` | no | next event in 858min: NZD Medium 'RBNZ Gov Breman Speaks' |
 | `AUD_JPY` | no | no relevant events |
+| `AUD_CAD` | no | next event in 428min: CAD Medium 'Ivey PMI' |
+| `AUD_CHF` | no | no relevant events |
+| `AUD_NZD` | no | next event in 858min: NZD Medium 'RBNZ Gov Breman Speaks' |
+| `CAD_JPY` | no | next event in 428min: CAD Medium 'Ivey PMI' |
+| `CAD_CHF` | no | next event in 428min: CAD Medium 'Ivey PMI' |
+| `CHF_JPY` | no | no relevant events |
+| `NZD_JPY` | no | next event in 858min: NZD Medium 'RBNZ Gov Breman Speaks' |
+| `NZD_CAD` | no | next event in 428min: CAD Medium 'Ivey PMI' |
+| `NZD_CHF` | no | next event in 858min: NZD Medium 'RBNZ Gov Breman Speaks' |
 
 ## Upcoming High/Medium Events (first 30)
 

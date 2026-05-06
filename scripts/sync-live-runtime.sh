@@ -214,6 +214,7 @@ copy_local_runtime_files() {
 
 require_branch "$MAIN_BRANCH"
 require_branch "$LIVE_BRANCH"
+assert_only_report_drift "$LIVE_ROOT" "live"
 if [[ "$LIVE_ONLY" -eq 0 ]]; then
   require_branch "$SOURCE_BRANCH"
   assert_only_report_drift "$DEV_ROOT" "development"
