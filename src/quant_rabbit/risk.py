@@ -102,7 +102,37 @@ class RiskPolicy:
     #     explicit operator pace, or improve strategy expectancy so backtest
     #     pace falls naturally below the cap.
     max_target_trades_per_day: int | None = 30
+    # Floor on per_trade_risk_budget as a fraction of starting equity.
+    # (a) market reality: even with a tight daily_risk_pct and a high
+    #     target_trades_per_day count, the per-trade slice must still
+    #     justify a tradable lane size at OANDA's minimum unit (1k base
+    #     currency). At ~0.05% of typical retail FX equity (~JPY 200k) this
+    #     keeps per_trade ≈ 100 JPY which is the boundary where 1000-unit
+    #     lots remain sized within reasonable SL distances.
+    # (b) constant rather than derived: this is operator policy preventing
+    #     "math break" cycles where pace × budget drives per-trade into
+    #     units the broker cannot honor — see
+    #     feedback_high_conviction_execution.md and
+    #     feedback_basket_and_pace_cap.md.
+    # (c) replace via: improve strategy expectancy so backtest firepower
+    #     pace falls naturally, or raise daily_risk_pct intentionally.
+    min_per_trade_risk_pct: float | None = 0.05
+    # Default reward/risk floor for non-range entries.
+    # (a) market reality: trend / breakout-failure setups need their TP to clear
+    #     spread + slippage by a margin that compensates for losing trades; 1.2R
+    #     is the conservative floor where +EV holds at modest hit rate.
+    # (b) constant rather than derived: this is operator policy on minimum
+    #     trade quality. Per-regime floors override (see range_min_reward_risk).
+    # (c) replace via: tune from post-trade-learning hit-rate distribution per
+    #     regime if the floor proves systematically too tight or too loose.
     min_reward_risk: float = 1.2
+    # Reward/risk floor when the intent's regime context is RANGE.
+    # Per AGENT_CONTRACT §3.5: range regimes deserve faster rotation. Hit rate
+    # in clean RANGE is materially above trend, so a lower R floor is +EV when
+    # the actual move is bounded by the opposite rail. Range geometry already
+    # caps TP at the opposing rail (`_range_geometry`), so this floor only
+    # gates the loss/reward ratio, not the absolute target distance.
+    range_min_reward_risk: float = 0.6
     max_quote_age_seconds: int = 20
     max_spread_multiple: float = 2.5
     min_target_spread_multiple: float = 5.0
@@ -294,11 +324,27 @@ class RiskEngine:
                     f"planned worst-case loss {metrics.risk_jpy:.0f} JPY exceeds cap {loss_cap:.0f} JPY",
                 )
             )
-        if metrics.reward_risk < self.policy.min_reward_risk:
+        # Regime-derived reward/risk floor. RANGE regimes are allowed below the
+        # default min_reward_risk because rotation geometry caps TP at the
+        # opposing rail and high hit-rate range scalps remain +EV at sub-1R.
+        # Falls back to default min when regime is missing/unclear so silent
+        # data gaps cannot relax the floor (per AGENT_CONTRACT §3.5).
+        regime_state = ""
+        if intent.metadata:
+            raw_state = intent.metadata.get("regime_state")
+            if isinstance(raw_state, str):
+                regime_state = raw_state.upper()
+        active_min_rr = (
+            self.policy.range_min_reward_risk
+            if "RANGE" in regime_state
+            else self.policy.min_reward_risk
+        )
+        if metrics.reward_risk < active_min_rr:
             issues.append(
                 RiskIssue(
                     "REWARD_RISK_TOO_LOW",
-                    f"planned reward/risk {metrics.reward_risk:.2f}x is below {self.policy.min_reward_risk:.2f}x",
+                    f"planned reward/risk {metrics.reward_risk:.2f}x is below {active_min_rr:.2f}x"
+                    + (f" (regime={regime_state})" if regime_state else ""),
                 )
             )
         if metrics.reward_pips < spread_pips * self.policy.min_target_spread_multiple:

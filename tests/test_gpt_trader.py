@@ -612,6 +612,68 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_accepts_single_pair_basket_when_other_pairs_are_below_rank_ceiling(self) -> None:
+        """High-conviction concentrated attack should not be blocked by basket
+        coverage when the other advised pairs only appear below
+        PRIMARY_ATTACK_RANK_CEILING. The rank gap itself is the deterministic
+        conviction gate per AGENT_CONTRACT §5–§6 — see
+        feedback_high_conviction_execution.md.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            primary_lane = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET"
+            # Pad ranks 2..4 with EUR_USD lanes so the rank ceiling stays
+            # within a single pair; AUD_JPY/GBP_USD only appear at rank 5+.
+            eur_filler_2 = "range_trader:EUR_USD:SHORT:RANGE_ROTATION:MARKET"
+            eur_filler_3 = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+            eur_filler_4 = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            low_rank_aud = "trend_trader:AUD_JPY:LONG:TREND_CONTINUATION:MARKET"
+            low_rank_gbp = "trend_trader:GBP_USD:LONG:TREND_CONTINUATION:MARKET"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(lane_id=primary_lane),
+                            _result(lane_id=eur_filler_2),
+                            _result(lane_id=eur_filler_3),
+                            _result(lane_id=eur_filler_4),
+                            _result(lane_id=low_rank_aud),
+                            _result(lane_id=low_rank_gbp),
+                        ]
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [
+                            primary_lane,
+                            eur_filler_2,
+                            eur_filler_3,
+                            eur_filler_4,
+                            low_rank_aud,
+                            low_rank_gbp,
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision(lane_id=primary_lane)
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{primary_lane}"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("BASKET_PAIR_COVERAGE_INCOMPLETE", codes)
+
     def test_accepts_attack_priority_lane_in_selected_basket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
