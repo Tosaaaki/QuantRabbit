@@ -1777,7 +1777,46 @@ def _open_target_state(root: Path) -> Path:
     return path
 
 
+def _pair_charts(root: Path, pairs: tuple[str, ...] = ("EUR_USD",)) -> Path:
+    path = root / "pair_charts.json"
+    charts = []
+    for pair in pairs:
+        atr_pips = 3.0 if pair.endswith("_USD") else 5.0
+        charts.append(
+            {
+                "pair": pair,
+                "dominant_regime": "TREND_UP",
+                "long_score": 0.80,
+                "short_score": 0.20,
+                "session": {"current_tag": "NY_AM_KILLZONE"},
+                "views": [
+                    {
+                        "granularity": "M5",
+                        "regime": "TREND_UP",
+                        "indicators": {"atr_pips": atr_pips},
+                        "regime_reading": {"confidence": 0.75, "atr_percentile": 0.40},
+                    },
+                    {
+                        "granularity": "M15",
+                        "regime": "TREND_UP",
+                        "indicators": {"atr_pips": atr_pips * 1.5},
+                        "regime_reading": {"confidence": 0.75, "atr_percentile": 0.40},
+                    },
+                    {
+                        "granularity": "H1",
+                        "regime": "TREND_UP",
+                        "indicators": {"atr_pips": atr_pips * 3.0},
+                        "regime_reading": {"confidence": 0.75, "atr_percentile": 0.40},
+                    },
+                ],
+            }
+        )
+    path.write_text(json.dumps({"charts": charts}) + "\n")
+    return path
+
+
 def _campaign(root: Path) -> Path:
+    _pair_charts(root)
     path = root / "campaign.json"
     path.write_text(
         json.dumps(
@@ -1806,6 +1845,7 @@ def _campaign(root: Path) -> Path:
 
 
 def _two_lane_campaign(root: Path) -> Path:
+    _pair_charts(root, ("AUD_JPY", "EUR_USD"))
     path = root / "campaign.json"
     path.write_text(
         json.dumps(

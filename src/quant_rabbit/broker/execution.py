@@ -245,6 +245,7 @@ class LiveOrderGateway:
         accepted_margin_jpy = 0.0
         seen_geometry = set(_pending_geometry_keys(initial_snapshot))
         seen_parent_lanes: set[str] = set()
+        accepted_pair_sides: dict[str, Side] = {}
         order_results: list[dict[str, Any]] = []
         batch_risk_issues = 0
         batch_strategy_issues = 0
@@ -261,6 +262,24 @@ class LiveOrderGateway:
                         "BASKET_DUPLICATE_PARENT_LANE",
                         f"{requested_lane_id} is another execution variant of parent lane {parent_lane}; "
                         "send only one timing variant for a thesis in the same basket",
+                    ),
+                )
+                order_results.append(blocked)
+                batch_risk_issues += len(blocked["risk_issues"])
+                continue
+            candidate_intent = _intent_from_json(selected["intent"])
+            accepted_side = accepted_pair_sides.get(candidate_intent.pair)
+            if accepted_side is not None and accepted_side != candidate_intent.side and not _intent_declares_hedge(candidate_intent):
+                blocked = _blocked_batch_result(
+                    generated_at=generated_at,
+                    selected=selected,
+                    lane_id=requested_lane_id,
+                    send=send,
+                    issue=RiskIssue(
+                        "BASKET_OPPOSING_PAIR_SIDE",
+                        f"{requested_lane_id} would add {candidate_intent.pair} {candidate_intent.side.value} "
+                        f"after {accepted_side.value} in the same basket; do not create same-pair "
+                        "opposite exposure unless the intent explicitly declares HEDGE",
                     ),
                 )
                 order_results.append(blocked)
@@ -303,6 +322,7 @@ class LiveOrderGateway:
             if item_result.get("sent") or (not send and item_result.get("status") == "STAGED"):
                 accepted_count += 1
                 seen_parent_lanes.add(parent_lane)
+                accepted_pair_sides.setdefault(candidate_intent.pair, candidate_intent.side)
                 metrics = item_result.get("risk_metrics") if isinstance(item_result.get("risk_metrics"), dict) else {}
                 accepted_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
                 accepted_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
@@ -922,6 +942,10 @@ def _intent_geometry_key(intent: OrderIntent) -> tuple[object, ...]:
         _price_key(intent.pair, intent.tp),
         _price_key(intent.pair, intent.sl),
     )
+
+
+def _intent_declares_hedge(intent: OrderIntent) -> bool:
+    return str((intent.metadata or {}).get("position_intent") or "").upper() == "HEDGE"
 
 
 def _raw_dependent_price(raw: dict[str, Any], key: str) -> float | None:

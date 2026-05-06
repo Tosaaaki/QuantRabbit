@@ -220,17 +220,16 @@ class RiskEngine:
                             f"{position.pair} {position.side.value} id={position.trade_id} is not eligible",
                         )
                     )
-                elif (
-                    position.pair == intent.pair
-                    and position.side != intent.side
-                    and not _account_hedging_enabled(snapshot)
+                elif position.pair == intent.pair and position.side != intent.side and (
+                    not _account_hedging_enabled(snapshot) or not _intent_declares_hedge(intent)
                 ):
                     issues.append(
                         RiskIssue(
                             "OPPOSING_POSITION_NEEDS_HEDGING",
                             f"fresh {intent.pair} {intent.side.value} entry opposes protected "
-                            f"{position.pair} {position.side.value} id={position.trade_id}, but broker snapshot "
-                            "does not prove account hedging is enabled",
+                            f"{position.pair} {position.side.value} id={position.trade_id}; "
+                            "opposite-side adds require both broker hedging proof and explicit "
+                            "intent.metadata['position_intent']='HEDGE'",
                         )
                     )
 
@@ -771,6 +770,10 @@ def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
 
 def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:
     return bool(snapshot.account and snapshot.account.hedging_enabled)
+
+
+def _intent_declares_hedge(intent: OrderIntent) -> bool:
+    return str((intent.metadata or {}).get("position_intent") or "").upper() == "HEDGE"
 
 
 def _is_operator_managed_manual(position: BrokerPosition) -> bool:

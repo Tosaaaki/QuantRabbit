@@ -28,6 +28,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_PAIR_CHARTS,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
     DEFAULT_POSITION_MANAGEMENT,
@@ -133,6 +134,13 @@ def _basket_parent_lane_set(lane_ids: tuple[str, ...]) -> set[str]:
         for parent in (_basket_parent_lane_id(lane_id) for lane_id in lane_ids)
         if parent
     }
+
+
+def _default_pair_charts_path(campaign_plan_path: Path) -> Path:
+    sibling = campaign_plan_path.with_name("pair_charts.json")
+    if campaign_plan_path != DEFAULT_CAMPAIGN_PLAN and sibling.exists():
+        return sibling
+    return DEFAULT_PAIR_CHARTS
 
 
 def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool = False) -> bool:
@@ -261,6 +269,7 @@ class AutoTradeCycle:
         execution_ledger_report_path: Path = DEFAULT_EXECUTION_LEDGER_REPORT,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
         campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
+        pair_charts_path: Path | None = None,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
         trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
@@ -300,6 +309,7 @@ class AutoTradeCycle:
         self.execution_ledger_report_path = execution_ledger_report_path
         self.report_path = report_path
         self.campaign_plan_path = campaign_plan_path
+        self.pair_charts_path = pair_charts_path or _default_pair_charts_path(campaign_plan_path)
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
         self.trader_settings_path = trader_settings_path
@@ -1372,6 +1382,7 @@ class AutoTradeCycle:
     def _intent_generator(self, max_loss_jpy: float | None = None) -> IntentGenerator:
         return IntentGenerator(
             campaign_plan=self.campaign_plan_path,
+            pair_charts_path=self.pair_charts_path,
             strategy_profile=self.strategy_profile_path,
             output_path=self.intents_path,
             report_path=self.intent_report_path,

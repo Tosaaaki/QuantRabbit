@@ -375,6 +375,47 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("OPPOSING_POSITION_NEEDS_HEDGING", {issue.code for issue in decision.issues})
 
+    def test_portfolio_policy_blocks_opposing_same_pair_entry_without_explicit_hedge_intent(self) -> None:
+        protected_short = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1640,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1710,
+            tp=1.1730,
+            sl=1.1702,
+            thesis="range_reclaim_without_hedge_declaration",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION campaign lane",
+                narrative="lower-rail rotation while existing short remains protected",
+                chart_story="box rail reclaim into midpoint",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=500.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_short,), hedging_enabled=True))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("OPPOSING_POSITION_NEEDS_HEDGING", {issue.code for issue in decision.issues})
+
     def test_portfolio_policy_allows_opposing_same_pair_hedge_when_account_hedging_enabled(self) -> None:
         protected_short = BrokerPosition(
             trade_id="2",

@@ -44,6 +44,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 strategy_profile=strategy,
                 output_path=output,
                 report_path=report,
+                pair_charts_path=_pair_charts(root),
                 max_loss_jpy=cap_jpy,
             ).run(snapshot_path=snapshot)
 
@@ -86,6 +87,62 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(intent["metadata"]["session_bucket"], "NY")
             self.assertEqual(intent["market_context"]["session"], "NY")
             self.assertIn("TREND_DOWN current", intent["market_context"]["regime"])
+
+    def test_blocks_chart_direction_conflict_before_live_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root, direction="SHORT"),
+                strategy_profile=_strategy(root, status="CANDIDATE", direction="SHORT"),
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.76,
+                    short_score=0.19,
+                    dominant_regime="TREND_UP",
+                    m5_regime="TREND_UP",
+                ),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
+            self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
+
+    def test_blocks_trend_market_chase_when_m5_is_not_trending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.76,
+                    short_score=0.19,
+                    dominant_regime="TREND_UP",
+                    m5_regime="RANGE",
+                ),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            stop_entry = next(item for item in payload["results"] if item["intent"]["order_type"] == "STOP-ENTRY")
+            market = next(item for item in payload["results"] if item["intent"]["order_type"] == "MARKET")
+            market_issue_codes = {issue["code"] for issue in market["risk_issues"]}
+
+            self.assertEqual(stop_entry["status"], "LIVE_READY")
+            self.assertEqual(market["status"], "DRY_RUN_BLOCKED")
+            self.assertIn("TREND_MARKET_NOT_OPERATING_TREND", market_issue_codes)
 
     def test_trigger_receipt_required_does_not_create_market_chase_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -349,7 +406,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", issue_codes)
 
 
-def _campaign(root: Path, *, target_reward_risk: float | None = None) -> Path:
+def _campaign(root: Path, *, target_reward_risk: float | None = None, direction: str = "LONG") -> Path:
     path = root / "campaign.json"
     path.write_text(
         json.dumps(
@@ -358,7 +415,7 @@ def _campaign(root: Path, *, target_reward_risk: float | None = None) -> Path:
                     {
                         "desk": "trend_trader",
                         "pair": "EUR_USD",
-                        "direction": "LONG",
+                        "direction": direction,
                         "method": "TREND_CONTINUATION",
                         "adoption": "RISK_REPAIR_DRY_RUN",
                         "campaign_role": "NOW_IF_REPAIRED",
@@ -434,7 +491,7 @@ def _trigger_campaign(root: Path) -> Path:
     return path
 
 
-def _strategy(root: Path, *, status: str = "RISK_REPAIR_CANDIDATE") -> Path:
+def _strategy(root: Path, *, status: str = "RISK_REPAIR_CANDIDATE", direction: str = "LONG") -> Path:
     path = root / "strategy.json"
     path.write_text(
         json.dumps(
@@ -442,7 +499,7 @@ def _strategy(root: Path, *, status: str = "RISK_REPAIR_CANDIDATE") -> Path:
                 "profiles": [
                     {
                         "pair": "EUR_USD",
-                        "direction": "LONG",
+                        "direction": direction,
                         "status": status,
                         "required_fix": "edge exists but old sizing broke the loss cap",
                     }
@@ -504,6 +561,56 @@ def _pair_charts_with_context(root: Path) -> Path:
                             {
                                 "granularity": "M5",
                                 "regime_reading": {"state": "TREND_WEAK", "confidence": 0.5, "atr_percentile": 80.0},
+                                "indicators": {
+                                    "atr_pips": 8.0,
+                                    "bb_lower": 1.1710,
+                                    "bb_upper": 1.1760,
+                                    "bb_middle": 1.1735,
+                                    "donchian_low": 1.1707,
+                                    "donchian_high": 1.1764,
+                                    "vwap": 1.1738,
+                                    "avwap_anchor": 1.1734,
+                                    "avwap_lower_1sd": 1.1712,
+                                    "avwap_upper_1sd": 1.1758,
+                                    "linreg_channel_lower": 1.1709,
+                                    "linreg_channel_upper": 1.1761,
+                                    "swing_low": 1.1705,
+                                    "swing_high": 1.1767,
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _pair_charts_with_direction(
+    root: Path,
+    *,
+    long_score: float,
+    short_score: float,
+    dominant_regime: str,
+    m5_regime: str,
+) -> Path:
+    path = root / "pair_charts_direction.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "dominant_regime": dominant_regime,
+                        "long_score": long_score,
+                        "short_score": short_score,
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime": m5_regime,
+                                "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6, "atr_percentile": 50.0},
                                 "indicators": {
                                     "atr_pips": 8.0,
                                     "bb_lower": 1.1710,

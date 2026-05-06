@@ -176,6 +176,43 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(second["status"], "BLOCKED")
             self.assertIn("BASKET_DUPLICATE_PARENT_LANE", {issue["code"] for issue in second["risk_issues"]})
 
+    def test_batch_blocks_same_pair_opposite_side_without_explicit_hedge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            intents = _intents(root, order_type="MARKET")
+            payload = json.loads(intents.read_text())
+            short = json.loads(json.dumps(payload["results"][0]))
+            short["lane_id"] = "lane:EUR_USD:SHORT"
+            short["intent"]["side"] = "SHORT"
+            short["intent"]["entry"] = 1.17298
+            short["intent"]["tp"] = 1.17180
+            short["intent"]["sl"] = 1.17360
+            short["intent"]["thesis"] = "opposite side should not share basket"
+            payload["results"].append(short)
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=intents,
+                lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:SHORT"),
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "PARTIAL_SENT")
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(len(client.orders), 1)
+            result = json.loads((root / "request.json").read_text())
+            second = result["orders"][1]
+            self.assertEqual(second["status"], "BLOCKED")
+            self.assertIn("BASKET_OPPOSING_PAIR_SIDE", {issue["code"] for issue in second["risk_issues"]})
+
     def test_batch_send_does_not_double_count_sent_margin_from_fresh_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

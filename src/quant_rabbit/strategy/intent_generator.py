@@ -186,11 +186,14 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             continue
         per_tf: dict[str, Any] = {
             "dominant_regime": chart.get("dominant_regime"),
+            "long_score": chart.get("long_score"),
+            "short_score": chart.get("short_score"),
             "session": chart.get("session") if isinstance(chart.get("session"), dict) else {},
         }
         for view in chart.get("views", []) or []:
             granularity = view.get("granularity")
             if isinstance(granularity, str):
+                per_tf[f"{granularity}__regime"] = view.get("regime")
                 per_tf[granularity] = view.get("indicators", {}) or {}
                 # Expose regime_reading per timeframe so geometry can read
                 # confidence / atr_percentile for regime-aware SL widening.
@@ -281,6 +284,34 @@ def _session_bucket_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> 
     return _session_bucket_from_tag(session.get("current_tag"))
 
 
+def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
+    """Return current pair-chart direction/method context for executable gates.
+
+    This is not a score-threshold selector. It records the chart reader's
+    current long-vs-short orientation and operating timeframe regime so order
+    intents cannot become LIVE_READY while directly contradicting the same
+    evidence packet that supplied their ATR geometry.
+    """
+    if charts is None:
+        return {}
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return {}
+    long_score = _optional_float(per_tf.get("long_score"))
+    short_score = _optional_float(per_tf.get("short_score"))
+    bias = None
+    if long_score is not None and short_score is not None and long_score != short_score:
+        bias = Side.LONG.value if long_score > short_score else Side.SHORT.value
+    return {
+        "chart_long_score": long_score,
+        "chart_short_score": short_score,
+        "chart_direction_bias": bias,
+        "m5_regime": _text_or_none(per_tf.get("M5__regime")),
+        "m15_regime": _text_or_none(per_tf.get("M15__regime")),
+        "h1_regime": _text_or_none(per_tf.get("H1__regime")),
+    }
+
+
 def _session_bucket_from_tag(value: object) -> str | None:
     if value is None:
         return None
@@ -296,6 +327,21 @@ def _session_bucket_from_tag(value: object) -> str | None:
     if "ROLLOVER" in text or "OFF_HOURS" in text:
         return "ROLLOVER"
     return None
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        parsed = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return parsed
+
+
+def _text_or_none(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
 
 
 def _regime_reward_risk_multiplier(regime_state: str | None) -> float:
@@ -509,6 +555,7 @@ class IntentGenerator:
         regime_state = _regime_state_for(pair, pair_charts)
         regime_reading = _regime_reading_for(pair, pair_charts)
         session_bucket = _session_bucket_for(pair, pair_charts)
+        chart_context = _chart_context_for(pair, pair_charts)
         intent = _intent_from_lane(
             lane,
             quote,
@@ -521,6 +568,7 @@ class IntentGenerator:
             regime_state=regime_state,
             regime_reading=regime_reading,
             session_bucket=session_bucket,
+            chart_context=chart_context,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -576,6 +624,10 @@ class IntentGenerator:
                     "severity": "BLOCK",
                 }
             )
+            risk_allowed = False
+        context_issues = _method_context_issues(intent)
+        if context_issues:
+            risk_issues.extend(context_issues)
             risk_allowed = False
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
@@ -730,6 +782,7 @@ def _intent_from_lane(
     regime_state: str | None = None,
     regime_reading: dict[str, Any] | None = None,
     session_bucket: str | None = None,
+    chart_context: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -800,6 +853,7 @@ def _intent_from_lane(
             "regime_state": regime_state,
             "regime_stop_widen_mult": stop_widen_mult,
             "session_bucket": session_bucket,
+            **(chart_context or {}),
             "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": (
@@ -814,6 +868,51 @@ def _intent_from_lane(
             **margin_metadata,
         },
     )
+
+
+def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
+    """Block receipts whose current chart context contradicts the lane.
+
+    The campaign planner may offer both sides and multiple desks for coverage.
+    `generate-intents` is the first executable layer that has live broker
+    quotes plus pair_charts in the same packet, so it must prevent a generic
+    coverage lane from becoming LIVE_READY when the current chart packet says
+    the opposite side or a non-trend operating tape.
+    """
+    metadata = intent.metadata or {}
+    issues: list[dict[str, str]] = []
+    bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if bias in {Side.LONG.value, Side.SHORT.value} and bias != intent.side.value:
+        long_score = metadata.get("chart_long_score")
+        short_score = metadata.get("chart_short_score")
+        issues.append(
+            {
+                "code": "CHART_DIRECTION_CONFLICT",
+                "message": (
+                    f"{intent.pair} {intent.side.value} conflicts with current pair_charts direction "
+                    f"bias={bias} (long_score={long_score}, short_score={short_score}); "
+                    "wait for this side to dominate or choose the aligned lane."
+                ),
+                "severity": "BLOCK",
+            }
+        )
+
+    method = intent.market_context.method if intent.market_context is not None else None
+    if method == TradeMethod.TREND_CONTINUATION and intent.order_type == OrderType.MARKET:
+        m5_regime = str(metadata.get("m5_regime") or "").upper()
+        expected = "TREND_UP" if intent.side == Side.LONG else "TREND_DOWN"
+        if m5_regime and m5_regime != expected:
+            issues.append(
+                {
+                    "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                    "message": (
+                        f"{intent.pair} {intent.side.value} MARKET trend-continuation needs M5 {expected}; "
+                        f"current M5 regime is {m5_regime}. Use a pending trigger instead of chasing inside chop/range."
+                    ),
+                    "severity": "BLOCK",
+                }
+            )
+    return issues
 
 
 def _order_type_for(method: TradeMethod) -> OrderType:
