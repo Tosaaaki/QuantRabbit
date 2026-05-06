@@ -11,3 +11,4 @@ logs/
 data/
 secrets/
 .claude/
+.quant_rabbit_live.lock/
