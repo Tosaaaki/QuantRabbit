@@ -148,6 +148,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Trader decisions compare mined history, market story, campaign role, narrative risk, current broker state, risk geometry, and live exposure.
 - Portfolio Director records which desk wins and why when trader desks disagree.
 - Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but only the final trader receipt may select a lane or `selected_lane_ids` basket, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
+- Parallel specialist observation is allowed only as processed read-only input to the single trader. Macro/news, indicator, flow/levels, risk-audit, strategy, and portfolio-context specialists may produce advisory `specialist_reviews` over the same broker/market packet, but they must declare `read_only=true`, `live_permission=false`, cite only packet evidence refs, and must not select lanes, cancel orders, change risk budgets, stage orders, or create a second trader loop.
 - `ai-attack-advice` is also read-only. It may rank current `LIVE_READY` lanes and expose advisory parameter surfaces to Codex automation, but it cannot grant live permission, raise risk budgets, stage orders, or create a second trader loop.
 - When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane. Protected trader-owned exposure is not by itself a no-trade gate; additional entries are still decided by `gpt-trader-decision` and validated by `LiveOrderGateway` basket / portfolio checks. A TRADE using advised lanes must cite both `attack:advice` and `attack:lane:<lane_id>`. The first tradeable lane in `recommended_now_lane_ids` is the dynamic missed-edge repair priority for the cycle; the selected basket must include it before lower-ranked advice may be used. If that first lane is `EUR_USD` `SHORT`, it is the primary repair target unless a named deterministic gate blocks it after the advice packet was built.
 - Strategy-review identity is `lane_id` plus `method`, not a loose desk alias. A review for `TREND_CONTINUATION` cannot authorize a `RANGE_ROTATION` or `BREAKOUT_FAILURE` lane.
@@ -273,7 +274,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --start-balance 222781 --snapshot data/broker_snapshot.json
 
 # Per-pair indicator stack (Phase A+B+C extended)
-PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --output data/pair_charts.json
+PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 
 # Market context layers (must be refreshed before every trader cycle)
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot   # DXY synthetic, US bond CFDs, SPX/Gold/Oil/BTC, FX correlations

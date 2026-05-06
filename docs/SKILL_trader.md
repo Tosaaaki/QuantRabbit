@@ -27,7 +27,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
 
 # Per-pair indicator stack (Phase A+B+C extended) — decisions MUST cite these numbers
-PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --output data/pair_charts.json
+PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 
 # Market context layers (added 2026-05-04). Do NOT skip these — every TRADE
 # decision must reference them; missing data must be flagged not invented.
@@ -69,7 +69,7 @@ Before writing any decision, open and actually read every layer below. Skipping 
   - `target_trades_per_day` and `target_trades_per_day_source`. When ai-test-bot firepower is present, pace comes from `required_trades_per_day_at_observed_expectancy`; the policy value of 10 is only the no-evidence fallback.
   - `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day`.
   The per-trade figure is what flows into every intent's `metadata.max_loss_jpy`. Cite **which** cap your decision is bounded by; do not conflate them.
-- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime plus execution/setup/intraday/higher-timeframe indicators (`M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D`). Fields per timeframe:
+- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime plus execution/setup/intraday/higher-timeframe indicators (`M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D`). M1 is execution microstructure / last-minute confirmation, M5/M15 are the operating setup, M30/H1 are intraday structure, and H4/D are higher-timeframe context / "are we fighting the tape?" audit. Fields per timeframe:
   - **Trend**: EMA(12/20/50), Ichimoku, Supertrend (`supertrend_dir`), Parabolic SAR (`psar_dir`), Aroon (`aroon_osc_14`), Hull MA, KAMA, ALMA, linear regression slope/R²/channel (`linreg_*`).
   - **Momentum**: RSI, Stoch RSI, MACD, CCI, ROC, **Williams %R** (`williams_r_14`), **MFI** (`mfi_14`), Vortex (+/-).
   - **Volatility**: ATR pips, BB span, Keltner width, Donchian, **BB squeeze** (`bb_squeeze`), **Choppiness** (`choppiness_14`), realized vol.
@@ -117,12 +117,13 @@ The decision must reference these inputs explicitly. Do not invent ATR, regime, 
 
 ### 3. Decide
 
-Use a single top-level Portfolio Director pass, then optional strategy-review passes, then one final decision receipt:
+Use a single top-level Portfolio Director pass, then optional read-only specialist / strategy-review passes, then one final decision receipt:
 
 1. Top layer: read broker truth, daily target, exposure, all `LIVE_READY` lanes, `ai_attack_advice`, and hard gates.
 2. Indicator layer: use the `market_context` packet plus source files for pair charts, flow, levels, calendar, cross-asset, currency strength, COT, and option skew. Do not cite only evidence refs when the data body is available.
-3. Strategy-review layer: review lanes by `lane_id` / `method`, not by a loose desk name. Trend, range, and breakout-failure reviews may run in parallel, but they must only emit advisory `strategy_reviews`.
-4. Final integration: write exactly one decision JSON. Only the final JSON can select the primary `selected_lane_id` and, when multiple current `LIVE_READY` lanes should fire in the same cycle, `selected_lane_ids`. Execution remains gated by `gpt-trader-decision`, `TraderBrain` prefilter, `RiskEngine`, `StrategyProfile`, and `LiveOrderGateway`.
+3. Specialist observation layer: macro/news, indicator, flow/levels, risk-audit, strategy, and portfolio-context readers may run in parallel. They process the same broker/market packet for the trader and may emit advisory `specialist_reviews`, but they must declare `read_only=true`, `live_permission=false`, cite packet evidence refs, and never select lanes, cancel orders, change risk budgets, stage orders, or create a second trader loop.
+4. Strategy-review layer: review lanes by `lane_id` / `method`, not by a loose desk name. Trend, range, and breakout-failure reviews may run in parallel, but they must only emit advisory `strategy_reviews`.
+5. Final integration: write exactly one decision JSON. Only the final JSON can select the primary `selected_lane_id` and, when multiple current `LIVE_READY` lanes should fire in the same cycle, `selected_lane_ids`. Execution remains gated by `gpt-trader-decision`, `TraderBrain` prefilter, `RiskEngine`, `StrategyProfile`, and `LiveOrderGateway`.
 
 Write `data/codex_trader_decision_response.json` (the filename is kept for compatibility regardless of which model wrote it):
 
@@ -144,7 +145,7 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
     "broker:snapshot", "target:daily",
     "intent:<lane_id>", "campaign:<lane_id>",
     "strategy:<pair>:<side>", "story:<pair>",
-    "chart:<pair>:M5", "chart:<pair>:H1", "chart:<pair>:structure",
+    "chart:<pair>:M1", "chart:<pair>:M5", "chart:<pair>:H1", "chart:<pair>:H4", "chart:<pair>:D", "chart:<pair>:structure",
     "cross:dxy", "cross:USB10Y_USD", "cross:correlations:<pair>",
     "strength:<pair>", "flow:<pair>", "levels:<pair>",
     "calendar:<pair>", "cot:<currency>", "option:skew:<pair>",
@@ -158,11 +159,24 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
       "summary": "Trend review supports only this lane because M5/M15 trend_score and levels align; it does not authorize range/failure lanes."
     }
   ],
+  "specialist_reviews": [
+    {
+      "role": "indicator",
+      "lane_id": "trend_trader:USD_JPY:LONG:TREND_CONTINUATION",
+      "method": "TREND_CONTINUATION",
+      "verdict": "SUPPORTS",
+      "summary": "M1 confirms no fresh jump, M5/M15 carry the entry structure, and H4/D context does not contradict the long thesis.",
+      "cited_evidence_refs": ["chart:USD_JPY:M1", "chart:USD_JPY:M5", "chart:USD_JPY:H4", "chart:USD_JPY:D"],
+      "hard_gate_codes": [],
+      "read_only": true,
+      "live_permission": false
+    }
+  ],
   "operator_summary": "..."
 }
 ```
 
-Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only current `LIVE_READY` lane(s) that can survive deterministic prefiltering. If firing more than one order, put every lane in `selected_lane_ids` and cite each `intent:<lane_id>` in `evidence_refs`; `selected_lane_id` is the primary lane. When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, a WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane; protected trader-owned exposure alone is not a no-trade gate, because the gateway still performs basket / portfolio validation. A TRADE selecting advised lanes must cite `attack:advice` and `attack:lane:<lane_id>`. The first current tradeable lane in `recommended_now_lane_ids` is the dynamic missed-edge repair priority for this cycle; the selected basket must include it before lower-ranked advice is allowed. If that first lane is `EUR_USD` `SHORT`, it is the primary repair target unless a named deterministic gate blocks it after advice generation. When the daily target is open and no trader-owned position exists, prefer a verified basket that includes immediate `MARKET` participation when available; pending entries are trigger/rail theses and are counted by gateway basket validation, not used as a blanket reason to stop adding. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped. `strategy_reviews` is optional but, when present, each review's `lane_id` and `method` must match the lane it reviews; a trend review cannot authorize a range or breakout-failure lane.
+Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only current `LIVE_READY` lane(s) that can survive deterministic prefiltering. If firing more than one order, put every lane in `selected_lane_ids` and cite each `intent:<lane_id>` in `evidence_refs`; `selected_lane_id` is the primary lane. When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, a WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane; protected trader-owned exposure alone is not a no-trade gate, because the gateway still performs basket / portfolio validation. A TRADE selecting advised lanes must cite `attack:advice` and `attack:lane:<lane_id>`. The first current tradeable lane in `recommended_now_lane_ids` is the dynamic missed-edge repair priority for this cycle; the selected basket must include it before lower-ranked advice is allowed. If that first lane is `EUR_USD` `SHORT`, it is the primary repair target unless a named deterministic gate blocks it after advice generation. When the daily target is open and no trader-owned position exists, prefer a verified basket that includes immediate `MARKET` participation when available; pending entries are trigger/rail theses and are counted by gateway basket validation, not used as a blanket reason to stop adding. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped. `strategy_reviews` is optional but, when present, each review's `lane_id` and `method` must match the lane it reviews; a trend review cannot authorize a range or breakout-failure lane. `specialist_reviews` is optional but, when present, each review is processed observation only: `read_only=true`, `live_permission=false`, cited refs must exist in the packet, and lane/method must match if supplied.
 
 `chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json`, `cross_asset_snapshot.json`, `flow_snapshot.json`, `levels_snapshot.json`, `currency_strength.json`, `economic_calendar.json`, `cot_snapshot.json`, and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
 
@@ -207,7 +221,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 - **Ignoring `ai_attack_advice.recommended_now_lane_ids` while target remains open.** Advice is not live permission, but it is a current rank of already validated lanes. If it recommends a tradeable `LIVE_READY` lane, GPT must select a basket containing the first tradeable advised lane and cite `attack:advice` / `attack:lane:<lane_id>`, or name the deterministic gate that now blocks that lane. Skipping first-ranked `EUR_USD SHORT` to a lower-ranked lane is a verifier rejection, not discretion.
 - Treating old worst loss or weak past evidence as a veto after current risk repair. Once the current `LIVE_READY` receipt fits `per_trade_risk_budget_jpy`, negative `live_net`, missing positive mined evidence, low capture rate, old `WAIT` language, and stale story rejection markers are audit context only. Do not use them to block, reduce size, or lower rank.
 - Treating `ai_attack_advice` as execution permission. It is a read-only ranker for already validated lanes; it cannot place/stage orders, enable a second trader, raise `daily_risk_budget_jpy` / `per_trade_risk_budget_jpy`, or override `gpt-trader-decision` and gateway validation.
+- Treating `specialist_reviews` as execution permission. Helper bots are allowed for observation and critique only; the final trader receipt is the only object that can select lanes, and it still must pass verifier/gateway gates.
 - Submitting a `TRADE` without checking `pair_charts.json` regime + ATR for that pair.
+- Submitting a `TRADE` without separating timeframe roles: M1 for execution/jump quality, M5/M15 for setup, M30/H1 for intraday structure, and H4/D for higher-timeframe contradiction.
 - Submitting a `TRADE` on a JPY pair without citing DXY direction and `USB10Y_USD` trend from `cross_asset_snapshot.json` (proxy for US-JP yield differential).
 - Submitting a `TRADE` while `economic_calendar.json` shows `pair_windows[].in_window=true` for either side of the pair, without an explicit override justification in `risk_notes`.
 - Submitting a `TRADE` while `flow_snapshot.json` reports `spreads[].stress_flag="STRESSED"` on the chosen pair.

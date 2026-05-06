@@ -167,6 +167,71 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertTrue(summary.allowed)
 
+    def test_accepts_extended_pair_chart_timeframe_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["chart:EUR_USD:M1", "chart:EUR_USD:M30", "chart:EUR_USD:H4", "chart:EUR_USD:D"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
+    def test_accepts_read_only_specialist_review_with_packet_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [
+                {
+                    "role": "macro_news",
+                    "lane_id": LANE_ID,
+                    "method": "TREND_CONTINUATION",
+                    "verdict": "SUPPORTS",
+                    "summary": "Macro review supports the lane but does not grant execution authority.",
+                    "cited_evidence_refs": ["broker:snapshot", "cross:dxy"],
+                    "hard_gate_codes": [],
+                    "read_only": True,
+                    "live_permission": False,
+                }
+            ]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
+    def test_rejects_specialist_review_that_grants_live_permission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [
+                {
+                    "role": "macro_news",
+                    "verdict": "SUPPORTS",
+                    "summary": "A specialist must never authorize live execution.",
+                    "cited_evidence_refs": ["broker:snapshot"],
+                    "read_only": False,
+                    "live_permission": True,
+                }
+            ]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SPECIALIST_REVIEW_NOT_READ_ONLY", codes)
+            self.assertIn("SPECIALIST_REVIEW_LIVE_PERMISSION", codes)
+
     def test_rejects_stale_request_evidence_when_live_ready_lane_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

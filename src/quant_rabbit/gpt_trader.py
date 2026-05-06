@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
+from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_CAMPAIGN_PLAN,
@@ -29,6 +30,7 @@ from quant_rabbit.paths import (
 ALLOWED_ACTIONS = ("TRADE", "WAIT", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE", "REQUEST_EVIDENCE")
 ALLOWED_CONFIDENCE = ("LOW", "MEDIUM", "HIGH")
 ALLOWED_METHODS = ("TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE", "EVENT_RISK", "POSITION_MANAGEMENT")
+ALLOWED_SPECIALIST_ROLES = ("macro_news", "indicator", "flow_levels", "risk_audit", "strategy", "portfolio_context")
 # Matches the CLI generate-intents breadth used by the scheduled trader. The
 # verifier also keeps every LIVE_READY lane even when a smaller cap is passed,
 # because the operator may cite any executable lane visible in order_intents.
@@ -52,6 +54,7 @@ class GPTTraderDecision:
     evidence_refs: tuple[str, ...]
     operator_summary: str
     strategy_reviews: tuple[dict[str, Any], ...] = ()
+    specialist_reviews: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -222,6 +225,7 @@ class GPTTraderBrain:
             f"- Selected basket lanes: `{', '.join(decision.get('selected_lane_ids') or []) or 'none'}`",
             f"- Cancel order ids: `{', '.join(decision.get('cancel_order_ids') or []) or 'none'}`",
             f"- Confidence: `{decision.get('confidence')}`",
+            f"- Specialist reviews: `{len(decision.get('specialist_reviews') or [])}`",
             f"- Operator summary: {decision.get('operator_summary')}",
             "",
             "## Verification Issues",
@@ -267,6 +271,7 @@ class DecisionVerifier:
         if unknown_refs:
             issues.append(VerificationIssue("UNKNOWN_EVIDENCE_REF", f"unknown evidence refs: {', '.join(unknown_refs)}"))
         self._verify_strategy_reviews(decision, issues)
+        self._verify_specialist_reviews(decision, issues)
 
         broker = self.packet.get("broker_snapshot", {})
         positions = int(broker.get("positions") or 0)
@@ -442,6 +447,58 @@ class DecisionVerifier:
             if verdict and verdict not in {"SUPPORTS", "REJECTS", "BLOCKED", "WATCH"}:
                 issues.append(VerificationIssue("BAD_STRATEGY_REVIEW_VERDICT", f"unsupported strategy review verdict {verdict!r}"))
 
+    def _verify_specialist_reviews(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
+        for review in decision.specialist_reviews:
+            role = str(review.get("role") or "")
+            verdict = str(review.get("verdict") or "")
+            lane_id = str(review.get("lane_id") or "")
+            method = str(review.get("method") or "")
+            cited_refs = tuple(str(ref) for ref in review.get("cited_evidence_refs", []) or [])
+            if role not in ALLOWED_SPECIALIST_ROLES:
+                issues.append(VerificationIssue("BAD_SPECIALIST_REVIEW_ROLE", f"unsupported specialist review role {role!r}"))
+            if verdict not in {"SUPPORTS", "REJECTS", "BLOCKED", "WATCH"}:
+                issues.append(VerificationIssue("BAD_SPECIALIST_REVIEW_VERDICT", f"unsupported specialist review verdict {verdict!r}"))
+            if review.get("read_only") is not True:
+                issues.append(
+                    VerificationIssue(
+                        "SPECIALIST_REVIEW_NOT_READ_ONLY",
+                        "specialist reviews are processed observation only and must declare read_only=true",
+                    )
+                )
+            if review.get("live_permission") not in (False, None):
+                issues.append(
+                    VerificationIssue(
+                        "SPECIALIST_REVIEW_LIVE_PERMISSION",
+                        "specialist reviews must not grant live permission; only the final verified trader receipt can do that",
+                    )
+                )
+            if not cited_refs:
+                issues.append(
+                    VerificationIssue(
+                        "SPECIALIST_REVIEW_REFS_REQUIRED",
+                        "specialist reviews must cite packet evidence refs",
+                    )
+                )
+            unknown_refs = sorted(set(cited_refs) - self.allowed_refs)
+            if unknown_refs:
+                issues.append(
+                    VerificationIssue(
+                        "UNKNOWN_SPECIALIST_REVIEW_REF",
+                        f"specialist review uses unknown evidence refs: {', '.join(unknown_refs)}",
+                    )
+                )
+            if lane_id:
+                lane = self.lanes.get(lane_id)
+                if lane is None:
+                    issues.append(VerificationIssue("UNKNOWN_SPECIALIST_REVIEW_LANE", f"specialist review lane is not in packet: {lane_id}"))
+                elif method and method != str(lane.get("method") or ""):
+                    issues.append(
+                        VerificationIssue(
+                            "SPECIALIST_REVIEW_METHOD_MISMATCH",
+                            f"specialist review method {method} does not match lane {lane_id} method {lane.get('method')}",
+                        )
+                    )
+
 
 GPT_TRADER_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -489,6 +546,32 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
                 },
             },
         },
+        "specialist_reviews": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "role",
+                    "verdict",
+                    "summary",
+                    "cited_evidence_refs",
+                    "read_only",
+                    "live_permission",
+                ],
+                "properties": {
+                    "role": {"type": "string", "enum": list(ALLOWED_SPECIALIST_ROLES)},
+                    "lane_id": {"type": ["string", "null"]},
+                    "method": {"type": ["string", "null"], "enum": [*ALLOWED_METHODS, None]},
+                    "verdict": {"type": "string", "enum": ["SUPPORTS", "REJECTS", "BLOCKED", "WATCH"]},
+                    "summary": {"type": "string"},
+                    "cited_evidence_refs": {"type": "array", "items": {"type": "string"}},
+                    "hard_gate_codes": {"type": "array", "items": {"type": "string"}},
+                    "read_only": {"type": "boolean"},
+                    "live_permission": {"type": "boolean"},
+                },
+            },
+        },
     },
 }
 
@@ -518,6 +601,11 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
         strategy_reviews=tuple(
             dict(item)
             for item in payload.get("strategy_reviews", []) or []
+            if isinstance(item, dict)
+        ),
+        specialist_reviews=tuple(
+            dict(item)
+            for item in payload.get("specialist_reviews", []) or []
             if isinstance(item, dict)
         ),
     )
@@ -661,7 +749,7 @@ def _allowed_refs(
     # economic calendar, and COT data. The verifier therefore must accept these
     # refs as known; otherwise every well-formed decision is rejected with
     # UNKNOWN_EVIDENCE_REF and the cycle never reaches the gateway.
-    timeframes = ("M5", "M15", "H1")
+    timeframes = DEFAULT_PAIR_CHART_TIMEFRAMES
     structure_keys = ("structure",)
     cross_assets = ("dxy", "USB10Y_USD", "USB02Y_USD", "spx", "gold", "oil", "btc")
     refs = ["broker:snapshot", "target:daily"]

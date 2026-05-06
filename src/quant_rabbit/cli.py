@@ -17,6 +17,7 @@ from quant_rabbit.ai_test_bot import (
     DEFAULT_TRAINING_DAYS,
 )
 from quant_rabbit.attack_advisor import AttackAdvisor
+from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
@@ -115,7 +116,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_charts = sub.add_parser("pair-charts", help="Compute multi-timeframe indicator scores per pair.")
     p_charts.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
-    p_charts.add_argument("--timeframes", default="M5,M15,H1")
+    p_charts.add_argument("--timeframes", default=",".join(DEFAULT_PAIR_CHART_TIMEFRAMES))
     p_charts.add_argument("--count", type=int, default=200)
     p_charts.add_argument("--output", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_charts.add_argument("--report", type=Path, default=DEFAULT_PAIR_CHARTS_REPORT)
