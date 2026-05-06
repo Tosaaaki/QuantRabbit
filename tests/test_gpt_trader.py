@@ -525,6 +525,89 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("ATTACK_PRIORITY_SKIPPED", codes)
 
+    def test_rejects_single_pair_basket_when_advice_covers_multiple_pairs(self) -> None:
+        """Regression: when ai_attack_advice spans N≥2 distinct pairs and the
+        trader is flat with the daily target open, picking one pair is
+        leaving edge on the table. Verifier must emit
+        BASKET_PAIR_COVERAGE_INCOMPLETE so the operator knows to expand.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            primary_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            second_pair_lane = "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION:MARKET"
+            third_pair_lane = "trend_trader:GBP_USD:LONG:TREND_CONTINUATION:MARKET"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(lane_id=primary_lane),
+                            _result(lane_id=second_pair_lane),
+                            _result(lane_id=third_pair_lane),
+                        ]
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [
+                            primary_lane,
+                            second_pair_lane,
+                            third_pair_lane,
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision(lane_id=primary_lane)
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{primary_lane}"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("BASKET_PAIR_COVERAGE_INCOMPLETE", codes)
+
+    def test_accepts_basket_covering_every_advised_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            primary_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            second_pair_lane = "trend_trader:EUR_JPY:LONG:TREND_CONTINUATION:MARKET"
+            third_pair_lane = "trend_trader:GBP_USD:LONG:TREND_CONTINUATION:MARKET"
+            advised = [primary_lane, second_pair_lane, third_pair_lane]
+            files["intents"].write_text(
+                json.dumps({"results": [_result(lane_id=l) for l in advised]})
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": advised,
+                    }
+                )
+            )
+            decision = _batch_trade_decision(advised)
+            decision["evidence_refs"].extend(
+                ["attack:advice"] + [f"attack:lane:{l}" for l in advised]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
     def test_accepts_attack_priority_lane_in_selected_basket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

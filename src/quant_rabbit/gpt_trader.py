@@ -54,6 +54,12 @@ FORBIDDEN_SPECIALIST_AUTHORITY_FIELDS = (
 # because the operator may cite any executable lane visible in order_intents.
 DEFAULT_GPT_MAX_LANES = 56
 
+# Maximum distinct pairs a verifier-accepted basket should cover when
+# ai_attack_advice has recommended lanes across multiple pairs and the
+# campaign target is open. Mirrors RiskPolicy.max_portfolio_positions; the
+# gateway still re-validates portfolio risk and margin before send.
+BASKET_PAIR_COVERAGE_TARGET = 4
+
 
 @dataclass(frozen=True)
 class GPTTraderDecision:
@@ -324,6 +330,36 @@ class DecisionVerifier:
                                 "ai_attack_advice ranks current tradeable LIVE_READY lanes in execution order; "
                                 "the selected basket must include the first-ranked lane instead of skipping "
                                 f"to lower-ranked advice: {priority_lane_id}",
+                            )
+                        )
+                    advised_pairs = []
+                    for advised_lane_id in attack_lane_ids:
+                        pair = _pair_from_lane_id(advised_lane_id)
+                        if pair and pair not in advised_pairs:
+                            advised_pairs.append(pair)
+                    selected_pairs: set[str] = set()
+                    for chosen_lane_id in selected_lane_ids:
+                        pair = _pair_from_lane_id(chosen_lane_id)
+                        if pair:
+                            selected_pairs.add(pair)
+                    expected_basket_pairs = min(
+                        len(advised_pairs),
+                        BASKET_PAIR_COVERAGE_TARGET,
+                    )
+                    if len(selected_pairs) < expected_basket_pairs:
+                        skipped_pairs = [
+                            pair for pair in advised_pairs if pair not in selected_pairs
+                        ][:expected_basket_pairs]
+                        issues.append(
+                            VerificationIssue(
+                                "BASKET_PAIR_COVERAGE_INCOMPLETE",
+                                "ai_attack_advice recommends tradeable LIVE_READY lanes across "
+                                f"{len(advised_pairs)} distinct pair(s) ({', '.join(advised_pairs)}); "
+                                f"basket only covers {len(selected_pairs) or 'no'} pair(s) "
+                                f"({', '.join(sorted(selected_pairs)) or 'none'}). Per AGENT_CONTRACT "
+                                "§5–§6 campaign exposure occupancy: include one lane per advised pair "
+                                f"up to max_portfolio_positions, or cite a named deterministic gate per "
+                                f"skipped pair in risk_notes: {', '.join(skipped_pairs)}",
                             )
                         )
                     if "attack:advice" not in decision.evidence_refs:
@@ -951,6 +987,16 @@ def _attack_recommended_tradeable_lane_ids(
 def _cited_live_ready_lanes(decision: GPTTraderDecision, lane_ids: list[str]) -> list[str]:
     refs = set(decision.evidence_refs)
     return [lane_id for lane_id in lane_ids if f"intent:{lane_id}" in refs]
+
+
+def _pair_from_lane_id(lane_id: str) -> str:
+    """Extract the pair token from a `desk:pair:side:method[:MARKET]` lane id."""
+    if not lane_id:
+        return ""
+    parts = lane_id.split(":")
+    if len(parts) >= 2 and parts[1]:
+        return parts[1]
+    return ""
 
 
 def _pairs_from_lanes(lanes: list[dict[str, Any]]) -> tuple[str, ...]:
