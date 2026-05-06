@@ -125,7 +125,7 @@ class RiskEngineTest(unittest.TestCase):
             side=Side.LONG,
             units=20000,
             entry_price=156.836,
-            owner=Owner.UNKNOWN,
+            owner=Owner.EXTERNAL,
             take_profit=None,
             stop_loss=None,
         )
@@ -143,6 +143,33 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("EXTERNAL_RISK_OPEN", codes)
         self.assertIn("UNPROTECTED_POSITION", codes)
+
+    def test_operator_manual_position_does_not_block_fresh_entries(self) -> None:
+        manual = BrokerPosition(
+            trade_id="470201",
+            pair="USD_JPY",
+            side=Side.LONG,
+            units=25000,
+            entry_price=155.962,
+            owner=Owner.UNKNOWN,
+            take_profit=None,
+            stop_loss=None,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="manual_usdjpy_is_operator_managed_parallel_exposure",
+        )
+        decision = RiskEngine().validate(intent, snapshot(positions=(manual,)))
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("EXTERNAL_RISK_OPEN", codes)
+        self.assertNotIn("UNPROTECTED_POSITION", codes)
+        self.assertNotIn("OPEN_POSITION_EXISTS", codes)
 
     def test_trader_position_without_tp_or_sl_blocks_fresh_entries(self) -> None:
         unprotected = BrokerPosition(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -244,6 +244,7 @@ class AutoTradeCycle:
             snapshot = self._refresh_snapshot(pairs)
             target_summary = self._update_target_state(snapshot) or target_summary
         positions = len(snapshot.positions)
+        trader_positions = _trader_position_count(snapshot)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
         resolved_max_loss_jpy = self._resolve_max_loss_jpy()
@@ -273,12 +274,13 @@ class AutoTradeCycle:
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         position_decision = None
         position_execution = None
-        if positions:
+        if trader_positions:
             decision = self._brain().run(snapshot)
-            position_decision = self._position_manager().run(snapshot)
+            managed_snapshot = _trader_only_snapshot(snapshot)
+            position_decision = self._position_manager().run(managed_snapshot)
             position_execution = self._position_gateway().run(
                 decision=position_decision,
-                snapshot=snapshot,
+                snapshot=managed_snapshot,
                 send=send,
             )
             canceled_orders: list[str] = []
@@ -332,11 +334,12 @@ class AutoTradeCycle:
                 return summary
         if pending_entries:
             decision = self._brain().run(snapshot)
-            position_decision = self._position_manager().run(snapshot)
+            managed_snapshot = _trader_only_snapshot(snapshot)
+            position_decision = self._position_manager().run(managed_snapshot)
             position_execution = self._position_gateway().run(
                 decision=position_decision,
-                snapshot=snapshot,
-                send=send and positions > 0,
+                snapshot=managed_snapshot,
+                send=send and trader_positions > 0,
             )
             canceled_orders: list[str] = []
             status = "MONITOR_ONLY_EXPOSURE_OPEN"
@@ -1128,9 +1131,21 @@ def _pending_entry_order_count(snapshot) -> int:
 
 
 def _portfolio_add_allowed(snapshot) -> bool:
-    if not snapshot.positions:
+    trader_positions = tuple(position for position in snapshot.positions if position.owner.value == "trader")
+    if not trader_positions:
         return False
     return all(
         position.owner.value == "trader" and position.stop_loss is not None and position.take_profit is not None
-        for position in snapshot.positions
+        for position in trader_positions
+    )
+
+
+def _trader_position_count(snapshot) -> int:
+    return sum(1 for position in snapshot.positions if position.owner.value == "trader")
+
+
+def _trader_only_snapshot(snapshot):
+    return replace(
+        snapshot,
+        positions=tuple(position for position in snapshot.positions if position.owner.value == "trader"),
     )

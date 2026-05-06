@@ -538,8 +538,11 @@ def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
     snapshot = packet.get("broker_snapshot", {})
     blockers: list[str] = []
     for position in snapshot.get("position_summaries", []) or []:
+        owner = str(position.get("owner") or "")
+        if owner in {"manual", "unknown"}:
+            continue
         if (
-            str(position.get("owner") or "") == "trader"
+            owner == "trader"
             and position.get("take_profit") is not None
             and position.get("stop_loss") is not None
         ):

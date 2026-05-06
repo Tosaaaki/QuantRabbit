@@ -132,7 +132,8 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Exposure-management loop: `BrokerSnapshot` → `TraderBrain` → `PositionManager` → `PositionProtectionGateway`.
 - `gpt-trader-decision` verifies the operator's decision receipt by default.
   - `autotrade-cycle --use-gpt-trader --gpt-decision-response …` may hand off **only an ACCEPTED `TRADE`** from a deterministic prefilter lane.
-- Unprotected, external / manual, over-budget, or pending-entry exposure **blocks fresh entries**.
+- Unprotected trader-owned exposure, external exposure, over-budget exposure, or pending-entry exposure **blocks fresh entries**.
+- Operator-managed manual/tagless exposure (`owner=manual` or `owner=unknown`) is observed in broker truth but is not modified, protected, closed, or counted as a fresh-entry blocker. The operator owns that risk. The trader may run in parallel and must still size its own entries from equity, ATR, spread, and trader-owned portfolio risk.
 - Protected trader-owned exposure may add only through portfolio risk validation; total worst-case loss must stay inside the active exposure budget.
 - Pending orders vetoed by the current `TraderBrain` can be canceled before the next cycle.
 - Trader decisions compare mined history, market story, campaign role, narrative risk, current broker state, risk geometry, and live exposure.
@@ -154,13 +155,14 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Local OANDA credentials live in `.env.local` at repo root with `QR_OANDA_*` keys. **Never print their values.**
 - `OandaReadOnlyClient` loads `.env.local` automatically when process env vars are absent. `QR_OANDA_ENV_FILE=/path/to/file` overrides the lookup for tests or alternate environments.
 - Do **not** read legacy `config/env.toml` into vNext.
-- Manual, tagless, or broker-synced exposure **blocks new entries** until adopted or closed.
+- Manual/tagless operator exposure does **not** block new trader entries and must not be modified by the trader. External/broker-synced exposure that is not explicitly operator-managed still blocks new entries until adopted or closed.
 
 ---
 
 ## 10. Position Protection
 
 - Missing TP / SL is a **repair requirement** (not optional).
+- This repair requirement applies to trader-owned positions. Operator-managed manual/tagless positions are not repaired or closed by the trader.
 - Profitable protected positions can tighten SL to break-even or better.
 - Contradicted trader-owned positions can be closed.
 - **Existing SL cannot be widened.**

@@ -16,6 +16,7 @@ class TargetPositionRisk:
     trade_id: str
     pair: str
     side: str
+    owner: str
     units: int
     unrealized_pl_jpy: float
     protected: bool
@@ -170,8 +171,13 @@ class DailyTargetLedger:
             if snapshot
             else float(previous.get("unrealized_pl_jpy") or 0.0)
         )
-        open_risk = round(sum(position.remaining_risk_jpy or 0.0 for position in positions), 4)
-        unprotected = sum(1 for position in positions if not position.protected)
+        open_risk = round(
+            sum((position.remaining_risk_jpy or 0.0) for position in positions if _counts_against_trader_budget(position)),
+            4,
+        )
+        unprotected = sum(
+            1 for position in positions if not position.protected and _counts_against_trader_budget(position)
+        )
         progress = round(realized + unrealized, 4)
         target_jpy = round(start_balance * (target_pct / 100.0), 2)
         remaining_target = round(max(0.0, target_jpy - progress), 4)
@@ -268,7 +274,7 @@ class DailyTargetLedger:
             missing = "/".join(position.missing) if position.missing else "none"
             risk_text = "unknown" if position.remaining_risk_jpy is None else f"{position.remaining_risk_jpy:.0f} JPY"
             lines.append(
-                f"- `{position.trade_id}` `{position.pair} {position.side}` units=`{position.units}` "
+                f"- `{position.trade_id}` `{position.pair} {position.side}` owner=`{position.owner}` units=`{position.units}` "
                 f"upl=`{position.unrealized_pl_jpy:.0f}` risk=`{risk_text}` missing=`{missing}`"
             )
         lines.extend(
@@ -277,7 +283,7 @@ class DailyTargetLedger:
                 "## Target Contract",
                 "",
                 "- The 10% daily target is tracked as a product KPI and execution objective, not a guaranteed return.",
-                "- Unprotected exposure makes remaining risk budget unavailable until TP/SL is repaired or the trade is closed.",
+                "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is observed but not managed by the trader.",
                 "- Reaching the target switches the system toward protection-first behavior before any new risk is added.",
             ]
         )
@@ -301,6 +307,7 @@ def _position_risk(
         trade_id=position.trade_id,
         pair=position.pair,
         side=position.side.value,
+        owner=position.owner.value,
         units=position.units,
         unrealized_pl_jpy=round(position.unrealized_pl_jpy, 4),
         protected=not missing,
@@ -321,6 +328,7 @@ def _previous_positions(payload: object) -> tuple[TargetPositionRisk, ...]:
                 trade_id=str(item.get("trade_id") or ""),
                 pair=str(item.get("pair") or ""),
                 side=str(item.get("side") or ""),
+                owner=str(item.get("owner") or Owner.UNKNOWN.value),
                 units=int(item.get("units") or 0),
                 unrealized_pl_jpy=float(item.get("unrealized_pl_jpy") or 0.0),
                 protected=bool(item.get("protected")),
@@ -354,6 +362,8 @@ def _blockers(
 ) -> list[str]:
     blockers: list[str] = []
     for position in positions:
+        if not _counts_against_trader_budget(position):
+            continue
         if not position.protected:
             blockers.append(
                 f"open position {position.trade_id} {position.pair} lacks {'/'.join(position.missing)}; repair before fresh risk"
@@ -363,6 +373,10 @@ def _blockers(
     if remaining_target > 0 and not positions:
         blockers.append(f"remaining target {remaining_target:.0f} JPY still needs live-ready campaign coverage")
     return blockers
+
+
+def _counts_against_trader_budget(position: TargetPositionRisk) -> bool:
+    return position.owner not in {Owner.MANUAL.value, Owner.UNKNOWN.value}
 
 
 def _status(

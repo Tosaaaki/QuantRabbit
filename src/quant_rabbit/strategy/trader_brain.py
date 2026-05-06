@@ -148,7 +148,7 @@ class TraderBrain:
                 reverse=True,
             )
         )
-        if (positions and not portfolio_add_allowed) or pending_entries:
+        if exposure_blockers or pending_entries:
             pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
@@ -530,6 +530,8 @@ def _campaign_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
     blockers: list[str] = []
     for position in snapshot.positions:
+        if position.owner in {Owner.MANUAL, Owner.UNKNOWN}:
+            continue
         blockers.append(f"open position exists: {position.pair} {position.side.value} id={position.trade_id}")
     for order in snapshot.orders:
         if not order.trade_id and order.order_type.upper() in PENDING_ENTRY_TYPES:
@@ -546,11 +548,12 @@ def _pending_entry_order_count(snapshot: BrokerSnapshot) -> int:
 
 
 def _portfolio_add_allowed(snapshot: BrokerSnapshot) -> bool:
-    if not snapshot.positions:
+    trader_positions = tuple(position for position in snapshot.positions if position.owner == Owner.TRADER)
+    if not trader_positions:
         return False
     return all(
         position.owner == Owner.TRADER and position.stop_loss is not None and position.take_profit is not None
-        for position in snapshot.positions
+        for position in trader_positions
     )
 
 

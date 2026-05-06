@@ -118,6 +118,40 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.unprotected_positions, 1)
             payload = json.loads((root / "target.json").read_text())
             self.assertIn("TP", payload["positions"][0]["missing"])
+
+    def test_operator_manual_position_does_not_block_trader_risk_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="manual-470201",
+                        pair="USD_JPY",
+                        side=Side.LONG,
+                        units=25000,
+                        entry_price=155.962,
+                        unrealized_pl_jpy=4650.0,
+                        take_profit=None,
+                        stop_loss=None,
+                        owner=Owner.UNKNOWN,
+                    ),
+                ),
+                quotes={"USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now)},
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(start_balance_jpy=100_000, daily_risk_budget_jpy=500, snapshot=snapshot)
+
+            self.assertEqual(summary.status, "PURSUE_TARGET")
+            self.assertEqual(summary.remaining_risk_budget_jpy, 500.0)
+            self.assertEqual(summary.unprotected_positions, 0)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["positions"][0]["owner"], "unknown")
+            self.assertIn("TP", payload["positions"][0]["missing"])
             self.assertIn("SL", payload["positions"][0]["missing"])
 
     def test_updates_existing_target_without_repeating_start_balance(self) -> None:

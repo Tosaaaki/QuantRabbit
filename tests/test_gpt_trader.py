@@ -43,6 +43,31 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertTrue(summary.allowed)
 
+    def test_accepts_trade_with_operator_manual_position_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "manual-470201",
+                        "pair": "USD_JPY",
+                        "side": "LONG",
+                        "units": 25000,
+                        "entry_price": 155.962,
+                        "take_profit": None,
+                        "stop_loss": None,
+                        "owner": "unknown",
+                    }
+                ],
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+
     def test_rejects_trade_when_broker_exposure_is_not_layerable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

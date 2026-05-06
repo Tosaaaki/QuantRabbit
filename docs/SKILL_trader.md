@@ -99,6 +99,7 @@ Before writing any decision, open and actually read every layer below. Skipping 
 - `data/order_intents.json` (and `docs/order_intents_report.md`) — pre-validated lane intents with current geometry (ATR-derived SL, equity-derived units). `LIVE_READY` lanes have no risk or strategy blockers; `DRY_RUN_BLOCKED` lanes carry their reason.
 - `data/market_story_profile.json` — current narrative pressure (intervention risk, event risk, JPY-cross conditions, etc.).
 - `data/broker_snapshot.json` — open positions, pending orders, ages, spreads.
+  - Operator-managed manual/tagless positions (`owner=manual` or `owner=unknown`) are for operator awareness only. Do not protect, close, cancel around, or use them as a reason to block a valid trader-owned entry; cite them only as parallel manual exposure.
 
 **Macro / inter-market (added 2026-05-04):**
 - `data/cross_asset_snapshot.json` — `synthetic_dxy.last_value` + Δ24h%, US10Y/US2Y CFD prices and spread, SPX/Gold/Oil/BTC trend+z-score, **per-FX-pair correlation row** to each cross asset. JPY pairs MUST cite USB10Y_USD trend (proxy for US-JP yield differential) and DXY trend in `chart_story`. EUR_USD MUST cite DXY level in `chart_story`. If `MISSING_JP10Y_FEED` appears, treat the JP-yield leg as unknown.

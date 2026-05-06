@@ -391,6 +391,58 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse(summary.sent)
             self.assertFalse((root / "pm.json").exists())
 
+    def test_operator_manual_position_does_not_stop_fresh_entry_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(
+                        BrokerPosition(
+                            trade_id="manual-470201",
+                            pair="USD_JPY",
+                            side=Side.LONG,
+                            units=25000,
+                            entry_price=155.962,
+                            owner=Owner.UNKNOWN,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.positions, 1)
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertFalse((root / "pm.json").exists())
+            self.assertTrue((root / "live_order.json").exists())
+
     def test_flat_cycle_uses_accepted_gpt_trade_before_gateway(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

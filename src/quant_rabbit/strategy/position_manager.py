@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Side
+from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Side
 from quant_rabbit.paths import DEFAULT_DAILY_TARGET_STATE, DEFAULT_POSITION_MANAGEMENT, DEFAULT_POSITION_MANAGEMENT_REPORT, DEFAULT_TRADER_DECISION
 from quant_rabbit.risk import RiskPolicy
 
@@ -57,7 +57,8 @@ class PositionManager:
     def run(self, snapshot: BrokerSnapshot) -> PositionManagementDecision:
         generated_at = datetime.now(timezone.utc).isoformat()
         scores = _load_scores(self.trader_decision_path)
-        managed = tuple(self._manage_position(position, snapshot, scores) for position in snapshot.positions)
+        trader_positions = tuple(position for position in snapshot.positions if position.owner == Owner.TRADER)
+        managed = tuple(self._manage_position(position, snapshot, scores) for position in trader_positions)
         action = _aggregate_action(managed)
         decision = PositionManagementDecision(generated_at_utc=generated_at, action=action, positions=managed)
         self._write(decision)
@@ -177,6 +178,7 @@ class PositionManager:
                 "## Management Contract",
                 "",
                 "- Existing positions are managed before any new entry is considered.",
+                "- Operator-managed manual/tagless positions are observed in broker truth but ignored by this gateway.",
                 "- Missing TP/SL is a repair requirement, not a passive monitor state.",
                 "- Profit protection is required once open profit is large relative to remaining stop risk.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",

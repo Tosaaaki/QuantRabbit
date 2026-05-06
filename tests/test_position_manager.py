@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Quote, Side
+from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.position_manager import (
     ACTION_HOLD_PROTECTED,
     ACTION_PROFIT_PROTECT,
@@ -180,6 +181,35 @@ class PositionManagerTest(unittest.TestCase):
             self.assertIsNone(result.positions[0].recommended_stop_loss)
             self.assertIn("needs exit review", (root / "pm.md").read_text())
 
+    def test_operator_manual_position_is_not_managed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime.now(timezone.utc),
+                positions=(
+                    BrokerPosition(
+                        trade_id="manual-1",
+                        pair="USD_JPY",
+                        side=Side.LONG,
+                        units=25000,
+                        entry_price=155.962,
+                        owner=Owner.UNKNOWN,
+                    ),
+                ),
+                quotes={"USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=datetime.now(timezone.utc))},
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, "NO_POSITION")
+            self.assertEqual(result.positions, ())
+            self.assertIn("manual/tagless positions", (root / "pm.md").read_text())
+
 
 def _decision(root: Path, *, long_score: float, short_score: float) -> Path:
     path = root / "decision.json"
@@ -206,6 +236,8 @@ def _snapshot(
     include_usd_jpy: bool = True,
 ) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
+    if position.owner == Owner.UNKNOWN:
+        position = replace(position, owner=Owner.TRADER)
     quotes = {"EUR_USD": Quote("EUR_USD", bid, ask, timestamp_utc=now)}
     if include_usd_jpy:
         quotes["USD_JPY"] = Quote("USD_JPY", usd_jpy_bid, usd_jpy_ask, timestamp_utc=now)

@@ -80,6 +80,10 @@ class RiskPolicy:
     require_live_enabled_for_send: bool = True
     require_market_context_for_live_send: bool = True
     allow_protected_trader_position_adds: bool = False
+    # OANDA trades without the vNext trader tag are operator-managed manual
+    # exposure. They remain visible in broker truth, but the autonomous trader
+    # must not protect, close, or count them against its own entry budget.
+    allow_operator_managed_manual_exposure: bool = True
     max_portfolio_positions: int = 4
     max_portfolio_loss_jpy: float | None = None
 
@@ -112,9 +116,10 @@ class RiskEngine:
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
+        entry_relevant_positions = self._entry_relevant_positions(snapshot)
         portfolio_add_mode = self.policy.allow_protected_trader_position_adds
         if self.policy.block_new_entries_with_open_positions and not portfolio_add_mode:
-            for position in snapshot.positions:
+            for position in entry_relevant_positions:
                 issues.append(
                     RiskIssue(
                         "OPEN_POSITION_EXISTS",
@@ -123,15 +128,15 @@ class RiskEngine:
                     )
                 )
         elif self.policy.block_new_entries_with_open_positions and portfolio_add_mode:
-            if len(snapshot.positions) >= self.policy.max_portfolio_positions:
+            if len(entry_relevant_positions) >= self.policy.max_portfolio_positions:
                 issues.append(
                     RiskIssue(
                         "PORTFOLIO_POSITION_LIMIT",
-                        f"open trader positions {len(snapshot.positions)} reached portfolio limit "
+                        f"open trader positions {len(entry_relevant_positions)} reached portfolio limit "
                         f"{self.policy.max_portfolio_positions}",
                     )
                 )
-            for position in snapshot.positions:
+            for position in entry_relevant_positions:
                 if position.owner != Owner.TRADER or position.stop_loss is None or position.take_profit is None:
                     issues.append(
                         RiskIssue(
@@ -155,7 +160,7 @@ class RiskEngine:
                     )
 
         if self.policy.block_new_entries_with_external_risk:
-            for position in snapshot.positions:
+            for position in entry_relevant_positions:
                 if position.owner != Owner.TRADER:
                     issues.append(
                         RiskIssue(
@@ -166,7 +171,7 @@ class RiskEngine:
                     )
 
         if self.policy.block_unprotected_positions:
-            for position in snapshot.positions:
+            for position in entry_relevant_positions:
                 if position.stop_loss is None or position.take_profit is None:
                     missing = []
                     if position.take_profit is None:
@@ -284,6 +289,11 @@ class RiskEngine:
             metrics=metrics,
             issues=tuple(issues),
         )
+
+    def _entry_relevant_positions(self, snapshot: BrokerSnapshot) -> tuple[BrokerPosition, ...]:
+        if not self.policy.allow_operator_managed_manual_exposure:
+            return tuple(snapshot.positions)
+        return tuple(position for position in snapshot.positions if not _is_operator_managed_manual(position))
 
     def _spec(self, pair: str) -> InstrumentSpec:
         try:
@@ -540,7 +550,7 @@ class RiskEngine:
 
     def _open_portfolio_risk_jpy(self, snapshot: BrokerSnapshot) -> tuple[float, RiskIssue | None]:
         total = 0.0
-        for position in snapshot.positions:
+        for position in self._entry_relevant_positions(snapshot):
             if position.stop_loss is None:
                 return 0.0, RiskIssue(
                     "PORTFOLIO_RISK_UNKNOWN",
@@ -568,6 +578,10 @@ def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
 
 def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:
     return bool(snapshot.account and snapshot.account.hedging_enabled)
+
+
+def _is_operator_managed_manual(position: BrokerPosition) -> bool:
+    return position.owner in {Owner.MANUAL, Owner.UNKNOWN}
 
 
 def _is_pending_entry_order(order: BrokerOrder) -> bool:
