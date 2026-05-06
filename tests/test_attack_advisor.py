@@ -60,6 +60,7 @@ class AttackAdvisorTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
                 coverage_path=coverage,
                 output_path=root / "advice.json",
                 report_path=root / "advice.md",
@@ -85,6 +86,7 @@ class AttackAdvisorTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 ai_backtest_path=root / "missing_backtest.json",
+                outcome_mart_path=root / "missing_outcome_mart.json",
                 coverage_path=root / "missing_coverage.json",
                 output_path=root / "advice.json",
                 report_path=root / "advice.md",
@@ -116,6 +118,8 @@ class AttackAdvisorTest(unittest.TestCase):
                         str(target),
                         "--ai-backtest",
                         str(root / "missing_backtest.json"),
+                        "--outcome-mart",
+                        str(root / "missing_outcome_mart.json"),
                         "--coverage",
                         str(root / "missing_coverage.json"),
                         "--output",
@@ -132,6 +136,86 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertTrue(payload["read_only"])
             self.assertFalse(payload["live_permission"])
             self.assertTrue(report.exists())
+
+    def test_archive_outcome_mart_boosts_method_specific_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            outcome_mart = root / "outcome_mart.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="TREND_CONTINUATION",
+                                reward_jpy=900.0,
+                                risk_jpy=300.0,
+                                rr=3.0,
+                            ),
+                            _result(
+                                lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="RANGE_ROTATION",
+                                reward_jpy=900.0,
+                                risk_jpy=300.0,
+                                rr=3.0,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 600.0}))
+            backtest.write_text(json.dumps({"bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            outcome_mart.write_text(
+                json.dumps(
+                    {
+                        "method_edges": [
+                            {
+                                "key": "EUR_USD:LONG:RANGE_ROTATION:ALL:ALL:ALL",
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "net_jpy": 500.0,
+                                "avg_jpy": 50.0,
+                                "outcome_n": 10,
+                            },
+                            {
+                                "key": "EUR_USD:LONG:TREND_CONTINUATION:ALL:ALL:ALL",
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "method": "TREND_CONTINUATION",
+                                "net_jpy": -100.0,
+                                "avg_jpy": -10.0,
+                                "outcome_n": 10,
+                            },
+                        ]
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=outcome_mart,
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["recommended_now_lane_ids"][0], "range_trader:EUR_USD:LONG:RANGE_ROTATION")
+            lane = payload["lanes"][0]
+            self.assertEqual(lane["archive_method_edge_jpy"], 500.0)
+            self.assertEqual(lane["archive_method_trials"], 10)
 
 
 def _result(

@@ -13,6 +13,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_OUTCOME_MART,
     DEFAULT_ORDER_INTENTS,
 )
 
@@ -25,6 +26,8 @@ ADVISORY_REWARD_COVERAGE_SCORE_CAP = 40.0
 ADVISORY_REWARD_RISK_SCORE_MULT = 6.0
 ADVISORY_POSITIVE_EDGE_SCORE = 25.0
 ADVISORY_NEGATIVE_EDGE_PENALTY = 25.0
+ADVISORY_OUTCOME_MART_EDGE_SCORE = 15.0
+ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY = 15.0
 ADVISORY_MARKET_PARTICIPATION_SCORE = 5.0
 REPORT_LANE_LIMIT = 12
 
@@ -44,6 +47,10 @@ class AttackLaneAdvice:
     historical_edge_jpy: float | None
     historical_edge_trades: int
     historical_edge_buckets: tuple[str, ...]
+    archive_method_edge_jpy: float | None
+    archive_method_avg_jpy: float | None
+    archive_method_trials: int
+    archive_method_key: str | None
     rationale: tuple[str, ...]
     blockers: tuple[str, ...] = ()
 
@@ -75,6 +82,7 @@ class AttackAdvisor:
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         ai_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
+        outcome_mart_path: Path = DEFAULT_OUTCOME_MART,
         coverage_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         output_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         report_path: Path = DEFAULT_AI_ATTACK_ADVICE_REPORT,
@@ -82,6 +90,7 @@ class AttackAdvisor:
         self.intents_path = intents_path
         self.target_state_path = target_state_path
         self.ai_backtest_path = ai_backtest_path
+        self.outcome_mart_path = outcome_mart_path
         self.coverage_path = coverage_path
         self.output_path = output_path
         self.report_path = report_path
@@ -91,12 +100,19 @@ class AttackAdvisor:
         intents = _load_json(self.intents_path)
         target = _load_json(self.target_state_path)
         ai_backtest = _load_optional_json(self.ai_backtest_path)
+        outcome_mart = _load_optional_json(self.outcome_mart_path)
         coverage = _load_optional_json(self.coverage_path)
         edge_index = _edge_index(ai_backtest or {})
+        outcome_index = _outcome_index(outcome_mart or {})
         remaining_target = _positive_float(target.get("remaining_target_jpy"))
         remaining_risk = _positive_float(target.get("remaining_risk_budget_jpy"))
         lanes = tuple(
-            _attack_lane(item, edge_index=edge_index, remaining_target_jpy=remaining_target)
+            _attack_lane(
+                item,
+                edge_index=edge_index,
+                outcome_index=outcome_index,
+                remaining_target_jpy=remaining_target,
+            )
             for item in intents.get("results", []) or []
             if isinstance(item, dict) and isinstance(item.get("intent"), dict)
         )
@@ -125,6 +141,7 @@ class AttackAdvisor:
                 recommended_reward=recommended_reward,
                 live_ready=live_ready,
                 edge_index=edge_index,
+                outcome_index=outcome_index,
                 coverage=coverage or {},
             )
         )
@@ -137,6 +154,7 @@ class AttackAdvisor:
             "intents_path": str(self.intents_path),
             "target_state_path": str(self.target_state_path),
             "ai_backtest_path": str(self.ai_backtest_path) if self.ai_backtest_path.exists() else None,
+            "outcome_mart_path": str(self.outcome_mart_path) if self.outcome_mart_path.exists() else None,
             "coverage_path": str(self.coverage_path) if self.coverage_path.exists() else None,
             "remaining_target_jpy": remaining_target,
             "remaining_risk_budget_jpy": remaining_risk,
@@ -203,7 +221,8 @@ class AttackAdvisor:
                 lines.append(
                     f"- `{lane_id}` score=`{lane['score']:.1f}` reward=`{lane['reward_jpy']:.0f}` "
                     f"risk=`{lane['risk_jpy']:.0f}` rr=`{lane['reward_risk']:.2f}` "
-                    f"hist_edge=`{lane['historical_edge_jpy']}`"
+                    f"hist_edge=`{lane['historical_edge_jpy']}` "
+                    f"archive_edge=`{lane['archive_method_edge_jpy']}`"
                 )
         else:
             lines.append("- none")
@@ -240,6 +259,7 @@ def _attack_lane(
     item: dict[str, Any],
     *,
     edge_index: dict[tuple[str, str], dict[str, Any]],
+    outcome_index: dict[tuple[str, str, str], dict[str, Any]],
     remaining_target_jpy: float | None,
 ) -> AttackLaneAdvice:
     intent = item["intent"]
@@ -262,6 +282,11 @@ def _attack_lane(
     edge = edge_index.get((pair, direction), {})
     edge_jpy = _optional_float(edge.get("managed_net_jpy"))
     edge_trades = int(edge.get("trades") or 0)
+    archive_edge = _best_outcome_edge(outcome_index, pair=pair, direction=direction, method=method)
+    archive_net_jpy = _optional_float(archive_edge.get("net_jpy")) if archive_edge else None
+    archive_avg_jpy = _optional_float(archive_edge.get("avg_jpy")) if archive_edge else None
+    archive_trials = int(archive_edge.get("outcome_n") or 0) if archive_edge else 0
+    archive_key = str(archive_edge.get("key") or "") if archive_edge else None
     rationale: list[str] = []
     score = 0.0
     if reward is not None:
@@ -279,6 +304,12 @@ def _attack_lane(
     elif edge_jpy is not None and edge_jpy < 0:
         score -= ADVISORY_NEGATIVE_EDGE_PENALTY
         rationale.append("negative AI-test-bot pair/direction edge")
+    if archive_net_jpy is not None and archive_net_jpy > 0:
+        score += ADVISORY_OUTCOME_MART_EDGE_SCORE
+        rationale.append("positive archive method edge")
+    elif archive_net_jpy is not None and archive_net_jpy < 0:
+        score -= ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY
+        rationale.append("negative archive method edge")
     if order_type == "MARKET":
         score += ADVISORY_MARKET_PARTICIPATION_SCORE
         rationale.append("immediate market participation")
@@ -296,6 +327,10 @@ def _attack_lane(
         historical_edge_jpy=_round(edge_jpy) if edge_jpy is not None else None,
         historical_edge_trades=edge_trades,
         historical_edge_buckets=tuple(str(bucket) for bucket in edge.get("buckets", ()) or ()),
+        archive_method_edge_jpy=_round(archive_net_jpy) if archive_net_jpy is not None else None,
+        archive_method_avg_jpy=_round(archive_avg_jpy) if archive_avg_jpy is not None else None,
+        archive_method_trials=archive_trials,
+        archive_method_key=archive_key,
         rationale=tuple(rationale),
         blockers=tuple(blockers),
     )
@@ -361,6 +396,33 @@ def _edge_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]
     return index
 
 
+def _outcome_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    index: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in payload.get("method_edges", []) or []:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "")
+        direction = str(item.get("direction") or "")
+        method = str(item.get("method") or "")
+        if not pair or not direction or not method:
+            continue
+        index[(pair, direction, method)] = item
+    return index
+
+
+def _best_outcome_edge(
+    index: dict[tuple[str, str, str], dict[str, Any]],
+    *,
+    pair: str,
+    direction: str,
+    method: str,
+) -> dict[str, Any]:
+    exact = index.get((pair, direction, method))
+    if exact:
+        return exact
+    return index.get((pair, direction, "UNSPECIFIED"), {})
+
+
 def _blockers(
     *,
     intents: dict[str, Any],
@@ -388,6 +450,7 @@ def _action_items(
     recommended_reward: float,
     live_ready: tuple[AttackLaneAdvice, ...],
     edge_index: dict[tuple[str, str], dict[str, Any]],
+    outcome_index: dict[tuple[str, str, str], dict[str, Any]],
     coverage: dict[str, Any],
 ) -> Iterator[str]:
     if remaining_target and live_ready_reward < remaining_target:
@@ -397,6 +460,8 @@ def _action_items(
         yield "use recommended_now as the first verified basket, then keep generating sequential ladder receipts"
     if not edge_index:
         yield "run ai-test-bot-backtest before advice so pair/direction history is grounded"
+    if not outcome_index:
+        yield "run build-outcome-mart before advice so archive method history is grounded"
     coverage_status = str(coverage.get("status") or "")
     if coverage_status and coverage_status != "LIVE_READY_COVERAGE_READY":
         yield f"resolve coverage optimizer status {coverage_status} before treating attack advice as certified"
@@ -438,6 +503,7 @@ def _settings_advice() -> dict[str, Any]:
         "do_not_enable_second_trader": True,
         "safe_parameter_surface": [
             "lane ranking",
+            "archive outcome feature weighting",
             "selected_lane_ids basket",
             "method/pair priority",
             "additional receipt backlog priority",

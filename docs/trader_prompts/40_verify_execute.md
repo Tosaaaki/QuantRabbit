@@ -16,6 +16,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 
 Verifier acceptance is required before gateway handoff.
 
+If the verifier rejects the receipt, or if the router reports that the receipt predates a refreshed broker snapshot / repriced intent packet, do not stop the trader because the old receipt exists. Return to the routed decision branch, write one current receipt, and continue through the normal verifier -> gateway path.
+
 ## Execute One Gateway Cycle
 
 ```bash
@@ -33,7 +35,7 @@ Verifier acceptance is required before gateway handoff.
 - `autotrade-cycle` syncs `data/execution_ledger.db` before and after gateway work and records gateway receipts in the ledger.
 - Real send also requires `QR_LIVE_ENABLED=1`, `--send`, and all live gates.
 - Without live gates, the cycle stays dry-run.
-- Do not rerun after a rejected / blocked / no-trade result to force a fill.
+- Do not rerun after a rejected / blocked / no-trade result to force a fill. A later scheduled cycle may refresh broker truth and make a new decision; that is normal continuation, not a workaround send.
 
 ## Report
 

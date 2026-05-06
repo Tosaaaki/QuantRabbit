@@ -35,6 +35,8 @@ load_live_enabled_from_env_file
 export QR_LIVE_ENABLED="${QR_LIVE_ENABLED:-0}"
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"
+readonly DEFAULT_SYNC_DEV_ROOT="/Users/tossaki/App/QuantRabbit"
+readonly DEFAULT_SYNC_MAIN_BRANCH="main"
 
 acquire_lock() {
   if mkdir "$QR_AUTOTRADE_LOCK_DIR" 2>/dev/null; then
@@ -66,10 +68,54 @@ acquire_lock() {
   exit 75
 }
 
+is_report_path() {
+  local path="$1"
+  [[ "$path" == docs/*_report.md ]]
+}
+
+can_continue_after_sync_failure() {
+  if [[ "${QR_LIVE_SYNC_CONTINUE_IF_CURRENT:-1}" != "1" ]]; then
+    return 1
+  fi
+
+  local dev_root main_branch live_head main_head line path lock_rel
+  dev_root="${QR_SYNC_DEV_ROOT:-$DEFAULT_SYNC_DEV_ROOT}"
+  main_branch="${QR_SYNC_MAIN_BRANCH:-$DEFAULT_SYNC_MAIN_BRANCH}"
+  lock_rel="${QR_AUTOTRADE_LOCK_DIR#$ROOT_DIR/}"
+  live_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)" || return 1
+  main_head="$(git -C "$dev_root" rev-parse "$main_branch" 2>/dev/null)" || return 1
+  if [[ "$live_head" != "$main_head" ]]; then
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    path="${line:3}"
+    if [[ "$lock_rel" != "$QR_AUTOTRADE_LOCK_DIR" && ( "$path" == "$lock_rel" || "$path" == "$lock_rel/"* ) ]]; then
+      continue
+    fi
+    if ! is_report_path "$path"; then
+      echo "[run-autotrade-live] live sync failed and runtime has non-report drift: ${line}" >&2
+      return 1
+    fi
+  done < <(git -C "$ROOT_DIR" status --short --untracked-files=all 2>/dev/null) || return 1
+  return 0
+}
+
 acquire_lock
 
 if [[ "$QR_LIVE_SYNC_ENABLED" == "1" && -x "${ROOT_DIR}/scripts/sync-live-runtime.sh" ]]; then
+  set +e
   "${ROOT_DIR}/scripts/sync-live-runtime.sh" --live-only --skip-tests
+  sync_status="$?"
+  set -e
+  if [[ "$sync_status" -ne 0 ]]; then
+    if can_continue_after_sync_failure; then
+      echo "[run-autotrade-live] live sync failed with status=${sync_status}, but runtime HEAD matches main and only docs/*_report.md drift is present; continuing this trader cycle." >&2
+    else
+      exit "$sync_status"
+    fi
+  fi
 fi
 
 if [[ ! -f "$QR_OANDA_ENV_FILE" ]]; then

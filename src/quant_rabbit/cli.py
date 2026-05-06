@@ -29,6 +29,7 @@ from quant_rabbit.execution_replay import ExecutionReplayer
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.learning import PostTradeLearner
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+from quant_rabbit.outcome_mart import OutcomeMartBuilder
 from quant_rabbit.paths import (
     ROOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
@@ -91,6 +92,8 @@ from quant_rabbit.paths import (
     DEFAULT_NEWS_SNAPSHOT,
     DEFAULT_NEWS_DIGEST,
     DEFAULT_NEWS_FLOW_LOG,
+    DEFAULT_OUTCOME_MART,
+    DEFAULT_OUTCOME_MART_REPORT,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS_ARG
@@ -198,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_prompt.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
+    p_prompt.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_prompt.add_argument("--position-execution", type=Path, default=DEFAULT_POSITION_EXECUTION)
+    p_prompt.add_argument("--autotrade-report", type=Path, default=DEFAULT_AUTOTRADE_REPORT)
     p_prompt.add_argument("--include-content", action="store_true")
 
     p_mine = sub.add_parser("mine-strategy", help="Mine legacy evidence into a strategy profile.")
@@ -268,6 +274,12 @@ def main(argv: list[str] | None = None) -> int:
     p_ai_test.add_argument("--output", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
     p_ai_test.add_argument("--report", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST_REPORT)
 
+    p_outcome = sub.add_parser("build-outcome-mart", help="Build read-only archive outcome features for lane ranking.")
+    p_outcome.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
+    p_outcome.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_outcome.add_argument("--output", type=Path, default=DEFAULT_OUTCOME_MART)
+    p_outcome.add_argument("--report", type=Path, default=DEFAULT_OUTCOME_MART_REPORT)
+
     p_coverage = sub.add_parser("optimize-coverage", help="Measure live-ready target coverage and emit gap tasks.")
     p_coverage.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_coverage.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
@@ -279,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     p_attack.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_attack.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_attack.add_argument("--ai-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
+    p_attack.add_argument("--outcome-mart", type=Path, default=DEFAULT_OUTCOME_MART)
     p_attack.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_attack.add_argument("--output", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_attack.add_argument("--report", type=Path, default=DEFAULT_AI_ATTACK_ADVICE_REPORT)
@@ -1013,6 +1026,9 @@ def main(argv: list[str] | None = None) -> int:
                 attack_advice_path=args.attack_advice,
                 decision_response_path=args.decision_response,
                 gpt_decision_path=args.gpt_decision,
+                live_order_path=args.live_order,
+                position_execution_path=args.position_execution,
+                autotrade_report_path=args.autotrade_report,
                 include_content=args.include_content,
             )
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1264,6 +1280,36 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "build-outcome-mart":
+        try:
+            summary = OutcomeMartBuilder(
+                db_path=args.db,
+                execution_ledger_db_path=args.execution_ledger_db,
+                output_path=args.output,
+                report_path=args.report,
+            ).run()
+        except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "archive_outcomes": summary.archive_outcomes,
+                    "execution_ledger_outcomes": summary.execution_ledger_outcomes,
+                    "story_observations": summary.story_observations,
+                    "method_edges": summary.method_edges,
+                    "setup_buckets": summary.setup_buckets,
+                    "live_permission": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status == "OUTCOME_MART_READY" else 2
     if args.command == "optimize-coverage":
         summary = CoverageOptimizer(
             intents_path=args.intents,
@@ -1439,6 +1485,7 @@ def main(argv: list[str] | None = None) -> int:
                 intents_path=args.intents,
                 target_state_path=args.target_state,
                 ai_backtest_path=args.ai_backtest,
+                outcome_mart_path=args.outcome_mart,
                 coverage_path=args.coverage,
                 output_path=args.output,
                 report_path=args.report,

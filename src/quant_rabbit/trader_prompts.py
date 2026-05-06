@@ -17,10 +17,12 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_FLOW_SNAPSHOT,
     DEFAULT_GPT_TRADER_DECISION,
+    DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
+    DEFAULT_POSITION_EXECUTION,
     DEFAULT_TRADER_PROMPTS_DIR,
 )
 
@@ -30,6 +32,7 @@ BRANCH_ENTRY = "entry_decision"
 BRANCH_POSITION = "position_management"
 BRANCH_VERIFY = "verify_execute"
 BRANCH_LEARNING = "learning_gap"
+DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,9 @@ def route_trader_prompts(
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
+    live_order_path: Path | None = DEFAULT_LIVE_ORDER_REQUEST,
+    position_execution_path: Path | None = DEFAULT_POSITION_EXECUTION,
+    autotrade_report_path: Path | None = DEFAULT_AUTOTRADE_REPORT,
     include_content: bool = False,
 ) -> PromptRoute:
     artifacts = {
@@ -134,30 +140,40 @@ def route_trader_prompts(
     if position_reasons:
         return _build_route(BRANCH_POSITION, position_reasons, include_content=include_content)
 
-    if _decision_receipt_exists(decision_response_path):
+    decision_state = _decision_receipt_state(
+        decision_response_path=decision_response_path,
+        snapshot_path=snapshot_path,
+        intents_path=intents_path,
+        gpt_decision_path=gpt_decision_path,
+        live_order_path=live_order_path,
+        position_execution_path=position_execution_path,
+        autotrade_report_path=autotrade_report_path,
+    )
+    if decision_state.pending:
         return _build_route(
             BRANCH_VERIFY,
-            (f"decision response exists: {decision_response_path}",),
+            decision_state.reasons,
             include_content=include_content,
         )
+    carry_reasons = decision_state.reasons
 
     live_ready_lanes = _live_ready_lane_ids(intents)
     if _target_open(target_state) and live_ready_lanes:
         return _build_route(
             BRANCH_ENTRY,
-            (f"daily target open with {len(live_ready_lanes)} current LIVE_READY lane(s)",),
+            (*carry_reasons, f"daily target open with {len(live_ready_lanes)} current LIVE_READY lane(s)"),
             include_content=include_content,
         )
     if _target_open(target_state):
         return _build_route(
             BRANCH_LEARNING,
-            ("daily target open but no current LIVE_READY lane is available",),
+            (*carry_reasons, "daily target open but no current LIVE_READY lane is available"),
             include_content=include_content,
         )
 
     return _build_route(
         BRANCH_POSITION,
-        ("daily target is closed or protected; review exposure before adding risk",),
+        (*carry_reasons, "daily target is closed or protected; review exposure before adding risk"),
         include_content=include_content,
     )
 
@@ -174,8 +190,76 @@ def _prompt_doc(key: str, *, include_content: bool) -> PromptDoc:
     return PromptDoc(key=key, path=path, exists=exists, content=content)
 
 
-def _decision_receipt_exists(path: Path | None) -> bool:
-    return path is not None and path.exists()
+@dataclass(frozen=True)
+class DecisionReceiptState:
+    pending: bool
+    reasons: tuple[str, ...] = ()
+
+
+def _decision_receipt_state(
+    *,
+    decision_response_path: Path | None,
+    snapshot_path: Path,
+    intents_path: Path,
+    gpt_decision_path: Path | None,
+    live_order_path: Path | None,
+    position_execution_path: Path | None,
+    autotrade_report_path: Path | None,
+) -> DecisionReceiptState:
+    if decision_response_path is None or not decision_response_path.exists():
+        return DecisionReceiptState(pending=False)
+
+    decision_mtime_ns = decision_response_path.stat().st_mtime_ns
+    for path, label in (
+        (snapshot_path, "refreshed broker snapshot"),
+        (intents_path, "repriced order intents"),
+    ):
+        if _artifact_newer(path, decision_mtime_ns):
+            return DecisionReceiptState(
+                pending=False,
+                reasons=(f"decision response predates {label}; refresh decision from broker truth: {path}",),
+            )
+
+    for path, label in (
+        (live_order_path, "live order gateway receipt"),
+        (position_execution_path, "position gateway receipt"),
+        (autotrade_report_path, "autotrade cycle report"),
+    ):
+        if _artifact_newer(path, decision_mtime_ns):
+            return DecisionReceiptState(
+                pending=False,
+                reasons=(f"decision response already consumed by {label}: {path}",),
+            )
+
+    gpt_state = _gpt_decision_terminal_state(gpt_decision_path, decision_mtime_ns)
+    if gpt_state:
+        return DecisionReceiptState(pending=False, reasons=(gpt_state,))
+
+    return DecisionReceiptState(
+        pending=True,
+        reasons=(f"unconsumed decision response exists: {decision_response_path}",),
+    )
+
+
+def _artifact_newer(path: Path | None, decision_mtime_ns: int) -> bool:
+    return path is not None and path.exists() and path.stat().st_mtime_ns > decision_mtime_ns
+
+
+def _gpt_decision_terminal_state(path: Path | None, decision_mtime_ns: int) -> str | None:
+    if path is None or not path.exists() or path.stat().st_mtime_ns <= decision_mtime_ns:
+        return None
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    status = str(payload.get("status") or "")
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    action = str(decision.get("action") or "")
+    if status != "ACCEPTED":
+        return f"decision response already verified as {status or 'UNKNOWN'}: {path}"
+    if action and action != "TRADE":
+        return f"decision response already verified as non-executable {action}: {path}"
+    return None
 
 
 def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:

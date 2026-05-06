@@ -61,6 +61,35 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertNotIn("forcing dry-run mode", result.stderr)
             self.assertEqual((root / "sync.args").read_text(), "--live-only --skip-tests\n")
 
+    def test_sync_failure_continues_when_runtime_is_current_with_report_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1", sync_exit=37)
+            _init_git(root)
+            (root / "docs").mkdir(exist_ok=True)
+            (root / "docs" / "cycle_report.md").write_text("tracked report\n")
+            _run(["git", "add", "."], cwd=root)
+            _run(["git", "commit", "-m", "initial"], cwd=root)
+            _run(["git", "branch", "-m", "main"], cwd=root)
+            (root / "docs" / "cycle_report.md").write_text("runtime drift\n")
+            env["QR_SYNC_DEV_ROOT"] = str(root)
+            env["QR_SYNC_MAIN_BRANCH"] = "main"
+            env["QR_SYNC_MARKER_PATH"] = str(root / "docs" / "sync_report.md")
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(capture.exists())
+            self.assertIn("live sync failed with status=37", result.stderr)
+
     def test_existing_live_lock_blocks_overlapping_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -101,7 +130,13 @@ class LiveWrapperTest(unittest.TestCase):
                 _restore_env("QR_AUTOTRADE_LOCK_HELD", original_lock_held)
 
 
-def _wrapper_env(root: Path, capture: Path, *, live_enabled: str | None = None) -> dict[str, str]:
+def _wrapper_env(
+    root: Path,
+    capture: Path,
+    *,
+    live_enabled: str | None = None,
+    sync_exit: int = 0,
+) -> dict[str, str]:
     env_file = root / "oanda.env"
     lines = [
         "QR_OANDA_ACCOUNT_ID=acct-test",
@@ -123,6 +158,7 @@ def _wrapper_env(root: Path, capture: Path, *, live_enabled: str | None = None) 
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
                 "printf '%s\\n' \"$*\" > \"$QR_SYNC_MARKER_PATH\"",
+                f"exit {sync_exit}",
             ]
         )
         + "\n"
@@ -162,6 +198,16 @@ def _wrapper_env(root: Path, capture: Path, *, live_enabled: str | None = None) 
         }
     )
     return env
+
+
+def _init_git(root: Path) -> None:
+    _run(["git", "init"], cwd=root)
+    _run(["git", "config", "user.email", "test@example.invalid"], cwd=root)
+    _run(["git", "config", "user.name", "Test User"], cwd=root)
+
+
+def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
 
 
 def _restore_env(name: str, value: str | None) -> None:

@@ -27,6 +27,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 - Missing required evidence is a blocker, not a value to guess.
 - One final decision receipt selects action; specialist and strategy prompts are read-only observation.
 - A blocked, rejected, monitor-only, or no-trade cycle must not be followed by a workaround send.
+- Do not stop solely because a decision receipt was written recently or stale local state disagrees with refreshed broker truth. Use `trader-prompt-route`: unconsumed receipts go to verify; rejected, consumed, or broker-stale receipts go back to fresh decision work.
 
 ## Branches
 
@@ -66,6 +67,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
+# If broker refresh made an older receipt stale, overwrite it with one current receipt.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \

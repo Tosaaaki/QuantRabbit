@@ -7,6 +7,8 @@
 - Source, config, data, decision, or prompt diffs block the scheduled trader cycle until resolved.
 - Confirm exactly one trader scheduled task is enabled.
 - Do not run report-writing refresh commands from a dirty development tree.
+- Do not stop because refreshed broker truth disagrees with stale journal, stale local state, or an older decision receipt. Broker truth wins; re-route and rewrite the receipt when needed.
+- A locally remembered pending order that is absent from the refreshed OANDA snapshot is stale local memory, not a send blocker.
 
 ## Refresh Evidence
 
@@ -52,3 +54,4 @@ PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance "$(jq -
 - Dirty source/config/data/decision files before report writes.
 - More than one trader scheduler enabled.
 - Missing OANDA read credentials for broker-truth refresh.
+- Active OANDA broker-truth exposure/risk gates that the current gateway cannot reconcile.
