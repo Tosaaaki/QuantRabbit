@@ -68,6 +68,7 @@ class DeskLane:
     evidence_tail_jpy: float = 0.0
     evidence_best_jpy: float = 0.0
     seat_missed: int = 0
+    missed_reward_pressure_jpy: float = 0.0
     blockers: tuple[str, ...] = ()
     story_examples: tuple[str, ...] = ()
 
@@ -190,7 +191,8 @@ class CampaignPlanner:
         for lane in plan.lanes:
             lines.append(
                 f"- `{lane.desk}` `{lane.pair} {lane.direction}` method=`{lane.method}` "
-                f"adoption=`{lane.adoption}` role=`{lane.campaign_role}` target_rr=`{lane.target_reward_risk:.2f}`"
+                f"adoption=`{lane.adoption}` role=`{lane.campaign_role}` target_rr=`{lane.target_reward_risk:.2f}` "
+                f"missed_pressure=`{lane.missed_reward_pressure_jpy:.1f}`"
             )
             lines.append(f"  - reason: {lane.reason}")
             lines.append(f"  - receipt: {lane.required_receipt}")
@@ -244,6 +246,7 @@ def _strategy_lane(
         evidence_tail_jpy=strategy.positive_tail_jpy,
         evidence_best_jpy=strategy.positive_best_jpy,
         seat_missed=strategy.seat_missed,
+        missed_reward_pressure_jpy=_missed_reward_pressure_jpy(strategy.positive_tail_jpy, strategy.seat_missed),
         blockers=blockers,
         story_examples=story.examples[:2],
     )
@@ -335,7 +338,7 @@ def _coverage_gap(lanes: tuple[DeskLane, ...], target_jpy: float) -> str:
     return f"Target {target_jpy:.0f} JPY has no evidence-backed coverage yet."
 
 
-def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, int, str, str, str]:
+def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, float, int, str, str, str]:
     rank = {
         "ORDER_INTENT_REQUIRED": 0,
         "RISK_REPAIR_DRY_RUN": 1,
@@ -346,6 +349,7 @@ def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, int, str, str, st
     }.get(lane.adoption, 9)
     return (
         rank,
+        -lane.missed_reward_pressure_jpy,
         -lane.evidence_tail_jpy,
         -lane.evidence_best_jpy,
         -lane.seat_missed,
@@ -353,6 +357,16 @@ def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, int, str, str, st
         lane.pair,
         lane.direction,
     )
+
+
+def _missed_reward_pressure_jpy(positive_tail_jpy: float, seat_missed: int) -> float:
+    """Rank missed repairs by observed opportunity count times conservative payoff.
+
+    `seat_missed` names how many evidence-backed seats were left unused, while
+    `positive_tail_jpy` is the conservative positive payoff tail. Multiplying
+    them favors repeated missed chances without hard-coding a pair name.
+    """
+    return max(0.0, positive_tail_jpy) * max(0, seat_missed)
 
 
 def _load_strategy_profile(path: Path) -> dict[str, list[StrategyEvidence]]:

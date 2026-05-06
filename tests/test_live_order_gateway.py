@@ -15,6 +15,16 @@ from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
 
 class LiveOrderGatewayTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._original_per_trade_reader = execution_module._per_trade_risk_from_state
+        self._original_daily_budget_reader = execution_module._daily_risk_budget_from_state
+        execution_module._per_trade_risk_from_state = lambda: None
+        execution_module._daily_risk_budget_from_state = lambda path=None: None
+
+    def tearDown(self) -> None:
+        execution_module._per_trade_risk_from_state = self._original_per_trade_reader
+        execution_module._daily_risk_budget_from_state = self._original_daily_budget_reader
+
     def test_stages_oanda_stop_order_without_sending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

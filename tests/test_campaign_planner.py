@@ -110,9 +110,9 @@ class CampaignPlannerTest(unittest.TestCase):
                                 "direction": "LONG",
                                 "status": "CANDIDATE",
                                 "required_fix": "ready",
-                                "positive_best_jpy": 800.0,
-                                "positive_tail_jpy": 120.0,
-                                "seat_missed": 5,
+                                "positive_best_jpy": 4020.0,
+                                "positive_tail_jpy": 2259.0,
+                                "seat_missed": 46,
                             },
                         ]
                     }
@@ -140,6 +140,7 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertEqual(first["pair"], "EUR_USD")
             self.assertEqual(first["direction"], "SHORT")
             self.assertEqual(first["seat_missed"], 94)
+            self.assertGreater(first["missed_reward_pressure_jpy"], 114000)
 
 
 if __name__ == "__main__":

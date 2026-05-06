@@ -9,6 +9,7 @@ from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.paths import (
+    DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_CAMPAIGN_PLAN,
@@ -204,6 +205,7 @@ class AutoTradeCycle:
         gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
         gpt_decision_report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         gpt_target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        gpt_attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         gpt_max_lanes: int = DEFAULT_GPT_MAX_LANES,
         gpt_wait_retry_limit: int = 2,
         reuse_market_artifacts: bool = False,
@@ -239,6 +241,7 @@ class AutoTradeCycle:
         self.gpt_decision_path = gpt_decision_path
         self.gpt_decision_report_path = gpt_decision_report_path
         self.gpt_target_state_path = gpt_target_state_path
+        self.gpt_attack_advice_path = gpt_attack_advice_path
         self.gpt_max_lanes = gpt_max_lanes
         self.gpt_wait_retry_limit = gpt_wait_retry_limit
         self.reuse_market_artifacts = reuse_market_artifacts
@@ -1190,6 +1193,7 @@ class AutoTradeCycle:
             strategy_profile_path=self.strategy_profile_path,
             market_story_profile_path=self.market_story_profile_path,
             target_state_path=self.gpt_target_state_path,
+            attack_advice_path=self.gpt_attack_advice_path,
             output_path=self.gpt_decision_path,
             report_path=self.gpt_decision_report_path,
             max_lanes=self.gpt_max_lanes,
