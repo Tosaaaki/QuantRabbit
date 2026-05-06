@@ -36,6 +36,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF lev
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter (currently MISSING_OPTION_SKEW_FEED)
 
 # Intents + coverage
+# Context fetches can outlive RiskPolicy.max_quote_age_seconds. Refresh broker
+# truth again immediately before pricing intents so risk validation does not
+# block all lanes as STALE_QUOTE.
+PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 ```

@@ -20,6 +20,10 @@ from quant_rabbit.paths import (
 ALLOWED_ACTIONS = ("TRADE", "WAIT", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE", "REQUEST_EVIDENCE")
 ALLOWED_CONFIDENCE = ("LOW", "MEDIUM", "HIGH")
 ALLOWED_METHODS = ("TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE", "EVENT_RISK", "POSITION_MANAGEMENT")
+# Matches the intent generator's default candidate breadth so the deterministic
+# lane selected by TraderBrain is still visible to GPT verification when range
+# rotation appears behind trend/failure alternatives in the generated list.
+DEFAULT_GPT_MAX_LANES = 12
 
 
 @dataclass(frozen=True)
@@ -89,7 +93,7 @@ class GPTTraderBrain:
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
-        max_lanes: int = 8,
+        max_lanes: int = DEFAULT_GPT_MAX_LANES,
     ) -> None:
         self.provider = provider
         self.intents_path = intents_path

@@ -1,8 +1,8 @@
 # Position Execution Report
 
-- Generated at UTC: `2026-05-05T03:40:04.609537+00:00`
+- Generated at UTC: `2026-05-05T04:05:36.619411+00:00`
 - Status: `NO_ACTION`
-- Send requested: `False`
+- Send requested: `True`
 - Sent: `False`
 
 ## Actions

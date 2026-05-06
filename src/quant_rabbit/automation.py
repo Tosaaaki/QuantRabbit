@@ -32,7 +32,7 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_SETTINGS,
     ROOT,
 )
-from quant_rabbit.gpt_trader import GPTTraderBrain, TraderModelProvider
+from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.risk import RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.intent_generator import IntentGenerator
@@ -182,7 +182,7 @@ class AutoTradeCycle:
         gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
         gpt_decision_report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         gpt_target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
-        gpt_max_lanes: int = 8,
+        gpt_max_lanes: int = DEFAULT_GPT_MAX_LANES,
         gpt_wait_retry_limit: int = 2,
         refresh_market_story: bool = True,
         market_news_root: Path | None = None,
@@ -228,12 +228,16 @@ class AutoTradeCycle:
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
         pairs = ("AUD_JPY", "AUD_USD", "EUR_JPY", "EUR_USD", "GBP_JPY", "GBP_USD", "USD_JPY")
-        snapshot = self.client.snapshot(pairs)
-        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-        self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+        snapshot = self._refresh_snapshot(pairs)
         target_summary = self._update_target_state(snapshot)
         if self.refresh_market_story:
             self._market_story_miner().run()
+            # Market-story mining can read archive/news artifacts and take
+            # longer than RiskPolicy.max_quote_age_seconds. Refresh immediately
+            # before intent pricing so risk validation sees broker-current
+            # quotes instead of blocking all lanes as STALE_QUOTE.
+            snapshot = self._refresh_snapshot(pairs)
+            target_summary = self._update_target_state(snapshot) or target_summary
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
@@ -444,6 +448,10 @@ class AutoTradeCycle:
                 if self.gpt_wait_retry_limit > 0 and target_is_pursue:
                     for attempt in range(1, self.gpt_wait_retry_limit + 1):
                         gpt_wait_retries = attempt
+                        snapshot = self._refresh_snapshot(pairs)
+                        target_summary = self._update_target_state(snapshot) or target_summary
+                        positions = len(snapshot.positions)
+                        orders = len(snapshot.orders)
                         intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(
                             snapshot_path=self.snapshot_path,
                             max_candidates=12,
@@ -810,7 +818,7 @@ class AutoTradeCycle:
             "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",
             "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk.",
             "- If GPT trader handoff is enabled, the selected lane must also be an accepted GPT `TRADE` decision from the deterministic prefilter set.",
-            "- If flat, the cycle refreshes broker truth, regenerates intents, asks TraderBrain to compare lanes, and sends only the selected lane when live mode is explicitly enabled.",
+            "- If flat, the cycle refreshes broker truth immediately before pricing intents, asks TraderBrain to compare lanes, and sends only the selected lane when live mode is explicitly enabled.",
         ]
         self.report_path.write_text("\n".join(lines) + "\n")
 
@@ -829,6 +837,12 @@ class AutoTradeCycle:
             profile_path=self.market_story_profile_path,
             news_root=self.market_news_root,
         )
+
+    def _refresh_snapshot(self, pairs: tuple[str, ...]):
+        snapshot = self.client.snapshot(pairs)
+        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+        return snapshot
 
     def _update_target_state(self, snapshot) -> DailyTargetSummary | None:
         if self.target_state_path is None:

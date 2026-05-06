@@ -160,6 +160,25 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["status"], "ACCEPTED")
             self.assertEqual(payload["decision"]["selected_lane_id"], LANE_ID)
 
+    def test_default_packet_includes_range_lane_beyond_first_eight_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            range_lane = "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            filler = [
+                _result(lane_id=f"candidate_{idx}:EUR_USD:LONG:TREND_CONTINUATION")
+                for idx in range(9)
+            ]
+            files["intents"].write_text(
+                json.dumps({"results": [*filler, _result(lane_id=range_lane, method="RANGE_ROTATION")]})
+            )
+            brain = _brain(root, files, _trade_decision(lane_id=range_lane, method="RANGE_ROTATION"))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.selected_lane_id, range_lane)
+
 
 def _brain(root: Path, files: dict[str, Path], decision: dict) -> GPTTraderBrain:
     return GPTTraderBrain(
@@ -256,9 +275,9 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     return files
 
 
-def _result() -> dict:
+def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
     return {
-        "lane_id": LANE_ID,
+        "lane_id": lane_id,
         "status": "LIVE_READY",
         "risk_allowed": True,
         "risk_issues": [],
@@ -275,10 +294,10 @@ def _result() -> dict:
             "thesis": "EUR_USD continuation can pay before daily target window closes.",
             "owner": "trader",
             "market_context": {
-                "regime": "TREND_CONTINUATION campaign lane",
+                "regime": f"{method} campaign lane",
                 "narrative": "Dollar pressure and momentum theme favor EUR_USD continuation.",
                 "chart_story": "Higher lows are pressing into the trigger shelf.",
-                "method": "TREND_CONTINUATION",
+                "method": method,
                 "invalidation": "Invalid if the shelf breaks before entry.",
                 "event_risk": "",
                 "session": "test",
@@ -287,13 +306,13 @@ def _result() -> dict:
     }
 
 
-def _trade_decision() -> dict:
+def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
     return {
         "action": "TRADE",
-        "selected_lane_id": LANE_ID,
+        "selected_lane_id": lane_id,
         "confidence": "HIGH",
         "thesis": "The live-ready EUR_USD continuation lane has current story and positive mined evidence.",
-        "method": "TREND_CONTINUATION",
+        "method": method,
         "narrative": "Momentum and campaign role align with a controlled stop-entry.",
         "chart_story": "Higher lows press into the trigger shelf.",
         "invalidation": "Do not trade if the shelf fails before entry or the SL level trades.",
@@ -302,8 +321,8 @@ def _trade_decision() -> dict:
         "evidence_refs": [
             "broker:snapshot",
             "target:daily",
-            f"intent:{LANE_ID}",
-            f"campaign:{LANE_ID}",
+            f"intent:{lane_id}",
+            f"campaign:{lane_id}",
             "strategy:EUR_USD:LONG",
             "story:EUR_USD",
         ],

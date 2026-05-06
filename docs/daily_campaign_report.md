@@ -1,12 +1,12 @@
 # Daily 10% Campaign Plan
 
-- Generated at UTC: `2026-05-05T03:35:49.640444+00:00`
+- Generated at UTC: `2026-05-06T03:14:09.991663+00:00`
 - Start balance: `208946 JPY`
 - Target return: `10.0%`
 - Target JPY: `20895 JPY`
 - Per-trade loss cap: `1051 JPY` (`daily target state /Users/tossaki/App/QuantRabbit/data/daily_target_state.json`)
-- Director verdict: `BUILD_ORDER_INTENTS`
-- Coverage gap: 12 lanes can attempt receipts, but target 20895 JPY still requires actual TP/SL geometry and current tape confirmation.
+- Director verdict: `REPAIR_BEFORE_LIVE`
+- Coverage gap: Target 20895 JPY has no live-ready coverage yet; 15 lanes need risk repair or trigger receipts first.
 
 ## Operating Rule
 
@@ -14,84 +14,99 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
 
 ## Trader Desks
 
-- `failure_trader` `AUD_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP_RUNNER` target_rr=`3.83`
-  - reason: CANDIDATE; pretrade_net=3152.2, live_net=2129.0, worst=-856.0; positive_tail=2259.0, target_rr=3.83; story method pressure=56
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R. Runner TP should target about 3.83R only when current tape supports the hold.
+- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`2.85`
+  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=767.4, worst=-2076.6831; positive_tail=1213.2, target_rr=2.85; story method pressure=126
+  - receipt: Produce a dry-run receipt proving old edge survives with <=1051 JPY risk before live use.
+  - blocker: old sizing broke the loss cap
+  - blocker: edge exists but old sizing broke the loss cap; require <=1051 JPY dry-run receipt before live use
+  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
+  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
+- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`2.85`
+  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=767.4, worst=-2076.6831; positive_tail=1213.2, target_rr=2.85; story method pressure=143
+  - receipt: Produce a dry-run receipt proving old edge survives with <=1051 JPY risk before live use.
+  - blocker: old sizing broke the loss cap
+  - blocker: edge exists but old sizing broke the loss cap; require <=1051 JPY dry-run receipt before live use
+  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
+  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
+- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`RISK_REPAIR_DRY_RUN` role=`NOW_IF_REPAIRED` target_rr=`2.85`
+  - reason: RISK_REPAIR_CANDIDATE; pretrade_net=1605.1, live_net=767.4, worst=-2076.6831; positive_tail=1213.2, target_rr=2.85; story method pressure=42
+  - receipt: Produce a dry-run receipt proving old edge survives with <=1051 JPY risk before live use.
+  - blocker: old sizing broke the loss cap
+  - blocker: edge exists but old sizing broke the loss cap; require <=1051 JPY dry-run receipt before live use
+  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
+  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
+- `failure_trader` `AUD_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD_RUNNER` target_rr=`3.83`
+  - reason: MINE_MISSED_EDGE; pretrade_net=3152.2, live_net=2129.0, worst=-856.0; positive_tail=2259.0, target_rr=3.83; story method pressure=56
+  - receipt: Arm only a trigger/pending-entry receipt; no market chase. Runner TP should target about 3.83R only when current tape supports the hold.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
-- `failure_trader` `EUR_USD LONG` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.26`
-  - reason: CANDIDATE; pretrade_net=16174.0, live_net=839.3, worst=-798.0; positive_tail=1141.8, target_rr=2.26; story method pressure=126
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
-  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
-- `failure_trader` `EUR_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.85`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=767.4, worst=-2076.6831; positive_tail=1213.2, target_rr=2.85; story method pressure=126
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
-  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
-- `failure_trader` `GBP_USD LONG` method=`BREAKOUT_FAILURE` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50`
-  - reason: CANDIDATE; pretrade_net=1341.7, live_net=-3935.3, worst=-2583.1; positive_tail=740.4, target_rr=1.50; story method pressure=48
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
-  - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
-- `range_trader` `AUD_JPY LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP_RUNNER` target_rr=`3.83`
-  - reason: CANDIDATE; pretrade_net=3152.2, live_net=2129.0, worst=-856.0; positive_tail=2259.0, target_rr=3.83; story method pressure=46
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R. Runner TP should target about 3.83R only when current tape supports the hold.
-  - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
-  - story: quality_audit: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
-- `range_trader` `EUR_USD LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.26`
-  - reason: CANDIDATE; pretrade_net=16174.0, live_net=839.3, worst=-798.0; positive_tail=1141.8, target_rr=2.26; story method pressure=142
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
-  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
-- `range_trader` `EUR_USD SHORT` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.85`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=767.4, worst=-2076.6831; positive_tail=1213.2, target_rr=2.85; story method pressure=142
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
-  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
-- `range_trader` `GBP_USD LONG` method=`RANGE_ROTATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50`
-  - reason: CANDIDATE; pretrade_net=1341.7, live_net=-3935.3, worst=-2583.1; positive_tail=740.4, target_rr=1.50; story method pressure=67
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
-  - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
-- `trend_trader` `AUD_JPY LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP_RUNNER` target_rr=`3.83`
-  - reason: CANDIDATE; pretrade_net=3152.2, live_net=2129.0, worst=-856.0; positive_tail=2259.0, target_rr=3.83; story method pressure=34
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R. Runner TP should target about 3.83R only when current tape supports the hold.
-  - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
-  - story: quality_audit: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
-- `trend_trader` `EUR_USD LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.26`
-  - reason: CANDIDATE; pretrade_net=16174.0, live_net=839.3, worst=-798.0; positive_tail=1141.8, target_rr=2.26; story method pressure=41
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
-  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
-- `trend_trader` `EUR_USD SHORT` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`2.85`
-  - reason: CANDIDATE; pretrade_net=1605.1, live_net=767.4, worst=-2076.6831; positive_tail=1213.2, target_rr=2.85; story method pressure=41
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
-  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
-- `trend_trader` `GBP_USD LONG` method=`TREND_CONTINUATION` adoption=`ORDER_INTENT_REQUIRED` role=`NOW_OR_BACKUP` target_rr=`1.50`
-  - reason: CANDIDATE; pretrade_net=1341.7, live_net=-3935.3, worst=-2583.1; positive_tail=740.4, target_rr=1.50; story method pressure=28
-  - receipt: Create a current order intent with market_context, entry, TP, SL, risk <=1051 JPY, and >=1.2R.
-  - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
-  - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `failure_trader` `EUR_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50`
   - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-1757.5, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=83
   - receipt: Arm only a trigger/pending-entry receipt; no market chase.
   - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution; every receipt must be risk-resized under the 1051 JPY cap
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
+- `failure_trader` `EUR_USD LONG` method=`BREAKOUT_FAILURE` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`2.26`
+  - reason: MINE_MISSED_EDGE; pretrade_net=16174.0, live_net=839.3, worst=-798.0; positive_tail=1141.8, target_rr=2.26; story method pressure=126
+  - receipt: Arm only a trigger/pending-entry receipt; no market chase.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
+  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
+  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
+- `failure_trader` `GBP_USD LONG` method=`BREAKOUT_FAILURE` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50`
+  - reason: MINE_MISSED_EDGE; pretrade_net=1341.7, live_net=-3935.3, worst=-2583.1; positive_tail=740.4, target_rr=1.50; story method pressure=49
+  - receipt: Arm only a trigger/pending-entry receipt; no market chase.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution; every receipt must be risk-resized under the 1051 JPY cap
+  - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
+  - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
+- `range_trader` `AUD_JPY LONG` method=`RANGE_ROTATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD_RUNNER` target_rr=`3.83`
+  - reason: MINE_MISSED_EDGE; pretrade_net=3152.2, live_net=2129.0, worst=-856.0; positive_tail=2259.0, target_rr=3.83; story method pressure=46
+  - receipt: Use exact rail/box order intent only; missed move is not participation. Runner TP should target about 3.83R only when current tape supports the hold.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
+  - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
+  - story: quality_audit: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
 - `range_trader` `EUR_JPY LONG` method=`RANGE_ROTATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50`
   - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-1757.5, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=86
   - receipt: Use exact rail/box order intent only; missed move is not participation.
   - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution; every receipt must be risk-resized under the 1051 JPY cap
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
+- `range_trader` `EUR_USD LONG` method=`RANGE_ROTATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`2.26`
+  - reason: MINE_MISSED_EDGE; pretrade_net=16174.0, live_net=839.3, worst=-798.0; positive_tail=1141.8, target_rr=2.26; story method pressure=143
+  - receipt: Use exact rail/box order intent only; missed move is not participation.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
+  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
+  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
+- `range_trader` `GBP_USD LONG` method=`RANGE_ROTATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50`
+  - reason: MINE_MISSED_EDGE; pretrade_net=1341.7, live_net=-3935.3, worst=-2583.1; positive_tail=740.4, target_rr=1.50; story method pressure=66
+  - receipt: Use exact rail/box order intent only; missed move is not participation.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution; every receipt must be risk-resized under the 1051 JPY cap
+  - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
+  - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
+- `trend_trader` `AUD_JPY LONG` method=`TREND_CONTINUATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD_RUNNER` target_rr=`3.83`
+  - reason: MINE_MISSED_EDGE; pretrade_net=3152.2, live_net=2129.0, worst=-856.0; positive_tail=2259.0, target_rr=3.83; story method pressure=34
+  - receipt: Arm only a trigger/pending-entry receipt; no market chase. Runner TP should target about 3.83R only when current tape supports the hold.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
+  - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
+  - story: quality_audit: | AUD_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | flush to the low, then an orderly green recovery and late higher close, but the move is still a rebound inside the broader breakdown | NO: rebound inside trend, not range |
 - `trend_trader` `EUR_JPY LONG` method=`TREND_CONTINUATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50`
   - reason: MINE_MISSED_EDGE; pretrade_net=3158.5, live_net=-1757.5, worst=-1272.0; positive_tail=483.0, target_rr=1.50; story method pressure=23
   - receipt: Arm only a trigger/pending-entry receipt; no market chase.
   - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution; every receipt must be risk-resized under the 1051 JPY cap
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
+- `trend_trader` `EUR_USD LONG` method=`TREND_CONTINUATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`2.26`
+  - reason: MINE_MISSED_EDGE; pretrade_net=16174.0, live_net=839.3, worst=-798.0; positive_tail=1141.8, target_rr=2.26; story method pressure=42
+  - receipt: Arm only a trigger/pending-entry receipt; no market chase.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution
+  - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
+  - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
+- `trend_trader` `GBP_USD LONG` method=`TREND_CONTINUATION` adoption=`TRIGGER_RECEIPT_REQUIRED` role=`BACKUP_OR_RELOAD` target_rr=`1.50`
+  - reason: MINE_MISSED_EDGE; pretrade_net=1341.7, live_net=-3935.3, worst=-2583.1; positive_tail=740.4, target_rr=1.50; story method pressure=28
+  - receipt: Arm only a trigger/pending-entry receipt; no market chase.
+  - blocker: missed seats paid more often than captured; build trigger/pending-entry receipts before live execution; every receipt must be risk-resized under the 1051 JPY cap
+  - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
+  - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `event_risk_trader` `AUD_JPY BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
   - reason: overlay from market story themes: intervention=58, breakout_failure=52, range_rail=49, spread_liquidity=17
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
@@ -108,7 +123,7 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
 - `event_risk_trader` `EUR_USD BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
-  - reason: overlay from market story themes: range_rail=167, breakout_failure=105, spread_liquidity=41, intervention=29
+  - reason: overlay from market story themes: range_rail=168, breakout_failure=105, spread_liquidity=40, intervention=28
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
   - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
@@ -118,12 +133,12 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
 - `event_risk_trader` `GBP_USD BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
-  - reason: overlay from market story themes: range_rail=69, breakout_failure=47, spread_liquidity=29, momentum=15
+  - reason: overlay from market story themes: range_rail=68, breakout_failure=48, spread_liquidity=28, momentum=15
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `event_risk_trader` `USD_JPY BOTH` method=`EVENT_RISK` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
-  - reason: overlay from market story themes: intervention=145, breakout_failure=98, range_rail=97, central_bank=63
+  - reason: overlay from market story themes: intervention=157, breakout_failure=99, range_rail=96, central_bank=71
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - story: news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
@@ -143,7 +158,7 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | EUR_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | heavy red flush, then a narrow repair shelf of small mixed-to-green bodies under the EMA cluster = corrective bounce inside larger bear control | NO: repair, not honest rotation |
 - `position_manager` `EUR_USD BOTH` method=`POSITION_MANAGEMENT` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
-  - reason: overlay from market story themes: range_rail=167, breakout_failure=105, spread_liquidity=41, intervention=29
+  - reason: overlay from market story themes: range_rail=168, breakout_failure=105, spread_liquidity=40, intervention=28
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_digest: Implication**: EUR caught between hot inflation (can't cut) and weak growth (needs cut). EUR directional bias remains murky. EUR/USD resistance likely firm below 1.1700.
   - story: news_digest: EUR/USD**: Capped near 1.1700. Hot EU CPI vs weak GDP = directionless. Below 1.1600 = EUR weakness thesis. NFP break could set direction.
@@ -153,12 +168,12 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
 - `position_manager` `GBP_USD BOTH` method=`POSITION_MANAGEMENT` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
-  - reason: overlay from market story themes: range_rail=69, breakout_failure=47, spread_liquidity=29, momentum=15
+  - reason: overlay from market story themes: range_rail=68, breakout_failure=48, spread_liquidity=28, momentum=15
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `position_manager` `USD_JPY BOTH` method=`POSITION_MANAGEMENT` adoption=`RISK_OVERLAY` role=`VETO_OR_RESIZE` target_rr=`1.00`
-  - reason: overlay from market story themes: intervention=145, breakout_failure=98, range_rail=97, central_bank=63
+  - reason: overlay from market story themes: intervention=157, breakout_failure=99, range_rail=96, central_bank=71
   - receipt: Any other desk must name how this overlay changes size, timing, stop, or pass decision.
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - story: news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
@@ -199,19 +214,19 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
 - `failure_trader` `GBP_USD SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-837.8, live_net=-1501.6, worst=-815.1587; positive_tail=881.7, target_rr=1.00; story method pressure=48
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-837.8, live_net=-1501.6, worst=-815.1587; positive_tail=881.7, target_rr=1.00; story method pressure=49
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `failure_trader` `USD_JPY LONG` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6954.8, worst=-3360.0; positive_tail=15.0, target_rr=1.00; story method pressure=104
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6954.8, worst=-3360.0; positive_tail=15.0, target_rr=1.00; story method pressure=105
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: historical live loss exceeded the 1051 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - story: news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
 - `failure_trader` `USD_JPY SHORT` method=`BREAKOUT_FAILURE` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-554.0, worst=-334.0; positive_tail=41.9, target_rr=1.00; story method pressure=104
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-554.0, worst=-334.0; positive_tail=41.9, target_rr=1.00; story method pressure=105
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
@@ -253,19 +268,19 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - story: quality_audit: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
 - `range_trader` `GBP_USD SHORT` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-837.8, live_net=-1501.6, worst=-815.1587; positive_tail=881.7, target_rr=1.00; story method pressure=67
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-837.8, live_net=-1501.6, worst=-815.1587; positive_tail=881.7, target_rr=1.00; story method pressure=66
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `range_trader` `USD_JPY LONG` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6954.8, worst=-3360.0; positive_tail=15.0, target_rr=1.00; story method pressure=90
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6954.8, worst=-3360.0; positive_tail=15.0, target_rr=1.00; story method pressure=89
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: historical live loss exceeded the 1051 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - story: news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
 - `range_trader` `USD_JPY SHORT` method=`RANGE_ROTATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-554.0, worst=-334.0; positive_tail=41.9, target_rr=1.00; story method pressure=90
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-554.0, worst=-334.0; positive_tail=41.9, target_rr=1.00; story method pressure=89
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
@@ -313,13 +328,13 @@ The 10% number is a campaign target, not a profit guarantee. No lane becomes liv
   - story: news_digest: BoE held as expected, no new guidance. Mortgage data today (15:00 JST) may give GBP/USD a nudge.
   - story: news_digest: GBP/USD**: Neutral around 1.3500. BoE gave nothing new. GBP follows USD/risk tone.
 - `trend_trader` `USD_JPY LONG` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6954.8, worst=-3360.0; positive_tail=15.0, target_rr=1.00; story method pressure=23
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-29.0, live_net=-6954.8, worst=-3360.0; positive_tail=15.0, target_rr=1.00; story method pressure=24
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: historical live loss exceeded the 1051 JPY cap; only risk-resized dry-run receipts can reopen it
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).
   - story: news_digest: Trade implication**: Long USD/JPY or short JPY crosses carry real intervention risk. Tight SLs on JPY shorts = getting hunted. If already long JPY via rate-check pop, thesis is asymmetric upside.
 - `trend_trader` `USD_JPY SHORT` method=`TREND_CONTINUATION` adoption=`REJECTED` role=`NONE` target_rr=`1.00`
-  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-554.0, worst=-334.0; positive_tail=41.9, target_rr=1.00; story method pressure=23
+  - reason: BLOCK_UNTIL_NEW_EVIDENCE; pretrade_net=-2544.0, live_net=-554.0, worst=-334.0; positive_tail=41.9, target_rr=1.00; story method pressure=24
   - receipt: Do not trade until new evidence changes the strategy profile.
   - blocker: both live execution and pretrade feedback are negative; require a new vehicle or market-structure proof
   - story: news_digest: USD/JPY has been pressing near 160, the threshold where authorities previously intervened (July 2024).

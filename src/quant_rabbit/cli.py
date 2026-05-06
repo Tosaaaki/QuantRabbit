@@ -71,7 +71,7 @@ from quant_rabbit.paths import (
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPTION_SKEW_REPORT,
 )
-from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider
+from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.strategy.ensemble import CampaignPlanner
@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_gpt.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
-    p_gpt.add_argument("--max-lanes", type=int, default=8)
+    p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_gpt.add_argument("--report", type=Path, default=DEFAULT_GPT_TRADER_DECISION_REPORT)
 
@@ -291,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--report", type=Path, default=DEFAULT_AUTOTRADE_REPORT)
     p_auto.add_argument("--use-gpt-trader", action="store_true")
     p_auto.add_argument("--gpt-decision-response", type=Path, default=None)
-    p_auto.add_argument("--gpt-max-lanes", type=int, default=8)
+    p_auto.add_argument("--gpt-max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_auto.add_argument(
         "--refresh-market-story",
         dest="refresh_market_story",

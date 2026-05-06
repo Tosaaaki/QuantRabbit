@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -167,6 +167,62 @@ class AutoTradeCycleTest(unittest.TestCase):
             payload = json.loads(profile.read_text())
             statuses = {(item["pair"], item["direction"]): item["status"] for item in payload["profiles"]}
             self.assertEqual(statuses[("EUR_USD", "LONG")], "CANDIDATE")
+
+    def test_flat_cycle_refreshes_quotes_after_market_story_before_pricing_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            stale = now - timedelta(seconds=90)
+            client = SequenceCycleClient(
+                (
+                    BrokerSnapshot(
+                        fetched_at_utc=stale,
+                        quotes={
+                            "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=stale),
+                            "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=stale),
+                        },
+                    ),
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={
+                            "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                            "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                        },
+                    ),
+                )
+            )
+            news_root = root / "news"
+            news_root.mkdir()
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                market_news_root=news_root,
+                refresh_market_story=True,
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertGreaterEqual(len(client.snapshot_calls), 3)
+            intents = json.loads((root / "intents.json").read_text())
+            self.assertEqual(intents["results"][0]["status"], "LIVE_READY")
+            snapshot = json.loads((root / "snapshot.json").read_text())
+            self.assertEqual(snapshot["quotes"]["EUR_USD"]["timestamp_utc"], now.isoformat())
 
     def test_protected_profitable_position_is_managed_before_new_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -490,10 +546,12 @@ class AutoTradeCycleTest(unittest.TestCase):
 class FakeCycleClient:
     def __init__(self, snapshot: BrokerSnapshot) -> None:
         self.snapshot_value = snapshot
+        self.snapshot_calls: list[tuple[str, ...]] = []
         self.orders_sent: list[dict[str, Any]] = []
         self.orders_canceled: list[str] = []
 
     def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+        self.snapshot_calls.append(pairs)
         return self.snapshot_value
 
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
@@ -503,6 +561,17 @@ class FakeCycleClient:
     def cancel_order(self, order_id: str) -> dict[str, Any]:
         self.orders_canceled.append(order_id)
         return {"orderCancelTransaction": {"id": "2", "orderID": order_id}}
+
+
+class SequenceCycleClient(FakeCycleClient):
+    def __init__(self, snapshots: tuple[BrokerSnapshot, ...]) -> None:
+        super().__init__(snapshots[-1])
+        self.snapshots = snapshots
+
+    def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+        self.snapshot_calls.append(pairs)
+        index = min(len(self.snapshot_calls) - 1, len(self.snapshots) - 1)
+        return self.snapshots[index]
 
 
 def _campaign(root: Path) -> Path:

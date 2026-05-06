@@ -1,17 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-05T03:40:04.613308+00:00`
-- Status: `REJECTED`
-- Action: `WAIT`
-- Selected lane: `None`
+- Generated at UTC: `2026-05-06T03:27:01.746217+00:00`
+- Status: `ACCEPTED`
+- Action: `TRADE`
+- Selected lane: `range_trader:EUR_USD:LONG:RANGE_ROTATION`
 - Cancel order ids: `none`
-- Confidence: `HIGH`
-- Operator summary: WAIT decision: all 15 LIVE_READY lanes (67k JPY potential reward, 338% of remaining target) blocked by universal M5 disagreement=0.9428 > 0.7 reading-layer gate across all pairs during Golden Week Asian session thin liquidity. Current EUR_USD SHORT position protected at breakeven SL with +1162.63 JPY unrealized (5.56% of target). No invented thresholds—formal contract gate (line 183) enforced. Professional stance: preserve capital, protect gains, wait for London killzone liquidity and M5/H1 re-alignment in 210min.
+- Confidence: `MEDIUM`
+- Operator summary: TRADE the deterministic EUR_USD support-rail range rotation lane. It is LIVE_READY, flat-account eligible, and specifically addresses the weak range-trading path without forcing market entry or bypassing risk gates.
 
 ## Verification Issues
 
-- `BLOCK` BAD_METHOD: unsupported method ''
-- `BLOCK` UNKNOWN_EVIDENCE_REF: unknown evidence refs: intent:failure_trader:EUR_JPY:LONG:BREAKOUT_FAILURE
+- none
 
 ## Decision Contract
 

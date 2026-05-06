@@ -1,6 +1,6 @@
 # Strategy Mining Report
 
-- Generated at UTC: `2026-05-05T03:18:57.047020+00:00`
+- Generated at UTC: `2026-05-06T03:21:56.712623+00:00`
 - History DB: `/Users/tossaki/App/QuantRabbit/data/legacy_history.db`
 - Strategy profile JSON: `/Users/tossaki/App/QuantRabbit/data/strategy_profile.json`
 - Per-trade loss cap: `1051 JPY` (`daily target state /Users/tossaki/App/QuantRabbit/data/daily_target_state.json`)
