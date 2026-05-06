@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Git hooks export repository-local GIT_* variables. This script creates and
+# tests temporary repositories, so keep all git invocations path-scoped.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+
 usage() {
   cat <<'USAGE'
 Usage: scripts/sync-live-runtime.sh [--live-only] [--skip-tests]

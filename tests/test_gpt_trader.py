@@ -167,6 +167,26 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertTrue(summary.allowed)
 
+    def test_accepts_wider_chart_timeframe_evidence_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "chart:EUR_USD:M1",
+                    "chart:EUR_USD:M30",
+                    "chart:EUR_USD:H4",
+                    "chart:EUR_USD:D",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+
     def test_accepts_extended_pair_chart_timeframe_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -389,8 +409,11 @@ class GPTTraderBrainTest(unittest.TestCase):
             eur = market_context["pairs"]["EUR_USD"]
 
             self.assertEqual(eur["chart"]["dominant_regime"], "TREND_UP")
+            self.assertEqual(eur["chart"]["views"]["M1"]["last_jump_bars_ago"], 12)
             self.assertEqual(eur["chart"]["views"]["M5"]["atr_pips"], 5.3)
             self.assertEqual(eur["chart"]["views"]["M5"]["regime_state"], "TREND_STRONG")
+            self.assertEqual(eur["chart"]["views"]["H4"]["regime_state"], "TREND_WEAK")
+            self.assertEqual(eur["chart"]["views"]["D"]["regime_state"], "RANGE")
             self.assertEqual(eur["flow"]["spread"]["stress_flag"], "NORMAL")
             self.assertEqual(eur["levels"]["pdh"], 1.18)
             self.assertFalse(eur["calendar"]["in_window"])
@@ -583,6 +606,115 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("ATTACK_ADVICE_EVIDENCE_MISSING", codes)
             self.assertIn("ATTACK_ADVICE_LANE_EVIDENCE_MISSING", codes)
 
+    def test_accepts_read_only_specialist_reviews(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [_specialist_review()]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
+    def test_rejects_specialist_review_that_claims_live_permission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [_specialist_review(live_permission=True)]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SPECIALIST_REVIEW_LIVE_PERMISSION", codes)
+
+    def test_rejects_specialist_review_that_is_not_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [_specialist_review(read_only=False)]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SPECIALIST_REVIEW_NOT_READ_ONLY", codes)
+
+    def test_rejects_specialist_review_with_unknown_evidence_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [
+                _specialist_review(cited_evidence_refs=["chart:EUR_USD:M1", "external:invented"])
+            ]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("UNKNOWN_SPECIALIST_REVIEW_REF", codes)
+
+    def test_rejects_specialist_review_with_unknown_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [_specialist_review(lane_id="unknown:EUR_USD:LONG:TREND_CONTINUATION")]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("UNKNOWN_SPECIALIST_REVIEW_LANE", codes)
+
+    def test_rejects_specialist_review_method_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["specialist_reviews"] = [_specialist_review(method="RANGE_ROTATION")]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SPECIALIST_REVIEW_METHOD_MISMATCH", codes)
+
+    def test_rejects_specialist_review_with_execution_authority_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            review = _specialist_review()
+            review["action"] = "TRADE"
+            review["selected_lane_id"] = LANE_ID
+            decision["specialist_reviews"] = [review]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SPECIALIST_REVIEW_AUTHORITY_FIELD", codes)
+
     def test_rejects_strategy_review_that_uses_wrong_method_for_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -734,34 +866,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
                             "judas_armed": False,
                             "ny_midnight_open_price": 1.17,
                         },
-                        "views": [
-                            {
-                                "granularity": "M5",
-                                "indicators": {
-                                    "atr_pips": 5.3,
-                                    "adx_14": 42.0,
-                                    "rsi_14": 61.0,
-                                    "choppiness_14": 39.0,
-                                    "bb_width_percentile_100": 0.62,
-                                    "atr_percentile_100": 0.71,
-                                },
-                                "regime_reading": {
-                                    "state": "TREND_STRONG",
-                                    "confidence": 0.82,
-                                    "hurst": 0.58,
-                                },
-                                "family_scores": {
-                                    "trend_score": 1.2,
-                                    "mean_rev_score": -0.4,
-                                    "breakout_score": 0.3,
-                                    "disagreement": 0.35,
-                                },
-                                "stat_filters": {
-                                    "last_jump_bars_ago": 8,
-                                    "lag1_autocorr": 0.12,
-                                },
-                            }
-                        ],
+                        "views": _chart_views(),
                     }
                 ],
             }
@@ -871,6 +976,47 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     return files
 
 
+def _chart_views() -> list[dict]:
+    return [
+        _chart_view("M1", atr_pips=1.2, state="TREND_WEAK", last_jump_bars_ago=12),
+        _chart_view("M5", atr_pips=5.3, state="TREND_STRONG", last_jump_bars_ago=8),
+        _chart_view("M15", atr_pips=9.1, state="TREND_STRONG", last_jump_bars_ago=18),
+        _chart_view("M30", atr_pips=13.4, state="TREND_WEAK", last_jump_bars_ago=24),
+        _chart_view("H1", atr_pips=18.2, state="TREND_WEAK", last_jump_bars_ago=31),
+        _chart_view("H4", atr_pips=35.8, state="TREND_WEAK", last_jump_bars_ago=40),
+        _chart_view("D", atr_pips=76.4, state="RANGE", last_jump_bars_ago=55),
+    ]
+
+
+def _chart_view(granularity: str, *, atr_pips: float, state: str, last_jump_bars_ago: int) -> dict:
+    return {
+        "granularity": granularity,
+        "indicators": {
+            "atr_pips": atr_pips,
+            "adx_14": 42.0,
+            "rsi_14": 61.0,
+            "choppiness_14": 39.0,
+            "bb_width_percentile_100": 0.62,
+            "atr_percentile_100": 0.71,
+        },
+        "regime_reading": {
+            "state": state,
+            "confidence": 0.82,
+            "hurst": 0.58,
+        },
+        "family_scores": {
+            "trend_score": 1.2,
+            "mean_rev_score": -0.4,
+            "breakout_score": 0.3,
+            "disagreement": 0.35,
+        },
+        "stat_filters": {
+            "last_jump_bars_ago": last_jump_bars_ago,
+            "lag1_autocorr": 0.12,
+        },
+    }
+
+
 def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
     return {
         "lane_id": lane_id,
@@ -935,6 +1081,34 @@ def _batch_trade_decision(lane_ids: list[str]) -> dict:
     decision["evidence_refs"] = refs
     decision["operator_summary"] = "Accept the verified EUR_USD continuation basket."
     return decision
+
+
+def _specialist_review(
+    *,
+    role: str = "indicator",
+    lane_id: str | None = LANE_ID,
+    method: str | None = "TREND_CONTINUATION",
+    verdict: str = "SUPPORTS",
+    cited_evidence_refs: list[str] | None = None,
+    read_only: bool = True,
+    live_permission: bool = False,
+) -> dict:
+    return {
+        "role": role,
+        "lane_id": lane_id,
+        "method": method,
+        "verdict": verdict,
+        "summary": "M1 has no fresh jump and H4/D do not contradict the continuation lane.",
+        "cited_evidence_refs": cited_evidence_refs or [
+            "chart:EUR_USD:M1",
+            "chart:EUR_USD:M5",
+            "chart:EUR_USD:H4",
+            "chart:EUR_USD:D",
+        ],
+        "hard_gate_codes": [],
+        "read_only": read_only,
+        "live_permission": live_permission,
+    }
 
 
 def _request_evidence_decision() -> dict:

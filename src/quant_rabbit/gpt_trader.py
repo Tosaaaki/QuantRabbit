@@ -31,6 +31,24 @@ ALLOWED_ACTIONS = ("TRADE", "WAIT", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "
 ALLOWED_CONFIDENCE = ("LOW", "MEDIUM", "HIGH")
 ALLOWED_METHODS = ("TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE", "EVENT_RISK", "POSITION_MANAGEMENT")
 ALLOWED_SPECIALIST_ROLES = ("macro_news", "indicator", "flow_levels", "risk_audit", "strategy", "portfolio_context")
+FORBIDDEN_SPECIALIST_AUTHORITY_FIELDS = (
+    "action",
+    "selected_lane_id",
+    "selected_lane_ids",
+    "cancel_order_ids",
+    "units",
+    "tp",
+    "sl",
+    "entry",
+    "risk_budget_jpy",
+    "daily_risk_budget_jpy",
+    "per_trade_risk_budget_jpy",
+    "max_loss_jpy",
+    "size_multiple",
+    "stage_order",
+    "send_order",
+    "confirm_live",
+)
 # Matches the CLI generate-intents breadth used by the scheduled trader. The
 # verifier also keeps every LIVE_READY lane even when a smaller cap is passed,
 # because the operator may cite any executable lane visible in order_intents.
@@ -465,11 +483,19 @@ class DecisionVerifier:
                         "specialist reviews are processed observation only and must declare read_only=true",
                     )
                 )
-            if review.get("live_permission") not in (False, None):
+            if review.get("live_permission") is not False:
                 issues.append(
                     VerificationIssue(
                         "SPECIALIST_REVIEW_LIVE_PERMISSION",
-                        "specialist reviews must not grant live permission; only the final verified trader receipt can do that",
+                        "specialist reviews must declare live_permission=false; only the final verified trader receipt can authorize execution",
+                    )
+                )
+            forbidden = sorted(field for field in FORBIDDEN_SPECIALIST_AUTHORITY_FIELDS if field in review)
+            if forbidden:
+                issues.append(
+                    VerificationIssue(
+                        "SPECIALIST_REVIEW_AUTHORITY_FIELD",
+                        "specialist reviews must not carry execution authority fields: " + ", ".join(forbidden),
                     )
                 )
             if not cited_refs:
