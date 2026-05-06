@@ -33,6 +33,7 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_DECISION_REPORT,
+    DEFAULT_TRADER_JOURNAL,
     DEFAULT_TRADER_SETTINGS,
     ROOT,
 )
@@ -235,6 +236,7 @@ class AutoTradeCycle:
         position_execution_report_path: Path = DEFAULT_POSITION_EXECUTION_REPORT,
         live_order_output_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         live_order_report_path: Path = DEFAULT_LIVE_ORDER_STAGE_REPORT,
+        trader_journal_path: Path = DEFAULT_TRADER_JOURNAL,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
         campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
@@ -271,6 +273,7 @@ class AutoTradeCycle:
         self.position_execution_report_path = position_execution_report_path
         self.live_order_output_path = live_order_output_path
         self.live_order_report_path = live_order_report_path
+        self.trader_journal_path = trader_journal_path
         self.report_path = report_path
         self.campaign_plan_path = campaign_plan_path
         self.strategy_profile_path = strategy_profile_path
@@ -298,10 +301,130 @@ class AutoTradeCycle:
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
         try:
-            return self._run(send=send)
+            summary = self._run(send=send)
+            self._append_trader_journal_entry(summary)
+            return summary
         finally:
             if lock_dir is not None:
                 shutil.rmtree(lock_dir, ignore_errors=True)
+
+    def _append_trader_journal_entry(self, summary: AutoTradeCycleSummary) -> None:
+        """Append one JSONL line to logs/trader_journal.jsonl per cycle.
+
+        AGENT_CONTRACT §6 / §11 require a persistent audit trail of every
+        decision, basket selection, and execution outcome. The legacy archive
+        carried `logs/trader_journal.jsonl`; vNext rebuilds the writer here so
+        post-trade review and `mine-strategy` have something historical to
+        learn from. Latest-state files (`data/live_order_request.json`,
+        `data/autotrade_cycle_report.json`) get overwritten every cycle and
+        cannot serve as a long-term audit trail.
+
+        Best-effort: a journal-write failure must not break the live cycle
+        since the broker remains the canonical record either way.
+        """
+        try:
+            entry: dict = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "status": summary.status,
+                "decision_source": summary.decision_source,
+                "selected_lane_id": summary.selected_lane_id,
+                "selected_lane_ids": list(summary.selected_lane_ids),
+                "deterministic_lane_id": summary.deterministic_lane_id,
+                "selected_lane_score": summary.selected_lane_score,
+                "selected_lane_size_multiple": summary.selected_lane_size_multiple,
+                "sent": summary.sent,
+                "sent_count": summary.sent_count,
+                "positions": summary.positions,
+                "orders": summary.orders,
+                "live_ready": summary.live_ready,
+                "canceled_orders": list(summary.canceled_orders),
+                "receipt_promotions": summary.receipt_promotions,
+                "position_management_action": summary.position_management_action,
+                "position_execution_status": summary.position_execution_status,
+                "position_execution_sent": summary.position_execution_sent,
+                "target_status": summary.target_status,
+                "target_remaining_jpy": summary.target_remaining_jpy,
+                "target_progress_pct": summary.target_progress_pct,
+                "gpt_status": summary.gpt_status,
+                "gpt_action": summary.gpt_action,
+                "gpt_allowed": summary.gpt_allowed,
+                "gpt_issues": summary.gpt_issues,
+                "gpt_error": summary.gpt_error,
+                "gpt_recovery_source": summary.gpt_recovery_source,
+                "campaign_exposure_required": summary.campaign_exposure_required,
+            }
+            if summary.sent and self.live_order_output_path.exists():
+                try:
+                    request_payload = json.loads(self.live_order_output_path.read_text())
+                    live_record: dict = {
+                        "status": request_payload.get("status"),
+                        "lane_id": request_payload.get("lane_id"),
+                        "scaled_units": request_payload.get("scaled_units"),
+                        "size_multiple": request_payload.get("size_multiple"),
+                        "sent": request_payload.get("sent"),
+                    }
+                    response = request_payload.get("response") or {}
+                    if isinstance(response, dict) and response:
+                        live_record["response"] = {
+                            k: response.get(k)
+                            for k in (
+                                "status",
+                                "trade_id",
+                                "fill_price",
+                                "fill_units",
+                                "reason",
+                                "reject_reason",
+                            )
+                            if response.get(k) is not None
+                        }
+                    request_orders = request_payload.get("request_orders") or request_payload.get("orders")
+                    if isinstance(request_orders, list) and request_orders:
+                        live_record["request_orders"] = request_orders
+                    entry["live_order"] = live_record
+                except (json.JSONDecodeError, OSError):
+                    entry["live_order_read_error"] = True
+            if self.gpt_decision_path.exists():
+                try:
+                    gpt_payload = json.loads(self.gpt_decision_path.read_text())
+                    issues = gpt_payload.get("verification_issues") or []
+                    if issues:
+                        entry["verification_issues"] = [
+                            {
+                                "code": issue.get("code"),
+                                "severity": issue.get("severity"),
+                                "message": issue.get("message"),
+                            }
+                            for issue in issues[:10]
+                        ]
+                except (json.JSONDecodeError, OSError):
+                    pass
+            if self.snapshot_path.exists():
+                try:
+                    snapshot_payload = json.loads(self.snapshot_path.read_text())
+                    trader_positions = [
+                        {
+                            "trade_id": str(position.get("trade_id") or ""),
+                            "pair": position.get("pair"),
+                            "side": position.get("side"),
+                            "units": position.get("units"),
+                            "entry_price": position.get("entry_price"),
+                            "stop_loss": position.get("stop_loss"),
+                            "take_profit": position.get("take_profit"),
+                            "unrealized_pl_jpy": position.get("unrealized_pl_jpy"),
+                        }
+                        for position in snapshot_payload.get("positions", [])
+                        if position.get("owner") == "trader"
+                    ]
+                    entry["trader_positions"] = trader_positions
+                except (json.JSONDecodeError, OSError):
+                    pass
+            self.trader_journal_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.trader_journal_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n")
+        except Exception:
+            # AGENT_CONTRACT §6: audit trail is required, but a write failure
+            # must not block live execution. The broker remains canonical.
+            pass
 
     def _run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
