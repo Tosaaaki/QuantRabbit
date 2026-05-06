@@ -35,7 +35,7 @@ from quant_rabbit.paths import (
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.risk import RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
-from quant_rabbit.strategy.intent_generator import IntentGenerator
+from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.position_manager import PositionManager
 from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter
@@ -184,6 +184,7 @@ class AutoTradeCycle:
         gpt_target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         gpt_max_lanes: int = DEFAULT_GPT_MAX_LANES,
         gpt_wait_retry_limit: int = 2,
+        reuse_market_artifacts: bool = False,
         refresh_market_story: bool = True,
         market_news_root: Path | None = None,
         live_enabled: bool = False,
@@ -218,6 +219,7 @@ class AutoTradeCycle:
         self.gpt_target_state_path = gpt_target_state_path
         self.gpt_max_lanes = gpt_max_lanes
         self.gpt_wait_retry_limit = gpt_wait_retry_limit
+        self.reuse_market_artifacts = reuse_market_artifacts
         self.refresh_market_story = refresh_market_story
         self.market_news_root = market_news_root if market_news_root is not None else ROOT / "logs"
         self.live_enabled = live_enabled
@@ -228,9 +230,12 @@ class AutoTradeCycle:
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
         pairs = ("AUD_JPY", "AUD_USD", "EUR_JPY", "EUR_USD", "GBP_JPY", "GBP_USD", "USD_JPY")
-        snapshot = self._refresh_snapshot(pairs)
+        if self.reuse_market_artifacts:
+            snapshot = self._load_snapshot_artifact()
+        else:
+            snapshot = self._refresh_snapshot(pairs)
         target_summary = self._update_target_state(snapshot)
-        if self.refresh_market_story:
+        if self.refresh_market_story and not self.reuse_market_artifacts:
             self._market_story_miner().run()
             # Market-story mining can read archive/news artifacts and take
             # longer than RiskPolicy.max_quote_age_seconds. Refresh immediately
@@ -262,7 +267,10 @@ class AutoTradeCycle:
             self._write_report(summary, generated_at)
             return summary
 
-        intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
+        if self.reuse_market_artifacts:
+            intent_summary = self._load_intent_summary_artifact()
+        else:
+            intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         position_decision = None
         position_execution = None
         if positions:
@@ -808,6 +816,7 @@ class AutoTradeCycle:
             f"- GPT error: `{summary.gpt_error or 'none'}`",
             f"- GPT wait recovery attempts: `{summary.gpt_wait_retries}`",
             f"- GPT recovery source: `{summary.gpt_recovery_source or 'none'}`",
+            f"- Market artifact mode: `{'reuse_existing' if self.reuse_market_artifacts else 'refresh_and_reprice'}`",
             f"- Market story refresh: `{self.refresh_market_story}` (source: `{self.market_news_root}`)",
             "",
             "## Cycle Contract",
@@ -818,7 +827,7 @@ class AutoTradeCycle:
             "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",
             "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk.",
             "- If GPT trader handoff is enabled, the selected lane must also be an accepted GPT `TRADE` decision from the deterministic prefilter set.",
-            "- If flat, the cycle refreshes broker truth immediately before pricing intents, asks TraderBrain to compare lanes, and sends only the selected lane when live mode is explicitly enabled.",
+            "- If flat, the cycle refreshes broker truth immediately before pricing intents unless `--reuse-market-artifacts` pins the already generated decision packet; the live gateway still refreshes broker truth before any stage/send.",
         ]
         self.report_path.write_text("\n".join(lines) + "\n")
 
@@ -843,6 +852,26 @@ class AutoTradeCycle:
         self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
+
+    def _load_snapshot_artifact(self):
+        if not self.snapshot_path.exists():
+            raise ValueError(f"reuse-market-artifacts requires existing broker snapshot: {self.snapshot_path}")
+        return _snapshot_from_json(json.loads(self.snapshot_path.read_text()))
+
+    def _load_intent_summary_artifact(self) -> IntentGenerationSummary:
+        if not self.intents_path.exists():
+            raise ValueError(f"reuse-market-artifacts requires existing order intents: {self.intents_path}")
+        payload = json.loads(self.intents_path.read_text())
+        results = [item for item in payload.get("results", []) or [] if isinstance(item, dict)]
+        return IntentGenerationSummary(
+            output_path=self.intents_path,
+            report_path=self.intent_report_path,
+            candidates_seen=len(results),
+            generated=sum(1 for item in results if isinstance(item.get("intent"), dict)),
+            needs_snapshot=sum(1 for item in results if item.get("status") == "NEEDS_BROKER_SNAPSHOT"),
+            dry_run_passed=sum(1 for item in results if item.get("status") == "DRY_RUN_PASSED"),
+            live_ready=sum(1 for item in results if item.get("status") == "LIVE_READY"),
+        )
 
     def _update_target_state(self, snapshot) -> DailyTargetSummary | None:
         if self.target_state_path is None:

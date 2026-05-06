@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.automation import AutoTradeCycle
+from quant_rabbit.automation import AutoTradeCycle, _snapshot_to_json
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 
@@ -542,6 +542,70 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertTrue((root / "live_order.json").exists())
 
+    def test_reuse_market_artifacts_pins_gpt_packet_and_skips_repricing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            target_state = root / "target.json"
+            target_state.write_text(
+                json.dumps(
+                    {
+                        "start_balance_jpy": 100_000,
+                        "target_return_pct": 10.0,
+                        "daily_risk_budget_jpy": 2_000,
+                        "target_trades_per_day": 10,
+                    }
+                )
+            )
+            client = FakeCycleClient(snapshot)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                reuse_market_artifacts=True,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(len(client.snapshot_calls), 1)
+            self.assertIn("reuse_existing", (root / "report.md").read_text())
+
 
 class FakeCycleClient:
     def __init__(self, snapshot: BrokerSnapshot) -> None:
@@ -795,6 +859,54 @@ def _two_lane_stories(root: Path) -> Path:
         )
     )
     return path
+
+
+def _write_live_ready_intents(path: Path) -> None:
+    lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+    path.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "lane_id": lane_id,
+                        "status": "LIVE_READY",
+                        "intent": {
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "order_type": "STOP-ENTRY",
+                            "units": 10_000,
+                            "entry": 1.1735,
+                            "tp": 1.175,
+                            "sl": 1.1728,
+                            "thesis": "Repaired EUR_USD continuation entry.",
+                            "reason": "campaign lane is live-ready",
+                            "owner": "trader",
+                            "market_context": {
+                                "regime": "TREND_CONTINUATION",
+                                "narrative": "EUR_USD continuation pressure remains intact.",
+                                "chart_story": "M5 trend staircase continuation above support.",
+                                "method": "TREND_CONTINUATION",
+                                "invalidation": "support shelf breaks before trigger",
+                                "event_risk": "none",
+                                "session": "test",
+                            },
+                            "metadata": {"max_loss_jpy": 1_500},
+                        },
+                        "risk_metrics": {
+                            "risk_jpy": 1_099,
+                            "reward_jpy": 2_355,
+                            "reward_risk": 2.14,
+                            "spread_pips": 0.8,
+                        },
+                        "risk_issues": [],
+                        "strategy_issues": [],
+                        "live_blockers": [],
+                    }
+                ]
+            }
+        )
+        + "\n"
+    )
 
 
 def _gpt_trade_decision(

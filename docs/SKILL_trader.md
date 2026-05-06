@@ -157,12 +157,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 
 ```bash
 ./scripts/run-autotrade-live.sh \
+  --reuse-market-artifacts \
   --use-gpt-trader \
   --gpt-decision-response data/codex_trader_decision_response.json \
   --send
 ```
 
-Live send still requires `QR_LIVE_ENABLED=1` and the gates in `AGENT_CONTRACT.md §9`. Without them the cycle stays dry-run.
+`--reuse-market-artifacts` pins GPT verification to the `broker_snapshot` and `order_intents` that the decision receipt just cited, preventing intra-cycle evidence drift. Live send still requires `QR_LIVE_ENABLED=1` and the gates in `AGENT_CONTRACT.md §9`; `LiveOrderGateway` fetches fresh broker truth again before staging or sending. Without the live gates the cycle stays dry-run.
 
 ## Report at end
 

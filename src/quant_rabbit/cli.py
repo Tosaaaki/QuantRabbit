@@ -293,6 +293,14 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--gpt-decision-response", type=Path, default=None)
     p_auto.add_argument("--gpt-max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_auto.add_argument(
+        "--reuse-market-artifacts",
+        action="store_true",
+        help=(
+            "Use the existing broker snapshot and order intents for GPT verification/selection; "
+            "the live gateway still fetches fresh broker truth before staging or sending."
+        ),
+    )
+    p_auto.add_argument(
         "--refresh-market-story",
         dest="refresh_market_story",
         action="store_true",
@@ -444,6 +452,7 @@ def main(argv: list[str] | None = None) -> int:
                 use_gpt_trader=use_gpt_trader,
                 gpt_provider=gpt_provider,
                 gpt_max_lanes=args.gpt_max_lanes,
+                reuse_market_artifacts=args.reuse_market_artifacts,
                 trader_settings_path=args.trader_settings,
                 refresh_market_story=args.refresh_market_story,
                 market_news_root=args.market_news_dir,
