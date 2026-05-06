@@ -80,7 +80,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertTrue(any("out-of-sample managed net is not positive" in item for item in payload["blockers"]))
             self.assertEqual(payload["bucket_contributions"][0]["managed_net_jpy"], -75.0)
 
-    def test_dedupes_seat_outcomes_by_matched_trade_before_scoring(self) -> None:
+    def test_dedupes_seat_outcomes_by_overlapping_matched_trades_before_scoring(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db = root / "legacy.db"
@@ -100,6 +100,14 @@ class AITestBotBacktesterTest(unittest.TestCase):
                     "updated_at": "2026-04-01 02:00:00",
                 }
             )
+            raw_train_overlap = json.dumps(
+                {
+                    "source": "s_hunt",
+                    "setup_type": "MARKET",
+                    "matched_trade_ids": "seat-1,seat-extra",
+                    "updated_at": "2026-04-01 01:30:00",
+                }
+            )
             raw_validation = json.dumps(
                 {
                     "source": "s_hunt",
@@ -108,13 +116,22 @@ class AITestBotBacktesterTest(unittest.TestCase):
                     "updated_at": "2026-04-02 01:00:00",
                 }
             )
+            raw_validation_overlap = json.dumps(
+                {
+                    "source": "s_hunt",
+                    "setup_type": "MARKET",
+                    "matched_trade_ids": "seat-2,seat-next",
+                    "updated_at": "2026-04-02 02:00:00",
+                }
+            )
             _seed_db(
                 db,
                 [
                     ("seat_outcomes", "2026-04-01", "EUR_USD", "SHORT", 500.0, raw_train),
+                    ("seat_outcomes", "2026-04-01", "EUR_USD", "SHORT", 500.0, raw_train_overlap),
                     ("seat_outcomes", "2026-04-01", "EUR_USD", "SHORT", 500.0, raw_train_later),
                     ("seat_outcomes", "2026-04-02", "EUR_USD", "SHORT", 700.0, raw_validation),
-                    ("seat_outcomes", "2026-04-02", "EUR_USD", "SHORT", 700.0, raw_validation),
+                    ("seat_outcomes", "2026-04-02", "EUR_USD", "SHORT", 700.0, raw_validation_overlap),
                 ],
             )
 
@@ -130,9 +147,9 @@ class AITestBotBacktesterTest(unittest.TestCase):
             ).run(start_balance_jpy=1000.0)
 
             payload = json.loads((root / "ai_backtest.json").read_text())
-            self.assertEqual(payload["raw_rows"], 4)
+            self.assertEqual(payload["raw_rows"], 5)
             self.assertEqual(payload["deduped_rows"], 2)
-            self.assertEqual(payload["deduped_away_rows"], 2)
+            self.assertEqual(payload["deduped_away_rows"], 3)
             day = payload["days"][0]
             self.assertEqual(day["selected_trades"], 1)
             self.assertEqual(day["managed_net_jpy"], 700.0)

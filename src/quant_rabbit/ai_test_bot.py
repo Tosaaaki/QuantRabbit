@@ -51,6 +51,7 @@ class TestBotTrade:
     pl_jpy: float
     opportunity_key: str
     sort_key: str
+    match_ids: tuple[str, ...] = ()
 
     @property
     def bucket(self) -> TestBotBucket:
@@ -278,6 +279,7 @@ class AITestBotBacktester:
             source_table = str(row["source_table"])
             pair = str(row["pair"])
             direction = str(row["direction"])
+            match_ids = _matched_trade_ids(raw.get("matched_trade_ids")) if source_table == "seat_outcomes" else ()
             execution_style, allocation_band = _observable_bucket_fields(
                 source_table=source_table,
                 execution_style=row["execution_style"],
@@ -304,6 +306,7 @@ class AITestBotBacktester:
                     raw=raw,
                 ),
                 sort_key=_event_sort_key(row["source_id"], raw),
+                match_ids=match_ids,
             )
 
     def _write_output(self, payload: dict) -> None:
@@ -488,11 +491,42 @@ def _selected_trades_for_day(trades: tuple[TestBotTrade, ...], day: TestBotDay) 
 
 def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade, ...]:
     selected: dict[str, TestBotTrade] = {}
+    seat_matched_groups: dict[tuple[str, str, str, str], list[TestBotTrade]] = {}
     for row in rows:
+        if row.source_table == "seat_outcomes" and row.match_ids:
+            key = (row.source_table, row.session_date, row.pair, row.direction)
+            seat_matched_groups.setdefault(key, []).append(row)
+            continue
         current = selected.get(row.opportunity_key)
-        if current is None or (row.sort_key, row.source_id) > (current.sort_key, current.source_id):
+        if current is None or _is_newer(row, current):
+            selected[row.opportunity_key] = row
+    for group_rows in seat_matched_groups.values():
+        for row in _dedupe_overlapping_seat_matches(group_rows):
             selected[row.opportunity_key] = row
     return tuple(sorted(selected.values(), key=lambda row: (row.session_date, row.source_table, row.pair, row.direction, row.sort_key)))
+
+
+def _dedupe_overlapping_seat_matches(rows: list[TestBotTrade]) -> tuple[TestBotTrade, ...]:
+    components: list[tuple[set[str], TestBotTrade]] = []
+    for row in sorted(rows, key=lambda item: (item.sort_key, item.source_id)):
+        row_ids = set(row.match_ids)
+        overlaps = [index for index, (ids, _) in enumerate(components) if ids & row_ids]
+        if not overlaps:
+            components.append((row_ids, row))
+            continue
+        merged_ids = set(row_ids)
+        best = row
+        for index in reversed(overlaps):
+            ids, candidate = components.pop(index)
+            merged_ids.update(ids)
+            if _is_newer(candidate, best):
+                best = candidate
+        components.append((merged_ids, best))
+    return tuple(best for _, best in components)
+
+
+def _is_newer(candidate: TestBotTrade, current: TestBotTrade) -> bool:
+    return (candidate.sort_key, candidate.source_id) > (current.sort_key, current.source_id)
 
 
 def _certification_blockers(
@@ -789,9 +823,9 @@ def _opportunity_key(
     raw: dict[str, object],
 ) -> str:
     if source_table == "seat_outcomes":
-        matched = _matched_trade_key(raw.get("matched_trade_ids"))
-        if matched:
-            return ":".join((source_table, session_date, pair, direction, "matched", matched))
+        match_ids = _matched_trade_ids(raw.get("matched_trade_ids"))
+        if match_ids:
+            return ":".join((source_table, session_date, pair, direction, "matched", ",".join(match_ids)))
         return ":".join((source_table, session_date, pair, direction, allocation_band, execution_style))
     trade_id = str(raw.get("trade_id") or "").strip()
     if trade_id:
@@ -799,9 +833,9 @@ def _opportunity_key(
     return ":".join((source_table, session_date, pair, direction, execution_style, allocation_band, source_id))
 
 
-def _matched_trade_key(value: object) -> str:
+def _matched_trade_ids(value: object) -> tuple[str, ...]:
     parts = sorted(part.strip(" `") for part in str(value or "").replace("，", ",").split(",") if part.strip(" `"))
-    return ",".join(parts)
+    return tuple(parts)
 
 
 def _event_sort_key(source_id: object, raw: dict[str, object]) -> str:
