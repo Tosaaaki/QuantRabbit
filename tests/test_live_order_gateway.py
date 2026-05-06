@@ -142,6 +142,40 @@ class LiveOrderGatewayTest(unittest.TestCase):
             result = json.loads((root / "request.json").read_text())
             self.assertEqual(len(result["orders"]), 2)
 
+    def test_batch_blocks_duplicate_parent_lane_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            intents = _intents(root)
+            payload = json.loads(intents.read_text())
+            market = json.loads(json.dumps(payload["results"][0]))
+            market["lane_id"] = "lane:EUR_USD:LONG:MARKET"
+            market["intent"]["order_type"] = "MARKET"
+            market["intent"]["entry"] = 1.17306
+            payload["results"].append(market)
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=intents,
+                lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:LONG:MARKET"),
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "PARTIAL_SENT")
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(len(client.orders), 1)
+            result = json.loads((root / "request.json").read_text())
+            second = result["orders"][1]
+            self.assertEqual(second["status"], "BLOCKED")
+            self.assertIn("BASKET_DUPLICATE_PARENT_LANE", {issue["code"] for issue in second["risk_issues"]})
+
     def test_batch_send_does_not_double_count_sent_margin_from_fresh_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

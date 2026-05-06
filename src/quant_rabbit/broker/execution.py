@@ -244,11 +244,28 @@ class LiveOrderGateway:
         accepted_risk_jpy = 0.0
         accepted_margin_jpy = 0.0
         seen_geometry = set(_pending_geometry_keys(initial_snapshot))
+        seen_parent_lanes: set[str] = set()
         order_results: list[dict[str, Any]] = []
         batch_risk_issues = 0
         batch_strategy_issues = 0
 
         for selected, requested_lane_id in selected_items:
+            parent_lane = _selected_parent_lane_key(selected, requested_lane_id)
+            if parent_lane in seen_parent_lanes:
+                blocked = _blocked_batch_result(
+                    generated_at=generated_at,
+                    selected=selected,
+                    lane_id=requested_lane_id,
+                    send=send,
+                    issue=RiskIssue(
+                        "BASKET_DUPLICATE_PARENT_LANE",
+                        f"{requested_lane_id} is another execution variant of parent lane {parent_lane}; "
+                        "send only one timing variant for a thesis in the same basket",
+                    ),
+                )
+                order_results.append(blocked)
+                batch_risk_issues += len(blocked["risk_issues"])
+                continue
             active_occupancy = initial_occupancy + accepted_count
             if active_occupancy >= portfolio_position_cap:
                 blocked = _blocked_batch_result(
@@ -285,6 +302,7 @@ class LiveOrderGateway:
             batch_strategy_issues += len(item_result["strategy_issues"])
             if item_result.get("sent") or (not send and item_result.get("status") == "STAGED"):
                 accepted_count += 1
+                seen_parent_lanes.add(parent_lane)
                 metrics = item_result.get("risk_metrics") if isinstance(item_result.get("risk_metrics"), dict) else {}
                 accepted_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
                 accepted_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
@@ -668,6 +686,18 @@ def _blocked_batch_result(*, generated_at: str, selected: dict[str, Any], lane_i
         "requested_units": None,
         "scaled_units": None,
     }
+
+
+def _selected_parent_lane_key(selected: dict[str, Any], requested_lane_id: str | None) -> str:
+    intent = selected.get("intent") if isinstance(selected, dict) else None
+    metadata = intent.get("metadata") if isinstance(intent, dict) and isinstance(intent.get("metadata"), dict) else {}
+    parent = metadata.get("parent_lane_id") if isinstance(metadata, dict) else None
+    if isinstance(parent, str) and parent.strip():
+        return parent.strip()
+    lane_id = str(selected.get("lane_id") or requested_lane_id or "")
+    if lane_id.endswith(":MARKET"):
+        return lane_id[: -len(":MARKET")]
+    return lane_id
 
 
 def _basket_size_multiple(

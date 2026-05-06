@@ -119,6 +119,22 @@ def _is_existing_pending_blocker(blocker: str) -> bool:
     return str(blocker).startswith("pending entry exists:")
 
 
+def _basket_parent_lane_id(lane_id: str | None) -> str | None:
+    if not lane_id:
+        return None
+    if lane_id.endswith(":MARKET"):
+        return lane_id[: -len(":MARKET")]
+    return lane_id
+
+
+def _basket_parent_lane_set(lane_ids: tuple[str, ...]) -> set[str]:
+    return {
+        parent
+        for parent in (_basket_parent_lane_id(lane_id) for lane_id in lane_ids)
+        if parent
+    }
+
+
 def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool = False) -> bool:
     if _passes_gpt_prefilter(score):
         return True
@@ -736,7 +752,7 @@ class AutoTradeCycle:
                             )
                             self._write_report(summary, generated_at)
                             return summary
-                        if not set(gpt_lane_ids).issubset(set(basket_lane_ids)):
+                        if not _basket_parent_lane_set(gpt_lane_ids).issubset(_basket_parent_lane_set(basket_lane_ids)):
                             summary = AutoTradeCycleSummary(
                                 status="GPT_DECISION_NOT_PREFILTERED",
                                 report_path=self.report_path,
@@ -1097,7 +1113,9 @@ class AutoTradeCycle:
                         )
                         self._write_report(summary, generated_at)
                         return summary
-                elif not set(gpt_selected_lane_ids).issubset(prefiltered_lane_ids):
+                elif not _basket_parent_lane_set(gpt_selected_lane_ids).issubset(
+                    _basket_parent_lane_set(tuple(prefiltered_lane_ids))
+                ):
                     if campaign_exposure_required:
                         gpt_recovery_source = "CAMPAIGN_EXPOSURE_RECOVERY_GPT_NOT_PREFILTERED"
                     else:
@@ -1465,12 +1483,18 @@ class AutoTradeCycle:
     ) -> tuple[tuple[str, ...], dict[str, float]]:
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
+        parent_lane_ids: set[str] = set()
 
         def add(lane_id: str | None, size_multiple: float | None) -> None:
             if not lane_id or lane_id in size_multiples:
                 return
+            parent_lane_id = _basket_parent_lane_id(lane_id)
+            if parent_lane_id and parent_lane_id in parent_lane_ids:
+                return
             lane_ids.append(lane_id)
             size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+            if parent_lane_id:
+                parent_lane_ids.add(parent_lane_id)
 
         add(primary_lane_id, primary_size_multiple)
         for score in decision.scores:
@@ -1487,9 +1511,13 @@ class AutoTradeCycle:
     ) -> tuple[tuple[str, ...], dict[str, float]]:
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
+        parent_lane_ids: set[str] = set()
 
         def add(lane_id: str | None, size_multiple: float | None = None) -> None:
             if not lane_id or lane_id in size_multiples:
+                return
+            parent_lane_id = _basket_parent_lane_id(lane_id)
+            if parent_lane_id and parent_lane_id in parent_lane_ids:
                 return
             if size_multiple is None:
                 _, size_multiple = AutoTradeCycle._selected_lane_meta(
@@ -1498,6 +1526,8 @@ class AutoTradeCycle:
                 )
             lane_ids.append(lane_id)
             size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+            if parent_lane_id:
+                parent_lane_ids.add(parent_lane_id)
 
         for lane_id in gpt_lane_ids:
             add(lane_id)

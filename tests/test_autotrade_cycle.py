@@ -240,9 +240,9 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=True)
 
             self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(summary.sent_count, 1)
             self.assertEqual(client.orders_canceled, [])
-            self.assertEqual(len(client.orders_sent), 2)
+            self.assertEqual(len(client.orders_sent), 1)
             self.assertEqual(summary.orders, 1)
 
     def test_gpt_trade_cancels_named_pending_orders_before_capacity_checked_send(self) -> None:
@@ -321,10 +321,10 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=True)
 
             self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(summary.sent_count, 1)
             self.assertEqual(summary.canceled_orders, tuple(order.order_id for order in pending_orders))
             self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
-            self.assertEqual(len(client.orders_sent), 2)
+            self.assertEqual(len(client.orders_sent), 1)
 
     def test_protected_position_with_pending_can_replace_pending_before_capacity_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -417,10 +417,10 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
             self.assertEqual(summary.gpt_status, "ACCEPTED")
             self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(summary.sent_count, 1)
             self.assertEqual(summary.canceled_orders, tuple(order.order_id for order in pending_orders))
             self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
-            self.assertEqual(len(client.orders_sent), 2)
+            self.assertEqual(len(client.orders_sent), 1)
 
     def test_protected_position_can_cancel_contaminated_pending_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -974,7 +974,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
 
-    def test_gpt_single_trade_expands_to_prefiltered_basket_for_open_target(self) -> None:
+    def test_gpt_single_trade_dedupes_prefiltered_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -1026,14 +1026,14 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=True)
 
             self.assertEqual(summary.status, "SENT")
-            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(summary.sent_count, 1)
             self.assertEqual(
                 summary.selected_lane_ids,
-                ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION", market_lane),
+                ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION",),
             )
-            self.assertEqual(len(client.orders_sent), 2)
+            self.assertEqual(len(client.orders_sent), 1)
 
-    def test_gpt_batch_trade_sends_multiple_verified_lanes(self) -> None:
+    def test_gpt_batch_trade_dedupes_same_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -1093,14 +1093,15 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "SENT")
             self.assertTrue(summary.sent)
-            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(summary.sent_count, 1)
             self.assertEqual(
                 summary.selected_lane_ids,
-                ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION", market_lane),
+                ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION",),
             )
-            self.assertEqual(len(client.orders_sent), 2)
+            self.assertEqual(len(client.orders_sent), 1)
             result = json.loads((root / "live_order.json").read_text())
-            self.assertEqual(len(result["orders"]), 2)
+            self.assertEqual(result["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertNotIn("orders", result)
 
     def test_cycle_appends_jsonl_audit_entry_per_run(self) -> None:
         """Regression: each cycle must append one JSONL line to the trader
@@ -1179,12 +1180,11 @@ class AutoTradeCycleTest(unittest.TestCase):
             entry = entries[0]
             self.assertEqual(entry["status"], "SENT")
             self.assertTrue(entry["sent"])
-            self.assertEqual(entry["sent_count"], 2)
+            self.assertEqual(entry["sent_count"], 1)
             self.assertEqual(
                 entry["selected_lane_ids"],
                 [
                     "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
-                    market_lane,
                 ],
             )
             self.assertIn("ts", entry)
