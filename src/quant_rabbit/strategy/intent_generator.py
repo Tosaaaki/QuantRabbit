@@ -106,6 +106,24 @@ PENDING_ENTRY_OFFSET_SPREAD_MULT = 2.0
 RANGE_MARKET_EDGE_ZONE_SPREAD_MULT = 2.0
 RANGE_MARKET_EDGE_ZONE_ATR_MULT = 0.25
 
+# Directional range participation is the low-volatility variant of
+# RANGE_ROTATION. It is still risk-capped by per-trade JPY budget, but when M5
+# says RANGE + QUIET and the M5 directional bias agrees with the lane, the
+# trader may take a market scalp from inside the box instead of waiting only at
+# the rail.
+#
+# - RANGE_DIRECTIONAL_STOP_SPREAD_MULT: OANDA fill / rounding noise requires
+#   the stop to clear RiskPolicy.min_stop_spread_multiple (5x spread). 5.1x is
+#   the smallest generator-side cushion that still validates after price
+#   rounding, so low-vol ATR can translate into larger units without raising
+#   the loss cap.
+# - RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP: low-vol range scalps should rotate
+#   fast; cap the market target to one stop-distance even when historical lane
+#   evidence asks for a runner. The lane's base RR remains recorded in
+#   metadata, while this execution shape pursues small repeatable wins.
+RANGE_DIRECTIONAL_STOP_SPREAD_MULT = 5.1
+RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP = 1.0
+
 # Structural range rails. 1σ VWAP bands are deliberately excluded here: they
 # are often the box interior / magnet zone, not the actual fail point. Treating
 # them as rails creates tiny spread-dominated boxes and makes range trades look
@@ -194,6 +212,11 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             granularity = view.get("granularity")
             if isinstance(granularity, str):
                 per_tf[f"{granularity}__regime"] = view.get("regime")
+                per_tf[f"{granularity}__long_bias"] = view.get("long_bias")
+                per_tf[f"{granularity}__short_bias"] = view.get("short_bias")
+                family_scores = view.get("family_scores")
+                if isinstance(family_scores, dict):
+                    per_tf[f"{granularity}__family_scores"] = family_scores
                 per_tf[granularity] = view.get("indicators", {}) or {}
                 # Expose regime_reading per timeframe so geometry can read
                 # confidence / atr_percentile for regime-aware SL widening.
@@ -302,6 +325,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     bias = None
     if long_score is not None and short_score is not None and long_score != short_score:
         bias = Side.LONG.value if long_score > short_score else Side.SHORT.value
+    m5_indicators = per_tf.get("M5") if isinstance(per_tf.get("M5"), dict) else {}
+    m5_family = per_tf.get("M5__family_scores") if isinstance(per_tf.get("M5__family_scores"), dict) else {}
     return {
         "chart_long_score": long_score,
         "chart_short_score": short_score,
@@ -309,6 +334,13 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "m5_regime": _text_or_none(per_tf.get("M5__regime")),
         "m15_regime": _text_or_none(per_tf.get("M15__regime")),
         "h1_regime": _text_or_none(per_tf.get("H1__regime")),
+        "m5_long_bias": _optional_float(per_tf.get("M5__long_bias")),
+        "m5_short_bias": _optional_float(per_tf.get("M5__short_bias")),
+        "m5_regime_quantile": _text_or_none(m5_indicators.get("regime_quantile")),
+        "m5_mean_rev_score": _optional_float(m5_family.get("mean_rev_score")),
+        "m5_trend_score": _optional_float(m5_family.get("trend_score")),
+        "m5_breakout_score": _optional_float(m5_family.get("breakout_score")),
+        "m5_family_disagreement": _optional_float(m5_family.get("disagreement")),
     }
 
 
@@ -384,9 +416,25 @@ def _regime_stop_widening_multiplier(regime_reading: dict[str, Any] | None) -> f
     if isinstance(confidence, (int, float)) and confidence < REGIME_LOW_CONFIDENCE_THRESHOLD:
         multiplier = max(multiplier, REGIME_LOW_CONFIDENCE_STOP_MULT)
     atr_pct = regime_reading.get("atr_percentile")
-    if isinstance(atr_pct, (int, float)) and atr_pct > REGIME_HIGH_VOL_PCTILE:
+    normalized_atr_pct = _normalized_percentile(atr_pct)
+    if normalized_atr_pct is not None and normalized_atr_pct > REGIME_HIGH_VOL_PCTILE:
         multiplier = max(multiplier, REGIME_HIGH_VOL_STOP_MULT)
     return min(REGIME_MAX_STOP_WIDEN, multiplier)
+
+
+def _normalized_percentile(value: object) -> float | None:
+    """Normalize percentile values emitted as either 0..1 or 0..100.
+
+    pair_charts currently emits ATR percentile from different readers; some
+    are fractional and some are percentage points. The risk response must not
+    treat 35th percentile as 3500th percentile and widen quiet tape stops.
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    if parsed < 0:
+        return None
+    return parsed / 100.0 if parsed > 1.0 else parsed
 
 
 def _range_indicators_for(
@@ -401,6 +449,75 @@ def _range_indicators_for(
         return None
     indicators = per_tf.get(timeframe)
     return indicators if isinstance(indicators, dict) and indicators else None
+
+
+def _execution_regime_state(
+    method: TradeMethod,
+    dominant_regime: str | None,
+    chart_context: dict[str, Any] | None,
+) -> str | None:
+    """Return the regime state that should drive executable geometry.
+
+    Dominant multi-timeframe regime remains recorded, but RANGE_ROTATION is an
+    M5 operating tactic. When M5 is explicitly RANGE/QUIET, use RANGE for the
+    executable RR floor even if higher timeframes make the aggregate dominant
+    regime look UNCLEAR.
+    """
+    if method == TradeMethod.RANGE_ROTATION and _is_low_vol_range_context(chart_context):
+        return "RANGE"
+    return dominant_regime
+
+
+def _effective_stop_widening_multiplier(
+    method: TradeMethod,
+    regime_reading: dict[str, Any] | None,
+    chart_context: dict[str, Any] | None,
+) -> float:
+    if method == TradeMethod.RANGE_ROTATION and _is_low_vol_range_context(chart_context):
+        return 1.0
+    return _regime_stop_widening_multiplier(regime_reading)
+
+
+def _execution_target_reward_risk(
+    base_reward_risk: float,
+    method: TradeMethod,
+    order_type: OrderType,
+    execution_regime: str | None,
+    chart_context: dict[str, Any] | None,
+    side: Side,
+) -> float:
+    target_reward_risk = round(base_reward_risk * _regime_reward_risk_multiplier(execution_regime), 2)
+    if (
+        method == TradeMethod.RANGE_ROTATION
+        and order_type == OrderType.MARKET
+        and _is_low_vol_directional_range(side, chart_context)
+    ):
+        target_reward_risk = min(target_reward_risk, RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP)
+    return round(target_reward_risk, 2)
+
+
+def _is_low_vol_range_context(chart_context: dict[str, Any] | None) -> bool:
+    if not chart_context:
+        return False
+    return str(chart_context.get("m5_regime") or "").upper() == "RANGE" and str(
+        chart_context.get("m5_regime_quantile") or ""
+    ).upper() == "QUIET"
+
+
+def _is_low_vol_directional_range(side: Side, chart_context: dict[str, Any] | None) -> bool:
+    if not _is_low_vol_range_context(chart_context):
+        return False
+    return _direction_bias_from_m5(chart_context) == side.value
+
+
+def _direction_bias_from_m5(chart_context: dict[str, Any] | None) -> str | None:
+    if not chart_context:
+        return None
+    long_bias = _optional_float(chart_context.get("m5_long_bias"))
+    short_bias = _optional_float(chart_context.get("m5_short_bias"))
+    if long_bias is None or short_bias is None or long_bias == short_bias:
+        return None
+    return Side.LONG.value if long_bias > short_bias else Side.SHORT.value
 
 
 PIP_FACTORS = {pair: instrument_pip_factor(pair) for pair in DEFAULT_TRADER_PAIRS}
@@ -612,14 +729,15 @@ class IntentGenerator:
         if (
             method == TradeMethod.RANGE_ROTATION
             and order_type_override == OrderType.MARKET
-            and intent.metadata.get("geometry_model") != "RANGE_RAIL_MARKET"
+            and intent.metadata.get("geometry_model") not in {"RANGE_RAIL_MARKET", "RANGE_DIRECTIONAL_MARKET"}
         ):
             risk_issues.append(
                 {
                     "code": "RANGE_MARKET_NOT_AT_RAIL",
                     "message": (
                         f"{pair} range MARKET lane is not inside the rail zone; "
-                        "keep the pending LIMIT rail order instead of chasing the box interior."
+                        "keep the pending LIMIT rail order unless M5 RANGE/QUIET direction bias "
+                        "supports a directional range market scalp."
                     ),
                     "severity": "BLOCK",
                 }
@@ -792,9 +910,17 @@ def _intent_from_lane(
     # Regime-derived reward_risk per AGENT_CONTRACT §3.5: range → close TP for
     # rotation, trend → wider TP to ride. The lane's base value is preserved
     # for audit; the active geometry reflects current regime.
-    rr_multiplier = _regime_reward_risk_multiplier(regime_state)
-    target_reward_risk = round(base_reward_risk * rr_multiplier, 2)
-    stop_widen_mult = _regime_stop_widening_multiplier(regime_reading)
+    execution_regime = _execution_regime_state(method, regime_state, chart_context)
+    rr_multiplier = _regime_reward_risk_multiplier(execution_regime)
+    target_reward_risk = _execution_target_reward_risk(
+        base_reward_risk,
+        method,
+        order_type,
+        execution_regime,
+        chart_context,
+        side,
+    )
+    stop_widen_mult = _effective_stop_widening_multiplier(method, regime_reading, chart_context)
     entry, tp, sl = _geometry(
         pair,
         side,
@@ -805,6 +931,7 @@ def _intent_from_lane(
         range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
         chart_indicators=range_indicators,
         stop_widen_mult=stop_widen_mult,
+        chart_context=chart_context,
     )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
     geometry_metadata = _geometry_metadata(
@@ -817,11 +944,18 @@ def _intent_from_lane(
         sl=sl,
         range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
         chart_indicators=range_indicators,
+        chart_context=chart_context,
+        atr_pips=atr_pips,
     )
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
-    regime_context = f"{regime_state} current; {method.value} campaign lane" if regime_state else f"{method.value} campaign lane"
+    if execution_regime:
+        regime_context = f"{execution_regime} current; {method.value} campaign lane"
+        if regime_state and regime_state != execution_regime:
+            regime_context += f"; dominant={regime_state}"
+    else:
+        regime_context = f"{method.value} campaign lane"
     context = MarketContext(
         regime=regime_context,
         narrative=str(lane.get("reason") or ""),
@@ -850,7 +984,8 @@ def _intent_from_lane(
             "target_reward_risk": target_reward_risk,
             "base_target_reward_risk": base_reward_risk,
             "regime_reward_risk_mult": rr_multiplier,
-            "regime_state": regime_state,
+            "regime_state": execution_regime,
+            "dominant_regime_state": regime_state,
             "regime_stop_widen_mult": stop_widen_mult,
             "session_bucket": session_bucket,
             **(chart_context or {}),
@@ -881,15 +1016,17 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     """
     metadata = intent.metadata or {}
     issues: list[dict[str, str]] = []
-    bias = str(metadata.get("chart_direction_bias") or "").upper()
+    method = intent.market_context.method if intent.market_context is not None else None
+    bias = _method_direction_bias(metadata, method)
     if bias in {Side.LONG.value, Side.SHORT.value} and bias != intent.side.value:
-        long_score = metadata.get("chart_long_score")
-        short_score = metadata.get("chart_short_score")
+        long_score = metadata.get("m5_long_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_long_score")
+        short_score = metadata.get("m5_short_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_short_score")
+        scope = "M5 range" if method == TradeMethod.RANGE_ROTATION else "pair_charts"
         issues.append(
             {
                 "code": "CHART_DIRECTION_CONFLICT",
                 "message": (
-                    f"{intent.pair} {intent.side.value} conflicts with current pair_charts direction "
+                    f"{intent.pair} {intent.side.value} conflicts with current {scope} direction "
                     f"bias={bias} (long_score={long_score}, short_score={short_score}); "
                     "wait for this side to dominate or choose the aligned lane."
                 ),
@@ -897,7 +1034,6 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
             }
         )
 
-    method = intent.market_context.method if intent.market_context is not None else None
     if method == TradeMethod.TREND_CONTINUATION and intent.order_type == OrderType.MARKET:
         m5_regime = str(metadata.get("m5_regime") or "").upper()
         expected = "TREND_UP" if intent.side == Side.LONG else "TREND_DOWN"
@@ -913,6 +1049,14 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 }
             )
     return issues
+
+
+def _method_direction_bias(metadata: dict[str, Any], method: TradeMethod | None) -> str:
+    if method == TradeMethod.RANGE_ROTATION:
+        m5_bias = _direction_bias_from_m5(metadata)
+        if m5_bias:
+            return m5_bias
+    return str(metadata.get("chart_direction_bias") or "").upper()
 
 
 def _order_type_for(method: TradeMethod) -> OrderType:
@@ -932,6 +1076,7 @@ def _geometry(
     range_indicators: dict[str, Any] | None = None,
     chart_indicators: dict[str, Any] | None = None,
     stop_widen_mult: float = 1.0,
+    chart_context: dict[str, Any] | None = None,
 ) -> tuple[float, float, float]:
     """Build (entry, tp, sl) prices.
 
@@ -958,6 +1103,7 @@ def _geometry(
             atr_pips=atr_pips,
             indicators=range_indicators,
             stop_widen_mult=stop_widen_mult,
+            chart_context=chart_context,
         )
         if range_geometry is not None:
             return range_geometry
@@ -1059,6 +1205,7 @@ def _range_geometry(
     atr_pips: float | None,
     indicators: dict[str, Any],
     stop_widen_mult: float = 1.0,
+    chart_context: dict[str, Any] | None = None,
 ) -> tuple[float, float, float] | None:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
@@ -1083,7 +1230,15 @@ def _range_geometry(
         if order_type == OrderType.MARKET:
             edge_zone = _range_market_edge_zone_pips(atr_pips, stop_pips, spread_pips)
             if quote.ask > support + (edge_zone * pip):
-                return None
+                return _directional_range_market_geometry(
+                    pair,
+                    side,
+                    quote,
+                    reward_risk=reward_risk,
+                    atr_pips=atr_pips,
+                    spread_pips=spread_pips,
+                    chart_context=chart_context,
+                )
             entry = quote.ask
         else:
             entry = min(support + spread_buffer, quote.ask - pending_offset)
@@ -1101,7 +1256,15 @@ def _range_geometry(
         if order_type == OrderType.MARKET:
             edge_zone = _range_market_edge_zone_pips(atr_pips, stop_pips, spread_pips)
             if quote.bid < resistance - (edge_zone * pip):
-                return None
+                return _directional_range_market_geometry(
+                    pair,
+                    side,
+                    quote,
+                    reward_risk=reward_risk,
+                    atr_pips=atr_pips,
+                    spread_pips=spread_pips,
+                    chart_context=chart_context,
+                )
             entry = quote.bid
         else:
             entry = max(resistance - spread_buffer, quote.bid + pending_offset)
@@ -1115,6 +1278,39 @@ def _range_geometry(
         tp = max(rr_target, opposing_rail)
         if tp >= entry:
             return None
+    return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
+
+
+def _directional_range_market_geometry(
+    pair: str,
+    side: Side,
+    quote: Quote,
+    *,
+    reward_risk: float,
+    atr_pips: float | None,
+    spread_pips: float,
+    chart_context: dict[str, Any] | None,
+) -> tuple[float, float, float] | None:
+    if not _is_low_vol_directional_range(side, chart_context):
+        return None
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    stop_floor = spread_pips * RANGE_DIRECTIONAL_STOP_SPREAD_MULT
+    stop_pips = max((atr_pips or 0.0) * GEOMETRY_ATR_MULT, stop_floor)
+    if stop_pips <= 0:
+        return None
+    target_pips = max(
+        stop_pips * min(reward_risk, RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP),
+        spread_pips * RiskPolicy().min_target_spread_multiple,
+    )
+    if side == Side.LONG:
+        entry = quote.ask
+        tp = entry + (target_pips * pip)
+        sl = entry - (stop_pips * pip)
+    else:
+        entry = quote.bid
+        tp = entry - (target_pips * pip)
+        sl = entry + (stop_pips * pip)
     return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
 
 
@@ -1215,6 +1411,8 @@ def _geometry_metadata(
     sl: float,
     range_indicators: dict[str, Any] | None,
     chart_indicators: dict[str, Any] | None,
+    chart_context: dict[str, Any] | None = None,
+    atr_pips: float | None = None,
 ) -> dict[str, Any]:
     if order_type not in {OrderType.LIMIT, OrderType.MARKET} or not range_indicators:
         return {
@@ -1237,8 +1435,10 @@ def _geometry_metadata(
         support = _target_support(entry, stop_pips, spread_pips, support_levels, pip) or support
     inside_box = support < tp < resistance
     outside_box = sl < support if side == Side.LONG else sl > resistance
-    if order_type == OrderType.MARKET:
-        edge_zone = _range_market_edge_zone_pips(None, stop_pips, spread_pips)
+    if order_type == OrderType.MARKET and _is_low_vol_directional_range(side, chart_context):
+        model = "RANGE_DIRECTIONAL_MARKET"
+    elif order_type == OrderType.MARKET:
+        edge_zone = _range_market_edge_zone_pips(atr_pips, stop_pips, spread_pips)
         if side == Side.LONG:
             at_rail = quote.ask <= support + (edge_zone * pip)
         else:
@@ -1253,6 +1453,10 @@ def _geometry_metadata(
         "range_entry_side": "support" if side == Side.LONG else "resistance",
         "range_tp_is_inside_box": inside_box,
         "range_sl_outside_box": outside_box,
+        "range_directional_market": model == "RANGE_DIRECTIONAL_MARKET",
+        "range_directional_target_rr_cap": (
+            RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP if model == "RANGE_DIRECTIONAL_MARKET" else None
+        ),
     }
 
 

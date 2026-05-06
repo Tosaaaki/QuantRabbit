@@ -321,6 +321,73 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["status"], "DRY_RUN_BLOCKED")
             self.assertIn("RANGE_MARKET_NOT_AT_RAIL", issue_codes)
 
+    def test_low_vol_directional_range_market_uses_tight_risk_budgeted_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.76,
+                    short_score=0.19,
+                    dominant_regime="UNCLEAR",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.72,
+                    m5_short_bias=0.18,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                ),
+                max_loss_jpy=140.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
+            issue_codes = {issue["code"] for issue in market["risk_issues"]}
+
+            self.assertEqual(market["status"], "LIVE_READY")
+            self.assertEqual(market["intent"]["metadata"]["geometry_model"], "RANGE_DIRECTIONAL_MARKET")
+            self.assertEqual(market["intent"]["metadata"]["regime_state"], "RANGE")
+            self.assertEqual(market["intent"]["metadata"]["regime_stop_widen_mult"], 1.0)
+            self.assertGreaterEqual(market["intent"]["units"], 2000)
+            self.assertLessEqual(market["risk_metrics"]["risk_jpy"], 140.0)
+            self.assertNotIn("RANGE_MARKET_NOT_AT_RAIL", issue_codes)
+
+    def test_range_direction_conflict_uses_m5_bias_not_aggregate_bias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root, direction="SHORT"),
+                strategy_profile=_strategy(root, status="CANDIDATE", direction="SHORT"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.82,
+                    short_score=0.11,
+                    dominant_regime="UNCLEAR",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.12,
+                    m5_short_bias=0.76,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                ),
+                max_loss_jpy=140.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+            market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
+
+            self.assertEqual(market["status"], "LIVE_READY")
+            self.assertNotIn("CHART_DIRECTION_CONFLICT", issue_codes)
+
     def test_open_position_with_per_trade_sized_risk_does_not_block_new_entry(self) -> None:
         # AGENT_CONTRACT §3.5 regression: portfolio cap is the WHOLE-DAY risk
         # budget, not the per-trade slice. A previous bug fed `max_loss_jpy`
@@ -439,7 +506,7 @@ def _campaign(root: Path, *, target_reward_risk: float | None = None, direction:
     return path
 
 
-def _range_campaign(root: Path) -> Path:
+def _range_campaign(root: Path, *, direction: str = "LONG") -> Path:
     path = root / "range_campaign.json"
     path.write_text(
         json.dumps(
@@ -448,7 +515,7 @@ def _range_campaign(root: Path) -> Path:
                     {
                         "desk": "range_trader",
                         "pair": "EUR_USD",
-                        "direction": "LONG",
+                        "direction": direction,
                         "method": "RANGE_ROTATION",
                         "adoption": "ORDER_INTENT_REQUIRED",
                         "campaign_role": "NOW",
@@ -594,6 +661,10 @@ def _pair_charts_with_direction(
     short_score: float,
     dominant_regime: str,
     m5_regime: str,
+    m5_long_bias: float | None = None,
+    m5_short_bias: float | None = None,
+    regime_quantile: str = "NORMAL",
+    atr_pips: float = 8.0,
 ) -> Path:
     path = root / "pair_charts_direction.json"
     path.write_text(
@@ -610,9 +681,18 @@ def _pair_charts_with_direction(
                             {
                                 "granularity": "M5",
                                 "regime": m5_regime,
+                                "long_bias": long_score if m5_long_bias is None else m5_long_bias,
+                                "short_bias": short_score if m5_short_bias is None else m5_short_bias,
                                 "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6, "atr_percentile": 50.0},
+                                "family_scores": {
+                                    "mean_rev_score": 1.1,
+                                    "trend_score": 0.2,
+                                    "breakout_score": 0.1,
+                                    "disagreement": 0.2,
+                                },
                                 "indicators": {
-                                    "atr_pips": 8.0,
+                                    "atr_pips": atr_pips,
+                                    "regime_quantile": regime_quantile,
                                     "bb_lower": 1.1710,
                                     "bb_upper": 1.1760,
                                     "bb_middle": 1.1735,
@@ -774,6 +854,18 @@ class RegimeAwareGeometryHelpersTest(unittest.TestCase):
 
         reading = {"confidence": 0.9, "atr_percentile": 0.95}
         self.assertEqual(_regime_stop_widening_multiplier(reading), REGIME_HIGH_VOL_STOP_MULT)
+
+    def test_percent_scale_atr_percentile_does_not_turn_quiet_tape_into_high_vol(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            REGIME_HIGH_VOL_STOP_MULT,
+            _regime_stop_widening_multiplier,
+        )
+
+        quiet_percent_scale = {"confidence": 0.9, "atr_percentile": 35.0}
+        hot_percent_scale = {"confidence": 0.9, "atr_percentile": 95.0}
+
+        self.assertEqual(_regime_stop_widening_multiplier(quiet_percent_scale), 1.0)
+        self.assertEqual(_regime_stop_widening_multiplier(hot_percent_scale), REGIME_HIGH_VOL_STOP_MULT)
 
     def test_widening_is_clamped_at_max(self) -> None:
         from quant_rabbit.strategy.intent_generator import (
