@@ -44,6 +44,10 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["managed_net_jpy"], 90.0)
             self.assertNotIn("GBP_USD", " ".join(day["selected_buckets"]))
             self.assertFalse(payload["live_permission"])
+            self.assertEqual(payload["firepower"]["best_selected_day_jpy"], 90.0)
+            self.assertEqual(payload["bucket_contributions"][0]["bucket"], "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED")
+            self.assertEqual(payload["oracle"]["top_n_target_hit_days"], 1)
+            self.assertEqual(payload["missed_best_days"][0]["best_bucket"], "trades:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED")
             self.assertIn("offline research bot", (root / "ai_backtest.md").read_text())
 
     def test_applies_equity_loss_cap_to_validation_result(self) -> None:
@@ -74,6 +78,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["managed_net_jpy"], -75.0)
             self.assertEqual(payload["status"], "BLOCKED")
             self.assertTrue(any("out-of-sample managed net is not positive" in item for item in payload["blockers"]))
+            self.assertEqual(payload["bucket_contributions"][0]["managed_net_jpy"], -75.0)
 
 
 def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float]]) -> None:

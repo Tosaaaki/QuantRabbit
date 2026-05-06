@@ -181,6 +181,13 @@ class AITestBotBacktester:
             )
         )
         validation_rows = tuple(row for day in day_results for row in _selected_trades_for_day(trades, day))
+        oracle = _oracle_summary(
+            trades=trades,
+            day_results=day_results,
+            target_jpy=target_jpy,
+            max_loss_jpy=cap.loss_cap_jpy,
+            top_n=self.max_active_buckets,
+        )
         blockers = tuple(
             _certification_blockers(
                 day_results=day_results,
@@ -212,6 +219,15 @@ class AITestBotBacktester:
             "min_train_trades": self.min_train_trades,
             "max_active_buckets": self.max_active_buckets,
             "summary": _summary_payload(day_results, validation_rows, target_jpy, gross_profit, gross_loss, profit_factor),
+            "firepower": _firepower_payload(day_results, validation_rows, target_jpy, cap.loss_cap_jpy),
+            "bucket_contributions": _bucket_contributions(validation_rows, cap.loss_cap_jpy),
+            "oracle": oracle,
+            "missed_best_days": _missed_best_days(
+                trades=trades,
+                day_results=day_results,
+                max_loss_jpy=cap.loss_cap_jpy,
+                limit=12,
+            ),
             "blockers": list(blockers),
             "days": [asdict(day) for day in day_results],
         }
@@ -286,11 +302,40 @@ class AITestBotBacktester:
             f"- Profit factor: `{summary['profit_factor'] if summary['profit_factor'] is not None else 'n/a'}`",
             f"- Max drawdown: `{summary['max_drawdown_jpy']:.0f} JPY`",
             "",
+            "## Root Cause",
+            "",
+            f"- Best selected day: `{payload['firepower']['best_selected_day_jpy']:.0f} JPY`",
+            f"- Average selected day: `{summary['avg_managed_day_jpy']:.0f} JPY`",
+            f"- Average selected trade: `{payload['firepower']['avg_selected_trade_jpy']:.1f} JPY`",
+            f"- Required trades/day at observed expectancy: `{payload['firepower']['required_trades_per_day_at_observed_expectancy']}`",
+            f"- Oracle top-{payload['max_active_buckets']} target-hit days: `{payload['oracle']['top_n_target_hit_days']}`",
+            f"- Oracle all-positive target-hit days: `{payload['oracle']['all_positive_target_hit_days']}`",
+            f"- Selected/oracle capture: `{payload['oracle']['selected_vs_top_n_capture_pct']:.1f}%`",
+            "",
             "## Blockers",
             "",
         ]
         if payload["blockers"]:
             lines.extend(f"- {item}" for item in payload["blockers"])
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Bucket Contributions", ""])
+        if payload["bucket_contributions"]:
+            for item in payload["bucket_contributions"][:12]:
+                lines.append(
+                    f"- `{item['bucket']}` net=`{item['managed_net_jpy']:.0f}` raw=`{item['raw_net_jpy']:.0f}` "
+                    f"trades=`{item['trades']}` days=`{item['days']}` win_rate=`{item['win_rate_pct']:.1f}%` "
+                    f"worst=`{item['worst_trade_jpy']:.0f}` best=`{item['best_trade_jpy']:.0f}`"
+                )
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Missed Best Buckets", ""])
+        if payload["missed_best_days"]:
+            for item in payload["missed_best_days"]:
+                lines.append(
+                    f"- `{item['session_date']}` selected=`{item['selected_net_jpy']:.0f}` "
+                    f"best=`{item['best_bucket']}` best_net=`{item['best_bucket_net_jpy']:.0f}`"
+                )
         else:
             lines.append("- none")
         lines.extend(
@@ -462,6 +507,172 @@ def _summary_payload(
         "max_drawdown_jpy": _max_drawdown(tuple(day.managed_net_jpy for day in day_results)),
         "target_jpy": target_jpy,
     }
+
+
+def _firepower_payload(
+    day_results: tuple[TestBotDay, ...],
+    validation_rows: tuple[TestBotTrade, ...],
+    target_jpy: float,
+    max_loss_jpy: float,
+) -> dict[str, float | int | None]:
+    selected_trade_count = len(validation_rows)
+    selected_net = _round(sum(_capped_pl(row.pl_jpy, max_loss_jpy) for row in validation_rows))
+    avg_trade = _round(selected_net / selected_trade_count) if selected_trade_count else 0.0
+    best_day = max((day.managed_net_jpy for day in day_results), default=0.0)
+    avg_trades_per_day = _round(selected_trade_count / len(day_results)) if day_results else 0.0
+    required_trades = None
+    if avg_trade > 0:
+        required_trades = int((target_jpy + avg_trade - 0.000001) // avg_trade)
+    return {
+        "best_selected_day_jpy": best_day,
+        "best_selected_day_coverage_pct": _round((best_day / target_jpy) * 100.0) if target_jpy else 0.0,
+        "avg_selected_trade_jpy": avg_trade,
+        "avg_selected_trades_per_day": avg_trades_per_day,
+        "required_trades_per_day_at_observed_expectancy": required_trades,
+        "trade_frequency_multiple_required": _round(required_trades / avg_trades_per_day)
+        if required_trades is not None and avg_trades_per_day > 0
+        else None,
+    }
+
+
+def _bucket_contributions(
+    validation_rows: tuple[TestBotTrade, ...],
+    max_loss_jpy: float,
+) -> list[dict[str, float | int | str]]:
+    by_bucket: dict[TestBotBucket, dict[str, object]] = {}
+    for row in validation_rows:
+        item = by_bucket.setdefault(
+            row.bucket,
+            {
+                "bucket": row.bucket.label,
+                "trades": 0,
+                "wins": 0,
+                "managed_net_jpy": 0.0,
+                "raw_net_jpy": 0.0,
+                "days": set(),
+                "worst_trade_jpy": None,
+                "best_trade_jpy": None,
+            },
+        )
+        capped = _capped_pl(row.pl_jpy, max_loss_jpy)
+        item["trades"] = int(item["trades"]) + 1
+        item["wins"] = int(item["wins"]) + (1 if capped > 0 else 0)
+        item["managed_net_jpy"] = _round(float(item["managed_net_jpy"]) + capped)
+        item["raw_net_jpy"] = _round(float(item["raw_net_jpy"]) + row.pl_jpy)
+        days = item["days"]
+        if isinstance(days, set):
+            days.add(row.session_date)
+        worst = item["worst_trade_jpy"]
+        best = item["best_trade_jpy"]
+        item["worst_trade_jpy"] = row.pl_jpy if worst is None else min(float(worst), row.pl_jpy)
+        item["best_trade_jpy"] = row.pl_jpy if best is None else max(float(best), row.pl_jpy)
+    rows: list[dict[str, float | int | str]] = []
+    for item in by_bucket.values():
+        trades = int(item["trades"])
+        days = item["days"]
+        rows.append(
+            {
+                "bucket": str(item["bucket"]),
+                "trades": trades,
+                "days": len(days) if isinstance(days, set) else 0,
+                "win_rate_pct": _round((int(item["wins"]) / trades) * 100.0) if trades else 0.0,
+                "managed_net_jpy": _round(float(item["managed_net_jpy"])),
+                "raw_net_jpy": _round(float(item["raw_net_jpy"])),
+                "worst_trade_jpy": _round(float(item["worst_trade_jpy"] or 0.0)),
+                "best_trade_jpy": _round(float(item["best_trade_jpy"] or 0.0)),
+            }
+        )
+    return sorted(rows, key=lambda item: (float(item["managed_net_jpy"]), str(item["bucket"])), reverse=True)
+
+
+def _oracle_summary(
+    *,
+    trades: tuple[TestBotTrade, ...],
+    day_results: tuple[TestBotDay, ...],
+    target_jpy: float,
+    max_loss_jpy: float,
+    top_n: int,
+) -> dict[str, float | int | str | None]:
+    selected_by_day = {day.session_date: set(day.selected_buckets) for day in day_results}
+    selected_net_by_day = {day.session_date: day.managed_net_jpy for day in day_results}
+    top_n_hits = 0
+    all_positive_hits = 0
+    top_n_total = 0.0
+    all_positive_total = 0.0
+    best_top_n = 0.0
+    best_top_n_day: str | None = None
+    best_all_positive = 0.0
+    best_all_positive_day: str | None = None
+    selected_total = _round(sum(selected_net_by_day.values()))
+    for day in day_results:
+        bucket_net = _bucket_net_for_day(trades, day.session_date, max_loss_jpy)
+        top_n_net = _round(sum(value for _, value in sorted(bucket_net.items(), key=lambda item: item[1], reverse=True)[:top_n]))
+        all_positive_net = _round(sum(value for value in bucket_net.values() if value > 0))
+        top_n_total += top_n_net
+        all_positive_total += all_positive_net
+        if top_n_net >= target_jpy:
+            top_n_hits += 1
+        if all_positive_net >= target_jpy:
+            all_positive_hits += 1
+        if top_n_net > best_top_n:
+            best_top_n = top_n_net
+            best_top_n_day = day.session_date
+        if all_positive_net > best_all_positive:
+            best_all_positive = all_positive_net
+            best_all_positive_day = day.session_date
+    positive_top_total = max(top_n_total, 0.0)
+    return {
+        "top_n": top_n,
+        "top_n_target_hit_days": top_n_hits,
+        "all_positive_target_hit_days": all_positive_hits,
+        "top_n_total_net_jpy": _round(top_n_total),
+        "all_positive_total_net_jpy": _round(all_positive_total),
+        "best_top_n_day": best_top_n_day,
+        "best_top_n_day_jpy": _round(best_top_n),
+        "best_all_positive_day": best_all_positive_day,
+        "best_all_positive_day_jpy": _round(best_all_positive),
+        "selected_vs_top_n_capture_pct": _round((selected_total / positive_top_total) * 100.0) if positive_top_total > 0 else 0.0,
+        "validation_days": len(selected_by_day),
+    }
+
+
+def _missed_best_days(
+    *,
+    trades: tuple[TestBotTrade, ...],
+    day_results: tuple[TestBotDay, ...],
+    max_loss_jpy: float,
+    limit: int,
+) -> list[dict[str, float | str]]:
+    misses: list[dict[str, float | str]] = []
+    for day in day_results:
+        bucket_net = _bucket_net_for_day(trades, day.session_date, max_loss_jpy)
+        if not bucket_net:
+            continue
+        best_bucket, best_net = max(bucket_net.items(), key=lambda item: item[1])
+        selected = set(day.selected_buckets)
+        if best_net > 0 and best_bucket.label not in selected:
+            misses.append(
+                {
+                    "session_date": day.session_date,
+                    "selected_net_jpy": day.managed_net_jpy,
+                    "best_bucket": best_bucket.label,
+                    "best_bucket_net_jpy": _round(best_net),
+                }
+            )
+    return sorted(misses, key=lambda item: float(item["best_bucket_net_jpy"]), reverse=True)[:limit]
+
+
+def _bucket_net_for_day(
+    trades: tuple[TestBotTrade, ...],
+    session_date: str,
+    max_loss_jpy: float,
+) -> dict[TestBotBucket, float]:
+    bucket_net: dict[TestBotBucket, float] = {}
+    for row in trades:
+        if row.session_date != session_date:
+            continue
+        bucket_net[row.bucket] = _round(bucket_net.get(row.bucket, 0.0) + _capped_pl(row.pl_jpy, max_loss_jpy))
+    return bucket_net
 
 
 def _status(
