@@ -163,6 +163,12 @@ class LiveOrderGatewayTest(unittest.TestCase):
                 {issue["code"] for issue in second_result["risk_issues"]},
             )
 
+    def test_capacity_downsize_floors_units_instead_of_rounding_up(self) -> None:
+        scaled, issues = execution_module._scaled_units(4000, 0.28849)
+
+        self.assertEqual(scaled, 1153)
+        self.assertEqual(issues, [])
+
     def test_default_risk_cap_reads_daily_target_state_before_policy_literal(self) -> None:
         original_reader = execution_module._per_trade_risk_from_state
         execution_module._per_trade_risk_from_state = lambda: 100.0

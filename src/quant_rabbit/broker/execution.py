@@ -601,7 +601,7 @@ def _snapshot_pairs(payload: dict[str, Any], intent: OrderIntent) -> tuple[str, 
 def _scaled_units(units: int, size_multiple: float) -> tuple[int | None, list[RiskIssue]]:
     if not math.isfinite(size_multiple) or size_multiple <= 0:
         return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")]
-    scaled_abs = abs(int(round(units * size_multiple)))
+    scaled_abs = int(math.floor(abs(units) * size_multiple))
     if scaled_abs < 1:
         return None, [RiskIssue("SIZE_MULTIPLIER_TOO_SMALL", "scaled units would round to zero")]
     scaled = scaled_abs if units >= 0 else -scaled_abs
