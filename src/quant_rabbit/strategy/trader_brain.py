@@ -260,15 +260,20 @@ class TraderBrain:
         if loss_cap_jpy is None:
             blockers.append("trader loss cap missing for historical evidence scaling")
         else:
-            score += _clamp(pretrade_net / loss_cap_jpy, -25.0, 25.0)
-            score += _clamp(live_net / loss_cap_jpy, -30.0, 30.0)
+            pretrade_component = _clamp(pretrade_net / loss_cap_jpy, -25.0, 25.0)
+            live_component = _clamp(live_net / loss_cap_jpy, -30.0, 30.0)
+            if status != "LIVE_READY" or pretrade_component > 0:
+                score += pretrade_component
+            if status != "LIVE_READY" or live_component > 0:
+                score += live_component
         if pretrade_net > 0:
             rationale.append(f"positive pretrade evidence {pretrade_net:.0f} JPY")
         if live_net > 0:
             rationale.append(f"positive live evidence {live_net:.0f} JPY")
         if live_net < 0:
-            blockers.append(f"negative live execution history {live_net:.0f} JPY")
-            score -= 20.0
+            rationale.append(f"negative live execution history {live_net:.0f} JPY; current receipt is the authority")
+            if status != "LIVE_READY":
+                score -= 20.0
         if loss_cap_jpy is not None and live_worst is not None and live_worst <= -loss_cap_jpy:
             if live_worst <= -(loss_cap_jpy * HISTORICAL_LARGE_LOSS_CAP_MULTIPLE):
                 rationale.append(
@@ -276,7 +281,8 @@ class TraderBrain:
                 )
             else:
                 rationale.append(f"old worst loss repaired only by current sizing: {live_worst:.0f} JPY")
-            score -= 8.0
+            if status != "LIVE_READY":
+                score -= 8.0
 
         method_pressure = int((story.get("methods") or {}).get(method, 0))
         score += _clamp(method_pressure * 0.25, 0.0, 30.0)
@@ -286,7 +292,7 @@ class TraderBrain:
         examples = tuple(str(item) for item in story.get("examples", [])[:4])
         score += _method_theme_score(method, themes, rationale)
         score += _campaign_score(lane, rationale)
-        score += _narrative_risk_score(pair, direction, method, themes, examples, blockers, rationale)
+        score += _narrative_risk_score(pair, direction, method, themes, examples, blockers, rationale, status=status)
         score += _technical_consensus_score(
             intent=intent,
             method=method,
@@ -702,30 +708,39 @@ def _narrative_risk_score(
     examples: tuple[str, ...],
     blockers: list[str],
     rationale: list[str],
+    *,
+    status: str,
 ) -> float:
-    # AGENT_CONTRACT §6: discretionary narrative concerns size the lane down via
-    # score → size_multiple. They MUST NOT block the lane in prose. Per §3.5
+    # AGENT_CONTRACT §6: current discretionary narrative concerns size the lane
+    # down via score -> size_multiple. They MUST NOT block the lane in prose. Per §3.5
     # per_trade_risk_budget_jpy already shrinks the per-shot exposure; layering
     # an "intervention narrative" or "visual story rejected" gate on top is an
     # invented threshold not enumerated in §3.5/§9/§10/§11. Surface the concern
     # in rationale so the operator/GPT sees it, but let the lane stay tradable.
     text = " ".join(examples).upper()
     score = 0.0
+    is_live_ready = status == "LIVE_READY"
     if pair in JPY_CROSSES and direction == Side.LONG.value:
         intervention = int(themes.get("intervention") or 0)
         liquidity = int(themes.get("spread_liquidity") or 0)
         if intervention or "INTERVENTION" in text or "RATE CHECK" in text:
-            score -= 55.0
-            rationale.append("JPY-cross long under intervention/rate-check narrative — size multiple reduced")
+            score -= 90.0
+            rationale.append("JPY-cross long under intervention/rate-check narrative; size multiple reduced")
         if liquidity or "GOLDEN WEEK" in text:
-            score -= 20.0
+            score -= 25.0
             rationale.append("JPY liquidity theme requires smaller/fewer entries")
     if "WAIT" in text:
-        score -= 18.0
-        rationale.append("recent narrative contained WAIT language")
+        if is_live_ready:
+            rationale.append("stale narrative WAIT language ignored for live-ready receipt")
+        else:
+            score -= 18.0
+            rationale.append("recent narrative contained WAIT language")
     if "NO:" in text and method == TradeMethod.RANGE_ROTATION.value:
-        score -= 28.0
-        rationale.append("visual story rejected range rotation — size multiple reduced")
+        if is_live_ready:
+            rationale.append("stale visual rejection marker ignored for live-ready receipt")
+        else:
+            score -= 28.0
+            rationale.append("visual story rejected range rotation; size multiple reduced")
     if "TREND-BULL" in text and direction == Side.LONG.value:
         score += 10.0
     if "TREND-BEAR" in text and direction == Side.SHORT.value:
@@ -773,8 +788,11 @@ def _technical_consensus_score(
         score += 1.0
         rationale.append(f"some positive evidence count={positive_evidence_n}")
     else:
-        score -= 3.0
-        blockers.append("missing positive mined evidence on this pair/direction")
+        if status == "LIVE_READY":
+            rationale.append("missing positive mined evidence on this pair/direction; advisory only")
+        else:
+            score -= 3.0
+            rationale.append("missing positive mined evidence on this pair/direction; repair required before live-ready")
 
     if seat_orderable > 0 and seat_discovered > 0:
         capture_rate = seat_captured / seat_discovered
@@ -788,8 +806,13 @@ def _technical_consensus_score(
         elif capture_rate >= 0.10:
             score += 0.0
         else:
-            score -= 4.0
-            blockers.append(f"low capture rate={capture_rate:.0%} ({seat_captured}/{seat_discovered})")
+            if status == "LIVE_READY":
+                rationale.append(f"low capture rate={capture_rate:.0%} ({seat_captured}/{seat_discovered}); advisory only")
+            else:
+                score -= 4.0
+                rationale.append(
+                    f"low capture rate={capture_rate:.0%} ({seat_captured}/{seat_discovered}); repair required before live-ready"
+                )
     if positive_tail_jpy > 0:
         score += 2.0
     if positive_best_jpy > 0:
@@ -854,20 +877,26 @@ def _technical_consensus_score(
     if method_pressure <= 0 and not story.get("methods"):
         if status == "LIVE_READY" and support_ticks >= 2 and evidence_ticks >= 1:
             rationale.append("entry can still pass with strong statistical edge despite weak live story pressure")
+        elif status == "LIVE_READY":
+            rationale.append("live technical story lacks method pressure; advisory only")
         else:
             score -= 5.0
             blockers.append("live technical story lacks method pressure for this setup")
 
     if required_fix and "watch-only" in required_fix.lower():
-        score -= 2.0
-        blockers.append("strategy required_fix still mentions watch-only restrictions")
+        if status == "LIVE_READY":
+            rationale.append("strategy required_fix still mentions watch-only restrictions; advisory only")
+        else:
+            score -= 2.0
+            rationale.append("strategy required_fix still mentions watch-only restrictions; repair required before live-ready")
 
     if (
         loss_cap_jpy is not None
         and live_worst is not None
         and live_worst <= -(loss_cap_jpy * HISTORICAL_LARGE_LOSS_CAP_MULTIPLE)
     ):
-        score -= 2.0
+        if status != "LIVE_READY":
+            score -= 2.0
 
     if status == "LIVE_READY" and intent.get("order_type"):
         support_ratio = (support_ticks + 1) / 5.0
@@ -884,6 +913,7 @@ def _technical_consensus_score(
         rationale=rationale,
         blockers=blockers,
         support_ticks=support_ticks,
+        status=status,
     )
 
     return score
@@ -898,9 +928,13 @@ def _story_fusion_score(
     rationale: list[str],
     blockers: list[str],
     support_ticks: int,
+    status: str,
 ) -> float:
     delta = 0.0
     if not examples:
+        if status == "LIVE_READY":
+            rationale.append("story has no concrete technical/news/chart examples; advisory only")
+            return 0.0
         blockers.append("story has no concrete technical/news/chart examples")
         return -3.0
 
@@ -942,15 +976,22 @@ def _story_fusion_score(
             delta += 1.0
             rationale.append("news and chart-quality evidence agree on setup")
     else:
-        delta -= 1.0
-        blockers.append("story evidence lacks source diversity")
+        if status == "LIVE_READY":
+            rationale.append("story evidence lacks source diversity; advisory only")
+        else:
+            delta -= 1.0
+            blockers.append("story evidence lacks source diversity")
 
     conflict_hits = sum(1 for item in examples if "NO:" in item.upper())
     if conflict_hits >= 2:
-        delta -= 2.5
-        blockers.append("story explicitly contains mixed rejection markers")
+        if status == "LIVE_READY":
+            rationale.append("story explicitly contains mixed rejection markers; advisory only")
+        else:
+            delta -= 2.5
+            blockers.append("story explicitly contains mixed rejection markers")
     elif conflict_hits == 1:
-        delta -= 1.0
+        if status != "LIVE_READY":
+            delta -= 1.0
 
     if method_token and any(method_token in item.upper() for item in examples):
         delta += 2.0
@@ -1029,6 +1070,8 @@ def _discretionary_gate_check(
     live_net = float(strategy.get("live_net_jpy") or 0.0)
     if pretrade_net > 0 or live_net > 0 or strategy.get("receipt_promotion"):
         judgment.append("mined or repaired edge evidence is positive")
+    elif status == "LIVE_READY" and profile_status == "CANDIDATE":
+        judgment.append("past edge evidence is weak/negative, but the current live-ready receipt remains executable")
     else:
         blockers.append("no positive mined or repaired edge evidence")
 

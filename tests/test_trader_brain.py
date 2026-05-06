@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
-from quant_rabbit.strategy.trader_brain import ACTION_MONITOR_EXISTING, ACTION_NO_TRADE, ACTION_SEND_ENTRY, TraderBrain
+from quant_rabbit.strategy.trader_brain import (
+    ACTION_MONITOR_EXISTING,
+    ACTION_NO_TRADE,
+    ACTION_SEND_ENTRY,
+    TraderBrain,
+    _narrative_risk_score,
+)
 
 
 class TraderBrainTest(unittest.TestCase):
@@ -270,6 +276,57 @@ class TraderBrainTest(unittest.TestCase):
             self.assertNotIn("historical live worst loss is large", " ".join(eur.blockers))
             self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
 
+    def test_past_negative_history_cannot_veto_current_live_ready_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_negative_history_strategy(root),
+                market_story_profile_path=_thin_eur_story(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            eur = decision.scores[0]
+            self.assertEqual(eur.action, ACTION_SEND_ENTRY)
+            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            blocker_text = " ".join(eur.blockers)
+            self.assertNotIn("negative live execution history", blocker_text)
+            self.assertNotIn("missing positive mined evidence", blocker_text)
+            self.assertNotIn("low capture rate", blocker_text)
+            self.assertNotIn("no positive mined or repaired edge evidence", blocker_text)
+            self.assertIn("current receipt is the authority", " ".join(eur.rationale))
+            self.assertGreaterEqual(eur.size_multiple, 1.0)
+
+    def test_stale_story_markers_are_advisory_for_live_ready_receipts(self) -> None:
+        blockers: list[str] = []
+        rationale: list[str] = []
+
+        score = _narrative_risk_score(
+            "EUR_USD",
+            Side.LONG.value,
+            "RANGE_ROTATION",
+            {},
+            (
+                "news_digest: old WAIT note from prior review",
+                "quality_audit: NO: stale range rejection marker",
+            ),
+            blockers,
+            rationale,
+            status="LIVE_READY",
+        )
+
+        self.assertEqual(score, 0.0)
+        self.assertEqual(blockers, [])
+        rationale_text = " ".join(rationale)
+        self.assertIn("stale narrative WAIT language ignored", rationale_text)
+        self.assertIn("stale visual rejection marker ignored", rationale_text)
+
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
@@ -319,6 +376,25 @@ def _intents(root: Path) -> Path:
                         "LONG",
                         "TREND_CONTINUATION",
                     ),
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _eur_only_intents(root: Path) -> Path:
+    path = root / "eur_intents.json"
+    path.write_text(
+        json.dumps(
+            {
+                "results": [
+                    _result(
+                        "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                        "EUR_USD",
+                        "LONG",
+                        "TREND_CONTINUATION",
+                    )
                 ]
             }
         )
@@ -379,6 +455,20 @@ def _campaign(root: Path) -> Path:
             {
                 "lanes": [
                     _lane("failure_trader", "AUD_JPY", "LONG", "BREAKOUT_FAILURE"),
+                    _lane("trend_trader", "EUR_USD", "LONG", "TREND_CONTINUATION"),
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _eur_only_campaign(root: Path) -> Path:
+    path = root / "eur_campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
                     _lane("trend_trader", "EUR_USD", "LONG", "TREND_CONTINUATION"),
                 ]
             }
@@ -489,6 +579,37 @@ def _eur_strategy(root: Path) -> Path:
     return path
 
 
+def _negative_history_strategy(root: Path) -> Path:
+    path = root / "negative_history_strategy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "system_contract": {
+                    "loss_cap_jpy": 500.0,
+                    "loss_cap_source": "test current campaign cap",
+                },
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "pretrade_net_jpy": -3000,
+                        "live_net_jpy": -1500,
+                        "live_worst_jpy": -1200,
+                        "positive_evidence_n": 0,
+                        "positive_tail_jpy": 0,
+                        "positive_best_jpy": 0,
+                        "seat_discovered": 10,
+                        "seat_orderable": 10,
+                        "seat_captured": 0,
+                    }
+                ],
+            }
+        )
+    )
+    return path
+
+
 def _stories(root: Path) -> Path:
     path = root / "stories.json"
     path.write_text(
@@ -513,6 +634,25 @@ def _stories(root: Path) -> Path:
                             "quality_audit: EUR_USD trend-bull staircase continuation",
                         ],
                     },
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _thin_eur_story(root: Path) -> Path:
+    path = root / "thin_eur_story.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pair_profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "methods": {"TREND_CONTINUATION": 20},
+                        "themes": {"momentum": 2},
+                        "examples": ["quality_audit: EUR_USD trend-bull continuation"],
+                    }
                 ]
             }
         )
