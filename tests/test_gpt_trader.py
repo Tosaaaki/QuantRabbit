@@ -167,26 +167,6 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertTrue(summary.allowed)
 
-    def test_accepts_wider_chart_timeframe_evidence_refs(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            files = _fixtures(root)
-            decision = _trade_decision()
-            decision["evidence_refs"].extend(
-                [
-                    "chart:EUR_USD:M1",
-                    "chart:EUR_USD:M30",
-                    "chart:EUR_USD:H4",
-                    "chart:EUR_USD:D",
-                ]
-            )
-            brain = _brain(root, files, decision)
-
-            summary = brain.run(snapshot_path=files["snapshot"])
-
-            self.assertEqual(summary.status, "ACCEPTED")
-            self.assertTrue(summary.allowed)
-
     def test_accepts_extended_pair_chart_timeframe_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

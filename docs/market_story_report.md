@@ -1,8 +1,8 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-06T13:03:33.081115+00:00`
+- Generated at UTC: `2026-05-06T13:05:45.020426+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
-- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmpbldojcx8/stories.json`
+- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmp8leon1be/stories.json`
 - Story artifacts read: `17`
 - Narrative/chart lines mined: `1980`
 
