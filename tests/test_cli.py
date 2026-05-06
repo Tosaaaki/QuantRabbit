@@ -75,6 +75,35 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertIn("missing_prices.json", payload["error"])
 
+    def test_news_snapshot_no_fetch_writes_runtime_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "data" / "news_items.json"
+            digest = root / "logs" / "news_digest.md"
+            flow = root / "logs" / "news_flow_log.md"
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "news-snapshot",
+                        "--no-fetch",
+                        "--output",
+                        str(output),
+                        "--digest",
+                        str(digest),
+                        "--flow-log",
+                        str(flow),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["items"], 0)
+            self.assertTrue(output.exists())
+            self.assertTrue(digest.exists())
+            self.assertTrue(flow.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,6 +70,9 @@ from quant_rabbit.paths import (
     DEFAULT_COT_REPORT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPTION_SKEW_REPORT,
+    DEFAULT_NEWS_SNAPSHOT,
+    DEFAULT_NEWS_DIGEST,
+    DEFAULT_NEWS_FLOW_LOG,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS_ARG
@@ -150,6 +153,16 @@ def main(argv: list[str] | None = None) -> int:
     p_opt.add_argument("--tenors", default="1W,1M,3M")
     p_opt.add_argument("--output", type=Path, default=DEFAULT_OPTION_SKEW)
     p_opt.add_argument("--report", type=Path, default=DEFAULT_OPTION_SKEW_REPORT)
+
+    p_news = sub.add_parser("news-snapshot", help="Fetch public news feeds into ignored data/log artifacts.")
+    p_news.add_argument("--no-fetch", action="store_true", help="Skip network fetch and emit a missing-feed issue.")
+    p_news.add_argument("--lookback-hours", type=int, default=None)
+    p_news.add_argument("--max-items", type=int, default=None)
+    p_news.add_argument("--digest-items", type=int, default=None)
+    p_news.add_argument("--flow-entries", type=int, default=None)
+    p_news.add_argument("--output", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
+    p_news.add_argument("--digest", type=Path, default=DEFAULT_NEWS_DIGEST)
+    p_news.add_argument("--flow-log", type=Path, default=DEFAULT_NEWS_FLOW_LOG)
 
     p_mine = sub.add_parser("mine-strategy", help="Mine legacy evidence into a strategy profile.")
     p_mine.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
@@ -860,6 +873,44 @@ def main(argv: list[str] | None = None) -> int:
             "output_path": str(args.output), "report_path": str(args.report),
             "pairs": len(snap.pairs), "issues": list(snap.issues),
         }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "news-snapshot":
+        from quant_rabbit.analysis.news import (
+            DEFAULT_DIGEST_ITEMS,
+            DEFAULT_FLOW_ENTRIES,
+            DEFAULT_LOOKBACK_HOURS,
+            DEFAULT_MAX_ITEMS,
+            build_news_snapshot,
+            write_news_artifacts,
+        )
+
+        snap = build_news_snapshot(
+            lookback_hours=args.lookback_hours or DEFAULT_LOOKBACK_HOURS,
+            max_items=args.max_items or DEFAULT_MAX_ITEMS,
+            fetch=not args.no_fetch,
+        )
+        write_news_artifacts(
+            snap,
+            output_path=args.output,
+            digest_path=args.digest,
+            flow_log_path=args.flow_log,
+            digest_items=args.digest_items or DEFAULT_DIGEST_ITEMS,
+            flow_entries=args.flow_entries or DEFAULT_FLOW_ENTRIES,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(args.output),
+                    "digest_path": str(args.digest),
+                    "flow_log_path": str(args.flow_log),
+                    "items": len(snap.items),
+                    "issues": list(snap.issues),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     if args.command == "economic-calendar":
         from quant_rabbit.analysis.calendar import build_calendar_snapshot
