@@ -27,8 +27,8 @@
 
 1. Compute the daily campaign target as `day_start_balance * 10%`.
 2. Run simultaneous desks: trend continuation, range rotation, breakout/failure, event-risk, and position management.
-3. Let each desk propose, veto, or resize lanes from the same strategy and market-story evidence.
-4. Portfolio Director must publish NOW / BACKUP / RUNNER candidates or an explicit coverage gap.
+3. Let each desk and specialist emit advisory reviews from the same strategy and market-story evidence; they must not select lanes, resize risk, cancel orders, or grant live permission.
+4. Portfolio Director must publish NOW / BACKUP / RUNNER candidates or an explicit coverage gap through the single final trader receipt.
 5. A 10% campaign target never overrides the risk gateway; it only forces missing coverage to be named.
 6. `daily-target-state` records start equity, target JPY, realized/unrealized PnL, remaining target, open risk, and remaining risk budget.
 

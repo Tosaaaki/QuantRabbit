@@ -81,6 +81,7 @@
 {
   "action": "TRADE|WAIT|CANCEL_PENDING|PROTECT|TIGHTEN_SL|CLOSE|REQUEST_EVIDENCE",
   "selected_lane_id": "string|null",
+  "selected_lane_ids": ["string"],
   "confidence": "LOW|MEDIUM|HIGH",
   "thesis": "string",
   "method": "TREND_CONTINUATION|RANGE_ROTATION|BREAKOUT_FAILURE|EVENT_RISK|POSITION_MANAGEMENT",
@@ -90,6 +91,22 @@
   "rejected_alternatives": ["string"],
   "risk_notes": ["string"],
   "evidence_refs": ["string"],
+  "strategy_reviews": [
+    {"lane_id": "string", "method": "string", "verdict": "SUPPORTS|REJECTS|BLOCKED|WATCH", "summary": "string"}
+  ],
+  "specialist_reviews": [
+    {
+      "role": "macro_news|indicator|flow_levels|risk_audit|strategy|portfolio_context",
+      "lane_id": "string|null",
+      "method": "string|null",
+      "verdict": "SUPPORTS|REJECTS|BLOCKED|WATCH",
+      "summary": "string",
+      "cited_evidence_refs": ["string"],
+      "hard_gate_codes": ["string"],
+      "read_only": true,
+      "live_permission": false
+    }
+  ],
   "operator_summary": "string"
 }
 ```
@@ -163,6 +180,7 @@ flowchart TD
 - Known live-risk failure mode fixed: slow market-story/context refresh must not reuse an old broker snapshot for intent pricing; `autotrade-cycle` refreshes broker truth immediately before `IntentGenerator` so valid range/trend/failure lanes are not lost to blanket `STALE_QUOTE` blockers.
 - Known GPT-handoff failure mode fixed: the verifier packet must include the full default intent breadth, otherwise a deterministic range-rotation lane behind trend/failure alternatives can be rejected as an unknown lane even though it is `LIVE_READY`.
 - Known live-risk failure mode fixed: invalid pending-entry receipts, such as missing entry prices, must produce a `BLOCKED` gateway receipt instead of raising before the audit trail is written.
+- Known multi-reader failure mode fixed: specialist readers may attach processed observations, but verifier rejects any `specialist_reviews` that are not read-only, claim live permission, cite unknown evidence, mismatch lane/method identity, or carry execution-authority fields.
 - Known dry-run certification failure mode fixed: execution replay must price `MARKET` fills from the supplied quote path, not from a stale expected `entry` field that could falsely inflate target coverage.
 - Known position-protection failure mode fixed: USD-quoted positions with missing SL and missing `USD_JPY` conversion data route to exit review instead of crashing during capped stop repair.
 - USD-quoted pair risk must use the snapshot `USD_JPY` conversion quote; missing, stale, or abnormally wide conversion quotes block broker-truth risk validation.
