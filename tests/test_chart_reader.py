@@ -30,6 +30,7 @@ class ChartReaderTest(unittest.TestCase):
         chart = build_pair_chart(
             "USD_JPY",
             client=None,  # type: ignore[arg-type]
+            timeframes=tuple(candles_by_tf),
             candles_by_tf=candles_by_tf,
         )
         self.assertGreater(chart.long_score, chart.short_score)
@@ -45,6 +46,7 @@ class ChartReaderTest(unittest.TestCase):
         chart = build_pair_chart(
             "USD_JPY",
             client=None,  # type: ignore[arg-type]
+            timeframes=tuple(candles_by_tf),
             candles_by_tf=candles_by_tf,
         )
         self.assertGreater(chart.short_score, chart.long_score)

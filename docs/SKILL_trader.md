@@ -69,7 +69,7 @@ Before writing any decision, open and actually read every layer below. Skipping 
   - `target_trades_per_day` and `target_trades_per_day_source`. When ai-test-bot firepower is present, pace comes from `required_trades_per_day_at_observed_expectancy`; the policy value of 10 is only the no-evidence fallback.
   - `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day`.
   The per-trade figure is what flows into every intent's `metadata.max_loss_jpy`. Cite **which** cap your decision is bounded by; do not conflate them.
-- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators. Fields per timeframe:
+- `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime plus execution/setup/intraday/higher-timeframe indicators (`M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D`). Fields per timeframe:
   - **Trend**: EMA(12/20/50), Ichimoku, Supertrend (`supertrend_dir`), Parabolic SAR (`psar_dir`), Aroon (`aroon_osc_14`), Hull MA, KAMA, ALMA, linear regression slope/R²/channel (`linreg_*`).
   - **Momentum**: RSI, Stoch RSI, MACD, CCI, ROC, **Williams %R** (`williams_r_14`), **MFI** (`mfi_14`), Vortex (+/-).
   - **Volatility**: ATR pips, BB span, Keltner width, Donchian, **BB squeeze** (`bb_squeeze`), **Choppiness** (`choppiness_14`), realized vol.

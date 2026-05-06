@@ -2,7 +2,7 @@
 
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
 - History DB: `/Users/tossaki/App/QuantRabbit/data/legacy_history.db`
-- Imported at UTC: `2026-05-06T07:12:31.096175+00:00`
+- Imported at UTC: `2026-05-06T03:21:34.605710+00:00`
 
 ## Coverage
 

@@ -1,17 +1,21 @@
 # Position Management Report
 
-- Generated at UTC: `2026-05-06T11:43:48.356141+00:00`
-- Action: `NO_POSITION`
-- Positions: `0`
+- Generated at UTC: `2026-05-05T04:05:36.619007+00:00`
+- Action: `HOLD_PROTECTED`
+- Positions: `1`
 
 ## Positions
 
-- none
+- `470188` `EUR_USD SHORT` units=`13000` action=`HOLD_PROTECTED` upl=`1979.1`
+  - scores: same=`185.56` opposite=`210.19`
+  - protection plan: sl=`None` tp=`None`
+  - reason: TP/SL present and current thesis is not contradicted enough to force exit
+  - reason: remaining risk about 0 JPY
+  - reason: remaining reward about 5900 JPY
 
 ## Management Contract
 
 - Existing positions are managed before any new entry is considered.
-- Operator-managed manual/tagless positions are observed in broker truth but ignored by this gateway.
 - Missing TP/SL is a repair requirement, not a passive monitor state.
 - Profit protection is required once open profit is large relative to remaining stop risk.
 - A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.

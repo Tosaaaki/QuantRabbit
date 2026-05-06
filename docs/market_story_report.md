@@ -1,8 +1,8 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-06T12:55:11.735941+00:00`
+- Generated at UTC: `2026-05-06T05:40:40.641721+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
-- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmpg2fwcgye/stories.json`
+- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmp20q4kdls/stories.json`
 - Story artifacts read: `17`
 - Narrative/chart lines mined: `1980`
 
@@ -75,11 +75,6 @@
   - news_digest: EUR/JPY / GBP/JPY / AUD/JPY**: All carry intervention risk. JPY crosses can gap violently on rate check → actual intervention. Size down on all JPY shorts.
   - quality_audit: | GBP_JPY | TREND-BULL | TREND-BEAR | TREND-BEAR | waterfall lower followed by a shallow shelf and a cautious rebound; the right edge is still below the old breakdown zone = dead-cat repair | NO: recovery leg, not a clean box |
   - quality_audit: No range trades: the live scanner rails on `EUR_USD`, `GBP_JPY`, `EUR_JPY`, and `AUD_JPY` are not visually confirmed as stable two-way boxes. The direct-USD charts are breakout-continuation structures, and the JPY crosses are repair-first,
-- `EUR_GBP` methods: BREAKOUT_FAILURE=2, RANGE_ROTATION=1; themes: breakout_failure=2, range_rail=1
-  - daily_state: AUD_USD: SQUEEZE | weaker rebound than EUR/GBP and already stalling. NOW none. RELOAD short only on 0.71535/45 failure. OTHER SIDE long only on 0.71395/71405 defense. -> Edge C / Allocation C / SKIP.
-  - daily_state: Macro chain: USD offered intraday -> supports EUR/GBP/AUD vs USD but does not justify bad prices | EUR soft data caps upside -> favors tactical box | GBP strongest -> long-only on pullback | JPY selectively bid -> USD_JPY sell-cap better th
-- `GBP_AUD` methods: none; themes: intervention=1
-  - daily_state: vs last session: EUR stayed weak, JPY stayed selective, GBP/AUD stayed compressed, the EUR_JPY short receipt has already closed, and EUR_USD remains trigger-only.
 
 ## Method Switching Contract
 

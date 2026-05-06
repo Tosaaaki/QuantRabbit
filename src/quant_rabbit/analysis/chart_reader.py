@@ -1,6 +1,7 @@
 """Pair-level chart view that lets the trader rank pairs by edge.
 
-For each pair, fetch candles at M5/M15/H1, run the indicator stack, and emit:
+For each pair, fetch candles across execution, setup, intraday, and higher
+timeframes, run the indicator stack, and emit:
 
 - A multi-timeframe regime tag (TREND_UP / TREND_DOWN / RANGE / IMPULSE / FAILURE_RISK)
 - A bias score per direction (long/short) from indicator agreement
@@ -32,7 +33,13 @@ from quant_rabbit.analysis.sessions import SessionContext, build_session_context
 from quant_rabbit.analysis.smc import SMCReading, analyze_smc
 
 
-DEFAULT_TIMEFRAMES: tuple[str, ...] = ("M5", "M15", "H1")
+# Default trader chart stack. These are roles, not equal votes:
+#
+# - M1: execution microstructure / last-minute confirmation.
+# - M5/M15: main setup and operating chart.
+# - M30/H1: intraday bias and structure.
+# - H4/D: higher-timeframe context and "are we fighting the tape?" audit.
+DEFAULT_TIMEFRAMES: tuple[str, ...] = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
 
 
 @dataclass(frozen=True)
