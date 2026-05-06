@@ -38,6 +38,27 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<--use-gpt-trader>", payload)
             self.assertIn("<--reuse-market-artifacts>", payload)
 
+    def test_env_file_live_enabled_allows_live_send_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            env.pop("QR_LIVE_ENABLED", None)
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertIn("QR_LIVE_ENABLED=1\n", payload)
+            self.assertNotIn("forcing dry-run mode", result.stderr)
+
     def test_existing_live_lock_blocks_overlapping_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -78,16 +99,17 @@ class LiveWrapperTest(unittest.TestCase):
                 _restore_env("QR_AUTOTRADE_LOCK_HELD", original_lock_held)
 
 
-def _wrapper_env(root: Path, capture: Path) -> dict[str, str]:
+def _wrapper_env(root: Path, capture: Path, *, live_enabled: str | None = None) -> dict[str, str]:
     env_file = root / "oanda.env"
+    lines = [
+        "QR_OANDA_ACCOUNT_ID=acct-test",
+        "QR_OANDA_TOKEN=token-test",
+        "QR_OANDA_BASE_URL=https://example.test",
+    ]
+    if live_enabled is not None:
+        lines.append(f"QR_LIVE_ENABLED={live_enabled}")
     env_file.write_text(
-        "\n".join(
-            [
-                "QR_OANDA_ACCOUNT_ID=acct-test",
-                "QR_OANDA_TOKEN=token-test",
-                "QR_OANDA_BASE_URL=https://example.test",
-            ]
-        )
+        "\n".join(lines)
         + "\n"
     )
     fake_bin = root / "bin"

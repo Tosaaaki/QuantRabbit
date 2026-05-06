@@ -10,6 +10,12 @@ See `ARCHIVE_POINTER.md` for the legacy snapshot location and `SYSTEM_REBUILD_CH
 
 See `docs/COMPLETION_DESIGN.md` for the completion architecture, GPT trader requirements, daily 10% campaign gates, and roadmap.
 
+## Runtime Branching
+
+`main` is the stable integration branch. The active trader automation runs from `/Users/tossaki/App/QuantRabbit-live` on `codex/live-trader-runtime`, which mirrors `main` for broker reads, receipts, and gateway execution. Development happens in `/Users/tossaki/App/QuantRabbit` or another worktree.
+
+Use `scripts/sync-live-runtime.sh` to promote committed code: source branch -> `main` -> `codex/live-trader-runtime`, fast-forward only. The live runner also calls `scripts/sync-live-runtime.sh --live-only --skip-tests` before each cycle, and `scripts/install-live-runtime-hooks.sh` installs a post-commit hook so development commits are automatically tested and promoted.
+
 ## Local Credentials
 
 OANDA credentials are stored in `.env.local` at the repository root as `QR_OANDA_ACCOUNT_ID`, `QR_OANDA_TOKEN`, and `QR_OANDA_BASE_URL`. The client loads this file automatically when process environment variables are absent. Do not print the secret values; use `QR_OANDA_ENV_FILE=/path/to/file` to override the lookup in tests or alternate environments.

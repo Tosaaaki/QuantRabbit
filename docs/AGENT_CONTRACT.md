@@ -15,6 +15,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Codex auto-load stub | `AGENTS.md` |
 | Trader runtime playbook (one cycle) | `docs/SKILL_trader.md` |
 | Live send wrapper | `scripts/run-autotrade-live.sh` |
+| Live runtime sync | `scripts/sync-live-runtime.sh` |
 | Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Legacy archive root | `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` |
@@ -37,6 +38,8 @@ Rules:
 - **Every cycle reads the same `docs/SKILL_trader.md`.** Changes there affect every subsequent cycle whichever model runs.
 - **No VM deployment path.** QuantRabbit production operation is the local scheduled-task/workspace flow. Do not use VM deploy scripts, SSH deploys, or cloud instance restarts for this project unless the operator explicitly changes the infrastructure model in this contract first.
 - **Runtime/development worktrees are separated.** Active trader scheduled tasks must use `/Users/tossaki/App/QuantRabbit-live`, a clean committed worktree dedicated to broker reads, receipts, and gateway execution. Development and strategy improvement may happen in `/Users/tossaki/App/QuantRabbit` or another worktree, but a dirty development tree must never be the live trader `cwd`.
+- **Main is the stable integration branch.** Development commits are promoted by `scripts/sync-live-runtime.sh`: source branch → `main` (fast-forward only) → `codex/live-trader-runtime` (fast-forward only). Do not commit directly in `/Users/tossaki/App/QuantRabbit-live`; that branch mirrors `main` for runtime. The live wrapper runs `scripts/sync-live-runtime.sh --live-only --skip-tests` before each gateway cycle so a promoted `main` cannot be forgotten.
+- **Promotion is automated and guarded.** The development post-commit hook installed by `scripts/install-live-runtime-hooks.sh` runs the sync script after each commit. Promotion is blocked by source/config/data/decision dirt, non-fast-forward history, failing tests, missing live worktree, or a scheduled trader automation that does not point at `/Users/tossaki/App/QuantRabbit-live`. Report-only `docs/*_report.md` drift may be cleared automatically in the live worktree because the next trader cycle overwrites latest reports.
 - **Precheck before report writes.** Concurrency and clean-source checks must run before any command that writes tracked reports under `docs/*_report.md`. Dirty source/config/data/decision files block the cycle. Report-only tracked diffs under `docs/*_report.md` from the immediately previous trader cycle are runtime drift and do not block a scheduled run; the next cycle may overwrite latest reports. A stopped precheck must not create new diffs; otherwise the next scheduled cycle will self-block before it reaches the market read.
 - **Handoff discipline.** When the active scheduled task changes, the next cycle must (1) refresh `broker-snapshot`, (2) read the most recent `data/codex_trader_decision_response.json` (the filename is kept for compatibility, not as an attribution), (3) inherit any open trader-owned positions and pending orders, (4) not cancel another cycle's pending orders without an explicit reason recorded in the next decision receipt. When a scheduled trader has already generated `data/broker_snapshot.json` and `data/order_intents.json` before writing the decision receipt, the gateway cycle must use `autotrade-cycle --reuse-market-artifacts` so GPT verification sees the same evidence packet the decision cited; `LiveOrderGateway` still fetches fresh broker truth immediately before staging or sending.
 
@@ -146,7 +149,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Portfolio Director records which desk wins and why when trader desks disagree.
 - Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but only the final trader receipt may select a lane or `selected_lane_ids` basket, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
 - `ai-attack-advice` is also read-only. It may rank current `LIVE_READY` lanes and expose advisory parameter surfaces to Codex automation, but it cannot grant live permission, raise risk budgets, stage orders, or create a second trader loop.
-- When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane. Protected trader-owned exposure is not by itself a no-trade gate; additional entries are still decided by `gpt-trader-decision` and validated by `LiveOrderGateway` basket / portfolio checks. A TRADE using an advised lane must cite both `attack:advice` and `attack:lane:<lane_id>`.
+- When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane. Protected trader-owned exposure is not by itself a no-trade gate; additional entries are still decided by `gpt-trader-decision` and validated by `LiveOrderGateway` basket / portfolio checks. A TRADE using advised lanes must cite both `attack:advice` and `attack:lane:<lane_id>`. The first tradeable lane in `recommended_now_lane_ids` is the dynamic missed-edge repair priority for the cycle; the selected basket must include it before lower-ranked advice may be used. If that first lane is `EUR_USD` `SHORT`, it is the primary repair target unless a named deterministic gate blocks it after the advice packet was built.
 - Strategy-review identity is `lane_id` plus `method`, not a loose desk alias. A review for `TREND_CONTINUATION` cannot authorize a `RANGE_ROTATION` or `BREAKOUT_FAILURE` lane.
 
 ---
@@ -313,6 +316,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.js
 PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
 
 # LIVE (gated)
+scripts/sync-live-runtime.sh
 ./scripts/run-autotrade-live.sh \
     --reuse-market-artifacts \
     --use-gpt-trader \

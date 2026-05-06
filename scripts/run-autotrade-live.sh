@@ -5,9 +5,36 @@ readonly ROOT_DIR="${QR_TRADER_ROOT_DIR:-/Users/tossaki/App/QuantRabbit-live}"
 cd "$ROOT_DIR"
 
 export PYTHONPATH="src"
-export QR_LIVE_ENABLED="${QR_LIVE_ENABLED:-0}"
 export QR_OANDA_ENV_FILE="${QR_OANDA_ENV_FILE:-.env.local}"
+load_live_enabled_from_env_file() {
+  if [[ -n "${QR_LIVE_ENABLED:-}" || ! -f "$QR_OANDA_ENV_FILE" ]]; then
+    return 0
+  fi
+
+  local line value
+  line="$(grep -E "^[[:space:]]*(export[[:space:]]+)?QR_LIVE_ENABLED[[:space:]]*=" "$QR_OANDA_ENV_FILE" | tail -n 1 || true)"
+  if [[ -z "$line" ]]; then
+    return 0
+  fi
+
+  value="${line#*=}"
+  value="${value%%#*}"
+  value="$(printf '%s' "$value" | tr -d "[:space:]\"'")"
+  case "$value" in
+    0|1)
+      export QR_LIVE_ENABLED="$value"
+      ;;
+    *)
+      echo "[run-autotrade-live] invalid QR_LIVE_ENABLED in ${QR_OANDA_ENV_FILE}; expected 0 or 1." >&2
+      exit 2
+      ;;
+  esac
+}
+
+load_live_enabled_from_env_file
+export QR_LIVE_ENABLED="${QR_LIVE_ENABLED:-0}"
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
+readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"
 
 acquire_lock() {
   if mkdir "$QR_AUTOTRADE_LOCK_DIR" 2>/dev/null; then
@@ -40,6 +67,10 @@ acquire_lock() {
 }
 
 acquire_lock
+
+if [[ "$QR_LIVE_SYNC_ENABLED" == "1" && -x "${ROOT_DIR}/scripts/sync-live-runtime.sh" ]]; then
+  "${ROOT_DIR}/scripts/sync-live-runtime.sh" --live-only --skip-tests
+fi
 
 if [[ ! -f "$QR_OANDA_ENV_FILE" ]]; then
   echo "[run-autotrade-live] missing OANDA env file: $QR_OANDA_ENV_FILE" >&2
