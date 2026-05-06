@@ -60,6 +60,8 @@ class LaneScore:
     method: str
     order_type: str
     entry: float | None
+    tp: float | None
+    sl: float | None
     status: str
     score: float
     action: str
@@ -233,6 +235,8 @@ class TraderBrain:
         method = str((intent.get("market_context") or {}).get("method") or "")
         order_type = str(intent.get("order_type") or "")
         entry = _optional_float(intent.get("entry"))
+        tp = _optional_float(intent.get("tp"))
+        sl = _optional_float(intent.get("sl"))
         status = str(result.get("status") or "")
         risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
         spread_pips = _optional_float(risk_metrics.get("spread_pips"))
@@ -350,6 +354,8 @@ class TraderBrain:
             method=method,
             order_type=order_type,
             entry=entry,
+            tp=tp,
+            sl=sl,
             status=status,
             score=adjusted_score,
             size_multiple=size_multiple,
@@ -688,7 +694,22 @@ def _keeps_pending_order(order: BrokerOrder, score: LaneScore) -> bool:
         return False
     if score.action != ACTION_SEND_ENTRY and not _blocked_only_by_existing_pending(score):
         return False
-    return not _entry_drift_exceeds_current_spread(order.pair or "", order.price, score.entry, score.spread_pips)
+    pair = order.pair or ""
+    return not (
+        _entry_drift_exceeds_current_spread(pair, order.price, score.entry, score.spread_pips)
+        or _entry_drift_exceeds_current_spread(
+            pair,
+            _raw_dependent_price(order.raw, "takeProfitOnFill"),
+            score.tp,
+            score.spread_pips,
+        )
+        or _entry_drift_exceeds_current_spread(
+            pair,
+            _raw_dependent_price(order.raw, "stopLossOnFill"),
+            score.sl,
+            score.spread_pips,
+        )
+    )
 
 
 def _blocked_only_by_existing_pending(score: LaneScore) -> bool:
@@ -714,6 +735,15 @@ def _entry_drift_exceeds_current_spread(
     # reprices the same setup by a few ticks. The replacement threshold is tied to
     # current spread, so it expands in thin liquidity and tightens in normal tape.
     return _entry_drift_pips(pair, order_price, lane_entry) > spread_pips * PENDING_ENTRY_REPLACE_SPREAD_MULT
+
+
+def _raw_dependent_price(raw: dict[str, Any], key: str) -> float | None:
+    if not isinstance(raw, dict):
+        return None
+    nested = raw.get(key)
+    if not isinstance(nested, dict):
+        return None
+    return _optional_float(nested.get("price"))
 
 
 def _method_theme_score(method: str, themes: dict[str, Any], rationale: list[str]) -> float:

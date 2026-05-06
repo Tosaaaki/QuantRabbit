@@ -178,6 +178,41 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(decision.pending_cancel_order_ids, ("far-stop",))
 
+    def test_cancels_pending_when_tp_or_sl_geometry_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_mixed_entry_type_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="stale-limit-sl",
+                        pair="EUR_USD",
+                        order_type="LIMIT",
+                        price=1.17120,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "takeProfitOnFill": {"price": "1.17360"},
+                            "stopLossOnFill": {"price": "1.16800"},
+                        },
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ("stale-limit-sl",))
+
     def test_protected_trader_position_can_still_select_portfolio_add(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
