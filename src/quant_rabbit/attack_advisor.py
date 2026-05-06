@@ -56,6 +56,9 @@ class AttackLaneAdvice:
     archive_condition_avg_jpy: float | None
     archive_condition_trials: int
     archive_condition_key: str | None
+    archive_condition_validation_outcomes: int
+    archive_condition_validation_actual_net_jpy: float | None
+    archive_condition_validation_hit_rate_pct: float | None
     rationale: tuple[str, ...]
     blockers: tuple[str, ...] = ()
 
@@ -110,6 +113,7 @@ class AttackAdvisor:
         edge_index = _edge_index(ai_backtest or {})
         outcome_index = _outcome_index(outcome_mart or {})
         condition_index = _condition_index(outcome_mart or {})
+        condition_validation_index = _condition_validation_index(outcome_mart or {})
         intent_session_bucket = _session_bucket_from_timestamp(intents.get("generated_at_utc"))
         remaining_target = _positive_float(target.get("remaining_target_jpy"))
         remaining_risk = _positive_float(target.get("remaining_risk_budget_jpy"))
@@ -119,6 +123,7 @@ class AttackAdvisor:
                 edge_index=edge_index,
                 outcome_index=outcome_index,
                 condition_index=condition_index,
+                condition_validation_index=condition_validation_index,
                 intent_session_bucket=intent_session_bucket,
                 remaining_target_jpy=remaining_target,
             )
@@ -234,6 +239,7 @@ class AttackAdvisor:
                     f"hist_edge=`{lane['historical_edge_jpy']}` "
                     f"condition=`{lane['archive_condition_key']}` "
                     f"condition_edge=`{lane['archive_condition_edge_jpy']}` "
+                    f"condition_validated_net=`{lane['archive_condition_validation_actual_net_jpy']}` "
                     f"method_edge=`{lane['archive_method_edge_jpy']}`"
                 )
         else:
@@ -273,6 +279,7 @@ def _attack_lane(
     edge_index: dict[tuple[str, str], dict[str, Any]],
     outcome_index: dict[tuple[str, str, str], dict[str, Any]],
     condition_index: dict[tuple[str, str, str, str], dict[str, Any]],
+    condition_validation_index: dict[tuple[str, str], dict[str, Any]],
     intent_session_bucket: str,
     remaining_target_jpy: float | None,
 ) -> AttackLaneAdvice:
@@ -324,6 +331,18 @@ def _attack_lane(
     condition_avg_jpy = _optional_float(condition_edge.get("avg_jpy")) if condition_edge else None
     condition_trials = int(condition_edge.get("outcome_n") or 0) if condition_edge else 0
     condition_key = str(condition_edge.get("key") or "") if condition_edge else None
+    condition_validation = _condition_validation_for_edge(
+        condition_validation_index,
+        condition_key=condition_key,
+        condition_net_jpy=condition_net_jpy,
+    )
+    condition_validation_outcomes = int(condition_validation.get("outcomes") or 0) if condition_validation else 0
+    condition_validation_actual_net_jpy = (
+        _optional_float(condition_validation.get("actual_net_jpy")) if condition_validation else None
+    )
+    condition_validation_hit_rate_pct = (
+        _optional_float(condition_validation.get("directional_hit_rate_pct")) if condition_validation else None
+    )
     rationale: list[str] = []
     score = 0.0
     if reward is not None:
@@ -343,11 +362,25 @@ def _attack_lane(
         rationale.append("negative AI-test-bot pair/direction edge")
     condition_is_actionable = condition_trials >= ADVISORY_OUTCOME_MART_MIN_TRIALS
     if condition_net_jpy is not None and condition_is_actionable and condition_net_jpy > 0:
-        score += ADVISORY_OUTCOME_MART_EDGE_SCORE
-        rationale.append("positive archive condition edge")
+        if (
+            condition_validation_outcomes >= ADVISORY_OUTCOME_MART_MIN_TRIALS
+            and condition_validation_actual_net_jpy is not None
+            and condition_validation_actual_net_jpy <= 0
+        ):
+            rationale.append("positive archive condition edge failed walk-forward validation")
+        else:
+            score += ADVISORY_OUTCOME_MART_EDGE_SCORE
+            rationale.append("positive archive condition edge")
     elif condition_net_jpy is not None and condition_is_actionable and condition_net_jpy < 0:
         score -= ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY
-        rationale.append("negative archive condition edge")
+        if (
+            condition_validation_outcomes >= ADVISORY_OUTCOME_MART_MIN_TRIALS
+            and condition_validation_actual_net_jpy is not None
+            and condition_validation_actual_net_jpy < 0
+        ):
+            rationale.append("negative archive condition edge validated walk-forward")
+        else:
+            rationale.append("negative archive condition edge")
     elif condition_net_jpy is not None and not condition_is_actionable:
         rationale.append("archive condition edge below sample floor")
     if order_type == "MARKET":
@@ -375,6 +408,13 @@ def _attack_lane(
         archive_condition_avg_jpy=_round(condition_avg_jpy) if condition_avg_jpy is not None else None,
         archive_condition_trials=condition_trials,
         archive_condition_key=condition_key,
+        archive_condition_validation_outcomes=condition_validation_outcomes,
+        archive_condition_validation_actual_net_jpy=_round(condition_validation_actual_net_jpy)
+        if condition_validation_actual_net_jpy is not None
+        else None,
+        archive_condition_validation_hit_rate_pct=_round(condition_validation_hit_rate_pct)
+        if condition_validation_hit_rate_pct is not None
+        else None,
         rationale=tuple(rationale),
         blockers=tuple(blockers),
     )
@@ -456,7 +496,9 @@ def _outcome_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[s
 
 def _condition_index(payload: dict[str, Any]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
     index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
-    for item in payload.get("condition_edges", []) or []:
+    items = list(payload.get("condition_edges", []) or [])
+    items.extend(payload.get("condition_rollups", []) or [])
+    for item in items:
         if not isinstance(item, dict):
             continue
         method = _condition_token(item.get("method"))
@@ -467,6 +509,31 @@ def _condition_index(payload: dict[str, Any]) -> dict[tuple[str, str, str, str],
             continue
         index[(method, order_type or "UNSPECIFIED", session or "UNSPECIFIED", regime or "UNSPECIFIED")] = item
     return index
+
+
+def _condition_validation_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    index: dict[tuple[str, str], dict[str, Any]] = {}
+    validation = payload.get("condition_validation") if isinstance(payload.get("condition_validation"), dict) else {}
+    for item in validation.get("matched_edges", []) or []:
+        if not isinstance(item, dict):
+            continue
+        key = str(item.get("key") or "")
+        predicted_edge = str(item.get("predicted_edge") or "")
+        if key and predicted_edge:
+            index[(key, predicted_edge)] = item
+    return index
+
+
+def _condition_validation_for_edge(
+    index: dict[tuple[str, str], dict[str, Any]],
+    *,
+    condition_key: str | None,
+    condition_net_jpy: float | None,
+) -> dict[str, Any]:
+    if not condition_key or condition_net_jpy is None or condition_net_jpy == 0:
+        return {}
+    predicted_edge = "POSITIVE" if condition_net_jpy > 0 else "NEGATIVE"
+    return index.get((condition_key, predicted_edge), {})
 
 
 def _best_outcome_edge(
@@ -496,6 +563,13 @@ def _best_condition_edge(
     regime_key = _regime_condition_token(regime) or "UNSPECIFIED"
     for key in (
         (method_key, order_key, session_key, regime_key),
+        (method_key, order_key, session_key, "ALL"),
+        (method_key, order_key, "ALL", regime_key),
+        (method_key, order_key, "ALL", "ALL"),
+        (method_key, "ALL", session_key, regime_key),
+        (method_key, "ALL", session_key, "ALL"),
+        (method_key, "ALL", "ALL", regime_key),
+        (method_key, "ALL", "ALL", "ALL"),
         (method_key, order_key, session_key, "UNSPECIFIED"),
         (method_key, order_key, "UNSPECIFIED", regime_key),
         (method_key, order_key, "UNSPECIFIED", "UNSPECIFIED"),

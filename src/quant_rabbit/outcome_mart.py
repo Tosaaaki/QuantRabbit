@@ -26,6 +26,14 @@ NEGATIVE_TAIL_PERCENTILE = 0.25
 REPORT_ROW_LIMIT = 16
 REPORT_MIN_CONDITION_OUTCOMES = 5
 
+# Offline validation sample size only. This is the minimum number of prior
+# comparable outcomes before the report describes whether a historical
+# condition edge would have pointed in the right direction; it is not a live
+# trading gate and must not block or authorize a lane.
+VALIDATION_MIN_PRIOR_OUTCOMES = 5
+
+_UTC = timezone.utc
+
 
 @dataclass(frozen=True)
 class OutcomeMartSummary:
@@ -36,6 +44,9 @@ class OutcomeMartSummary:
     execution_ledger_outcomes: int
     story_observations: int
     condition_edges: int
+    condition_rollups: int
+    validated_condition_outcomes: int
+    condition_directional_hit_rate_pct: float | None
     method_edges: int
     setup_buckets: int
 
@@ -50,6 +61,7 @@ class OutcomeRow:
     session_bucket: str
     regime: str
     pl_jpy: float
+    observed_at_utc: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +135,55 @@ class _Bucket:
         }
 
 
+@dataclass
+class _ValidationBucket:
+    values: list[float] = field(default_factory=list)
+
+    @property
+    def outcome_n(self) -> int:
+        return len(self.values)
+
+    @property
+    def net_jpy(self) -> float:
+        return sum(self.values)
+
+    def add_outcome(self, value: float) -> None:
+        self.values.append(value)
+
+
+@dataclass
+class _ValidationMatchStats:
+    key: tuple[str, str, str, str]
+    predicted_sign: int
+    values: list[float] = field(default_factory=list)
+    hits: int = 0
+
+    def add_match(self, value: float) -> None:
+        actual_sign = 1 if value > 0 else -1
+        if actual_sign == self.predicted_sign:
+            self.hits += 1
+        self.values.append(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        wins = [value for value in self.values if value > 0]
+        outcome_n = len(self.values)
+        method, order_type, session_bucket, regime = self.key
+        return {
+            "key": ":".join(("ALL", "ALL", method, order_type, session_bucket, regime)),
+            "method": method,
+            "order_type": order_type,
+            "session_bucket": session_bucket,
+            "regime": regime,
+            "predicted_edge": "POSITIVE" if self.predicted_sign > 0 else "NEGATIVE",
+            "outcomes": outcome_n,
+            "directional_hit_outcomes": self.hits,
+            "directional_hit_rate_pct": _round((self.hits / outcome_n) * 100.0) if outcome_n else None,
+            "actual_net_jpy": _round(sum(self.values)) if self.values else 0.0,
+            "actual_win_rate_pct": _round((len(wins) / outcome_n) * 100.0) if outcome_n else None,
+            "match_scope": "rollup" if "ALL" in self.key else "exact",
+        }
+
+
 class OutcomeMartBuilder:
     """Build a read-only outcome mart from imported archive and execution truth.
 
@@ -155,6 +216,7 @@ class OutcomeMartBuilder:
         method_edges: dict[tuple[str, str, str], _Bucket] = {}
         pair_edges: dict[tuple[str, str], _Bucket] = {}
         condition_edges: dict[tuple[str, str, str, str], _Bucket] = {}
+        condition_rollups: dict[tuple[str, str, str, str], _Bucket] = {}
         setup_buckets: dict[tuple[str, str, str, str, str, str], _Bucket] = {}
 
         def method_bucket(pair: str, direction: str, method: str) -> _Bucket:
@@ -182,6 +244,19 @@ class OutcomeMartBuilder:
                 )
             return condition_edges[key]
 
+        def condition_rollup_bucket(method: str, order_type: str, session_bucket: str, regime: str) -> _Bucket:
+            key = (method, order_type, session_bucket, regime)
+            if key not in condition_rollups:
+                condition_rollups[key] = _Bucket(
+                    pair="ALL",
+                    direction="ALL",
+                    method=method,
+                    order_type=order_type,
+                    session_bucket=session_bucket,
+                    regime=regime,
+                )
+            return condition_rollups[key]
+
         def setup_bucket(item: OutcomeRow | StoryObservation) -> _Bucket:
             key = (item.pair, item.direction, item.method, item.order_type, item.session_bucket, item.regime)
             if key not in setup_buckets:
@@ -197,17 +272,22 @@ class OutcomeMartBuilder:
 
         for row in (*archive_outcomes, *execution_outcomes):
             condition_bucket(row).add_outcome(row.pl_jpy, source=row.source)
+            for key in _condition_rollup_keys(row):
+                condition_rollup_bucket(*key).add_outcome(row.pl_jpy, source=row.source)
             method_bucket(row.pair, row.direction, row.method).add_outcome(row.pl_jpy, source=row.source)
             pair_bucket(row.pair, row.direction).add_outcome(row.pl_jpy, source=row.source)
             setup_bucket(row).add_outcome(row.pl_jpy, source=row.source)
 
         for observation in story_observations:
             condition_bucket(observation).add_observation()
+            for key in _condition_rollup_keys(observation):
+                condition_rollup_bucket(*key).add_observation()
             method_bucket(observation.pair, observation.direction, observation.method).add_observation()
             pair_bucket(observation.pair, observation.direction).add_observation()
             setup_bucket(observation).add_observation()
 
         generated_at = datetime.now(timezone.utc).isoformat()
+        condition_validation = _walk_forward_condition_validation((*archive_outcomes, *execution_outcomes))
         payload = {
             "generated_at_utc": generated_at,
             "read_only": True,
@@ -220,6 +300,8 @@ class OutcomeMartBuilder:
                 "story_observations": len(story_observations),
             },
             "condition_edges": _sorted_bucket_dicts(condition_edges.values()),
+            "condition_rollups": _sorted_bucket_dicts(condition_rollups.values()),
+            "condition_validation": condition_validation,
             "pair_direction_edges": _sorted_bucket_dicts(pair_edges.values()),
             "method_edges": _sorted_bucket_dicts(method_edges.values()),
             "setup_buckets": _sorted_bucket_dicts(setup_buckets.values()),
@@ -244,6 +326,9 @@ class OutcomeMartBuilder:
             execution_ledger_outcomes=len(execution_outcomes),
             story_observations=len(story_observations),
             condition_edges=len(condition_edges),
+            condition_rollups=len(condition_rollups),
+            validated_condition_outcomes=int(condition_validation["validated_outcomes"]),
+            condition_directional_hit_rate_pct=condition_validation["directional_hit_rate_pct"],
             method_edges=len(method_edges),
             setup_buckets=len(setup_buckets),
         )
@@ -298,6 +383,106 @@ class OutcomeMartBuilder:
         for item in sorted(negative_conditions, key=lambda value: (value["net_jpy"], -value["outcome_n"]))[:REPORT_ROW_LIMIT]:
             lines.append(_edge_table_row(item))
         if not negative_conditions:
+            lines.append("| none | 0 | 0 | 0 |  |  |  |  |")
+
+        validation = payload["condition_validation"]
+        positive_validation = validation["predicted_positive"]
+        negative_validation = validation["predicted_negative"]
+        lines.extend(
+            [
+                "",
+                "## Walk-Forward Condition Validation",
+                "",
+                "- Uses only prior outcomes at each historical point; current/future rows are not visible to the edge being tested.",
+                f"- Prior sample minimum: `{validation['min_prior_outcomes']}` outcomes",
+                f"- Eligible outcomes: `{validation['eligible_outcomes']}`",
+                f"- Validated outcomes: `{validation['validated_outcomes']}` (`{validation['coverage_pct']:.1f}%` coverage)",
+                f"- Directional hit rate: `{_format_optional_pct(validation['directional_hit_rate_pct'])}`",
+                (
+                    f"- Positive prior edge: `{positive_validation['outcomes']}` outcomes, "
+                    f"actual net `{positive_validation['actual_net_jpy']:.1f}` JPY, "
+                    f"actual win `{_format_optional_pct(positive_validation['actual_win_rate_pct'])}`"
+                ),
+                (
+                    f"- Negative prior edge: `{negative_validation['outcomes']}` outcomes, "
+                    f"actual net `{negative_validation['actual_net_jpy']:.1f}` JPY, "
+                    f"actual win `{_format_optional_pct(negative_validation['actual_win_rate_pct'])}`"
+                ),
+                f"- Exact condition matches: `{validation['exact_match_outcomes']}`",
+                f"- Rolled-up condition matches: `{validation['rollup_match_outcomes']}`",
+            ]
+        )
+        matched_edges = validation["matched_edges"]
+        validated_positive_edges = [
+            item
+            for item in matched_edges
+            if item["predicted_edge"] == "POSITIVE" and item["actual_net_jpy"] > 0 and item["outcomes"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
+        false_positive_edges = [
+            item
+            for item in matched_edges
+            if item["predicted_edge"] == "POSITIVE" and item["actual_net_jpy"] < 0 and item["outcomes"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
+        validated_negative_edges = [
+            item
+            for item in matched_edges
+            if item["predicted_edge"] == "NEGATIVE" and item["actual_net_jpy"] < 0 and item["outcomes"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
+        for title, rows in (
+            ("Validated Positive Conditions", validated_positive_edges),
+            ("False Positive Conditions", sorted(false_positive_edges, key=lambda item: (item["actual_net_jpy"], -item["outcomes"]))),
+            ("Validated Negative Conditions", sorted(validated_negative_edges, key=lambda item: (item["actual_net_jpy"], -item["outcomes"]))),
+        ):
+            lines.extend(
+                [
+                    "",
+                    f"### {title}",
+                    "",
+                    "| Condition | Predicted | Outcomes | Actual Net JPY | Hit % | Actual Win % | Scope |",
+                    "|---|---|---:|---:|---:|---:|---|",
+                ]
+            )
+            for item in rows[:REPORT_ROW_LIMIT]:
+                lines.append(_validation_table_row(item))
+            if not rows:
+                lines.append("| none |  | 0 | 0 |  |  |  |")
+
+        winning_rollups = [
+            item
+            for item in payload["condition_rollups"]
+            if (item.get("net_jpy") or 0) > 0 and item["outcome_n"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
+        losing_rollups = [
+            item
+            for item in payload["condition_rollups"]
+            if (item.get("net_jpy") or 0) < 0 and item["outcome_n"] >= REPORT_MIN_CONDITION_OUTCOMES
+        ]
+        lines.extend(
+            [
+                "",
+                f"## Winning Condition Rollups (>= {REPORT_MIN_CONDITION_OUTCOMES} outcomes)",
+                "",
+                "| Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in winning_rollups[:REPORT_ROW_LIMIT]:
+            lines.append(_edge_table_row(item))
+        if not winning_rollups:
+            lines.append("| none | 0 | 0 | 0 |  |  |  |  |")
+
+        lines.extend(
+            [
+                "",
+                f"## Losing Condition Rollups (>= {REPORT_MIN_CONDITION_OUTCOMES} outcomes)",
+                "",
+                "| Condition | Outcomes | Observations | Net JPY | Avg JPY | Win % | Worst | Best |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in sorted(losing_rollups, key=lambda value: (value["net_jpy"], -value["outcome_n"]))[:REPORT_ROW_LIMIT]:
+            lines.append(_edge_table_row(item))
+        if not losing_rollups:
             lines.append("| none | 0 | 0 | 0 |  |  |  |  |")
 
         lines.extend(
@@ -356,6 +541,7 @@ def _archive_outcome_rows(db_path: Path) -> Iterator[OutcomeRow]:
                 session_bucket=_session_bucket(raw),
                 regime=_regime(raw),
                 pl_jpy=value,
+                observed_at_utc=_observed_at_utc(raw, row["session_date"]),
             )
 
 
@@ -412,6 +598,7 @@ def _execution_ledger_rows(db_path: Path) -> Iterator[OutcomeRow]:
                 session_bucket=_session_bucket({"created_at": row["ts_utc"]}),
                 regime=_regime(raw),
                 pl_jpy=value,
+                observed_at_utc=_parse_datetime(row["ts_utc"]),
             )
 
 
@@ -429,6 +616,11 @@ def _sorted_bucket_dicts(values: Iterable[_Bucket]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: (item["net_jpy"], item["outcome_n"], item["story_observation_n"], item["key"]), reverse=True)
 
 
+def _sorted_validation_match_dicts(values: Iterable[_ValidationMatchStats]) -> list[dict[str, Any]]:
+    rows = [stats.to_dict() for stats in values]
+    return sorted(rows, key=lambda item: (abs(item["actual_net_jpy"]), item["outcomes"], item["key"]), reverse=True)
+
+
 def _edge_table_row(item: dict[str, Any]) -> str:
     avg = "" if item["avg_jpy"] is None else f"{item['avg_jpy']:.1f}"
     win_rate = "" if item["win_rate_pct"] is None else f"{item['win_rate_pct']:.1f}"
@@ -440,36 +632,245 @@ def _edge_table_row(item: dict[str, Any]) -> str:
     )
 
 
+def _validation_table_row(item: dict[str, Any]) -> str:
+    hit_rate = _format_optional_pct(item["directional_hit_rate_pct"])
+    win_rate = _format_optional_pct(item["actual_win_rate_pct"])
+    return (
+        f"| `{item['key']}` | {item['predicted_edge']} | {item['outcomes']} | "
+        f"{item['actual_net_jpy']:.1f} | {hit_rate} | {win_rate} | {item['match_scope']} |"
+    )
+
+
+def _format_optional_pct(value: object) -> str:
+    return "n/a" if value is None else f"{float(value):.1f}%"
+
+
+def _condition_rollup_keys(item: OutcomeRow | StoryObservation) -> tuple[tuple[str, str, str, str], ...]:
+    keys = (
+        (item.method, item.order_type, item.session_bucket, "ALL"),
+        (item.method, item.order_type, "ALL", item.regime),
+        (item.method, item.order_type, "ALL", "ALL"),
+        (item.method, "ALL", item.session_bucket, item.regime),
+        (item.method, "ALL", item.session_bucket, "ALL"),
+        (item.method, "ALL", "ALL", item.regime),
+        (item.method, "ALL", "ALL", "ALL"),
+    )
+    return tuple(dict.fromkeys(keys))
+
+
+def _condition_lookup_keys(row: OutcomeRow) -> tuple[tuple[str, str, str, str], ...]:
+    keys = (
+        (row.method, row.order_type, row.session_bucket, row.regime),
+        *_condition_rollup_keys(row),
+        (row.method, row.order_type, row.session_bucket, "UNSPECIFIED"),
+        (row.method, row.order_type, "UNSPECIFIED", row.regime),
+        (row.method, row.order_type, "UNSPECIFIED", "UNSPECIFIED"),
+        (row.method, "UNSPECIFIED", row.session_bucket, row.regime),
+        (row.method, "UNSPECIFIED", row.session_bucket, "UNSPECIFIED"),
+        (row.method, "UNSPECIFIED", "UNSPECIFIED", row.regime),
+        (row.method, "UNSPECIFIED", "UNSPECIFIED", "UNSPECIFIED"),
+    )
+    return tuple(dict.fromkeys(keys))
+
+
+def _condition_training_keys(row: OutcomeRow) -> tuple[tuple[str, str, str, str], ...]:
+    keys = ((row.method, row.order_type, row.session_bucket, row.regime), *_condition_rollup_keys(row))
+    return tuple(dict.fromkeys(keys))
+
+
+def _walk_forward_condition_validation(rows: Iterable[OutcomeRow]) -> dict[str, Any]:
+    ordered = sorted(
+        (row for row in rows if row.observed_at_utc is not None and row.pl_jpy != 0),
+        key=lambda row: (row.observed_at_utc or datetime.min.replace(tzinfo=_UTC), row.source, row.pair, row.direction),
+    )
+    prior: dict[tuple[str, str, str, str], _ValidationBucket] = {}
+    validated_outcomes = 0
+    hit_outcomes = 0
+    exact_match_outcomes = 0
+    rollup_match_outcomes = 0
+    positive_values: list[float] = []
+    negative_values: list[float] = []
+    matched_stats: dict[tuple[tuple[str, str, str, str], int], _ValidationMatchStats] = {}
+
+    index = 0
+    while index < len(ordered):
+        timestamp = ordered[index].observed_at_utc
+        batch: list[OutcomeRow] = []
+        while index < len(ordered) and ordered[index].observed_at_utc == timestamp:
+            batch.append(ordered[index])
+            index += 1
+
+        for row in batch:
+            matched_key: tuple[str, str, str, str] | None = None
+            matched_bucket: _ValidationBucket | None = None
+            for key in _condition_lookup_keys(row):
+                bucket = prior.get(key)
+                if bucket is None or bucket.outcome_n < VALIDATION_MIN_PRIOR_OUTCOMES or bucket.net_jpy == 0:
+                    continue
+                matched_key = key
+                matched_bucket = bucket
+                break
+
+            if matched_key is not None and matched_bucket is not None:
+                predicted_sign = 1 if matched_bucket.net_jpy > 0 else -1
+                actual_sign = 1 if row.pl_jpy > 0 else -1
+                validated_outcomes += 1
+                if predicted_sign == actual_sign:
+                    hit_outcomes += 1
+                if matched_key == (row.method, row.order_type, row.session_bucket, row.regime):
+                    exact_match_outcomes += 1
+                else:
+                    rollup_match_outcomes += 1
+                if predicted_sign > 0:
+                    positive_values.append(row.pl_jpy)
+                else:
+                    negative_values.append(row.pl_jpy)
+                stat_key = (matched_key, predicted_sign)
+                stats = matched_stats.setdefault(
+                    stat_key,
+                    _ValidationMatchStats(key=matched_key, predicted_sign=predicted_sign),
+                )
+                stats.add_match(row.pl_jpy)
+
+        for row in batch:
+            for key in _condition_training_keys(row):
+                bucket = prior.setdefault(key, _ValidationBucket())
+                bucket.add_outcome(row.pl_jpy)
+
+    positive_wins = [value for value in positive_values if value > 0]
+    negative_wins = [value for value in negative_values if value > 0]
+    coverage_pct = _round((validated_outcomes / len(ordered)) * 100.0) if ordered else 0.0
+    hit_rate = _round((hit_outcomes / validated_outcomes) * 100.0) if validated_outcomes else None
+    return {
+        "status": "CONDITION_WALK_FORWARD_READY" if validated_outcomes else "INSUFFICIENT_PRIOR_CONDITION_HISTORY",
+        "min_prior_outcomes": VALIDATION_MIN_PRIOR_OUTCOMES,
+        "eligible_outcomes": len(ordered),
+        "validated_outcomes": validated_outcomes,
+        "coverage_pct": coverage_pct,
+        "directional_hit_outcomes": hit_outcomes,
+        "directional_hit_rate_pct": hit_rate,
+        "exact_match_outcomes": exact_match_outcomes,
+        "rollup_match_outcomes": rollup_match_outcomes,
+        "predicted_positive": {
+            "outcomes": len(positive_values),
+            "actual_net_jpy": _round(sum(positive_values)) if positive_values else 0.0,
+            "actual_win_rate_pct": _round((len(positive_wins) / len(positive_values)) * 100.0)
+            if positive_values
+            else None,
+        },
+        "predicted_negative": {
+            "outcomes": len(negative_values),
+            "actual_net_jpy": _round(sum(negative_values)) if negative_values else 0.0,
+            "actual_win_rate_pct": _round((len(negative_wins) / len(negative_values)) * 100.0)
+            if negative_values
+            else None,
+        },
+        "matched_edges": _sorted_validation_match_dicts(matched_stats.values()),
+    }
+
+
 def _method_family(payload: dict[str, Any], fallback_text: object | None = None) -> str:
     lane_method = _method_from_lane_id(payload.get("lane_id"))
     if lane_method:
         return lane_method
-    parts = []
-    for key in (
-        "method",
-        "trade_method",
-        "setup_method",
-        "thesis_family",
-        "thesis_vehicle",
-        "thesis_structure",
-        "setup_type",
-        "type",
-        "entry_type",
-        "reason",
-        "orderability",
-        "upgrade_action",
+    text = _payload_text(
+        payload,
+        (
+            "method",
+            "trade_method",
+            "setup_method",
+            "thesis_family",
+            "thesis_vehicle",
+            "thesis_structure",
+            "setup_type",
+            "type",
+            "entry_type",
+            "reason",
+            "orderability",
+            "upgrade_action",
+            "thesis",
+            "thesis_key",
+            "thesis_market",
+            "thesis_trigger",
+            "notes",
+            "why",
+            "trigger",
+            "payout_path",
+            "invalidation",
+            "deployment_status",
+            "deployment_result",
+            "execution_note",
+            "lesson_from_review",
+            "collapse_note",
+            "live_tape_bias",
+            "live_tape_mode",
+            "live_tape_bucket",
+            "mtf_chain",
+        ),
+        fallback_text=fallback_text,
+    )
+    normalized = text.replace("-", "_").replace("/", "_").replace(" ", "_")
+    if any(
+        token in normalized
+        for token in (
+            "breakout_failure",
+            "failed_breakout",
+            "false_break",
+            "fakeout",
+            "failure",
+            "failed",
+            "touch_and_fail",
+            "retest_failure",
+            "rejection",
+            "reject",
+            "trap",
+            "sweep",
+            "stop_run",
+        )
     ):
-        value = payload.get(key)
-        if value:
-            parts.append(str(value))
-    if fallback_text:
-        parts.append(str(fallback_text))
-    text = " ".join(parts).lower()
-    if any(token in text for token in ("range", "mean", "box", "floor", "ceiling", "rotation")):
-        return "RANGE_ROTATION"
-    if any(token in text for token in ("breakout failure", "failed breakout", "failure", "failed", "fade", "rejection")):
         return "BREAKOUT_FAILURE"
-    if any(token in text for token in ("trend", "continuation", "breakout", "shelf", "retest")):
+    if any(
+        token in normalized
+        for token in (
+            "range",
+            "mean",
+            "box",
+            "floor",
+            "ceiling",
+            "rotation",
+            "rail",
+            "band",
+            "lid",
+            "fade",
+            "reversal",
+            "absorption",
+            "counter_reversal",
+            "swing_probe",
+        )
+    ):
+        return "RANGE_ROTATION"
+    if any(
+        token in normalized
+        for token in (
+            "trend",
+            "continuation",
+            "breakout",
+            "shelf",
+            "retest",
+            "pullback",
+            "runner",
+            "momentum",
+            "impulse",
+            "swing",
+            "ema_pack",
+            "direct_usd",
+            "usd_strength",
+            "h1_bear",
+            "h1_bull",
+            "bull_walk",
+            "bear_squeeze",
+        )
+    ):
         return "TREND_CONTINUATION"
     return "UNSPECIFIED"
 
@@ -521,10 +922,8 @@ def _hour_from_payload(payload: dict[str, Any]) -> int | None:
         value = payload.get(key)
         if not value:
             continue
-        text = str(value).replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(text)
-        except ValueError:
+        parsed = _parse_datetime(value)
+        if parsed is None:
             continue
         return parsed.hour
     return None
@@ -547,6 +946,28 @@ def _regime(payload: dict[str, Any]) -> str:
         value = payload.get(key)
         if value:
             return _regime_family(value)
+    text = _payload_text(
+        payload,
+        (
+            "thesis_family",
+            "thesis_structure",
+            "thesis_key",
+            "thesis_market",
+            "live_tape_bias",
+            "live_tape_mode",
+            "live_tape_bucket",
+            "mtf_chain",
+            "why",
+            "notes",
+            "trigger",
+            "payout_path",
+            "invalidation",
+        ),
+    )
+    if text:
+        regime = _regime_family(text)
+        if regime in {"SQUEEZE", "RANGE", "QUIET", "TRENDING", "TRANSITION"}:
+            return regime
     return "UNSPECIFIED"
 
 
@@ -601,6 +1022,57 @@ def _percentile(values: list[float], pct: float) -> float:
     pct = max(0.0, min(1.0, pct))
     idx = round((len(values) - 1) * pct)
     return values[int(idx)]
+
+
+def _payload_text(
+    payload: dict[str, Any],
+    keys: Iterable[str],
+    *,
+    fallback_text: object | None = None,
+) -> str:
+    parts = []
+    for key in keys:
+        value = payload.get(key)
+        if value:
+            parts.append(str(value))
+    if fallback_text:
+        parts.append(str(fallback_text))
+    return " ".join(parts).lower()
+
+
+def _observed_at_utc(payload: dict[str, Any], session_date: object | None = None) -> datetime | None:
+    session_day = _parse_datetime(session_date)
+    for key in (
+        "closed_at",
+        "exit_time",
+        "timestamp_utc",
+        "state_last_updated",
+        "created_at",
+        "updated_at",
+    ):
+        parsed = _parse_datetime(payload.get(key))
+        if parsed is None:
+            continue
+        if session_day is not None and parsed.date() != session_day.date():
+            continue
+        return parsed
+    return session_day
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.replace("Z", "+00:00").replace(" UTC", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_UTC)
+    return parsed.astimezone(_UTC)
 
 
 def _load_json(text: object) -> dict[str, Any]:

@@ -261,6 +261,159 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertEqual(lane["archive_method_edge_jpy"], 500.0)
             self.assertIn("condition=`ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING`", (root / "advice.md").read_text())
 
+    def test_archive_outcome_mart_uses_condition_rollup_when_exact_condition_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            outcome_mart = root / "outcome_mart.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-06T08:30:00+00:00",
+                        "results": [
+                            _result(
+                                lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="RANGE_ROTATION",
+                                context={
+                                    "method": "RANGE_ROTATION",
+                                    "narrative": "test",
+                                    "chart_story": "test",
+                                    "invalidation": "test",
+                                    "regime": "RANGE_ROTATION campaign lane",
+                                    "session": "generated dry-run",
+                                },
+                                metadata={"regime_state": "TREND_UP"},
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            backtest.write_text(json.dumps({"bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            outcome_mart.write_text(
+                json.dumps(
+                    {
+                        "condition_edges": [],
+                        "condition_rollups": [
+                            {
+                                "key": "ALL:ALL:RANGE_ROTATION:MARKET:ALL:TRENDING",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "MARKET",
+                                "session_bucket": "ALL",
+                                "regime": "TRENDING",
+                                "net_jpy": 750.0,
+                                "avg_jpy": 75.0,
+                                "outcome_n": 10,
+                            }
+                        ],
+                        "method_edges": [],
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=outcome_mart,
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(lane["archive_condition_edge_jpy"], 750.0)
+            self.assertEqual(lane["archive_condition_key"], "ALL:ALL:RANGE_ROTATION:MARKET:ALL:TRENDING")
+
+    def test_archive_condition_boost_requires_passing_walk_forward_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            outcome_mart = root / "outcome_mart.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-06T08:30:00+00:00",
+                        "results": [
+                            _result(
+                                lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                method="RANGE_ROTATION",
+                                context={
+                                    "method": "RANGE_ROTATION",
+                                    "narrative": "test",
+                                    "chart_story": "test",
+                                    "invalidation": "test",
+                                    "regime": "RANGE_ROTATION campaign lane",
+                                    "session": "generated dry-run",
+                                },
+                                metadata={"regime_state": "TREND_UP"},
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 500.0}))
+            backtest.write_text(json.dumps({"bucket_contributions": []}))
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+            outcome_mart.write_text(
+                json.dumps(
+                    {
+                        "condition_edges": [
+                            {
+                                "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING",
+                                "method": "RANGE_ROTATION",
+                                "order_type": "MARKET",
+                                "session_bucket": "LONDON",
+                                "regime": "TRENDING",
+                                "net_jpy": 500.0,
+                                "avg_jpy": 50.0,
+                                "outcome_n": 10,
+                            }
+                        ],
+                        "condition_validation": {
+                            "matched_edges": [
+                                {
+                                    "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING",
+                                    "predicted_edge": "POSITIVE",
+                                    "outcomes": 10,
+                                    "actual_net_jpy": -250.0,
+                                    "directional_hit_rate_pct": 30.0,
+                                }
+                            ]
+                        },
+                        "method_edges": [],
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=outcome_mart,
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            lane = payload["lanes"][0]
+            self.assertEqual(lane["score"], 63.0)
+            self.assertEqual(lane["archive_condition_validation_actual_net_jpy"], -250.0)
+            self.assertIn("positive archive condition edge failed walk-forward validation", lane["rationale"])
+
 
 def _result(
     *,
