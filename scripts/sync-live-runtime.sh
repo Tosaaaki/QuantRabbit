@@ -136,6 +136,39 @@ clear_report_drift() {
   done < <(status_lines "$root")
 }
 
+backup_report_drift() {
+  local root="$1"
+  local backup_root="$2"
+  local paths_file="${backup_root}/.paths"
+  : > "$paths_file"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local path
+    path="$(status_path "$line")"
+    if ! is_report_path "$path"; then
+      continue
+    fi
+    if [[ -f "$root/$path" ]]; then
+      mkdir -p "$backup_root/$(dirname "$path")"
+      cp -p "$root/$path" "$backup_root/$path"
+      printf '%s\n' "$path" >> "$paths_file"
+    fi
+  done < <(status_lines "$root")
+}
+
+restore_report_drift() {
+  local root="$1"
+  local backup_root="$2"
+  local paths_file="${backup_root}/.paths"
+  [[ -f "$paths_file" ]] || return 0
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    [[ -f "$backup_root/$path" ]] || continue
+    mkdir -p "$root/$(dirname "$path")"
+    cp -p "$backup_root/$path" "$root/$path"
+  done < "$paths_file"
+}
+
 require_branch() {
   local branch="$1"
   if ! git -C "$DEV_ROOT" rev-parse --verify --quiet "$branch" >/dev/null; then
@@ -186,8 +219,18 @@ sync_live_worktree() {
     exit 4
   fi
 
+  local report_backup
+  report_backup="$(mktemp -d)"
+  backup_report_drift "$LIVE_ROOT" "$report_backup"
   clear_report_drift "$LIVE_ROOT"
-  git -C "$LIVE_ROOT" merge --ff-only "$target_branch"
+  if ! git -C "$LIVE_ROOT" merge --ff-only "$target_branch"; then
+    local merge_status="$?"
+    restore_report_drift "$LIVE_ROOT" "$report_backup"
+    rm -rf "$report_backup"
+    exit "$merge_status"
+  fi
+  restore_report_drift "$LIVE_ROOT" "$report_backup"
+  rm -rf "$report_backup"
   assert_only_report_drift "$LIVE_ROOT" "live"
 }
 

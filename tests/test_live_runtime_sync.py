@@ -12,7 +12,7 @@ SYNC = ROOT / "scripts" / "sync-live-runtime.sh"
 
 
 class LiveRuntimeSyncTest(unittest.TestCase):
-    def test_promotes_source_to_main_and_live_after_clearing_report_drift(self) -> None:
+    def test_promotes_source_to_main_and_live_after_preserving_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             live = Path(tmp) / "live"
@@ -31,7 +31,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             feature_head = _git(repo, "rev-parse", "feature")
             self.assertEqual(_git(repo, "rev-parse", "main"), feature_head)
             self.assertEqual(_git(live, "rev-parse", "HEAD"), feature_head)
-            self.assertEqual(_git(live, "status", "--short"), "")
+            self.assertEqual((live / "docs" / "cycle_report.md").read_text(), "new runtime drift\n")
+            self.assertEqual(_git(live, "status", "--short"), "M docs/cycle_report.md")
 
     def test_blocks_when_development_has_source_dirty(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
