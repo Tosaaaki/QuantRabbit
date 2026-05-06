@@ -4,16 +4,40 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Side
-from quant_rabbit.paths import DEFAULT_DAILY_TARGET_STATE, DEFAULT_POSITION_MANAGEMENT, DEFAULT_POSITION_MANAGEMENT_REPORT, DEFAULT_TRADER_DECISION
+from quant_rabbit.paths import (
+    DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_PAIR_CHARTS,
+    DEFAULT_POSITION_MANAGEMENT,
+    DEFAULT_POSITION_MANAGEMENT_REPORT,
+    DEFAULT_TRADER_DECISION,
+)
 from quant_rabbit.risk import RiskPolicy
+from quant_rabbit.strategy.intent_generator import (
+    GEOMETRY_ATR_TIMEFRAME,
+    GEOMETRY_SPREAD_FLOOR_MULT,
+    _atr_pips_for,
+    _load_pair_charts,
+    _session_bucket_for,
+)
 
 
 ACTION_HOLD_PROTECTED = "HOLD_PROTECTED"
 ACTION_PROFIT_PROTECT = "PROFIT_PROTECT_REQUIRED"
 ACTION_REVIEW_EXIT = "REVIEW_EXIT"
 ACTION_REPAIR_PROTECTION = "REPAIR_PROTECTION_REQUIRED"
+
+# Profit protection must not move SL to breakeven while the market is still
+# inside ordinary execution noise. Use the same spread floor as entry geometry
+# plus one current M5 ATR: this is market-derived noise room, not a profit gate.
+PROFIT_PROTECTION_NOISE_ATR_MULT = 1.0
+PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
+# Position-management threshold only. Breakeven review starts when open profit
+# covers this fraction of current remaining stop risk, unless current ATR/spread
+# noise requires more room. This does not size or authorize fresh risk.
+PROFIT_PROTECTION_RISK_FRACTION = 0.6
 
 
 @dataclass(frozen=True)
@@ -47,18 +71,21 @@ class PositionManager:
         self,
         *,
         trader_decision_path: Path = DEFAULT_TRADER_DECISION,
+        pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         output_path: Path = DEFAULT_POSITION_MANAGEMENT,
         report_path: Path = DEFAULT_POSITION_MANAGEMENT_REPORT,
     ) -> None:
         self.trader_decision_path = trader_decision_path
+        self.pair_charts_path = pair_charts_path
         self.output_path = output_path
         self.report_path = report_path
 
     def run(self, snapshot: BrokerSnapshot) -> PositionManagementDecision:
         generated_at = datetime.now(timezone.utc).isoformat()
         scores = _load_scores(self.trader_decision_path)
+        pair_charts = _load_pair_charts(self.pair_charts_path)
         trader_positions = tuple(position for position in snapshot.positions if position.owner == Owner.TRADER)
-        managed = tuple(self._manage_position(position, snapshot, scores) for position in trader_positions)
+        managed = tuple(self._manage_position(position, snapshot, scores, pair_charts) for position in trader_positions)
         action = _aggregate_action(managed)
         decision = PositionManagementDecision(generated_at_utc=generated_at, action=action, positions=managed)
         self._write(decision)
@@ -69,6 +96,7 @@ class PositionManager:
         position: BrokerPosition,
         snapshot: BrokerSnapshot,
         scores: dict[tuple[str, str], float],
+        pair_charts: dict[str, dict[str, Any]] | None,
     ) -> ManagedPosition:
         same_score = scores.get((position.pair, position.side.value))
         opposite_score = scores.get((position.pair, _opposite(position.side)))
@@ -78,6 +106,7 @@ class PositionManager:
         quote = snapshot.quotes.get(position.pair)
         recommended_stop_loss: float | None = None
         recommended_take_profit: float | None = None
+        reasons.extend(_session_protection_notes(position, quote, pair_charts))
 
         if position.stop_loss is None or position.take_profit is None:
             missing = []
@@ -101,20 +130,30 @@ class PositionManager:
                 recommended_take_profit = _repair_take_profit(position, basis_stop, quote)
                 if recommended_take_profit is not None:
                     reasons.append(f"repair TP candidate {recommended_take_profit:.5f}")
-        elif _profit_protection_needed(position, remaining_risk):
-            reasons.append("profit is large enough to require break-even/trailing review")
-            recommended_stop_loss = _break_even_stop(position, quote)
-            if recommended_stop_loss is None:
-                reasons.append("break-even SL is not market-valid yet")
-            else:
-                reasons.append(f"break-even SL candidate {recommended_stop_loss:.5f}")
-            action = ACTION_PROFIT_PROTECT
-        elif opposite_score is not None and same_score is not None and opposite_score >= same_score + 20 and position.unrealized_pl_jpy < 0:
-            reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
-            action = ACTION_REVIEW_EXIT
         else:
-            reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
-            action = ACTION_HOLD_PROTECTED
+            profit_protection_needed, profit_reasons = _profit_protection_needed(
+                position,
+                remaining_risk,
+                quote,
+                snapshot.quotes,
+                snapshot.home_conversions,
+                pair_charts,
+            )
+            reasons.extend(profit_reasons)
+            if profit_protection_needed:
+                reasons.append("profit clears remaining risk plus current session noise")
+                recommended_stop_loss = _break_even_stop(position, quote)
+                if recommended_stop_loss is None:
+                    reasons.append("break-even SL is not market-valid yet")
+                else:
+                    reasons.append(f"break-even SL candidate {recommended_stop_loss:.5f}")
+                action = ACTION_PROFIT_PROTECT
+            elif opposite_score is not None and same_score is not None and opposite_score >= same_score + 20 and position.unrealized_pl_jpy < 0:
+                reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
+                action = ACTION_REVIEW_EXIT
+            else:
+                reasons.append("TP/SL present and current thesis is not contradicted enough to force exit")
+                action = ACTION_HOLD_PROTECTED
 
         if remaining_risk is not None:
             reasons.append(f"remaining risk about {remaining_risk:.0f} JPY")
@@ -243,16 +282,74 @@ def _remaining_reward_jpy(position: BrokerPosition, quotes, home_conversions=Non
     return max(0.0, pips) * jpy_per_pip
 
 
-def _profit_protection_needed(position: BrokerPosition, remaining_risk: float | None) -> bool:
+def _profit_protection_needed(
+    position: BrokerPosition,
+    remaining_risk: float | None,
+    quote,
+    quotes,
+    home_conversions,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[bool, tuple[str, ...]]:
+    reasons: list[str] = []
     if remaining_risk is None or remaining_risk <= 0:
-        return False
-    if position.unrealized_pl_jpy < remaining_risk * 0.6:
-        return False
+        return False, ("remaining risk is missing or non-positive; profit protection waits",)
+    risk_threshold = remaining_risk * PROFIT_PROTECTION_RISK_FRACTION
+    noise_jpy = _profit_protection_noise_jpy(position, quote, quotes, home_conversions, pair_charts)
+    threshold = max(risk_threshold, noise_jpy or 0.0)
+    reasons.append(f"profit protection threshold about {threshold:.0f} JPY")
+    if noise_jpy is not None:
+        reasons.append(f"current {GEOMETRY_ATR_TIMEFRAME} noise about {noise_jpy:.0f} JPY")
+    else:
+        reasons.append("current ATR/spread noise could not be converted to JPY")
+    if position.unrealized_pl_jpy < threshold:
+        return False, tuple(reasons)
     if position.stop_loss is None:
-        return True
+        return True, tuple(reasons)
     if position.side == Side.LONG:
-        return position.stop_loss < position.entry_price
-    return position.stop_loss > position.entry_price
+        needed = position.stop_loss < position.entry_price
+    else:
+        needed = position.stop_loss > position.entry_price
+    if not needed:
+        reasons.append("stop is already breakeven or better")
+    return needed, tuple(reasons)
+
+
+def _profit_protection_noise_jpy(
+    position: BrokerPosition,
+    quote,
+    quotes,
+    home_conversions,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> float | None:
+    if quote is None:
+        return None
+    jpy_per_pip = _jpy_per_pip(position, quotes, home_conversions or {})
+    if jpy_per_pip is None:
+        return None
+    atr_pips = _atr_pips_for(position.pair, pair_charts, GEOMETRY_ATR_TIMEFRAME)
+    if atr_pips is None:
+        return None
+    spread_pips = abs(float(quote.ask) - float(quote.bid)) * _pip_factor(position.pair)
+    noise_pips = spread_pips * PROFIT_PROTECTION_SPREAD_MULT
+    noise_pips += atr_pips * PROFIT_PROTECTION_NOISE_ATR_MULT
+    return max(0.0, noise_pips) * jpy_per_pip
+
+
+def _session_protection_notes(
+    position: BrokerPosition,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[str, ...]:
+    notes: list[str] = []
+    session_bucket = _session_bucket_for(position.pair, pair_charts)
+    if session_bucket:
+        notes.append(f"current session bucket {session_bucket}")
+    atr_pips = _atr_pips_for(position.pair, pair_charts, GEOMETRY_ATR_TIMEFRAME)
+    if atr_pips is not None:
+        notes.append(f"current {GEOMETRY_ATR_TIMEFRAME} ATR about {atr_pips:.1f} pips")
+    elif quote is not None:
+        notes.append(f"current {GEOMETRY_ATR_TIMEFRAME} ATR missing; spread floor is the only noise input")
+    return tuple(notes)
 
 
 def _break_even_stop(position: BrokerPosition, quote) -> float | None:

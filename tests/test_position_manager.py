@@ -37,6 +37,7 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
@@ -63,6 +64,7 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
@@ -91,12 +93,43 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
 
             self.assertEqual(result.action, ACTION_PROFIT_PROTECT)
             self.assertEqual(result.positions[0].recommended_stop_loss, 1.1729)
+
+    def test_profit_protection_waits_inside_current_atr_noise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            pair_charts = _pair_charts(root, atr_pips=10.0)
+            snapshot = _snapshot(
+                BrokerPosition(
+                    trade_id="1",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.1729,
+                    unrealized_pl_jpy=90,
+                    take_profit=1.1741,
+                    stop_loss=1.1721,
+                ),
+                bid=1.1738,
+                ask=1.1739,
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertIn("current M5 noise", (root / "pm.md").read_text())
 
     def test_usd_quote_position_risk_uses_snapshot_conversion_not_static_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,6 +152,7 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
@@ -146,6 +180,7 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
@@ -173,6 +208,7 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
@@ -202,6 +238,7 @@ class PositionManagerTest(unittest.TestCase):
 
             result = PositionManager(
                 trader_decision_path=decision,
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "pm.json",
                 report_path=root / "pm.md",
             ).run(snapshot)
@@ -246,6 +283,29 @@ def _snapshot(
         positions=(position,),
         quotes=quotes,
     )
+
+
+def _pair_charts(root: Path, *, atr_pips: float) -> Path:
+    path = root / "pair_charts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "indicators": {"atr_pips": atr_pips},
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
 
 
 if __name__ == "__main__":
