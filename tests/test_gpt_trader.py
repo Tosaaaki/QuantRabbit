@@ -421,6 +421,79 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("ATTACK_ADVICE_IGNORED", codes)
 
+    def test_rejects_trade_that_skips_first_attack_priority_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            priority_lane = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(lane_id=priority_lane),
+                            _result(),
+                        ]
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [priority_lane, LANE_ID],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ATTACK_PRIORITY_SKIPPED", codes)
+
+    def test_accepts_attack_priority_lane_in_selected_basket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            priority_lane = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(lane_id=priority_lane),
+                            _result(),
+                        ]
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [priority_lane, LANE_ID],
+                    }
+                )
+            )
+            decision = _batch_trade_decision([priority_lane, LANE_ID])
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{priority_lane}", f"attack:lane:{LANE_ID}"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
     def test_rejects_recommended_trade_without_attack_advice_evidence_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

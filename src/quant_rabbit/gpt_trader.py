@@ -293,6 +293,16 @@ class DecisionVerifier:
                         )
                     )
                 else:
+                    priority_lane_id = attack_lane_ids[0]
+                    if priority_lane_id not in selected_lane_ids:
+                        issues.append(
+                            VerificationIssue(
+                                "ATTACK_PRIORITY_SKIPPED",
+                                "ai_attack_advice ranks current tradeable LIVE_READY lanes in execution order; "
+                                "the selected basket must include the first-ranked lane instead of skipping "
+                                f"to lower-ranked advice: {priority_lane_id}",
+                            )
+                        )
                     if "attack:advice" not in decision.evidence_refs:
                         issues.append(
                             VerificationIssue(
