@@ -16,7 +16,8 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
 )
 from quant_rabbit.risk import RiskEngine, RiskIssue, RiskPolicy, resolve_max_loss_jpy
-from quant_rabbit.strategy.intent_generator import _daily_risk_budget_from_state
+from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
+from quant_rabbit.strategy.intent_generator import _daily_risk_budget_from_state, _per_trade_risk_from_state
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -35,6 +36,8 @@ class LiveOrderStageSummary:
     sent: bool
     risk_issues: int
     strategy_issues: int
+    sent_count: int = 0
+    lane_ids: tuple[str, ...] = ()
 
 
 class LiveOrderGateway:
@@ -98,11 +101,16 @@ class LiveOrderGateway:
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, intent))
+        default_max_loss_jpy = _per_trade_risk_from_state()
+        if default_max_loss_jpy is None:
+            # First-run/test compatibility only. Production cycles should have a
+            # daily target ledger before the live gateway is reached.
+            default_max_loss_jpy = RiskPolicy().max_loss_jpy
         max_loss_jpy = resolve_max_loss_jpy(
             max_loss_jpy=self.max_loss_jpy,
             max_loss_pct=self.max_loss_pct,
             equity_jpy=self.risk_equity_jpy,
-            default_max_loss_jpy=RiskPolicy().max_loss_jpy,
+            default_max_loss_jpy=default_max_loss_jpy,
             label="stage-live-order risk cap",
         )
         # AGENT_CONTRACT §3.5: portfolio cap (open + candidate exposure for the
@@ -118,6 +126,7 @@ class LiveOrderGateway:
         risk = RiskEngine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
+                max_loss_jpy=max_loss_jpy,
                 max_portfolio_loss_jpy=portfolio_loss_cap,
             ),
             live_enabled=validate_live_enabled,
@@ -181,7 +190,301 @@ class LiveOrderGateway:
             sent=sent,
             risk_issues=len(result["risk_issues"]),
             strategy_issues=len(strategy_issues),
+            sent_count=1 if sent else 0,
+            lane_ids=(selected_lane_id,) if selected_lane_id else (),
         )
+
+    def run_batch(
+        self,
+        *,
+        intents_path: Path = DEFAULT_ORDER_INTENTS,
+        lane_ids: tuple[str, ...],
+        size_multiples: dict[str, float] | None = None,
+        send: bool = False,
+        confirm_live: bool = False,
+    ) -> LiveOrderStageSummary:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        intents_payload = json.loads(intents_path.read_text())
+        unique_lane_ids = tuple(dict.fromkeys(lane_id for lane_id in lane_ids if lane_id))
+        selected_items = [(_select_intent(intents_payload, lane_id), lane_id) for lane_id in unique_lane_ids]
+        selected_items = [(selected, lane_id) for selected, lane_id in selected_items if selected is not None]
+        if not selected_items:
+            result = {
+                "generated_at_utc": generated_at,
+                "status": "NO_INTENT",
+                "lane_id": None,
+                "lane_ids": list(unique_lane_ids),
+                "orders": [],
+                "risk_issues": [],
+                "strategy_issues": [],
+                "send_requested": send,
+                "sent": False,
+                "sent_count": 0,
+            }
+            self._write_result(result)
+            self._write_report(result)
+            return LiveOrderStageSummary("NO_INTENT", None, self.output_path, self.report_path, False, 0, 0)
+
+        initial_snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, _intent_from_json(selected_items[0][0]["intent"])))
+        initial_occupancy = _trader_entry_occupancy(initial_snapshot)
+        sent_count = 0
+        accepted_count = 0
+        cumulative_risk_jpy = 0.0
+        cumulative_margin_jpy = 0.0
+        seen_geometry = set(_pending_geometry_keys(initial_snapshot))
+        order_results: list[dict[str, Any]] = []
+        batch_risk_issues = 0
+        batch_strategy_issues = 0
+
+        for selected, requested_lane_id in selected_items:
+            active_occupancy = initial_occupancy + accepted_count
+            if active_occupancy >= RiskPolicy().max_portfolio_positions:
+                blocked = _blocked_batch_result(
+                    generated_at=generated_at,
+                    selected=selected,
+                    lane_id=requested_lane_id,
+                    send=send,
+                    issue=RiskIssue(
+                        "BASKET_PORTFOLIO_POSITION_LIMIT",
+                        f"basket already has {active_occupancy} trader entries/pending orders; "
+                        f"cap is {RiskPolicy().max_portfolio_positions}",
+                    ),
+                )
+                order_results.append(blocked)
+                batch_risk_issues += len(blocked["risk_issues"])
+                continue
+
+            item_result = self._run_one_selected(
+                selected=selected,
+                intents_payload=intents_payload,
+                generated_at=generated_at,
+                lane_id_arg=requested_lane_id,
+                size_multiple=(size_multiples or {}).get(requested_lane_id, 1.0),
+                send=send,
+                confirm_live=confirm_live,
+                allow_basket_pending=True,
+                cumulative_risk_jpy=cumulative_risk_jpy,
+                cumulative_margin_jpy=cumulative_margin_jpy,
+                seen_geometry=seen_geometry,
+            )
+            order_results.append(item_result)
+            batch_risk_issues += len(item_result["risk_issues"])
+            batch_strategy_issues += len(item_result["strategy_issues"])
+            if item_result.get("sent") or (not send and item_result.get("status") == "STAGED"):
+                accepted_count += 1
+                metrics = item_result.get("risk_metrics") if isinstance(item_result.get("risk_metrics"), dict) else {}
+                cumulative_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
+                cumulative_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
+                geometry_key = item_result.get("geometry_key")
+                if geometry_key:
+                    seen_geometry.add(tuple(geometry_key))
+            if item_result.get("sent"):
+                sent_count += 1
+
+        staged_count = sum(1 for item in order_results if item.get("status") == "STAGED")
+        blocked_count = sum(1 for item in order_results if item.get("status") == "BLOCKED")
+        if send:
+            if sent_count and blocked_count:
+                status = "PARTIAL_SENT"
+            elif sent_count:
+                status = "SENT"
+            else:
+                status = "BLOCKED"
+        else:
+            status = "STAGED" if staged_count else "BLOCKED"
+        result = {
+            "generated_at_utc": generated_at,
+            "status": status,
+            "lane_id": order_results[0].get("lane_id") if order_results else None,
+            "lane_ids": [item.get("lane_id") for item in order_results],
+            "orders": order_results,
+            "risk_issues": [issue for item in order_results for issue in item.get("risk_issues", [])],
+            "strategy_issues": [issue for item in order_results for issue in item.get("strategy_issues", [])],
+            "send_requested": send,
+            "sent": sent_count > 0,
+            "sent_count": sent_count,
+            "staged_count": staged_count,
+            "blocked_count": blocked_count,
+            "cumulative_risk_jpy": cumulative_risk_jpy,
+            "cumulative_margin_jpy": cumulative_margin_jpy,
+            "initial_trader_entry_occupancy": initial_occupancy,
+        }
+        self._write_result(result)
+        self._write_report(result)
+        return LiveOrderStageSummary(
+            status=status,
+            lane_id=result["lane_id"],
+            output_path=self.output_path,
+            report_path=self.report_path,
+            sent=sent_count > 0,
+            risk_issues=batch_risk_issues,
+            strategy_issues=batch_strategy_issues,
+            sent_count=sent_count,
+            lane_ids=tuple(lane_id for lane_id in result["lane_ids"] if lane_id),
+        )
+
+    def _run_one_selected(
+        self,
+        *,
+        selected: dict[str, Any],
+        intents_payload: dict[str, Any],
+        generated_at: str,
+        lane_id_arg: str | None,
+        size_multiple: float,
+        send: bool,
+        confirm_live: bool,
+        allow_basket_pending: bool = False,
+        cumulative_risk_jpy: float = 0.0,
+        cumulative_margin_jpy: float = 0.0,
+        seen_geometry: set[tuple[object, ...]] | None = None,
+    ) -> dict[str, Any]:
+        selected_lane_id = str(selected.get("lane_id") or "")
+        intent = _intent_from_json(selected["intent"])
+        requested_units = intent.units
+        scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
+        if scaled_units is not None:
+            intent = replace(intent, units=scaled_units)
+        snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, intent))
+        max_loss_jpy = self._resolve_gateway_max_loss_jpy()
+        portfolio_loss_cap = self._resolve_portfolio_loss_cap_jpy()
+        validate_live_enabled = self.live_enabled if send else True
+        risk = self._validate_intent(
+            intent=intent,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+        )
+        if allow_basket_pending and risk.metrics is not None:
+            scale_multiple, scale_issue = _basket_size_multiple(
+                intent=intent,
+                snapshot=snapshot,
+                metrics=risk.metrics,
+                portfolio_loss_cap=portfolio_loss_cap,
+                cumulative_risk_jpy=cumulative_risk_jpy,
+                cumulative_margin_jpy=cumulative_margin_jpy,
+            )
+            if scale_issue is not None:
+                scale_issues.append(scale_issue)
+            if 0.0 < scale_multiple < 1.0:
+                scaled_units, extra_scale_issues = _scaled_units(intent.units, scale_multiple)
+                scale_issues.extend(extra_scale_issues)
+                if scaled_units is not None:
+                    intent = replace(intent, units=scaled_units)
+                    risk = self._validate_intent(
+                        intent=intent,
+                        snapshot=snapshot,
+                        max_loss_jpy=max_loss_jpy,
+                        portfolio_loss_cap=portfolio_loss_cap,
+                        validate_live_enabled=validate_live_enabled,
+                        allow_basket_pending=allow_basket_pending,
+                    )
+                    size_multiple *= scale_multiple
+        strategy_issues = tuple(
+            issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
+        )
+        risk_issues = [issue.__dict__ for issue in risk.issues]
+        if allow_basket_pending:
+            risk_issues.extend(
+                issue.__dict__
+                for issue in _basket_issues(
+                    intent=intent,
+                    snapshot=snapshot,
+                    metrics=risk.metrics,
+                    portfolio_loss_cap=portfolio_loss_cap,
+                    cumulative_risk_jpy=cumulative_risk_jpy,
+                    cumulative_margin_jpy=cumulative_margin_jpy,
+                    seen_geometry=seen_geometry or set(),
+                )
+            )
+        intent_status_issues = _intent_status_issues(selected)
+        send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
+        all_blocked = (
+            any(issue["severity"] == "BLOCK" for issue in risk_issues)
+            or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
+            or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
+            or any(issue["severity"] == "BLOCK" for issue in send_issues)
+            or any(issue.severity == "BLOCK" for issue in scale_issues)
+        )
+        order_request, order_build_issues = _build_order_request(intent)
+        all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
+        response = None
+        sent = False
+        status = "BLOCKED" if all_blocked else "STAGED"
+        if send and order_request is not None and not all_blocked:
+            response = self.client.post_order_json(order_request)
+            sent = True
+            status = "SENT"
+        return {
+            "generated_at_utc": generated_at,
+            "status": status,
+            "lane_id": selected_lane_id,
+            "order_request": order_request,
+            "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
+            "risk_issues": [
+                *risk_issues,
+                *intent_status_issues,
+                *send_issues,
+                *order_build_issues,
+                *[issue.__dict__ for issue in scale_issues],
+            ],
+            "strategy_issues": list(strategy_issues),
+            "send_requested": send,
+            "sent": sent,
+            "response": response,
+            "snapshot": {
+                "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
+                "positions": len(snapshot.positions),
+                "orders": len(snapshot.orders),
+                "quotes": len(snapshot.quotes),
+            },
+            "size_multiple": size_multiple,
+            "requested_units": requested_units,
+            "scaled_units": intent.units,
+            "geometry_key": list(_intent_geometry_key(intent)),
+        }
+
+    def _resolve_gateway_max_loss_jpy(self) -> float:
+        default_max_loss_jpy = _per_trade_risk_from_state()
+        if default_max_loss_jpy is None:
+            # First-run/test compatibility only. Production cycles should have a
+            # daily target ledger before the live gateway is reached.
+            default_max_loss_jpy = RiskPolicy().max_loss_jpy
+        return resolve_max_loss_jpy(
+            max_loss_jpy=self.max_loss_jpy,
+            max_loss_pct=self.max_loss_pct,
+            equity_jpy=self.risk_equity_jpy,
+            default_max_loss_jpy=default_max_loss_jpy,
+            label="stage-live-order risk cap",
+        )
+
+    def _resolve_portfolio_loss_cap_jpy(self) -> float | None:
+        return (
+            self.portfolio_loss_cap_jpy
+            if self.portfolio_loss_cap_jpy is not None
+            else _daily_risk_budget_from_state(DEFAULT_DAILY_TARGET_STATE)
+        )
+
+    def _validate_intent(
+        self,
+        *,
+        intent: OrderIntent,
+        snapshot: BrokerSnapshot,
+        max_loss_jpy: float,
+        portfolio_loss_cap: float | None,
+        validate_live_enabled: bool,
+        allow_basket_pending: bool,
+    ):
+        return RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                block_new_entries_with_pending_entry_orders=not allow_basket_pending,
+                max_loss_jpy=max_loss_jpy,
+                max_portfolio_loss_jpy=None if allow_basket_pending else portfolio_loss_cap,
+            ),
+            live_enabled=validate_live_enabled,
+        ).validate(intent, snapshot, for_live_send=True)
 
     def _write_result(self, result: dict[str, Any]) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,14 +498,35 @@ class LiveOrderGateway:
             f"- Generated at UTC: `{result['generated_at_utc']}`",
             f"- Status: `{result['status']}`",
             f"- Lane: `{result.get('lane_id')}`",
+            f"- Lanes: `{', '.join(str(item) for item in result.get('lane_ids', []) if item) or result.get('lane_id')}`",
             f"- Requested units: `{result.get('requested_units')}` size multiple: `{result.get('size_multiple')}` scaled units:`{result.get('scaled_units')}`",
             f"- Send requested: `{result.get('send_requested')}`",
             f"- Sent: `{result.get('sent')}`",
+            f"- Sent count: `{result.get('sent_count', 1 if result.get('sent') else 0)}`",
             "",
             "## Order Request",
             "",
         ]
-        order = result.get("order_request")
+        batch_orders = result.get("orders") if isinstance(result.get("orders"), list) else []
+        if batch_orders:
+            for item in batch_orders:
+                order = item.get("order_request")
+                lane_id = item.get("lane_id")
+                lines.append(f"- `{lane_id}` status=`{item.get('status')}` sent=`{item.get('sent')}`")
+                if not order:
+                    continue
+                lines.append(f"  - `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
+                if "price" in order:
+                    lines.append(f"  - price: `{order['price']}`")
+                lines.append(f"  - takeProfitOnFill: `{order['takeProfitOnFill']['price']}`")
+                lines.append(f"  - stopLossOnFill: `{order['stopLossOnFill']['price']}`")
+                metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else None
+                if metrics:
+                    lines.append(
+                        f"  - broker-truth risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
+                        f"rr=`{metrics['reward_risk']:.2f}` margin=`{metrics.get('estimated_margin_jpy', 0.0):.1f} JPY`"
+                    )
+        order = None if batch_orders else result.get("order_request")
         if order:
             lines.append(f"- `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
             if "price" in order:
@@ -222,7 +546,7 @@ class LiveOrderGateway:
                     f"- broker-truth risk: `{metrics['risk_jpy']:.1f} JPY` reward=`{metrics['reward_jpy']:.1f} JPY` "
                     f"rr=`{metrics['reward_risk']:.2f}` spread=`{metrics['spread_pips']:.1f}pip`{margin_tail}"
                 )
-        else:
+        elif not batch_orders:
             lines.append("- none")
         lines.extend(["", "## Issues", ""])
         issues = [*result.get("risk_issues", []), *result.get("strategy_issues", [])]
@@ -274,6 +598,261 @@ def _scaled_units(units: int, size_multiple: float) -> tuple[int | None, list[Ri
         return None, [RiskIssue("SIZE_MULTIPLIER_TOO_SMALL", "scaled units would round to zero")]
     scaled = scaled_abs if units >= 0 else -scaled_abs
     return scaled, []
+
+
+def _blocked_batch_result(*, generated_at: str, selected: dict[str, Any], lane_id: str, send: bool, issue: RiskIssue) -> dict[str, Any]:
+    return {
+        "generated_at_utc": generated_at,
+        "status": "BLOCKED",
+        "lane_id": str(selected.get("lane_id") or lane_id),
+        "order_request": None,
+        "risk_metrics": None,
+        "risk_issues": [issue.__dict__],
+        "strategy_issues": [],
+        "send_requested": send,
+        "sent": False,
+        "response": None,
+        "size_multiple": None,
+        "requested_units": None,
+        "scaled_units": None,
+    }
+
+
+def _basket_size_multiple(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    metrics,
+    portfolio_loss_cap: float | None,
+    cumulative_risk_jpy: float,
+    cumulative_margin_jpy: float,
+) -> tuple[float, RiskIssue | None]:
+    scale = 1.0
+    reasons: list[str] = []
+    pending_risk, pending_margin, pending_issue = _pending_risk_margin_jpy(snapshot)
+    open_risk, open_issue = _open_trader_position_risk_jpy(snapshot)
+    if pending_issue is not None:
+        return 0.0, pending_issue
+    if open_issue is not None:
+        return 0.0, open_issue
+    if portfolio_loss_cap is not None:
+        remaining_risk = portfolio_loss_cap - open_risk - pending_risk - cumulative_risk_jpy
+        if remaining_risk <= 0:
+            return 0.0, RiskIssue(
+                "BASKET_RISK_CAP_REACHED",
+                f"basket risk capacity is exhausted: open {open_risk:.0f} + pending {pending_risk:.0f} "
+                f"+ batch {cumulative_risk_jpy:.0f} >= cap {portfolio_loss_cap:.0f} JPY",
+            )
+        if metrics.risk_jpy > remaining_risk > 0:
+            scale = min(scale, remaining_risk / metrics.risk_jpy)
+            reasons.append(f"risk room {remaining_risk:.0f} JPY")
+
+    account = snapshot.account
+    max_margin_pct = RiskPolicy().max_margin_utilization_pct
+    if account is not None and max_margin_pct is not None:
+        margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+        remaining_margin = margin_room - pending_margin - cumulative_margin_jpy
+        if remaining_margin <= 0:
+            return 0.0, RiskIssue(
+                "BASKET_MARGIN_CAP_REACHED",
+                f"basket margin capacity is exhausted: pending {pending_margin:.0f} + batch {cumulative_margin_jpy:.0f} "
+                f">= room {margin_room:.0f} JPY",
+            )
+        if metrics.estimated_margin_jpy > remaining_margin > 0:
+            scale = min(scale, remaining_margin / metrics.estimated_margin_jpy)
+            reasons.append(f"margin room {remaining_margin:.0f} JPY")
+
+    if scale < 1.0:
+        return scale, RiskIssue(
+            "BASKET_DOWNSIZED_FOR_CAPACITY",
+            f"{intent.pair} {intent.side.value} downsized to fit basket {' and '.join(reasons)}",
+            "WARN",
+        )
+    return 1.0, None
+
+
+def _basket_issues(
+    *,
+    intent: OrderIntent,
+    snapshot: BrokerSnapshot,
+    metrics,
+    portfolio_loss_cap: float | None,
+    cumulative_risk_jpy: float,
+    cumulative_margin_jpy: float,
+    seen_geometry: set[tuple[object, ...]],
+) -> list[RiskIssue]:
+    issues: list[RiskIssue] = []
+    geometry = _intent_geometry_key(intent)
+    if geometry in seen_geometry:
+        issues.append(
+            RiskIssue(
+                "BASKET_DUPLICATE_GEOMETRY",
+                f"{intent.pair} {intent.side.value} {intent.order_type.value} shares an existing entry/tp/sl geometry",
+            )
+        )
+    if metrics is None:
+        return issues
+    pending_risk, pending_margin, pending_issue = _pending_risk_margin_jpy(snapshot)
+    open_risk, open_issue = _open_trader_position_risk_jpy(snapshot)
+    if pending_issue is not None:
+        issues.append(pending_issue)
+    if open_issue is not None:
+        issues.append(open_issue)
+    if portfolio_loss_cap is not None and pending_issue is None and open_issue is None:
+        total_risk = open_risk + pending_risk + cumulative_risk_jpy + metrics.risk_jpy
+        if total_risk > portfolio_loss_cap:
+            issues.append(
+                RiskIssue(
+                    "BASKET_PORTFOLIO_LOSS_CAP_EXCEEDED",
+                    f"basket worst-case loss {total_risk:.0f} JPY exceeds daily cap {portfolio_loss_cap:.0f} JPY",
+                )
+            )
+    account = snapshot.account
+    max_margin_pct = RiskPolicy().max_margin_utilization_pct
+    if account is not None and max_margin_pct is not None:
+        margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+        total_margin = pending_margin + cumulative_margin_jpy + metrics.estimated_margin_jpy
+        if total_margin > margin_room:
+            issues.append(
+                RiskIssue(
+                    "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
+                    f"basket candidate margin {total_margin:.0f} JPY exceeds remaining {max_margin_pct:.1f}% "
+                    f"margin room {margin_room:.0f} JPY",
+                )
+            )
+    return issues
+
+
+def _trader_entry_occupancy(snapshot: BrokerSnapshot) -> int:
+    positions = sum(1 for position in snapshot.positions if position.owner == Owner.TRADER)
+    orders = sum(1 for order in snapshot.orders if _is_trader_pending_entry(order))
+    return positions + orders
+
+
+def _pending_geometry_keys(snapshot: BrokerSnapshot) -> tuple[tuple[object, ...], ...]:
+    keys: list[tuple[object, ...]] = []
+    for order in snapshot.orders:
+        if not _is_trader_pending_entry(order):
+            continue
+        key = _pending_order_geometry_key(order)
+        if key is not None:
+            keys.append(key)
+    return tuple(keys)
+
+
+def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, RiskIssue | None]:
+    risk = 0.0
+    margin = 0.0
+    for order in snapshot.orders:
+        if not _is_trader_pending_entry(order):
+            continue
+        if not order.pair or order.price is None or not order.units:
+            return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} is missing pair/price/units")
+        sl = _raw_dependent_price(order.raw, "stopLossOnFill")
+        if sl is None:
+            return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} has no stopLossOnFill")
+        spec = DEFAULT_SPECS.get(order.pair)
+        if spec is None:
+            return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} pair {order.pair} is unsupported")
+        quote_to_jpy = _quote_to_jpy(order.pair, snapshot)
+        if quote_to_jpy is None:
+            return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"missing conversion quote for pending order {order.order_id}")
+        side = Side.LONG if order.units > 0 else Side.SHORT
+        if side == Side.LONG:
+            loss_pips = (order.price - sl) * spec.pip_factor
+        else:
+            loss_pips = (sl - order.price) * spec.pip_factor
+        jpy_per_pip = (abs(order.units) / spec.pip_factor) * quote_to_jpy
+        risk += max(0.0, loss_pips) * jpy_per_pip
+        margin += estimate_required_margin_jpy(
+            units=abs(order.units),
+            entry_price=order.price,
+            quote_to_jpy=quote_to_jpy,
+            spec=spec,
+        )
+    return risk, margin, None
+
+
+def _open_trader_position_risk_jpy(snapshot: BrokerSnapshot) -> tuple[float, RiskIssue | None]:
+    risk = 0.0
+    for position in snapshot.positions:
+        if position.owner != Owner.TRADER:
+            continue
+        if position.stop_loss is None:
+            return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"trader position {position.trade_id} has no SL")
+        spec = DEFAULT_SPECS.get(position.pair)
+        if spec is None:
+            return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"position {position.trade_id} pair {position.pair} is unsupported")
+        quote_to_jpy = _quote_to_jpy(position.pair, snapshot)
+        if quote_to_jpy is None:
+            return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"missing conversion quote for position {position.trade_id}")
+        if position.side == Side.LONG:
+            loss_pips = (position.entry_price - position.stop_loss) * spec.pip_factor
+        else:
+            loss_pips = (position.stop_loss - position.entry_price) * spec.pip_factor
+        jpy_per_pip = (position.units / spec.pip_factor) * quote_to_jpy
+        risk += max(0.0, loss_pips) * jpy_per_pip
+    return risk, None
+
+
+def _is_trader_pending_entry(order) -> bool:
+    if order.owner != Owner.TRADER or order.trade_id:
+        return False
+    return str(order.order_type or "").upper() in {"LIMIT", "STOP", "STOP-ENTRY", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
+
+
+def _pending_order_geometry_key(order) -> tuple[object, ...] | None:
+    if not order.pair or order.price is None or not order.units:
+        return None
+    side = Side.LONG if order.units > 0 else Side.SHORT
+    tp = _raw_dependent_price(order.raw, "takeProfitOnFill")
+    sl = _raw_dependent_price(order.raw, "stopLossOnFill")
+    order_type = "STOP-ENTRY" if str(order.order_type).upper() == "STOP" else str(order.order_type).upper()
+    return (order.pair, side.value, order_type, _price_key(order.pair, order.price), _price_key(order.pair, tp), _price_key(order.pair, sl))
+
+
+def _intent_geometry_key(intent: OrderIntent) -> tuple[object, ...]:
+    return (
+        intent.pair,
+        intent.side.value,
+        intent.order_type.value,
+        _price_key(intent.pair, intent.entry),
+        _price_key(intent.pair, intent.tp),
+        _price_key(intent.pair, intent.sl),
+    )
+
+
+def _raw_dependent_price(raw: dict[str, Any], key: str) -> float | None:
+    payload = raw.get(key) if isinstance(raw, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("price")
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _quote_to_jpy(pair: str, snapshot: BrokerSnapshot) -> float | None:
+    quote_ccy = pair.split("_", 1)[1]
+    if quote_ccy == "JPY":
+        return 1.0
+    home_conversion = snapshot.home_conversions.get(quote_ccy)
+    if home_conversion is not None and home_conversion > 0:
+        return float(home_conversion)
+    conversion_quote = snapshot.quotes.get(f"{quote_ccy}_JPY")
+    if conversion_quote is not None:
+        return max(conversion_quote.bid, conversion_quote.ask)
+    return None
+
+
+def _price_key(pair: str, value: float | None) -> float | None:
+    if value is None:
+        return None
+    precision = 3 if pair.endswith("_JPY") else 5
+    return round(float(value), precision)
 
 
 def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -> list[dict[str, str]]:

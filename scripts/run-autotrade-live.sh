@@ -33,4 +33,28 @@ fi
 readonly LIVE_ARG="$*"
 echo "[run-autotrade-live] running from ${ROOT_DIR} with env_file=${QR_OANDA_ENV_FILE}, QR_LIVE_ENABLED=${QR_LIVE_ENABLED}, args=${LIVE_ARG:-<none>}" >&2
 
-python3 -m quant_rabbit.cli autotrade-cycle "$@"
+args=("$@")
+has_arg() {
+  local needle="$1"
+  local item
+  for item in "${args[@]}"; do
+    if [[ "$item" == "$needle" || "$item" == "${needle}="* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if has_arg "--send" && ! has_arg "--use-gpt-trader"; then
+  gpt_args=("--use-gpt-trader")
+  if ! has_arg "--reuse-market-artifacts"; then
+    gpt_args=("--reuse-market-artifacts" "${gpt_args[@]}")
+  fi
+  if ! has_arg "--gpt-decision-response"; then
+    gpt_args=("${gpt_args[@]}" "--gpt-decision-response" "data/codex_trader_decision_response.json")
+  fi
+  args=("${gpt_args[@]}" "${args[@]}")
+  echo "[run-autotrade-live] live send requires trader decision handoff; using args=${args[*]}" >&2
+fi
+
+python3 -m quant_rabbit.cli autotrade-cycle "${args[@]}"

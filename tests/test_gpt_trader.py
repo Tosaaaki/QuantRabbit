@@ -32,6 +32,42 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_accepts_batch_trade_when_selected_lanes_are_live_ready_and_cited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            market_lane = f"{LANE_ID}:MARKET"
+            files["intents"].write_text(
+                json.dumps({"results": [_result(), _result(lane_id=market_lane)]})
+            )
+            brain = _brain(root, files, _batch_trade_decision([LANE_ID, market_lane]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.selected_lane_ids, (LANE_ID, market_lane))
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+
+    def test_rejects_batch_trade_when_selected_lane_is_not_cited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            market_lane = f"{LANE_ID}:MARKET"
+            files["intents"].write_text(
+                json.dumps({"results": [_result(), _result(lane_id=market_lane)]})
+            )
+            decision = _batch_trade_decision([LANE_ID, market_lane])
+            decision["evidence_refs"].remove(f"intent:{market_lane}")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SELECTED_LANE_EVIDENCE_MISSING", codes)
+
     def test_accepts_trade_when_existing_position_is_protected_and_trader_owned(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -72,6 +108,17 @@ class GPTTraderBrainTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root, orders=[{**_pending_order(), "order_id": "manual-pending", "owner": "unknown"}])
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+
+    def test_accepts_trade_with_trader_pending_entry_for_gateway_basket_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
             brain = _brain(root, files, _trade_decision())
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -621,6 +668,17 @@ def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION
         ],
         "operator_summary": "Accept the verified EUR_USD continuation lane.",
     }
+
+
+def _batch_trade_decision(lane_ids: list[str]) -> dict:
+    decision = _trade_decision(lane_id=lane_ids[0])
+    decision["selected_lane_ids"] = lane_ids
+    refs = list(decision["evidence_refs"])
+    for lane_id in lane_ids[1:]:
+        refs.extend([f"intent:{lane_id}", f"campaign:{lane_id}"])
+    decision["evidence_refs"] = refs
+    decision["operator_summary"] = "Accept the verified EUR_USD continuation basket."
+    return decision
 
 
 def _request_evidence_decision() -> dict:

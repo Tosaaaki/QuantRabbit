@@ -3,11 +3,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_REPORT
+from quant_rabbit.ai_test_bot import (
+    AITestBotBacktester,
+    DEFAULT_MAX_ACTIVE_BUCKETS,
+    DEFAULT_MIN_TRAIN_TRADES,
+    DEFAULT_SOURCE_TABLES,
+    DEFAULT_TRAINING_DAYS,
+)
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
@@ -20,6 +28,8 @@ from quant_rabbit.learning import PostTradeLearner
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
 from quant_rabbit.paths import (
     ROOT,
+    DEFAULT_AI_TEST_BOT_BACKTEST,
+    DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CAMPAIGN_REPORT,
@@ -211,6 +221,25 @@ def main(argv: list[str] | None = None) -> int:
     p_replay.add_argument("--max-days", type=int, default=None)
     p_replay.add_argument("--output", type=Path, default=DEFAULT_REPLAY_BACKTEST)
     p_replay.add_argument("--report", type=Path, default=DEFAULT_REPLAY_BACKTEST_REPORT)
+
+    p_ai_test = sub.add_parser(
+        "ai-test-bot-backtest",
+        help="Walk-forward backtest an AI-managed parameter policy over imported legacy records.",
+    )
+    p_ai_test.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
+    p_ai_test.add_argument("--start-balance", type=float, required=True)
+    p_ai_test.add_argument("--target-return-pct", type=float, default=10.0)
+    p_ai_test.add_argument("--max-loss", type=float, default=None)
+    p_ai_test.add_argument("--daily-risk-pct", type=float, default=None)
+    p_ai_test.add_argument("--target-trades-per-day", type=int, default=None)
+    p_ai_test.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_ai_test.add_argument("--training-days", type=int, default=DEFAULT_TRAINING_DAYS)
+    p_ai_test.add_argument("--min-train-trades", type=int, default=DEFAULT_MIN_TRAIN_TRADES)
+    p_ai_test.add_argument("--max-active-buckets", type=int, default=DEFAULT_MAX_ACTIVE_BUCKETS)
+    p_ai_test.add_argument("--source-tables", default=",".join(DEFAULT_SOURCE_TABLES))
+    p_ai_test.add_argument("--max-validation-days", type=int, default=None)
+    p_ai_test.add_argument("--output", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
+    p_ai_test.add_argument("--report", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST_REPORT)
 
     p_coverage = sub.add_parser("optimize-coverage", help="Measure live-ready target coverage and emit gap tasks.")
     p_coverage.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -486,9 +515,11 @@ def main(argv: list[str] | None = None) -> int:
                     "snapshot_path": str(summary.snapshot_path),
                     "intents_path": str(summary.intents_path),
                     "selected_lane_id": summary.selected_lane_id,
+                    "selected_lane_ids": list(summary.selected_lane_ids),
                     "deterministic_lane_id": summary.deterministic_lane_id,
                     "decision_source": summary.decision_source,
                     "sent": summary.sent,
+                    "sent_count": summary.sent_count,
                     "positions": summary.positions,
                     "orders": summary.orders,
                     "live_ready": summary.live_ready,
@@ -1110,6 +1141,49 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "ai-test-bot-backtest":
+        try:
+            source_tables = tuple(item.strip() for item in str(args.source_tables).split(",") if item.strip())
+            summary = AITestBotBacktester(
+                db_path=args.db,
+                output_path=args.output,
+                report_path=args.report,
+                target_state_path=args.target_state,
+                max_loss_jpy=args.max_loss,
+                daily_risk_pct=args.daily_risk_pct,
+                target_trades_per_day=args.target_trades_per_day,
+                training_days=args.training_days,
+                min_train_trades=args.min_train_trades,
+                max_active_buckets=args.max_active_buckets,
+                source_tables=source_tables,
+            ).run(
+                start_balance_jpy=args.start_balance,
+                target_return_pct=args.target_return_pct,
+                max_validation_days=args.max_validation_days,
+            )
+        except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "validation_days": summary.validation_days,
+                    "traded_days": summary.traded_days,
+                    "target_hit_days": summary.target_hit_days,
+                    "total_managed_net_jpy": summary.total_managed_net_jpy,
+                    "profit_factor": summary.profit_factor,
+                    "blockers": summary.blockers,
+                    "live_permission": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "optimize-coverage":
         summary = CoverageOptimizer(
             intents_path=args.intents,
@@ -1279,6 +1353,7 @@ def main(argv: list[str] | None = None) -> int:
                     "report_path": str(summary.report_path),
                     "action": summary.action,
                     "selected_lane_id": summary.selected_lane_id,
+                    "selected_lane_ids": list(summary.selected_lane_ids),
                     "allowed": summary.allowed,
                     "issues": summary.issues,
                 },

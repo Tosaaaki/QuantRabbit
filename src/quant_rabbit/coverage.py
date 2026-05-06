@@ -23,6 +23,9 @@ class CoverageLane:
     pair: str
     direction: str
     order_type: str
+    entry: float | None
+    tp: float | None
+    sl: float | None
     units: int
     risk_jpy: float
     reward_jpy: float
@@ -73,10 +76,18 @@ class CoverageOptimizer:
         lanes = tuple(_coverage_lane(item) for item in intents.get("results", []) or [] if _has_intent(item))
         remaining_target = _remaining_target(target)
         remaining_risk_budget = _remaining_risk_budget(target)
-        live_ready_reward = _round(sum(lane.reward_jpy for lane in lanes if lane.counts_live_ready))
-        potential_reward = _round(sum(lane.reward_jpy for lane in lanes if lane.counts_live_ready or lane.counts_after_promotion))
-        live_ready_risk = _round(sum(lane.risk_jpy for lane in lanes if lane.counts_live_ready))
-        sequential_ladder = _sequential_ladder(lanes, remaining_target, remaining_risk_budget)
+        raw_live_ready_lanes = tuple(lane for lane in lanes if lane.counts_live_ready)
+        live_ready_lanes = _dedupe_exact_geometry(raw_live_ready_lanes)
+        potential_lanes = _dedupe_exact_geometry(
+            tuple(lane for lane in lanes if lane.counts_live_ready or lane.counts_after_promotion)
+        )
+        duplicate_live_ready_lanes = len(raw_live_ready_lanes) - len(live_ready_lanes)
+        live_ready_reward = _round(sum(lane.reward_jpy for lane in live_ready_lanes))
+        potential_reward = _round(sum(lane.reward_jpy for lane in potential_lanes))
+        live_ready_risk = _round(sum(lane.risk_jpy for lane in live_ready_lanes))
+        raw_live_ready_reward = _round(sum(lane.reward_jpy for lane in raw_live_ready_lanes))
+        raw_live_ready_risk = _round(sum(lane.risk_jpy for lane in raw_live_ready_lanes))
+        sequential_ladder = _sequential_ladder(live_ready_lanes, remaining_target, remaining_risk_budget)
         replay_gap = _replay_gap(replay)
         blockers = tuple(
             _blockers(
@@ -86,6 +97,7 @@ class CoverageOptimizer:
                 live_ready_reward=live_ready_reward,
                 potential_reward=potential_reward,
                 live_ready_risk=live_ready_risk,
+                duplicate_live_ready_lanes=duplicate_live_ready_lanes,
                 sequential_ladder=sequential_ladder,
                 lanes=lanes,
                 replay_gap=replay_gap,
@@ -98,6 +110,7 @@ class CoverageOptimizer:
                 potential_reward=potential_reward,
                 live_ready_risk=live_ready_risk,
                 remaining_risk_budget=remaining_risk_budget,
+                duplicate_live_ready_lanes=duplicate_live_ready_lanes,
                 sequential_ladder=sequential_ladder,
                 lanes=lanes,
                 replay_gap=replay_gap,
@@ -120,6 +133,10 @@ class CoverageOptimizer:
             "remaining_risk_budget_jpy": remaining_risk_budget,
             "live_ready_reward_jpy": live_ready_reward,
             "live_ready_risk_jpy": live_ready_risk,
+            "raw_live_ready_reward_jpy": raw_live_ready_reward,
+            "raw_live_ready_risk_jpy": raw_live_ready_risk,
+            "unique_live_ready_lanes": len(live_ready_lanes),
+            "duplicate_live_ready_lanes": duplicate_live_ready_lanes,
             "potential_reward_jpy": potential_reward,
             "sequential_ladder_reward_jpy": sequential_ladder["reward_jpy"],
             "sequential_ladder_risk_jpy": sequential_ladder["risk_jpy"],
@@ -144,7 +161,7 @@ class CoverageOptimizer:
             remaining_target_jpy=remaining_target,
             live_ready_reward_jpy=live_ready_reward,
             potential_reward_jpy=potential_reward,
-            live_ready_lanes=sum(1 for lane in lanes if lane.counts_live_ready),
+            live_ready_lanes=len(live_ready_lanes),
             promotion_candidate_lanes=sum(1 for lane in lanes if lane.counts_after_promotion),
             action_items=len(action_items),
             sequential_ladder_reward_jpy=sequential_ladder["reward_jpy"],
@@ -164,6 +181,8 @@ class CoverageOptimizer:
             f"- Status: `{payload['status']}`",
             f"- Remaining target: `{payload['remaining_target_jpy']:.0f} JPY`",
             f"- Live-ready reward: `{payload['live_ready_reward_jpy']:.0f} JPY` (`{payload['coverage_pct']:.1f}%`)",
+            f"- Unique live-ready lanes: `{payload['unique_live_ready_lanes']}` "
+            f"(duplicates removed=`{payload['duplicate_live_ready_lanes']}`)",
             f"- Sequential ladder reward: `{payload['sequential_ladder_reward_jpy']:.0f} JPY` "
             f"(`{payload['sequential_ladder_coverage_pct']:.1f}%`, steps=`{payload['sequential_ladder_steps']}`)",
             f"- Potential reward after promotions: `{payload['potential_reward_jpy']:.0f} JPY` (`{payload['potential_coverage_pct']:.1f}%`)",
@@ -217,6 +236,9 @@ def _coverage_lane(result: dict[str, Any]) -> CoverageLane:
         pair=pair,
         direction=direction,
         order_type=str(intent.get("order_type") or ""),
+        entry=_optional_float(intent.get("entry")),
+        tp=_optional_float(intent.get("tp")),
+        sl=_optional_float(intent.get("sl")),
         units=units,
         risk_jpy=risk_jpy,
         reward_jpy=reward_jpy,
@@ -261,6 +283,7 @@ def _blockers(
     live_ready_reward: float,
     potential_reward: float,
     live_ready_risk: float,
+    duplicate_live_ready_lanes: int,
     sequential_ladder: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
@@ -299,12 +322,15 @@ def _action_items(
     potential_reward: float,
     live_ready_risk: float,
     remaining_risk_budget: float,
+    duplicate_live_ready_lanes: int,
     sequential_ladder: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
 ) -> list[str]:
     items: list[str] = []
     promotion_candidates = [lane for lane in lanes if lane.counts_after_promotion]
+    if duplicate_live_ready_lanes:
+        items.append("dedupe same entry/tp/sl receipts before considering multi-entry execution")
     if promotion_candidates:
         items.append(f"promote {len(promotion_candidates)} dry-run receipts only after their strategy blockers clear")
     if live_ready_reward < remaining_target:
@@ -388,6 +414,20 @@ def _sequential_ladder(
         "steps": len(selected),
         "lane_ids": [lane.lane_id for lane in selected],
     }
+
+
+def _dedupe_exact_geometry(lanes: tuple[CoverageLane, ...]) -> tuple[CoverageLane, ...]:
+    selected: dict[tuple[object, ...], CoverageLane] = {}
+    for lane in lanes:
+        key = (lane.pair, lane.direction, lane.order_type, lane.entry, lane.tp, lane.sl)
+        current = selected.get(key)
+        if current is None or (lane.reward_risk, lane.reward_jpy, lane.lane_id) > (
+            current.reward_risk,
+            current.reward_jpy,
+            current.lane_id,
+        ):
+            selected[key] = lane
+    return tuple(selected.values())
 
 
 def _replay_gap(replay: dict[str, Any]) -> str | None:

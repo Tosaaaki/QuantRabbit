@@ -121,6 +121,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 strategy_profile=_strategy(root),
                 output_path=output,
                 report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
             ).run(snapshot_path=_snapshot(root))
 
             result = json.loads(output.read_text())["results"][0]

@@ -114,6 +114,39 @@ class TraderBrainTest(unittest.TestCase):
             self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
             self.assertEqual(decision.pending_cancel_order_ids, ())
 
+    def test_target_open_cancels_passive_pending_when_market_lane_is_waiting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state = _target_state(root, per_trade_risk_budget_jpy=400.0)
+            brain = TraderBrain(
+                intents_path=_market_preference_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=target_state,
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="passive-limit",
+                        pair="EUR_USD",
+                        order_type="LIMIT",
+                        price=1.17120,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
+            self.assertEqual(decision.pending_cancel_order_ids, ("passive-limit",))
+
     def test_cancels_pending_only_when_same_type_lane_has_moved_outside_spread_band(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -248,6 +281,27 @@ class TraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "decision.json").read_text())
             self.assertEqual(payload["loss_cap_jpy"], 400.0)
             self.assertIn("daily target state", payload["loss_cap_source"])
+
+    def test_target_open_flat_account_prefers_market_lane_over_passive_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state = _target_state(root, per_trade_risk_budget_jpy=400.0)
+            brain = TraderBrain(
+                intents_path=_market_preference_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=target_state,
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
+            self.assertIn("MARKET lane", decision.reason)
 
     def test_historical_large_loss_warns_but_does_not_block_repaired_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -416,6 +470,29 @@ def _mixed_entry_type_intents(root: Path) -> Path:
         "sl": 1.17060,
     }
     path.write_text(json.dumps({"results": [limit, stop]}))
+    return path
+
+
+def _market_preference_intents(root: Path) -> Path:
+    path = root / "market_preference_intents.json"
+    pending = _result("range_trader:EUR_USD:LONG:RANGE_ROTATION", "EUR_USD", "LONG", "RANGE_ROTATION")
+    pending["risk_metrics"] = {"risk_jpy": 80.0, "reward_jpy": 320.0, "reward_risk": 4.0, "spread_pips": 0.8}
+    pending["intent"] = {
+        **pending["intent"],
+        "order_type": "LIMIT",
+        "entry": 1.17120,
+        "tp": 1.17360,
+        "sl": 1.17060,
+    }
+    market = _result(
+        "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+        "EUR_USD",
+        "LONG",
+        "TREND_CONTINUATION",
+    )
+    market["intent"] = {**market["intent"], "order_type": "MARKET", "entry": 1.17306}
+    market["risk_metrics"] = {"risk_jpy": 100.0, "reward_jpy": 220.0, "reward_risk": 2.2, "spread_pips": 0.8}
+    path.write_text(json.dumps({"results": [pending, market]}))
     return path
 
 

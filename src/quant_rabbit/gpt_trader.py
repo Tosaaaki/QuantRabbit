@@ -38,6 +38,7 @@ DEFAULT_GPT_MAX_LANES = 56
 class GPTTraderDecision:
     action: str
     selected_lane_id: str | None
+    selected_lane_ids: tuple[str, ...]
     cancel_order_ids: tuple[str, ...]
     confidence: str
     thesis: str
@@ -72,6 +73,7 @@ class GPTTraderSummary:
     report_path: Path
     action: str | None
     selected_lane_id: str | None
+    selected_lane_ids: tuple[str, ...]
     allowed: bool
     issues: int
 
@@ -154,6 +156,7 @@ class GPTTraderBrain:
             report_path=self.report_path,
             action=decision.action,
             selected_lane_id=decision.selected_lane_id,
+            selected_lane_ids=decision.selected_lane_ids,
             allowed=verification.allowed,
             issues=len(verification.issues),
         )
@@ -173,7 +176,8 @@ class GPTTraderBrain:
             "contract": {
                 "allowed_actions": list(ALLOWED_ACTIONS),
                 "trade_requires_live_ready_lane": True,
-                "pending_entry_blocks_new_trade": True,
+                "trade_may_select_multiple_live_ready_lanes": True,
+                "pending_entries_are_basket_counted_by_gateway": True,
                 "protected_trader_position_adds_require_portfolio_validation": True,
                 "model_output_is_advisory_until_verified": True,
                 "strategy_reviews_must_use_lane_id_not_desk_alias": True,
@@ -210,6 +214,7 @@ class GPTTraderBrain:
             f"- Status: `{result['status']}`",
             f"- Action: `{decision.get('action')}`",
             f"- Selected lane: `{decision.get('selected_lane_id')}`",
+            f"- Selected basket lanes: `{', '.join(decision.get('selected_lane_ids') or []) or 'none'}`",
             f"- Cancel order ids: `{', '.join(decision.get('cancel_order_ids') or []) or 'none'}`",
             f"- Confidence: `{decision.get('confidence')}`",
             f"- Operator summary: {decision.get('operator_summary')}",
@@ -229,7 +234,7 @@ class GPTTraderBrain:
                 "## Decision Contract",
                 "",
                 "- GPT is the discretionary reasoning layer; deterministic verification remains the execution gate.",
-                "- `TRADE` requires a known `LIVE_READY` lane and no pending-entry or non-layerable exposure.",
+                "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
             ]
         )
@@ -259,24 +264,41 @@ class DecisionVerifier:
 
         broker = self.packet.get("broker_snapshot", {})
         positions = int(broker.get("positions") or 0)
-        lane = self.lanes.get(decision.selected_lane_id or "")
+        selected_lane_ids = _selected_trade_lane_ids(decision)
+        primary_lane_id = decision.selected_lane_id or (selected_lane_ids[0] if selected_lane_ids else None)
         tradeable_lanes = _tradeable_live_ready_lanes(self.packet)
         exposure_blockers = _trade_exposure_blockers(self.packet)
 
         if decision.action == "TRADE":
-            if not decision.selected_lane_id:
-                issues.append(VerificationIssue("LANE_REQUIRED", "TRADE requires selected_lane_id"))
+            if not selected_lane_ids:
+                issues.append(VerificationIssue("LANE_REQUIRED", "TRADE requires selected_lane_id or selected_lane_ids"))
             if exposure_blockers:
                 issues.append(VerificationIssue("EXPOSURE_BLOCKS_TRADE", "; ".join(exposure_blockers[:3])))
-            if lane is None:
-                issues.append(VerificationIssue("UNKNOWN_LANE", f"selected lane is not in packet: {decision.selected_lane_id}"))
-            else:
-                if lane.get("status") != "LIVE_READY":
-                    issues.append(VerificationIssue("LANE_NOT_LIVE_READY", f"lane status is {lane.get('status')}"))
-                if lane.get("method") != decision.method:
-                    issues.append(VerificationIssue("METHOD_MISMATCH", "decision method does not match selected lane"))
-                if lane.get("risk_blockers") or lane.get("strategy_blockers") or lane.get("live_blockers"):
-                    issues.append(VerificationIssue("LANE_HAS_BLOCKERS", "selected lane still carries blockers"))
+            if decision.selected_lane_id and decision.selected_lane_id not in selected_lane_ids:
+                issues.append(
+                    VerificationIssue(
+                        "PRIMARY_LANE_NOT_IN_BASKET",
+                        "selected_lane_id must also appear in selected_lane_ids",
+                    )
+                )
+            for selected_lane_id in selected_lane_ids:
+                selected_lane = self.lanes.get(selected_lane_id)
+                if selected_lane is None:
+                    issues.append(VerificationIssue("UNKNOWN_LANE", f"selected lane is not in packet: {selected_lane_id}"))
+                    continue
+                if selected_lane.get("status") != "LIVE_READY":
+                    issues.append(VerificationIssue("LANE_NOT_LIVE_READY", f"{selected_lane_id} status is {selected_lane.get('status')}"))
+                if selected_lane_id == primary_lane_id and selected_lane.get("method") != decision.method:
+                    issues.append(VerificationIssue("METHOD_MISMATCH", "decision method does not match selected primary lane"))
+                if selected_lane.get("risk_blockers") or selected_lane.get("strategy_blockers") or selected_lane.get("live_blockers"):
+                    issues.append(VerificationIssue("LANE_HAS_BLOCKERS", f"{selected_lane_id} still carries blockers"))
+                if str(selected_lane.get("evidence_ref") or "") not in decision.evidence_refs:
+                    issues.append(
+                        VerificationIssue(
+                            "SELECTED_LANE_EVIDENCE_MISSING",
+                            f"selected lane {selected_lane_id} must be cited in evidence_refs",
+                        )
+                    )
             for field_name, value in (
                 ("thesis", decision.thesis),
                 ("narrative", decision.narrative),
@@ -388,6 +410,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
     "properties": {
         "action": {"type": "string", "enum": list(ALLOWED_ACTIONS)},
         "selected_lane_id": {"type": ["string", "null"]},
+        "selected_lane_ids": {"type": "array", "items": {"type": "string"}},
         "cancel_order_ids": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "string", "enum": list(ALLOWED_CONFIDENCE)},
         "thesis": {"type": "string"},
@@ -419,9 +442,15 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
 
 def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
     selected_lane_id = payload.get("selected_lane_id")
+    selected_lane_ids = tuple(
+        dict.fromkeys(str(item) for item in payload.get("selected_lane_ids", []) or [] if str(item))
+    )
+    if not selected_lane_ids and selected_lane_id is not None:
+        selected_lane_ids = (str(selected_lane_id),)
     return GPTTraderDecision(
         action=str(payload.get("action") or ""),
         selected_lane_id=str(selected_lane_id) if selected_lane_id is not None else None,
+        selected_lane_ids=selected_lane_ids,
         cancel_order_ids=tuple(str(item) for item in payload.get("cancel_order_ids", []) or []),
         confidence=str(payload.get("confidence") or ""),
         thesis=str(payload.get("thesis") or ""),
@@ -439,6 +468,13 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
             if isinstance(item, dict)
         ),
     )
+
+
+def _selected_trade_lane_ids(decision: GPTTraderDecision) -> tuple[str, ...]:
+    lane_ids = tuple(dict.fromkeys(lane_id for lane_id in decision.selected_lane_ids if lane_id))
+    if lane_ids:
+        return lane_ids
+    return (decision.selected_lane_id,) if decision.selected_lane_id else ()
 
 
 def _lane_packet(
@@ -665,8 +701,6 @@ def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
         blockers.append(
             f"non-layerable position {position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
         )
-    if _has_pending_entry_order(packet):
-        blockers.append("pending entry order is open")
     return blockers
 
 

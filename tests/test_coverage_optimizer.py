@@ -163,6 +163,10 @@ class CoverageOptimizerTest(unittest.TestCase):
                             _result(
                                 "LIVE_READY",
                                 lane_id="failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE",
+                                pair="AUD_JPY",
+                                entry=100.0,
+                                tp=101.0,
+                                sl=99.5,
                                 risk_metrics={"risk_jpy": 480.0, "reward_jpy": 4000.0, "reward_risk": 8.33, "spread_pips": 0.8},
                             ),
                         ]
@@ -184,6 +188,49 @@ class CoverageOptimizerTest(unittest.TestCase):
             payload = json.loads((root / "coverage.json").read_text())
             self.assertEqual(payload["sequential_ladder_steps"], 2)
             self.assertFalse(any("simultaneous" in item for item in payload["blockers"]))
+
+    def test_dedupes_exact_geometry_before_counting_live_ready_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            replay = root / "replay.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "LIVE_READY",
+                                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                risk_metrics={"risk_jpy": 100.0, "reward_jpy": 200.0, "reward_risk": 2.0, "spread_pips": 0.8},
+                            ),
+                            _result(
+                                "LIVE_READY",
+                                lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                                risk_metrics={"risk_jpy": 100.0, "reward_jpy": 200.0, "reward_risk": 2.0, "spread_pips": 0.8},
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 300.0, "remaining_risk_budget_jpy": 500.0}))
+            replay.write_text(json.dumps({"summary": {"days": 1, "evidence_target_covered": 1}}))
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=replay,
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_GAP")
+            self.assertEqual(summary.live_ready_lanes, 1)
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertEqual(payload["raw_live_ready_reward_jpy"], 400.0)
+            self.assertEqual(payload["live_ready_reward_jpy"], 200.0)
+            self.assertEqual(payload["duplicate_live_ready_lanes"], 1)
+            self.assertTrue(any("dedupe same entry/tp/sl" in item for item in payload["action_items"]))
 
     def test_names_replay_gap_instead_of_profile_promotion_when_live_ready_coverage_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -212,6 +259,12 @@ def _result(
     status: str,
     *,
     lane_id: str = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+    order_type: str = "STOP-ENTRY",
+    entry: float = 1.1000,
+    tp: float = 1.1010,
+    sl: float = 1.0995,
     live_blocker: str | None = None,
     risk_metrics: dict | None = None,
     include_risk_metrics: bool = True,
@@ -224,13 +277,13 @@ def _result(
         "strategy_issues": [],
         "live_blockers": [live_blocker] if live_blocker else [],
         "intent": {
-            "pair": "EUR_USD",
-            "side": "LONG",
-            "order_type": "STOP-ENTRY",
+            "pair": pair,
+            "side": side,
+            "order_type": order_type,
             "units": 1000,
-            "entry": 1.1000,
-            "tp": 1.1010,
-            "sl": 1.0995,
+            "entry": entry,
+            "tp": tp,
+            "sl": sl,
             "thesis": "test continuation",
             "market_context": {
                 "regime": "TREND_CONTINUATION campaign lane",

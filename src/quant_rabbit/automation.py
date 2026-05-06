@@ -106,6 +106,21 @@ def _passes_gpt_prefilter(score: LaneScore) -> bool:
     return not any(_is_hard_prefilter_blocker(b) for b in score.blockers)
 
 
+def _is_existing_pending_blocker(blocker: str) -> bool:
+    return str(blocker).startswith("pending entry exists:")
+
+
+def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool = False) -> bool:
+    if _passes_gpt_prefilter(score):
+        return True
+    if not allow_existing_pending:
+        return False
+    if score.status != "LIVE_READY" or score.action != ACTION_NO_TRADE:
+        return False
+    blockers = [blocker for blocker in score.blockers if not _is_existing_pending_blocker(blocker)]
+    return not any(_is_hard_prefilter_blocker(blocker) for blocker in blockers)
+
+
 @dataclass(frozen=True)
 class AutoTradeCycleSummary:
     status: str
@@ -118,6 +133,8 @@ class AutoTradeCycleSummary:
     positions: int
     orders: int
     live_ready: int
+    selected_lane_ids: tuple[str, ...] = ()
+    sent_count: int = 0
     decision_source: str = "deterministic"
     selected_lane_score: float | None = None
     selected_lane_size_multiple: float | None = None
@@ -146,6 +163,7 @@ class GptHandoffSummary:
     selected_lane_id: str | None
     allowed: bool
     issues: int
+    selected_lane_ids: tuple[str, ...] = ()
     error: str | None = None
 
 
@@ -153,7 +171,8 @@ class AutoTradeCycle:
     """One safe automated trading cycle.
 
     The cycle can add only when existing exposure is protected, trader-owned, and
-    still inside portfolio risk validation. Pending entry orders remain monitor-only.
+    still inside portfolio risk validation. Existing trader pending entries are
+    basket-counted by the gateway before any additional order is staged or sent.
     """
 
     def __init__(
@@ -356,6 +375,167 @@ class AutoTradeCycle:
                     self.client.cancel_order(order_id)
                     canceled_orders.append(order_id)
                 status = "CANCELED_CONTAMINATED_PENDING"
+            target_open = (
+                target_summary is not None
+                and target_summary.status == "PURSUE_TARGET"
+                and target_summary.remaining_target_jpy > 0
+            )
+            if not canceled_orders and target_open:
+                basket_lane_ids, basket_size_multiples = self._basket_lane_plan(
+                    decision=decision,
+                    primary_lane_id=None,
+                    primary_size_multiple=None,
+                    allow_existing_pending=True,
+                )
+                if basket_lane_ids:
+                    if send and self.live_enabled and not self.use_gpt_trader:
+                        return self._fresh_entry_gpt_required_summary(
+                            generated_at=generated_at,
+                            positions=positions,
+                            orders=orders,
+                            live_ready=intent_summary.live_ready,
+                            selected_lane_id=basket_lane_ids[0],
+                            selected_lane_ids=basket_lane_ids,
+                            deterministic_lane_id=basket_lane_ids[0],
+                            canceled_orders=tuple(canceled_orders),
+                            target_summary=target_summary,
+                            position_decision=position_decision,
+                            position_execution=position_execution,
+                            decision_source="deterministic_basket_blocked",
+                        )
+                    gpt_summary = None
+                    if send and self.live_enabled and self.use_gpt_trader:
+                        gpt_summary = self._run_gpt_handoff()
+                        gpt_lane_ids = (
+                            gpt_summary.selected_lane_ids
+                            or ((gpt_summary.selected_lane_id,) if gpt_summary.selected_lane_id else ())
+                        )
+                        if (
+                            gpt_summary.status != "ACCEPTED"
+                            or not gpt_summary.allowed
+                            or gpt_summary.action != "TRADE"
+                            or not gpt_lane_ids
+                        ):
+                            summary = AutoTradeCycleSummary(
+                                status=(
+                                    "GPT_REJECTED"
+                                    if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed
+                                    else f"GPT_{gpt_summary.action or 'NO_TRADE'}"
+                                ),
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                deterministic_lane_id=basket_lane_ids[0],
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                selected_lane_ids=basket_lane_ids,
+                                canceled_orders=tuple(canceled_orders),
+                                receipt_promotions=0,
+                                decision_source="gpt_trader",
+                                position_management_action=position_decision.action,
+                                position_execution_status=position_execution.status,
+                                position_execution_sent=position_execution.sent,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
+                        if not set(gpt_lane_ids).issubset(set(basket_lane_ids)):
+                            summary = AutoTradeCycleSummary(
+                                status="GPT_DECISION_NOT_PREFILTERED",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                deterministic_lane_id=basket_lane_ids[0],
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                selected_lane_ids=gpt_lane_ids,
+                                canceled_orders=tuple(canceled_orders),
+                                receipt_promotions=0,
+                                decision_source="gpt_trader",
+                                position_management_action=position_decision.action,
+                                position_execution_status=position_execution.status,
+                                position_execution_sent=position_execution.sent,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
+                        basket_lane_ids = gpt_lane_ids
+                        basket_size_multiples = {
+                            lane_id: basket_size_multiples.get(lane_id, 1.0)
+                            for lane_id in basket_lane_ids
+                        }
+                    order_summary = LiveOrderGateway(
+                        client=self.client,
+                        strategy_profile=self.strategy_profile_path,
+                        output_path=self.live_order_output_path,
+                        report_path=self.live_order_report_path,
+                        live_enabled=self.live_enabled,
+                        max_loss_jpy=resolved_max_loss_jpy,
+                        portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+                    ).run_batch(
+                        intents_path=self.intents_path,
+                        lane_ids=basket_lane_ids,
+                        size_multiples=basket_size_multiples,
+                        send=send,
+                        confirm_live=send,
+                    )
+                    selected_lane_id = order_summary.lane_id
+                    selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                        decision=decision,
+                        lane_id=selected_lane_id,
+                    )
+                    summary = AutoTradeCycleSummary(
+                        status=order_summary.status,
+                        report_path=self.report_path,
+                        snapshot_path=self.snapshot_path,
+                        intents_path=self.intents_path,
+                        selected_lane_id=selected_lane_id,
+                        selected_lane_ids=order_summary.lane_ids,
+                        selected_lane_score=selected_lane_score,
+                        selected_lane_size_multiple=selected_lane_size_multiple,
+                        deterministic_lane_id=selected_lane_id,
+                        sent=order_summary.sent,
+                        sent_count=order_summary.sent_count,
+                        positions=positions,
+                        orders=orders,
+                        live_ready=intent_summary.live_ready,
+                        canceled_orders=tuple(canceled_orders),
+                        receipt_promotions=0,
+                        decision_source="deterministic_basket",
+                        position_management_action=position_decision.action,
+                        position_execution_status=position_execution.status,
+                        position_execution_sent=position_execution.sent,
+                        target_status=target_summary.status if target_summary else None,
+                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                        target_progress_pct=target_summary.progress_pct if target_summary else None,
+                        gpt_status=gpt_summary.status if gpt_summary else None,
+                        gpt_action=gpt_summary.action if gpt_summary else None,
+                        gpt_allowed=gpt_summary.allowed if gpt_summary else None,
+                        gpt_issues=gpt_summary.issues if gpt_summary else None,
+                        gpt_error=gpt_summary.error if gpt_summary else None,
+                    )
+                    self._write_report(summary, generated_at)
+                    return summary
             summary = AutoTradeCycleSummary(
                 status=status,
                 report_path=self.report_path,
@@ -391,6 +571,7 @@ class AutoTradeCycle:
         selected_lane_score = decision.selected_lane_score
         selected_lane_size_multiple = decision.selected_lane_size_multiple
         gpt_summary = None
+        gpt_selected_lane_ids: tuple[str, ...] = ()
         gpt_wait_retries = 0
         gpt_recovery_source = None
         campaign_exposure_required = _campaign_exposure_required(
@@ -438,7 +619,11 @@ class AutoTradeCycle:
             gpt_summary = self._run_gpt_handoff()
             if gpt_summary.status == "ACCEPTED" and gpt_summary.allowed:
                 if gpt_summary.action == "TRADE" and gpt_summary.selected_lane_id:
-                    selected_lane_id = gpt_summary.selected_lane_id
+                    gpt_selected_lane_ids = (
+                        gpt_summary.selected_lane_ids
+                        or (gpt_summary.selected_lane_id,)
+                    )
+                    selected_lane_id = gpt_selected_lane_ids[0]
                     selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                         decision=decision,
                         lane_id=selected_lane_id,
@@ -474,7 +659,9 @@ class AutoTradeCycle:
                                     selected_lane_id=deterministic_lane_id,
                                     allowed=True,
                                     issues=0,
+                                    selected_lane_ids=(deterministic_lane_id,),
                                 )
+                                gpt_selected_lane_ids = (deterministic_lane_id,)
                                 gpt_recovery_source = f"DETERMINISTIC_WAIT_RECOVERY_ATTEMPT_{attempt}"
                                 break
                             if attempt == self.gpt_wait_retry_limit:
@@ -487,7 +674,11 @@ class AutoTradeCycle:
                                 and retry_summary.action == "TRADE"
                                 and retry_summary.selected_lane_id
                             ):
-                                selected_lane_id = retry_summary.selected_lane_id
+                                gpt_selected_lane_ids = (
+                                    retry_summary.selected_lane_ids
+                                    or (retry_summary.selected_lane_id,)
+                                )
+                                selected_lane_id = gpt_selected_lane_ids[0]
                                 selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                                     decision=decision,
                                     lane_id=selected_lane_id,
@@ -560,6 +751,11 @@ class AutoTradeCycle:
                     and gpt_summary.action == "TRADE"
                     and bool(gpt_summary.selected_lane_id)
                 )
+                if gpt_trade_accepted:
+                    gpt_selected_lane_ids = (
+                        gpt_summary.selected_lane_ids
+                        or (gpt_summary.selected_lane_id,)
+                    )
                 if not gpt_trade_accepted:
                     if campaign_exposure_required:
                         reason = gpt_summary.action or gpt_summary.status or "NO_TRADE"
@@ -600,7 +796,7 @@ class AutoTradeCycle:
                         )
                         self._write_report(summary, generated_at)
                         return summary
-                elif gpt_summary.selected_lane_id not in prefiltered_lane_ids:
+                elif not set(gpt_selected_lane_ids).issubset(prefiltered_lane_ids):
                     if campaign_exposure_required:
                         gpt_recovery_source = "CAMPAIGN_EXPOSURE_RECOVERY_GPT_NOT_PREFILTERED"
                     else:
@@ -635,35 +831,80 @@ class AutoTradeCycle:
                         self._write_report(summary, generated_at)
                         return summary
                 else:
-                    selected_lane_id = gpt_summary.selected_lane_id
+                    selected_lane_id = gpt_selected_lane_ids[0]
                     selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                         decision=decision, lane_id=selected_lane_id
                     )
 
-        order_summary = LiveOrderGateway(
+        basket_lane_ids = gpt_selected_lane_ids or ((selected_lane_id,) if selected_lane_id else ())
+        basket_size_multiples = {
+            selected_lane_id: selected_lane_size_multiple if selected_lane_size_multiple is not None else 1.0
+        } if selected_lane_id else {}
+        for lane_id in basket_lane_ids:
+            if lane_id not in basket_size_multiples:
+                _, size_multiple = self._selected_lane_meta(decision=decision, lane_id=lane_id)
+                basket_size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+        if selected_lane_id and not self.use_gpt_trader:
+            basket_lane_ids, basket_size_multiples = self._basket_lane_plan(
+                decision=decision,
+                primary_lane_id=selected_lane_id,
+                primary_size_multiple=selected_lane_size_multiple,
+            )
+
+        if basket_lane_ids and send and self.live_enabled and not self.use_gpt_trader:
+            return self._fresh_entry_gpt_required_summary(
+                generated_at=generated_at,
+                positions=positions,
+                orders=orders,
+                live_ready=intent_summary.live_ready,
+                selected_lane_id=selected_lane_id,
+                selected_lane_ids=basket_lane_ids,
+                selected_lane_score=selected_lane_score,
+                selected_lane_size_multiple=selected_lane_size_multiple,
+                deterministic_lane_id=deterministic_lane_id,
+                receipt_promotions=promotion_summary.promoted,
+                target_summary=target_summary,
+                position_decision=position_decision,
+                position_execution=position_execution,
+            )
+
+        order_gateway = LiveOrderGateway(
             client=self.client,
             strategy_profile=self.strategy_profile_path,
             output_path=self.live_order_output_path,
             report_path=self.live_order_report_path,
             live_enabled=self.live_enabled,
             max_loss_jpy=resolved_max_loss_jpy,
-        ).run(
-            intents_path=self.intents_path,
-            lane_id=selected_lane_id,
-            size_multiple=selected_lane_size_multiple if selected_lane_size_multiple is not None else 1.0,
-            send=send,
-            confirm_live=send,
+            portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
         )
+        if len(basket_lane_ids) > 1:
+            order_summary = order_gateway.run_batch(
+                intents_path=self.intents_path,
+                lane_ids=basket_lane_ids,
+                size_multiples=basket_size_multiples,
+                send=send,
+                confirm_live=send,
+            )
+        else:
+            order_summary = order_gateway.run(
+                intents_path=self.intents_path,
+                lane_id=selected_lane_id,
+                size_multiple=selected_lane_size_multiple if selected_lane_size_multiple is not None else 1.0,
+                send=send,
+                confirm_live=send,
+            )
         summary = AutoTradeCycleSummary(
             status=order_summary.status,
             report_path=self.report_path,
             snapshot_path=self.snapshot_path,
             intents_path=self.intents_path,
             selected_lane_id=selected_lane_id,
+            selected_lane_ids=order_summary.lane_ids or basket_lane_ids,
             selected_lane_score=selected_lane_score,
             selected_lane_size_multiple=selected_lane_size_multiple,
             deterministic_lane_id=deterministic_lane_id,
             sent=order_summary.sent,
+            sent_count=order_summary.sent_count,
             positions=positions,
             orders=orders,
             live_ready=intent_summary.live_ready,
@@ -691,6 +932,53 @@ class AutoTradeCycle:
         self._write_report(summary, generated_at)
         return summary
 
+    def _fresh_entry_gpt_required_summary(
+        self,
+        *,
+        generated_at: str,
+        positions: int,
+        orders: int,
+        live_ready: int,
+        selected_lane_id: str | None,
+        selected_lane_ids: tuple[str, ...],
+        deterministic_lane_id: str | None,
+        target_summary: DailyTargetSummary | None,
+        selected_lane_score: float | None = None,
+        selected_lane_size_multiple: float | None = None,
+        canceled_orders: tuple[str, ...] = (),
+        receipt_promotions: int = 0,
+        position_decision=None,
+        position_execution=None,
+        decision_source: str = "deterministic_blocked",
+    ) -> AutoTradeCycleSummary:
+        summary = AutoTradeCycleSummary(
+            status="GPT_REQUIRED_FOR_LIVE_SEND",
+            report_path=self.report_path,
+            snapshot_path=self.snapshot_path,
+            intents_path=self.intents_path,
+            selected_lane_id=selected_lane_id,
+            selected_lane_ids=selected_lane_ids,
+            selected_lane_score=selected_lane_score,
+            selected_lane_size_multiple=selected_lane_size_multiple,
+            deterministic_lane_id=deterministic_lane_id,
+            sent=False,
+            sent_count=0,
+            positions=positions,
+            orders=orders,
+            live_ready=live_ready,
+            canceled_orders=canceled_orders,
+            receipt_promotions=receipt_promotions,
+            decision_source=decision_source,
+            position_management_action=position_decision.action if position_decision else None,
+            position_execution_status=position_execution.status if position_execution else None,
+            position_execution_sent=position_execution.sent if position_execution else False,
+            target_status=target_summary.status if target_summary else None,
+            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+            target_progress_pct=target_summary.progress_pct if target_summary else None,
+        )
+        self._write_report(summary, generated_at)
+        return summary
+
     def _write_report(self, summary: AutoTradeCycleSummary, generated_at: str) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         lines = [
@@ -705,9 +993,11 @@ class AutoTradeCycle:
             f"- Decision source: `{summary.decision_source}`",
             f"- Deterministic lane: `{summary.deterministic_lane_id}`",
             f"- Selected lane: `{summary.selected_lane_id}`",
+            f"- Selected basket lanes: `{', '.join(summary.selected_lane_ids) if summary.selected_lane_ids else 'none'}`",
             f"- Selected lane score: `{summary.selected_lane_score}`",
             f"- Selected lane size multiple: `{summary.selected_lane_size_multiple}`",
             f"- Sent: `{summary.sent}`",
+            f"- Sent count: `{summary.sent_count}`",
             f"- Canceled orders: `{', '.join(summary.canceled_orders) if summary.canceled_orders else 'none'}`",
             f"- Position management: `{summary.position_management_action or 'none'}`",
             f"- Position execution: `{summary.position_execution_status or 'none'}` sent=`{summary.position_execution_sent}`",
@@ -719,18 +1009,28 @@ class AutoTradeCycle:
             f"- Campaign exposure required: `{summary.campaign_exposure_required}`",
             f"- Market artifact mode: `{'reuse_existing' if self.reuse_market_artifacts else 'refresh_and_reprice'}`",
             f"- Market story refresh: `{self.refresh_market_story}` (source: `{self.market_news_root}`)",
-            "",
-            "## Cycle Contract",
-            "",
-            "- Protected trader-owned positions may add only through portfolio risk validation; pending entries remain monitor-only.",
-            "- Open positions are handed to PositionManager first, then the protection gateway may close, repair protection, or tighten SL when the action is risk-reducing.",
-            "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
-            "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",
-            "- If the daily target is open, the trader is flat, and LIVE_READY lanes survive prefiltering, the cycle must recover to a lane instead of preserving discretionary flatness.",
-            "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk.",
-            "- If GPT trader handoff is enabled, the selected lane must also be an accepted GPT `TRADE` decision from the deterministic prefilter set.",
-            "- If flat, the cycle refreshes broker truth immediately before pricing intents unless `--reuse-market-artifacts` pins the already generated decision packet; the live gateway still refreshes broker truth before any stage/send.",
         ]
+        if summary.status == "GPT_REQUIRED_FOR_LIVE_SEND":
+            lines.append(
+                "- Live entry blocker: `--send` requires `--use-gpt-trader --gpt-decision-response ...`; "
+                "deterministic TraderBrain may prefilter but cannot be the live discretionary sender."
+            )
+        lines.extend(
+            [
+                "",
+                "## Cycle Contract",
+                "",
+                "- Protected trader-owned positions and trader-owned pending entries may add only through basket portfolio risk validation.",
+                "- If basket portfolio validation has no capacity, pending entries remain monitor-only.",
+                "- Open positions are handed to PositionManager first, then the protection gateway may close, repair protection, or tighten SL when the action is risk-reducing.",
+                "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
+                "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",
+                "- If the daily target is open, the trader is flat, and LIVE_READY lanes survive prefiltering, the cycle must recover to a lane instead of preserving discretionary flatness.",
+                "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk.",
+                "- If GPT trader handoff is enabled, the selected lane must also be an accepted GPT `TRADE` decision from the deterministic prefilter set.",
+                "- If flat, the cycle refreshes broker truth immediately before pricing intents unless `--reuse-market-artifacts` pins the already generated decision packet; the live gateway still refreshes broker truth before any stage/send.",
+            ]
+        )
         self.report_path.write_text("\n".join(lines) + "\n")
 
     def _intent_generator(self, max_loss_jpy: float | None = None) -> IntentGenerator:
@@ -811,6 +1111,7 @@ class AutoTradeCycle:
             strategy_profile_path=self.strategy_profile_path,
             market_story_profile_path=self.market_story_profile_path,
             trader_settings_path=self.trader_settings_path,
+            target_state_path=self.target_state_path or DEFAULT_DAILY_TARGET_STATE,
             output_path=self.decision_path,
             report_path=self.decision_report_path,
         )
@@ -835,6 +1136,29 @@ class AutoTradeCycle:
             return deterministic_lane_id
         return prefiltered[0].lane_id if prefiltered else None
 
+    @staticmethod
+    def _basket_lane_plan(
+        *,
+        decision: TraderDecision,
+        primary_lane_id: str | None,
+        primary_size_multiple: float | None,
+        allow_existing_pending: bool = False,
+    ) -> tuple[tuple[str, ...], dict[str, float]]:
+        lane_ids: list[str] = []
+        size_multiples: dict[str, float] = {}
+
+        def add(lane_id: str | None, size_multiple: float | None) -> None:
+            if not lane_id or lane_id in size_multiples:
+                return
+            lane_ids.append(lane_id)
+            size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+
+        add(primary_lane_id, primary_size_multiple)
+        for score in decision.scores:
+            if _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
+                add(score.lane_id, score.size_multiple)
+        return tuple(lane_ids), size_multiples
+
     def _run_gpt_handoff(self) -> GptHandoffSummary:
         try:
             summary = self._gpt_brain().run(snapshot_path=self.snapshot_path)
@@ -844,6 +1168,7 @@ class AutoTradeCycle:
                 selected_lane_id=summary.selected_lane_id,
                 allowed=summary.allowed,
                 issues=summary.issues,
+                selected_lane_ids=summary.selected_lane_ids,
             )
         except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
             return GptHandoffSummary(
@@ -947,6 +1272,21 @@ class AutoTradeCycle:
             if value > 0:
                 return value
         return None
+
+    def _portfolio_loss_cap_jpy_from_target_state(self) -> float | None:
+        """Return the whole-day cap used for open + pending + basket risk."""
+        if self.target_state_path is None or not self.target_state_path.exists():
+            return None
+        try:
+            payload = json.loads(self.target_state_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
+        raw = payload.get("daily_risk_budget_jpy")
+        try:
+            value = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
 
     def _risk_equity_jpy_for_pct(self) -> float | None:
         if self.risk_equity_jpy is not None:

@@ -259,6 +259,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories
 
 # Backtest / planning
 PYTHONPATH=src python3 -m quant_rabbit.cli replay-backtest --start-balance 222781
+PYTHONPATH=src python3 -m quant_rabbit.cli ai-test-bot-backtest --start-balance 222781
 PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance 222781
 
 # Broker truth
@@ -298,6 +299,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli stage-live-order \
     --lane-id 'failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE'
 PYTHONPATH=src python3 -m quant_rabbit.cli autotrade-cycle \
+    --reuse-market-artifacts \
     --use-gpt-trader \
     --gpt-decision-response data/codex_trader_decision_response.json
 
@@ -307,5 +309,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.js
 PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
 
 # LIVE (gated)
-QR_LIVE_ENABLED=1 PYTHONPATH=src python3 -m quant_rabbit.cli autotrade-cycle --send
+./scripts/run-autotrade-live.sh \
+    --reuse-market-artifacts \
+    --use-gpt-trader \
+    --gpt-decision-response data/codex_trader_decision_response.json \
+    --send
 ```

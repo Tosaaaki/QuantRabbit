@@ -44,6 +44,13 @@ MEDIUM_RISK_CAP_FRACTION = 0.90
 # spreads, the pending price is no longer the same executable neighborhood.
 PENDING_ENTRY_REPLACE_SPREAD_MULT = 8.0
 
+# Narrative penalties are score/ranking inputs, not risk gates. The JPY
+# intervention penalty must be larger than a normal positive-evidence boost so
+# rate-check / intervention risk actually reduces size while still leaving a
+# current LIVE_READY receipt executable under AGENT_CONTRACT §6.
+JPY_INTERVENTION_SCORE_PENALTY = 90.0
+JPY_LIQUIDITY_SCORE_PENALTY = 25.0
+
 
 @dataclass(frozen=True)
 class LaneScore:
@@ -157,6 +164,12 @@ class TraderBrain:
         )
         if exposure_blockers or pending_entries:
             pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
+            if not pending_cancel_order_ids and _target_open_market_lane_waits_on_pending(
+                self.target_state_path,
+                snapshot,
+                scores,
+            ):
+                pending_cancel_order_ids = _trader_pending_order_ids(snapshot)
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
                 selected_lane_id=None,
@@ -172,7 +185,11 @@ class TraderBrain:
                 loss_cap_source=loss_cap_source,
             )
         else:
-            selected = next((item for item in scores if item.action == ACTION_SEND_ENTRY), None)
+            selected = _select_entry_lane(
+                scores,
+                target_state_path=self.target_state_path,
+                snapshot=snapshot,
+            )
             if selected:
                 decision = TraderDecision(
                     action=ACTION_SEND_ENTRY,
@@ -180,7 +197,7 @@ class TraderBrain:
                     selected_lane_score=selected.score,
                     selected_lane_size_multiple=selected.size_multiple,
                     generated_at_utc=generated_at,
-                    reason=f"Selected highest-scoring live-ready lane: {selected.lane_id}",
+                    reason=_entry_selection_reason(scores, selected),
                     scores=scores,
                     positions=positions,
                     orders=orders,
@@ -424,6 +441,62 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def _select_entry_lane(
+    scores: tuple[LaneScore, ...],
+    *,
+    target_state_path: Path,
+    snapshot: BrokerSnapshot,
+) -> LaneScore | None:
+    sendable = tuple(item for item in scores if item.action == ACTION_SEND_ENTRY)
+    if not sendable:
+        return None
+    if _target_open_needs_immediate_entry(target_state_path, snapshot):
+        market = next((item for item in sendable if item.order_type.upper() == "MARKET"), None)
+        if market is not None:
+            return market
+    return sendable[0]
+
+
+def _entry_selection_reason(scores: tuple[LaneScore, ...], selected: LaneScore) -> str:
+    top_sendable = next((item for item in scores if item.action == ACTION_SEND_ENTRY), None)
+    if selected.order_type.upper() == "MARKET":
+        if top_sendable is not None and top_sendable.lane_id != selected.lane_id:
+            return f"Selected live-ready MARKET lane for target-open immediate exposure: {selected.lane_id}"
+        return f"Selected highest-scoring live-ready MARKET lane for target-open immediate exposure: {selected.lane_id}"
+    return f"Selected highest-scoring live-ready lane: {selected.lane_id}"
+
+
+def _target_open_needs_immediate_entry(target_state_path: Path, snapshot: BrokerSnapshot) -> bool:
+    if not _target_open(target_state_path):
+        return False
+    trader_positions = sum(1 for position in snapshot.positions if position.owner == Owner.TRADER)
+    return trader_positions == 0 and _pending_entry_order_count(snapshot) == 0
+
+
+def _target_open_market_lane_waits_on_pending(
+    target_state_path: Path,
+    snapshot: BrokerSnapshot,
+    scores: tuple[LaneScore, ...],
+) -> bool:
+    if not _target_open(target_state_path):
+        return False
+    if any(position.owner == Owner.TRADER for position in snapshot.positions):
+        return False
+    return any(
+        score.order_type.upper() == "MARKET"
+        and score.status == "LIVE_READY"
+        and _blocked_only_by_existing_pending(score)
+        for score in scores
+    )
+
+
+def _target_open(target_state_path: Path) -> bool:
+    target = _load_json(target_state_path)
+    if str(target.get("status") or "") != "PURSUE_TARGET":
+        return False
+    return float(target.get("remaining_target_jpy") or 0.0) > 0
+
+
 def load_trader_settings(path: Path) -> TraderSettings:
     return _load_trader_settings(path)
 
@@ -614,6 +687,17 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
     return tuple(contaminated)
 
 
+def _trader_pending_order_ids(snapshot: BrokerSnapshot) -> tuple[str, ...]:
+    return tuple(
+        order.order_id
+        for order in snapshot.orders
+        if order.owner == Owner.TRADER
+        and not order.trade_id
+        and order.order_id
+        and str(order.order_type or "").upper() in PENDING_ENTRY_TYPES
+    )
+
+
 def _order_direction(units: int | None) -> str | None:
     if units is None:
         return None
@@ -724,10 +808,10 @@ def _narrative_risk_score(
         intervention = int(themes.get("intervention") or 0)
         liquidity = int(themes.get("spread_liquidity") or 0)
         if intervention or "INTERVENTION" in text or "RATE CHECK" in text:
-            score -= 90.0
+            score -= JPY_INTERVENTION_SCORE_PENALTY
             rationale.append("JPY-cross long under intervention/rate-check narrative; size multiple reduced")
         if liquidity or "GOLDEN WEEK" in text:
-            score -= 25.0
+            score -= JPY_LIQUIDITY_SCORE_PENALTY
             rationale.append("JPY liquidity theme requires smaller/fewer entries")
     if "WAIT" in text:
         if is_live_ready:

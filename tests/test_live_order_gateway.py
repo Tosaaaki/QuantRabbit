@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 
@@ -91,6 +92,62 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "SENT")
             self.assertTrue(summary.sent)
             self.assertEqual(len(client.orders), 1)
+
+    def test_batch_send_posts_multiple_live_ready_orders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            intents = _intents(root)
+            payload = json.loads(intents.read_text())
+            second = json.loads(json.dumps(payload["results"][0]))
+            second["lane_id"] = "lane:EUR_USD:LONG:reload"
+            second["intent"]["entry"] = 1.17360
+            second["intent"]["tp"] = 1.17480
+            second["intent"]["sl"] = 1.17280
+            payload["results"].append(second)
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=intents,
+                lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:LONG:reload"),
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.sent_count, 2)
+            self.assertTrue(summary.sent)
+            self.assertEqual(len(client.orders), 2)
+            result = json.loads((root / "request.json").read_text())
+            self.assertEqual(len(result["orders"]), 2)
+
+    def test_default_risk_cap_reads_daily_target_state_before_policy_literal(self) -> None:
+        original_reader = execution_module._per_trade_risk_from_state
+        execution_module._per_trade_risk_from_state = lambda: 100.0
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+                self.assertEqual(summary.status, "BLOCKED")
+                payload = json.loads((root / "request.json").read_text())
+                self.assertIn("LOSS_CAP_EXCEEDED", {issue["code"] for issue in payload["risk_issues"]})
+        finally:
+            execution_module._per_trade_risk_from_state = original_reader
 
     def test_send_blocks_when_candidate_exceeds_margin_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

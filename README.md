@@ -29,11 +29,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision --snapshot data/b
 PYTHONPATH=src python3 -m quant_rabbit.cli promote-receipts
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli stage-live-order --lane-id 'failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE'
-PYTHONPATH=src python3 -m quant_rabbit.cli autotrade-cycle --use-gpt-trader --gpt-decision-response data/codex_trader_decision_response.json
+PYTHONPATH=src python3 -m quant_rabbit.cli autotrade-cycle --reuse-market-artifacts --use-gpt-trader --gpt-decision-response data/codex_trader_decision_response.json
 PYTHONPATH=src python3 -m quant_rabbit.cli replay-execution --prices data/quote_path.json --target-jpy 22278
 PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.json
 PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
-./scripts/run-autotrade-live.sh --send
+./scripts/run-autotrade-live.sh --reuse-market-artifacts --use-gpt-trader --gpt-decision-response data/codex_trader_decision_response.json --send
 PYTHONPATH=src python3 -m quant_rabbit.cli risk-dry-run --intent intent.json --snapshot snapshot.json
 ```
 
