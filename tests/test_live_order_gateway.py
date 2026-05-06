@@ -18,12 +18,15 @@ class LiveOrderGatewayTest(unittest.TestCase):
     def setUp(self) -> None:
         self._original_per_trade_reader = execution_module._per_trade_risk_from_state
         self._original_daily_budget_reader = execution_module._daily_risk_budget_from_state
+        self._original_target_trades_reader = execution_module._target_trades_per_day_from_state
         execution_module._per_trade_risk_from_state = lambda: None
         execution_module._daily_risk_budget_from_state = lambda path=None: None
+        execution_module._target_trades_per_day_from_state = lambda path=None: None
 
     def tearDown(self) -> None:
         execution_module._per_trade_risk_from_state = self._original_per_trade_reader
         execution_module._daily_risk_budget_from_state = self._original_daily_budget_reader
+        execution_module._target_trades_per_day_from_state = self._original_target_trades_reader
 
     def test_stages_oanda_stop_order_without_sending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -179,6 +182,19 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
         self.assertEqual(scaled, 1153)
         self.assertEqual(issues, [])
+
+    def test_portfolio_position_cap_scales_with_target_trade_pace(self) -> None:
+        execution_module._target_trades_per_day_from_state = lambda path=None: 12
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "daily_target_state.json"
+            state.write_text(json.dumps({"target_trades_per_day": 12}))
+
+            cap = execution_module._portfolio_position_cap_from_state(
+                state,
+                policy=SimpleNamespace(max_portfolio_positions=2),
+            )
+
+            self.assertEqual(cap, 4)
 
     def test_capacity_downsize_leaves_integer_margin_headroom(self) -> None:
         now = datetime.now(timezone.utc)
@@ -403,6 +419,50 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertFalse(summary.sent)
             payload = json.loads((root / "request.json").read_text())
             self.assertNotIn("OPEN_POSITION_EXISTS", {issue["code"] for issue in payload["risk_issues"]})
+
+    def test_batch_position_cap_scales_with_target_trades_per_day(self) -> None:
+        execution_module._target_trades_per_day_from_state = lambda path=None: 30
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            now = client.snapshot_value.fetched_at_utc
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=tuple(
+                    BrokerPosition(
+                        trade_id=str(200 + index),
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1710 + index * 0.0001,
+                        take_profit=1.1750,
+                        stop_loss=1.1710 + index * 0.0001,
+                        owner=Owner.TRADER,
+                    )
+                    for index in range(4)
+                ),
+                orders=(),
+                quotes=client.snapshot_value.quotes,
+                account=client.snapshot_value.account,
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=_intents(root, order_type="MARKET"),
+                lane_ids=("lane:EUR_USD:LONG",),
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            self.assertEqual(payload["portfolio_position_cap"], 10)
+            issue_codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("BASKET_PORTFOLIO_POSITION_LIMIT", issue_codes)
+            self.assertNotIn("PORTFOLIO_POSITION_LIMIT", issue_codes)
 
     def test_non_live_ready_intent_is_not_staged_even_if_fresh_risk_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

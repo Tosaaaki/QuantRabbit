@@ -40,6 +40,12 @@ class LiveOrderStageSummary:
     lane_ids: tuple[str, ...] = ()
 
 
+# Portfolio occupancy needs to scale with the campaign pace. Three active FX
+# windows (Asia, London, NY) is the coarse session model already used by the
+# archive outcome evidence; the fixed policy cap remains the fallback floor.
+ACTIVE_FX_SESSION_BUCKETS_PER_DAY = 3
+
+
 class LiveOrderGateway:
     """Stage or send one OANDA order after the live risk contract passes."""
 
@@ -101,6 +107,7 @@ class LiveOrderGateway:
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
         snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, intent))
+        portfolio_position_cap = _portfolio_position_cap_from_state()
         default_max_loss_jpy = _per_trade_risk_from_state()
         if default_max_loss_jpy is None:
             # First-run/test compatibility only. Production cycles should have a
@@ -127,6 +134,7 @@ class LiveOrderGateway:
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 max_loss_jpy=max_loss_jpy,
+                max_portfolio_positions=portfolio_position_cap,
                 max_portfolio_loss_jpy=portfolio_loss_cap,
             ),
             live_enabled=validate_live_enabled,
@@ -179,6 +187,7 @@ class LiveOrderGateway:
             "size_multiple": size_multiple,
             "requested_units": requested_units,
             "scaled_units": scaled_units,
+            "portfolio_position_cap": portfolio_position_cap,
         }
         self._write_result(result)
         self._write_report(result)
@@ -227,6 +236,7 @@ class LiveOrderGateway:
 
         initial_snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, _intent_from_json(selected_items[0][0]["intent"])))
         initial_occupancy = _trader_entry_occupancy(initial_snapshot)
+        portfolio_position_cap = _portfolio_position_cap_from_state()
         sent_count = 0
         accepted_count = 0
         validation_cumulative_risk_jpy = 0.0
@@ -240,7 +250,7 @@ class LiveOrderGateway:
 
         for selected, requested_lane_id in selected_items:
             active_occupancy = initial_occupancy + accepted_count
-            if active_occupancy >= RiskPolicy().max_portfolio_positions:
+            if active_occupancy >= portfolio_position_cap:
                 blocked = _blocked_batch_result(
                     generated_at=generated_at,
                     selected=selected,
@@ -249,7 +259,7 @@ class LiveOrderGateway:
                     issue=RiskIssue(
                         "BASKET_PORTFOLIO_POSITION_LIMIT",
                         f"basket already has {active_occupancy} trader entries/pending orders; "
-                        f"cap is {RiskPolicy().max_portfolio_positions}",
+                        f"cap is {portfolio_position_cap}",
                     ),
                 )
                 order_results.append(blocked)
@@ -268,6 +278,7 @@ class LiveOrderGateway:
                 cumulative_risk_jpy=validation_cumulative_risk_jpy,
                 cumulative_margin_jpy=validation_cumulative_margin_jpy,
                 seen_geometry=seen_geometry,
+                portfolio_position_cap=portfolio_position_cap,
             )
             order_results.append(item_result)
             batch_risk_issues += len(item_result["risk_issues"])
@@ -316,6 +327,7 @@ class LiveOrderGateway:
             "cumulative_risk_jpy": accepted_risk_jpy,
             "cumulative_margin_jpy": accepted_margin_jpy,
             "initial_trader_entry_occupancy": initial_occupancy,
+            "portfolio_position_cap": portfolio_position_cap,
         }
         self._write_result(result)
         self._write_report(result)
@@ -345,6 +357,7 @@ class LiveOrderGateway:
         cumulative_risk_jpy: float = 0.0,
         cumulative_margin_jpy: float = 0.0,
         seen_geometry: set[tuple[object, ...]] | None = None,
+        portfolio_position_cap: int | None = None,
     ) -> dict[str, Any]:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
@@ -363,6 +376,7 @@ class LiveOrderGateway:
             portfolio_loss_cap=portfolio_loss_cap,
             validate_live_enabled=validate_live_enabled,
             allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
         )
         if allow_basket_pending and risk.metrics is not None:
             scale_multiple, scale_issue = _basket_size_multiple(
@@ -387,6 +401,7 @@ class LiveOrderGateway:
                         portfolio_loss_cap=portfolio_loss_cap,
                         validate_live_enabled=validate_live_enabled,
                         allow_basket_pending=allow_basket_pending,
+                        portfolio_position_cap=portfolio_position_cap or _portfolio_position_cap_from_state(),
                     )
                     size_multiple *= scale_multiple
         strategy_issues = tuple(
@@ -450,6 +465,7 @@ class LiveOrderGateway:
             "size_multiple": size_multiple,
             "requested_units": requested_units,
             "scaled_units": intent.units,
+            "portfolio_position_cap": portfolio_position_cap or _portfolio_position_cap_from_state(),
             "geometry_key": list(_intent_geometry_key(intent)),
         }
 
@@ -483,12 +499,14 @@ class LiveOrderGateway:
         portfolio_loss_cap: float | None,
         validate_live_enabled: bool,
         allow_basket_pending: bool,
+        portfolio_position_cap: int,
     ):
         return RiskEngine(
             policy=RiskPolicy(
                 allow_protected_trader_position_adds=True,
                 block_new_entries_with_pending_entry_orders=not allow_basket_pending,
                 max_loss_jpy=max_loss_jpy,
+                max_portfolio_positions=portfolio_position_cap,
                 max_portfolio_loss_jpy=None if allow_basket_pending else portfolio_loss_cap,
             ),
             live_enabled=validate_live_enabled,
@@ -511,6 +529,7 @@ class LiveOrderGateway:
             f"- Send requested: `{result.get('send_requested')}`",
             f"- Sent: `{result.get('sent')}`",
             f"- Sent count: `{result.get('sent_count', 1 if result.get('sent') else 0)}`",
+            f"- Portfolio position cap: `{result.get('portfolio_position_cap')}`",
             "",
             "## Order Request",
             "",
@@ -606,6 +625,31 @@ def _scaled_units(units: int, size_multiple: float) -> tuple[int | None, list[Ri
         return None, [RiskIssue("SIZE_MULTIPLIER_TOO_SMALL", "scaled units would round to zero")]
     scaled = scaled_abs if units >= 0 else -scaled_abs
     return scaled, []
+
+
+def _portfolio_position_cap_from_state(
+    state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+    *,
+    policy: RiskPolicy | None = None,
+) -> int:
+    risk_policy = policy or RiskPolicy()
+    base_cap = int(risk_policy.max_portfolio_positions)
+    target_trades = _target_trades_per_day_from_state(state_path)
+    if target_trades is None:
+        return base_cap
+    session_floor = math.ceil(target_trades / ACTIVE_FX_SESSION_BUCKETS_PER_DAY)
+    return max(base_cap, session_floor)
+
+
+def _target_trades_per_day_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> int | None:
+    if not state_path.exists():
+        return None
+    try:
+        payload = json.loads(state_path.read_text())
+        value = int(payload.get("target_trades_per_day") or 0)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return value if value > 0 else None
 
 
 def _blocked_batch_result(*, generated_at: str, selected: dict[str, Any], lane_id: str, send: bool, issue: RiskIssue) -> dict[str, Any]:
