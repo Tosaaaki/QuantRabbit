@@ -360,6 +360,91 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["input_packet"]["ai_attack_advice"]["recommended_now_lane_ids"], [LANE_ID])
             self.assertFalse(payload["input_packet"]["ai_attack_advice"]["live_permission"])
 
+    def test_rejects_wait_when_attack_advice_recommends_lane_even_with_trader_exposure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[_position()])
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+
+    def test_rejects_trade_that_ignores_attack_advice_recommended_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            alternative_lane = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(),
+                            _result(lane_id=alternative_lane, method="BREAKOUT_FAILURE"),
+                        ]
+                    }
+                )
+            )
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            decision = _trade_decision(lane_id=alternative_lane, method="BREAKOUT_FAILURE")
+            decision["evidence_refs"].append("attack:advice")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ATTACK_ADVICE_IGNORED", codes)
+
+    def test_rejects_recommended_trade_without_attack_advice_evidence_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ATTACK_ADVICE_EVIDENCE_MISSING", codes)
+            self.assertIn("ATTACK_ADVICE_LANE_EVIDENCE_MISSING", codes)
+
     def test_rejects_strategy_review_that_uses_wrong_method_for_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -240,6 +240,7 @@ class GPTTraderBrain:
                 "",
                 "- GPT is the discretionary reasoning layer; deterministic verification remains the execution gate.",
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
+                "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
             ]
         )
@@ -272,6 +273,7 @@ class DecisionVerifier:
         selected_lane_ids = _selected_trade_lane_ids(decision)
         primary_lane_id = decision.selected_lane_id or (selected_lane_ids[0] if selected_lane_ids else None)
         tradeable_lanes = _tradeable_live_ready_lanes(self.packet)
+        attack_lane_ids = _attack_recommended_tradeable_lane_ids(self.packet, tradeable_lanes)
         exposure_blockers = _trade_exposure_blockers(self.packet)
 
         if decision.action == "TRADE":
@@ -279,6 +281,33 @@ class DecisionVerifier:
                 issues.append(VerificationIssue("LANE_REQUIRED", "TRADE requires selected_lane_id or selected_lane_ids"))
             if exposure_blockers:
                 issues.append(VerificationIssue("EXPOSURE_BLOCKS_TRADE", "; ".join(exposure_blockers[:3])))
+            if _target_requires_entry(self.packet) and attack_lane_ids and not exposure_blockers:
+                selected_attack_lanes = [lane_id for lane_id in selected_lane_ids if lane_id in attack_lane_ids]
+                if not selected_attack_lanes:
+                    issues.append(
+                        VerificationIssue(
+                            "ATTACK_ADVICE_IGNORED",
+                            "ai_attack_advice recommends current tradeable LIVE_READY lane(s); the selected "
+                            "basket must include at least one recommended lane or the advice must be regenerated: "
+                            f"{', '.join(attack_lane_ids[:3])}",
+                        )
+                    )
+                else:
+                    if "attack:advice" not in decision.evidence_refs:
+                        issues.append(
+                            VerificationIssue(
+                                "ATTACK_ADVICE_EVIDENCE_MISSING",
+                                "TRADE selecting an ai_attack_advice recommended lane must cite attack:advice",
+                            )
+                        )
+                    for lane_id in selected_attack_lanes:
+                        if f"attack:lane:{lane_id}" not in decision.evidence_refs:
+                            issues.append(
+                                VerificationIssue(
+                                    "ATTACK_ADVICE_LANE_EVIDENCE_MISSING",
+                                    f"TRADE selecting recommended lane {lane_id} must cite attack:lane:{lane_id}",
+                                )
+                            )
             if decision.selected_lane_id and decision.selected_lane_id not in selected_lane_ids:
                 issues.append(
                     VerificationIssue(
@@ -315,6 +344,15 @@ class DecisionVerifier:
         elif decision.action in {"WAIT", "REQUEST_EVIDENCE"}:
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("WAIT_SELECTED_LANE", f"{decision.action} must not select a lane"))
+            if _target_requires_entry(self.packet) and not exposure_blockers and attack_lane_ids:
+                issues.append(
+                    VerificationIssue(
+                        "ATTACK_ADVICE_REQUIRES_TRADE",
+                        "ai_attack_advice recommends current tradeable LIVE_READY lane(s) while the daily target "
+                        "is still open. Protected trader exposure is not a no-trade gate; choose TRADE or rerun "
+                        f"the advice after a named hard blocker fires: {', '.join(attack_lane_ids[:3])}",
+                    )
+                )
             if _target_requires_entry(self.packet) and not exposure_blockers and tradeable_lanes:
                 if not _trader_exposure_present(self.packet):
                     issues.append(
@@ -768,6 +806,22 @@ def _tradeable_live_ready_lanes(packet: dict[str, Any]) -> list[str]:
         if lane_id:
             lanes.append(lane_id)
     return lanes
+
+
+def _attack_recommended_tradeable_lane_ids(
+    packet: dict[str, Any],
+    tradeable_lanes: list[str] | None = None,
+) -> list[str]:
+    advice = packet.get("ai_attack_advice")
+    if not isinstance(advice, dict):
+        return []
+    current = set(tradeable_lanes if tradeable_lanes is not None else _tradeable_live_ready_lanes(packet))
+    lane_ids: list[str] = []
+    for raw_lane_id in advice.get("recommended_now_lane_ids", []) or []:
+        lane_id = str(raw_lane_id or "")
+        if lane_id and lane_id in current and lane_id not in lane_ids:
+            lane_ids.append(lane_id)
+    return lane_ids
 
 
 def _cited_live_ready_lanes(decision: GPTTraderDecision, lane_ids: list[str]) -> list[str]:

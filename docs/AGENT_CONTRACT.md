@@ -145,6 +145,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Portfolio Director records which desk wins and why when trader desks disagree.
 - Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but only the final trader receipt may select a lane or `selected_lane_ids` basket, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
 - `ai-attack-advice` is also read-only. It may rank current `LIVE_READY` lanes and expose advisory parameter surfaces to Codex automation, but it cannot grant live permission, raise risk budgets, stage orders, or create a second trader loop.
+- When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane. Protected trader-owned exposure is not by itself a no-trade gate; additional entries are still decided by `gpt-trader-decision` and validated by `LiveOrderGateway` basket / portfolio checks. A TRADE using an advised lane must cite both `attack:advice` and `attack:lane:<lane_id>`.
 - Strategy-review identity is `lane_id` plus `method`, not a loose desk alias. A review for `TREND_CONTINUATION` cannot authorize a `RANGE_ROTATION` or `BREAKOUT_FAILURE` lane.
 
 ---
