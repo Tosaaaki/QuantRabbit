@@ -15,7 +15,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Codex auto-load stub | `AGENTS.md` |
 | Trader runtime playbook (one cycle) | `docs/SKILL_trader.md` |
 | Live send wrapper | `scripts/run-autotrade-live.sh` |
-| Codex scheduled task | `~/.claude/scheduled-tasks/<codex-task>/` (Codex-managed) |
+| Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Legacy archive root | `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` |
 | Archive manifest | `…/ARCHIVE_MANIFEST_20260430T151527Z.md` |
@@ -36,6 +36,7 @@ Rules:
 - **Switch by enabling / disabling scheduled tasks.** No code, prompt, or playbook changes are required to swap the executing model.
 - **Every cycle reads the same `docs/SKILL_trader.md`.** Changes there affect every subsequent cycle whichever model runs.
 - **No VM deployment path.** QuantRabbit production operation is the local scheduled-task/workspace flow. Do not use VM deploy scripts, SSH deploys, or cloud instance restarts for this project unless the operator explicitly changes the infrastructure model in this contract first.
+- **Precheck before report writes.** Concurrency and clean-tree checks must run before any command that writes tracked reports under `docs/*_report.md`. A stopped precheck must leave the workspace clean; otherwise the next scheduled cycle will self-block on the dirty tree.
 - **Handoff discipline.** When the active scheduled task changes, the next cycle must (1) refresh `broker-snapshot`, (2) read the most recent `data/codex_trader_decision_response.json` (the filename is kept for compatibility, not as an attribution), (3) inherit any open trader-owned positions and pending orders, (4) not cancel another cycle's pending orders without an explicit reason recorded in the next decision receipt.
 
 In automation, "GPT" means whichever model is currently dispatched by the scheduler. **Do not call any API-key model path from QuantRabbit code** (`QR_OPENAI_API_KEY`, `OPENAI_API_KEY`). Live discretion lives in the scheduled-task model, not in a library call.

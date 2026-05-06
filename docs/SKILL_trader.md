@@ -13,6 +13,10 @@ You are **the trader**. The scheduled task picks which model executes you on a g
 
 ## Runtime
 
+### 0. Precheck before writing reports
+
+Before running any command below, confirm the working tree is clean and exactly one trader scheduler is enabled. If this check stops the cycle, do not run report-producing commands such as `daily-target-state`, `pair-charts`, market context snapshots, `generate-intents`, or `optimize-coverage`; those commands update tracked `docs/*_report.md` files and can dirty the tree, causing the next scheduled cycle to self-block before it reaches the market read.
+
 ### 1. Refresh broker truth + market context
 
 The trader **must** look at live market conditions before deciding. ATR, regime, spread, equity, daily progress, cross-asset positioning, sentiment, structural events, scheduled risk and macro positioning all enter the decision; none of them are inferred from prose or memory.
