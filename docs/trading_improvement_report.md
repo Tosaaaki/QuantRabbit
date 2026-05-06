@@ -3,7 +3,7 @@
 - Generated at JST: `2026-05-05`
 - Scope: QuantRabbit vNext profitability RCA, research synthesis, risk/coverage fixes
 - Execution: read-only analysis and dry-run verification only; no live order was sent
-- Deployment model: local scheduled-task/workspace operation only. VM deploy scripts, SSH deploys, and cloud instance restarts are not used for QuantRabbit.
+- Deployment model: local scheduled-task/workspace operation only.
 
 ## Position
 
