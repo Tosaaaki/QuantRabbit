@@ -1,16 +1,16 @@
 # GPT Trader Decision Report
 
-- Generated at UTC: `2026-05-06T03:27:01.746217+00:00`
-- Status: `ACCEPTED`
-- Action: `TRADE`
-- Selected lane: `range_trader:EUR_USD:LONG:RANGE_ROTATION`
+- Generated at UTC: `2026-05-06T04:37:24.205318+00:00`
+- Status: `REJECTED`
+- Action: `WAIT`
+- Selected lane: `None`
 - Cancel order ids: `none`
-- Confidence: `MEDIUM`
-- Operator summary: TRADE the deterministic EUR_USD support-rail range rotation lane. It is LIVE_READY, flat-account eligible, and specifically addresses the weak range-trading path without forcing market entry or bypassing risk gates.
+- Confidence: `HIGH`
+- Operator summary: WAIT one cycle. The book is flat and the campaign remains active, but the current LIVE_READY lanes are clustered in EUR_USD and GBP_USD immediately after M5 jump events, so no-send is the disciplined choice until the next refresh.
 
 ## Verification Issues
 
-- none
+- `BLOCK` UNKNOWN_EVIDENCE_REF: unknown evidence refs: intent:trend_trader:EUR_USD:LONG:TREND_CONTINUATION, intent:trend_trader:GBP_USD:LONG:TREND_CONTINUATION
 
 ## Decision Contract
 

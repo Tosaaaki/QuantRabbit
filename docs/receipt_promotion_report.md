@@ -1,6 +1,6 @@
 # Receipt Promotion Report
 
-- Generated at UTC: `2026-05-06T03:27:01.743954+00:00`
+- Generated at UTC: `2026-05-06T04:37:24.202925+00:00`
 - Strategy profile: `/Users/tossaki/App/QuantRabbit/data/strategy_profile.json`
 - Order intents: `/Users/tossaki/App/QuantRabbit/data/order_intents.json`
 - Intent snapshot: `/Users/tossaki/App/QuantRabbit/data/broker_snapshot.json`
