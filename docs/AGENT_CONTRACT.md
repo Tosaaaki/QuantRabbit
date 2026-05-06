@@ -14,6 +14,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Claude Code auto-load stub | `CLAUDE.md` |
 | Codex auto-load stub | `AGENTS.md` |
 | Trader runtime playbook (one cycle) | `docs/SKILL_trader.md` |
+| Trader prompt branches | `docs/trader_prompts/*.md` |
 | Live send wrapper | `scripts/run-autotrade-live.sh` |
 | Live runtime sync | `scripts/sync-live-runtime.sh` |
 | Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
@@ -259,6 +260,9 @@ If both contributed in the same commit, include both lines.
 ## 14. Current Commands
 
 ```bash
+# Prompt routing
+PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
+
 # Evidence
 PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-strategy

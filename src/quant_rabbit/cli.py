@@ -82,6 +82,7 @@ from quant_rabbit.paths import (
     DEFAULT_CALENDAR_REPORT,
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_COT_REPORT,
+    DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     DEFAULT_OPTION_SKEW,
     DEFAULT_OPTION_SKEW_REPORT,
     DEFAULT_NEWS_SNAPSHOT,
@@ -99,6 +100,7 @@ from quant_rabbit.strategy.miner import StrategyMiner
 from quant_rabbit.strategy.profile import StrategyProfile
 from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter
 from quant_rabbit.target import DailyTargetLedger
+from quant_rabbit.trader_prompts import route_trader_prompts
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -177,6 +179,23 @@ def main(argv: list[str] | None = None) -> int:
     p_news.add_argument("--output", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
     p_news.add_argument("--digest", type=Path, default=DEFAULT_NEWS_DIGEST)
     p_news.add_argument("--flow-log", type=Path, default=DEFAULT_NEWS_FLOW_LOG)
+
+    p_prompt = sub.add_parser("trader-prompt-route", help="Route the trader to the minimal prompt branch for current state.")
+    p_prompt.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_prompt.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_prompt.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_prompt.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_prompt.add_argument("--cross-asset", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
+    p_prompt.add_argument("--flow", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
+    p_prompt.add_argument("--currency-strength", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
+    p_prompt.add_argument("--levels", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
+    p_prompt.add_argument("--calendar", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
+    p_prompt.add_argument("--cot", type=Path, default=DEFAULT_COT_SNAPSHOT)
+    p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
+    p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
+    p_prompt.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
+    p_prompt.add_argument("--include-content", action="store_true")
 
     p_mine = sub.add_parser("mine-strategy", help="Mine legacy evidence into a strategy profile.")
     p_mine.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
@@ -957,6 +976,30 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        return 0
+    if args.command == "trader-prompt-route":
+        try:
+            route = route_trader_prompts(
+                snapshot_path=args.snapshot,
+                target_state_path=args.target_state,
+                intents_path=args.intents,
+                pair_charts_path=args.pair_charts,
+                cross_asset_path=args.cross_asset,
+                flow_path=args.flow,
+                currency_strength_path=args.currency_strength,
+                levels_path=args.levels,
+                calendar_path=args.calendar,
+                cot_path=args.cot,
+                option_skew_path=args.option_skew,
+                attack_advice_path=args.attack_advice,
+                decision_response_path=args.decision_response,
+                gpt_decision_path=args.gpt_decision,
+                include_content=args.include_content,
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(json.dumps(route.to_payload(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "economic-calendar":
         from quant_rabbit.analysis.calendar import build_calendar_snapshot
