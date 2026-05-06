@@ -37,6 +37,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertIn("<--send>", payload)
             self.assertIn("<--use-gpt-trader>", payload)
             self.assertIn("<--reuse-market-artifacts>", payload)
+            self.assertEqual((root / "sync.args").read_text(), "--live-only --skip-tests\n")
 
     def test_env_file_live_enabled_allows_live_send_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,6 +59,7 @@ class LiveWrapperTest(unittest.TestCase):
             payload = capture.read_text()
             self.assertIn("QR_LIVE_ENABLED=1\n", payload)
             self.assertNotIn("forcing dry-run mode", result.stderr)
+            self.assertEqual((root / "sync.args").read_text(), "--live-only --skip-tests\n")
 
     def test_existing_live_lock_blocks_overlapping_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -112,6 +114,20 @@ def _wrapper_env(root: Path, capture: Path, *, live_enabled: str | None = None) 
         "\n".join(lines)
         + "\n"
     )
+    fake_scripts = root / "scripts"
+    fake_scripts.mkdir()
+    fake_sync = fake_scripts / "sync-live-runtime.sh"
+    fake_sync.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "printf '%s\\n' \"$*\" > \"$QR_SYNC_MARKER_PATH\"",
+            ]
+        )
+        + "\n"
+    )
+    fake_sync.chmod(0o755)
     fake_bin = root / "bin"
     fake_bin.mkdir()
     fake_python = fake_bin / "python3"
@@ -140,6 +156,9 @@ def _wrapper_env(root: Path, capture: Path, *, live_enabled: str | None = None) 
             "QR_CAPTURE_PATH": str(capture),
             "QR_OANDA_ENV_FILE": str(env_file),
             "QR_AUTOTRADE_LOCK_DIR": str(root / "lock"),
+            "QR_TRADER_ROOT_DIR": str(root),
+            "QR_LIVE_SYNC_ENABLED": "1",
+            "QR_SYNC_MARKER_PATH": str(root / "sync.args"),
         }
     )
     return env
