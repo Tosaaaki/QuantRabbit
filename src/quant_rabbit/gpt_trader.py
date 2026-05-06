@@ -20,10 +20,10 @@ from quant_rabbit.paths import (
 ALLOWED_ACTIONS = ("TRADE", "WAIT", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE", "REQUEST_EVIDENCE")
 ALLOWED_CONFIDENCE = ("LOW", "MEDIUM", "HIGH")
 ALLOWED_METHODS = ("TREND_CONTINUATION", "RANGE_ROTATION", "BREAKOUT_FAILURE", "EVENT_RISK", "POSITION_MANAGEMENT")
-# Matches the intent generator's default candidate breadth so the deterministic
-# lane selected by TraderBrain is still visible to GPT verification when range
-# rotation appears behind trend/failure alternatives in the generated list.
-DEFAULT_GPT_MAX_LANES = 12
+# Matches the CLI generate-intents breadth used by the scheduled trader. The
+# verifier also keeps every LIVE_READY lane even when a smaller cap is passed,
+# because the operator may cite any executable lane visible in order_intents.
+DEFAULT_GPT_MAX_LANES = 56
 
 
 @dataclass(frozen=True)
@@ -399,7 +399,16 @@ def _lane_packet(
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
             }
         )
-    return lanes[:max_lanes]
+    if max_lanes <= 0 or len(lanes) <= max_lanes:
+        return lanes
+    capped = lanes[:max_lanes]
+    capped_ids = {str(lane.get("lane_id") or "") for lane in capped}
+    for lane in lanes[max_lanes:]:
+        lane_id = str(lane.get("lane_id") or "")
+        if lane_id and lane_id not in capped_ids and lane.get("status") == "LIVE_READY":
+            capped.append(lane)
+            capped_ids.add(lane_id)
+    return capped
 
 
 def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:

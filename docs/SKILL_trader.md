@@ -15,7 +15,7 @@ You are **the trader**. The scheduled task picks which model executes you on a g
 
 ### 0. Precheck before writing reports
 
-Before running any command below, confirm the working tree is clean and exactly one trader scheduler is enabled. If this check stops the cycle, do not run report-producing commands such as `daily-target-state`, `pair-charts`, market context snapshots, `generate-intents`, or `optimize-coverage`; those commands update tracked `docs/*_report.md` files and can dirty the tree, causing the next scheduled cycle to self-block before it reaches the market read.
+Before running any command below, confirm the source tree is clean and exactly one trader scheduler is enabled. `git status --short` may contain only tracked `docs/*_report.md` runtime reports from the immediately previous trader cycle; those report-only diffs are not a send blocker and may be overwritten by the next latest-report refresh. If source/config/data/decision files are dirty, stop before report-producing commands such as `daily-target-state`, `pair-charts`, market context snapshots, `generate-intents`, or `optimize-coverage`; those commands update tracked `docs/*_report.md` files and can dirty the tree further, causing the next scheduled cycle to self-block before it reaches the market read.
 
 ### 1. Refresh broker truth + market context
 
@@ -142,7 +142,7 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
 }
 ```
 
-Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering.
+Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped.
 
 `chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json`, `cross_asset_snapshot.json`, `flow_snapshot.json`, `levels_snapshot.json`, `currency_strength.json`, `economic_calendar.json`, `cot_snapshot.json`, and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
 

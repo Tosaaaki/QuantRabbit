@@ -1,19 +1,19 @@
 # Live Order Stage Report
 
-- Generated at UTC: `2026-05-06T03:27:01.748145+00:00`
+- Generated at UTC: `2026-05-06T05:40:22.574632+00:00`
 - Status: `STAGED`
-- Lane: `range_trader:EUR_USD:LONG:RANGE_ROTATION`
+- Lane: `trend_trader:EUR_USD:LONG:TREND_CONTINUATION`
 - Requested units: `13000` size multiple: `1.0` scaled units:`13000`
 - Send requested: `False`
 - Sent: `False`
 
 ## Order Request
 
-- `EUR_USD` `LIMIT` units=`13000`
-- price: `1.17160`
-- takeProfitOnFill: `1.17224`
-- stopLossOnFill: `1.17112`
-- broker-truth risk: `987.1 JPY` reward=`1316.1 JPY` rr=`1.33` spread=`0.8pip`
+- `EUR_USD` `STOP` units=`13000`
+- price: `1.17349`
+- takeProfitOnFill: `1.17457`
+- stopLossOnFill: `1.17301`
+- broker-truth risk: `977.6 JPY` reward=`2199.7 JPY` rr=`2.25` spread=`0.8pip`
 
 ## Issues
 

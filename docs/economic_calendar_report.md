@@ -1,6 +1,6 @@
 # Economic Calendar
 
-- Generated at UTC: `2026-05-06T04:33:28.022245+00:00`
+- Generated at UTC: `2026-05-06T05:31:39.565053+00:00`
 - Source: `https://nfs.faireconomy.media/ff_calendar_thisweek.xml`
 - Events parsed: 115
 
@@ -8,12 +8,12 @@
 
 | Pair | In Window | Reason |
 |---|---|---|
-| `USD_JPY` | no | next event in 702min: USD Medium 'ADP Non-Farm Employment Change' |
-| `EUR_USD` | no | next event in 702min: USD Medium 'ADP Non-Farm Employment Change' |
-| `GBP_USD` | no | next event in 702min: USD Medium 'ADP Non-Farm Employment Change' |
-| `AUD_USD` | no | next event in 702min: USD Medium 'ADP Non-Farm Employment Change' |
-| `EUR_JPY` | no | next event in 3267min: EUR Medium 'ECB President Lagarde Speaks' |
-| `GBP_JPY` | no | next event in 3587min: GBP High 'BOE Gov Bailey Speaks' |
+| `USD_JPY` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
+| `EUR_USD` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
+| `GBP_USD` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
+| `AUD_USD` | no | next event in 643min: USD Medium 'ADP Non-Farm Employment Change' |
+| `EUR_JPY` | no | next event in 3208min: EUR Medium 'ECB President Lagarde Speaks' |
+| `GBP_JPY` | no | next event in 3528min: GBP High 'BOE Gov Bailey Speaks' |
 | `AUD_JPY` | no | no relevant events |
 
 ## Upcoming High/Medium Events (first 30)

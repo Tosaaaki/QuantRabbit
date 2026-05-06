@@ -204,8 +204,28 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertEqual(summary.selected_lane_id, range_lane)
 
+    def test_live_ready_lane_beyond_packet_cap_is_still_verifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            filler = [
+                _result(lane_id=f"candidate_{idx}:EUR_USD:LONG:TREND_CONTINUATION")
+                for idx in range(13)
+            ]
+            files["intents"].write_text(json.dumps({"results": [*filler, _result()]}))
+            brain = _brain(root, files, _trade_decision(), max_lanes=12)
 
-def _brain(root: Path, files: dict[str, Path], decision: dict) -> GPTTraderBrain:
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.selected_lane_id, LANE_ID)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            packet_lane_ids = {lane["lane_id"] for lane in payload["input_packet"]["lanes"]}
+            self.assertIn(LANE_ID, packet_lane_ids)
+            self.assertGreater(len(packet_lane_ids), 12)
+
+
+def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int | None = None) -> GPTTraderBrain:
     return GPTTraderBrain(
         provider=StaticTraderProvider(decision),
         intents_path=files["intents"],
@@ -215,6 +235,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict) -> GPTTraderBrain
         target_state_path=files["target"],
         output_path=root / "gpt_decision.json",
         report_path=root / "gpt_decision.md",
+        **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
 
