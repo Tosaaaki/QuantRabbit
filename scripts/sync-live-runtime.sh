@@ -173,11 +173,13 @@ sync_live_worktree() {
   fi
 
   assert_only_report_drift "$LIVE_ROOT" "live"
+  clear_report_drift "$LIVE_ROOT"
 
   live_current="$(git -C "$LIVE_ROOT" rev-parse HEAD)"
   target_sha="$(git -C "$DEV_ROOT" rev-parse "$target_branch")"
   if [[ "$live_current" == "$target_sha" ]]; then
     echo "[sync-live-runtime] live worktree already at $target_sha"
+    assert_only_report_drift "$LIVE_ROOT" "live"
     return 0
   fi
   if ! git -C "$DEV_ROOT" merge-base --is-ancestor "$LIVE_BRANCH" "$target_branch"; then
@@ -185,7 +187,6 @@ sync_live_worktree() {
     exit 4
   fi
 
-  clear_report_drift "$LIVE_ROOT"
   git -C "$LIVE_ROOT" merge --ff-only "$target_branch"
   assert_only_report_drift "$LIVE_ROOT" "live"
 }

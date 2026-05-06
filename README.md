@@ -14,7 +14,7 @@ See `docs/COMPLETION_DESIGN.md` for the completion architecture, GPT trader requ
 
 `main` is the stable integration branch. The active trader automation runs from `/Users/tossaki/App/QuantRabbit-live` on `codex/live-trader-runtime`, which mirrors `main` for broker reads, receipts, and gateway execution. Development happens in `/Users/tossaki/App/QuantRabbit` or another worktree.
 
-Use `scripts/sync-live-runtime.sh` to promote committed code: source branch -> `main` -> `codex/live-trader-runtime`, fast-forward only. The live runner also calls `scripts/sync-live-runtime.sh --live-only --skip-tests` before each cycle, and `scripts/install-live-runtime-hooks.sh` installs a post-commit hook so development commits are automatically tested and promoted.
+Use `scripts/sync-live-runtime.sh` to promote committed code: source branch -> `main` -> `codex/live-trader-runtime`, fast-forward only. The live worktree does not create its own commits; it mirrors `main` and clears runtime `docs/*_report.md` drift during live-only sync. The live runner also calls `scripts/sync-live-runtime.sh --live-only --skip-tests` before each cycle, and `scripts/install-live-runtime-hooks.sh` installs a post-commit hook so development commits are automatically tested and promoted.
 
 ## Local Credentials
 
