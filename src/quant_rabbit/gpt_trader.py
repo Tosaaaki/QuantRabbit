@@ -115,6 +115,7 @@ class GPTTraderSummary:
     action: str | None
     selected_lane_id: str | None
     selected_lane_ids: tuple[str, ...]
+    cancel_order_ids: tuple[str, ...]
     allowed: bool
     issues: int
 
@@ -200,6 +201,7 @@ class GPTTraderBrain:
             action=decision.action,
             selected_lane_id=decision.selected_lane_id,
             selected_lane_ids=decision.selected_lane_ids,
+            cancel_order_ids=decision.cancel_order_ids,
             allowed=verification.allowed,
             issues=len(verification.issues),
         )
@@ -443,6 +445,7 @@ class DecisionVerifier:
             ):
                 if not value.strip():
                     issues.append(VerificationIssue("INCOMPLETE_TRADE_DECISION", f"TRADE missing {field_name}"))
+            self._verify_cancel_order_ids(decision, issues, action="TRADE")
         elif decision.action in {"WAIT", "REQUEST_EVIDENCE"}:
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("WAIT_SELECTED_LANE", f"{decision.action} must not select a lane"))
@@ -483,10 +486,9 @@ class DecisionVerifier:
                         )
                     )
         elif decision.action == "CANCEL_PENDING":
-            pending_order_ids = set(_pending_entry_order_ids(self.packet))
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("CANCEL_SELECTED_LANE", "CANCEL_PENDING must not select a trade lane"))
-            if not pending_order_ids:
+            if not _pending_entry_order_ids(self.packet):
                 issues.append(VerificationIssue("NO_PENDING_ENTRY", "CANCEL_PENDING requires a pending entry order"))
             if not decision.cancel_order_ids:
                 issues.append(
@@ -495,20 +497,32 @@ class DecisionVerifier:
                         "CANCEL_PENDING must name the pending entry order ids to cancel",
                     )
                 )
-            unknown_cancel_ids = sorted(set(decision.cancel_order_ids) - pending_order_ids)
-            if unknown_cancel_ids:
-                issues.append(
-                    VerificationIssue(
-                        "UNKNOWN_CANCEL_ORDER_ID",
-                        "cancel_order_ids must match current pending entry orders: "
-                        + ", ".join(unknown_cancel_ids),
-                    )
-                )
+            self._verify_cancel_order_ids(decision, issues, action="CANCEL_PENDING")
         elif decision.action in {"PROTECT", "TIGHTEN_SL", "CLOSE"}:
             if positions <= 0:
                 issues.append(VerificationIssue("NO_OPEN_POSITION", f"{decision.action} requires an open position"))
 
         return VerificationResult(allowed=not any(issue.severity == "BLOCK" for issue in issues), issues=tuple(issues))
+
+    def _verify_cancel_order_ids(
+        self,
+        decision: GPTTraderDecision,
+        issues: list[VerificationIssue],
+        *,
+        action: str,
+    ) -> None:
+        if not decision.cancel_order_ids:
+            return
+        pending_order_ids = set(_pending_entry_order_ids(self.packet))
+        unknown_cancel_ids = sorted(set(decision.cancel_order_ids) - pending_order_ids)
+        if unknown_cancel_ids:
+            issues.append(
+                VerificationIssue(
+                    "UNKNOWN_CANCEL_ORDER_ID",
+                    f"{action} cancel_order_ids must match current trader-owned pending entry orders: "
+                    + ", ".join(unknown_cancel_ids),
+                )
+            )
 
     def _verify_strategy_reviews(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
         for review in decision.strategy_reviews:

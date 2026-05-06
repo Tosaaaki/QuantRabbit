@@ -213,6 +213,7 @@ class GptHandoffSummary:
     allowed: bool
     issues: int
     selected_lane_ids: tuple[str, ...] = ()
+    cancel_order_ids: tuple[str, ...] = ()
     error: str | None = None
 
 
@@ -694,6 +695,13 @@ class AutoTradeCycle:
                             )
                             self._write_report(summary, generated_at)
                             return summary
+                        canceled_orders.extend(
+                            self._cancel_gpt_pending_orders(
+                                gpt_summary,
+                                send=send,
+                                already_canceled=tuple(canceled_orders),
+                            )
+                        )
                         if target_open:
                             basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                                 decision=decision,
@@ -1436,6 +1444,7 @@ class AutoTradeCycle:
                 allowed=summary.allowed,
                 issues=summary.issues,
                 selected_lane_ids=summary.selected_lane_ids,
+                cancel_order_ids=summary.cancel_order_ids,
             )
         except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
             return GptHandoffSummary(
@@ -1446,6 +1455,25 @@ class AutoTradeCycle:
                 issues=1,
                 error=str(exc),
             )
+
+    def _cancel_gpt_pending_orders(
+        self,
+        gpt_summary: GptHandoffSummary,
+        *,
+        send: bool,
+        already_canceled: tuple[str, ...] = (),
+    ) -> tuple[str, ...]:
+        if not send or not self.live_enabled or not gpt_summary.cancel_order_ids:
+            return ()
+        canceled: list[str] = []
+        already = set(already_canceled)
+        for order_id in gpt_summary.cancel_order_ids:
+            if order_id in already:
+                continue
+            self.client.cancel_order(order_id)
+            canceled.append(order_id)
+            already.add(order_id)
+        return tuple(canceled)
 
     def _gpt_brain(self) -> GPTTraderBrain:
         return GPTTraderBrain(

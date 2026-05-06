@@ -74,11 +74,13 @@ Write `data/codex_trader_decision_response.json`.
 - `confidence`: `LOW`, `MEDIUM`, `HIGH`
 - `method`: `TREND_CONTINUATION`, `RANGE_ROTATION`, `BREAKOUT_FAILURE`, `EVENT_RISK`, `POSITION_MANAGEMENT`
 - Specialist `role`: `macro_news`, `indicator`, `flow_levels`, `risk_audit`, `strategy`, `portfolio_context`
+- `cancel_order_ids` on `TRADE` is allowed only for current trader-owned pending entry ids from the broker snapshot. The gateway cancels those ids before validating the selected basket, so use it only when replacing stale or lower-priority pending exposure with a current tradeable basket.
 
 ## Verifier Rejection Triggers
 
 - Unknown evidence refs.
 - `TRADE` without current `LIVE_READY` selected lane(s).
+- `TRADE` or `CANCEL_PENDING` names unknown, manual, or non-pending order ids in `cancel_order_ids`.
 - Selected lane not cited as `intent:<lane_id>`.
 - Method mismatch with selected primary lane.
 - WAIT / REQUEST_EVIDENCE while target is open and clean tradeable lanes exist, unless a named gate blocks them.

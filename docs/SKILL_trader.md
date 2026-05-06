@@ -68,6 +68,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
+# If current trader-owned pending entries consume portfolio capacity, either keep
+# that pending basket explicitly or name verified trader pending ids in
+# cancel_order_ids when replacing them with current MARKET participation.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
