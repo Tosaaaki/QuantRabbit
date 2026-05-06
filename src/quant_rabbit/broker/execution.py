@@ -637,6 +637,7 @@ def _basket_size_multiple(
 ) -> tuple[float, RiskIssue | None]:
     scale = 1.0
     reasons: list[str] = []
+    requested_units = abs(intent.units)
     pending_risk, pending_margin, pending_issue = _pending_risk_margin_jpy(snapshot)
     open_risk, open_issue = _open_trader_position_risk_jpy(snapshot)
     if pending_issue is not None:
@@ -652,7 +653,7 @@ def _basket_size_multiple(
                 f"+ batch {cumulative_risk_jpy:.0f} >= cap {portfolio_loss_cap:.0f} JPY",
             )
         if metrics.risk_jpy > remaining_risk > 0:
-            scale = min(scale, remaining_risk / metrics.risk_jpy)
+            scale = min(scale, _capacity_scale(requested_units, metrics.risk_jpy, remaining_risk))
             reasons.append(f"risk room {remaining_risk:.0f} JPY")
 
     account = snapshot.account
@@ -667,7 +668,7 @@ def _basket_size_multiple(
                 f">= room {margin_room:.0f} JPY",
             )
         if metrics.estimated_margin_jpy > remaining_margin > 0:
-            scale = min(scale, remaining_margin / metrics.estimated_margin_jpy)
+            scale = min(scale, _capacity_scale(requested_units, metrics.estimated_margin_jpy, remaining_margin))
             reasons.append(f"margin room {remaining_margin:.0f} JPY")
 
     if scale < 1.0:
@@ -677,6 +678,25 @@ def _basket_size_multiple(
             "WARN",
         )
     return 1.0, None
+
+
+def _capacity_scale(requested_units: int, current_value: float, capacity: float) -> float:
+    """Scale units to fit a linear risk/margin capacity after integer flooring.
+
+    OANDA order size is integer units while risk and margin are decimal account
+    values. When we are capacity-bound, leave one unit of granularity as
+    headroom so recomputing broker-truth risk/margin cannot round back over the
+    cap by a few JPY and self-block the staged basket.
+    """
+    if requested_units <= 0 or current_value <= 0 or capacity <= 0:
+        return 0.0
+    value_per_unit = current_value / requested_units
+    if value_per_unit <= 0:
+        return 0.0
+    max_units = math.floor(capacity / value_per_unit)
+    if max_units < requested_units:
+        max_units = max(0, max_units - 1)
+    return max_units / requested_units
 
 
 def _basket_issues(

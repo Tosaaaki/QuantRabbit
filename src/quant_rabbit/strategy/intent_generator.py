@@ -514,7 +514,24 @@ def _variant_lane_id(parent_lane_id: str, order_type: OrderType | None) -> str:
 def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
     method = TradeMethod.parse(str(lane["method"]))
     base = _order_type_for(method)
+    if _lane_forbids_market_chase(lane):
+        return (base,)
     return (base, OrderType.MARKET)
+
+
+def _lane_forbids_market_chase(lane: dict[str, Any]) -> bool:
+    """Return true when campaign evidence requires a pending trigger receipt.
+
+    `TRIGGER_RECEIPT_REQUIRED` lanes come from missed-edge / trigger repair
+    evidence. AGENT_CONTRACT §11 allows those to reopen only from LIMIT or
+    STOP-ENTRY receipts; generating a same-geometry MARKET variant turns
+    "arm the trigger" into quote chasing and lets TraderBrain select stale
+    market entries that the live gateway later rejects.
+    """
+    if str(lane.get("adoption") or "") == "TRIGGER_RECEIPT_REQUIRED":
+        return True
+    receipt = str(lane.get("required_receipt") or "").lower()
+    return "no market chase" in receipt
 
 
 def _intent_from_lane(

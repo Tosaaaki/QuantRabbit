@@ -66,6 +66,29 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
 
+    def test_trigger_receipt_required_does_not_create_market_chase_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_trigger_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            lane_ids = {item["lane_id"] for item in payload["results"]}
+            order_types = {item["intent"]["order_type"] for item in payload["results"]}
+
+            self.assertEqual(summary.generated, 1)
+            self.assertEqual(order_types, {"STOP-ENTRY"})
+            self.assertEqual(lane_ids, {"failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"})
+            self.assertFalse(any(lane_id.endswith(":MARKET") for lane_id in lane_ids))
+
     def test_sizes_repair_receipt_to_use_loss_budget_without_breaking_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -333,6 +356,32 @@ def _range_campaign(root: Path) -> Path:
                         "target_reward_risk": 2.0,
                         "blockers": [],
                         "story_examples": ["quality_audit: lower rail box reclaim into midpoint"],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _trigger_campaign(root: Path) -> Path:
+    path = root / "trigger_campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "desk": "failure_trader",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "adoption": "TRIGGER_RECEIPT_REQUIRED",
+                        "campaign_role": "BACKUP_OR_RELOAD",
+                        "reason": "missed-edge trigger pressure",
+                        "required_receipt": "Arm only a trigger/pending-entry receipt; no market chase.",
+                        "target_reward_risk": 2.0,
+                        "blockers": [],
+                        "story_examples": ["quality_audit: failed downside break reclaimed the box"],
                     }
                 ]
             }

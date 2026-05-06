@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import quant_rabbit.broker.execution as execution_module
@@ -168,6 +169,62 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
         self.assertEqual(scaled, 1153)
         self.assertEqual(issues, [])
+
+    def test_capacity_downsize_leaves_integer_margin_headroom(self) -> None:
+        now = datetime.now(timezone.utc)
+        intent = execution_module._intent_from_json(
+            {
+                "pair": "EUR_USD",
+                "side": "LONG",
+                "order_type": "MARKET",
+                "units": 4000,
+                "entry": 1.17306,
+                "tp": 1.17450,
+                "sl": 1.17250,
+                "thesis": "trend continuation",
+                "owner": "trader",
+                "market_context": {
+                    "regime": "TREND_CONTINUATION campaign lane",
+                    "narrative": "trend continuation pressure",
+                    "chart_story": "trend staircase",
+                    "method": "TREND_CONTINUATION",
+                    "invalidation": "SL trades",
+                },
+            }
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": Quote("EUR_USD", bid=1.17298, ask=1.17306, timestamp_utc=now),
+                "USD_JPY": Quote("USD_JPY", bid=157.0, ask=157.01, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=175_510.0,
+                margin_available_jpy=200_000.0,
+                fetched_at_utc=now,
+            ),
+        )
+        metrics = SimpleNamespace(risk_jpy=400.0, estimated_margin_jpy=29_465.0)
+
+        scale, issue = execution_module._basket_size_multiple(
+            intent=intent,
+            snapshot=snapshot,
+            metrics=metrics,
+            portfolio_loss_cap=None,
+            cumulative_risk_jpy=0.0,
+            cumulative_margin_jpy=0.0,
+        )
+        scaled, scale_issues = execution_module._scaled_units(intent.units, scale)
+
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue.code, "BASKET_DOWNSIZED_FOR_CAPACITY")
+        self.assertEqual(scale_issues, [])
+        self.assertLessEqual((metrics.estimated_margin_jpy / intent.units) * scaled, 8_490.0)
+        self.assertLess(scaled, 1153)
 
     def test_default_risk_cap_reads_daily_target_state_before_policy_literal(self) -> None:
         original_reader = execution_module._per_trade_risk_from_state
