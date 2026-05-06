@@ -127,6 +127,10 @@ class RegimeReading:
             or None if window underfilled.
         confidence: 0..1, fraction of the four signals that vote with the
             output state. 0 when state == "UNKNOWN".
+        source: Where the four inputs came from. This keeps short-history
+            readings explicit instead of silently pretending they used a
+            one-year ATR percentile.
+        lookback_bars: Effective candle history behind the reading when known.
     """
 
     state: str
@@ -135,6 +139,8 @@ class RegimeReading:
     choppiness: float | None
     atr_percentile: float | None
     confidence: float
+    source: str = "ohlc_default"
+    lookback_bars: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +374,115 @@ def _atr_percentile_last(
 # ---------------------------------------------------------------------------
 
 
+def classify_regime_from_values(
+    *,
+    hurst: float | None,
+    adx: float | None,
+    choppiness: float | None,
+    atr_percentile: float | None,
+    source: str,
+    lookback_bars: int | None = None,
+) -> RegimeReading:
+    """Classify regime from already-computed, market-derived readings.
+
+    `atr_percentile` is expected on the 0..100 scale. This path is used by
+    chart_reader when the full annualized raw-OHLC classifier cannot seed, but
+    the indicator stack has current Hurst/ADX/Choppiness/ATR percentile values
+    over the fetched candle window. It is not a literal fallback: missing inputs
+    still return UNKNOWN, and the `source`/`lookback_bars` fields disclose the
+    evidence window to the trader.
+    """
+    if hurst is None or adx is None or choppiness is None or atr_percentile is None:
+        return RegimeReading(
+            state="UNKNOWN",
+            hurst=hurst,
+            adx=adx,
+            choppiness=choppiness,
+            atr_percentile=atr_percentile,
+            confidence=0.0,
+            source=source,
+            lookback_bars=lookback_bars,
+        )
+
+    trend_votes = 0
+    if hurst > HURST_TREND_THRESHOLD:
+        trend_votes += 1
+    if adx > ADX_TREND_THRESHOLD:
+        trend_votes += 1
+    if choppiness < CHOP_TREND_THRESHOLD:
+        trend_votes += 1
+
+    range_votes = 0
+    if hurst < HURST_RANGE_THRESHOLD:
+        range_votes += 1
+    if adx < ADX_RANGE_THRESHOLD:
+        range_votes += 1
+    if choppiness > CHOP_RANGE_THRESHOLD:
+        range_votes += 1
+    range_low_vol = atr_percentile < ATR_RANGE_PCT_THRESHOLD
+
+    if trend_votes == 3:
+        return RegimeReading(
+            state="TREND_STRONG",
+            hurst=hurst,
+            adx=adx,
+            choppiness=choppiness,
+            atr_percentile=atr_percentile,
+            confidence=1.0,
+            source=source,
+            lookback_bars=lookback_bars,
+        )
+
+    if range_votes == 3 and range_low_vol:
+        return RegimeReading(
+            state="RANGE",
+            hurst=hurst,
+            adx=adx,
+            choppiness=choppiness,
+            atr_percentile=atr_percentile,
+            confidence=1.0,
+            source=source,
+            lookback_bars=lookback_bars,
+        )
+
+    adx_neutral = ADX_RANGE_THRESHOLD <= adx <= ADX_TREND_THRESHOLD
+    chop_neutral = CHOP_TREND_THRESHOLD <= choppiness <= CHOP_RANGE_THRESHOLD
+    if atr_percentile < ATR_BREAKOUT_PCT_THRESHOLD and adx_neutral and chop_neutral:
+        return RegimeReading(
+            state="BREAKOUT_PENDING",
+            hurst=hurst,
+            adx=adx,
+            choppiness=choppiness,
+            atr_percentile=atr_percentile,
+            confidence=0.75,
+            source=source,
+            lookback_bars=lookback_bars,
+        )
+
+    if trend_votes >= 1 and trend_votes < 3:
+        return RegimeReading(
+            state="TREND_WEAK",
+            hurst=hurst,
+            adx=adx,
+            choppiness=choppiness,
+            atr_percentile=atr_percentile,
+            confidence=trend_votes / 3.0,
+            source=source,
+            lookback_bars=lookback_bars,
+        )
+
+    return RegimeReading(
+        state="TRANSITION",
+        hurst=hurst,
+        adx=adx,
+        choppiness=choppiness,
+        atr_percentile=atr_percentile,
+        confidence=0.25,
+        source=source,
+        lookback_bars=lookback_bars,
+    )
+
+
 def classify_regime(
     *,
     closes: Sequence[float],
@@ -397,6 +512,8 @@ def classify_regime(
             choppiness=None,
             atr_percentile=None,
             confidence=0.0,
+            source="ohlc_invalid",
+            lookback_bars=len(closes),
         )
 
     hurst = _hurst_dfa(closes, window=hurst_window)
@@ -406,89 +523,11 @@ def classify_regime(
         highs, lows, closes, period=14, lookback=bars_per_year
     )
 
-    # If ANY indicator is missing, refuse to invent a state. Per
-    # AGENT_CONTRACT §3.5, "when in doubt, fail loud" — UNKNOWN is the loud
-    # signal the trader can branch on.
-    if hurst is None or adx is None or chop is None or atr_pct is None:
-        return RegimeReading(
-            state="UNKNOWN",
-            hurst=hurst,
-            adx=adx,
-            choppiness=chop,
-            atr_percentile=atr_pct,
-            confidence=0.0,
-        )
-
-    trend_votes = 0
-    if hurst > HURST_TREND_THRESHOLD:
-        trend_votes += 1
-    if adx > ADX_TREND_THRESHOLD:
-        trend_votes += 1
-    if chop < CHOP_TREND_THRESHOLD:
-        trend_votes += 1
-
-    range_votes = 0
-    if hurst < HURST_RANGE_THRESHOLD:
-        range_votes += 1
-    if adx < ADX_RANGE_THRESHOLD:
-        range_votes += 1
-    if chop > CHOP_RANGE_THRESHOLD:
-        range_votes += 1
-    range_low_vol = atr_pct < ATR_RANGE_PCT_THRESHOLD
-
-    # TREND_STRONG: all three trend indicators agree.
-    if trend_votes == 3:
-        return RegimeReading(
-            state="TREND_STRONG",
-            hurst=hurst,
-            adx=adx,
-            choppiness=chop,
-            atr_percentile=atr_pct,
-            confidence=1.0,
-        )
-
-    # RANGE: all three range indicators agree AND vol is low.
-    if range_votes == 3 and range_low_vol:
-        return RegimeReading(
-            state="RANGE",
-            hurst=hurst,
-            adx=adx,
-            choppiness=chop,
-            atr_percentile=atr_pct,
-            confidence=1.0,
-        )
-
-    # BREAKOUT_PENDING: ATR squeezed AND ADX/Chop neutral (neither pure
-    # trend nor pure range — a coil before expansion).
-    adx_neutral = ADX_RANGE_THRESHOLD <= adx <= ADX_TREND_THRESHOLD
-    chop_neutral = CHOP_TREND_THRESHOLD <= chop <= CHOP_RANGE_THRESHOLD
-    if atr_pct < ATR_BREAKOUT_PCT_THRESHOLD and adx_neutral and chop_neutral:
-        return RegimeReading(
-            state="BREAKOUT_PENDING",
-            hurst=hurst,
-            adx=adx,
-            choppiness=chop,
-            atr_percentile=atr_pct,
-            confidence=0.75,
-        )
-
-    # TREND_WEAK: at least one trend indicator fires, but not all three.
-    if trend_votes >= 1 and trend_votes < 3:
-        return RegimeReading(
-            state="TREND_WEAK",
-            hurst=hurst,
-            adx=adx,
-            choppiness=chop,
-            atr_percentile=atr_pct,
-            confidence=trend_votes / 3.0,
-        )
-
-    # Anything else: TRANSITION (mixed / neutral / disagreeing signals).
-    return RegimeReading(
-        state="TRANSITION",
+    return classify_regime_from_values(
         hurst=hurst,
         adx=adx,
         choppiness=chop,
         atr_percentile=atr_pct,
-        confidence=0.25,
+        source="ohlc_dfa_atr_percentile",
+        lookback_bars=min(len(closes), max(bars_per_year, hurst_window + 1)),
     )

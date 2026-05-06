@@ -114,6 +114,29 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 500.0)
             self.assertGreater(intent["units"], 0)
 
+    def test_generic_stop_sits_beyond_current_adverse_wick_structure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            result = next(item for item in json.loads(output.read_text())["results"] if item["intent"]["order_type"] == "STOP-ENTRY")
+            intent = result["intent"]
+            metadata = intent["metadata"]
+
+            self.assertEqual(metadata["geometry_model"], "ATR_SPREAD_STRUCTURE")
+            self.assertTrue(metadata["structural_stop_outside_level"])
+            self.assertLess(intent["sl"], metadata["structural_stop_level"])
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 500.0)
+
     def test_sizes_usd_quote_pair_from_snapshot_conversion_not_static_rate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

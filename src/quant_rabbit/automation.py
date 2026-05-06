@@ -10,6 +10,7 @@ from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
@@ -1084,6 +1085,7 @@ class AutoTradeCycle:
         return DailyTargetLedger(
             state_path=self.target_state_path,
             report_path=report_path,
+            pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
         ).run(snapshot=snapshot)
 
     def _receipt_promoter(self) -> ReceiptPromoter:

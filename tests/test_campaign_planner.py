@@ -86,6 +86,61 @@ class CampaignPlannerTest(unittest.TestCase):
             self.assertIn("target, not a profit guarantee", payload["operating_rule"])
             self.assertIn("Portfolio Director Rules", report.read_text())
 
+    def test_prioritizes_high_tail_and_missed_pressure_within_same_adoption(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            story = root / "story.json"
+            plan_path = root / "campaign.json"
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "SHORT",
+                                "status": "CANDIDATE",
+                                "required_fix": "ready",
+                                "positive_best_jpy": 2992.49,
+                                "positive_tail_jpy": 1213.22,
+                                "seat_missed": 94,
+                            },
+                            {
+                                "pair": "GBP_USD",
+                                "direction": "LONG",
+                                "status": "CANDIDATE",
+                                "required_fix": "ready",
+                                "positive_best_jpy": 800.0,
+                                "positive_tail_jpy": 120.0,
+                                "seat_missed": 5,
+                            },
+                        ]
+                    }
+                )
+            )
+            story.write_text(
+                json.dumps(
+                    {
+                        "pair_profiles": [
+                            {"pair": "EUR_USD", "methods": {"TREND_CONTINUATION": 2}, "themes": {}, "examples": []},
+                            {"pair": "GBP_USD", "methods": {"TREND_CONTINUATION": 2}, "themes": {}, "examples": []},
+                        ]
+                    }
+                )
+            )
+
+            CampaignPlanner(
+                strategy_profile=strategy,
+                market_story_profile=story,
+                report_path=root / "campaign.md",
+                plan_path=plan_path,
+            ).run(start_balance_jpy=200_000)
+
+            first = json.loads(plan_path.read_text())["lanes"][0]
+            self.assertEqual(first["pair"], "EUR_USD")
+            self.assertEqual(first["direction"], "SHORT")
+            self.assertEqual(first["seat_missed"], 94)
+
 
 if __name__ == "__main__":
     unittest.main()

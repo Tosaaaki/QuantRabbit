@@ -345,6 +345,39 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 20)
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 200.0)
 
+    def test_backtest_required_trade_pace_overrides_stale_default_pace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "firepower": {
+                            "avg_selected_trades_per_day": 6.1892,
+                            "required_trades_per_day_at_observed_expectancy": 229,
+                        }
+                    }
+                )
+            )
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            )
+            ledger.run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+                target_trades_per_day=10,
+            )
+
+            summary = ledger.run(realized_pl_jpy=0)
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(summary.target_trades_per_day, 229)
+            self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades")
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 229, places=4)
+            self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades")
+
     def test_explicit_start_balance_overrides_snapshot_account(self) -> None:
         from quant_rabbit.models import AccountSummary
 

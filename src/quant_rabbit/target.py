@@ -39,6 +39,7 @@ class DailyTargetSnapshot:
     campaign_day_jst: str
     daily_risk_budget_jpy: float
     target_trades_per_day: int
+    target_trades_per_day_source: str
     per_trade_risk_budget_jpy: float
     open_risk_jpy: float
     remaining_risk_budget_jpy: float
@@ -60,6 +61,7 @@ class DailyTargetSummary:
     remaining_target_jpy: float
     remaining_risk_budget_jpy: float
     target_trades_per_day: int
+    target_trades_per_day_source: str
     per_trade_risk_budget_jpy: float
     unprotected_positions: int
 
@@ -72,9 +74,11 @@ class DailyTargetLedger:
         *,
         state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         report_path: Path = DEFAULT_DAILY_TARGET_REPORT,
+        pace_backtest_path: Path | None = None,
     ) -> None:
         self.state_path = state_path
         self.report_path = report_path
+        self.pace_backtest_path = pace_backtest_path
 
     def run(
         self,
@@ -148,9 +152,21 @@ class DailyTargetLedger:
         # behave like that operationally. Per AGENT_CONTRACT §3.5 there is no
         # silent JPY fallback: the trade pace must come from CLI, persisted
         # state, or the documented policy default (RiskPolicy.target_trades_per_day).
-        explicit_pace = _coalesce_int(
-            target_trades_per_day, previous.get("target_trades_per_day")
-        )
+        explicit_pace = _coalesce_int(target_trades_per_day)
+        pace_source = "cli" if explicit_pace is not None else ""
+        if explicit_pace is None:
+            backtest_pace = _pace_from_backtest(self.pace_backtest_path)
+            previous_pace = _coalesce_int(previous.get("target_trades_per_day"))
+            if backtest_pace is not None:
+                explicit_pace = max(backtest_pace, previous_pace or 0)
+                pace_source = (
+                    "ai_test_bot_required_trades"
+                    if explicit_pace == backtest_pace
+                    else "previous_state_above_ai_test_bot"
+                )
+            elif previous_pace is not None:
+                explicit_pace = previous_pace
+                pace_source = "previous_state"
         if explicit_pace is None:
             if policy.target_trades_per_day is None or policy.target_trades_per_day <= 0:
                 raise ValueError(
@@ -159,6 +175,7 @@ class DailyTargetLedger:
                     "RiskPolicy.target_trades_per_day."
                 )
             explicit_pace = int(policy.target_trades_per_day)
+            pace_source = "risk_policy_default"
         per_trade_risk_budget = round(risk_budget / explicit_pace, 4)
 
         positions = (
@@ -210,6 +227,7 @@ class DailyTargetLedger:
             campaign_day_jst=campaign_day_jst,
             daily_risk_budget_jpy=round(risk_budget, 4),
             target_trades_per_day=explicit_pace,
+            target_trades_per_day_source=pace_source,
             per_trade_risk_budget_jpy=per_trade_risk_budget,
             open_risk_jpy=open_risk,
             remaining_risk_budget_jpy=remaining_risk_budget,
@@ -231,6 +249,7 @@ class DailyTargetLedger:
             remaining_target_jpy=state.remaining_target_jpy,
             remaining_risk_budget_jpy=state.remaining_risk_budget_jpy,
             target_trades_per_day=state.target_trades_per_day,
+            target_trades_per_day_source=state.target_trades_per_day_source,
             per_trade_risk_budget_jpy=state.per_trade_risk_budget_jpy,
             unprotected_positions=state.unprotected_positions,
         )
@@ -260,7 +279,7 @@ class DailyTargetLedger:
             f"- Remaining target: `{state.remaining_target_jpy:.0f} JPY`",
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",
             f"- Remaining risk budget: `{state.remaining_risk_budget_jpy:.0f} JPY`",
-            f"- Target trades per day: `{state.target_trades_per_day}`",
+            f"- Target trades per day: `{state.target_trades_per_day}` (`{state.target_trades_per_day_source}`)",
             f"- Per-trade risk cap: `{state.per_trade_risk_budget_jpy:.0f} JPY`",
             f"- Current equity estimate: `{state.current_equity_jpy:.0f} JPY`",
             "",
@@ -434,6 +453,28 @@ def _coalesce_int(*values: object) -> int | None:
         if parsed > 0:
             return parsed
     return None
+
+
+def _pace_from_backtest(path: Path | None) -> int | None:
+    """Read required daily trade pace from ai-test-bot firepower evidence.
+
+    This is the wiring promised in RiskPolicy's documentation: when observed
+    expectancy says the target needs far more attempts than the policy default,
+    the ledger records that market/backtest-derived pace instead of carrying a
+    stale "10 trades/day" operator default forward. Missing or non-positive
+    evidence returns None so the caller can fall back loudly to previous/CLI/
+    policy source labels.
+    """
+    if path is None or not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    firepower = payload.get("firepower")
+    if not isinstance(firepower, dict):
+        return None
+    return _coalesce_int(firepower.get("required_trades_per_day_at_observed_expectancy"))
 
 
 def _coalesce_campaign_day(payload: dict[str, Any]) -> str | None:

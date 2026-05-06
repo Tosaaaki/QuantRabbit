@@ -75,6 +75,12 @@ RANGE_MARKET_EDGE_ZONE_ATR_MULT = 0.25
 RANGE_SUPPORT_LEVEL_KEYS = ("bb_lower", "donchian_low", "avwap_lower_2sd", "swing_low", "linreg_channel_lower")
 RANGE_RESISTANCE_LEVEL_KEYS = ("bb_upper", "donchian_high", "avwap_upper_2sd", "swing_high", "linreg_channel_upper")
 
+# Generic trend/failure stops should not sit inside the current wick shelf.
+# The buffer is one live spread beyond the adverse structural level because the
+# spread is the current broker noise floor; the actual distance remains driven
+# by ATR, spread, and chart-derived levels, not a fixed pip literal.
+STRUCTURAL_STOP_BUFFER_SPREAD_MULT = 1.0
+
 
 def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
     """Return per-trade JPY cap from the daily target ledger, or None if unavailable.
@@ -558,6 +564,7 @@ def _intent_from_lane(
         reward_risk=target_reward_risk,
         atr_pips=atr_pips,
         range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+        chart_indicators=range_indicators,
     )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
     geometry_metadata = _geometry_metadata(
@@ -569,6 +576,7 @@ def _intent_from_lane(
         tp=tp,
         sl=sl,
         range_indicators=range_indicators if method == TradeMethod.RANGE_ROTATION else None,
+        chart_indicators=range_indicators,
     )
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot)
@@ -630,6 +638,7 @@ def _geometry(
     reward_risk: float = 1.5,
     atr_pips: float | None = None,
     range_indicators: dict[str, Any] | None = None,
+    chart_indicators: dict[str, Any] | None = None,
 ) -> tuple[float, float, float]:
     """Build (entry, tp, sl) prices.
 
@@ -652,7 +661,15 @@ def _geometry(
         )
         if range_geometry is not None:
             return range_geometry
-    return _generic_geometry(pair, side, order_type, quote, reward_risk=reward_risk, atr_pips=atr_pips)
+    return _generic_geometry(
+        pair,
+        side,
+        order_type,
+        quote,
+        reward_risk=reward_risk,
+        atr_pips=atr_pips,
+        chart_indicators=chart_indicators,
+    )
 
 
 def _generic_geometry(
@@ -663,6 +680,7 @@ def _generic_geometry(
     *,
     reward_risk: float,
     atr_pips: float | None,
+    chart_indicators: dict[str, Any] | None = None,
 ) -> tuple[float, float, float]:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
@@ -672,7 +690,6 @@ def _generic_geometry(
         stop_pips = max(atr_pips * GEOMETRY_ATR_MULT, spread_floor)
     else:
         stop_pips = spread_floor
-    reward_pips = stop_pips * reward_risk
     trigger_offset_pips = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT
     if order_type == OrderType.LIMIT:
         entry = quote.bid - trigger_offset_pips * pip if side == Side.LONG else quote.ask + trigger_offset_pips * pip
@@ -680,6 +697,15 @@ def _generic_geometry(
         entry = quote.ask if side == Side.LONG else quote.bid
     else:
         entry = quote.ask + trigger_offset_pips * pip if side == Side.LONG else quote.bid - trigger_offset_pips * pip
+    stop_pips = _structural_stop_pips(
+        pair,
+        side,
+        entry,
+        base_stop_pips=stop_pips,
+        spread_pips=spread_pips,
+        indicators=chart_indicators,
+    )
+    reward_pips = stop_pips * reward_risk
     if side == Side.LONG:
         tp = entry + reward_pips * pip
         sl = entry - stop_pips * pip
@@ -687,6 +713,34 @@ def _generic_geometry(
         tp = entry - reward_pips * pip
         sl = entry + stop_pips * pip
     return _round_price(pair, entry), _round_price(pair, tp), _round_price(pair, sl)
+
+
+def _structural_stop_pips(
+    pair: str,
+    side: Side,
+    entry: float,
+    *,
+    base_stop_pips: float,
+    spread_pips: float,
+    indicators: dict[str, Any] | None,
+) -> float:
+    if not indicators:
+        return base_stop_pips
+    pip_factor = PIP_FACTORS[pair]
+    if side == Side.LONG:
+        level = _nearest_below(entry, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))
+        if level is None:
+            return base_stop_pips
+        structural_pips = (entry - level) * pip_factor
+    else:
+        level = _nearest_above(entry, _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS))
+        if level is None:
+            return base_stop_pips
+        structural_pips = (level - entry) * pip_factor
+    if structural_pips <= 0:
+        return base_stop_pips
+    buffer_pips = spread_pips * STRUCTURAL_STOP_BUFFER_SPREAD_MULT
+    return max(base_stop_pips, structural_pips + buffer_pips)
 
 
 def _range_geometry(
@@ -843,9 +897,13 @@ def _geometry_metadata(
     tp: float,
     sl: float,
     range_indicators: dict[str, Any] | None,
+    chart_indicators: dict[str, Any] | None,
 ) -> dict[str, Any]:
     if order_type not in {OrderType.LIMIT, OrderType.MARKET} or not range_indicators:
-        return {"geometry_model": "ATR_SPREAD"}
+        return {
+            "geometry_model": "ATR_SPREAD_STRUCTURE",
+            **_structural_stop_metadata(pair, side, entry, sl, chart_indicators),
+        }
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
     spread_pips = abs(quote.ask - quote.bid) * pip_factor
@@ -878,6 +936,31 @@ def _geometry_metadata(
         "range_entry_side": "support" if side == Side.LONG else "resistance",
         "range_tp_is_inside_box": inside_box,
         "range_sl_outside_box": outside_box,
+    }
+
+
+def _structural_stop_metadata(
+    pair: str,
+    side: Side,
+    entry: float,
+    sl: float,
+    indicators: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not indicators:
+        return {}
+    pip_factor = PIP_FACTORS[pair]
+    if side == Side.LONG:
+        level = _nearest_below(entry, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))
+        outside = level is not None and sl < level
+    else:
+        level = _nearest_above(entry, _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS))
+        outside = level is not None and sl > level
+    if level is None:
+        return {}
+    return {
+        "structural_stop_level": round(level, 3 if pair.endswith("_JPY") else 5),
+        "structural_stop_distance_pips": round(abs(entry - level) * pip_factor, 3),
+        "structural_stop_outside_level": outside,
     }
 
 

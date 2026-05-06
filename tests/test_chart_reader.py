@@ -62,6 +62,24 @@ class ChartReaderTest(unittest.TestCase):
         self.assertIn("ATR=", chart.chart_story)
         self.assertIn("RSI=", chart.chart_story)
 
+    def test_short_history_pair_chart_uses_indicator_regime_reading(self) -> None:
+        candles_by_tf = {"M5": _series(1.17, -0.00005, n=200)}
+
+        chart = build_pair_chart(
+            "EUR_USD",
+            client=None,  # type: ignore[arg-type]
+            timeframes=("M5",),
+            candles_by_tf=candles_by_tf,
+        )
+
+        reading = chart.views[0].regime_reading
+        self.assertIsNotNone(reading)
+        assert reading is not None
+        self.assertNotEqual(reading.state, "UNKNOWN")
+        self.assertEqual(reading.source, "indicator_set_M5")
+        self.assertEqual(reading.lookback_bars, 200)
+        self.assertIn("Read=", chart.chart_story)
+
 
 if __name__ == "__main__":
     unittest.main()

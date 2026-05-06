@@ -583,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         target_summary = DailyTargetLedger(
             state_path=DEFAULT_DAILY_TARGET_STATE,
             report_path=DEFAULT_DAILY_TARGET_REPORT,
+            pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
         ).run(start_balance_jpy=args.start_balance, target_return_pct=args.target_return_pct)
         print(
             json.dumps(
@@ -1088,6 +1089,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = DailyTargetLedger(
                 state_path=args.state,
                 report_path=args.report,
+                pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
             ).run(
                 start_balance_jpy=args.start_balance,
                 target_return_pct=args.target_return_pct,
@@ -1111,6 +1113,7 @@ def main(argv: list[str] | None = None) -> int:
                     "remaining_target_jpy": summary.remaining_target_jpy,
                     "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
                     "target_trades_per_day": summary.target_trades_per_day,
+                    "target_trades_per_day_source": summary.target_trades_per_day_source,
                     "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
                     "unprotected_positions": summary.unprotected_positions,
                 },

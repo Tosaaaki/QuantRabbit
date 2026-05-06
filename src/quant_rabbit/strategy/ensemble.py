@@ -67,6 +67,7 @@ class DeskLane:
     target_reward_risk: float = 1.5
     evidence_tail_jpy: float = 0.0
     evidence_best_jpy: float = 0.0
+    seat_missed: int = 0
     blockers: tuple[str, ...] = ()
     story_examples: tuple[str, ...] = ()
 
@@ -242,6 +243,7 @@ def _strategy_lane(
         target_reward_risk=target_rr,
         evidence_tail_jpy=strategy.positive_tail_jpy,
         evidence_best_jpy=strategy.positive_best_jpy,
+        seat_missed=strategy.seat_missed,
         blockers=blockers,
         story_examples=story.examples[:2],
     )
@@ -333,7 +335,7 @@ def _coverage_gap(lanes: tuple[DeskLane, ...], target_jpy: float) -> str:
     return f"Target {target_jpy:.0f} JPY has no evidence-backed coverage yet."
 
 
-def _lane_sort_key(lane: DeskLane) -> tuple[int, str, str, str]:
+def _lane_sort_key(lane: DeskLane) -> tuple[int, float, float, int, str, str, str]:
     rank = {
         "ORDER_INTENT_REQUIRED": 0,
         "RISK_REPAIR_DRY_RUN": 1,
@@ -342,7 +344,15 @@ def _lane_sort_key(lane: DeskLane) -> tuple[int, str, str, str]:
         "WATCH_ONLY": 4,
         "REJECTED": 5,
     }.get(lane.adoption, 9)
-    return (rank, lane.desk, lane.pair, lane.direction)
+    return (
+        rank,
+        -lane.evidence_tail_jpy,
+        -lane.evidence_best_jpy,
+        -lane.seat_missed,
+        lane.desk,
+        lane.pair,
+        lane.direction,
+    )
 
 
 def _load_strategy_profile(path: Path) -> dict[str, list[StrategyEvidence]]:

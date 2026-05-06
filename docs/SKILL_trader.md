@@ -66,7 +66,8 @@ Before writing any decision, open and actually read every layer below. Skipping 
 **Core (must read every cycle):**
 - `data/daily_target_state.json` — current equity, today's target, two distinct caps:
   - `daily_risk_budget_jpy` = whole-day loss budget (≈ 2% of starting equity).
-  - `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day` (default ≈ 0.2% of equity per shot).
+  - `target_trades_per_day` and `target_trades_per_day_source`. When ai-test-bot firepower is present, pace comes from `required_trades_per_day_at_observed_expectancy`; the policy value of 10 is only the no-evidence fallback.
+  - `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day`.
   The per-trade figure is what flows into every intent's `metadata.max_loss_jpy`. Cite **which** cap your decision is bounded by; do not conflate them.
 - `data/pair_charts.json` (and `docs/pair_charts_report.md`) — per-pair regime + M5/M15/H1 indicators. Fields per timeframe:
   - **Trend**: EMA(12/20/50), Ichimoku, Supertrend (`supertrend_dir`), Parabolic SAR (`psar_dir`), Aroon (`aroon_osc_14`), Hull MA, KAMA, ALMA, linear regression slope/R²/channel (`linreg_*`).
@@ -225,7 +226,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 `daily_target_state.json` carries two distinct caps:
 
 - `daily_risk_budget_jpy` = **whole day's** worst-case loss budget (≈ 2% of starting equity).
-- `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day` = **single trade's** worst-case loss (≈ 0.2% of equity at the default pace of 10 trades/day).
+- `per_trade_risk_budget_jpy` = `daily_risk_budget_jpy / target_trades_per_day` = **single trade's** worst-case loss. The pace is backtest/firepower-derived when available, not fixed at 10 trades/day.
 
 The split exists because the campaign needs many attempts to hit the 10% target. A single losing trade burns only 1/N of the day; the campaign continues. WAIT decisions that cite "risk" without naming **which** of these two caps is exceeded by **which** specific intent are operating in the old whole-day-per-shot mental model — that mental model is no longer correct.
 

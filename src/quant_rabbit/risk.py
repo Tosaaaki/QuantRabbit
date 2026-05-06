@@ -66,23 +66,21 @@ class RiskPolicy:
     # Equity-percent cap used by daily-target-state to derive the day's risk
     # budget from starting balance (e.g. 2.0 = 2% of equity per trading day).
     daily_risk_pct: float | None = 2.0
-    # Number of independent trade attempts the campaign expects to make in a
-    # day. The per-trade JPY cap is daily_risk_budget_jpy / target_trades_per_day,
-    # so this knob shapes "few big shots" vs "many small probes".
+    # Fallback number of independent trade attempts the campaign expects to
+    # make in a day. DailyTargetLedger's CLI/automation path first reads
+    # ai-test-bot firepower evidence; this policy value is used only when that
+    # observed-expectancy pace is unavailable.
     #
     # Per AGENT_CONTRACT §3.5:
     # (a) market reality: a realistic FX scalp/swing day fires 5–30 trades
-    #     depending on regime, session liquidity, and pacing. 10 is the median
-    #     observed in recent trader cycles and matches the "fire many small
-    #     shots, let winners run" operating mode the campaign targets.
-    # (b) constant rather than derived: this is operator policy (campaign
-    #     pacing), not market data. Higher conviction → set lower (e.g. 5).
-    #     High-frequency scalp → set higher (e.g. 20). Default 10 makes a
-    #     single losing trade burn ≈10% of the day's risk budget, leaving
-    #     room for many more attempts.
+    #     depending on regime, session liquidity, and pacing. 10 is a safe
+    #     minimum fallback; current production pace should come from
+    #     ai_test_bot_backtest.firepower.required_trades_per_day_at_observed_expectancy.
+    # (b) constant rather than derived: this value is only the no-evidence
+    #     operator-policy fallback. When backtest firepower is present, the
+    #     ledger uses that market/history-derived pace instead.
     # (c) replace via: --target-trades-per-day on daily-target-state, or by
-    #     deriving from mining (target_return_pct / (avg_target_R * win_rate))
-    #     once that wiring exists in DailyTargetLedger.
+    #     improving ai-test-bot firepower/expectancy wiring.
     target_trades_per_day: int | None = 10
     min_reward_risk: float = 1.2
     max_quote_age_seconds: int = 20

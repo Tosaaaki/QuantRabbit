@@ -25,7 +25,7 @@ from quant_rabbit.broker.oanda import OandaReadOnlyClient
 # Reading-layer additions (phases 1-3 per docs/research/ + AGENT_CONTRACT §6).
 # These are fail-soft: when underlying data is insufficient the readings are
 # emitted as None, never silently faked.
-from quant_rabbit.analysis.regime import RegimeReading, classify_regime
+from quant_rabbit.analysis.regime import RegimeReading, classify_regime, classify_regime_from_values
 from quant_rabbit.analysis.families import FamilyScores, compute_family_scores
 from quant_rabbit.analysis.statfilters import StatFilterReading, compute_stat_filters
 from quant_rabbit.analysis.sessions import SessionContext, build_session_context
@@ -135,7 +135,7 @@ def build_pair_chart(
             pip_size=indicators.pip_size,
         ) if len(candles) >= 30 else None
         regime_reading, family_scores, stat_filters, smc_reading = _build_reading_layer(
-            candles=candles, indicators=indicators
+            candles=candles, indicators=indicators, granularity=tf
         )
         views.append(
             ChartView(
@@ -170,7 +170,7 @@ def build_pair_chart(
 
 
 def _build_reading_layer(
-    *, candles: tuple[Candle, ...], indicators: IndicatorSet
+    *, candles: tuple[Candle, ...], indicators: IndicatorSet, granularity: str
 ) -> tuple[RegimeReading | None, FamilyScores | None, StatFilterReading | None, SMCReading | None]:
     """Compute the four per-view reading-layer artifacts.
 
@@ -188,6 +188,10 @@ def _build_reading_layer(
     regime_reading: RegimeReading | None = None
     try:
         regime_reading = classify_regime(closes=closes, highs=highs, lows=lows)
+        if regime_reading.state == "UNKNOWN":
+            indicator_reading = _indicator_regime_reading(indicators, granularity=granularity)
+            if indicator_reading.state != "UNKNOWN":
+                regime_reading = indicator_reading
     except Exception:
         regime_reading = None
 
@@ -212,6 +216,33 @@ def _build_reading_layer(
         smc_reading = None
 
     return regime_reading, family_scores, stat_filters, smc_reading
+
+
+def _indicator_regime_reading(indicators: IndicatorSet, *, granularity: str) -> RegimeReading:
+    """Build a regime reading from IndicatorSet values when annual lookback is underfilled.
+
+    The pair-charts command fetches a bounded recent candle window every cycle.
+    For that window, IndicatorSet already computes Hurst(available history),
+    ADX(14), Choppiness(14), and ATR percentile over the fetched window. Using
+    those values keeps the reading layer live and transparent; missing values
+    still produce UNKNOWN and the `source` field discloses the shorter evidence
+    window.
+    """
+    atr_pct = _indicator_percentile_to_100(indicators.atr_percentile_100)
+    return classify_regime_from_values(
+        hurst=indicators.hurst_100,
+        adx=indicators.adx_14,
+        choppiness=indicators.choppiness_14,
+        atr_percentile=atr_pct,
+        source=f"indicator_set_{granularity}",
+        lookback_bars=indicators.candles_count,
+    )
+
+
+def _indicator_percentile_to_100(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return value * 100.0 if 0.0 <= value <= 1.0 else value
 
 
 def _build_session_for_pair(
@@ -247,6 +278,8 @@ def _regime_reading_to_dict(r: RegimeReading | None) -> dict[str, object] | None
         "choppiness": r.choppiness,
         "atr_percentile": r.atr_percentile,
         "confidence": r.confidence,
+        "source": r.source,
+        "lookback_bars": r.lookback_bars,
     }
 
 
@@ -492,6 +525,8 @@ def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
             bits.append(f"Chop={ind.choppiness_14:.0f}")
         if ind.supertrend_dir is not None:
             bits.append(f"ST={'+' if ind.supertrend_dir > 0 else '-'}")
+        if view.regime_reading is not None:
+            bits.append(f"Read={view.regime_reading.state}:{view.regime_reading.confidence:.2f}")
         if ind.regime_quantile is not None:
             bits.append(f"q={ind.regime_quantile}")
         if ind.ichimoku_cloud_pos:
