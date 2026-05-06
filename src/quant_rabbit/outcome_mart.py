@@ -506,7 +506,7 @@ def _order_type(payload: dict[str, Any], fallback: object | None) -> str:
 def _session_bucket(payload: dict[str, Any]) -> str:
     raw_bucket = payload.get("session_bucket")
     if raw_bucket:
-        return _norm(raw_bucket)
+        return _session_family(raw_bucket)
     hour = _hour_from_payload(payload)
     if hour is None:
         return "UNSPECIFIED"
@@ -546,8 +546,40 @@ def _regime(payload: dict[str, Any]) -> str:
     for key in ("regime", "regime_snapshot", "live_tape_state", "h1_trend", "m5_trend"):
         value = payload.get(key)
         if value:
-            return _norm(value)
+            return _regime_family(value)
     return "UNSPECIFIED"
+
+
+def _session_family(value: object) -> str:
+    text = _norm(value).replace("-", "_")
+    if not text:
+        return "UNSPECIFIED"
+    if "LONDON" in text:
+        return "LONDON"
+    if text in {"NY", "NEWYORK", "NEW_YORK"} or text.startswith("NY_") or "SILVER_BULLET" in text:
+        return "NY"
+    if text in {"TOKYO", "ASIA"} or "TOKYO" in text or "ASIA" in text:
+        return "ASIA"
+    if "ROLLOVER" in text or "OFF_HOURS" in text:
+        return "ROLLOVER"
+    return text
+
+
+def _regime_family(value: object) -> str:
+    text = _norm(value).replace("-", "_")
+    if not text:
+        return "UNSPECIFIED"
+    if "SQUEEZE" in text or "BREAKOUT_PENDING" in text:
+        return "SQUEEZE"
+    if "RANGE" in text or "ROTATION" in text or "MEAN_REVERT" in text:
+        return "RANGE"
+    if "QUIET" in text or "STABLE" in text or "THIN_LIQUIDITY" in text:
+        return "QUIET"
+    if "TREND" in text or "BULL" in text or "BEAR" in text or "IMPULSE" in text:
+        return "TRENDING"
+    if "TRANSITION" in text or "FRICTION" in text or "HEADLINE" in text:
+        return "TRANSITION"
+    return text
 
 
 def _evidence_state(values: list[float]) -> str:

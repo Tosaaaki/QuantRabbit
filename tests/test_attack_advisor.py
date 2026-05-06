@@ -198,21 +198,21 @@ class AttackAdvisorTest(unittest.TestCase):
                     {
                         "condition_edges": [
                             {
-                                "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TREND_UP",
+                                "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING",
                                 "method": "RANGE_ROTATION",
                                 "order_type": "MARKET",
                                 "session_bucket": "LONDON",
-                                "regime": "TREND_UP",
+                                "regime": "TRENDING",
                                 "net_jpy": 500.0,
                                 "avg_jpy": 50.0,
                                 "outcome_n": 10,
                             },
                             {
-                                "key": "ALL:ALL:TREND_CONTINUATION:MARKET:LONDON:TREND_UP",
+                                "key": "ALL:ALL:TREND_CONTINUATION:MARKET:LONDON:TRENDING",
                                 "method": "TREND_CONTINUATION",
                                 "order_type": "MARKET",
                                 "session_bucket": "LONDON",
-                                "regime": "TREND_UP",
+                                "regime": "TRENDING",
                                 "net_jpy": -100.0,
                                 "avg_jpy": -10.0,
                                 "outcome_n": 10,
@@ -257,9 +257,9 @@ class AttackAdvisorTest(unittest.TestCase):
             lane = payload["lanes"][0]
             self.assertEqual(lane["archive_condition_edge_jpy"], 500.0)
             self.assertEqual(lane["archive_condition_trials"], 10)
-            self.assertEqual(lane["archive_condition_key"], "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TREND_UP")
+            self.assertEqual(lane["archive_condition_key"], "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING")
             self.assertEqual(lane["archive_method_edge_jpy"], 500.0)
-            self.assertIn("condition=`ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TREND_UP`", (root / "advice.md").read_text())
+            self.assertIn("condition=`ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING`", (root / "advice.md").read_text())
 
 
 def _result(

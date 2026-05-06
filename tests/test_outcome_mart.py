@@ -33,7 +33,7 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertEqual(payload["source_coverage"]["archive_outcomes"], 3)
             self.assertEqual(payload["source_coverage"]["story_observations"], 2)
             conditions = {item["key"]: item for item in payload["condition_edges"]}
-            condition_key = "ALL:ALL:TREND_CONTINUATION:MARKET:LONDON:UNSPECIFIED"
+            condition_key = "ALL:ALL:TREND_CONTINUATION:MARKET:LONDON:TRENDING"
             self.assertEqual(conditions[condition_key]["outcome_n"], 2)
             self.assertEqual(conditions[condition_key]["net_jpy"], 40.0)
             self.assertEqual(conditions[condition_key]["evidence_state"], "POSITIVE_ARCHIVE_EDGE")
@@ -119,7 +119,14 @@ def _seed_history_db(path: Path) -> None:
                 None,
                 None,
                 "continuation shelf",
-                json.dumps({"reason": "MARKET_ORDER", "session_hour": 8, "thesis_structure": "trend continuation"}),
+                json.dumps(
+                    {
+                        "reason": "MARKET_ORDER",
+                        "session_hour": 8,
+                        "thesis_structure": "trend continuation",
+                        "regime": "bear trend",
+                    }
+                ),
             ),
             (
                 "trades",
@@ -131,7 +138,14 @@ def _seed_history_db(path: Path) -> None:
                 None,
                 None,
                 "continuation shelf",
-                json.dumps({"reason": "MARKET_ORDER", "session_hour": 9, "thesis_structure": "trend continuation"}),
+                json.dumps(
+                    {
+                        "reason": "MARKET_ORDER",
+                        "session_hour": 9,
+                        "thesis_structure": "trend continuation",
+                        "regime": "TREND_UP",
+                    }
+                ),
             ),
             (
                 "seat_outcomes",
@@ -143,7 +157,7 @@ def _seed_history_db(path: Path) -> None:
                 "LIMIT",
                 None,
                 "range box",
-                json.dumps({"setup_type": "Range-Mean-Revert", "session_hour": 2}),
+                json.dumps({"setup_type": "Range-Mean-Revert", "session_bucket": "Tokyo", "regime": "quiet / stable"}),
             ),
         ],
     )

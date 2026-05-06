@@ -66,6 +66,27 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
 
+    def test_carries_current_regime_and_session_bucket_from_pair_charts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                pair_charts_path=_pair_charts_with_context(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            intent = payload["results"][0]["intent"]
+            self.assertEqual(intent["metadata"]["regime_state"], "TREND_DOWN")
+            self.assertEqual(intent["metadata"]["session_bucket"], "NY")
+            self.assertEqual(intent["market_context"]["session"], "NY")
+            self.assertIn("TREND_DOWN current", intent["market_context"]["regime"])
+
     def test_trigger_receipt_required_does_not_create_market_chase_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -443,6 +464,46 @@ def _pair_charts(root: Path) -> Path:
                         "views": [
                             {
                                 "granularity": "M5",
+                                "indicators": {
+                                    "atr_pips": 8.0,
+                                    "bb_lower": 1.1710,
+                                    "bb_upper": 1.1760,
+                                    "bb_middle": 1.1735,
+                                    "donchian_low": 1.1707,
+                                    "donchian_high": 1.1764,
+                                    "vwap": 1.1738,
+                                    "avwap_anchor": 1.1734,
+                                    "avwap_lower_1sd": 1.1712,
+                                    "avwap_upper_1sd": 1.1758,
+                                    "linreg_channel_lower": 1.1709,
+                                    "linreg_channel_upper": 1.1761,
+                                    "swing_low": 1.1705,
+                                    "swing_high": 1.1767,
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _pair_charts_with_context(root: Path) -> Path:
+    path = root / "pair_charts_context.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "dominant_regime": "TREND_DOWN",
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime_reading": {"state": "TREND_WEAK", "confidence": 0.5, "atr_percentile": 80.0},
                                 "indicators": {
                                     "atr_pips": 8.0,
                                     "bb_lower": 1.1710,

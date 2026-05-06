@@ -184,7 +184,10 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
         pair = chart.get("pair")
         if not isinstance(pair, str):
             continue
-        per_tf: dict[str, Any] = {"dominant_regime": chart.get("dominant_regime")}
+        per_tf: dict[str, Any] = {
+            "dominant_regime": chart.get("dominant_regime"),
+            "session": chart.get("session") if isinstance(chart.get("session"), dict) else {},
+        }
         for view in chart.get("views", []) or []:
             granularity = view.get("granularity")
             if isinstance(granularity, str):
@@ -257,6 +260,41 @@ def _regime_reading_for(
     raw = per_tf.get(f"{timeframe}__regime_reading")
     if isinstance(raw, dict):
         return raw
+    return None
+
+
+def _session_bucket_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> str | None:
+    """Return a coarse session bucket aligned with archive outcome evidence.
+
+    Pair charts expose richer tags such as NY_AM_KILLZONE or SILVER_BULLET.
+    The archive outcome mart is intentionally coarser (ASIA/LONDON/NY/ROLLOVER)
+    so condition matching stays comparable across old and current packets.
+    """
+    if charts is None:
+        return None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return None
+    session = per_tf.get("session")
+    if not isinstance(session, dict):
+        return None
+    return _session_bucket_from_tag(session.get("current_tag"))
+
+
+def _session_bucket_from_tag(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+    if not text:
+        return None
+    if "LONDON" in text:
+        return "LONDON"
+    if text.startswith("NY") or "NEWYORK" in text or "NEW_YORK" in text or "SILVER_BULLET" in text:
+        return "NY"
+    if "ASIA" in text or "TOKYO" in text:
+        return "ASIA"
+    if "ROLLOVER" in text or "OFF_HOURS" in text:
+        return "ROLLOVER"
     return None
 
 
@@ -470,6 +508,7 @@ class IntentGenerator:
         range_indicators = _range_indicators_for(pair, pair_charts)
         regime_state = _regime_state_for(pair, pair_charts)
         regime_reading = _regime_reading_for(pair, pair_charts)
+        session_bucket = _session_bucket_for(pair, pair_charts)
         intent = _intent_from_lane(
             lane,
             quote,
@@ -481,6 +520,7 @@ class IntentGenerator:
             parent_lane_id=parent_lane_id,
             regime_state=regime_state,
             regime_reading=regime_reading,
+            session_bucket=session_bucket,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -689,6 +729,7 @@ def _intent_from_lane(
     parent_lane_id: str | None = None,
     regime_state: str | None = None,
     regime_reading: dict[str, Any] | None = None,
+    session_bucket: str | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -727,14 +768,15 @@ def _intent_from_lane(
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
+    regime_context = f"{regime_state} current; {method.value} campaign lane" if regime_state else f"{method.value} campaign lane"
     context = MarketContext(
-        regime=f"{method.value} campaign lane",
+        regime=regime_context,
         narrative=str(lane.get("reason") or ""),
         chart_story=" | ".join(str(item) for item in lane.get("story_examples", [])[:2]) or "campaign lane requires current chart read",
         method=method,
         invalidation=f"invalid if SL {sl} trades or campaign overlay vetoes the setup",
         event_risk="; ".join(str(item) for item in lane.get("blockers", [])[:2]),
-        session="generated dry-run",
+        session=session_bucket or "generated dry-run",
     )
     return OrderIntent(
         pair=pair,
@@ -757,6 +799,7 @@ def _intent_from_lane(
             "regime_reward_risk_mult": rr_multiplier,
             "regime_state": regime_state,
             "regime_stop_widen_mult": stop_widen_mult,
+            "session_bucket": session_bucket,
             "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": (

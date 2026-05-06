@@ -311,11 +311,13 @@ def _attack_lane(
             metadata.get("session_bucket"),
             context.get("session"),
             intent_session_bucket,
+            normalizer=_session_condition_token,
         ),
         regime=_first_condition_token(
             metadata.get("regime_state"),
             context.get("regime_state"),
             context.get("regime"),
+            normalizer=_regime_condition_token,
         ),
     )
     condition_net_jpy = _optional_float(condition_edge.get("net_jpy")) if condition_edge else None
@@ -459,8 +461,8 @@ def _condition_index(payload: dict[str, Any]) -> dict[tuple[str, str, str, str],
             continue
         method = _condition_token(item.get("method"))
         order_type = _condition_token(item.get("order_type"))
-        session = _condition_token(item.get("session_bucket"))
-        regime = _condition_token(item.get("regime"))
+        session = _session_condition_token(item.get("session_bucket"))
+        regime = _regime_condition_token(item.get("regime"))
         if not method:
             continue
         index[(method, order_type or "UNSPECIFIED", session or "UNSPECIFIED", regime or "UNSPECIFIED")] = item
@@ -490,8 +492,8 @@ def _best_condition_edge(
 ) -> dict[str, Any]:
     method_key = _condition_token(method)
     order_key = _condition_token(order_type) or "UNSPECIFIED"
-    session_key = _condition_token(session) or "UNSPECIFIED"
-    regime_key = _condition_token(regime) or "UNSPECIFIED"
+    session_key = _session_condition_token(session) or "UNSPECIFIED"
+    regime_key = _regime_condition_token(regime) or "UNSPECIFIED"
     for key in (
         (method_key, order_key, session_key, regime_key),
         (method_key, order_key, session_key, "UNSPECIFIED"),
@@ -521,9 +523,47 @@ def _condition_token(value: object) -> str:
     return text
 
 
-def _first_condition_token(*values: object) -> str:
+def _session_condition_token(value: object) -> str:
+    text = _condition_token(value).replace("-", "_")
+    if not text:
+        return ""
+    if "LONDON" in text:
+        return "LONDON"
+    if text in {"NY", "NEWYORK", "NEW_YORK"}:
+        return "NY"
+    if text.startswith("NY_") or "NEWYORK" in text or "SILVER_BULLET" in text:
+        return "NY"
+    if text == "TOKYO" or "TOKYO" in text or "ASIA" in text:
+        return "ASIA"
+    if "ROLLOVER" in text or "OFF_HOURS" in text:
+        return "ROLLOVER"
+    return text
+
+
+def _regime_condition_token(value: object) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().upper().replace("/", "_").replace(" ", "_").replace("-", "_")
+    if not text:
+        return ""
+    if "CAMPAIGN_LANE" in text and "CURRENT" not in text:
+        return ""
+    if "SQUEEZE" in text or "BREAKOUT_PENDING" in text:
+        return "SQUEEZE"
+    if "RANGE" in text or "ROTATION" in text or "MEAN_REVERT" in text:
+        return "RANGE"
+    if "QUIET" in text or "STABLE" in text or "THIN_LIQUIDITY" in text:
+        return "QUIET"
+    if "TREND" in text or "BULL" in text or "BEAR" in text or "IMPULSE" in text:
+        return "TRENDING"
+    if "TRANSITION" in text or "FRICTION" in text or "HEADLINE" in text:
+        return "TRANSITION"
+    return text
+
+
+def _first_condition_token(*values: object, normalizer=_condition_token) -> str:
     for value in values:
-        token = _condition_token(value)
+        token = normalizer(value)
         if token:
             return token
     return ""
