@@ -84,7 +84,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(_git(live, "rev-parse", "HEAD"), _git(repo, "rev-parse", "main"))
 
-    def test_live_only_clears_report_drift_when_already_at_main(self) -> None:
+    def test_live_only_preserves_report_drift_when_already_at_main(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             live = Path(tmp) / "live"
@@ -99,7 +99,8 @@ class LiveRuntimeSyncTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(_git(live, "rev-parse", "HEAD"), _git(repo, "rev-parse", "main"))
-            self.assertEqual(_git(live, "status", "--short"), "")
+            self.assertEqual((live / "docs" / "cycle_report.md").read_text(), "new runtime drift\n")
+            self.assertEqual(_git(live, "status", "--short"), "M docs/cycle_report.md")
 
 
 def _sync(repo: Path, live: Path, *, source_branch: str = "feature", live_only: bool = False) -> subprocess.CompletedProcess[str]:
