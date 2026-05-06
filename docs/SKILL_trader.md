@@ -49,6 +49,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 # 2. Refresh evidence when routed there
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot
@@ -59,6 +60,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
@@ -71,6 +73,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --decision-response data/codex_trader_decision_response.json
 
 # 5. Run one gateway cycle only
+# The gateway cycle syncs data/execution_ledger.db before and after broker work
+# and records live_order / position_execution receipts.
 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
   --use-gpt-trader \
@@ -86,3 +90,4 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 - Daily target progress from `data/daily_target_state.json`.
 - `gpt-trader-decision` result and issue codes.
 - Gateway result and report paths under `docs/*_report.md`.
+- Execution ledger DB/report: `data/execution_ledger.db`, `docs/execution_ledger_report.md`.

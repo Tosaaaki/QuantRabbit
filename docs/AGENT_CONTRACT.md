@@ -17,6 +17,8 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Trader prompt branches | `docs/trader_prompts/*.md` |
 | Live send wrapper | `scripts/run-autotrade-live.sh` |
 | Live runtime sync | `scripts/sync-live-runtime.sh` |
+| Append-only execution ledger | `data/execution_ledger.db` |
+| Execution ledger latest report | `docs/execution_ledger_report.md` |
 | Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Legacy archive root | `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` |
@@ -113,7 +115,8 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Every decision receipt states: selected lane, rejected alternatives, thesis, method, narrative, chart story, invalidation, TP, SL, units, expected reward, worst-case loss, reason for action, and `operator`.
 - The system separates observation, reasoning, risk validation, order staging, order sending, position protection, and post-trade learning.
 - The trader learns from wins, losses, missed edges, bad entries, premature exits, and protection repairs **without allowing memory to override live risk checks**.
-- Maintain a professional audit trail: broker snapshots, intents, dry-run receipts, live-stage receipts, execution reports, protection actions, post-trade reviews.
+- Maintain a professional audit trail: broker snapshots, intents, dry-run receipts, live-stage receipts, execution reports, protection actions, post-trade reviews, and the append-only execution ledger.
+- `execution-ledger-sync` records OANDA transaction truth into `data/execution_ledger.db`. `stage-live-order` and `autotrade-cycle` sync it before and after gateway work and record gateway receipt files, so entries, exits, protections, cancels, and broker-side transaction ids have one durable DB trail.
 - Continuously root-cause bugs in strategy logic, risk math, stale broker state, duplicated exposure, missing protection, and legacy assumptions.
 
 ---
@@ -135,6 +138,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 ## 8. Autotrade Contract
 
 - `autotrade-cycle --send` is the live automation entrypoint.
+- `autotrade-cycle` syncs the execution ledger before and after the broker gateway phase; do not bypass it with direct OANDA writes or out-of-band receipt edits.
 - Flat-account entry loop: `BrokerSnapshot` → `IntentGenerator` → `TraderBrain` → `LiveOrderGateway`.
 - Exposure-management loop: `BrokerSnapshot` → `TraderBrain` → `PositionManager` → `PositionProtectionGateway`.
 - `gpt-trader-decision` verifies the operator's decision receipt by default.
