@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from dataclasses import replace
@@ -14,6 +15,47 @@ from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, Bro
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_direct_send_cycle_refuses_existing_live_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()) + "\n")
+            old_lock = os.environ.get("QR_AUTOTRADE_LOCK_DIR")
+            old_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+            os.environ["QR_AUTOTRADE_LOCK_DIR"] = str(lock_dir)
+            os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now)},
+                )
+            )
+            try:
+                with self.assertRaisesRegex(RuntimeError, "another autotrade cycle is already running"):
+                    AutoTradeCycle(
+                        client=client,
+                        snapshot_path=root / "snapshot.json",
+                        intents_path=root / "intents.json",
+                        intent_report_path=root / "intents.md",
+                        decision_path=root / "decision.json",
+                        decision_report_path=root / "decision.md",
+                        report_path=root / "report.md",
+                    ).run(send=True)
+            finally:
+                if old_lock is None:
+                    os.environ.pop("QR_AUTOTRADE_LOCK_DIR", None)
+                else:
+                    os.environ["QR_AUTOTRADE_LOCK_DIR"] = old_lock
+                if old_held is None:
+                    os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
+                else:
+                    os.environ["QR_AUTOTRADE_LOCK_HELD"] = old_held
+
+            self.assertEqual(client.snapshot_calls, [])
+            self.assertEqual(client.orders_sent, [])
+
     def test_existing_pending_order_turns_cycle_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

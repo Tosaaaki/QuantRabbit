@@ -12,6 +12,7 @@ readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabb
 acquire_lock() {
   if mkdir "$QR_AUTOTRADE_LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "${QR_AUTOTRADE_LOCK_DIR}/pid"
+    export QR_AUTOTRADE_LOCK_HELD=1
     trap 'rm -rf "$QR_AUTOTRADE_LOCK_DIR"' EXIT INT TERM
     return 0
   fi
@@ -29,6 +30,7 @@ acquire_lock() {
   rm -rf "$QR_AUTOTRADE_LOCK_DIR"
   if mkdir "$QR_AUTOTRADE_LOCK_DIR" 2>/dev/null; then
     printf '%s\n' "$$" > "${QR_AUTOTRADE_LOCK_DIR}/pid"
+    export QR_AUTOTRADE_LOCK_HELD=1
     trap 'rm -rf "$QR_AUTOTRADE_LOCK_DIR"' EXIT INT TERM
     return 0
   fi

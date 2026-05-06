@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from quant_rabbit.automation import _acquire_autotrade_lock
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "scripts" / "run-autotrade-live.sh"
@@ -31,6 +33,7 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = capture.read_text()
             self.assertIn("QR_LIVE_ENABLED=0\n", payload)
+            self.assertIn("QR_AUTOTRADE_LOCK_HELD=1\n", payload)
             self.assertIn("<--send>", payload)
             self.assertIn("<--use-gpt-trader>", payload)
             self.assertIn("<--reuse-market-artifacts>", payload)
@@ -57,6 +60,23 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertFalse(capture.exists())
             self.assertIn("another autotrade cycle is already running", result.stderr)
 
+    def test_direct_send_lock_blocks_overlapping_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lock_dir = root / "lock"
+            lock_dir.mkdir()
+            (lock_dir / "pid").write_text(str(os.getpid()) + "\n")
+            original_lock_dir = os.environ.get("QR_AUTOTRADE_LOCK_DIR")
+            original_lock_held = os.environ.get("QR_AUTOTRADE_LOCK_HELD")
+            os.environ["QR_AUTOTRADE_LOCK_DIR"] = str(lock_dir)
+            os.environ.pop("QR_AUTOTRADE_LOCK_HELD", None)
+            try:
+                with self.assertRaisesRegex(RuntimeError, "another autotrade cycle is already running"):
+                    _acquire_autotrade_lock(send=True)
+            finally:
+                _restore_env("QR_AUTOTRADE_LOCK_DIR", original_lock_dir)
+                _restore_env("QR_AUTOTRADE_LOCK_HELD", original_lock_held)
+
 
 def _wrapper_env(root: Path, capture: Path) -> dict[str, str]:
     env_file = root / "oanda.env"
@@ -80,6 +100,7 @@ def _wrapper_env(root: Path, capture: Path) -> dict[str, str]:
                 "set -euo pipefail",
                 "{",
                 "  printf 'QR_LIVE_ENABLED=%s\\n' \"${QR_LIVE_ENABLED:-}\"",
+                "  printf 'QR_AUTOTRADE_LOCK_HELD=%s\\n' \"${QR_AUTOTRADE_LOCK_HELD:-}\"",
                 "  printf 'PYTHONPATH=%s\\n' \"${PYTHONPATH:-}\"",
                 "  printf 'ARGV='",
                 "  for arg in \"$@\"; do printf '<%s>' \"$arg\"; done",
@@ -100,6 +121,13 @@ def _wrapper_env(root: Path, capture: Path) -> dict[str, str]:
         }
     )
     return env
+
+
+def _restore_env(name: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,6 +55,7 @@ from quant_rabbit.strategy.trader_brain import (
 
 
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
+DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 
 # Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
@@ -121,6 +124,46 @@ def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool =
         return False
     blockers = [blocker for blocker in score.blockers if not _is_existing_pending_blocker(blocker)]
     return not any(_is_hard_prefilter_blocker(blocker) for blocker in blockers)
+
+
+def _acquire_autotrade_lock(*, send: bool) -> Path | None:
+    """Acquire a nonblocking live-cycle lock for direct CLI sends.
+
+    The shell wrapper also takes this lock and sets QR_AUTOTRADE_LOCK_HELD=1 so
+    the in-process guard is reentrant. Direct `autotrade-cycle --send` calls do
+    not pass through the wrapper, so this closes the duplicate-send surface.
+    """
+    if not send or os.environ.get("QR_AUTOTRADE_LOCK_HELD") == "1":
+        return None
+    lock_dir = Path(os.environ.get("QR_AUTOTRADE_LOCK_DIR") or DEFAULT_AUTOTRADE_LOCK_DIR)
+    try:
+        lock_dir.mkdir()
+    except FileExistsError:
+        existing_pid = _lock_pid(lock_dir)
+        if existing_pid and _pid_is_running(existing_pid):
+            raise RuntimeError(f"another autotrade cycle is already running pid={existing_pid}")
+        shutil.rmtree(lock_dir, ignore_errors=True)
+        try:
+            lock_dir.mkdir()
+        except FileExistsError as exc:
+            raise RuntimeError(f"failed to acquire autotrade lock: {lock_dir}") from exc
+    (lock_dir / "pid").write_text(f"{os.getpid()}\n")
+    return lock_dir
+
+
+def _lock_pid(lock_dir: Path) -> int | None:
+    try:
+        return int((lock_dir / "pid").read_text().strip())
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _pid_is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -253,6 +296,14 @@ class AutoTradeCycle:
         self.risk_equity_jpy = risk_equity_jpy
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
+        lock_dir = _acquire_autotrade_lock(send=send)
+        try:
+            return self._run(send=send)
+        finally:
+            if lock_dir is not None:
+                shutil.rmtree(lock_dir, ignore_errors=True)
+
+    def _run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
         pairs = DEFAULT_TRADER_PAIRS
         if self.reuse_market_artifacts:
