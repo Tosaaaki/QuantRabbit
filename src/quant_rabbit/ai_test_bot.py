@@ -41,6 +41,7 @@ class TestBotBucket:
 
 @dataclass(frozen=True)
 class TestBotTrade:
+    source_id: str
     session_date: str
     source_table: str
     pair: str
@@ -48,6 +49,8 @@ class TestBotTrade:
     execution_style: str
     allocation_band: str
     pl_jpy: float
+    opportunity_key: str
+    sort_key: str
 
     @property
     def bucket(self) -> TestBotBucket:
@@ -122,6 +125,7 @@ class AITestBotBacktester:
         min_train_trades: int = DEFAULT_MIN_TRAIN_TRADES,
         max_active_buckets: int = DEFAULT_MAX_ACTIVE_BUCKETS,
         source_tables: tuple[str, ...] = DEFAULT_SOURCE_TABLES,
+        dedupe_opportunities: bool = True,
     ) -> None:
         if training_days <= 0:
             raise ValueError("ai-test-bot-backtest --training-days must be positive")
@@ -142,6 +146,7 @@ class AITestBotBacktester:
         self.min_train_trades = min_train_trades
         self.max_active_buckets = max_active_buckets
         self.source_tables = tuple(source_tables)
+        self.dedupe_opportunities = dedupe_opportunities
 
     def run(
         self,
@@ -166,7 +171,8 @@ class AITestBotBacktester:
         )
         daily_risk_budget_jpy = round(start_balance_jpy * (cap.daily_risk_pct / 100.0), 4)
         target_jpy = round(start_balance_jpy * (target_return_pct / 100.0), 4)
-        trades = tuple(self._load_trades())
+        raw_trades = tuple(self._load_trades())
+        trades = _dedupe_opportunities(raw_trades) if self.dedupe_opportunities else raw_trades
         days = sorted({trade.session_date for trade in trades})
         day_results = tuple(
             _walk_forward_days(
@@ -209,6 +215,10 @@ class AITestBotBacktester:
             "live_permission": False,
             "db_path": str(self.db_path),
             "source_tables": list(self.source_tables),
+            "dedupe_opportunities": self.dedupe_opportunities,
+            "raw_rows": len(raw_trades),
+            "deduped_rows": len(trades),
+            "deduped_away_rows": len(raw_trades) - len(trades),
             "start_balance_jpy": start_balance_jpy,
             "target_return_pct": target_return_pct,
             "target_jpy": target_jpy,
@@ -251,7 +261,7 @@ class AITestBotBacktester:
             raise FileNotFoundError(f"legacy history DB not found: {self.db_path}")
         placeholders = ",".join("?" for _ in self.source_tables)
         query = f"""
-            SELECT session_date, source_table, pair, direction, execution_style, allocation_band, pl
+            SELECT source_id, session_date, source_table, pair, direction, execution_style, allocation_band, pl, raw_json
             FROM legacy_records
             WHERE source_table IN ({placeholders})
               AND session_date IS NOT NULL
@@ -264,14 +274,36 @@ class AITestBotBacktester:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(query, self.source_tables).fetchall()
         for row in rows:
+            raw = _raw_payload(row["raw_json"])
+            source_table = str(row["source_table"])
+            pair = str(row["pair"])
+            direction = str(row["direction"])
+            execution_style, allocation_band = _observable_bucket_fields(
+                source_table=source_table,
+                execution_style=row["execution_style"],
+                allocation_band=row["allocation_band"],
+                raw=raw,
+            )
             yield TestBotTrade(
+                source_id=str(row["source_id"] or raw.get("id") or ""),
                 session_date=str(row["session_date"]),
-                source_table=str(row["source_table"]),
-                pair=str(row["pair"]),
-                direction=str(row["direction"]),
-                execution_style=_bucket_field(row["execution_style"]),
-                allocation_band=_bucket_field(row["allocation_band"]),
+                source_table=source_table,
+                pair=pair,
+                direction=direction,
+                execution_style=execution_style,
+                allocation_band=allocation_band,
                 pl_jpy=float(row["pl"]),
+                opportunity_key=_opportunity_key(
+                    source_id=str(row["source_id"] or raw.get("id") or ""),
+                    session_date=str(row["session_date"]),
+                    source_table=source_table,
+                    pair=pair,
+                    direction=direction,
+                    execution_style=execution_style,
+                    allocation_band=allocation_band,
+                    raw=raw,
+                ),
+                sort_key=_event_sort_key(row["source_id"], raw),
             )
 
     def _write_output(self, payload: dict) -> None:
@@ -289,6 +321,8 @@ class AITestBotBacktester:
             f"- Live permission: `{payload['live_permission']}`",
             f"- History DB: `{payload['db_path']}`",
             f"- Source tables: `{', '.join(payload['source_tables'])}`",
+            f"- Opportunity dedupe: `{payload['dedupe_opportunities']}` "
+            f"(raw=`{payload['raw_rows']}`, deduped=`{payload['deduped_rows']}`)",
             f"- Start balance: `{payload['start_balance_jpy']:.0f} JPY`",
             f"- Target: `{payload['target_jpy']:.0f} JPY` (`{payload['target_return_pct']:.1f}%`)",
             f"- Per-trade loss cap: `{payload['per_trade_loss_cap_jpy']:.0f} JPY` (`{payload['loss_cap_source']}`)",
@@ -345,6 +379,8 @@ class AITestBotBacktester:
                 "",
                 "- This is an offline research bot. It never places or stages broker orders.",
                 "- Bucket selection uses only prior training-window days; validation-day winners cannot select themselves.",
+                "- Seat outcome buckets use only observable setup/orderability/source fields, not future `CAPTURED/FAILED/MISSED` labels.",
+                "- Opportunity dedupe counts repeated seat receipts as one candidate before training or validation scoring.",
                 "- Losses are capped by the equity-derived per-trade cap; wins are not enlarged.",
                 "- `live_permission=false` means this receipt can support research, not live execution.",
                 "",
@@ -448,6 +484,15 @@ def _select_buckets(
 def _selected_trades_for_day(trades: tuple[TestBotTrade, ...], day: TestBotDay) -> tuple[TestBotTrade, ...]:
     selected = set(day.selected_buckets)
     return tuple(row for row in trades if row.session_date == day.session_date and row.bucket.label in selected)
+
+
+def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade, ...]:
+    selected: dict[str, TestBotTrade] = {}
+    for row in rows:
+        current = selected.get(row.opportunity_key)
+        if current is None or (row.sort_key, row.source_id) > (current.sort_key, current.source_id):
+            selected[row.opportunity_key] = row
+    return tuple(sorted(selected.values(), key=lambda row: (row.session_date, row.source_table, row.pair, row.direction, row.sort_key)))
 
 
 def _certification_blockers(
@@ -691,6 +736,90 @@ def _status(
 def _bucket_field(value: object) -> str:
     text = str(value or "").strip().upper()
     return text or "UNSPECIFIED"
+
+
+def _observable_bucket_fields(
+    *,
+    source_table: str,
+    execution_style: object,
+    allocation_band: object,
+    raw: dict[str, object],
+) -> tuple[str, str]:
+    if source_table == "seat_outcomes":
+        return _seat_order_style(raw), _bucket_field(raw.get("source"))
+    if source_table == "pretrade_outcomes":
+        return _bucket_field(raw.get("pretrade_level") or execution_style), _bucket_field(allocation_band)
+    return _bucket_field(execution_style), _bucket_field(allocation_band)
+
+
+def _seat_order_style(raw: dict[str, object]) -> str:
+    for key in ("setup_type", "orderability"):
+        style = _classify_order_style(raw.get(key))
+        if style != "UNSPECIFIED":
+            return style
+    return "UNSPECIFIED"
+
+
+def _classify_order_style(value: object) -> str:
+    text = str(value or "").strip().upper()
+    if not text:
+        return "UNSPECIFIED"
+    if "STOP" in text:
+        return "STOP-ENTRY"
+    if "LIMIT" in text:
+        return "LIMIT"
+    if "MARKET" in text:
+        return "MARKET"
+    if "ENTER NOW" in text or "NOW" == text:
+        return "MARKET"
+    if "PASS" in text:
+        return "PASS"
+    return text
+
+
+def _opportunity_key(
+    *,
+    source_id: str,
+    session_date: str,
+    source_table: str,
+    pair: str,
+    direction: str,
+    execution_style: str,
+    allocation_band: str,
+    raw: dict[str, object],
+) -> str:
+    if source_table == "seat_outcomes":
+        matched = _matched_trade_key(raw.get("matched_trade_ids"))
+        if matched:
+            return ":".join((source_table, session_date, pair, direction, "matched", matched))
+        return ":".join((source_table, session_date, pair, direction, allocation_band, execution_style))
+    trade_id = str(raw.get("trade_id") or "").strip()
+    if trade_id:
+        return ":".join((source_table, session_date, pair, direction, trade_id))
+    return ":".join((source_table, session_date, pair, direction, execution_style, allocation_band, source_id))
+
+
+def _matched_trade_key(value: object) -> str:
+    parts = sorted(part.strip(" `") for part in str(value or "").replace("，", ",").split(",") if part.strip(" `"))
+    return ",".join(parts)
+
+
+def _event_sort_key(source_id: object, raw: dict[str, object]) -> str:
+    for key in ("updated_at", "state_last_updated", "created_at"):
+        value = str(raw.get(key) or "").strip()
+        if value:
+            return value
+    return str(source_id or "")
+
+
+def _raw_payload(value: object) -> dict[str, object]:
+    if not value:
+        return {}
+    try:
+        payload = json.loads(str(value))
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _capped_pl(pl_jpy: float, max_loss_jpy: float) -> float:
