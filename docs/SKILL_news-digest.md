@@ -1,19 +1,67 @@
-# QuantRabbit News Digest Playbook
+# qr-news-digest — FX News Digest
 
-Purpose: refresh the ignored news artifacts that feed the market-story miner.
-This task is observation only. It must not run `autotrade-cycle`, place orders,
-call OANDA write gateways, or print secrets.
+Purpose: collect FX-relevant news via WebSearch and API parser, then write a
+trader-perspective summary to `logs/news_digest.md`. The trader session reads
+this file at the start of each cycle to build macro context into trade theses.
+This task is observation only: do not run `autotrade-cycle`, place orders, call
+OANDA write gateways, print secrets, or write tracked `docs/*_report.md` files.
+
+## Working Directory
+
+`/Users/tossaki/App/QuantRabbit`
 
 ## Steps
 
-1. Work in `/Users/tossaki/App/QuantRabbit`.
-2. Fetch and normalize public news feeds:
+1. WebSearch x3 — collect news from three angles:
+   - Breaking FX news: `"forex" OR "FX" OR "USD JPY EUR GBP" site:reuters.com OR site:bloomberg.com OR site:forexlive.com latest`
+   - Central bank actions: `"Fed" OR "BOJ" OR "ECB" OR "RBA" interest rate policy statement 2026`
+   - Economic calendar events today: `economic calendar today "NFP" OR "CPI" OR "GDP" OR "FOMC" OR "BOJ" 2026`
+
+2. Run the API parser. This may fail if a future provider requires keys; continue
+   with WebSearch results if it fails.
+
+```bash
+cd /Users/tossaki/App/QuantRabbit && PYTHONPATH=src python3 tools/news_fetcher.py
+```
+
+3. Also refresh the deterministic RSS artifacts. This writes `data/news_items.json`,
+   `logs/news_digest.md`, and `logs/news_flow_log.md`; overwrite the digest in
+   step 4 with the trader-perspective WebSearch summary.
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli news-snapshot
 ```
 
-3. Refresh the market-story profile without writing tracked reports:
+4. Write `logs/news_digest.md` manually from a pro trader's perspective. Keep it
+   under 60 lines total. Prioritize what changes trade thesis, entries, avoid
+   zones, and what the market is pricing in. Do not summarize everything.
+
+```markdown
+# FX News Digest — YYYY-MM-DD HH:MM JST
+
+## 🔴 High Impact (act on this)
+[Events/news that could move markets in the next 1-4 hours]
+
+## 🟡 Watch List
+[Developing stories, scheduled releases today]
+
+## 📅 Economic Calendar Today (JST)
+[Key releases with consensus vs prior]
+
+## 🏦 Central Bank Tracker
+[Latest from Fed/BOJ/ECB/RBA — stance, recent statements]
+
+## 💱 Pair-Specific Notes
+[USD_JPY / EUR_USD / GBP_USD / AUD_USD — any pair-specific drivers]
+
+## ⚠️ Risk Events (48h)
+[Upcoming scheduled risks]
+
+---
+Updated: YYYY-MM-DD HH:MM JST | Sources: WebSearch + news_fetcher.py
+```
+
+5. Refresh the market-story profile without writing tracked reports:
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
@@ -22,23 +70,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
   --report data/market_story_report.md
 ```
 
-4. If `news-snapshot` reports `MISSING_*` or `STALE_*` issues, use browser/web
-   fallback only to inspect source pages or feeds such as MarketPulse. Write
-   short, sourced headline summaries to `logs/news_digest.md`; do not copy full
-   article bodies. Then rerun step 3.
+## Notes
 
-## Outputs
-
-- `data/news_items.json`
-- `logs/news_digest.md`
-- `logs/news_flow_log.md`
-- `data/market_story_profile.json`
-- `data/market_story_report.md`
-
-All outputs above are ignored runtime artifacts. Do not write
-`docs/market_story_report.md` from this task.
-
-## Report
-
-Return a concise status with item count, issues, source URLs used, and the
-artifact paths above.
+- If WebSearch returns no useful results, write a minimal digest noting low news
+  flow.
+- JST = UTC+9. Always display times in JST.
+- Keep it concise; the trader reads this in 10 seconds.
+- Use browser inspection only as fallback for source pages or feeds. Do not copy
+  full article bodies; use short sourced summaries and links.

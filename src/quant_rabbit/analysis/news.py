@@ -238,50 +238,77 @@ def write_news_artifacts(
 
 
 def render_news_digest(snapshot: NewsSnapshot, *, digest_items: int = DEFAULT_DIGEST_ITEMS) -> str:
-    generated = snapshot.generated_at_utc
-    source_list = ", ".join(f"{source.name} ({source.url})" for source in snapshot.sources)
     ranked = _rank_items(snapshot.items)
-    high_impact = ranked[:digest_items]
-    pair_items = [item for item in ranked if item.pairs][:digest_items]
+    high_impact = _topic_items(
+        ranked,
+        {"central_bank", "inflation", "employment", "intervention", "geopolitics", "risk_off"},
+    )[:4]
+    watch = [item for item in ranked if item not in high_impact][:4]
+    pair_items = [item for item in ranked if item.pairs][:6]
+    risk_events = _topic_items(ranked, {"central_bank", "inflation", "employment", "geopolitics"})[:4]
 
     lines = [
-        "# News Digest",
+        f"# FX News Digest — {_jst_stamp(snapshot.generated_at_utc)}",
         "",
-        f"- Generated at UTC: `{generated}`",
-        f"- Freshness lookback hours: `{snapshot.lookback_hours}`",
-        f"- Sources: {source_list}",
-        f"- Items: `{len(snapshot.items)}`",
+        "## 🔴 High Impact (act on this)",
     ]
+    if high_impact:
+        lines.extend(f"- {_trader_bullet(item)}" for item in high_impact)
+    else:
+        lines.append("- Low fresh high-impact flow from configured feeds; avoid inventing a macro thesis.")
+
+    lines.extend(["", "## 🟡 Watch List"])
+    if watch:
+        lines.extend(f"- {_trader_bullet(item)}" for item in watch)
+    else:
+        lines.append("- No secondary fresh headlines detected.")
+
+    lines.extend(["", "## 📅 Economic Calendar Today (JST)"])
+    calendar_like = [
+        item for item in ranked
+        if any(topic in item.topics for topic in ("inflation", "employment", "growth", "central_bank"))
+    ][:4]
+    if calendar_like:
+        lines.extend(f"- {_calendar_bullet(item)}" for item in calendar_like)
+    else:
+        lines.append("- No calendar-specific item in RSS cache; use `data/economic_calendar.json` for exact event windows.")
+
+    lines.extend(["", "## 🏦 Central Bank Tracker"])
+    central_bank_items = _topic_items(ranked, {"central_bank", "intervention"})[:4]
+    if central_bank_items:
+        lines.extend(f"- {_trader_bullet(item)}" for item in central_bank_items)
+    else:
+        lines.append("- Fed/BOJ/ECB/RBA: no new central-bank headline in configured feeds.")
+
+    lines.extend(["", "## 💱 Pair-Specific Notes"])
+    if pair_items:
+        lines.extend(f"- {_pair_bullet(item)}" for item in pair_items)
+    else:
+        lines.append("- USD_JPY / EUR_USD / GBP_USD / AUD_USD: no pair-specific fresh headline detected.")
+
+    lines.extend(["", "## ⚠️ Risk Events (48h)"])
+    if risk_events:
+        lines.extend(f"- {_trader_bullet(item)}" for item in risk_events)
+    else:
+        lines.append("- No scheduled-risk headline detected in news feed; confirm with economic-calendar snapshot.")
+
     if snapshot.issues:
-        lines.extend(["", "## Issues", ""])
+        lines.extend(["", "## Feed Issues"])
         lines.extend(f"- {issue}" for issue in snapshot.issues)
 
-    lines.extend(["", "## High Impact", ""])
-    if high_impact:
-        for item in high_impact:
-            label = _item_label(item)
-            lines.append(f"- **{label}**: {item.title}. {item.summary} Source: {item.source}; published {item.published_at_utc}; {item.link}")
-    else:
-        lines.append("- MISSING_FRESH_NEWS_FEED: no fresh headlines available.")
-
-    lines.extend(["", "## Pair Watch List", ""])
-    if pair_items:
-        for item in pair_items:
-            label = ", ".join(item.pairs)
-            topics = ", ".join(item.topics) if item.topics else "macro"
-            lines.append(f"- **{label}**: {item.title}. Topics: {topics}. Source: {item.source}; {item.link}")
-    else:
-        lines.append("- No pair-specific headlines detected in the current feed.")
-
-    lines.extend(["", "## Source Items", ""])
-    for item in ranked[:digest_items]:
-        cats = ", ".join(item.categories) if item.categories else "none"
-        lines.append(f"- `{item.published_at_utc}` {item.source}: {item.title} | categories={cats} | url={item.link}")
+    source_names = " + ".join(source.name for source in snapshot.sources)
+    lines.extend(
+        [
+            "",
+            "---",
+            f"Updated: {_jst_stamp(snapshot.generated_at_utc)} | Sources: {source_names} + news_fetcher.py",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
 def render_flow_entry(snapshot: NewsSnapshot) -> str:
-    now = datetime.fromisoformat(snapshot.generated_at_utc).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+    now = _jst_stamp(snapshot.generated_at_utc)
     ranked = _rank_items(snapshot.items)
     hot = _flow_text(ranked[0]) if ranked else "MISSING_FRESH_NEWS_FEED"
     theme = _theme_text(ranked[:2]) if ranked else "N/A"
@@ -304,6 +331,10 @@ def _render_flow_log(entries: Sequence[str]) -> str:
 
 def _rank_items(items: Iterable[NewsItem]) -> list[NewsItem]:
     return sorted(items, key=_sort_key, reverse=True)
+
+
+def _topic_items(items: Sequence[NewsItem], topics: set[str]) -> list[NewsItem]:
+    return [item for item in items if any(topic in topics for topic in item.topics)]
 
 
 def _sort_key(item: NewsItem) -> tuple[int, str]:
@@ -427,6 +458,32 @@ def _flow_text(item: NewsItem | None) -> str:
     label = _item_label(item)
     text = f"{label}: {item.title}"
     return _clip(text, SUMMARY_CHAR_LIMIT)
+
+
+def _trader_bullet(item: NewsItem) -> str:
+    label = _item_label(item)
+    topic_text = ", ".join(item.topics) if item.topics else "macro"
+    return (
+        f"**{label}** — {item.title}. Trade read: {topic_text}; "
+        f"do not fade this without chart confirmation. Source: {item.source}; {item.link}"
+    )
+
+
+def _calendar_bullet(item: NewsItem) -> str:
+    label = ", ".join(item.currencies) if item.currencies else _item_label(item)
+    return f"**{label}** — {item.title}. Consensus/prior: check source and `data/economic_calendar.json`. {item.link}"
+
+
+def _pair_bullet(item: NewsItem) -> str:
+    pairs = ", ".join(item.pairs) if item.pairs else _item_label(item)
+    return f"**{pairs}** — {item.title}. Thesis driver: {', '.join(item.topics) if item.topics else 'price-action headline'}. {item.link}"
+
+
+def _jst_stamp(value: str) -> str:
+    ts = datetime.fromisoformat(value)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M JST")
 
 
 def _strip_html(value: str) -> str:

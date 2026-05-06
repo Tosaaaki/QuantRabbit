@@ -76,7 +76,7 @@ class NewsSnapshotTest(unittest.TestCase):
         digest = render_news_digest(snap)
         flow = render_flow_entry(snap)
 
-        self.assertIn("## High Impact", digest)
+        self.assertIn("High Impact", digest)
         self.assertIn("**USD_JPY**", digest)
         self.assertIn("Source: MarketPulse", digest)
         self.assertIn("- HOT:", flow)
@@ -103,7 +103,7 @@ class NewsSnapshotTest(unittest.TestCase):
 
             payload = json.loads(output.read_text())
             self.assertEqual(payload["items"][0]["source"], "MarketPulse")
-            self.assertIn("## Pair Watch List", digest.read_text())
+            self.assertIn("Pair-Specific Notes", digest.read_text())
             self.assertEqual(flow.read_text().count(ENTRY_SEPARATOR), 1)
 
 
