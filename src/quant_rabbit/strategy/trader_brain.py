@@ -169,7 +169,7 @@ class TraderBrain:
                 snapshot,
                 scores,
             ):
-                pending_cancel_order_ids = _trader_pending_order_ids(snapshot)
+                pending_cancel_order_ids = _trader_passive_pending_order_ids(snapshot)
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
                 selected_lane_id=None,
@@ -687,14 +687,14 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
     return tuple(contaminated)
 
 
-def _trader_pending_order_ids(snapshot: BrokerSnapshot) -> tuple[str, ...]:
+def _trader_passive_pending_order_ids(snapshot: BrokerSnapshot) -> tuple[str, ...]:
     return tuple(
         order.order_id
         for order in snapshot.orders
         if order.owner == Owner.TRADER
         and not order.trade_id
         and order.order_id
-        and str(order.order_type or "").upper() in PENDING_ENTRY_TYPES
+        and str(order.order_type or "").upper() == "LIMIT"
     )
 
 
