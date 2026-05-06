@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly ROOT_DIR="/Users/tossaki/App/QuantRabbit"
+readonly ROOT_DIR="${QR_TRADER_ROOT_DIR:-/Users/tossaki/App/QuantRabbit-live}"
 cd "$ROOT_DIR"
 
 export PYTHONPATH="src"
