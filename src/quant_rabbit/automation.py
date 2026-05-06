@@ -521,6 +521,7 @@ class AutoTradeCycle:
                 send=send,
             )
             canceled_orders: list[str] = []
+            canceled_status = "CANCELED_CONTAMINATED_PENDING"
             if (
                 pending_entries
                 and send
@@ -532,15 +533,37 @@ class AutoTradeCycle:
                 for order_id in decision.pending_cancel_order_ids:
                     self.client.cancel_order(order_id)
                     canceled_orders.append(order_id)
+            target_open = (
+                target_summary is not None
+                and target_summary.status == "PURSUE_TARGET"
+                and target_summary.remaining_target_jpy > 0
+            )
+            target_reached = target_summary is not None and target_summary.status == "TARGET_REACHED_PROTECT"
+            portfolio_add_allowed = _portfolio_add_allowed(snapshot)
+            if (
+                pending_entries
+                and target_reached
+                and send
+                and self.live_enabled
+                and not position_execution.sent
+                and position_execution.status == "NO_ACTION"
+                and not canceled_orders
+            ):
+                for order_id in _trader_pending_entry_order_ids(snapshot):
+                    self.client.cancel_order(order_id)
+                    canceled_orders.append(order_id)
+                if canceled_orders:
+                    canceled_status = "CANCELED_TARGET_REACHED_PENDING"
             if (
                 position_execution.sent
                 or position_execution.status in {"STAGED", "BLOCKED"}
-                or not _portfolio_add_allowed(snapshot)
-                or pending_entries
+                or not portfolio_add_allowed
+                or canceled_orders
+                or (pending_entries and not target_open)
             ):
                 status = "MONITOR_ONLY_EXPOSURE_OPEN"
                 if canceled_orders:
-                    status = "CANCELED_CONTAMINATED_PENDING"
+                    status = canceled_status
                 elif position_execution.sent:
                     status = "POSITION_ACTION_SENT"
                 elif position_execution.status == "STAGED":
@@ -591,6 +614,13 @@ class AutoTradeCycle:
                     self.client.cancel_order(order_id)
                     canceled_orders.append(order_id)
                 status = "CANCELED_CONTAMINATED_PENDING"
+            target_reached = target_summary is not None and target_summary.status == "TARGET_REACHED_PROTECT"
+            if not canceled_orders and target_reached and send and self.live_enabled:
+                for order_id in _trader_pending_entry_order_ids(snapshot):
+                    self.client.cancel_order(order_id)
+                    canceled_orders.append(order_id)
+                if canceled_orders:
+                    status = "CANCELED_TARGET_REACHED_PENDING"
             target_open = (
                 target_summary is not None
                 and target_summary.status == "PURSUE_TARGET"
@@ -626,6 +656,47 @@ class AutoTradeCycle:
                             gpt_summary.selected_lane_ids
                             or ((gpt_summary.selected_lane_id,) if gpt_summary.selected_lane_id else ())
                         )
+                        if (
+                            gpt_summary.status == "ACCEPTED"
+                            and gpt_summary.allowed
+                            and gpt_summary.action == "CANCEL_PENDING"
+                        ):
+                            canceled_orders.extend(
+                                self._cancel_gpt_pending_orders(
+                                    gpt_summary,
+                                    send=send,
+                                    already_canceled=tuple(canceled_orders),
+                                )
+                            )
+                            summary = AutoTradeCycleSummary(
+                                status="CANCELED_GPT_PENDING" if canceled_orders else "GPT_CANCEL_PENDING",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                deterministic_lane_id=basket_lane_ids[0],
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                selected_lane_ids=basket_lane_ids,
+                                canceled_orders=tuple(canceled_orders),
+                                receipt_promotions=0,
+                                decision_source="gpt_trader",
+                                position_management_action=position_decision.action,
+                                position_execution_status=position_execution.status,
+                                position_execution_sent=position_execution.sent,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
                         if (
                             gpt_summary.status != "ACCEPTED"
                             or not gpt_summary.allowed
@@ -1270,9 +1341,10 @@ class AutoTradeCycle:
                 "- If basket portfolio validation has no capacity, pending entries remain monitor-only.",
                 "- Open positions are handed to PositionManager first, then the protection gateway may close, repair protection, or tighten SL when the action is risk-reducing.",
                 "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
+                "- A verified GPT `CANCEL_PENDING` cancels only current trader-owned pending entry ids and sends no fresh entry in that cycle.",
                 "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",
                 "- If the daily target is open, the trader is flat, and LIVE_READY lanes survive prefiltering, the cycle must recover to a lane instead of preserving discretionary flatness.",
-                "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk.",
+                "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk; trader-owned pending entries are canceled instead of left fillable.",
                 "- If GPT trader handoff is enabled, the selected lane must also be an accepted GPT `TRADE` decision from the deterministic prefilter set.",
                 "- If flat, the cycle refreshes broker truth immediately before pricing intents unless `--reuse-market-artifacts` pins the already generated decision packet; the live gateway still refreshes broker truth before any stage/send.",
             ]
@@ -1676,11 +1748,17 @@ def _snapshot_to_json(snapshot) -> str:
 
 
 def _pending_entry_order_count(snapshot) -> int:
-    return sum(
-        1
+    return len(_trader_pending_entry_order_ids(snapshot))
+
+
+def _trader_pending_entry_order_ids(snapshot) -> tuple[str, ...]:
+    return tuple(
+        str(order.order_id)
         for order in snapshot.orders
-        if not order.trade_id and str(order.order_type or "").upper() in PENDING_ENTRY_TYPES
+        if not order.trade_id
+        and str(order.order_type or "").upper() in PENDING_ENTRY_TYPES
         and order.owner.value not in {"manual", "unknown"}
+        and order.order_id
     )
 
 

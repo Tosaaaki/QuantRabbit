@@ -283,6 +283,7 @@ class GPTTraderBrain:
                 "",
                 "- GPT is the discretionary reasoning layer; deterministic verification remains the execution gate.",
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
+                "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
             ]
@@ -794,11 +795,12 @@ def _lane_packet(
 
 
 def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
+    orders = snapshot.get("orders", []) or []
     return {
         "evidence_ref": "broker:snapshot",
         "fetched_at_utc": snapshot.get("fetched_at_utc"),
         "positions": len(snapshot.get("positions", []) or []),
-        "orders": len(snapshot.get("orders", []) or []),
+        "orders": len(orders),
         "position_summaries": [
             {
                 "trade_id": item.get("trade_id"),
@@ -811,7 +813,23 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
             }
             for item in (snapshot.get("positions", []) or [])[:5]
         ],
-        "pending_orders": [
+        "pending_orders": _pending_order_packet(orders),
+    }
+
+
+def _pending_order_packet(orders: list[Any]) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(item: Any) -> None:
+        if not isinstance(item, dict):
+            return
+        order_id = str(item.get("order_id") or "")
+        if order_id in seen:
+            return
+        if order_id:
+            seen.add(order_id)
+        selected.append(
             {
                 "order_id": item.get("order_id"),
                 "pair": item.get("pair"),
@@ -821,9 +839,23 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "units": item.get("units"),
                 "owner": item.get("owner"),
             }
-            for item in (snapshot.get("orders", []) or [])[:5]
-        ],
-    }
+        )
+
+    for item in orders[:5]:
+        add(item)
+    for item in orders:
+        if _is_pending_entry_order_payload(item):
+            add(item)
+    return selected
+
+
+def _is_pending_entry_order_payload(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("trade_id"):
+        return False
+    order_type = str(item.get("order_type") or "").upper()
+    return order_type in {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 
 
 def _parent_lane_id(lane_id: str) -> str:

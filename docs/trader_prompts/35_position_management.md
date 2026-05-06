@@ -29,7 +29,8 @@
 
 - Pending entries are inherited across scheduler handoff.
 - Do not cancel another cycle's pending order without an explicit reason in the next decision receipt.
-- `CANCEL_PENDING` must list current OANDA order ids in `cancel_order_ids`.
+- `CANCEL_PENDING` must list current trader-owned OANDA pending entry ids in `cancel_order_ids`; verified ids are canceled by the gateway cycle, and no fresh entry is sent in that same cycle.
+- If the daily target is already reached, trader-owned pending entry ids are canceled instead of left fillable.
 - Manual/tagless pending orders are observed only.
 
 ## Commands

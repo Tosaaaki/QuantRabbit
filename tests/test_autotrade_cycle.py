@@ -100,6 +100,72 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertIn("monitor-only", (root / "report.md").read_text())
             self.assertTrue((root / "decision.json").exists())
 
+    def test_gpt_cancel_pending_executes_verified_pending_cancel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="pending-1",
+                pair="EUR_USD",
+                order_type="STOP",
+                price=1.1735,
+                state="PENDING",
+                units=1000,
+                owner=Owner.TRADER,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_two_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+            self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
+            self.assertEqual(summary.canceled_orders, ("pending-1",))
+            self.assertEqual(client.orders_canceled, ["pending-1"])
+            self.assertEqual(client.orders_sent, [])
+
     def test_trader_pending_order_can_add_verified_basket_when_risk_is_known(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -254,6 +320,102 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(summary.canceled_orders, tuple(order.order_id for order in pending_orders))
+            self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
+            self.assertEqual(len(client.orders_sent), 2)
+
+    def test_protected_position_with_pending_can_replace_pending_before_capacity_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending_orders = tuple(
+                BrokerOrder(
+                    order_id=f"pending-{idx}",
+                    pair="EUR_USD",
+                    order_type="STOP",
+                    price=1.1735 + idx * 0.0001,
+                    state="PENDING",
+                    units=1000,
+                    owner=Owner.TRADER,
+                    raw={
+                        "takeProfitOnFill": {"price": "1.17550"},
+                        "stopLossOnFill": {"price": "1.17290"},
+                    },
+                )
+                for idx in range(3)
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="protected-gbp",
+                        pair="GBP_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.3600,
+                        take_profit=1.3620,
+                        stop_loss=1.3590,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=pending_orders,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "GBP_USD": Quote("GBP_USD", 1.3602, 1.3603, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            market_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            _write_two_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+            gpt_decision = _gpt_batch_trade_decision(
+                [
+                    market_lane,
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                ]
+            )
+            gpt_decision["cancel_order_ids"] = [order.order_id for order in pending_orders]
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(gpt_decision),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(summary.sent_count, 2)
             self.assertEqual(summary.canceled_orders, tuple(order.order_id for order in pending_orders))
@@ -541,6 +703,70 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse((root / "live_order.json").exists())
             self.assertFalse((root / "decision.json").exists())
             self.assertIn("protection-first no-send", (root / "report.md").read_text())
+
+    def test_target_reached_cancels_trader_pending_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = root / "target.json"
+            target_state.write_text(
+                json.dumps(
+                    {
+                        "start_balance_jpy": 100_000,
+                        "target_return_pct": 10.0,
+                        "realized_pl_jpy": 10_250,
+                        "daily_risk_budget_jpy": 500,
+                    }
+                )
+            )
+            pending = BrokerOrder(
+                order_id="target-hit-pending",
+                pair="EUR_USD",
+                order_type="STOP",
+                price=1.1735,
+                state="PENDING",
+                units=1000,
+                owner=Owner.TRADER,
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(pending,),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "CANCELED_TARGET_REACHED_PENDING")
+            self.assertEqual(summary.canceled_orders, ("target-hit-pending",))
+            self.assertEqual(client.orders_canceled, ["target-hit-pending"])
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_trade_attached_protection_orders_do_not_block_flat_entry_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1943,6 +2169,24 @@ def _gpt_wait_decision() -> dict:
             "story:EUR_USD",
         ],
         "operator_summary": "Wait even though a live-ready lane exists.",
+    }
+
+
+def _gpt_cancel_pending_decision(cancel_order_ids: list[str]) -> dict:
+    return {
+        "action": "CANCEL_PENDING",
+        "selected_lane_id": None,
+        "cancel_order_ids": cancel_order_ids,
+        "confidence": "HIGH",
+        "thesis": "The pending entry is stale relative to current broker truth and should be cleared before new risk.",
+        "method": "POSITION_MANAGEMENT",
+        "narrative": "A pending order blocks clean discretionary comparison.",
+        "chart_story": "The original trigger has drifted away from the current executable lane.",
+        "invalidation": "Do not cancel if the order id is not present in current broker truth.",
+        "rejected_alternatives": ["TRADE rejected until pending exposure is resolved."],
+        "risk_notes": ["Canceling a pending entry reduces possible future exposure."],
+        "evidence_refs": ["broker:snapshot", "target:daily"],
+        "operator_summary": "Clear the stale pending order before considering another entry.",
     }
 
 

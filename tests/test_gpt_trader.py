@@ -141,6 +141,39 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_accepts_cancel_order_id_for_trader_pending_entry_beyond_order_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            attached_orders = [
+                {
+                    "order_id": f"protective-{idx}",
+                    "pair": None,
+                    "order_type": "STOP_LOSS" if idx % 2 else "TAKE_PROFIT",
+                    "trade_id": f"trade-{idx}",
+                    "price": 1.17 + idx * 0.0001,
+                    "state": "PENDING",
+                    "units": None,
+                    "owner": "unknown",
+                }
+                for idx in range(5)
+            ]
+            files = _fixtures(root, orders=[*attached_orders, _pending_order()])
+            decision = _trade_decision()
+            decision["cancel_order_ids"] = ["pending-1"]
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertEqual(summary.cancel_order_ids, ("pending-1",))
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            packet_order_ids = [
+                item.get("order_id")
+                for item in payload["input_packet"]["broker_snapshot"]["pending_orders"]
+            ]
+            self.assertIn("pending-1", packet_order_ids)
+            self.assertEqual(payload["verification_issues"], [])
+
     def test_rejects_trade_with_unknown_pending_cancel_order_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

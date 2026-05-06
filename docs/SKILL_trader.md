@@ -71,6 +71,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 # If current trader-owned pending entries consume portfolio capacity, either keep
 # that pending basket explicitly or name verified trader pending ids in
 # cancel_order_ids when replacing them with current MARKET participation.
+# If the action is CANCEL_PENDING, list only current trader-owned pending entry
+# ids in cancel_order_ids; the gateway cycle cancels verified ids and sends no
+# fresh entry in that same cycle.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
