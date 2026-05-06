@@ -136,6 +136,7 @@ class AutoTradeCycleSummary:
     gpt_error: str | None = None
     gpt_wait_retries: int = 0
     gpt_recovery_source: str | None = None
+    campaign_exposure_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -392,6 +393,22 @@ class AutoTradeCycle:
         gpt_summary = None
         gpt_wait_retries = 0
         gpt_recovery_source = None
+        campaign_exposure_required = _campaign_exposure_required(
+            target_summary=target_summary,
+            trader_positions=trader_positions,
+            pending_entries=pending_entries,
+            live_ready=intent_summary.live_ready,
+        )
+
+        if selected_lane_id is None and campaign_exposure_required and not self.use_gpt_trader:
+            recovery_lane_id = self._campaign_recovery_lane(decision=decision, deterministic_lane_id=None)
+            if recovery_lane_id:
+                selected_lane_id = recovery_lane_id
+                selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                    decision=decision,
+                    lane_id=selected_lane_id,
+                )
+                gpt_recovery_source = "DETERMINISTIC_CAMPAIGN_EXPOSURE_RECOVERY"
 
         if selected_lane_id is None:
             if not self.use_gpt_trader:
@@ -413,215 +430,95 @@ class AutoTradeCycle:
                     target_status=target_summary.status if target_summary else None,
                     target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
                     target_progress_pct=target_summary.progress_pct if target_summary else None,
+                    campaign_exposure_required=campaign_exposure_required,
                 )
                 self._write_report(summary, generated_at)
                 return summary
 
             gpt_summary = self._run_gpt_handoff()
-            if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed:
-                summary = AutoTradeCycleSummary(
-                    status="GPT_REJECTED",
-                    report_path=self.report_path,
-                    snapshot_path=self.snapshot_path,
-                    intents_path=self.intents_path,
-                    selected_lane_id=None,
-                    deterministic_lane_id=deterministic_lane_id,
-                    sent=False,
-                    positions=positions,
-                    orders=orders,
-                    live_ready=intent_summary.live_ready,
-                    decision_source="gpt_trader",
-                    receipt_promotions=promotion_summary.promoted,
-                    position_management_action=position_decision.action if position_decision else None,
-                    position_execution_status=position_execution.status if position_execution else None,
-                    position_execution_sent=position_execution.sent if position_execution else False,
-                    target_status=target_summary.status if target_summary else None,
-                    target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                    target_progress_pct=target_summary.progress_pct if target_summary else None,
-                    gpt_status=gpt_summary.status,
-                    gpt_action=gpt_summary.action,
-                    gpt_allowed=gpt_summary.allowed,
-                    gpt_issues=gpt_summary.issues,
-                    gpt_error=gpt_summary.error,
-                    gpt_wait_retries=gpt_wait_retries,
-                    gpt_recovery_source=gpt_recovery_source,
-                )
-                self._write_report(summary, generated_at)
-                return summary
-
-            if gpt_summary.action == "TRADE" and gpt_summary.selected_lane_id:
-                selected_lane_id = gpt_summary.selected_lane_id
-                selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
-                    decision=decision, lane_id=selected_lane_id
-                )
-            elif gpt_summary.action in {"WAIT", "REQUEST_EVIDENCE"}:
-                target_is_pursue = (
-                    target_summary is not None
-                    and target_summary.status == "PURSUE_TARGET"
-                    and target_summary.remaining_target_jpy > 0
-                )
-                if self.gpt_wait_retry_limit > 0 and target_is_pursue:
-                    for attempt in range(1, self.gpt_wait_retry_limit + 1):
-                        gpt_wait_retries = attempt
-                        snapshot = self._refresh_snapshot(pairs)
-                        target_summary = self._update_target_state(snapshot) or target_summary
-                        positions = len(snapshot.positions)
-                        orders = len(snapshot.orders)
-                        intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(
-                            snapshot_path=self.snapshot_path,
-                            max_candidates=12,
-                        )
-                        decision = self._brain().run(snapshot)
-                        selected_lane_score = decision.selected_lane_score
-                        selected_lane_size_multiple = decision.selected_lane_size_multiple
-                        if decision.action == ACTION_SEND_ENTRY and decision.selected_lane_id:
-                            selected_lane_id = decision.selected_lane_id
-                            gpt_summary = GptHandoffSummary(
-                                status="ACCEPTED",
-                                action="TRADE",
-                                selected_lane_id=decision.selected_lane_id,
-                                allowed=True,
-                                issues=0,
-                            )
-                            gpt_recovery_source = f"DETERMINISTIC_WAIT_RECOVERY_ATTEMPT_{attempt}"
-                            break
-                        if attempt == self.gpt_wait_retry_limit:
-                            break
-                        retry_summary = self._run_gpt_handoff()
-                        if retry_summary.status != "ACCEPTED" or not retry_summary.allowed:
-                            summary = AutoTradeCycleSummary(
-                                status="GPT_REJECTED",
-                                report_path=self.report_path,
-                                snapshot_path=self.snapshot_path,
-                                intents_path=self.intents_path,
-                                selected_lane_id=None,
-                                deterministic_lane_id=deterministic_lane_id,
-                                sent=False,
-                                positions=positions,
-                                orders=orders,
-                                live_ready=intent_summary.live_ready,
-                                decision_source="gpt_trader",
-                                receipt_promotions=promotion_summary.promoted,
-                                position_management_action=position_decision.action if position_decision else None,
-                                position_execution_status=position_execution.status if position_execution else None,
-                                position_execution_sent=position_execution.sent if position_execution else False,
-                                target_status=target_summary.status if target_summary else None,
-                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                                target_progress_pct=target_summary.progress_pct if target_summary else None,
-                                gpt_status=retry_summary.status,
-                                gpt_action=retry_summary.action,
-                                gpt_allowed=retry_summary.allowed,
-                                gpt_issues=retry_summary.issues,
-                                gpt_error=retry_summary.error,
-                                gpt_wait_retries=gpt_wait_retries,
-                                gpt_recovery_source="GPT_RETRY_REJECTED",
-                            )
-                            self._write_report(summary, generated_at)
-                            return summary
-                        if retry_summary.action == "TRADE" and retry_summary.selected_lane_id:
-                            selected_lane_id = retry_summary.selected_lane_id
-                            selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
-                                decision=decision, lane_id=selected_lane_id
-                            )
-                            gpt_summary = retry_summary
-                            gpt_recovery_source = f"GPT_RETRY_TRADE_ATTEMPT_{attempt}"
-                            break
-                        gpt_summary = retry_summary
-
-                    if gpt_summary.action not in {"TRADE", "WAIT", "REQUEST_EVIDENCE"}:
-                        summary = AutoTradeCycleSummary(
-                            status=f"GPT_{gpt_summary.action or 'NO_TRADE'}",
-                            report_path=self.report_path,
-                            snapshot_path=self.snapshot_path,
-                            intents_path=self.intents_path,
-                            selected_lane_id=None,
-                            deterministic_lane_id=deterministic_lane_id,
-                            sent=False,
-                            positions=positions,
-                            orders=orders,
-                            live_ready=intent_summary.live_ready,
-                            decision_source="gpt_trader",
-                            receipt_promotions=promotion_summary.promoted,
-                            position_management_action=position_decision.action if position_decision else None,
-                            position_execution_status=position_execution.status if position_execution else None,
-                            position_execution_sent=position_execution.sent if position_execution else False,
-                            target_status=target_summary.status if target_summary else None,
-                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                            target_progress_pct=target_summary.progress_pct if target_summary else None,
-                            gpt_status=gpt_summary.status,
-                            gpt_action=gpt_summary.action,
-                            gpt_allowed=gpt_summary.allowed,
-                            gpt_issues=gpt_summary.issues,
-                            gpt_error=gpt_summary.error,
-                            gpt_wait_retries=gpt_wait_retries,
-                            gpt_recovery_source=gpt_recovery_source,
-                        )
-                        self._write_report(summary, generated_at)
-                        return summary
-
-                    if not selected_lane_id:
-                        summary = AutoTradeCycleSummary(
-                            status=f"GPT_{gpt_summary.action or 'NO_TRADE'}",
-                            report_path=self.report_path,
-                            snapshot_path=self.snapshot_path,
-                            intents_path=self.intents_path,
-                            selected_lane_id=None,
-                            deterministic_lane_id=deterministic_lane_id,
-                            sent=False,
-                            positions=positions,
-                            orders=orders,
-                            live_ready=intent_summary.live_ready,
-                            decision_source="gpt_trader",
-                            receipt_promotions=promotion_summary.promoted,
-                            position_management_action=position_decision.action if position_decision else None,
-                            position_execution_status=position_execution.status if position_execution else None,
-                            position_execution_sent=position_execution.sent if position_execution else False,
-                            target_status=target_summary.status if target_summary else None,
-                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                            target_progress_pct=target_summary.progress_pct if target_summary else None,
-                            gpt_status=gpt_summary.status,
-                            gpt_action=gpt_summary.action,
-                            gpt_allowed=gpt_summary.allowed,
-                            gpt_issues=gpt_summary.issues,
-                            gpt_error=gpt_summary.error,
-                            gpt_wait_retries=gpt_wait_retries,
-                            gpt_recovery_source=gpt_recovery_source,
-                        )
-                        self._write_report(summary, generated_at)
-                        return summary
-                else:
-                    summary = AutoTradeCycleSummary(
-                        status=f"GPT_{gpt_summary.action or 'NO_TRADE'}",
-                        report_path=self.report_path,
-                        snapshot_path=self.snapshot_path,
-                        intents_path=self.intents_path,
-                        selected_lane_id=None,
-                        deterministic_lane_id=deterministic_lane_id,
-                        sent=False,
-                        positions=positions,
-                        orders=orders,
-                        live_ready=intent_summary.live_ready,
-                        decision_source="gpt_trader",
-                        receipt_promotions=promotion_summary.promoted,
-                        position_management_action=position_decision.action if position_decision else None,
-                        position_execution_status=position_execution.status if position_execution else None,
-                        position_execution_sent=position_execution.sent if position_execution else False,
-                        target_status=target_summary.status if target_summary else None,
-                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                        target_progress_pct=target_summary.progress_pct if target_summary else None,
-                        gpt_status=gpt_summary.status,
-                        gpt_action=gpt_summary.action,
-                        gpt_allowed=gpt_summary.allowed,
-                        gpt_issues=gpt_summary.issues,
-                        gpt_error=gpt_summary.error,
-                        gpt_wait_retries=gpt_wait_retries,
-                        gpt_recovery_source=gpt_recovery_source,
+            if gpt_summary.status == "ACCEPTED" and gpt_summary.allowed:
+                if gpt_summary.action == "TRADE" and gpt_summary.selected_lane_id:
+                    selected_lane_id = gpt_summary.selected_lane_id
+                    selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                        decision=decision,
+                        lane_id=selected_lane_id,
                     )
-                    self._write_report(summary, generated_at)
-                    return summary
-            else:
+                elif gpt_summary.action in {"WAIT", "REQUEST_EVIDENCE"}:
+                    target_is_pursue = (
+                        target_summary is not None
+                        and target_summary.status == "PURSUE_TARGET"
+                        and target_summary.remaining_target_jpy > 0
+                    )
+                    if self.gpt_wait_retry_limit > 0 and target_is_pursue:
+                        for attempt in range(1, self.gpt_wait_retry_limit + 1):
+                            gpt_wait_retries = attempt
+                            snapshot = self._refresh_snapshot(pairs)
+                            target_summary = self._update_target_state(snapshot) or target_summary
+                            positions = len(snapshot.positions)
+                            orders = len(snapshot.orders)
+                            intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(
+                                snapshot_path=self.snapshot_path,
+                                max_candidates=12,
+                            )
+                            decision = self._brain().run(snapshot)
+                            deterministic_lane_id = (
+                                decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
+                            )
+                            if deterministic_lane_id:
+                                selected_lane_id = deterministic_lane_id
+                                selected_lane_score = decision.selected_lane_score
+                                selected_lane_size_multiple = decision.selected_lane_size_multiple
+                                gpt_summary = GptHandoffSummary(
+                                    status="ACCEPTED",
+                                    action="TRADE",
+                                    selected_lane_id=deterministic_lane_id,
+                                    allowed=True,
+                                    issues=0,
+                                )
+                                gpt_recovery_source = f"DETERMINISTIC_WAIT_RECOVERY_ATTEMPT_{attempt}"
+                                break
+                            if attempt == self.gpt_wait_retry_limit:
+                                break
+                            retry_summary = self._run_gpt_handoff()
+                            gpt_summary = retry_summary
+                            if (
+                                retry_summary.status == "ACCEPTED"
+                                and retry_summary.allowed
+                                and retry_summary.action == "TRADE"
+                                and retry_summary.selected_lane_id
+                            ):
+                                selected_lane_id = retry_summary.selected_lane_id
+                                selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                                    decision=decision,
+                                    lane_id=selected_lane_id,
+                                )
+                                gpt_recovery_source = f"GPT_RETRY_TRADE_ATTEMPT_{attempt}"
+                                break
+
+            if selected_lane_id is None and campaign_exposure_required:
+                recovery_lane_id = self._campaign_recovery_lane(
+                    decision=decision,
+                    deterministic_lane_id=deterministic_lane_id,
+                )
+                if recovery_lane_id:
+                    selected_lane_id = recovery_lane_id
+                    selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                        decision=decision,
+                        lane_id=selected_lane_id,
+                    )
+                    gpt_recovery_source = (
+                        gpt_recovery_source
+                        or f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{gpt_summary.status}_{gpt_summary.action or 'NO_TRADE'}"
+                    )
+
+            if selected_lane_id is None:
+                status = (
+                    "GPT_REJECTED"
+                    if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed
+                    else f"GPT_{gpt_summary.action or 'NO_TRADE'}"
+                )
                 summary = AutoTradeCycleSummary(
-                    status=f"GPT_{gpt_summary.action or 'NO_TRADE'}",
+                    status=status,
                     report_path=self.report_path,
                     snapshot_path=self.snapshot_path,
                     intents_path=self.intents_path,
@@ -646,6 +543,7 @@ class AutoTradeCycle:
                     gpt_error=gpt_summary.error,
                     gpt_wait_retries=gpt_wait_retries,
                     gpt_recovery_source=gpt_recovery_source,
+                    campaign_exposure_required=campaign_exposure_required,
                 )
                 self._write_report(summary, generated_at)
                 return summary
@@ -656,97 +554,87 @@ class AutoTradeCycle:
                 }
                 if gpt_summary is None:
                     gpt_summary = self._run_gpt_handoff()
-                if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed:
-                    summary = AutoTradeCycleSummary(
-                        status="GPT_REJECTED",
-                        report_path=self.report_path,
-                        snapshot_path=self.snapshot_path,
-                        intents_path=self.intents_path,
-                        selected_lane_id=None,
-                        deterministic_lane_id=deterministic_lane_id,
-                        sent=False,
-                        positions=positions,
-                        orders=orders,
-                        live_ready=intent_summary.live_ready,
-                        decision_source="gpt_trader",
-                        receipt_promotions=promotion_summary.promoted,
-                        position_management_action=position_decision.action if position_decision else None,
-                        position_execution_status=position_execution.status if position_execution else None,
-                        position_execution_sent=position_execution.sent if position_execution else False,
-                        target_status=target_summary.status if target_summary else None,
-                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                        target_progress_pct=target_summary.progress_pct if target_summary else None,
-                        gpt_status=gpt_summary.status,
-                        gpt_action=gpt_summary.action,
-                        gpt_allowed=gpt_summary.allowed,
-                        gpt_issues=gpt_summary.issues,
-                        gpt_error=gpt_summary.error,
-                        gpt_wait_retries=gpt_wait_retries,
-                        gpt_recovery_source=gpt_recovery_source,
-                    )
-                    self._write_report(summary, generated_at)
-                    return summary
-                if gpt_summary.action != "TRADE" or not gpt_summary.selected_lane_id:
-                    summary = AutoTradeCycleSummary(
-                        status=f"GPT_{gpt_summary.action or 'NO_TRADE'}",
-                        report_path=self.report_path,
-                        snapshot_path=self.snapshot_path,
-                        intents_path=self.intents_path,
-                        selected_lane_id=None,
-                        deterministic_lane_id=deterministic_lane_id,
-                        sent=False,
-                        positions=positions,
-                        orders=orders,
-                        live_ready=intent_summary.live_ready,
-                        decision_source="gpt_trader",
-                        receipt_promotions=promotion_summary.promoted,
-                        position_management_action=position_decision.action if position_decision else None,
-                        position_execution_status=position_execution.status if position_execution else None,
-                        position_execution_sent=position_execution.sent if position_execution else False,
-                        target_status=target_summary.status if target_summary else None,
-                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                        target_progress_pct=target_summary.progress_pct if target_summary else None,
-                        gpt_status=gpt_summary.status,
-                        gpt_action=gpt_summary.action,
-                        gpt_allowed=gpt_summary.allowed,
-                        gpt_issues=gpt_summary.issues,
-                        gpt_error=gpt_summary.error,
-                        gpt_wait_retries=gpt_wait_retries,
-                        gpt_recovery_source=gpt_recovery_source,
-                    )
-                    self._write_report(summary, generated_at)
-                    return summary
-                if gpt_summary.selected_lane_id not in prefiltered_lane_ids:
-                    summary = AutoTradeCycleSummary(
-                        status="GPT_DECISION_NOT_PREFILTERED",
-                        report_path=self.report_path,
-                        snapshot_path=self.snapshot_path,
-                        intents_path=self.intents_path,
-                        selected_lane_id=None,
-                        deterministic_lane_id=deterministic_lane_id,
-                        sent=False,
-                        positions=positions,
-                        orders=orders,
-                        live_ready=intent_summary.live_ready,
-                        decision_source="gpt_trader",
-                        receipt_promotions=promotion_summary.promoted,
-                        position_management_action=position_decision.action if position_decision else None,
-                        position_execution_status=position_execution.status if position_execution else None,
-                        position_execution_sent=position_execution.sent if position_execution else False,
-                        target_status=target_summary.status if target_summary else None,
-                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                        target_progress_pct=target_summary.progress_pct if target_summary else None,
-                        gpt_status=gpt_summary.status,
-                        gpt_action=gpt_summary.action,
-                        gpt_allowed=gpt_summary.allowed,
-                        gpt_issues=gpt_summary.issues,
-                        gpt_error=gpt_summary.error,
-                        gpt_wait_retries=gpt_wait_retries,
-                        gpt_recovery_source=gpt_recovery_source,
-                    )
-                    self._write_report(summary, generated_at)
-                    return summary
-                if gpt_summary.selected_lane_id:
+                gpt_trade_accepted = (
+                    gpt_summary.status == "ACCEPTED"
+                    and gpt_summary.allowed
+                    and gpt_summary.action == "TRADE"
+                    and bool(gpt_summary.selected_lane_id)
+                )
+                if not gpt_trade_accepted:
+                    if campaign_exposure_required:
+                        reason = gpt_summary.action or gpt_summary.status or "NO_TRADE"
+                        gpt_recovery_source = f"CAMPAIGN_EXPOSURE_RECOVERY_GPT_{reason}"
+                    else:
+                        status = (
+                            "GPT_REJECTED"
+                            if gpt_summary.status != "ACCEPTED" or not gpt_summary.allowed
+                            else f"GPT_{gpt_summary.action or 'NO_TRADE'}"
+                        )
+                        summary = AutoTradeCycleSummary(
+                            status=status,
+                            report_path=self.report_path,
+                            snapshot_path=self.snapshot_path,
+                            intents_path=self.intents_path,
+                            selected_lane_id=None,
+                            deterministic_lane_id=deterministic_lane_id,
+                            sent=False,
+                            positions=positions,
+                            orders=orders,
+                            live_ready=intent_summary.live_ready,
+                            decision_source="gpt_trader",
+                            receipt_promotions=promotion_summary.promoted,
+                            position_management_action=position_decision.action if position_decision else None,
+                            position_execution_status=position_execution.status if position_execution else None,
+                            position_execution_sent=position_execution.sent if position_execution else False,
+                            target_status=target_summary.status if target_summary else None,
+                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                            target_progress_pct=target_summary.progress_pct if target_summary else None,
+                            gpt_status=gpt_summary.status,
+                            gpt_action=gpt_summary.action,
+                            gpt_allowed=gpt_summary.allowed,
+                            gpt_issues=gpt_summary.issues,
+                            gpt_error=gpt_summary.error,
+                            gpt_wait_retries=gpt_wait_retries,
+                            gpt_recovery_source=gpt_recovery_source,
+                            campaign_exposure_required=campaign_exposure_required,
+                        )
+                        self._write_report(summary, generated_at)
+                        return summary
+                elif gpt_summary.selected_lane_id not in prefiltered_lane_ids:
+                    if campaign_exposure_required:
+                        gpt_recovery_source = "CAMPAIGN_EXPOSURE_RECOVERY_GPT_NOT_PREFILTERED"
+                    else:
+                        summary = AutoTradeCycleSummary(
+                            status="GPT_DECISION_NOT_PREFILTERED",
+                            report_path=self.report_path,
+                            snapshot_path=self.snapshot_path,
+                            intents_path=self.intents_path,
+                            selected_lane_id=None,
+                            deterministic_lane_id=deterministic_lane_id,
+                            sent=False,
+                            positions=positions,
+                            orders=orders,
+                            live_ready=intent_summary.live_ready,
+                            decision_source="gpt_trader",
+                            receipt_promotions=promotion_summary.promoted,
+                            position_management_action=position_decision.action if position_decision else None,
+                            position_execution_status=position_execution.status if position_execution else None,
+                            position_execution_sent=position_execution.sent if position_execution else False,
+                            target_status=target_summary.status if target_summary else None,
+                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                            target_progress_pct=target_summary.progress_pct if target_summary else None,
+                            gpt_status=gpt_summary.status,
+                            gpt_action=gpt_summary.action,
+                            gpt_allowed=gpt_summary.allowed,
+                            gpt_issues=gpt_summary.issues,
+                            gpt_error=gpt_summary.error,
+                            gpt_wait_retries=gpt_wait_retries,
+                            gpt_recovery_source=gpt_recovery_source,
+                            campaign_exposure_required=campaign_exposure_required,
+                        )
+                        self._write_report(summary, generated_at)
+                        return summary
+                else:
                     selected_lane_id = gpt_summary.selected_lane_id
                     selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
                         decision=decision, lane_id=selected_lane_id
@@ -779,7 +667,11 @@ class AutoTradeCycle:
             positions=positions,
             orders=orders,
             live_ready=intent_summary.live_ready,
-            decision_source="gpt_trader" if self.use_gpt_trader else "deterministic",
+            decision_source=(
+                "campaign_exposure_recovery"
+                if gpt_recovery_source and "CAMPAIGN_EXPOSURE_RECOVERY" in gpt_recovery_source
+                else ("gpt_trader" if self.use_gpt_trader else "deterministic")
+            ),
             receipt_promotions=promotion_summary.promoted,
             position_management_action=position_decision.action if position_decision else None,
             position_execution_status=position_execution.status if position_execution else None,
@@ -794,6 +686,7 @@ class AutoTradeCycle:
             gpt_error=gpt_summary.error if gpt_summary else None,
             gpt_wait_retries=gpt_wait_retries,
             gpt_recovery_source=gpt_recovery_source,
+            campaign_exposure_required=campaign_exposure_required,
         )
         self._write_report(summary, generated_at)
         return summary
@@ -823,15 +716,17 @@ class AutoTradeCycle:
             f"- GPT error: `{summary.gpt_error or 'none'}`",
             f"- GPT wait recovery attempts: `{summary.gpt_wait_retries}`",
             f"- GPT recovery source: `{summary.gpt_recovery_source or 'none'}`",
+            f"- Campaign exposure required: `{summary.campaign_exposure_required}`",
             f"- Market artifact mode: `{'reuse_existing' if self.reuse_market_artifacts else 'refresh_and_reprice'}`",
             f"- Market story refresh: `{self.refresh_market_story}` (source: `{self.market_news_root}`)",
             "",
             "## Cycle Contract",
             "",
-                "- Protected trader-owned positions may add only through portfolio risk validation; pending entries remain monitor-only.",
+            "- Protected trader-owned positions may add only through portfolio risk validation; pending entries remain monitor-only.",
             "- Open positions are handed to PositionManager first, then the protection gateway may close, repair protection, or tighten SL when the action is risk-reducing.",
             "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
             "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",
+            "- If the daily target is open, the trader is flat, and LIVE_READY lanes survive prefiltering, the cycle must recover to a lane instead of preserving discretionary flatness.",
             "- If the daily target is already reached while flat, the cycle records protection-first no-send status and adds no fresh risk.",
             "- If GPT trader handoff is enabled, the selected lane must also be an accepted GPT `TRADE` decision from the deterministic prefilter set.",
             "- If flat, the cycle refreshes broker truth immediately before pricing intents unless `--reuse-market-artifacts` pins the already generated decision packet; the live gateway still refreshes broker truth before any stage/send.",
@@ -932,6 +827,13 @@ class AutoTradeCycle:
             if score.lane_id == lane_id:
                 return score.score, score.size_multiple
         return None, None
+
+    @staticmethod
+    def _campaign_recovery_lane(*, decision: TraderDecision, deterministic_lane_id: str | None) -> str | None:
+        prefiltered = [item for item in decision.scores if _passes_gpt_prefilter(item)]
+        if deterministic_lane_id and any(item.lane_id == deterministic_lane_id for item in prefiltered):
+            return deterministic_lane_id
+        return prefiltered[0].lane_id if prefiltered else None
 
     def _run_gpt_handoff(self) -> GptHandoffSummary:
         try:
@@ -1143,6 +1045,24 @@ def _pending_entry_order_count(snapshot) -> int:
         for order in snapshot.orders
         if not order.trade_id and str(order.order_type or "").upper() in PENDING_ENTRY_TYPES
         and order.owner.value not in {"manual", "unknown"}
+    )
+
+
+def _campaign_exposure_required(
+    *,
+    target_summary: DailyTargetSummary | None,
+    trader_positions: int,
+    pending_entries: int,
+    live_ready: int,
+) -> bool:
+    if target_summary is None:
+        return False
+    return (
+        target_summary.status == "PURSUE_TARGET"
+        and target_summary.remaining_target_jpy > 0
+        and trader_positions == 0
+        and pending_entries == 0
+        and live_ready > 0
     )
 
 

@@ -24,6 +24,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -50,6 +51,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -82,6 +84,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_mixed_campaign(root),
                 strategy_profile_path=_eur_strategy(root),
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -113,6 +116,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_mixed_campaign(root),
                 strategy_profile_path=_eur_strategy(root),
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -143,6 +147,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -180,6 +185,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=_strategy(root),
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -202,6 +208,7 @@ class TraderBrainTest(unittest.TestCase):
                 campaign_plan_path=_campaign(root),
                 strategy_profile_path=strategy_path,
                 market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
@@ -213,6 +220,55 @@ class TraderBrainTest(unittest.TestCase):
             aud = next(item for item in payload["scores"] if item["pair"] == "AUD_JPY")
             self.assertEqual(payload["loss_cap_jpy"], 1000.0)
             self.assertNotIn("old worst loss repaired", " ".join(aud["rationale"]))
+
+    def test_daily_target_state_overrides_stale_strategy_contract_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target_state = _target_state(root, per_trade_risk_budget_jpy=400.0)
+            strategy_path = _strategy(root, loss_cap_jpy=1000.0)
+            brain = TraderBrain(
+                intents_path=_intents(root),
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=strategy_path,
+                market_story_profile_path=_stories(root),
+                target_state_path=target_state,
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            brain.run(_snapshot())
+
+            payload = json.loads((root / "decision.json").read_text())
+            self.assertEqual(payload["loss_cap_jpy"], 400.0)
+            self.assertIn("daily target state", payload["loss_cap_source"])
+
+    def test_historical_large_loss_warns_but_does_not_block_repaired_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy_path = _eur_strategy(root)
+            payload = json.loads(strategy_path.read_text())
+            payload["system_contract"]["loss_cap_jpy"] = 400.0
+            payload["profiles"][0]["live_worst_jpy"] = -900.0
+            strategy_path.write_text(json.dumps(payload))
+            brain = TraderBrain(
+                intents_path=_intents(root),
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=strategy_path,
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            eur = next(item for item in decision.scores if item.pair == "EUR_USD")
+            self.assertEqual(eur.action, ACTION_SEND_ENTRY)
+            self.assertIn("historical live worst loss is large", " ".join(eur.rationale))
+            self.assertNotIn("historical live worst loss is large", " ".join(eur.blockers))
+            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
 
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
@@ -227,6 +283,22 @@ def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
             "USD_JPY": Quote("USD_JPY", 157.00, 157.01, timestamp_utc=now),
         },
     )
+
+
+def _target_state(root: Path, *, per_trade_risk_budget_jpy: float) -> Path:
+    path = root / "target.json"
+    path.write_text(
+        json.dumps(
+            {
+                "status": "PURSUE_TARGET",
+                "remaining_target_jpy": 10_000.0,
+                "daily_risk_budget_jpy": per_trade_risk_budget_jpy * 10,
+                "target_trades_per_day": 10,
+                "per_trade_risk_budget_jpy": per_trade_risk_budget_jpy,
+            }
+        )
+    )
+    return path
 
 
 def _intents(root: Path) -> Path:

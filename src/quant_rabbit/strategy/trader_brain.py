@@ -270,7 +270,12 @@ class TraderBrain:
             blockers.append(f"negative live execution history {live_net:.0f} JPY")
             score -= 20.0
         if loss_cap_jpy is not None and live_worst is not None and live_worst <= -loss_cap_jpy:
-            rationale.append(f"old worst loss repaired only by current sizing: {live_worst:.0f} JPY")
+            if live_worst <= -(loss_cap_jpy * HISTORICAL_LARGE_LOSS_CAP_MULTIPLE):
+                rationale.append(
+                    f"historical live worst loss is large: {live_worst:.0f} JPY; current receipt repairs sizing"
+                )
+            else:
+                rationale.append(f"old worst loss repaired only by current sizing: {live_worst:.0f} JPY")
             score -= 8.0
 
         method_pressure = int((story.get("methods") or {}).get(method, 0))
@@ -474,12 +479,12 @@ def _resolve_trader_loss_cap(
     target_state_path: Path,
     snapshot: BrokerSnapshot,
 ) -> tuple[float | None, str]:
-    cap = _loss_cap_from_strategy_payload(strategy_payload)
-    if cap is not None:
-        return cap, "strategy profile system_contract.loss_cap_jpy"
     cap = _loss_cap_from_target_state(target_state_path)
     if cap is not None:
         return cap, f"daily target state {target_state_path}"
+    cap = _loss_cap_from_strategy_payload(strategy_payload)
+    if cap is not None:
+        return cap, "strategy profile system_contract.loss_cap_jpy"
     if settings.default_max_loss_jpy is not None and settings.default_max_loss_jpy > 0:
         return round(settings.default_max_loss_jpy, 4), "trader settings risk.max_loss_jpy"
     if (
@@ -863,7 +868,6 @@ def _technical_consensus_score(
         and live_worst <= -(loss_cap_jpy * HISTORICAL_LARGE_LOSS_CAP_MULTIPLE)
     ):
         score -= 2.0
-        blockers.append(f"historical live worst loss is large: {live_worst:.0f} JPY")
 
     if status == "LIVE_READY" and intent.get("order_type"):
         support_ratio = (support_ticks + 1) / 5.0

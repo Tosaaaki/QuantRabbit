@@ -68,6 +68,17 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertTrue(summary.allowed)
 
+    def test_accepts_trade_with_operator_manual_pending_order_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[{**_pending_order(), "order_id": "manual-pending", "owner": "unknown"}])
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+
     def test_rejects_trade_when_broker_exposure_is_not_layerable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -96,6 +107,19 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("UNKNOWN_EVIDENCE_REF", codes)
 
+    def test_accepts_missing_option_skew_evidence_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision["evidence_refs"].append("option:skew:unknown")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+
     def test_rejects_stale_request_evidence_when_live_ready_lane_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -109,10 +133,24 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("REQUEST_EVIDENCE_WITH_LIVE_READY_LANES", codes)
 
-    def test_accepts_wait_when_live_ready_lane_is_explicitly_rejected(self) -> None:
+    def test_rejects_wait_when_flat_target_open_and_live_ready_lane_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
+            brain = _brain(root, files, _wait_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            self.assertFalse(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+
+    def test_accepts_wait_when_trader_exposure_is_already_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[_position()])
             brain = _brain(root, files, _wait_decision())
 
             summary = brain.run(snapshot_path=files["snapshot"])

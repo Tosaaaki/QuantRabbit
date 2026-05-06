@@ -108,7 +108,7 @@ Before writing any decision, open and actually read every layer below. Skipping 
 - `data/levels_snapshot.json` — PDH/PDL/PDC, daily/weekly/monthly opens, four pivot styles (STANDARD/CAMARILLA/FIBONACCI/DEMARK), Asia/London/NY session ranges, nearest round numbers. Targets and invalidations should reference these levels rather than ad-hoc prices.
 - `data/economic_calendar.json` — `pair_windows[]`. If `in_window=true` for either side of a pair, the decision is automatically `WAIT` unless the operator explicitly overrides with a `risk_notes` justification.
 - `data/cot_snapshot.json` — leveraged-funds net positioning per currency. Use as an extreme-positioning warning (e.g. JPY `leveraged_net` at multi-quarter extreme = elevated reversal risk; cite `week_change_leveraged_net` direction).
-- `data/option_skew_snapshot.json` — option implied vol / 25Δ risk reversal. Currently emits `MISSING_OPTION_SKEW_FEED` until a vendor adapter is registered; treat as unknown.
+- `data/option_skew_snapshot.json` — option implied vol / 25Δ risk reversal. Currently emits `MISSING_OPTION_SKEW_FEED` until a vendor adapter is registered; treat as unknown and cite `option:skew:unknown` or `option:skew:<pair>`.
 
 The decision must reference these inputs explicitly. Do not invent ATR, regime, equity, DXY, yield, COT, calendar, or structure numbers from prose.
 
@@ -136,7 +136,7 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
     "chart:<pair>:M5", "chart:<pair>:H1", "chart:<pair>:structure",
     "cross:dxy", "cross:USB10Y_USD", "cross:correlations:<pair>",
     "strength:<pair>", "flow:<pair>", "levels:<pair>",
-    "calendar:<pair>", "cot:<currency>"
+    "calendar:<pair>", "cot:<currency>", "option:skew:<pair>"
   ],
   "operator_summary": "..."
 }
@@ -183,6 +183,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 - **Citing memory or precedent without rescaling to current sizing.** Past losses (e.g. "Apr 3 -984 JPY") are point-in-time. The risk path is now driven by `per_trade_risk_budget_jpy = daily_risk_budget_jpy / target_trades_per_day`. A precedent that would have lost X under the old per-trade cap loses `X × (new_cap / old_cap)` under today's cap. Cite the rescaled figure or do not cite the precedent.
 - Choosing WAIT without citing which input was missing or which gate fired.
 - **Choosing WAIT when LIVE_READY lanes exist and progress is behind pace.** If `daily_target_state.json` shows `progress_pct < 50` AND `data/order_intents.json` lists ≥ 3 `LIVE_READY` lanes, WAIT requires (a) one chart-story sentence per LIVE_READY lane stating why **that lane's specific invalidation** is hit right now, citing M5 numbers from `pair_charts.json`, AND (b) explicit citation of the AGENT_CONTRACT gate that fires (§9 spread cap, §11 strategy block, etc.). Generic narrative ("Golden Week thin liquidity", "EVENT_RISK") is not sufficient — it must be quantified against a contract-named gate. The campaign exists to find trades, not to defend zero.
+- **Leaving the target-open campaign flat when a prefiltered LIVE_READY lane exists.** If `daily_target_state.json` is `PURSUE_TARGET`, `remaining_target_jpy > 0`, no trader-owned position or trader-owned pending entry exists, and a deterministic prefiltered `LIVE_READY` lane exists, WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE is invalid unless every lane is blocked by a named contract gate. Manual/tagless operator exposure does not count as trader exposure and does not block the campaign lane.
+- Treating old worst loss as a hard veto after current risk repair. Historical worst loss may reduce score or size after rescaling; once the current `LIVE_READY` receipt fits `per_trade_risk_budget_jpy`, do not use old loss memory as the only reason to reject all entries.
 - Submitting a `TRADE` without checking `pair_charts.json` regime + ATR for that pair.
 - Submitting a `TRADE` on a JPY pair without citing DXY direction and `USB10Y_USD` trend from `cross_asset_snapshot.json` (proxy for US-JP yield differential).
 - Submitting a `TRADE` while `economic_calendar.json` shows `pair_windows[].in_window=true` for either side of the pair, without an explicit override justification in `risk_notes`.

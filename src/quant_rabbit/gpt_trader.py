@@ -248,6 +248,15 @@ class DecisionVerifier:
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("WAIT_SELECTED_LANE", f"{decision.action} must not select a lane"))
             if _target_requires_entry(self.packet) and not exposure_blockers and tradeable_lanes:
+                if not _trader_exposure_present(self.packet):
+                    issues.append(
+                        VerificationIssue(
+                            "CAMPAIGN_EXPOSURE_REQUIRED",
+                            "daily target is still open, no trader-owned position or pending entry is active, "
+                            "and tradeable LIVE_READY lanes exist; choose TRADE instead of leaving the "
+                            f"campaign flat: {', '.join(tradeable_lanes[:3])}",
+                        )
+                    )
                 cited_live_ready = _cited_live_ready_lanes(decision, tradeable_lanes)
                 if decision.action == "REQUEST_EVIDENCE":
                     issues.append(
@@ -508,6 +517,7 @@ def _allowed_refs(*, snapshot: dict[str, Any], target: dict[str, Any], lanes: li
                 f"levels:{pair}",
                 f"calendar:{pair}",
                 f"strength:{pair}",
+                f"option:skew:{pair}",
                 f"cross:correlations:{pair}",
             ]
         )
@@ -517,7 +527,7 @@ def _allowed_refs(*, snapshot: dict[str, Any], target: dict[str, Any], lanes: li
         refs.append(f"calendar:{currency}")
     for asset in cross_assets:
         refs.append(f"cross:{asset}")
-    refs.extend(["cross:dxy", "cross:correlations"])
+    refs.extend(["cross:dxy", "cross:correlations", "option:skew", "option:skew:unknown"])
     return sorted(set(refs))
 
 
@@ -543,6 +553,9 @@ def _pending_entry_order_ids(packet: dict[str, Any]) -> list[str]:
     snapshot = packet.get("broker_snapshot", {})
     order_ids: list[str] = []
     for order in snapshot.get("pending_orders", []) or []:
+        owner = str(order.get("owner") or "")
+        if owner in {"manual", "unknown"}:
+            continue
         if order.get("trade_id"):
             continue
         order_type = str(order.get("order_type") or "").upper()
@@ -571,6 +584,14 @@ def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
     if _has_pending_entry_order(packet):
         blockers.append("pending entry order is open")
     return blockers
+
+
+def _trader_exposure_present(packet: dict[str, Any]) -> bool:
+    snapshot = packet.get("broker_snapshot", {})
+    for position in snapshot.get("position_summaries", []) or []:
+        if str(position.get("owner") or "") == "trader":
+            return True
+    return _has_pending_entry_order(packet)
 
 
 def _target_requires_entry(packet: dict[str, Any]) -> bool:
