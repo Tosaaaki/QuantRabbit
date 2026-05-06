@@ -114,7 +114,7 @@ class TraderBrainTest(unittest.TestCase):
             self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
             self.assertEqual(decision.pending_cancel_order_ids, ())
 
-    def test_target_open_cancels_passive_pending_when_market_lane_is_waiting(self) -> None:
+    def test_target_open_keeps_passive_pending_for_gateway_basket_counting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             target_state = _target_state(root, per_trade_risk_budget_jpy=400.0)
@@ -145,7 +145,7 @@ class TraderBrainTest(unittest.TestCase):
             decision = brain.run(snapshot)
 
             self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
-            self.assertEqual(decision.pending_cancel_order_ids, ("passive-limit",))
+            self.assertEqual(decision.pending_cancel_order_ids, ())
 
     def test_cancels_pending_only_when_same_type_lane_has_moved_outside_spread_band(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -8,7 +8,7 @@ You are **the trader**. The scheduled task picks which model executes you on a g
 - Use OANDA only through the vNext CLI and gateways.
 - Do not print secrets.
 - Do not use VM/deploy scripts.
-- Do not run a second send or workaround after a blocked, monitor-only, rejected, or no-trade cycle.
+- Do not run a second send or workaround after a blocked, monitor-only, rejected, or no-trade cycle. One verified gateway cycle may carry multiple `selected_lane_ids`; the prohibition is against rerunning after the verifier/gateway rejects the cycle.
 - The 10% daily target is an operating KPI, not a guaranteed return and not permission to bypass risk gates.
 
 ## Runtime
@@ -119,7 +119,7 @@ Use a single top-level Portfolio Director pass, then optional strategy-review pa
 1. Top layer: read broker truth, daily target, exposure, all `LIVE_READY` lanes, and hard gates.
 2. Indicator layer: use the `market_context` packet plus source files for pair charts, flow, levels, calendar, cross-asset, currency strength, COT, and option skew. Do not cite only evidence refs when the data body is available.
 3. Strategy-review layer: review lanes by `lane_id` / `method`, not by a loose desk name. Trend, range, and breakout-failure reviews may run in parallel, but they must only emit advisory `strategy_reviews`.
-4. Final integration: write exactly one decision JSON. Only the final JSON can select a lane; execution remains gated by `gpt-trader-decision`, `TraderBrain` prefilter, `RiskEngine`, `StrategyProfile`, and `LiveOrderGateway`.
+4. Final integration: write exactly one decision JSON. Only the final JSON can select the primary `selected_lane_id` and, when multiple current `LIVE_READY` lanes should fire in the same cycle, `selected_lane_ids`. Execution remains gated by `gpt-trader-decision`, `TraderBrain` prefilter, `RiskEngine`, `StrategyProfile`, and `LiveOrderGateway`.
 
 Write `data/codex_trader_decision_response.json` (the filename is kept for compatibility regardless of which model wrote it):
 
@@ -127,6 +127,7 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
 {
   "action": "TRADE",
   "selected_lane_id": "desk:PAIR:SIDE:METHOD",
+  "selected_lane_ids": ["desk:PAIR:SIDE:METHOD", "desk:PAIR:SIDE:METHOD:MARKET"],
   "cancel_order_ids": [],
   "confidence": "HIGH",
   "thesis": "...",
@@ -157,7 +158,7 @@ Write `data/codex_trader_decision_response.json` (the filename is kept for compa
 }
 ```
 
-Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only a current `LIVE_READY` lane that can survive deterministic prefiltering. When the daily target is open and no trader-owned position or pending entry exists, prefer a `LIVE_READY` `MARKET` lane over a passive pending lane unless every market lane is blocked by a named contract gate; pending entries are for explicit trigger/rail theses, not a substitute for participation. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped. `strategy_reviews` is optional but, when present, each review's `lane_id` and `method` must match the lane it reviews; a trend review cannot authorize a range or breakout-failure lane.
+Action values: `TRADE`, `WAIT`, `REQUEST_EVIDENCE`, `PROTECT`, `TIGHTEN_SL`, `CLOSE`, `CANCEL_PENDING`. For `CANCEL_PENDING` put the OANDA order ids in `cancel_order_ids`. For `TRADE` choose only current `LIVE_READY` lane(s) that can survive deterministic prefiltering. If firing more than one order, put every lane in `selected_lane_ids` and cite each `intent:<lane_id>` in `evidence_refs`; `selected_lane_id` is the primary lane. When the daily target is open and no trader-owned position exists, prefer a verified basket that includes immediate `MARKET` participation when available; pending entries are trigger/rail theses and are counted by gateway basket validation, not used as a blanket reason to stop adding. `gpt-trader-decision` must verify against every `LIVE_READY` lane present in `data/order_intents.json`, even when blocked/diagnostic lanes are capped. `strategy_reviews` is optional but, when present, each review's `lane_id` and `method` must match the lane it reviews; a trend review cannot authorize a range or breakout-failure lane.
 
 `chart_story` and `risk_notes` MUST cite numbers from `pair_charts.json`, `cross_asset_snapshot.json`, `flow_snapshot.json`, `levels_snapshot.json`, `currency_strength.json`, `economic_calendar.json`, `cot_snapshot.json`, and `daily_target_state.json` — not hand-waving. If you cannot cite the numbers, the decision is `WAIT` or `REQUEST_EVIDENCE`.
 
@@ -185,7 +186,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 
 - Final status (TRADE / WAIT / PROTECT / TIGHTEN_SL / CLOSE / CANCEL_PENDING / REQUEST_EVIDENCE)
 - Sent flag (true / false / dry-run)
-- Selected lane id
+- Selected lane id(s)
 - Daily target progress (% of target, current vs starting equity)
 - gpt-trader-decision verification result
 - Blockers (if any) — including any `MISSING_*` issues that surfaced
@@ -198,7 +199,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 - **Citing memory or precedent without rescaling to current sizing.** Past losses (e.g. "Apr 3 -984 JPY") are point-in-time. The risk path is now driven by `per_trade_risk_budget_jpy = daily_risk_budget_jpy / target_trades_per_day`. A precedent that would have lost X under the old per-trade cap loses `X × (new_cap / old_cap)` under today's cap. Cite the rescaled figure or do not cite the precedent.
 - Choosing WAIT without citing which input was missing or which gate fired.
 - **Choosing WAIT when LIVE_READY lanes exist and progress is behind pace.** If `daily_target_state.json` shows `progress_pct < 50` AND `data/order_intents.json` lists ≥ 3 `LIVE_READY` lanes, WAIT requires (a) one chart-story sentence per LIVE_READY lane stating why **that lane's specific invalidation** is hit right now, citing M5 numbers from `pair_charts.json`, AND (b) explicit citation of the AGENT_CONTRACT gate that fires (§9 spread cap, §11 strategy block, etc.). Generic narrative ("Golden Week thin liquidity", "EVENT_RISK") is not sufficient — it must be quantified against a contract-named gate. The campaign exists to find trades, not to defend zero.
-- **Leaving the target-open campaign flat when a prefiltered LIVE_READY lane exists.** If `daily_target_state.json` is `PURSUE_TARGET`, `remaining_target_jpy > 0`, no trader-owned position or trader-owned pending entry exists, and a deterministic prefiltered `LIVE_READY` lane exists, WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE is invalid unless every lane is blocked by a named contract gate. Manual/tagless operator exposure does not count as trader exposure and does not block the campaign lane.
+- **Leaving the target-open campaign flat when a prefiltered LIVE_READY lane exists.** If `daily_target_state.json` is `PURSUE_TARGET`, `remaining_target_jpy > 0`, no trader-owned position exists, and a deterministic prefiltered `LIVE_READY` lane exists, WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE is invalid unless every lane is blocked by a named contract gate. Existing trader-owned pending entries must be counted by basket risk/margin/geometry validation; they are not a blanket reason to stop adding when capacity remains. Manual/tagless operator exposure does not count as trader exposure and does not block the campaign lane.
 - Treating old worst loss or weak past evidence as a veto after current risk repair. Once the current `LIVE_READY` receipt fits `per_trade_risk_budget_jpy`, negative `live_net`, missing positive mined evidence, low capture rate, old `WAIT` language, and stale story rejection markers are audit context only. Do not use them to block, reduce size, or lower rank.
 - Submitting a `TRADE` without checking `pair_charts.json` regime + ATR for that pair.
 - Submitting a `TRADE` on a JPY pair without citing DXY direction and `USB10Y_USD` trend from `cross_asset_snapshot.json` (proxy for US-JP yield differential).

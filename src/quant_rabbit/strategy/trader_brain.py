@@ -164,12 +164,6 @@ class TraderBrain:
         )
         if exposure_blockers or pending_entries:
             pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
-            if not pending_cancel_order_ids and _target_open_market_lane_waits_on_pending(
-                self.target_state_path,
-                snapshot,
-                scores,
-            ):
-                pending_cancel_order_ids = _trader_passive_pending_order_ids(snapshot)
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
                 selected_lane_id=None,
@@ -427,7 +421,7 @@ class TraderBrain:
                 "",
                 "- This layer must compare lanes; it must not send the first live-ready candidate mechanically.",
                 "- Scores rank attention only; live entry requires explicit discretionary gates, not a single score threshold.",
-                "- Pending entry or non-layerable exposure makes fresh-entry action monitor-only.",
+                "- Pending entry or non-layerable exposure makes TraderBrain monitor-only; automation may pass compatible pending entries to gateway basket validation.",
                 "- JPY-cross long trades are penalized when intervention / thin-liquidity themes are active.",
                 "- The execution gateway remains the final authority for live risk.",
             ]
@@ -471,23 +465,6 @@ def _target_open_needs_immediate_entry(target_state_path: Path, snapshot: Broker
         return False
     trader_positions = sum(1 for position in snapshot.positions if position.owner == Owner.TRADER)
     return trader_positions == 0 and _pending_entry_order_count(snapshot) == 0
-
-
-def _target_open_market_lane_waits_on_pending(
-    target_state_path: Path,
-    snapshot: BrokerSnapshot,
-    scores: tuple[LaneScore, ...],
-) -> bool:
-    if not _target_open(target_state_path):
-        return False
-    if any(position.owner == Owner.TRADER for position in snapshot.positions):
-        return False
-    return any(
-        score.order_type.upper() == "MARKET"
-        and score.status == "LIVE_READY"
-        and _blocked_only_by_existing_pending(score)
-        for score in scores
-    )
 
 
 def _target_open(target_state_path: Path) -> bool:
@@ -685,17 +662,6 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
         if not any(_keeps_pending_order(order, score) for score in compatible_scores):
             contaminated.append(order.order_id)
     return tuple(contaminated)
-
-
-def _trader_passive_pending_order_ids(snapshot: BrokerSnapshot) -> tuple[str, ...]:
-    return tuple(
-        order.order_id
-        for order in snapshot.orders
-        if order.owner == Owner.TRADER
-        and not order.trade_id
-        and order.order_id
-        and str(order.order_type or "").upper() == "LIMIT"
-    )
 
 
 def _order_direction(units: int | None) -> str | None:

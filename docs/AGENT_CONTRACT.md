@@ -89,7 +89,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Campaign planning translates the 10 % target into candidate lanes, required reward / risk, maximum acceptable loss, and exposure budget.
 - The system is not complete while it merely avoids bad trades — it must actively search for valid high-quality opportunities capable of reaching the daily target.
 - Campaign pressure must become **bounded execution behavior**: better timing, better filtering, stronger confluence, clearer invalidation, disciplined sizing.
-- **Campaign exposure occupancy.** While `daily_target_state.json` is `PURSUE_TARGET` with `remaining_target_jpy > 0`, if no trader-owned position or trader-owned pending entry is active and at least one current `LIVE_READY` lane survives deterministic prefiltering, the cycle must not end as flat WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE. It must choose the best prefiltered lane or record the exact contract-named hard gate that blocks every lane. Manual/tagless operator exposure does not satisfy this occupancy requirement and does not block it.
+- **Campaign exposure occupancy.** While `daily_target_state.json` is `PURSUE_TARGET` with `remaining_target_jpy > 0`, if no trader-owned position is active and at least one current `LIVE_READY` lane survives deterministic prefiltering, the cycle must not end as flat WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE. Existing trader-owned pending entries must be counted through basket risk/margin/geometry validation; they satisfy occupancy only when basket capacity or duplicate/stale-pending gates block every additional lane. Manual/tagless operator exposure does not satisfy this occupancy requirement and does not block it.
 - When the 10 % target is missed, produce a gap report (missed setup, blocked trade, market absence, risk rejection, execution cost, timing error, or strategy weakness).
 - Reaching the daily target triggers **protection-first** behavior; do not keep adding risk just because more trades are possible.
 
@@ -134,16 +134,16 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Flat-account entry loop: `BrokerSnapshot` → `IntentGenerator` → `TraderBrain` → `LiveOrderGateway`.
 - Exposure-management loop: `BrokerSnapshot` → `TraderBrain` → `PositionManager` → `PositionProtectionGateway`.
 - `gpt-trader-decision` verifies the operator's decision receipt by default.
-  - `autotrade-cycle --use-gpt-trader --gpt-decision-response …` may hand off **only an ACCEPTED `TRADE`** from a deterministic prefilter lane.
+  - `autotrade-cycle --use-gpt-trader --gpt-decision-response …` may hand off **only an ACCEPTED `TRADE`** from deterministic prefilter lane(s). A receipt may use `selected_lane_ids` to authorize a risk-bounded basket in the same gateway cycle.
   - The verifier must include every current `LIVE_READY` lane from `data/order_intents.json`; `--max-lanes` may cap blocked/diagnostic lanes, but must not clip executable lanes visible to the operator.
   - If the campaign exposure occupancy rule is active, GPT WAIT / REQUEST_EVIDENCE / rejected / non-prefiltered output is not allowed to keep the trader flat when deterministic prefiltered lanes exist. The cycle may recover to the deterministic prefilter lane and must still stage/send only through `LiveOrderGateway`, which remains the final broker-truth and risk authority.
-- Unprotected trader-owned exposure, external exposure, over-budget exposure, or pending-entry exposure **blocks fresh entries**.
+- Unprotected trader-owned exposure, external exposure, or over-budget exposure **blocks fresh entries**. Trader-owned pending entries do not blanket-block the campaign; they are either canceled when the current `TraderBrain` vetoes them, or counted as existing basket occupancy/risk/margin before any additional order is staged.
 - Operator-managed manual/tagless exposure (`owner=manual` or `owner=unknown`) is observed in broker truth but is not modified, protected, closed, or counted as a fresh-entry blocker. The operator owns that risk. The trader may run in parallel and must still size its own entries from equity, ATR, spread, and trader-owned portfolio risk.
-- Protected trader-owned exposure may add only through portfolio risk validation; total worst-case loss must stay inside the active exposure budget.
+- Protected trader-owned exposure and trader-owned pending entries may add only through basket/portfolio risk validation; total worst-case loss and estimated margin must stay inside the active exposure budget.
 - Pending orders vetoed by the current `TraderBrain` can be canceled before the next cycle.
 - Trader decisions compare mined history, market story, campaign role, narrative risk, current broker state, risk geometry, and live exposure.
 - Portfolio Director records which desk wins and why when trader desks disagree.
-- Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but exactly one final trader receipt may select a lane, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
+- Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but only the final trader receipt may select a lane or `selected_lane_ids` basket, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
 - Strategy-review identity is `lane_id` plus `method`, not a loose desk alias. A review for `TREND_CONTINUATION` cannot authorize a `RANGE_ROTATION` or `BREAKOUT_FAILURE` lane.
 
 ---
