@@ -525,11 +525,12 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("ATTACK_PRIORITY_SKIPPED", codes)
 
-    def test_rejects_single_pair_basket_when_advice_covers_multiple_pairs(self) -> None:
-        """Regression: when ai_attack_advice spans N≥2 distinct pairs and the
-        trader is flat with the daily target open, picking one pair is
-        leaving edge on the table. Verifier must emit
-        BASKET_PAIR_COVERAGE_INCOMPLETE so the operator knows to expand.
+    def test_warns_single_pair_basket_when_advice_covers_multiple_pairs(self) -> None:
+        """Regression: single-pair GPT JSON should not discard a valid trade.
+
+        The autotrade cycle expands accepted GPT trades into a deterministic
+        gateway basket, so this verifier issue is advisory instead of a send
+        blocker.
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -570,10 +571,13 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "REJECTED")
+            self.assertEqual(summary.status, "ACCEPTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
-            codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("BASKET_PAIR_COVERAGE_INCOMPLETE", codes)
+            issues = {
+                issue["code"]: issue
+                for issue in payload["verification_issues"]
+            }
+            self.assertEqual(issues["BASKET_PAIR_COVERAGE_INCOMPLETE"]["severity"], "WARN")
 
     def test_accepts_basket_covering_every_advised_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -360,6 +360,7 @@ class DecisionVerifier:
                                 "§5–§6 campaign exposure occupancy: include one lane per advised pair "
                                 f"up to max_portfolio_positions, or cite a named deterministic gate per "
                                 f"skipped pair in risk_notes: {', '.join(skipped_pairs)}",
+                                severity="WARN",
                             )
                         )
                     if "attack:advice" not in decision.evidence_refs:

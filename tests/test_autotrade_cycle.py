@@ -667,6 +667,65 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
 
+    def test_gpt_single_trade_expands_to_prefiltered_basket_for_open_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            market_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            _write_two_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.sent_count, 2)
+            self.assertEqual(
+                summary.selected_lane_ids,
+                ("trend_trader:EUR_USD:LONG:TREND_CONTINUATION", market_lane),
+            )
+            self.assertEqual(len(client.orders_sent), 2)
+
     def test_gpt_batch_trade_sends_multiple_verified_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -694,11 +694,18 @@ class AutoTradeCycle:
                             )
                             self._write_report(summary, generated_at)
                             return summary
-                        basket_lane_ids = gpt_lane_ids
-                        basket_size_multiples = {
-                            lane_id: basket_size_multiples.get(lane_id, 1.0)
-                            for lane_id in basket_lane_ids
-                        }
+                        if target_open:
+                            basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
+                                decision=decision,
+                                gpt_lane_ids=gpt_lane_ids,
+                                allow_existing_pending=True,
+                            )
+                        else:
+                            basket_lane_ids = gpt_lane_ids
+                            basket_size_multiples = {
+                                lane_id: basket_size_multiples.get(lane_id, 1.0)
+                                for lane_id in basket_lane_ids
+                            }
                     order_summary = LiveOrderGateway(
                         client=self.client,
                         strategy_profile=self.strategy_profile_path,
@@ -1051,14 +1058,30 @@ class AutoTradeCycle:
                         decision=decision, lane_id=selected_lane_id
                     )
 
-        basket_lane_ids = gpt_selected_lane_ids or ((selected_lane_id,) if selected_lane_id else ())
-        basket_size_multiples = {
-            selected_lane_id: selected_lane_size_multiple if selected_lane_size_multiple is not None else 1.0
-        } if selected_lane_id else {}
-        for lane_id in basket_lane_ids:
-            if lane_id not in basket_size_multiples:
-                _, size_multiple = self._selected_lane_meta(decision=decision, lane_id=lane_id)
-                basket_size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+        target_open = (
+            target_summary is not None
+            and target_summary.status == "PURSUE_TARGET"
+            and target_summary.remaining_target_jpy > 0
+        )
+        if self.use_gpt_trader and target_open and gpt_selected_lane_ids:
+            basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
+                decision=decision,
+                gpt_lane_ids=gpt_selected_lane_ids,
+            )
+            selected_lane_id = basket_lane_ids[0] if basket_lane_ids else selected_lane_id
+            selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                decision=decision,
+                lane_id=selected_lane_id,
+            )
+        else:
+            basket_lane_ids = gpt_selected_lane_ids or ((selected_lane_id,) if selected_lane_id else ())
+            basket_size_multiples = {
+                selected_lane_id: selected_lane_size_multiple if selected_lane_size_multiple is not None else 1.0
+            } if selected_lane_id else {}
+            for lane_id in basket_lane_ids:
+                if lane_id not in basket_size_multiples:
+                    _, size_multiple = self._selected_lane_meta(decision=decision, lane_id=lane_id)
+                    basket_size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
         if selected_lane_id and not self.use_gpt_trader:
             basket_lane_ids, basket_size_multiples = self._basket_lane_plan(
                 decision=decision,
@@ -1370,6 +1393,34 @@ class AutoTradeCycle:
             size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
 
         add(primary_lane_id, primary_size_multiple)
+        for score in decision.scores:
+            if _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
+                add(score.lane_id, score.size_multiple)
+        return tuple(lane_ids), size_multiples
+
+    @staticmethod
+    def _expanded_gpt_basket_plan(
+        *,
+        decision: TraderDecision,
+        gpt_lane_ids: tuple[str, ...],
+        allow_existing_pending: bool = False,
+    ) -> tuple[tuple[str, ...], dict[str, float]]:
+        lane_ids: list[str] = []
+        size_multiples: dict[str, float] = {}
+
+        def add(lane_id: str | None, size_multiple: float | None = None) -> None:
+            if not lane_id or lane_id in size_multiples:
+                return
+            if size_multiple is None:
+                _, size_multiple = AutoTradeCycle._selected_lane_meta(
+                    decision=decision,
+                    lane_id=lane_id,
+                )
+            lane_ids.append(lane_id)
+            size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
+
+        for lane_id in gpt_lane_ids:
+            add(lane_id)
         for score in decision.scores:
             if _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
                 add(score.lane_id, score.size_multiple)

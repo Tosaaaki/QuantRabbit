@@ -12,7 +12,7 @@
 2. List every current `LIVE_READY` lane.
 3. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
 4. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
-5. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity, or cite a named gate per skipped pair in `risk_notes`.
+5. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
 6. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons.
 7. Write exactly one `data/codex_trader_decision_response.json`.
 
