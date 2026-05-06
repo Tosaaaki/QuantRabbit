@@ -161,7 +161,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=False)
 
             self.assertEqual(summary.status, "STAGED")
-            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertFalse(summary.sent)
             self.assertEqual(client.orders_sent, [])
             payload = json.loads(profile.read_text())
@@ -387,7 +387,7 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "STAGED")
             self.assertEqual(summary.orders, 1)
-            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertFalse(summary.sent)
             self.assertFalse((root / "pm.json").exists())
 
@@ -439,7 +439,7 @@ class AutoTradeCycleTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "STAGED")
             self.assertEqual(summary.positions, 1)
-            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertFalse((root / "pm.json").exists())
             self.assertTrue((root / "live_order.json").exists())
 
@@ -534,7 +534,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=False)
 
             self.assertEqual(summary.status, "GPT_REJECTED")
-            self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertIsNone(summary.selected_lane_id)
             self.assertFalse(summary.sent)
             self.assertEqual(client.orders_sent, [])
@@ -587,7 +587,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             ).run(send=False)
 
             self.assertEqual(summary.status, "STAGED")
-            self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(summary.deterministic_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertEqual(summary.selected_lane_id, rejected_lane)
             self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.gpt_status, "ACCEPTED")

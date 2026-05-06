@@ -38,6 +38,12 @@ HISTORICAL_LARGE_LOSS_CAP_MULTIPLE = 1.8
 LOW_RISK_CAP_FRACTION = 0.60
 MEDIUM_RISK_CAP_FRACTION = 0.90
 
+# Pending-order replacement tolerance. This is deliberately a spread multiple,
+# not a fixed pip distance: a valid trigger can drift by more raw pips in thin
+# liquidity, while liquid tape should tolerate less. Above this many current
+# spreads, the pending price is no longer the same executable neighborhood.
+PENDING_ENTRY_REPLACE_SPREAD_MULT = 8.0
+
 
 @dataclass(frozen=True)
 class LaneScore:
@@ -54,6 +60,7 @@ class LaneScore:
     rationale: tuple[str, ...]
     size_multiple: float = 1.0
     judgment: tuple[str, ...] = ()
+    spread_pips: float | None = None
 
 
 @dataclass(frozen=True)
@@ -216,9 +223,12 @@ class TraderBrain:
         order_type = str(intent.get("order_type") or "")
         entry = _optional_float(intent.get("entry"))
         status = str(result.get("status") or "")
+        risk_metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else {}
+        spread_pips = _optional_float(risk_metrics.get("spread_pips"))
         strategy = strategies.get((pair, direction), {})
         story = stories.get(pair, {})
-        lane = campaign.get(lane_id, {})
+        parent_lane_id = str((intent.get("metadata") or {}).get("parent_lane_id") or "")
+        lane = campaign.get(lane_id) or campaign.get(parent_lane_id) or campaign.get(_parent_lane_id(lane_id)) or {}
         blockers: list[str] = list(exposure_blockers)
         rationale: list[str] = []
         score = 0.0
@@ -279,13 +289,16 @@ class TraderBrain:
             strategy=strategy,
             story=story,
             lane=lane,
-            risk_metrics=result.get("risk_metrics"),
+            risk_metrics=risk_metrics,
             method_pressure=method_pressure,
             loss_cap_jpy=loss_cap_jpy,
             rationale=rationale,
             blockers=blockers,
         )
         score += _direction_conflict_penalty(result, rationale)
+        if order_type.upper() == "MARKET" and status == "LIVE_READY":
+            score += 5.0
+            rationale.append("market receipt can execute the current quote instead of waiting for a trigger")
 
         if result.get("risk_issues"):
             blockers.extend(str(issue.get("message") or issue.get("code")) for issue in result.get("risk_issues", []))
@@ -322,6 +335,7 @@ class TraderBrain:
             blockers=tuple(blockers[:8]),
             rationale=tuple(rationale[:8]),
             judgment=tuple(judgment[:8]),
+            spread_pips=spread_pips,
         )
 
     def _write(self, decision: TraderDecision) -> None:
@@ -527,6 +541,12 @@ def _campaign_index(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return index
 
 
+def _parent_lane_id(lane_id: str) -> str:
+    if lane_id.endswith(":MARKET"):
+        return lane_id[: -len(":MARKET")]
+    return lane_id
+
+
 def _exposure_blockers(snapshot: BrokerSnapshot) -> tuple[str, ...]:
     blockers: list[str] = []
     for position in snapshot.positions:
@@ -558,12 +578,10 @@ def _portfolio_add_allowed(snapshot: BrokerSnapshot) -> bool:
 
 
 def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[LaneScore, ...]) -> tuple[str, ...]:
-    score_by_key: dict[tuple[str, str], LaneScore] = {}
+    scores_by_key: dict[tuple[str, str, str], list[LaneScore]] = {}
     for score in scores:
-        key = (score.pair, score.direction)
-        current = score_by_key.get(key)
-        if current is None or score.score > current.score:
-            score_by_key[key] = score
+        key = (score.pair, score.direction, _normalized_entry_type(score.order_type))
+        scores_by_key.setdefault(key, []).append(score)
     contaminated: list[str] = []
     for order in snapshot.orders:
         if order.trade_id or order.order_type.upper() not in PENDING_ENTRY_TYPES:
@@ -573,18 +591,11 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
             continue
         if order.owner != Owner.TRADER:
             continue
-        score = score_by_key.get((order.pair, direction))
-        if score is None:
+        compatible_scores = scores_by_key.get((order.pair, direction, _normalized_entry_type(order.order_type)), [])
+        if not compatible_scores:
             contaminated.append(order.order_id)
             continue
-        blocker_text = " ".join(score.blockers).upper()
-        if (
-            score.action != ACTION_SEND_ENTRY
-            or "INTERVENTION" in blocker_text
-            or "VISUAL STORY" in blocker_text
-            or not _same_entry_type(order.order_type, score.order_type)
-            or _entry_drift_pips(order.pair, order.price, score.entry) > 2.0
-        ):
+        if not any(_keeps_pending_order(order, score) for score in compatible_scores):
             contaminated.append(order.order_id)
     return tuple(contaminated)
 
@@ -600,8 +611,24 @@ def _order_direction(units: int | None) -> str | None:
 
 
 def _same_entry_type(order_type: str, lane_order_type: str) -> bool:
-    normalized_order = "STOP-ENTRY" if order_type.upper() == "STOP" else order_type.upper()
-    return normalized_order == lane_order_type.upper()
+    return _normalized_entry_type(order_type) == _normalized_entry_type(lane_order_type)
+
+
+def _normalized_entry_type(order_type: str) -> str:
+    return "STOP-ENTRY" if order_type.upper() == "STOP" else order_type.upper()
+
+
+def _keeps_pending_order(order: BrokerOrder, score: LaneScore) -> bool:
+    blocker_text = " ".join(score.blockers).upper()
+    if "INTERVENTION" in blocker_text or "VISUAL STORY" in blocker_text:
+        return False
+    if score.action != ACTION_SEND_ENTRY and not _blocked_only_by_existing_pending(score):
+        return False
+    return not _entry_drift_exceeds_current_spread(order.pair or "", order.price, score.entry, score.spread_pips)
+
+
+def _blocked_only_by_existing_pending(score: LaneScore) -> bool:
+    return bool(score.blockers) and all(str(item).startswith("pending entry exists:") for item in score.blockers)
 
 
 def _entry_drift_pips(pair: str, order_price: float | None, lane_entry: float | None) -> float:
@@ -609,6 +636,20 @@ def _entry_drift_pips(pair: str, order_price: float | None, lane_entry: float | 
         return 0.0
     pip_factor = 100 if pair.endswith("_JPY") else 10000
     return abs(order_price - lane_entry) * pip_factor
+
+
+def _entry_drift_exceeds_current_spread(
+    pair: str,
+    order_price: float | None,
+    lane_entry: float | None,
+    spread_pips: float | None,
+) -> bool:
+    if spread_pips is None or spread_pips <= 0:
+        return False
+    # Pending entries should not be canceled just because the next broker snapshot
+    # reprices the same setup by a few ticks. The replacement threshold is tied to
+    # current spread, so it expands in thin liquidity and tightens in normal tape.
+    return _entry_drift_pips(pair, order_price, lane_entry) > spread_pips * PENDING_ENTRY_REPLACE_SPREAD_MULT
 
 
 def _method_theme_score(method: str, themes: dict[str, Any], rationale: list[str]) -> float:

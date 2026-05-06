@@ -35,6 +35,25 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["takeProfitOnFill"]["price"], "1.17450")
             self.assertEqual(order["stopLossOnFill"]["price"], "1.17250")
 
+    def test_stages_oanda_market_order_without_entry_price(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(intents_path=_intents(root, order_type="MARKET"), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertFalse(summary.sent)
+            payload = json.loads((root / "request.json").read_text())
+            order = payload["order_request"]
+            self.assertEqual(order["type"], "MARKET")
+            self.assertEqual(order["timeInForce"], "FOK")
+            self.assertNotIn("price", order)
+
     def test_send_requires_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -274,7 +293,13 @@ def _profile(root: Path) -> Path:
     return path
 
 
-def _intents(root: Path, *, status: str = "LIVE_READY", metadata: dict[str, str] | None = None) -> Path:
+def _intents(
+    root: Path,
+    *,
+    status: str = "LIVE_READY",
+    metadata: dict[str, str] | None = None,
+    order_type: str = "STOP-ENTRY",
+) -> Path:
     path = root / "intents.json"
     path.write_text(
         json.dumps(
@@ -287,9 +312,9 @@ def _intents(root: Path, *, status: str = "LIVE_READY", metadata: dict[str, str]
                         "intent": {
                             "pair": "EUR_USD",
                             "side": "LONG",
-                            "order_type": "STOP-ENTRY",
+                            "order_type": order_type,
                             "units": 1000,
-                            "entry": 1.17330,
+                            "entry": 1.17306 if order_type == "MARKET" else 1.17330,
                             "tp": 1.17450,
                             "sl": 1.17250,
                             "thesis": "trend continuation",

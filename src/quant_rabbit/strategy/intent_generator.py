@@ -253,16 +253,19 @@ class IntentGenerator:
         pair_charts = _load_pair_charts(self.pair_charts_path)
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
-            results.append(
-                self._build_for_lane(
-                    lane,
-                    snapshot,
-                    strategy_profile,
-                    max_loss_jpy=max_loss_jpy,
-                    portfolio_loss_cap=portfolio_loss_cap,
-                    pair_charts=pair_charts,
+            variants = (None,) if snapshot is None else _order_variants_for(lane)
+            for order_type in variants:
+                results.append(
+                    self._build_for_lane(
+                        lane,
+                        snapshot,
+                        strategy_profile,
+                        max_loss_jpy=max_loss_jpy,
+                        portfolio_loss_cap=portfolio_loss_cap,
+                        pair_charts=pair_charts,
+                        order_type_override=order_type,
+                    )
                 )
-            )
         generated_at = datetime.now(timezone.utc).isoformat()
         self._write_output(results, generated_at, snapshot_path)
         self._write_report(results, generated_at, snapshot_path)
@@ -285,8 +288,10 @@ class IntentGenerator:
         max_loss_jpy: float,
         portfolio_loss_cap: float | None = None,
         pair_charts: dict[str, dict[str, Any]] | None = None,
+        order_type_override: OrderType | None = None,
     ) -> GeneratedIntent:
-        lane_id = _lane_id(lane)
+        parent_lane_id = _lane_id(lane)
+        lane_id = _variant_lane_id(parent_lane_id, order_type_override)
         pair = str(lane["pair"])
         direction = str(lane["direction"])
         if snapshot is None:
@@ -323,6 +328,8 @@ class IntentGenerator:
             max_loss_jpy=max_loss_jpy,
             atr_pips=atr_pips,
             range_indicators=range_indicators,
+            order_type_override=order_type_override,
+            parent_lane_id=parent_lane_id,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -465,6 +472,20 @@ def _lane_id(lane: dict[str, Any]) -> str:
     return f"{lane.get('desk')}:{lane.get('pair')}:{lane.get('direction')}:{lane.get('method')}"
 
 
+def _variant_lane_id(parent_lane_id: str, order_type: OrderType | None) -> str:
+    if order_type == OrderType.MARKET:
+        return f"{parent_lane_id}:MARKET"
+    return parent_lane_id
+
+
+def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
+    method = TradeMethod.parse(str(lane["method"]))
+    base = _order_type_for(method)
+    if method == TradeMethod.RANGE_ROTATION:
+        return (base,)
+    return (base, OrderType.MARKET)
+
+
 def _intent_from_lane(
     lane: dict[str, Any],
     quote: Quote,
@@ -473,11 +494,13 @@ def _intent_from_lane(
     max_loss_jpy: float,
     atr_pips: float | None = None,
     range_indicators: dict[str, Any] | None = None,
+    order_type_override: OrderType | None = None,
+    parent_lane_id: str | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
     method = TradeMethod.parse(str(lane["method"]))
-    order_type = _order_type_for(method)
+    order_type = order_type_override or _order_type_for(method)
     target_reward_risk = _target_reward_risk(lane)
     entry, tp, sl = _geometry(
         pair,
@@ -531,6 +554,8 @@ def _intent_from_lane(
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": f"floor units to the largest broker size under the {max_loss_jpy:.0f} JPY loss cap",
             "max_loss_jpy": max_loss_jpy,
+            "parent_lane_id": parent_lane_id or _lane_id(lane),
+            "order_timing": "NOW_MARKET" if order_type == OrderType.MARKET else "PENDING_TRIGGER",
             **position_metadata,
             **geometry_metadata,
         },
@@ -597,6 +622,8 @@ def _generic_geometry(
     trigger_offset_pips = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT
     if order_type == OrderType.LIMIT:
         entry = quote.bid - trigger_offset_pips * pip if side == Side.LONG else quote.ask + trigger_offset_pips * pip
+    elif order_type == OrderType.MARKET:
+        entry = quote.ask if side == Side.LONG else quote.bid
     else:
         entry = quote.ask + trigger_offset_pips * pip if side == Side.LONG else quote.bid - trigger_offset_pips * pip
     if side == Side.LONG:

@@ -394,7 +394,10 @@ def _lane_packet(
                 "risk_blockers": risk_blockers,
                 "strategy_blockers": strategy_blockers,
                 "live_blockers": list(result.get("live_blockers", []) or []),
-                "campaign": _small_dict(campaign_index.get(lane_id), ("adoption", "campaign_role", "required_receipt")),
+                "campaign": _small_dict(
+                    campaign_index.get(lane_id) or campaign_index.get(_parent_lane_id(lane_id)),
+                    ("adoption", "campaign_role", "required_receipt"),
+                ),
                 "strategy": _small_dict(strategy_index.get((pair, direction)), ("status", "pretrade_net_jpy", "live_net_jpy", "live_worst_jpy", "required_fix")),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
             }
@@ -442,6 +445,12 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
             for item in (snapshot.get("orders", []) or [])[:5]
         ],
     }
+
+
+def _parent_lane_id(lane_id: str) -> str:
+    if lane_id.endswith(":MARKET"):
+        return lane_id[: -len(":MARKET")]
+    return lane_id
 
 
 def _target_packet(target: dict[str, Any]) -> dict[str, Any]:

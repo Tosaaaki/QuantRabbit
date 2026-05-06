@@ -72,7 +72,68 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
             self.assertIsNone(decision.selected_lane_id)
-            self.assertEqual(decision.pending_cancel_order_ids, ("1",))
+            self.assertEqual(decision.pending_cancel_order_ids, ())
+
+    def test_keeps_pending_when_compatible_lane_exists_below_top_score(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_mixed_entry_type_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="trend-stop",
+                        pair="EUR_USD",
+                        order_type="STOP",
+                        price=1.17252,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.action, ACTION_MONITOR_EXISTING)
+            self.assertEqual(decision.pending_cancel_order_ids, ())
+
+    def test_cancels_pending_only_when_same_type_lane_has_moved_outside_spread_band(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_mixed_entry_type_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="far-stop",
+                        pair="EUR_USD",
+                        order_type="STOP",
+                        price=1.18000,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ("far-stop",))
 
     def test_protected_trader_position_can_still_select_portfolio_add(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -193,6 +254,23 @@ def _intents(root: Path) -> Path:
     return path
 
 
+def _mixed_entry_type_intents(root: Path) -> Path:
+    path = root / "mixed_intents.json"
+    stop = _result("trend_trader:EUR_USD:LONG:TREND_CONTINUATION", "EUR_USD", "LONG", "TREND_CONTINUATION")
+    stop["risk_metrics"] = {"risk_jpy": 100.0, "reward_jpy": 220.0, "reward_risk": 2.2, "spread_pips": 0.8}
+    limit = _result("range_trader:EUR_USD:LONG:RANGE_ROTATION", "EUR_USD", "LONG", "RANGE_ROTATION")
+    limit["risk_metrics"] = {"risk_jpy": 80.0, "reward_jpy": 300.0, "reward_risk": 3.75, "spread_pips": 0.8}
+    limit["intent"] = {
+        **limit["intent"],
+        "order_type": "LIMIT",
+        "entry": 1.17120,
+        "tp": 1.17360,
+        "sl": 1.17060,
+    }
+    path.write_text(json.dumps({"results": [limit, stop]}))
+    return path
+
+
 def _result(lane_id: str, pair: str, side: str, method: str) -> dict:
     return {
         "lane_id": lane_id,
@@ -230,6 +308,21 @@ def _campaign(root: Path) -> Path:
                 "lanes": [
                     _lane("failure_trader", "AUD_JPY", "LONG", "BREAKOUT_FAILURE"),
                     _lane("trend_trader", "EUR_USD", "LONG", "TREND_CONTINUATION"),
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _mixed_campaign(root: Path) -> Path:
+    path = root / "mixed_campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    _lane("trend_trader", "EUR_USD", "LONG", "TREND_CONTINUATION"),
+                    _lane("range_trader", "EUR_USD", "LONG", "RANGE_ROTATION"),
                 ]
             }
         )
@@ -287,6 +380,37 @@ def _strategy(root: Path, *, loss_cap_jpy: float = 500.0) -> Path:
                         "seat_captured": 5,
                     },
                 ]
+            }
+        )
+    )
+    return path
+
+
+def _eur_strategy(root: Path) -> Path:
+    path = root / "eur_strategy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "system_contract": {
+                    "loss_cap_jpy": 500.0,
+                    "loss_cap_source": "test current campaign cap",
+                },
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 2500,
+                        "live_worst_jpy": -400,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
+                    }
+                ],
             }
         )
     )

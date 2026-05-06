@@ -47,17 +47,24 @@ class IntentGeneratorTest(unittest.TestCase):
                 max_loss_jpy=cap_jpy,
             ).run(snapshot_path=snapshot)
 
-            self.assertEqual(summary.generated, 1)
-            self.assertEqual(summary.dry_run_passed, 1)
+            self.assertEqual(summary.generated, 2)
+            self.assertEqual(summary.dry_run_passed, 2)
             self.assertEqual(summary.live_ready, 0)
             payload = json.loads(output.read_text())
-            result = payload["results"][0]
+            order_types = {item["intent"]["order_type"] for item in payload["results"]}
+            self.assertEqual(order_types, {"STOP-ENTRY", "MARKET"})
+            result = next(item for item in payload["results"] if item["intent"]["order_type"] == "STOP-ENTRY")
             self.assertEqual(result["status"], "DRY_RUN_PASSED")
             self.assertEqual(result["intent"]["pair"], "EUR_USD")
             self.assertEqual(result["intent"]["market_context"]["method"], "TREND_CONTINUATION")
             self.assertLessEqual(result["risk_metrics"]["risk_jpy"], cap_jpy)
             self.assertGreater(result["risk_metrics"]["spread_pips"], 0.0)
             self.assertTrue(result["live_blockers"])
+
+            market = next(item for item in payload["results"] if item["intent"]["order_type"] == "MARKET")
+            self.assertEqual(market["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
+            self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
 
     def test_sizes_repair_receipt_to_use_loss_budget_without_breaking_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
