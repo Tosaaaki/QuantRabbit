@@ -24,6 +24,7 @@ from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.certification import DryRunCertifier
 from quant_rabbit.completion import CompletionAuditor
 from quant_rabbit.coverage import CoverageOptimizer
+from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.execution_replay import ExecutionReplayer
 from quant_rabbit.legacy.importer import LegacyImporter
 from quant_rabbit.learning import PostTradeLearner
@@ -47,6 +48,8 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_DRY_RUN_CERTIFICATION,
     DEFAULT_DRY_RUN_CERTIFICATION_REPORT,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_EXECUTION_LEDGER_REPORT,
     DEFAULT_EXECUTION_REPLAY,
     DEFAULT_EXECUTION_REPLAY_REPORT,
     DEFAULT_GPT_TRADER_DECISION,
@@ -288,6 +291,11 @@ def main(argv: list[str] | None = None) -> int:
     p_exec_replay.add_argument("--output", type=Path, default=DEFAULT_EXECUTION_REPLAY)
     p_exec_replay.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_REPLAY_REPORT)
 
+    p_ledger = sub.add_parser("execution-ledger-sync", help="Sync OANDA transactions into the append-only execution ledger.")
+    p_ledger.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_ledger.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
+    p_ledger.add_argument("--since-transaction-id", default=None)
+
     p_learn = sub.add_parser("learn-post-trade", help="Create receipt-backed post-trade learning candidates.")
     p_learn.add_argument("--outcome", type=Path, default=None)
     p_learn.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
@@ -361,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
     p_stage.add_argument("--risk-equity-jpy", type=float, default=None)
     p_stage.add_argument("--send", action="store_true")
     p_stage.add_argument("--confirm-live", action="store_true")
+    p_stage.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_stage.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
 
     p_auto = sub.add_parser("autotrade-cycle", help="Run one safe automated trading cycle.")
     p_auto.add_argument("--send", action="store_true")
@@ -394,6 +404,8 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--max-loss-pct", type=float, default=None)
     p_auto.add_argument("--risk-equity-jpy", type=float, default=None)
     p_auto.add_argument("--trader-settings", type=Path, default=DEFAULT_TRADER_SETTINGS)
+    p_auto.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_auto.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
 
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
@@ -481,8 +493,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "stage-live-order":
         try:
+            client = OandaExecutionClient()
+            ledger = ExecutionLedger(db_path=args.execution_ledger_db, report_path=args.execution_ledger_report)
+            ledger.sync_oanda_transactions(client)
             summary = LiveOrderGateway(
-                client=OandaExecutionClient(),
+                client=client,
                 strategy_profile=args.strategy_profile,
                 output_path=args.output,
                 report_path=args.report,
@@ -494,7 +509,9 @@ def main(argv: list[str] | None = None) -> int:
                     label="stage-live-order",
                 ),
             ).run(intents_path=args.intents, lane_id=args.lane_id, send=args.send, confirm_live=args.confirm_live)
-        except RuntimeError as exc:
+            ledger.record_gateway_receipt(kind="live_order", receipt_path=args.output)
+            ledger.sync_oanda_transactions(client)
+        except (RuntimeError, OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
             print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
             return 2
         print(
@@ -530,6 +547,8 @@ def main(argv: list[str] | None = None) -> int:
                 gpt_max_lanes=args.gpt_max_lanes,
                 reuse_market_artifacts=args.reuse_market_artifacts,
                 trader_settings_path=args.trader_settings,
+                execution_ledger_db_path=args.execution_ledger_db,
+                execution_ledger_report_path=args.execution_ledger_report,
                 refresh_market_story=args.refresh_market_story,
                 market_news_root=args.market_news_dir,
                 live_enabled=os.environ.get("QR_LIVE_ENABLED") == "1",
@@ -1329,6 +1348,34 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status == "READY_FOR_REVIEW" else 2
+    if args.command == "execution-ledger-sync":
+        try:
+            summary = ExecutionLedger(db_path=args.db, report_path=args.report).sync_oanda_transactions(
+                OandaExecutionClient(),
+                since_transaction_id=args.since_transaction_id,
+            )
+        except (RuntimeError, OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "db_path": str(summary.db_path),
+                    "report_path": str(summary.report_path),
+                    "transactions_seen": summary.transactions_seen,
+                    "transactions_inserted": summary.transactions_inserted,
+                    "events_inserted": summary.events_inserted,
+                    "gateway_receipts_inserted": summary.gateway_receipts_inserted,
+                    "baseline_transaction_id": summary.baseline_transaction_id,
+                    "last_transaction_id": summary.last_transaction_id,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "certify-dry-run":
         summary = DryRunCertifier(
             coverage_path=args.coverage,

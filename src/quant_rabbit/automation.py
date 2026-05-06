@@ -10,6 +10,7 @@ from pathlib import Path
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
+from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_SNAPSHOT,
@@ -17,6 +18,8 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_EXECUTION_LEDGER_REPORT,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LIVE_ORDER_REQUEST,
@@ -237,6 +240,8 @@ class AutoTradeCycle:
         live_order_output_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         live_order_report_path: Path = DEFAULT_LIVE_ORDER_STAGE_REPORT,
         trader_journal_path: Path = DEFAULT_TRADER_JOURNAL,
+        execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
+        execution_ledger_report_path: Path = DEFAULT_EXECUTION_LEDGER_REPORT,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
         campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
@@ -274,6 +279,8 @@ class AutoTradeCycle:
         self.live_order_output_path = live_order_output_path
         self.live_order_report_path = live_order_report_path
         self.trader_journal_path = trader_journal_path
+        self.execution_ledger_db_path = execution_ledger_db_path
+        self.execution_ledger_report_path = execution_ledger_report_path
         self.report_path = report_path
         self.campaign_plan_path = campaign_plan_path
         self.strategy_profile_path = strategy_profile_path
@@ -301,12 +308,42 @@ class AutoTradeCycle:
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
         try:
+            self._sync_execution_ledger()
             summary = self._run(send=send)
+            self._record_execution_ledger_receipts()
+            self._sync_execution_ledger()
             self._append_trader_journal_entry(summary)
             return summary
+        except Exception:
+            try:
+                self._sync_execution_ledger()
+            except Exception:
+                pass
+            raise
         finally:
             if lock_dir is not None:
                 shutil.rmtree(lock_dir, ignore_errors=True)
+
+    def _sync_execution_ledger(self) -> None:
+        if not self._execution_ledger_available():
+            return
+        ExecutionLedger(
+            db_path=self.execution_ledger_db_path,
+            report_path=self.execution_ledger_report_path,
+        ).sync_oanda_transactions(self.client)
+
+    def _record_execution_ledger_receipts(self) -> None:
+        if not self._execution_ledger_available():
+            return
+        ledger = ExecutionLedger(db_path=self.execution_ledger_db_path, report_path=self.execution_ledger_report_path)
+        for kind, path in (
+            ("live_order", self.live_order_output_path),
+            ("position_execution", self.position_execution_path),
+        ):
+            ledger.record_gateway_receipt(kind=kind, receipt_path=path)
+
+    def _execution_ledger_available(self) -> bool:
+        return hasattr(self.client, "account_summary") and hasattr(self.client, "transactions_since_id")
 
     def _append_trader_journal_entry(self, summary: AutoTradeCycleSummary) -> None:
         """Append one JSONL line to logs/trader_journal.jsonl per cycle.

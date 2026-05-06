@@ -66,6 +66,12 @@ class OandaReadOnlyClient:
         payload = self.get_json(f"/v3/accounts/{self.account_id}/summary")
         return _account_summary_from_payload(payload, now_utc=now_utc or datetime.now(timezone.utc))
 
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return self.get_json(
+            f"/v3/accounts/{self.account_id}/transactions/sinceid",
+            {"id": str(transaction_id)},
+        )
+
     def _account_summary_safe(self, now_utc: datetime) -> AccountSummary | None:
         try:
             return self.account_summary(now_utc=now_utc)

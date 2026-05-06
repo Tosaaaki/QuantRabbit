@@ -275,6 +275,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance 222781
 # Broker truth
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --start-balance 222781 --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 
 # Per-pair indicator stack (Phase A+B+C extended)
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json

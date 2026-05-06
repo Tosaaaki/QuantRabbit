@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -830,6 +831,78 @@ class AutoTradeCycleTest(unittest.TestCase):
             ]
             self.assertEqual(len(entries), 2)
 
+    def test_cycle_syncs_execution_ledger_around_live_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = LedgerCycleClient(snapshot)
+            ledger_path = root / "execution_ledger.db"
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                trader_journal_path=root / "trader_journal.jsonl",
+                execution_ledger_db_path=ledger_path,
+                execution_ledger_report_path=root / "execution_ledger.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.transaction_sync_calls, ["100"])
+            with sqlite3.connect(ledger_path) as conn:
+                event_types = {
+                    row[0] for row in conn.execute("SELECT event_type FROM execution_events").fetchall()
+                }
+                tx_count = conn.execute("SELECT COUNT(*) FROM oanda_transactions").fetchone()[0]
+                receipt_count = conn.execute("SELECT COUNT(*) FROM gateway_receipts").fetchone()[0]
+                last_id = conn.execute(
+                    "SELECT value FROM sync_state WHERE key='last_oanda_transaction_id'"
+                ).fetchone()[0]
+
+            self.assertIn("GATEWAY_ORDER_SENT", event_types)
+            self.assertIn("ORDER_FILLED", event_types)
+            self.assertEqual(tx_count, 1)
+            self.assertGreaterEqual(receipt_count, 1)
+            self.assertEqual(last_id, "101")
+
     def test_live_fresh_entry_requires_gpt_handoff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1263,6 +1336,42 @@ class SequenceCycleClient(FakeCycleClient):
         self.snapshot_calls.append(pairs)
         index = min(len(self.snapshot_calls) - 1, len(self.snapshots) - 1)
         return self.snapshots[index]
+
+
+class LedgerCycleClient(FakeCycleClient):
+    def __init__(self, snapshot: BrokerSnapshot) -> None:
+        super().__init__(snapshot)
+        self.transaction_sync_calls: list[str] = []
+
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            margin_available_jpy=200_000.0,
+            last_transaction_id="100",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict[str, Any]:
+        self.transaction_sync_calls.append(str(transaction_id))
+        if not self.orders_sent:
+            return {"lastTransactionID": transaction_id, "transactions": []}
+        return {
+            "lastTransactionID": "101",
+            "transactions": [
+                {
+                    "id": "101",
+                    "time": "2026-05-06T00:00:02.000000000Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "1",
+                    "instrument": "EUR_USD",
+                    "units": "1000",
+                    "price": "1.17306",
+                    "reason": "MARKET_ORDER",
+                    "tradeOpened": {"tradeID": "200", "units": "1000", "price": "1.17306"},
+                }
+            ],
+        }
 
 
 def _with_account(snapshot: BrokerSnapshot) -> BrokerSnapshot:
