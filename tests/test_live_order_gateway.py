@@ -10,6 +10,7 @@ from typing import Any
 import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
 
 class LiveOrderGatewayTest(unittest.TestCase):
@@ -126,6 +127,41 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(len(client.orders), 2)
             result = json.loads((root / "request.json").read_text())
             self.assertEqual(len(result["orders"]), 2)
+
+    def test_batch_send_does_not_double_count_sent_margin_from_fresh_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = MutatingExecutionClient(margin_used_jpy=168_000.0)
+            intents = _intents(root, order_type="MARKET")
+            payload = json.loads(intents.read_text())
+            second = json.loads(json.dumps(payload["results"][0]))
+            second["lane_id"] = "lane:EUR_USD:LONG:reload"
+            second["intent"]["tp"] = 1.17480
+            payload["results"].append(second)
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=intents,
+                lane_ids=("lane:EUR_USD:LONG", "lane:EUR_USD:LONG:reload"),
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.sent_count, 2)
+            result = json.loads((root / "request.json").read_text())
+            second_result = result["orders"][1]
+            self.assertEqual(second_result["scaled_units"], 1000)
+            self.assertNotIn(
+                "BASKET_DOWNSIZED_FOR_CAPACITY",
+                {issue["code"] for issue in second_result["risk_issues"]},
+            )
 
     def test_default_risk_cap_reads_daily_target_state_before_policy_literal(self) -> None:
         original_reader = execution_module._per_trade_risk_from_state
@@ -376,6 +412,61 @@ class FakeExecutionClient:
     def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
         self.orders.append(order_request)
         return {"orderCreateTransaction": {"id": "1"}, "relatedTransactionIDs": ["1"]}
+
+
+class MutatingExecutionClient(FakeExecutionClient):
+    def __init__(self, *, margin_used_jpy: float) -> None:
+        super().__init__()
+        account = self.snapshot_value.account
+        assert account is not None
+        self.snapshot_value = BrokerSnapshot(
+            fetched_at_utc=self.snapshot_value.fetched_at_utc,
+            positions=self.snapshot_value.positions,
+            orders=self.snapshot_value.orders,
+            quotes=self.snapshot_value.quotes,
+            account=AccountSummary(
+                nav_jpy=account.nav_jpy,
+                balance_jpy=account.balance_jpy,
+                margin_used_jpy=margin_used_jpy,
+                margin_available_jpy=max(0.0, account.nav_jpy - margin_used_jpy),
+                fetched_at_utc=account.fetched_at_utc,
+            ),
+        )
+
+    def post_order_json(self, order_request: dict[str, Any]) -> dict[str, Any]:
+        response = super().post_order_json(order_request)
+        units = int(order_request["units"])
+        quote = self.snapshot_value.quotes["EUR_USD"]
+        entry = quote.ask if units > 0 else quote.bid
+        margin = abs(units) * entry * self.snapshot_value.quotes["USD_JPY"].bid * OANDA_JP_RETAIL_FX_MARGIN_RATE
+        account = self.snapshot_value.account
+        assert account is not None
+        self.snapshot_value = BrokerSnapshot(
+            fetched_at_utc=datetime.now(timezone.utc),
+            positions=(
+                *self.snapshot_value.positions,
+                BrokerPosition(
+                    trade_id=str(len(self.orders)),
+                    pair="EUR_USD",
+                    side=Side.LONG if units > 0 else Side.SHORT,
+                    units=abs(units),
+                    entry_price=entry,
+                    take_profit=float(order_request["takeProfitOnFill"]["price"]),
+                    stop_loss=float(order_request["stopLossOnFill"]["price"]),
+                    owner=Owner.TRADER,
+                ),
+            ),
+            orders=self.snapshot_value.orders,
+            quotes=self.snapshot_value.quotes,
+            account=AccountSummary(
+                nav_jpy=account.nav_jpy,
+                balance_jpy=account.balance_jpy,
+                margin_used_jpy=account.margin_used_jpy + margin,
+                margin_available_jpy=max(0.0, account.margin_available_jpy - margin),
+                fetched_at_utc=datetime.now(timezone.utc),
+            ),
+        )
+        return response
 
 
 def _profile(root: Path) -> Path:

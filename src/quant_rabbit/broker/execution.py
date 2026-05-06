@@ -229,8 +229,10 @@ class LiveOrderGateway:
         initial_occupancy = _trader_entry_occupancy(initial_snapshot)
         sent_count = 0
         accepted_count = 0
-        cumulative_risk_jpy = 0.0
-        cumulative_margin_jpy = 0.0
+        validation_cumulative_risk_jpy = 0.0
+        validation_cumulative_margin_jpy = 0.0
+        accepted_risk_jpy = 0.0
+        accepted_margin_jpy = 0.0
         seen_geometry = set(_pending_geometry_keys(initial_snapshot))
         order_results: list[dict[str, Any]] = []
         batch_risk_issues = 0
@@ -263,8 +265,8 @@ class LiveOrderGateway:
                 send=send,
                 confirm_live=confirm_live,
                 allow_basket_pending=True,
-                cumulative_risk_jpy=cumulative_risk_jpy,
-                cumulative_margin_jpy=cumulative_margin_jpy,
+                cumulative_risk_jpy=validation_cumulative_risk_jpy,
+                cumulative_margin_jpy=validation_cumulative_margin_jpy,
                 seen_geometry=seen_geometry,
             )
             order_results.append(item_result)
@@ -273,8 +275,14 @@ class LiveOrderGateway:
             if item_result.get("sent") or (not send and item_result.get("status") == "STAGED"):
                 accepted_count += 1
                 metrics = item_result.get("risk_metrics") if isinstance(item_result.get("risk_metrics"), dict) else {}
-                cumulative_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
-                cumulative_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
+                accepted_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
+                accepted_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
+                # Dry-run staged orders are not visible in broker truth, so
+                # carry them synthetically. Live sends are verified against the
+                # next fresh broker snapshot to avoid double-counting margin.
+                if not item_result.get("sent"):
+                    validation_cumulative_risk_jpy += float(metrics.get("risk_jpy") or 0.0)
+                    validation_cumulative_margin_jpy += float(metrics.get("estimated_margin_jpy") or 0.0)
                 geometry_key = item_result.get("geometry_key")
                 if geometry_key:
                     seen_geometry.add(tuple(geometry_key))
@@ -305,8 +313,8 @@ class LiveOrderGateway:
             "sent_count": sent_count,
             "staged_count": staged_count,
             "blocked_count": blocked_count,
-            "cumulative_risk_jpy": cumulative_risk_jpy,
-            "cumulative_margin_jpy": cumulative_margin_jpy,
+            "cumulative_risk_jpy": accepted_risk_jpy,
+            "cumulative_margin_jpy": accepted_margin_jpy,
             "initial_trader_entry_occupancy": initial_occupancy,
         }
         self._write_result(result)
