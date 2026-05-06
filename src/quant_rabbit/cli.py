@@ -719,7 +719,7 @@ def main(argv: list[str] | None = None) -> int:
                 "",
                 "## How To Read",
                 "",
-                "- Long/Short scores are 0..1 indicator-agreement values weighted by timeframe (H1>M15>M5).",
+                "- Long/Short scores are 0..1 indicator-agreement values weighted by timeframe (D>H4>H1>M30>M15>M5>M1).",
                 "- A high score is a *signal of where the chart leans*, not an order. The trader still chooses.",
                 "- Regime is the dominant tag across timeframes (TREND_UP/DOWN, RANGE, IMPULSE_UP/DOWN, FAILURE_RISK, UNCLEAR).",
                 "- Pairs are sorted by max(long, short); the top entries are where edges line up.",

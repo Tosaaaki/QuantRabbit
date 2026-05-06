@@ -41,8 +41,8 @@ from quant_rabbit.strategy.profile import StrategyProfile
 #   (currently 5.0) — the validator rejects stops thinner than 5× spread, so the
 #   generator pre-emptively floors at 6× to leave a small safety margin.
 # - GEOMETRY_ATR_TIMEFRAME: M5 is the operating timeframe of the scalp / swing
-#   trader. M15 / H1 ATR is also available in pair_charts but reflects slower
-#   structure than the trader is reacting to.
+#   trader. M1 is too noisy for stop geometry, while M15/M30/H1/H4/D ATR
+#   reflects slower structure than the trader is reacting to.
 GEOMETRY_ATR_MULT = 1.0
 GEOMETRY_SPREAD_FLOOR_MULT = 6.0
 GEOMETRY_ATR_TIMEFRAME = "M5"

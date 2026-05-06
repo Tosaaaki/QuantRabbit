@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from quant_rabbit.analysis.candles import Candle
-from quant_rabbit.analysis.chart_reader import build_pair_chart
+from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES, build_pair_chart
 
 
 def _series(start: float, step: float, n: int = 100) -> list[Candle]:
@@ -21,6 +21,20 @@ def _series(start: float, step: float, n: int = 100) -> list[Candle]:
 
 
 class ChartReaderTest(unittest.TestCase):
+    def test_default_pair_chart_reads_full_timeframe_stack(self) -> None:
+        candles_by_tf = {
+            tf: _series(156.0, 0.02, n=220)
+            for tf in DEFAULT_TIMEFRAMES
+        }
+
+        chart = build_pair_chart(
+            "USD_JPY",
+            client=None,  # type: ignore[arg-type]
+            candles_by_tf=candles_by_tf,
+        )
+
+        self.assertEqual(tuple(view.granularity for view in chart.views), DEFAULT_TIMEFRAMES)
+
     def test_uptrend_pair_scores_long_above_short(self) -> None:
         candles_by_tf = {
             "M5": _series(156.0, 0.04),
@@ -64,7 +78,7 @@ class ChartReaderTest(unittest.TestCase):
         self.assertIn("ATR=", chart.chart_story)
         self.assertIn("RSI=", chart.chart_story)
 
-    def test_short_history_pair_chart_uses_indicator_regime_reading(self) -> None:
+    def test_short_history_pair_chart_uses_available_regime_reading(self) -> None:
         candles_by_tf = {"M5": _series(1.17, -0.00005, n=200)}
 
         chart = build_pair_chart(
@@ -78,7 +92,7 @@ class ChartReaderTest(unittest.TestCase):
         self.assertIsNotNone(reading)
         assert reading is not None
         self.assertNotEqual(reading.state, "UNKNOWN")
-        self.assertEqual(reading.source, "indicator_set_M5")
+        self.assertIn(reading.source, {"ohlc_dfa_atr_percentile", "indicator_set_M5"})
         self.assertEqual(reading.lookback_bars, 200)
         self.assertIn("Read=", chart.chart_story)
 

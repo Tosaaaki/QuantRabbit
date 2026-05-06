@@ -41,6 +41,33 @@ from quant_rabbit.analysis.smc import SMCReading, analyze_smc
 # - H4/D: higher-timeframe context and "are we fighting the tape?" audit.
 DEFAULT_TIMEFRAMES: tuple[str, ...] = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
 
+# Timeframe-specific annualization for ATR percentiles. These are calendar /
+# bar-frequency constants, not strategy thresholds. The classifier uses them to
+# make "1y ATR percentile" mean roughly the same market memory on M1 and D.
+_BARS_PER_YEAR_BY_TIMEFRAME: dict[str, int] = {
+    "M1": 252 * 1440,
+    "M5": 252 * 288,
+    "M15": 252 * 96,
+    "M30": 252 * 48,
+    "H1": 252 * 24,
+    "H4": 252 * 6,
+    "D": 252,
+}
+
+# Statistical filter windows by timeframe. Each value is a count of bars, so
+# it scales the memory horizon with the chart being read instead of treating an
+# H4 candle like an M5 candle. Windows remain estimator policy; missing history
+# emits None rather than substituting a price or risk literal.
+_STAT_FILTER_WINDOWS_BY_TIMEFRAME: dict[str, dict[str, int]] = {
+    "M1": {"autocorr": 200, "moment": 300, "jump": 80, "dfa": 300},
+    "M5": {"autocorr": 100, "moment": 200, "jump": 50, "dfa": 200},
+    "M15": {"autocorr": 80, "moment": 160, "jump": 40, "dfa": 160},
+    "M30": {"autocorr": 64, "moment": 128, "jump": 32, "dfa": 128},
+    "H1": {"autocorr": 48, "moment": 96, "jump": 24, "dfa": 96},
+    "H4": {"autocorr": 32, "moment": 80, "jump": 20, "dfa": 80},
+    "D": {"autocorr": 24, "moment": 64, "jump": 16, "dfa": 64},
+}
+
 
 @dataclass(frozen=True)
 class ChartView:
@@ -194,7 +221,13 @@ def _build_reading_layer(
 
     regime_reading: RegimeReading | None = None
     try:
-        regime_reading = classify_regime(closes=closes, highs=highs, lows=lows)
+        regime_reading = classify_regime(
+            closes=closes,
+            highs=highs,
+            lows=lows,
+            bars_per_year=_bars_per_year_for(granularity),
+            hurst_window=_hurst_window_for(granularity, len(closes)),
+        )
         if regime_reading.state == "UNKNOWN":
             indicator_reading = _indicator_regime_reading(indicators, granularity=granularity)
             if indicator_reading.state != "UNKNOWN":
@@ -211,7 +244,11 @@ def _build_reading_layer(
     stat_filters: StatFilterReading | None = None
     try:
         atr_for_flat = indicators.atr_pips * indicators.pip_size if indicators.atr_pips else None
-        stat_filters = compute_stat_filters(closes, atr_for_flat=atr_for_flat)
+        stat_filters = compute_stat_filters(
+            closes,
+            atr_for_flat=atr_for_flat,
+            **_stat_filter_kwargs_for(granularity, len(closes)),
+        )
     except Exception:
         stat_filters = None
 
@@ -223,6 +260,32 @@ def _build_reading_layer(
         smc_reading = None
 
     return regime_reading, family_scores, stat_filters, smc_reading
+
+
+def _bars_per_year_for(granularity: str) -> int:
+    return _BARS_PER_YEAR_BY_TIMEFRAME.get(granularity.upper(), _BARS_PER_YEAR_BY_TIMEFRAME["M5"])
+
+
+def _hurst_window_for(granularity: str, candle_count: int) -> int:
+    base = _STAT_FILTER_WINDOWS_BY_TIMEFRAME.get(granularity.upper(), _STAT_FILTER_WINDOWS_BY_TIMEFRAME["M5"])["dfa"]
+    # DFA requires window+1 closes. Clamp to available history so the reading can
+    # use the fetched packet when possible; classify_regime still reports the
+    # effective lookback in RegimeReading.lookback_bars.
+    return max(32, min(base, max(candle_count - 1, 32)))
+
+
+def _stat_filter_kwargs_for(granularity: str, candle_count: int) -> dict[str, int]:
+    base = _STAT_FILTER_WINDOWS_BY_TIMEFRAME.get(granularity.upper(), _STAT_FILTER_WINDOWS_BY_TIMEFRAME["M5"])
+    # Keep windows inside available history so M1/H4/D default packets return
+    # meaningful filters instead of all-None, while underfilled estimators still
+    # fail loudly through None fields.
+    max_returns = max(candle_count - 1, 0)
+    return {
+        "autocorr_window": max(8, min(base["autocorr"], max_returns)),
+        "moment_window": max(16, min(base["moment"], max_returns)),
+        "jump_window": max(4, min(base["jump"], max_returns)),
+        "dfa_window": max(32, min(base["dfa"], max_returns)),
+    }
 
 
 def _indicator_regime_reading(indicators: IndicatorSet, *, granularity: str) -> RegimeReading:
