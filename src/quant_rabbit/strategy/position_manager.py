@@ -120,7 +120,23 @@ class PositionManager:
             and position.owner == Owner.TRADER
             and _trader_sl_repair_disabled()
         )
-        if position.stop_loss is None or position.take_profit is None:
+
+        # Contradiction exit check runs BEFORE SL-free hold so that contradicted
+        # losing positions are closed even when SL repair is disabled.
+        contradicted = (
+            opposite_score is not None
+            and same_score is not None
+            and opposite_score >= same_score + 20
+            and position.unrealized_pl_jpy < 0
+        )
+        if not contradicted:
+            contradicted = _chart_regime_contradicted(position, pair_charts)
+        if contradicted:
+            if opposite_score is not None and same_score is not None:
+                reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
+            reasons.append(f"chart regime contradicts {position.side.value} (losing {position.unrealized_pl_jpy:.1f} JPY)")
+            action = ACTION_REVIEW_EXIT
+        elif position.stop_loss is None or position.take_profit is None:
             missing = []
             if position.take_profit is None:
                 missing.append("TP")
@@ -478,6 +494,28 @@ def _market_valid_stop(position: BrokerPosition, stop_loss: float, quote) -> boo
 
 def _default_repair_stop_pips(pair: str) -> float:
     return 10.0 if pair.endswith("_JPY") else 8.0
+
+
+def _chart_regime_contradicted(position: BrokerPosition, pair_charts: dict[str, dict[str, Any]] | None) -> bool:
+    """Check if pair-chart composite regime strongly contradicts the position side.
+
+    A LONG position is contradicted when short_score >= 0.8 and long_score < 0.2
+    (and losing). A SHORT position is contradicted by the reverse. This catches
+    regime contradiction when trader_decision.json lane scores don't show a wide
+    enough gap but the chart composite clearly disagrees with the position.
+    """
+    if pair_charts is None or position.unrealized_pl_jpy >= 0:
+        return False
+    chart = pair_charts.get(position.pair)
+    if chart is None:
+        return False
+    long_score = chart.get("long_score")
+    short_score = chart.get("short_score")
+    if long_score is None or short_score is None:
+        return False
+    if position.side == Side.LONG:
+        return short_score >= 0.8 and long_score < 0.2
+    return long_score >= 0.8 and short_score < 0.2
 
 
 def _opposite(side: Side) -> str:
