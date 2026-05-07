@@ -588,8 +588,12 @@ class LiveOrderGateway:
                 lines.append(f"  - `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
                 if "price" in order:
                     lines.append(f"  - price: `{order['price']}`")
-                lines.append(f"  - takeProfitOnFill: `{order['takeProfitOnFill']['price']}`")
-                lines.append(f"  - stopLossOnFill: `{order['stopLossOnFill']['price']}`")
+                if order.get("takeProfitOnFill"):
+                    lines.append(f"  - takeProfitOnFill: `{order['takeProfitOnFill']['price']}`")
+                if order.get("stopLossOnFill"):
+                    lines.append(f"  - stopLossOnFill: `{order['stopLossOnFill']['price']}`")
+                else:
+                    lines.append("  - stopLossOnFill: `none (SL-free)`")
                 metrics = item.get("risk_metrics") if isinstance(item.get("risk_metrics"), dict) else None
                 if metrics:
                     lines.append(
@@ -601,8 +605,12 @@ class LiveOrderGateway:
             lines.append(f"- `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
             if "price" in order:
                 lines.append(f"- price: `{order['price']}`")
-            lines.append(f"- takeProfitOnFill: `{order['takeProfitOnFill']['price']}`")
-            lines.append(f"- stopLossOnFill: `{order['stopLossOnFill']['price']}`")
+            if order.get("takeProfitOnFill"):
+                lines.append(f"- takeProfitOnFill: `{order['takeProfitOnFill']['price']}`")
+            if order.get("stopLossOnFill"):
+                lines.append(f"- stopLossOnFill: `{order['stopLossOnFill']['price']}`")
+            else:
+                lines.append("- stopLossOnFill: `none (SL-free)`")
             metrics = result.get("risk_metrics") if isinstance(result.get("risk_metrics"), dict) else None
             if metrics:
                 margin_tail = ""
