@@ -1032,10 +1032,15 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         "units": str(signed_units),
         "positionFill": _position_fill(intent),
         "takeProfitOnFill": {"price": _price(intent.pair, intent.tp)},
-        "stopLossOnFill": {"price": _price(intent.pair, intent.sl)},
         "clientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
         "tradeClientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
     }
+    # SL-free regime: omit stopLossOnFill so the broker does not enforce a
+    # tight noise-range SL. The intent.sl is still computed for sizing/risk
+    # math but is not sent to OANDA. User directive 「SLいらない」 / 「損失を
+    # 出さないで稼ぎまくる」 (2026-05-07).
+    if not _trader_sl_repair_disabled():
+        order["stopLossOnFill"] = {"price": _price(intent.pair, intent.sl)}
     if intent.order_type == OrderType.MARKET:
         order["timeInForce"] = "FOK"
     else:
