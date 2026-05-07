@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
+
+
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_STATE,
@@ -641,8 +646,13 @@ def _portfolio_add_allowed(snapshot: BrokerSnapshot) -> bool:
     trader_positions = tuple(position for position in snapshot.positions if position.owner == Owner.TRADER)
     if not trader_positions:
         return False
+    sl_free_active = _trader_sl_repair_disabled()
+    # SL-free regime: trader-owned SL=None is intentional; TP must still
+    # be present for layering (TP is the harvest plan in SL-free mode).
     return all(
-        position.owner == Owner.TRADER and position.stop_loss is not None and position.take_profit is not None
+        position.owner == Owner.TRADER
+        and position.take_profit is not None
+        and (position.stop_loss is not None or sl_free_active)
         for position in trader_positions
     )
 
