@@ -172,7 +172,18 @@ class PositionManager:
                 pair_charts,
             )
             reasons.extend(profit_reasons)
-            if profit_protection_needed:
+            sl_free_global = (
+                position.owner == Owner.TRADER and _trader_sl_repair_disabled()
+            )
+            if profit_protection_needed and sl_free_global:
+                # SL-free directive: do not auto-tighten SL even on profit.
+                # The operator decides when to harvest. TP stays as the auto
+                # exit; auto-added BE-stop is exactly the noise-hunt vector
+                # the user told us to stop generating ("意図的じゃないSLは
+                # 生成するな" 2026-05-07).
+                reasons.append("profit-protect skipped (QR_TRADER_DISABLE_SL_REPAIR=1); operator-managed harvest")
+                action = ACTION_HOLD_SL_FREE
+            elif profit_protection_needed:
                 reasons.append("profit clears remaining risk plus current session noise")
                 recommended_stop_loss = _break_even_stop(position, quote)
                 if recommended_stop_loss is None:
