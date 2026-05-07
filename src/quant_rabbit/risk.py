@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 from .models import (
     AccountSummary,
@@ -159,7 +164,10 @@ class RiskPolicy:
     # exposure. They remain visible in broker truth, but the autonomous trader
     # must not protect, close, or count them against its own entry budget.
     allow_operator_managed_manual_exposure: bool = True
-    max_portfolio_positions: int = 4
+    # Concurrent trader-owned positions cap. Default 4 caps simultaneous
+    # exposure to ~4 lanes; live env can override via `QR_MAX_PORTFOLIO_POSITIONS`
+    # for attack-mode multi-lane participation (`feedback_attack_mode_sizing.md`).
+    max_portfolio_positions: int = int(os.environ.get("QR_MAX_PORTFOLIO_POSITIONS", "4") or "4")
     max_portfolio_loss_jpy: float | None = None
 
 
@@ -211,8 +219,17 @@ class RiskEngine:
                         f"{self.policy.max_portfolio_positions}",
                     )
                 )
+            sl_free_active_for_layer = _trader_sl_repair_disabled()
             for position in entry_relevant_positions:
-                if position.owner != Owner.TRADER or position.stop_loss is None or position.take_profit is None:
+                # SL-free regime: trader-owned positions with TP but no SL are
+                # treated as protected for layering. The 「SLいらない」 directive
+                # makes SL=None deliberate; TP remains as the harvest protection.
+                pos_eligible = (
+                    position.owner == Owner.TRADER
+                    and position.take_profit is not None
+                    and (position.stop_loss is not None or sl_free_active_for_layer)
+                )
+                if not pos_eligible:
                     issues.append(
                         RiskIssue(
                             "OPEN_POSITION_EXISTS",
@@ -245,13 +262,19 @@ class RiskEngine:
                     )
 
         if self.policy.block_unprotected_positions:
+            sl_free_active = _trader_sl_repair_disabled()
             for position in entry_relevant_positions:
-                if position.stop_loss is None or position.take_profit is None:
-                    missing = []
-                    if position.take_profit is None:
-                        missing.append("TP")
-                    if position.stop_loss is None:
+                missing = []
+                if position.take_profit is None:
+                    missing.append("TP")
+                if position.stop_loss is None:
+                    if sl_free_active and position.owner == Owner.TRADER:
+                        # User directive 「SLいらない」 — trader-owned SL=None is
+                        # deliberate and does not block fresh entries. TP-only.
+                        pass
+                    else:
                         missing.append("SL")
+                if missing:
                     issues.append(
                         RiskIssue(
                             "UNPROTECTED_POSITION",
@@ -742,12 +765,13 @@ class RiskEngine:
 
     def _open_portfolio_risk_jpy(self, snapshot: BrokerSnapshot) -> tuple[float, RiskIssue | None]:
         total = 0.0
+        sl_free_active = _trader_sl_repair_disabled()
+        # Synthetic-SL distance for trader-owned SL-free positions: assume the
+        # discretionary close happens within the SL-free invalidation budget
+        # (5x M5 ATR ≈ 25 pips on majors). Hard-coded conservative estimate
+        # so basket math has a real number; refine later from pair_charts ATR.
+        SL_FREE_SYNTHETIC_PIPS = 30.0
         for position in self._entry_relevant_positions(snapshot):
-            if position.stop_loss is None:
-                return 0.0, RiskIssue(
-                    "PORTFOLIO_RISK_UNKNOWN",
-                    f"open position {position.trade_id} has no SL; cannot compute portfolio risk",
-                )
             spec = self._spec(position.pair)
             quote_to_jpy = self._quote_to_jpy(position.pair, snapshot)
             if quote_to_jpy is None:
@@ -755,10 +779,19 @@ class RiskEngine:
                     "PORTFOLIO_RISK_UNKNOWN",
                     f"missing conversion quote for open position {position.trade_id} {position.pair}",
                 )
-            if position.side == Side.LONG:
-                loss_pips = (position.entry_price - position.stop_loss) * spec.pip_factor
+            if position.stop_loss is None:
+                if sl_free_active and position.owner == Owner.TRADER:
+                    loss_pips = SL_FREE_SYNTHETIC_PIPS
+                else:
+                    return 0.0, RiskIssue(
+                        "PORTFOLIO_RISK_UNKNOWN",
+                        f"open position {position.trade_id} has no SL; cannot compute portfolio risk",
+                    )
             else:
-                loss_pips = (position.stop_loss - position.entry_price) * spec.pip_factor
+                if position.side == Side.LONG:
+                    loss_pips = (position.entry_price - position.stop_loss) * spec.pip_factor
+                else:
+                    loss_pips = (position.stop_loss - position.entry_price) * spec.pip_factor
             jpy_per_pip = (position.units / spec.pip_factor) * quote_to_jpy
             total += max(0.0, loss_pips) * jpy_per_pip
         return total, None

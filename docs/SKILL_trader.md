@@ -44,12 +44,25 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 ## Runtime Skeleton
 
 ```bash
+# 0. Export SL-free strategy env vars so generate-intents and risk validation
+#    pick up the wider stop geometry, suppressed SL repair, and expanded
+#    portfolio cap. These mirror `scripts/run-autotrade-live.sh` defaults so
+#    direct CLI invocations and the wrapper produce identical receipts.
+export QR_GEOMETRY_ATR_MULT="${QR_GEOMETRY_ATR_MULT:-5.0}"
+export QR_GEOMETRY_SPREAD_FLOOR_MULT="${QR_GEOMETRY_SPREAD_FLOOR_MULT:-12.0}"
+export QR_TRADER_DISABLE_SL_REPAIR="${QR_TRADER_DISABLE_SL_REPAIR:-1}"
+export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
+
 # 1. Route to the right prompt branch
 PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 
 # 2. Refresh evidence when routed there
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
+# `--daily-risk-budget` and `--target-trades-per-day` raise the per-trade cap
+# from the conservative 140 JPY default to ~1000 JPY so attack-mode sizing
+# (`feedback_attack_mode_sizing.md`) is reachable. The product still derives
+# from equity (≈4.6% of starting NAV), not a hardcoded JPY constant.
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-budget 10000 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot
@@ -60,7 +73,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-budget 10000 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
