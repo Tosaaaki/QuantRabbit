@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import math
 import json
+import os
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
 from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Owner, Quote, Side, TradeMethod
+
+
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_LIVE_ORDER_REQUEST,
@@ -897,21 +902,30 @@ def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, Ri
 
 def _open_trader_position_risk_jpy(snapshot: BrokerSnapshot) -> tuple[float, RiskIssue | None]:
     risk = 0.0
+    sl_free_active = _trader_sl_repair_disabled()
+    # Synthetic SL distance for trader-owned SL-free positions (basket math).
+    # Mirror the value used in `risk._open_portfolio_risk_jpy` so basket and
+    # portfolio gates see the same number.
+    SL_FREE_SYNTHETIC_PIPS = 30.0
     for position in snapshot.positions:
         if position.owner != Owner.TRADER:
             continue
-        if position.stop_loss is None:
-            return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"trader position {position.trade_id} has no SL")
         spec = DEFAULT_SPECS.get(position.pair)
         if spec is None:
             return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"position {position.trade_id} pair {position.pair} is unsupported")
         quote_to_jpy = _quote_to_jpy(position.pair, snapshot)
         if quote_to_jpy is None:
             return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"missing conversion quote for position {position.trade_id}")
-        if position.side == Side.LONG:
-            loss_pips = (position.entry_price - position.stop_loss) * spec.pip_factor
+        if position.stop_loss is None:
+            if sl_free_active:
+                loss_pips = SL_FREE_SYNTHETIC_PIPS
+            else:
+                return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"trader position {position.trade_id} has no SL")
         else:
-            loss_pips = (position.stop_loss - position.entry_price) * spec.pip_factor
+            if position.side == Side.LONG:
+                loss_pips = (position.entry_price - position.stop_loss) * spec.pip_factor
+            else:
+                loss_pips = (position.stop_loss - position.entry_price) * spec.pip_factor
         jpy_per_pip = (position.units / spec.pip_factor) * quote_to_jpy
         risk += max(0.0, loss_pips) * jpy_per_pip
     return risk, None
