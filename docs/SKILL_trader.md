@@ -52,6 +52,9 @@ export QR_GEOMETRY_ATR_MULT="${QR_GEOMETRY_ATR_MULT:-5.0}"
 export QR_GEOMETRY_SPREAD_FLOOR_MULT="${QR_GEOMETRY_SPREAD_FLOOR_MULT:-12.0}"
 export QR_TRADER_DISABLE_SL_REPAIR="${QR_TRADER_DISABLE_SL_REPAIR:-1}"
 export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
+# Operator-set base units. Under SL-free mode units = min(BASE_UNITS,
+# margin_budget). Loss-cap math is advisory; sizing is offense-anchored.
+export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 
 # 1. Route to the right prompt branch
 PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route

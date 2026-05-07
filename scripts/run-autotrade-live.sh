@@ -42,6 +42,16 @@ export QR_LIVE_ENABLED="${QR_LIVE_ENABLED:-0}"
 export QR_GEOMETRY_ATR_MULT="${QR_GEOMETRY_ATR_MULT:-5.0}"
 export QR_GEOMETRY_SPREAD_FLOOR_MULT="${QR_GEOMETRY_SPREAD_FLOOR_MULT:-12.0}"
 export QR_TRADER_DISABLE_SL_REPAIR="${QR_TRADER_DISABLE_SL_REPAIR:-1}"
+# Concurrent trader-owned positions cap. Default 4 in code; live runs a
+# wider portfolio so 3-pair-simultaneous attack (`feedback_attack_mode_sizing.md`)
+# fits comfortably with margin headroom.
+export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
+# Operator-set base position size (units) under SL-free mode. Sizing is no
+# longer derived from per-trade loss cap; only margin headroom can shrink
+# units below this. Bump higher for attack-mode (10000-15000); reduce when
+# margin is tight from manual exposure. User directive 「損失を出さないで
+# 稼ぎまくる」 2026-05-07.
+export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"

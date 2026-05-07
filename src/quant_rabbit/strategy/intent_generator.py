@@ -1523,9 +1523,25 @@ def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: fl
     quote_to_jpy = _quote_to_jpy(pair, snapshot)
     if quote_to_jpy is None:
         return 1
-    loss_budget_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
     margin_budget_units = _margin_budgeted_units(pair, entry, snapshot)
-    max_units = min(loss_budget_units, margin_budget_units) if margin_budget_units is not None else loss_budget_units
+    # SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive 「損失を出さない
+    # で稼ぎまくる」, 2026-05-07): sizing is operator-anchored, not loss-anchored.
+    # Read QR_TRADER_BASE_UNITS as the desired position size and only let
+    # margin headroom shrink it. The loss-budget factor is still computed and
+    # surfaced in metadata for audit, but it does not cap units.
+    sl_free_active = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+    if sl_free_active:
+        try:
+            base_units = float(os.environ.get("QR_TRADER_BASE_UNITS", "3000") or "3000")
+        except ValueError:
+            base_units = 3000.0
+        candidates = [base_units]
+        if margin_budget_units is not None:
+            candidates.append(margin_budget_units)
+        max_units = max(1.0, min(candidates))
+    else:
+        loss_budget_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
+        max_units = min(loss_budget_units, margin_budget_units) if margin_budget_units is not None else loss_budget_units
     if max_units >= 1000:
         return max(1000, int(max_units // 1000) * 1000)
     return max(1, int(max_units))
