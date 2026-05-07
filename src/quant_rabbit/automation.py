@@ -985,6 +985,71 @@ class AutoTradeCycle:
 
             gpt_summary = self._run_gpt_handoff()
             if gpt_summary.status == "ACCEPTED" and gpt_summary.allowed:
+                # Flat-with-positions GPT path must execute CLOSE / CANCEL_PENDING
+                # the same way the basket-with-pending path does upstream. Without
+                # these branches, an ACCEPTED CLOSE silently returns GPT_CLOSE and
+                # the broker is never asked to retire the named trades.
+                if gpt_summary.action == "CLOSE":
+                    closed_trades = self._close_gpt_trades(gpt_summary, send=send)
+                    summary = AutoTradeCycleSummary(
+                        status="CLOSED_GPT_TRADES" if closed_trades else "GPT_CLOSE",
+                        report_path=self.report_path,
+                        snapshot_path=self.snapshot_path,
+                        intents_path=self.intents_path,
+                        selected_lane_id=None,
+                        deterministic_lane_id=deterministic_lane_id,
+                        sent=False,
+                        positions=positions,
+                        orders=orders,
+                        live_ready=intent_summary.live_ready,
+                        receipt_promotions=promotion_summary.promoted,
+                        decision_source="gpt_trader",
+                        position_management_action=position_decision.action if position_decision else None,
+                        position_execution_status=position_execution.status if position_execution else None,
+                        position_execution_sent=position_execution.sent if position_execution else False,
+                        target_status=target_summary.status if target_summary else None,
+                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                        target_progress_pct=target_summary.progress_pct if target_summary else None,
+                        gpt_status=gpt_summary.status,
+                        gpt_action=gpt_summary.action,
+                        gpt_allowed=gpt_summary.allowed,
+                        gpt_issues=gpt_summary.issues,
+                        gpt_error=gpt_summary.error,
+                        campaign_exposure_required=campaign_exposure_required,
+                    )
+                    self._write_report(summary, generated_at)
+                    return summary
+                if gpt_summary.action == "CANCEL_PENDING":
+                    canceled_pending = self._cancel_gpt_pending_orders(gpt_summary, send=send)
+                    summary = AutoTradeCycleSummary(
+                        status="CANCELED_GPT_PENDING" if canceled_pending else "GPT_CANCEL_PENDING",
+                        report_path=self.report_path,
+                        snapshot_path=self.snapshot_path,
+                        intents_path=self.intents_path,
+                        selected_lane_id=None,
+                        deterministic_lane_id=deterministic_lane_id,
+                        sent=False,
+                        positions=positions,
+                        orders=orders,
+                        live_ready=intent_summary.live_ready,
+                        canceled_orders=tuple(canceled_pending),
+                        receipt_promotions=promotion_summary.promoted,
+                        decision_source="gpt_trader",
+                        position_management_action=position_decision.action if position_decision else None,
+                        position_execution_status=position_execution.status if position_execution else None,
+                        position_execution_sent=position_execution.sent if position_execution else False,
+                        target_status=target_summary.status if target_summary else None,
+                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                        target_progress_pct=target_summary.progress_pct if target_summary else None,
+                        gpt_status=gpt_summary.status,
+                        gpt_action=gpt_summary.action,
+                        gpt_allowed=gpt_summary.allowed,
+                        gpt_issues=gpt_summary.issues,
+                        gpt_error=gpt_summary.error,
+                        campaign_exposure_required=campaign_exposure_required,
+                    )
+                    self._write_report(summary, generated_at)
+                    return summary
                 if gpt_summary.action == "TRADE" and gpt_summary.selected_lane_id:
                     gpt_selected_lane_ids = (
                         gpt_summary.selected_lane_ids
