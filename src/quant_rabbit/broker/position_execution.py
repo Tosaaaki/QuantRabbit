@@ -165,15 +165,22 @@ class PositionProtectionGateway:
                     "timeInForce": "GTC",
                     "price": _price(position.pair, float(managed.recommended_stop_loss)),
                 }
-        if managed.recommended_take_profit is not None and position.take_profit is None:
-            tp_issue = _take_profit_issue(position, float(managed.recommended_take_profit), quote)
-            if tp_issue:
-                action["issues"].append(tp_issue)
-            else:
-                order_request["takeProfit"] = {
-                    "timeInForce": "GTC",
-                    "price": _price(position.pair, float(managed.recommended_take_profit)),
-                }
+        if managed.recommended_take_profit is not None:
+            current_tp = position.take_profit
+            new_tp = float(managed.recommended_take_profit)
+            tp_changed = current_tp is None or abs(new_tp - current_tp) > 1e-7
+            if tp_changed:
+                tp_issue = _take_profit_issue(position, new_tp, quote)
+                if tp_issue:
+                    action["issues"].append(tp_issue)
+                else:
+                    # Allow updating an existing TP, not just setting a missing one,
+                    # so the trader can move TP closer to harvest as the move
+                    # extends or push it out as the structure widens.
+                    order_request["takeProfit"] = {
+                        "timeInForce": "GTC",
+                        "price": _price(position.pair, new_tp),
+                    }
         if order_request:
             action["request"] = {
                 "type": "DEPENDENT_ORDER_REPLACE",

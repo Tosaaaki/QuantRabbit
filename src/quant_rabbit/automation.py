@@ -238,6 +238,7 @@ class GptHandoffSummary:
     issues: int
     selected_lane_ids: tuple[str, ...] = ()
     cancel_order_ids: tuple[str, ...] = ()
+    close_trade_ids: tuple[str, ...] = ()
     error: str | None = None
 
 
@@ -685,6 +686,41 @@ class AutoTradeCycle:
                         if (
                             gpt_summary.status == "ACCEPTED"
                             and gpt_summary.allowed
+                            and gpt_summary.action == "CLOSE"
+                        ):
+                            closed_trades = self._close_gpt_trades(gpt_summary, send=send)
+                            summary = AutoTradeCycleSummary(
+                                status="CLOSED_GPT_TRADES" if closed_trades else "GPT_CLOSE",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                deterministic_lane_id=basket_lane_ids[0] if basket_lane_ids else None,
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                selected_lane_ids=(),
+                                canceled_orders=tuple(canceled_orders),
+                                receipt_promotions=0,
+                                decision_source="gpt_trader",
+                                position_management_action=position_decision.action,
+                                position_execution_status=position_execution.status,
+                                position_execution_sent=position_execution.sent,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
+                        if (
+                            gpt_summary.status == "ACCEPTED"
+                            and gpt_summary.allowed
                             and gpt_summary.action == "CANCEL_PENDING"
                         ):
                             canceled_orders.extend(
@@ -799,6 +835,10 @@ class AutoTradeCycle:
                                 already_canceled=tuple(canceled_orders),
                             )
                         )
+                        # TRADE may also retire prior trader-owned positions
+                        # in the same cycle. Close runs before basket validation
+                        # so freed margin counts toward the new entries.
+                        self._close_gpt_trades(gpt_summary, send=send)
                         if target_open:
                             basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                                 decision=decision,
@@ -1558,6 +1598,7 @@ class AutoTradeCycle:
                 issues=summary.issues,
                 selected_lane_ids=summary.selected_lane_ids,
                 cancel_order_ids=summary.cancel_order_ids,
+                close_trade_ids=summary.close_trade_ids,
             )
         except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
             return GptHandoffSummary(
@@ -1587,6 +1628,28 @@ class AutoTradeCycle:
             canceled.append(order_id)
             already.add(order_id)
         return tuple(canceled)
+
+    def _close_gpt_trades(
+        self,
+        gpt_summary: GptHandoffSummary,
+        *,
+        send: bool,
+    ) -> tuple[str, ...]:
+        # Operator-directed market close on trader-owned positions named in
+        # decision.close_trade_ids. The verifier (gpt_trader) already confirmed
+        # each id is a current trader-owned trade in the broker snapshot.
+        if not send or not self.live_enabled or not gpt_summary.close_trade_ids:
+            return ()
+        closed: list[str] = []
+        for trade_id in gpt_summary.close_trade_ids:
+            try:
+                self.client.close_trade(str(trade_id), "ALL")
+                closed.append(str(trade_id))
+            except Exception:
+                # Failure to close (already closed, race) is non-fatal; the
+                # next cycle reads broker truth and re-decides.
+                continue
+        return tuple(closed)
 
     def _gpt_brain(self) -> GPTTraderBrain:
         return GPTTraderBrain(

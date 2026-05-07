@@ -95,6 +95,11 @@ class GPTTraderDecision:
     risk_notes: tuple[str, ...]
     evidence_refs: tuple[str, ...]
     operator_summary: str
+    # Operator-directed market close on existing trader-owned positions.
+    # Used with action="CLOSE" or attached to TRADE when an entry should
+    # also retire prior positions in the same cycle. Each id must match a
+    # current trader-owned open trade in the broker snapshot.
+    close_trade_ids: tuple[str, ...] = ()
     strategy_reviews: tuple[dict[str, Any], ...] = ()
     specialist_reviews: tuple[dict[str, Any], ...] = ()
 
@@ -123,6 +128,7 @@ class GPTTraderSummary:
     cancel_order_ids: tuple[str, ...]
     allowed: bool
     issues: int
+    close_trade_ids: tuple[str, ...] = ()
 
 
 class TraderModelProvider(Protocol):
@@ -209,6 +215,7 @@ class GPTTraderBrain:
             cancel_order_ids=decision.cancel_order_ids,
             allowed=verification.allowed,
             issues=len(verification.issues),
+            close_trade_ids=decision.close_trade_ids,
         )
 
     def _input_packet(self, snapshot_path: Path) -> dict[str, Any]:
@@ -507,6 +514,11 @@ class DecisionVerifier:
         elif decision.action in {"PROTECT", "TIGHTEN_SL", "CLOSE"}:
             if positions <= 0:
                 issues.append(VerificationIssue("NO_OPEN_POSITION", f"{decision.action} requires an open position"))
+            if decision.action == "CLOSE":
+                self._verify_close_trade_ids(decision, issues)
+        # CLOSE attached to TRADE: validate close_trade_ids even when action is TRADE.
+        if decision.action == "TRADE" and decision.close_trade_ids:
+            self._verify_close_trade_ids(decision, issues)
 
         return VerificationResult(allowed=not any(issue.severity == "BLOCK" for issue in issues), issues=tuple(issues))
 
@@ -527,6 +539,37 @@ class DecisionVerifier:
                     "UNKNOWN_CANCEL_ORDER_ID",
                     f"{action} cancel_order_ids must match current trader-owned pending entry orders: "
                     + ", ".join(unknown_cancel_ids),
+                )
+            )
+
+    def _verify_close_trade_ids(
+        self,
+        decision: GPTTraderDecision,
+        issues: list[VerificationIssue],
+    ) -> None:
+        if not decision.close_trade_ids:
+            if decision.action == "CLOSE":
+                issues.append(
+                    VerificationIssue(
+                        "MISSING_CLOSE_TRADE_IDS",
+                        "CLOSE must name the trader-owned trade ids to close",
+                    )
+                )
+            return
+        snapshot = self.packet.get("broker_snapshot", {}) or {}
+        trader_trade_ids: set[str] = set()
+        for position in snapshot.get("position_summaries", []) or []:
+            if str(position.get("owner") or "") == "trader":
+                tid = position.get("trade_id")
+                if tid is not None:
+                    trader_trade_ids.add(str(tid))
+        unknown = sorted(set(decision.close_trade_ids) - trader_trade_ids)
+        if unknown:
+            issues.append(
+                VerificationIssue(
+                    "UNKNOWN_CLOSE_TRADE_ID",
+                    "close_trade_ids must match current trader-owned open positions: "
+                    + ", ".join(unknown),
                 )
             )
 
@@ -637,6 +680,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "selected_lane_id": {"type": ["string", "null"]},
         "selected_lane_ids": {"type": "array", "items": {"type": "string"}},
         "cancel_order_ids": {"type": "array", "items": {"type": "string"}},
+        "close_trade_ids": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "string", "enum": list(ALLOWED_CONFIDENCE)},
         "thesis": {"type": "string"},
         "method": {"type": "string", "enum": list(ALLOWED_METHODS)},
@@ -713,6 +757,7 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
         risk_notes=tuple(str(item) for item in payload.get("risk_notes", []) or []),
         evidence_refs=tuple(str(item) for item in payload.get("evidence_refs", []) or []),
         operator_summary=str(payload.get("operator_summary") or ""),
+        close_trade_ids=tuple(str(item) for item in payload.get("close_trade_ids", []) or []),
         strategy_reviews=tuple(
             dict(item)
             for item in payload.get("strategy_reviews", []) or []
