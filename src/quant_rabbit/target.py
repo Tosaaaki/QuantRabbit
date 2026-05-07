@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+
+
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 from quant_rabbit.paths import DEFAULT_DAILY_TARGET_REPORT, DEFAULT_DAILY_TARGET_STATE
 from quant_rabbit.risk import RiskPolicy
 
@@ -364,7 +369,13 @@ def _position_risk(
     if position.take_profit is None:
         missing.append("TP")
     if position.stop_loss is None:
-        missing.append("SL")
+        # SL-free regime (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
+        # 「SLいらない」 / 「損失を出さないで稼ぎまくる」): trader-owned SL=None is
+        # intentional. Treat as protected for daily-target accounting so the
+        # status stays PURSUE_TARGET and basket entries are not blocked by
+        # REPAIR_REQUIRED.
+        if not (_trader_sl_repair_disabled() and position.owner == Owner.TRADER):
+            missing.append("SL")
     remaining_risk = _remaining_risk_jpy(position, quotes, home_conversions or {})
     if position.stop_loss is not None and remaining_risk is None:
         missing.append("JPY_CONVERSION")
