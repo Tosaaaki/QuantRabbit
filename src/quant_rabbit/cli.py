@@ -109,6 +109,39 @@ from quant_rabbit.target import DailyTargetLedger
 from quant_rabbit.trader_prompts import route_trader_prompts
 
 
+# SL-free production defaults. `scripts/run-autotrade-live.sh` exports the same
+# values, but a direct `python3 -m quant_rabbit.cli autotrade-cycle --send`
+# invocation (e.g. an ad-hoc smoke run, a manual reproducer, an alternate
+# scheduler) used to skip the wrapper and reattach tight broker SLs from
+# `intent.sl`. On 2026-05-07 23:24 UTC that path placed Trade 470395 with a
+# 5.3-pip SL — exactly the noise-range stop the operator directive 「SLい
+# らない」 forbids. The bootstrap only fires when QR_LIVE_ENABLED=1 so unit
+# tests (which exercise `cli.main(["autotrade-cycle", ...])` for argument
+# validation) do not pollute the rest of the pytest process. Within a live
+# session, only an explicit env override can revert any single knob.
+_SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
+    "QR_TRADER_DISABLE_SL_REPAIR": "1",
+    "QR_GEOMETRY_ATR_MULT": "5.0",
+    "QR_GEOMETRY_SPREAD_FLOOR_MULT": "12.0",
+    "QR_MAX_PORTFOLIO_POSITIONS": "10",
+    "QR_TRADER_BASE_UNITS": "3000",
+}
+
+
+def _bootstrap_sl_free_defaults() -> None:
+    applied: list[str] = []
+    for key, value in _SL_FREE_RUNTIME_DEFAULTS.items():
+        if key not in os.environ:
+            os.environ[key] = value
+            applied.append(key)
+    if applied:
+        sys.stderr.write(
+            "[qr-vnext] applied SL-free runtime defaults for "
+            + ",".join(applied)
+            + " (override with explicit env to revert)\n"
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qr-vnext")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -545,6 +578,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if summary.status in {"STAGED", "SENT"} else 2
     if args.command == "autotrade-cycle":
+        if os.environ.get("QR_LIVE_ENABLED") == "1":
+            _bootstrap_sl_free_defaults()
         try:
             use_gpt_trader = args.use_gpt_trader or os.environ.get("QR_GPT_TRADER_ENABLED") == "1"
             gpt_provider = _static_gpt_provider(
