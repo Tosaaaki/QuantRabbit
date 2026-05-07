@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,19 +33,36 @@ from quant_rabbit.strategy.profile import StrategyProfile
 # not the truth — the actual stop distance is the larger of ATR-derived and
 # spread-derived candidates.
 #
-# - GEOMETRY_ATR_MULT: 1.0 ATR is a "typical move" of the timeframe. Trader
-#   takes a setup expecting the next ATR to either prove the thesis (toward TP)
-#   or invalidate it (through SL). Tighter than 1.0 means routine noise hits SL;
-#   wider would needlessly enlarge worst-case loss.
-# - GEOMETRY_SPREAD_FLOOR_MULT: 6.0 × spread protects against broker fill jitter
-#   and wick noise around the entry. Must be >= RiskPolicy.min_stop_spread_multiple
-#   (currently 5.0) — the validator rejects stops thinner than 5× spread, so the
-#   generator pre-emptively floors at 6× to leave a small safety margin.
+# - GEOMETRY_ATR_MULT: default 1.0 ATR is a "typical move" of the timeframe.
+#   Live evidence (2026-05-06: 8 trader SL hits, ~-1075 JPY, all at 5–13 pips on
+#   EUR_USD/EUR_JPY/GBP_USD/AUD_JPY) showed 1.0 ATR sits inside routine M5 wick
+#   noise. The user's standing directive is "SLいらない" / SL-far
+#   (`feedback_no_tight_sl_thin_market.md`, `project_sl_free_strategy.md`).
+#   Override the default by setting `QR_GEOMETRY_ATR_MULT` (e.g. 5.0) in the
+#   live env so production widens SL out of the noise band without rewriting
+#   every regression-test fixture that was tuned to the 1.0-baseline geometry.
+# - GEOMETRY_SPREAD_FLOOR_MULT: default 6.0 × spread protects against broker
+#   fill jitter and wick noise around the entry. Must remain >=
+#   RiskPolicy.min_stop_spread_multiple (5.0). Override via
+#   `QR_GEOMETRY_SPREAD_FLOOR_MULT` (e.g. 12.0) for live SL-far operation.
 # - GEOMETRY_ATR_TIMEFRAME: M5 is the operating timeframe of the scalp / swing
 #   trader. M1 is too noisy for stop geometry, while M15/M30/H1/H4/D ATR
 #   reflects slower structure than the trader is reacting to.
-GEOMETRY_ATR_MULT = 1.0
-GEOMETRY_SPREAD_FLOOR_MULT = 6.0
+def _env_float(name: str, default: float, *, minimum: float | None = None) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if minimum is not None and value < minimum:
+        return minimum
+    return value
+
+
+GEOMETRY_ATR_MULT = _env_float("QR_GEOMETRY_ATR_MULT", 1.0, minimum=0.5)
+GEOMETRY_SPREAD_FLOOR_MULT = _env_float("QR_GEOMETRY_SPREAD_FLOOR_MULT", 6.0, minimum=5.1)
 GEOMETRY_ATR_TIMEFRAME = "M5"
 
 # Regime-derived reward/risk multipliers per AGENT_CONTRACT §3.5: "Trend regimes

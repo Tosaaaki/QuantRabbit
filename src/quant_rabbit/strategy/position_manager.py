@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,9 +26,19 @@ from quant_rabbit.strategy.intent_generator import (
 
 
 ACTION_HOLD_PROTECTED = "HOLD_PROTECTED"
+ACTION_HOLD_SL_FREE = "HOLD_SL_FREE"
 ACTION_PROFIT_PROTECT = "PROFIT_PROTECT_REQUIRED"
 ACTION_REVIEW_EXIT = "REVIEW_EXIT"
 ACTION_REPAIR_PROTECTION = "REPAIR_PROTECTION_REQUIRED"
+
+
+# When `QR_TRADER_DISABLE_SL_REPAIR=1` the protection gateway treats a missing
+# SL on a trader-owned position as deliberate (the user's "SLいらない" directive,
+# `feedback_no_tight_sl_thin_market.md`) and emits HOLD_SL_FREE instead of
+# REPAIR_PROTECTION_REQUIRED. TP repair, profit protection, and contradiction
+# exits still apply.
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 # Profit protection must not move SL to breakeven while the market is still
 # inside ordinary execution noise. Use the same spread floor as entry geometry
@@ -104,6 +115,11 @@ class PositionManager:
         recommended_take_profit: float | None = None
         reasons.extend(_session_protection_notes(position, quote, pair_charts))
 
+        sl_free_hold = (
+            position.stop_loss is None
+            and position.owner == Owner.TRADER
+            and _trader_sl_repair_disabled()
+        )
         if position.stop_loss is None or position.take_profit is None:
             missing = []
             if position.take_profit is None:
@@ -112,13 +128,17 @@ class PositionManager:
                 missing.append("SL")
             reasons.append(f"missing {'/'.join(missing)}")
             if position.stop_loss is None:
-                recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes, snapshot.home_conversions)
-                if recommended_stop_loss is None:
-                    reasons.append("no market-valid capped SL repair is available; exposure needs exit review")
-                    action = ACTION_REVIEW_EXIT
+                if sl_free_hold:
+                    reasons.append("trader SL-repair disabled (QR_TRADER_DISABLE_SL_REPAIR=1); discretionary SL-free hold")
+                    action = ACTION_HOLD_SL_FREE
                 else:
-                    reasons.append(f"repair SL candidate {recommended_stop_loss:.5f}")
-                    action = ACTION_REPAIR_PROTECTION
+                    recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes, snapshot.home_conversions)
+                    if recommended_stop_loss is None:
+                        reasons.append("no market-valid capped SL repair is available; exposure needs exit review")
+                        action = ACTION_REVIEW_EXIT
+                    else:
+                        reasons.append(f"repair SL candidate {recommended_stop_loss:.5f}")
+                        action = ACTION_REPAIR_PROTECTION
             else:
                 action = ACTION_REPAIR_PROTECTION
             if position.take_profit is None:

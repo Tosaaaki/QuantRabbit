@@ -33,6 +33,16 @@ load_live_enabled_from_env_file() {
 
 load_live_enabled_from_env_file
 export QR_LIVE_ENABLED="${QR_LIVE_ENABLED:-0}"
+
+# SL-free strategy knobs (`feedback_no_tight_sl_thin_market.md`,
+# `project_sl_free_strategy.md`, 2026-05-07 user directive 「SLいらない」).
+# Defaults widen SL beyond M5 noise so routine wicks cannot stop us out, and
+# disable position-manager SL-repair on trader-owned positions whose SL was
+# deliberately removed. Override per shell if you need to revert.
+export QR_GEOMETRY_ATR_MULT="${QR_GEOMETRY_ATR_MULT:-5.0}"
+export QR_GEOMETRY_SPREAD_FLOOR_MULT="${QR_GEOMETRY_SPREAD_FLOOR_MULT:-12.0}"
+export QR_TRADER_DISABLE_SL_REPAIR="${QR_TRADER_DISABLE_SL_REPAIR:-1}"
+
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"
 readonly DEFAULT_SYNC_DEV_ROOT="/Users/tossaki/App/QuantRabbit"
