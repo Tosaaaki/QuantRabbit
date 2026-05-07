@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
+
+
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
@@ -999,14 +1004,18 @@ def _pending_entry_order_ids(packet: dict[str, Any]) -> list[str]:
 def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
     snapshot = packet.get("broker_snapshot", {})
     blockers: list[str] = []
+    sl_free_active = _trader_sl_repair_disabled()
     for position in snapshot.get("position_summaries", []) or []:
         owner = str(position.get("owner") or "")
         if owner in {"manual", "unknown"}:
             continue
+        # SL-free regime: trader-owned TP-only positions are layerable
+        # (user directive 「SLいらない」 / 「損失を出さないで稼ぎまくる」).
+        sl_ok = position.get("stop_loss") is not None or sl_free_active
         if (
             owner == "trader"
             and position.get("take_profit") is not None
-            and position.get("stop_loss") is not None
+            and sl_ok
         ):
             continue
         blockers.append(
