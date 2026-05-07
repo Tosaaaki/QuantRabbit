@@ -1825,8 +1825,14 @@ def _portfolio_add_allowed(snapshot) -> bool:
     trader_positions = tuple(position for position in snapshot.positions if position.owner.value == "trader")
     if not trader_positions:
         return False
+    sl_free_active = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+    # Under SL-free mode (user directive 「SLいらない」 / 「損失を出さないで稼ぎまくる」),
+    # trader-owned SL=None is intentional. Layering stays allowed as long as
+    # every trader position has TP — TP is the harvest plan in SL-free mode.
     return all(
-        position.owner.value == "trader" and position.stop_loss is not None and position.take_profit is not None
+        position.owner.value == "trader"
+        and position.take_profit is not None
+        and (position.stop_loss is not None or sl_free_active)
         for position in trader_positions
     )
 
