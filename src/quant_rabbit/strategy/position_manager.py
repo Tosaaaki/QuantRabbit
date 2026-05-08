@@ -395,20 +395,18 @@ def _classify_macro(chart_story: str, lane_dir: str) -> str:
     target_up = lane_dir == "LONG"
 
     def _bias(tf: str) -> str:
+        # Macro bias relies on the TF's regime label only. Struct events
+        # (BOS/CHOCH) are timestamped at the last swing event and can be
+        # days old on D/H4 — using them as a tie-breaker on RANGE/UNCLEAR
+        # regimes mis-classifies positions with old downward struct as
+        # REVERSED while H1/H4 still trend up (2026-05-08 EUR_USD case).
         t = _parse_tf(chart_story, tf) or {}
         regime = str(t.get("regime") or "")
-        sd = t.get("struct_dir")
         if regime in _PM_REGIME_UP:
             return "UP"
         if regime in _PM_REGIME_DOWN:
             return "DOWN"
-        if regime in _PM_REGIME_RANGE:
-            # Use struct as tie-breaker when the regime label is ambiguous
-            if sd == "UP":
-                return "UP"
-            if sd == "DOWN":
-                return "DOWN"
-            return "MIXED"
+        # RANGE / UNCLEAR / TRANSITION / FAILURE_RISK: no directional bias.
         return "MIXED"
 
     h1 = _bias("H1")
