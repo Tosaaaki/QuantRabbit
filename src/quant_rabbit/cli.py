@@ -124,6 +124,12 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     "QR_GEOMETRY_ATR_MULT": "5.0",
     "QR_GEOMETRY_SPREAD_FLOOR_MULT": "12.0",
     "QR_MAX_PORTFOLIO_POSITIONS": "10",
+    # NAV-pct sizing replaces the legacy fixed unit count so position size
+    # auto-scales with equity (user 2026-05-08「BaseUnitを決めると、資産が
+    # 増えたときに追従できないよ。％で決めないといけなくない？」). 30% per
+    # position lands ≈10000u for EUR_USD at NAV ~227k — three concurrent
+    # positions reach ~90% margin utilization, just inside the 92% cap.
+    "QR_TRADER_POSITION_NAV_PCT": "30",
     "QR_TRADER_BASE_UNITS": "3000",
 }
 

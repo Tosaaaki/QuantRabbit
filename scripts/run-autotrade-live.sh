@@ -46,11 +46,15 @@ export QR_TRADER_DISABLE_SL_REPAIR="${QR_TRADER_DISABLE_SL_REPAIR:-1}"
 # wider portfolio so 3-pair-simultaneous attack (`feedback_attack_mode_sizing.md`)
 # fits comfortably with margin headroom.
 export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
-# Operator-set base position size (units) under SL-free mode. Sizing is no
-# longer derived from per-trade loss cap; only margin headroom can shrink
-# units below this. Bump higher for attack-mode (10000-15000); reduce when
-# margin is tight from manual exposure. User directive 「損失を出さないで
-# 稼ぎまくる」 2026-05-07.
+# NAV-pct sizing: each new position locks % of current NAV as margin, so
+# unit count auto-scales with equity (user 2026-05-08「BaseUnitを決めると、
+# 資産が増えたときに追従できないよ。％で決めないといけなくない？」). 30%
+# per position lands ≈10000u for EUR_USD at NAV 227k — three concurrent
+# positions reach ~90% margin utilization, just inside the 92% cap.
+# Override per shell to dial conservative (15-20) or all-in (40-50).
+export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
+# Legacy fixed-units fallback used only when QR_TRADER_POSITION_NAV_PCT
+# is unset. Kept for backward compat with smoke scripts that pin units.
 export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"

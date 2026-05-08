@@ -921,5 +921,126 @@ class PerTradeFloorTest(unittest.TestCase):
         self.assertGreater(policy.min_per_trade_risk_pct, 0.0)
 
 
+class NavPctSizingTest(unittest.TestCase):
+    """`_nav_pct_position_units` and the SL-free sizing precedence path.
+
+    User directive 2026-05-08「BaseUnitを決めると、資産が増えたときに追従
+    できないよ。％で決めないといけなくない？」: position size must be
+    NAV-relative so it auto-scales with equity.
+    """
+
+    def _account(self, nav_jpy: float = 227000.0):
+        from quant_rabbit.models import AccountSummary
+        return AccountSummary(
+            balance_jpy=nav_jpy,
+            nav_jpy=nav_jpy,
+            margin_used_jpy=0.0,
+            margin_available_jpy=nav_jpy,
+            unrealized_pl_jpy=0.0,
+            financing_jpy=0.0,
+            pl_jpy=0.0,
+            fetched_at_utc=datetime.now(timezone.utc),
+            hedging_enabled=True,
+            last_transaction_id="0",
+        )
+
+    def _snapshot(self, nav_jpy: float = 227000.0):
+        from quant_rabbit.models import BrokerSnapshot, Quote
+        return BrokerSnapshot(
+            fetched_at_utc=datetime.now(timezone.utc),
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": Quote(
+                    pair="EUR_USD",
+                    bid=1.17280,
+                    ask=1.17290,
+                    timestamp_utc=datetime.now(timezone.utc),
+                ),
+                "USD_JPY": Quote(
+                    pair="USD_JPY",
+                    bid=156.886,
+                    ask=156.894,
+                    timestamp_utc=datetime.now(timezone.utc),
+                ),
+            },
+            account=self._account(nav_jpy),
+            home_conversions={"USD": 157.0, "JPY": 1.0},
+        )
+
+    def test_nav_pct_returns_none_when_env_unset(self) -> None:
+        import os
+        from quant_rabbit.strategy.intent_generator import _nav_pct_position_units
+        prior = os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+        try:
+            result = _nav_pct_position_units("EUR_USD", 1.17290, self._snapshot())
+            self.assertIsNone(result)
+        finally:
+            if prior is not None:
+                os.environ["QR_TRADER_POSITION_NAV_PCT"] = prior
+
+    def test_nav_pct_30_yields_about_10000u_for_eur_usd_at_227k_nav(self) -> None:
+        # 30% × 227,000 JPY = 68,100 JPY margin.
+        # EUR_USD at 1.17290 with USDJPY=157 → margin/u ≈ 1.17290 × 157 × 0.04
+        # = 7.366 JPY/u. → 68,100 / 7.366 ≈ 9,245 units.
+        import os
+        from quant_rabbit.strategy.intent_generator import _nav_pct_position_units
+        os.environ["QR_TRADER_POSITION_NAV_PCT"] = "30"
+        try:
+            result = _nav_pct_position_units("EUR_USD", 1.17290, self._snapshot())
+            self.assertIsNotNone(result)
+            assert result is not None
+            self.assertGreater(result, 8500.0)
+            self.assertLess(result, 10500.0)
+        finally:
+            os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+
+    def test_nav_pct_auto_scales_with_higher_nav(self) -> None:
+        # Bumping NAV from 227k to 250k should grow units proportionally.
+        import os
+        from quant_rabbit.strategy.intent_generator import _nav_pct_position_units
+        os.environ["QR_TRADER_POSITION_NAV_PCT"] = "30"
+        try:
+            small = _nav_pct_position_units("EUR_USD", 1.17290, self._snapshot(nav_jpy=227000.0))
+            big = _nav_pct_position_units("EUR_USD", 1.17290, self._snapshot(nav_jpy=250000.0))
+            self.assertIsNotNone(small)
+            self.assertIsNotNone(big)
+            assert small is not None and big is not None
+            # 250/227 × small ≈ big within 5% tolerance.
+            expected_ratio = 250000.0 / 227000.0
+            actual_ratio = big / small
+            self.assertAlmostEqual(actual_ratio, expected_ratio, delta=0.02)
+        finally:
+            os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+
+    def test_nav_pct_auto_scales_down_with_lower_nav(self) -> None:
+        # Drawdown to 200k should shrink units proportionally.
+        import os
+        from quant_rabbit.strategy.intent_generator import _nav_pct_position_units
+        os.environ["QR_TRADER_POSITION_NAV_PCT"] = "30"
+        try:
+            normal = _nav_pct_position_units("EUR_USD", 1.17290, self._snapshot(nav_jpy=227000.0))
+            shrunk = _nav_pct_position_units("EUR_USD", 1.17290, self._snapshot(nav_jpy=200000.0))
+            self.assertIsNotNone(normal)
+            self.assertIsNotNone(shrunk)
+            assert normal is not None and shrunk is not None
+            self.assertLess(shrunk, normal)
+            expected_ratio = 200000.0 / 227000.0
+            actual_ratio = shrunk / normal
+            self.assertAlmostEqual(actual_ratio, expected_ratio, delta=0.02)
+        finally:
+            os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+
+    def test_nav_pct_invalid_value_returns_none(self) -> None:
+        import os
+        from quant_rabbit.strategy.intent_generator import _nav_pct_position_units
+        for bad in ("abc", "0", "-5", "  "):
+            os.environ["QR_TRADER_POSITION_NAV_PCT"] = bad
+            try:
+                self.assertIsNone(_nav_pct_position_units("EUR_USD", 1.17290, self._snapshot()))
+            finally:
+                os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+
+
 if __name__ == "__main__":
     unittest.main()

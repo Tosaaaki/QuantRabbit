@@ -1537,16 +1537,25 @@ def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: fl
     margin_budget_units = _margin_budgeted_units(pair, entry, snapshot)
     # SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive 「損失を出さない
     # で稼ぎまくる」, 2026-05-07): sizing is operator-anchored, not loss-anchored.
-    # Read QR_TRADER_BASE_UNITS as the desired position size and only let
-    # margin headroom shrink it. The loss-budget factor is still computed and
-    # surfaced in metadata for audit, but it does not cap units.
+    # Sizing precedence (highest first):
+    #   1. QR_TRADER_POSITION_NAV_PCT — % of NAV used as margin per position.
+    #      Auto-scales with equity (user 2026-05-08「BaseUnitを決めると、
+    #      資産が増えたときに追従できないよ。％で決めないといけなくない？」).
+    #   2. QR_TRADER_BASE_UNITS — legacy fixed-unit fallback.
+    #   3. Hard-coded 3000 unit fallback.
+    # Margin headroom (`_margin_budgeted_units`) still caps the result so the
+    # 92% portfolio margin utilization gate is never breached.
     sl_free_active = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
     if sl_free_active:
-        try:
-            base_units = float(os.environ.get("QR_TRADER_BASE_UNITS", "3000") or "3000")
-        except ValueError:
-            base_units = 3000.0
-        candidates = [base_units]
+        nav_pct_units = _nav_pct_position_units(pair, entry, snapshot)
+        if nav_pct_units is not None:
+            target_units = nav_pct_units
+        else:
+            try:
+                target_units = float(os.environ.get("QR_TRADER_BASE_UNITS", "3000") or "3000")
+            except ValueError:
+                target_units = 3000.0
+        candidates = [target_units]
         if margin_budget_units is not None:
             candidates.append(margin_budget_units)
         max_units = max(1.0, min(candidates))
@@ -1556,6 +1565,48 @@ def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: fl
     if max_units >= 1000:
         return max(1000, int(max_units // 1000) * 1000)
     return max(1, int(max_units))
+
+
+def _nav_pct_position_units(pair: str, entry: float, snapshot: BrokerSnapshot) -> float | None:
+    """Compute per-position units from QR_TRADER_POSITION_NAV_PCT × NAV.
+
+    Returns the desired unit count when the env var is set to a valid
+    positive number AND the broker snapshot carries a margin-eligible
+    account/quote/spec. Returns None when the operator has not configured
+    NAV-pct sizing (caller falls back to QR_TRADER_BASE_UNITS).
+
+    The percentage is consumed as MARGIN per position (not notional), so
+    "30" means each new position locks ~30% of NAV. With OANDA Japan's
+    25:1 leverage that translates to ≈7.5x NAV notional per position.
+    Three concurrent 30% positions reach ~90% margin utilization, which
+    sits just inside the 92% portfolio cap.
+    """
+    pct_str = os.environ.get("QR_TRADER_POSITION_NAV_PCT", "").strip()
+    if not pct_str:
+        return None
+    try:
+        pct = float(pct_str)
+    except ValueError:
+        return None
+    if pct <= 0:
+        return None
+    account = snapshot.account
+    if account is None or account.nav_jpy <= 0:
+        return None
+    quote_to_jpy = _quote_to_jpy(pair, snapshot)
+    spec = DEFAULT_SPECS.get(pair)
+    if quote_to_jpy is None or spec is None or spec.margin_rate <= 0:
+        return None
+    margin_per_unit = estimate_required_margin_jpy(
+        units=1,
+        entry_price=entry,
+        quote_to_jpy=quote_to_jpy,
+        spec=spec,
+    )
+    if margin_per_unit <= 0:
+        return None
+    target_margin_jpy = account.nav_jpy * (pct / 100.0)
+    return target_margin_jpy / margin_per_unit
 
 
 def _margin_budgeted_units(pair: str, entry: float, snapshot: BrokerSnapshot) -> float | None:
