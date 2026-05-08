@@ -23,7 +23,10 @@ from quant_rabbit.strategy.intent_generator import (
     _load_pair_charts,
     _session_bucket_for,
 )
-from quant_rabbit.strategy.price_action import aggregate_price_action_score
+from quant_rabbit.strategy.price_action import (
+    aggregate_price_action_score,
+    classify_order_block_proximity,
+)
 
 
 def _load_full_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]]:
@@ -498,49 +501,69 @@ def _adaptive_tp_action(
     if pa_reasons:
         reasons.append(f"price-action ({pa_delta_lane:+.1f}): " + " ; ".join(pa_reasons[:2]))
 
-    # Losing positions: only EXIT on confirmed reversal. WEAKENING+DEAD
-    # alone fires the loss-cut too aggressively on intra-trend pullbacks
-    # (today the AUD_JPY/GBP_USD basket got closed for −3,369 JPY at −5
-    # to −10 pips of normal pullback noise; the structures still resumed
-    # upward right after). User 2026-05-08「クローズ判断が早すぎて赤量産
-    # してない？少しさがるならショートだろ」: noise-range losses should
-    # not be auto-cut; let the trend backbone breathe.
+    # Losing positions: EXIT only on a market-derived structural break,
+    # never on a hardcoded NAV-percent threshold (AGENT_CONTRACT §3.5
+    # forbids thoughtless hardcodes / fallbacks; user 2026-05-08「決済も
+    # 市況によって動的。ハードコードとフォールバックはなし」).
     #
-    # New rules:
-    #   - macro REVERSED → CLOSE (real turn, regardless of loss size)
-    #   - WEAKENING+DEAD AND loss > 1% NAV (catastrophic territory)
-    #       → CLOSE
-    #   - everything else underwater → HOLD
+    # Two structural triggers:
+    #   1. macro=REVERSED — H1/H4 confirmed turn against the lane direction
+    #      (computed from the MTF chart_story by `_classify_macro`).
+    #   2. price has broken past the lane-relevant order block: for LONG,
+    #      below the nearest unmitigated BULL OB low (structural support
+    #      gone); for SHORT, above the nearest unmitigated BEAR OB high.
+    #
+    # If neither structural trigger fires, HOLD. Pullback noise inside
+    # the trend backbone is the exact regime SL-free was designed for —
+    # cutting at −5 pips manufactures the "open → red → close" churn the
+    # user flagged. The exit level comes from the market itself (OB
+    # levels priced by SMC), not from a literal JPY floor.
     if position.unrealized_pl_jpy <= 0:
-        # Catastrophic loss threshold: 1% of NAV per single position.
-        # Use a conservative literal NAV proxy when account isn't reachable.
-        nav_proxy = 200_000.0  # operator NAV magnitude — overridden when
-                                # the broker snapshot carries account info.
-        catastrophic_floor = -nav_proxy * 0.01  # −2,000 JPY at NAV 200k
-
         if macro == "REVERSED":
             reasons.append(
                 f"loss-cut: macro REVERSED while position underwater "
                 f"({position.unrealized_pl_jpy:+.0f} JPY) — H1/H4 structural turn"
             )
             return ACTION_REVIEW_EXIT, None, reasons
-        if (
-            macro == "WEAKENING"
-            and micro == "DEAD"
-            and position.unrealized_pl_jpy <= catastrophic_floor
-        ):
+
+        # Structural OB break check on M30 view (medium TF — short enough
+        # to reflect the move that just damaged the position, long enough
+        # not to fire on M5 noise wicks).
+        ob_break = False
+        ob_reason: str | None = None
+        if isinstance(pair_chart, dict):
+            for view in pair_chart.get("views") or []:
+                if view.get("granularity") != "M30":
+                    continue
+                obs = classify_order_block_proximity(view, cur_price, pip_factor)
+                if target_up and obs.nearest_bull_low is not None:
+                    if cur_price < obs.nearest_bull_low:
+                        ob_break = True
+                        ob_reason = (
+                            f"price {cur_price} below M30 BULL OB low "
+                            f"{obs.nearest_bull_low} — structural support broken"
+                        )
+                elif not target_up and obs.nearest_bear_high is not None:
+                    if cur_price > obs.nearest_bear_high:
+                        ob_break = True
+                        ob_reason = (
+                            f"price {cur_price} above M30 BEAR OB high "
+                            f"{obs.nearest_bear_high} — structural resistance broken"
+                        )
+                break
+
+        if ob_break and ob_reason is not None:
             reasons.append(
-                f"loss-cut: macro WEAKENING + micro DEAD AND loss "
-                f"{position.unrealized_pl_jpy:+.0f} JPY beyond catastrophic floor "
-                f"{catastrophic_floor:.0f} JPY"
+                f"loss-cut: {ob_reason} ({position.unrealized_pl_jpy:+.0f} JPY)"
             )
             return ACTION_REVIEW_EXIT, None, reasons
-        # Anything else underwater: hold. Pullback noise is the SL-free
-        # design's whole point; cutting at −5 to −10 pips manufactures the
-        # exact "open → quick red → close at loss" churn the user flagged.
+
+        # No structural break — HOLD and let the pullback resolve. The
+        # SL-free philosophy: the operator placed this position, no
+        # auto-rule should dump it on intra-trend noise.
         reasons.append(
             f"hold underwater ({position.unrealized_pl_jpy:+.0f} JPY): "
-            f"macro={macro} micro={micro} — within noise tolerance, await structure"
+            f"macro={macro} micro={micro} — no structural break detected"
         )
         return ACTION_HOLD_PROTECTED, None, reasons
 
