@@ -120,16 +120,28 @@ class PositionManager:
             and position.owner == Owner.TRADER
             and _trader_sl_repair_disabled()
         )
+        sl_free_owned = (
+            position.owner == Owner.TRADER and _trader_sl_repair_disabled()
+        )
 
-        # Contradiction exit check runs BEFORE SL-free hold so that contradicted
-        # losing positions are closed even when SL repair is disabled.
+        # Contradiction-based auto-REVIEW_EXIT was producing churn loops on
+        # SL-free trader-owned positions: chart regime flips frequently on M1/M5,
+        # so a -500 JPY EUR_USD SHORT got auto-closed and a fresh SHORT was
+        # opened in the same minute by the basket layer (2026-05-08 470395 →
+        # 470415, ~2 min apart). User directives 「SLいらない」「無駄な損切り
+        # はしない」「損失を出さないで稼ぎまくる」 (`feedback_no_tight_sl_thin_market.md`,
+        # `feedback_offense_sizing.md`) make operator-driven exits via
+        # `close_trade_ids` (commit 32deccb) authoritative. Suppress the
+        # auto-contradiction trigger on SL-free trader-owned positions; let the
+        # operator decide when a SHORT is genuinely contradicted vs noise.
         contradicted = (
-            opposite_score is not None
+            not sl_free_owned
+            and opposite_score is not None
             and same_score is not None
             and opposite_score >= same_score + 20
             and position.unrealized_pl_jpy < 0
         )
-        if not contradicted:
+        if not contradicted and not sl_free_owned:
             contradicted = _chart_regime_contradicted(position, pair_charts)
         if contradicted:
             if opposite_score is not None and same_score is not None:
@@ -191,7 +203,13 @@ class PositionManager:
                 else:
                     reasons.append(f"break-even SL candidate {recommended_stop_loss:.5f}")
                 action = ACTION_PROFIT_PROTECT
-            elif opposite_score is not None and same_score is not None and opposite_score >= same_score + 20 and position.unrealized_pl_jpy < 0:
+            elif (
+                not sl_free_owned
+                and opposite_score is not None
+                and same_score is not None
+                and opposite_score >= same_score + 20
+                and position.unrealized_pl_jpy < 0
+            ):
                 reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
                 action = ACTION_REVIEW_EXIT
             else:
