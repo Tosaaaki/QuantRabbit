@@ -470,6 +470,21 @@ def main(argv: list[str] | None = None) -> int:
     p_risk.add_argument("--risk-equity-jpy", type=float, default=None)
 
     args = parser.parse_args(argv)
+
+    # SL-free runtime defaults: every cli command that touches sizing /
+    # risk geometry must see the same env knobs as the wrapper exports.
+    # Previously the bootstrap fired only for `autotrade-cycle`, so a
+    # `generate-intents` or `stage-live-order` invocation that bypassed
+    # the wrapper got 3000u BASE_UNITS instead of POSITION_NAV_PCT-derived
+    # sizing (≈9,200u at NAV 226k × 30%). 2026-05-08 14:56 incident: a
+    # routine cycle opened a 3-pair LONG basket at 3000u/pair instead of
+    # the operator-anchored attack-mode size because intents had been
+    # generated under stale env. Move the bootstrap to the top of main()
+    # so every command sees the same defaults the wrapper would set.
+    # Gated on QR_LIVE_ENABLED=1 so unit tests stay isolated.
+    if os.environ.get("QR_LIVE_ENABLED") == "1":
+        _bootstrap_sl_free_defaults()
+
     if args.command == "import-legacy":
         summary = LegacyImporter(args.archive, args.db, args.report).run()
         print(
@@ -584,8 +599,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if summary.status in {"STAGED", "SENT"} else 2
     if args.command == "autotrade-cycle":
-        if os.environ.get("QR_LIVE_ENABLED") == "1":
-            _bootstrap_sl_free_defaults()
+        # Bootstrap moved to top of main() for all commands; this branch
+        # used to call it inline before the move.
         try:
             use_gpt_trader = args.use_gpt_trader or os.environ.get("QR_GPT_TRADER_ENABLED") == "1"
             gpt_provider = _static_gpt_provider(
