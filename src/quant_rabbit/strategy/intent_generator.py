@@ -601,6 +601,26 @@ class IntentGenerator:
     def run(self, *, snapshot_path: Path | None = None, max_candidates: int = 12) -> IntentGenerationSummary:
         plan = json.loads(self.campaign_plan.read_text())
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
+        # Phase 2 (user 2026-05-08「短期SHORTなら長期LONGでもSHORTいけるでしょ。
+        # 逆もまた然り」): under SL-free, also synthesize mirror lanes with
+        # opposite direction for each (desk, pair, method) so the scoring
+        # layer has both sides as candidates and the AI trader can pick
+        # whichever the structural lens favors right now. Dedupe to avoid
+        # producing the mirror twice when campaign_plan already lists both
+        # directions. `max_candidates` doubles to keep the dual-direction
+        # set room.
+        if _sl_free_active():
+            seen_keys = {(l.get("desk"), l.get("pair"), l.get("direction"), l.get("method")) for l in lanes}
+            mirrors: list[dict[str, Any]] = []
+            for lane in lanes:
+                m = _mirror_lane(lane)
+                key = (m.get("desk"), m.get("pair"), m.get("direction"), m.get("method"))
+                if key in seen_keys:
+                    continue
+                mirrors.append(m)
+                seen_keys.add(key)
+            lanes = lanes + mirrors
+            max_candidates = max(max_candidates, max_candidates * 2)
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
         strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
         # Pull equity-derived per-trade cap from daily_target_state.json when
@@ -881,6 +901,36 @@ def _lane_can_attempt(lane: dict[str, Any]) -> bool:
     return lane.get("adoption") in {"ORDER_INTENT_REQUIRED", "RISK_REPAIR_DRY_RUN", "TRIGGER_RECEIPT_REQUIRED"} and lane.get(
         "direction"
     ) in {"LONG", "SHORT"}
+
+
+def _mirror_lane(lane: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of `lane` with `direction` flipped LONG↔SHORT.
+
+    User 2026-05-08「短期SHORTなら、長期LONGでもSHORTいけるでしょ。逆もまた然り」:
+    under SL-free mode the AI trader reads market direction in real time
+    and should be free to take counter-trend pullbacks regardless of the
+    historical campaign direction. Generating a mirror lane lets the
+    scoring layer compare LONG vs SHORT on the same pair/method/desk
+    and pick the side the structural lens actually favors right now.
+    """
+    flipped_direction = "SHORT" if lane.get("direction") == "LONG" else "LONG"
+    mirror = dict(lane)
+    mirror["direction"] = flipped_direction
+    # Mark synthesised mirrors so downstream layers can recognise them
+    # in audit / report output. The lane_id changes naturally because
+    # `_lane_id` reads the new direction.
+    mirror["mirror_of"] = lane.get("direction")
+    return mirror
+
+
+def _sl_free_active() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
 
 
 def _lane_id(lane: dict[str, Any]) -> str:
