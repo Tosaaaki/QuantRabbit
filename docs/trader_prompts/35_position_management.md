@@ -17,13 +17,54 @@
 
 ## Protection Rules
 
-- Missing TP / SL on trader-owned exposure is a repair requirement.
+- Missing TP / SL on trader-owned exposure is a repair requirement, **except** under
+  SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`): trader-owned SL=None with TP set
+  is intentional, treat as protected, do NOT propose PROTECT/TIGHTEN_SL.
 - Operator-managed manual/tagless positions are observed only.
 - Existing SL must not be widened.
 - Existing TP is not moved by the protection gateway.
-- Profitable protected positions may tighten SL to break-even or better.
-- Contradicted trader-owned positions may close.
-- Fresh entries are blocked only by non-layerable trader-owned or external exposure; protected trader-owned exposure may add only through portfolio validation.
+- Profitable protected positions may tighten SL to break-even or better — **disabled
+  under SL-free**: do NOT auto-tighten on profit, the operator harvests via TP only.
+- Contradicted trader-owned positions may close, **but only on market-structure
+  evidence** (see CLOSE rules below).
+- Fresh entries are blocked only by non-layerable trader-owned or external exposure;
+  protected trader-owned exposure may add only through portfolio validation.
+
+## CLOSE Decision Rules (SL-free, user 2026-05-08「市況>リスク」)
+
+CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
+SL-free the per-trade risk number is advisory; market structure is authoritative.
+
+### Valid CLOSE triggers (any one is sufficient)
+
+- **MTF reversal**: H4/H1/M30 all flip against position (TREND_DOWN→TREND_UP or vice
+  versa). Cite each TF's regime + struct (BOS/CHOCH) in the receipt.
+- **Macro shock**: news event (intervention, FOMC, NFP gap, geopolitical) invalidates
+  the pair thesis. Cite the news_digest line in evidence_refs.
+- **Structural margin pressure**: closing this position is the only way to free
+  margin so the portfolio can keep capturing better setups. Quantify the margin
+  trade-off in receipt.
+- **Loss > NAV 5%** (≈11k JPY at current equity): structural collapse territory per
+  `feedback_independent_judgment.md`. Operator may CLOSE to cap damage.
+
+### NOT valid CLOSE triggers (do NOT propose CLOSE on these alone)
+
+- `unrealized_pl_jpy < -per_trade_risk_budget_jpy` — under SL-free this is **advisory
+  only**, not a hard close gate. -1,000 JPY ≈ 0.4% NAV is noise.
+- `chart_aggregate.long_score > short_score` (or vice versa) on its own — long/short
+  scores aggregate per-TF reads but a single noise flip on M5/M1 can move them.
+  Look at H4/H1/M30 directly before acting on aggregate.
+- M5/M1 short-term flip while H4/H1 still align with position — that's pullback noise
+  inside the macro thesis, not a reversal. SL-free design specifically holds through
+  this.
+- Position underwater for less than 30 minutes — give the structure time to play out.
+
+### When in doubt, choose WAIT
+
+`feedback_no_tight_sl_thin_market.md`「SLいらない」 / `feedback_offense_sizing.md`
+「損失出さないで稼ぎまくる」 / `feedback_market_over_risk_budget.md`「市況>リスク」.
+Holding through noise is the SL-free design's whole point — premature CLOSE locks in
+the noise loss AND forfeits the TP that's still reachable.
 
 ## Pending Orders
 
