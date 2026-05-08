@@ -447,10 +447,6 @@ def _adaptive_tp_action(
     reasons: list[str] = []
     if position.take_profit is None or quote is None:
         return ACTION_HOLD_PROTECTED, None, reasons
-    if position.unrealized_pl_jpy <= 0:
-        # Don't manage TPs on losing positions; let market structure decide
-        # (operator may still propose CLOSE via close_trade_ids on real reversal).
-        return ACTION_HOLD_PROTECTED, None, reasons
 
     pc = (pair_charts or {}).get(position.pair) if pair_charts else None
     chart_story = str(pc.get("chart_story") or "") if isinstance(pc, dict) else ""
@@ -462,6 +458,34 @@ def _adaptive_tp_action(
     micro = _classify_micro(chart_story, lane_dir)
     macro = _classify_macro(chart_story, lane_dir)
     reasons.append(f"micro={micro} macro={macro}")
+
+    # Losing positions need fast loss-cutting on real structural reversal,
+    # not blanket HOLD (user 2026-05-08「損切りも利確も判断を確実に素早く」).
+    # SL-free design: per_trade_risk overshoot is advisory (not a trigger), but
+    # macro reversal IS a trigger. `feedback_market_over_risk_budget.md` codifies:
+    #   - macro REVERSED → CLOSE
+    #   - WEAKENING + micro DEAD → CLOSE (early loss-cut on confirmed turn)
+    #   - else → HOLD (give the structure time to play out)
+    if position.unrealized_pl_jpy <= 0:
+        if macro == "REVERSED":
+            reasons.append(
+                f"loss-cut: macro REVERSED while position underwater "
+                f"({position.unrealized_pl_jpy:+.0f} JPY) — H1/H4 structural turn"
+            )
+            return ACTION_REVIEW_EXIT, None, reasons
+        if macro == "WEAKENING" and micro == "DEAD":
+            reasons.append(
+                f"loss-cut: macro WEAKENING + micro DEAD ("
+                f"{position.unrealized_pl_jpy:+.0f} JPY) — confirmed turn"
+            )
+            return ACTION_REVIEW_EXIT, None, reasons
+        # Macro intact (ALIGNED) — give the position time even underwater.
+        # Per `feedback_market_over_risk_budget.md`: hold through noise.
+        reasons.append(
+            f"hold underwater ({position.unrealized_pl_jpy:+.0f} JPY): "
+            f"macro {macro} not yet reversed"
+        )
+        return ACTION_HOLD_PROTECTED, None, reasons
 
     # Decision matrix (rows = macro, cols = micro)
     matrix = {
