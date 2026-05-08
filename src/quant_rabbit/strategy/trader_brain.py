@@ -32,17 +32,41 @@ _CHART_STORY_M1_STRUCT_PATTERN = re.compile(r"M1\([^)]*struct=(BOS|CHOCH)_(UP|DO
 _CHART_STORY_M5_STRUCT_PATTERN = re.compile(r"M5\([^)]*struct=(BOS|CHOCH)_(UP|DOWN)@")
 
 
-def _micro_structure_direction(market_context: dict[str, Any] | None) -> str:
+def _structural_chart_story(intent: dict[str, Any] | None) -> str:
+    """Return the inline multi-TF structural chart_story for an intent.
+
+    Looks first in `intent.metadata.chart_story_structural` (the
+    intent_generator-injected pair_charts string), falls back to the
+    legacy market_context.chart_story when the metadata key is absent
+    (older receipts / tests). Returns "" when neither is available.
+    """
+    if not isinstance(intent, dict):
+        return ""
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    metadata_story = str(metadata.get("chart_story_structural") or "")
+    if metadata_story:
+        return metadata_story
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    return str(market_context.get("chart_story") or "")
+
+
+def _micro_structure_direction(intent_or_context: dict[str, Any] | None) -> str:
     """Return the dominant M1/M5 BOS/CHOCH direction.
 
     "UP" / "DOWN" when both M1 and M5 agree, or when only one timeframe
     publishes a struct event. "UNCLEAR" when the two timeframes conflict
-    or when neither carries a struct field. Reads the inline chart_story
-    that the operator already sees, so no extra plumbing through scoring.
+    or when neither carries a struct field. Reads the inline structural
+    chart_story injected by `intent_generator._chart_context_for`; a bare
+    `market_context` dict still works for backward-compat tests.
     """
-    if not isinstance(market_context, dict):
+    if not isinstance(intent_or_context, dict):
         return "UNCLEAR"
-    chart_story = str(market_context.get("chart_story") or "")
+    # Accept either a full intent dict (preferred) or a raw market_context
+    # dict (legacy tests).
+    if "metadata" in intent_or_context or "market_context" in intent_or_context:
+        chart_story = _structural_chart_story(intent_or_context)
+    else:
+        chart_story = str(intent_or_context.get("chart_story") or "")
     if not chart_story:
         return "UNCLEAR"
     m1 = _CHART_STORY_M1_STRUCT_PATTERN.search(chart_story)
@@ -66,8 +90,7 @@ def _micro_structure_alignment_score(
     direction = str(intent.get("side") or "").upper()
     if direction not in {"LONG", "SHORT"}:
         return 0.0
-    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
-    micro = _micro_structure_direction(market_context)
+    micro = _micro_structure_direction(intent)
     if micro == "UNCLEAR":
         return 0.0
     aligned = (direction == "LONG" and micro == "UP") or (direction == "SHORT" and micro == "DOWN")
@@ -80,20 +103,22 @@ def _micro_structure_alignment_score(
     return MICRO_STRUCTURE_OPPOSED_PENALTY
 
 
-def _short_term_momentum_class(market_context: dict[str, Any] | None) -> str:
-    """Read M1/M5 ADX off the inline chart_story to classify momentum.
+def _short_term_momentum_class(intent_or_context: dict[str, Any] | None) -> str:
+    """Read M1/M5 ADX off the inline structural chart_story to classify momentum.
 
     Returns "HIGH" when the average M1+M5 ADX is at/above the breakout
     threshold (move in progress, MARKET fills catch it), "LOW" when the
     average is at/below the quiet threshold (range/transition, pending
-    triggers fill more cheaply), and "NEUTRAL" otherwise. The chart_story
-    string carries the ADX inline because it is the same payload the
-    operator (Claude/Codex) reads — keeping the parser here avoids a wider
-    refactor to thread pair_charts data through scoring.
+    triggers fill more cheaply), and "NEUTRAL" otherwise. Accepts either
+    a full intent dict (preferred — reads `metadata.chart_story_structural`)
+    or a raw market_context dict for backward compatibility.
     """
-    if not isinstance(market_context, dict):
+    if not isinstance(intent_or_context, dict):
         return "NEUTRAL"
-    chart_story = str(market_context.get("chart_story") or "")
+    if "metadata" in intent_or_context or "market_context" in intent_or_context:
+        chart_story = _structural_chart_story(intent_or_context)
+    else:
+        chart_story = str(intent_or_context.get("chart_story") or "")
     if not chart_story:
         return "NEUTRAL"
     m1 = _CHART_STORY_M1_ADX_PATTERN.search(chart_story)
@@ -438,7 +463,7 @@ class TraderBrain:
             # nothing until the trigger fires, so when M1/M5 ADX is quiet we
             # let those win the variant race; when ADX is hot we boost MARKET
             # to outscore pendings and grab the move.
-            momentum = _short_term_momentum_class(intent.get("market_context") or {})
+            momentum = _short_term_momentum_class(intent)
             if momentum == "HIGH":
                 score += 12.0
                 rationale.append("MARKET catches active short-term momentum (M1/M5 ADX≥25)")

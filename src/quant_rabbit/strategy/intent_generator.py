@@ -225,6 +225,13 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             "long_score": chart.get("long_score"),
             "short_score": chart.get("short_score"),
             "session": chart.get("session") if isinstance(chart.get("session"), dict) else {},
+            # Carry the inline structural chart_story (M1...struct=BOS_UP@...)
+            # so downstream scoring (`trader_brain._micro_structure_direction`,
+            # `trader_brain._short_term_momentum_class`) can parse the same
+            # micro-structure signal the operator reads, without re-loading
+            # pair_charts.json. The narrative chart_story on `MarketContext`
+            # is news/quality_audit excerpts and is left untouched.
+            "chart_story": chart.get("chart_story", "") or "",
         }
         for view in chart.get("views", []) or []:
             granularity = view.get("granularity")
@@ -359,6 +366,10 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "m5_trend_score": _optional_float(m5_family.get("trend_score")),
         "m5_breakout_score": _optional_float(m5_family.get("breakout_score")),
         "m5_family_disagreement": _optional_float(m5_family.get("disagreement")),
+        # Inline structural multi-TF chart_story for trader_brain micro-
+        # structure / momentum scoring. Distinct key from market_context's
+        # narrative `chart_story` (news/quality_audit excerpts).
+        "chart_story_structural": str(per_tf.get("chart_story") or ""),
     }
 
 
