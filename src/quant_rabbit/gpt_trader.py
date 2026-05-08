@@ -861,7 +861,7 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "stop_loss": item.get("stop_loss"),
                 "owner": item.get("owner"),
             }
-            for item in (snapshot.get("positions", []) or [])[:5]
+            for item in (snapshot.get("positions", []) or [])
         ],
         "pending_orders": _pending_order_packet(orders),
     }
