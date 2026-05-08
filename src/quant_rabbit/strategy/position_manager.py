@@ -23,6 +23,30 @@ from quant_rabbit.strategy.intent_generator import (
     _load_pair_charts,
     _session_bucket_for,
 )
+from quant_rabbit.strategy.price_action import aggregate_price_action_score
+
+
+def _load_full_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]]:
+    """Load pair_charts.json keyed by pair, preserving the full views array.
+
+    `_load_pair_charts` (intent_generator) flattens views into per-TF
+    keys for ATR / regime extraction. The price-action lens needs the
+    raw `views` list because it inspects swings, structure_events,
+    liquidity, order_blocks, dealing_range — which the flat shape drops.
+    Returns {} on missing/malformed file so callers can degrade gracefully.
+    """
+    if not charts_path.exists():
+        return {}
+    try:
+        payload = json.loads(charts_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for chart in payload.get("charts", []) or []:
+        pair = chart.get("pair")
+        if isinstance(pair, str):
+            out[pair] = chart
+    return out
 
 
 ACTION_HOLD_PROTECTED = "HOLD_PROTECTED"
@@ -459,6 +483,21 @@ def _adaptive_tp_action(
     macro = _classify_macro(chart_story, lane_dir)
     reasons.append(f"micro={micro} macro={macro}")
 
+    # Price-action lens (multi-TF SMC: swings, BOS/CHOCH events, dealing
+    # range, order blocks, liquidity touches). Returns a small ±delta that
+    # complements the macro/micro classification; primary action selection
+    # below still uses the matrix, but PA delta surfaces real market
+    # context in the rationale and gates ambiguous EXTEND decisions.
+    pip_factor = 100.0 if position.pair.endswith("_JPY") else 10000.0
+    cur_price = quote.bid if not target_up else quote.ask
+    full_charts = _load_full_pair_charts()
+    pair_chart = full_charts.get(position.pair)
+    pa_delta_lane, pa_reasons = aggregate_price_action_score(
+        pair_chart, lane_dir, cur_price, pip_factor
+    )
+    if pa_reasons:
+        reasons.append(f"price-action ({pa_delta_lane:+.1f}): " + " ; ".join(pa_reasons[:2]))
+
     # Losing positions need fast loss-cutting on real structural reversal,
     # not blanket HOLD (user 2026-05-08「損切りも利確も判断を確実に素早く」).
     # SL-free design: per_trade_risk overshoot is advisory (not a trigger), but
@@ -512,10 +551,15 @@ def _adaptive_tp_action(
 
     new_tp: float | None = None
 
+    # Gate EXTEND on positive price-action: don't push TP further when the
+    # lens reads weakening structure. Demote to HARVEST so we lock profit
+    # instead of chasing a TP the structure says won't print
+    # (user 2026-05-08「限界なら見極める」).
+    if action == ACTION_EXTEND_TP and pa_delta_lane < -3.0:
+        action = ACTION_HARVEST_TP
+        reasons.append(f"PA delta {pa_delta_lane:+.1f} demotes EXTEND→HARVEST")
+
     if action == ACTION_EXTEND_TP:
-        # If already > 60% to TP and still alive+aligned, extend by 50% of
-        # the original distance so winners run further. Skip when the move
-        # is already late (<20% remaining might just be TP fill imminent).
         if tp_pips_remaining > 5.0:
             extra_pips = max(10.0, tp_pips_remaining * 0.5)
             new_tp = (position.take_profit + extra_pips * pip) if target_up else (position.take_profit - extra_pips * pip)
