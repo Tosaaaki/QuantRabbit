@@ -18,6 +18,67 @@ SHORT_TERM_MOMENTUM_LOW_ADX = 18.0
 _CHART_STORY_M1_ADX_PATTERN = re.compile(r"M1\([^)]*ADX=([\d.]+)")
 _CHART_STORY_M5_ADX_PATTERN = re.compile(r"M5\([^)]*ADX=([\d.]+)")
 
+# Micro-structure alignment: M1/M5 most-recent BOS/CHOCH direction. Score
+# additions (`MICRO_STRUCTURE_ALIGNED_BONUS`) and penalties
+# (`MICRO_STRUCTURE_OPPOSED_PENALTY`) shift the lane ranking just enough that
+# a fresh micro flip against the lane direction can lose the variant race to
+# a same-direction-as-flip lane, without overriding genuinely strong macro
+# evidence. Tuned 2026-05-08 after H1 TREND_DOWN entries kept losing to M5
+# BOS_UP knife-catches in EUR_USD scalp sessions (user 「方向性をミスる
+# のはなんで？」).
+MICRO_STRUCTURE_ALIGNED_BONUS = 6.0
+MICRO_STRUCTURE_OPPOSED_PENALTY = -12.0
+_CHART_STORY_M1_STRUCT_PATTERN = re.compile(r"M1\([^)]*struct=(BOS|CHOCH)_(UP|DOWN)@")
+_CHART_STORY_M5_STRUCT_PATTERN = re.compile(r"M5\([^)]*struct=(BOS|CHOCH)_(UP|DOWN)@")
+
+
+def _micro_structure_direction(market_context: dict[str, Any] | None) -> str:
+    """Return the dominant M1/M5 BOS/CHOCH direction.
+
+    "UP" / "DOWN" when both M1 and M5 agree, or when only one timeframe
+    publishes a struct event. "UNCLEAR" when the two timeframes conflict
+    or when neither carries a struct field. Reads the inline chart_story
+    that the operator already sees, so no extra plumbing through scoring.
+    """
+    if not isinstance(market_context, dict):
+        return "UNCLEAR"
+    chart_story = str(market_context.get("chart_story") or "")
+    if not chart_story:
+        return "UNCLEAR"
+    m1 = _CHART_STORY_M1_STRUCT_PATTERN.search(chart_story)
+    m5 = _CHART_STORY_M5_STRUCT_PATTERN.search(chart_story)
+    m1_dir = m1.group(2) if m1 else None
+    m5_dir = m5.group(2) if m5 else None
+    if m1_dir and m5_dir:
+        return m1_dir if m1_dir == m5_dir else "UNCLEAR"
+    if m5_dir:
+        return m5_dir
+    if m1_dir:
+        return m1_dir
+    return "UNCLEAR"
+
+
+def _micro_structure_alignment_score(
+    intent: dict[str, Any],
+    rationale: list[str],
+    blockers: list[str],
+) -> float:
+    direction = str(intent.get("side") or "").upper()
+    if direction not in {"LONG", "SHORT"}:
+        return 0.0
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    micro = _micro_structure_direction(market_context)
+    if micro == "UNCLEAR":
+        return 0.0
+    aligned = (direction == "LONG" and micro == "UP") or (direction == "SHORT" and micro == "DOWN")
+    if aligned:
+        rationale.append(f"M1/M5 micro-structure {micro} agrees with {direction} thesis")
+        return MICRO_STRUCTURE_ALIGNED_BONUS
+    rationale.append(
+        f"M1/M5 micro-structure {micro} opposes {direction} thesis — fresh flip risk against entry"
+    )
+    return MICRO_STRUCTURE_OPPOSED_PENALTY
+
 
 def _short_term_momentum_class(market_context: dict[str, Any] | None) -> str:
     """Read M1/M5 ADX off the inline chart_story to classify momentum.
@@ -369,6 +430,7 @@ class TraderBrain:
             blockers=blockers,
         )
         score += _direction_conflict_penalty(result, rationale)
+        score += _micro_structure_alignment_score(intent, rationale, blockers)
         if order_type.upper() == "MARKET" and status == "LIVE_READY":
             # Regime-aware MARKET preference: catch live momentum, but don't
             # pay spread on quiet tape (user 2026-05-08 「市況によって柔軟に」

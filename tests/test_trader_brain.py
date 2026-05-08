@@ -11,7 +11,11 @@ from quant_rabbit.strategy.trader_brain import (
     ACTION_MONITOR_EXISTING,
     ACTION_NO_TRADE,
     ACTION_SEND_ENTRY,
+    MICRO_STRUCTURE_ALIGNED_BONUS,
+    MICRO_STRUCTURE_OPPOSED_PENALTY,
     TraderBrain,
+    _micro_structure_alignment_score,
+    _micro_structure_direction,
     _narrative_risk_score,
 )
 
@@ -770,6 +774,66 @@ def _thin_eur_story(root: Path) -> Path:
         )
     )
     return path
+
+
+class MicroStructureAlignmentTest(unittest.TestCase):
+    def _ctx(self, m1: str | None, m5: str | None) -> dict[str, dict[str, str]]:
+        parts = ["EUR_USD TREND_DOWN"]
+        if m1 is not None:
+            parts.append(f"M1(RANGE, ADX=15.0 RSI=52.0 ATR=1.0p struct={m1}@1.1730)")
+        if m5 is not None:
+            parts.append(f"M5(RANGE, ADX=16.0 RSI=53.0 ATR=2.0p struct={m5}@1.1732)")
+        return {"chart_story": "; ".join(parts)}
+
+    def test_direction_uses_m5_when_only_m5_present(self) -> None:
+        self.assertEqual(_micro_structure_direction(self._ctx(None, "BOS_UP")), "UP")
+        self.assertEqual(_micro_structure_direction(self._ctx(None, "CHOCH_DOWN")), "DOWN")
+
+    def test_direction_uses_m1_when_only_m1_present(self) -> None:
+        self.assertEqual(_micro_structure_direction(self._ctx("BOS_UP", None)), "UP")
+
+    def test_direction_aligned_when_m1_and_m5_agree(self) -> None:
+        self.assertEqual(_micro_structure_direction(self._ctx("CHOCH_UP", "BOS_UP")), "UP")
+        self.assertEqual(_micro_structure_direction(self._ctx("BOS_DOWN", "CHOCH_DOWN")), "DOWN")
+
+    def test_direction_unclear_when_m1_and_m5_conflict(self) -> None:
+        self.assertEqual(_micro_structure_direction(self._ctx("BOS_UP", "BOS_DOWN")), "UNCLEAR")
+
+    def test_direction_unclear_when_no_struct_field(self) -> None:
+        self.assertEqual(_micro_structure_direction({"chart_story": "EUR_USD; M1(RANGE, ADX=15.0)"}), "UNCLEAR")
+        self.assertEqual(_micro_structure_direction({}), "UNCLEAR")
+        self.assertEqual(_micro_structure_direction(None), "UNCLEAR")
+
+    def test_alignment_penalizes_short_into_micro_up_flip(self) -> None:
+        # 2026-05-08 EUR_USD scalp scenario: H1 TREND_DOWN but M1/M5 just
+        # flipped UP via BOS_UP@1.1732. Lane direction SHORT must take a
+        # negative score adjustment so the operator sees the conflict in
+        # rationale and a same-direction-as-flip lane can outscore it.
+        intent = {"side": "SHORT", "market_context": self._ctx("CHOCH_UP", "BOS_UP")}
+        rationale: list[str] = []
+        score = _micro_structure_alignment_score(intent, rationale, [])
+        self.assertEqual(score, MICRO_STRUCTURE_OPPOSED_PENALTY)
+        self.assertTrue(any("opposes SHORT" in line for line in rationale))
+
+    def test_alignment_rewards_long_into_micro_up_flip(self) -> None:
+        intent = {"side": "LONG", "market_context": self._ctx("CHOCH_UP", "BOS_UP")}
+        rationale: list[str] = []
+        score = _micro_structure_alignment_score(intent, rationale, [])
+        self.assertEqual(score, MICRO_STRUCTURE_ALIGNED_BONUS)
+        self.assertTrue(any("agrees with LONG" in line for line in rationale))
+
+    def test_alignment_neutral_when_micro_unclear(self) -> None:
+        intent = {"side": "SHORT", "market_context": self._ctx("BOS_UP", "BOS_DOWN")}
+        rationale: list[str] = []
+        score = _micro_structure_alignment_score(intent, rationale, [])
+        self.assertEqual(score, 0.0)
+        self.assertEqual(rationale, [])
+
+    def test_alignment_neutral_when_market_context_missing(self) -> None:
+        intent = {"side": "LONG"}
+        rationale: list[str] = []
+        score = _micro_structure_alignment_score(intent, rationale, [])
+        self.assertEqual(score, 0.0)
 
 
 if __name__ == "__main__":
