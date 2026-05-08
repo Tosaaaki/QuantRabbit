@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 from quant_rabbit.paths import (
     ROOT,
@@ -263,6 +268,7 @@ def _gpt_decision_terminal_state(path: Path | None, decision_mtime_ns: int) -> s
 
 
 def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
+    sl_free_active = _trader_sl_repair_disabled()
     reasons: list[str] = []
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict):
@@ -270,7 +276,17 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
         owner = str(position.get("owner") or "")
         if owner in {"manual", "unknown"}:
             continue
-        if position.get("take_profit") is None or position.get("stop_loss") is None:
+        tp_missing = position.get("take_profit") is None
+        sl_missing = position.get("stop_loss") is None
+        # SL-free regime (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
+        # 「SLいらない」 / 「損失を出さないで稼ぎまくる」 2026-05-07): trader-owned
+        # SL=None is intentional and should NOT route the operator into
+        # BRANCH_POSITION repair mode every cycle. TP-only is the SL-free
+        # design — only flag a real protection gap (missing TP, or any
+        # missing protection on owner=trader when SL-repair is enabled).
+        if sl_free_active and owner == "trader" and not tp_missing:
+            continue
+        if tp_missing or sl_missing:
             reasons.append(
                 "trader-owned position needs protection repair: "
                 f"{position.get('pair')} {position.get('side')} id={position.get('trade_id')}"

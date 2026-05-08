@@ -63,10 +63,80 @@ class TraderPromptRouteTest(unittest.TestCase):
                 ],
             )
 
-            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            prior = os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is not None:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
         self.assertEqual(route.branch, BRANCH_POSITION)
         self.assertIn("needs protection repair", route.reasons[0])
+
+    def test_sl_free_trader_tp_only_position_does_not_force_position_branch(self) -> None:
+        # Under QR_TRADER_DISABLE_SL_REPAIR=1 the operator directive 「SLいらない」
+        # makes trader-owned SL=None intentional. Routing must let the operator
+        # reach BRANCH_ENTRY for fresh entries instead of being trapped in
+        # BRANCH_POSITION repair mode every cycle.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "470395",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "take_profit": 1.17026,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+
+    def test_sl_free_trader_position_missing_tp_still_routes_to_position_branch(self) -> None:
+        # SL-free skip applies to SL=None only. A trader-owned position with
+        # TP also missing is a real protection gap and must still route to
+        # BRANCH_POSITION even when SL-repair is disabled.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "999",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": None,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
 
     def test_routes_existing_decision_response_to_verify_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
