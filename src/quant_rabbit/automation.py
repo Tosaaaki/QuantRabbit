@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import shutil
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -1704,15 +1705,29 @@ class AutoTradeCycle:
         # decision.close_trade_ids. The verifier (gpt_trader) already confirmed
         # each id is a current trader-owned trade in the broker snapshot.
         if not send or not self.live_enabled or not gpt_summary.close_trade_ids:
+            sys.stderr.write(
+                f"[automation._close_gpt_trades] short-circuit: "
+                f"send={send} live_enabled={self.live_enabled} "
+                f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
+            )
             return ()
         closed: list[str] = []
         for trade_id in gpt_summary.close_trade_ids:
             try:
-                self.client.close_trade(str(trade_id), "ALL")
+                response = self.client.close_trade(str(trade_id), "ALL")
                 closed.append(str(trade_id))
-            except Exception:
+                sys.stderr.write(
+                    f"[automation._close_gpt_trades] closed trade_id={trade_id} "
+                    f"resp_keys={list(response.keys()) if isinstance(response, dict) else type(response).__name__}\n"
+                )
+            except Exception as exc:
                 # Failure to close (already closed, race) is non-fatal; the
-                # next cycle reads broker truth and re-decides.
+                # next cycle reads broker truth and re-decides. Log the exact
+                # exception so the operator can diagnose silent failures.
+                sys.stderr.write(
+                    f"[automation._close_gpt_trades] FAILED trade_id={trade_id} "
+                    f"exc_type={type(exc).__name__} exc_msg={exc}\n"
+                )
                 continue
         return tuple(closed)
 
