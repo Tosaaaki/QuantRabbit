@@ -748,6 +748,30 @@ class TraderBrain:
         )
         score += _direction_conflict_penalty(result, rationale)
         score += _mtf_confluence_score(intent, rationale, blockers)
+
+        # Micro override: M1+M5 struct opposite to lane direction trumps the
+        # historical-bias score. User 2026-05-08「ミクロのグラデーションでしょ？
+        # 今の赤もショートで入ってたら勝てた」: when both micro TFs print struct
+        # against the lane, the immediate move is the wrong direction — refuse
+        # to enter regardless of how strong the historical evidence looks.
+        # Single-TF flip is half-strength so a noisy M1 alone doesn't kill an
+        # otherwise-clean lane.
+        intent_side = str(intent.get("side") or "").upper()
+        chart_story = _structural_chart_story(intent)
+        m1_struct = _CHART_STORY_M1_STRUCT_PATTERN.search(chart_story)
+        m5_struct = _CHART_STORY_M5_STRUCT_PATTERN.search(chart_story)
+        target_up = intent_side == "LONG"
+        m1_opp = bool(m1_struct and ((m1_struct.group(2) == "DOWN") == target_up))
+        m5_opp = bool(m5_struct and ((m5_struct.group(2) == "DOWN") == target_up))
+        if m1_opp and m5_opp:
+            score -= 30.0
+            rationale.append(
+                f"micro override: M1+M5 both struct opposite to {intent_side} — historical bias ignored"
+            )
+        elif m1_opp or m5_opp:
+            score -= 10.0
+            which = "M1" if m1_opp else "M5"
+            rationale.append(f"micro caution: {which} struct opposite to {intent_side}")
         # Price-action lens (user 2026-05-08「市況をちゃんとみれるようにして」):
         # SMC structural read across H4-M5 (swings, BOS/CHOCH events, dealing
         # range, order blocks, liquidity touches). Adds ±25 envelope to the
