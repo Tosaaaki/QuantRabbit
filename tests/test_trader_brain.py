@@ -13,10 +13,16 @@ from quant_rabbit.strategy.trader_brain import (
     ACTION_SEND_ENTRY,
     MICRO_STRUCTURE_ALIGNED_BONUS,
     MICRO_STRUCTURE_OPPOSED_PENALTY,
+    MTF_CONFLUENCE_CEILING,
+    MTF_CONFLUENCE_FLOOR,
     TraderBrain,
     _micro_structure_alignment_score,
     _micro_structure_direction,
+    _mtf_confluence_score,
     _narrative_risk_score,
+    _parse_chart_story_full,
+    _tf_lens_support,
+    _tf_strength_multiplier,
 )
 
 
@@ -834,6 +840,128 @@ class MicroStructureAlignmentTest(unittest.TestCase):
         rationale: list[str] = []
         score = _micro_structure_alignment_score(intent, rationale, [])
         self.assertEqual(score, 0.0)
+
+
+class MTFConfluenceTest(unittest.TestCase):
+    """Full 7-TF × 5-lens confluence scoring (`_mtf_confluence_score`).
+
+    User directive 2026-05-08「分析を広く」「エントリーしない理由ではなく、
+    エントリーする理由をみつけてほしい」: positive bias, capped negative.
+    """
+
+    # Fixture mirroring the live 2026-05-08 EUR_USD chart_story after the
+    # M5 BOS_DOWN re-flip — stack is uniformly SHORT-supportive across
+    # struct, regime, Supertrend, Ichimoku cloud.
+    EUR_USD_FULL_SHORT_STORY = (
+        "EUR_USD TREND_DOWN; "
+        "M1(UNCLEAR, ADX=23.6 RSI=49.0 ATR=1.0p ST=- Read=TRANSITION:0.25 cloud=below struct=BOS_DOWN@1.1730); "
+        "M5(RANGE, ADX=12.4 RSI=45.0 ATR=2.0p ST=- Read=TRANSITION:0.25 cloud=below struct=BOS_DOWN@1.1731); "
+        "M15(TREND_DOWN, ADX=37.0 RSI=43.1 ATR=4.9p ST=- Read=TREND_WEAK:0.33 cloud=below struct=CHOCH_UP@1.1732); "
+        "M30(TREND_DOWN, ADX=36.1 RSI=37.4 ATR=8.1p ST=- Read=TREND_WEAK:0.67 cloud=below struct=BOS_DOWN@1.1736); "
+        "H1(TREND_DOWN, ADX=31.3 RSI=39.1 ATR=11.7p ST=- Read=TREND_WEAK:0.67 cloud=below struct=CHOCH_DOWN@1.1762); "
+        "H4(TREND_DOWN, ADX=26.8 RSI=48.7 ATR=22.4p ST=+ Read=TREND_WEAK:0.67 struct=BOS_UP@1.1785); "
+        "D(UNCLEAR, ADX=22.1 RSI=53.8 ATR=65.0p ST=+ Read=TRANSITION:0.25 cloud=above struct=CHOCH_DOWN@1.1669)"
+    )
+
+    def _intent(self, side: str, story: str | None = None) -> dict:
+        return {
+            "side": side,
+            "metadata": {"chart_story_structural": story or self.EUR_USD_FULL_SHORT_STORY},
+        }
+
+    def test_parse_extracts_all_seven_timeframes(self) -> None:
+        parsed = _parse_chart_story_full(self.EUR_USD_FULL_SHORT_STORY)
+        self.assertEqual(set(parsed.keys()), {"M1", "M5", "M15", "M30", "H1", "H4", "D"})
+
+    def test_parse_extracts_all_lenses(self) -> None:
+        parsed = _parse_chart_story_full(self.EUR_USD_FULL_SHORT_STORY)
+        m30 = parsed["M30"]
+        self.assertEqual(m30["regime"], "TREND_DOWN")
+        self.assertEqual(m30["struct_dir"], "DOWN")
+        self.assertEqual(m30["struct_type"], "BOS")
+        self.assertEqual(m30["supertrend"], "DOWN")
+        self.assertEqual(m30["cloud"], "below")
+        self.assertAlmostEqual(m30["adx"], 36.1)
+        self.assertAlmostEqual(m30["rsi"], 37.4)
+        self.assertEqual(m30["read_label"], "TREND_WEAK")
+        self.assertAlmostEqual(m30["read_confidence"], 0.67)
+
+    def test_parse_handles_missing_cloud(self) -> None:
+        parsed = _parse_chart_story_full(self.EUR_USD_FULL_SHORT_STORY)
+        # H4 in the live story carries no cloud field; parser must omit
+        # the key gracefully (not crash, not insert a default).
+        self.assertNotIn("cloud", parsed["H4"])
+
+    def test_lens_support_short_picks_up_all_short_lenses(self) -> None:
+        parsed = _parse_chart_story_full(self.EUR_USD_FULL_SHORT_STORY)
+        h1 = parsed["H1"]
+        raw, max_possible, reasons = _tf_lens_support(h1, "SHORT")
+        # H1 has 4 SHORT-supporting lenses: struct=DOWN(1.0), regime
+        # TREND_DOWN(1.0), ST=-(0.7), cloud=below(0.5) = 3.2 raw with 3.2 max.
+        self.assertAlmostEqual(raw, 3.2)
+        self.assertAlmostEqual(max_possible, 3.2)
+        # Reasons should list the four supporting lenses in some order.
+        text = " ".join(reasons)
+        self.assertIn("DOWN", text)
+        self.assertIn("ST=-", text)
+        self.assertIn("cloud=below", text)
+
+    def test_strength_multiplier_boosts_high_adx(self) -> None:
+        # ADX 31 + Read confidence 0.67 → 1.30 × (0.5 + 0.5*0.67) = 1.30 × 0.835 = 1.0855
+        h1_data = {"adx": 31.3, "read_confidence": 0.67}
+        self.assertAlmostEqual(_tf_strength_multiplier(h1_data), 1.30 * 0.835, places=4)
+
+    def test_strength_multiplier_dampens_low_adx(self) -> None:
+        # ADX 12 → 0.70 multiplier; no Read confidence → 1.0 inner factor
+        m5_data = {"adx": 12.4}
+        self.assertAlmostEqual(_tf_strength_multiplier(m5_data), 0.70)
+
+    def test_short_lane_strongly_aligned_returns_large_positive(self) -> None:
+        # The full-stack EUR_USD SHORT setup must score solidly positive
+        # (≥10) so the lane outranks lagging-evidence-only competitors.
+        score = _mtf_confluence_score(self._intent("SHORT"), [], [])
+        self.assertGreaterEqual(score, 10.0)
+        self.assertLessEqual(score, MTF_CONFLUENCE_CEILING)
+
+    def test_long_lane_into_full_short_stack_capped_negative(self) -> None:
+        # LONG into a uniformly SHORT-aligned MTF stack must take a
+        # negative penalty but never exceed the floor — a single contrary
+        # signal should not zero out an otherwise-priceable setup.
+        score = _mtf_confluence_score(self._intent("LONG"), [], [])
+        self.assertLessEqual(score, 5.0)
+        self.assertGreaterEqual(score, MTF_CONFLUENCE_FLOOR)
+
+    def test_score_surfaces_aligned_lenses_in_rationale(self) -> None:
+        # Per directive: "find reasons to enter". Operator must see which
+        # lenses agreed even when net score is moderate.
+        rationale: list[str] = []
+        _mtf_confluence_score(self._intent("SHORT"), rationale, [])
+        self.assertTrue(rationale, "rationale must surface reasoning")
+        joined = " ".join(rationale)
+        self.assertIn("aligned", joined)
+
+    def test_no_chart_story_returns_zero(self) -> None:
+        self.assertEqual(_mtf_confluence_score({"side": "LONG"}, [], []), 0.0)
+
+    def test_invalid_direction_returns_zero(self) -> None:
+        self.assertEqual(
+            _mtf_confluence_score({"side": "WAIT", "metadata": {"chart_story_structural": self.EUR_USD_FULL_SHORT_STORY}}, [], []),
+            0.0,
+        )
+
+    def test_negative_score_capped_at_floor(self) -> None:
+        # Even a worst-case fully-opposed alignment must respect the floor.
+        score = _mtf_confluence_score(self._intent("LONG"), [], [])
+        self.assertGreaterEqual(score, MTF_CONFLUENCE_FLOOR)
+
+    def test_rsi_extreme_supports_mean_reversion(self) -> None:
+        # RSI 75 on M15 with no other M15 signal should still cast a SHORT
+        # vote (mean-reversion bias).
+        story = "X; M15(RANGE, ADX=20.0 RSI=75.0 ATR=4.0p Read=TRANSITION:0.5)"
+        parsed = _parse_chart_story_full(story)
+        raw, max_possible, reasons = _tf_lens_support(parsed["M15"], "SHORT")
+        self.assertGreater(raw, 0.0)
+        self.assertTrue(any("OB" in r for r in reasons))
 
 
 if __name__ == "__main__":

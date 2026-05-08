@@ -18,18 +18,53 @@ SHORT_TERM_MOMENTUM_LOW_ADX = 18.0
 _CHART_STORY_M1_ADX_PATTERN = re.compile(r"M1\([^)]*ADX=([\d.]+)")
 _CHART_STORY_M5_ADX_PATTERN = re.compile(r"M5\([^)]*ADX=([\d.]+)")
 
-# Micro-structure alignment: M1/M5 most-recent BOS/CHOCH direction. Score
-# additions (`MICRO_STRUCTURE_ALIGNED_BONUS`) and penalties
-# (`MICRO_STRUCTURE_OPPOSED_PENALTY`) shift the lane ranking just enough that
-# a fresh micro flip against the lane direction can lose the variant race to
-# a same-direction-as-flip lane, without overriding genuinely strong macro
-# evidence. Tuned 2026-05-08 after H1 TREND_DOWN entries kept losing to M5
-# BOS_UP knife-catches in EUR_USD scalp sessions (user 「方向性をミスる
-# のはなんで？」).
+# Micro-structure alignment: M1/M5 most-recent BOS/CHOCH direction. Kept
+# for backward compatibility with the prior commit; the production scoring
+# now uses `_mtf_confluence_score` which spans all 7 timeframes and 5
+# indicator lenses (struct + regime + Supertrend + cloud + RSI extreme).
+# These constants survive only as the simpler M1/M5-only scorer used by
+# legacy unit tests; new direction scoring goes through MTF_CONFLUENCE_*.
 MICRO_STRUCTURE_ALIGNED_BONUS = 6.0
 MICRO_STRUCTURE_OPPOSED_PENALTY = -12.0
 _CHART_STORY_M1_STRUCT_PATTERN = re.compile(r"M1\([^)]*struct=(BOS|CHOCH)_(UP|DOWN)@")
 _CHART_STORY_M5_STRUCT_PATTERN = re.compile(r"M5\([^)]*struct=(BOS|CHOCH)_(UP|DOWN)@")
+
+# MTF confluence scoring (production): 7 timeframes × 5 lenses, positive-
+# biased per user directive 2026-05-08 「エントリーしない理由ではなく、
+# エントリーする理由をみつけてほしい」「分析を広く」 (`feedback_analysis_breadth.md`,
+# `feedback_s_always_exists.md`). The negative penalty is hard-capped so a
+# single contrary signal cannot zero out an otherwise-aligned setup; the
+# positive bonus scales with the number of agreeing lenses across the TF
+# stack.
+MTF_TF_WEIGHTS: dict[str, float] = {
+    # Daily is the bias arbiter — slow but decisive. Weights sum to 1.0.
+    "D": 0.20,
+    "H4": 0.18,
+    "H1": 0.16,
+    "M30": 0.14,
+    "M15": 0.12,
+    "M5": 0.10,
+    "M1": 0.10,
+}
+MTF_CONFLUENCE_POSITIVE_GAIN = 22.0   # max positive multiplier (≈ +30 ceiling)
+MTF_CONFLUENCE_NEGATIVE_GAIN = 12.0   # capped per `MTF_CONFLUENCE_FLOOR`
+MTF_CONFLUENCE_CEILING = 30.0
+MTF_CONFLUENCE_FLOOR = -10.0
+_TF_BLOCK_PATTERN = re.compile(r"\b(D|H4|H1|M30|M15|M5|M1)\(([^)]+)\)")
+_LENS_PATTERNS: dict[str, "re.Pattern[str]"] = {
+    "adx": re.compile(r"ADX=([-\d.]+)"),
+    "rsi": re.compile(r"RSI=([-\d.]+)"),
+    "atr_pips": re.compile(r"ATR=([-\d.]+)p"),
+    "supertrend": re.compile(r"ST=([+-])"),
+    "cloud": re.compile(r"cloud=(above|below)"),
+    "struct": re.compile(r"struct=(BOS|CHOCH)_(UP|DOWN)@"),
+    "read_label": re.compile(r"Read=([A-Z_]+):([\d.]+)"),
+}
+# Regime → directional vote. RANGE / UNCLEAR / TRANSITION leave the regime
+# lens neutral but other lenses (struct/ST/cloud/RSI) still vote.
+_REGIME_UP_TOKENS = {"TREND_UP", "IMPULSE_UP", "BULL"}
+_REGIME_DOWN_TOKENS = {"TREND_DOWN", "IMPULSE_DOWN", "BEAR", "FAILURE_RISK"}
+_REGIME_NEUTRAL_TOKENS = {"RANGE", "UNCLEAR", "TRANSITION"}
 
 
 def _structural_chart_story(intent: dict[str, Any] | None) -> str:
@@ -87,6 +122,7 @@ def _micro_structure_alignment_score(
     rationale: list[str],
     blockers: list[str],
 ) -> float:
+    """Legacy M1/M5-only scorer. Production now uses `_mtf_confluence_score`."""
     direction = str(intent.get("side") or "").upper()
     if direction not in {"LONG", "SHORT"}:
         return 0.0
@@ -101,6 +137,216 @@ def _micro_structure_alignment_score(
         f"M1/M5 micro-structure {micro} opposes {direction} thesis — fresh flip risk against entry"
     )
     return MICRO_STRUCTURE_OPPOSED_PENALTY
+
+
+def _parse_chart_story_full(chart_story: str) -> dict[str, dict[str, Any]]:
+    """Parse the inline chart_story into per-TF indicator dicts.
+
+    Returns a mapping like {"M1": {"regime": "RANGE", "adx": 23.5,
+    "rsi": 60.1, "supertrend": "UP", "cloud": "above",
+    "struct_type": "BOS", "struct_dir": "UP", "read_label": "TREND_WEAK",
+    "read_confidence": 0.33}, "M5": {...}, ...}. Each field is optional —
+    callers must check for presence (not all TFs publish cloud, e.g. H4).
+    """
+    if not chart_story:
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for match in _TF_BLOCK_PATTERN.finditer(chart_story):
+        tf = match.group(1)
+        body = match.group(2)
+        # First token before the comma is the regime label.
+        head, _, rest = body.partition(",")
+        data: dict[str, Any] = {"regime": head.strip()}
+        full_body = rest if rest else body
+        for key in ("adx", "rsi", "atr_pips"):
+            m = _LENS_PATTERNS[key].search(full_body)
+            if m:
+                try:
+                    data[key] = float(m.group(1))
+                except ValueError:
+                    continue
+        m = _LENS_PATTERNS["supertrend"].search(full_body)
+        if m:
+            data["supertrend"] = "UP" if m.group(1) == "+" else "DOWN"
+        m = _LENS_PATTERNS["cloud"].search(full_body)
+        if m:
+            data["cloud"] = m.group(1)
+        m = _LENS_PATTERNS["struct"].search(full_body)
+        if m:
+            data["struct_type"] = m.group(1)
+            data["struct_dir"] = m.group(2)
+        m = _LENS_PATTERNS["read_label"].search(full_body)
+        if m:
+            data["read_label"] = m.group(1)
+            try:
+                data["read_confidence"] = float(m.group(2))
+            except ValueError:
+                pass
+        result[tf] = data
+    return result
+
+
+def _tf_lens_support(tf_data: dict[str, Any], direction: str) -> tuple[float, float, list[str]]:
+    """Per-TF support for `direction` across 5 lenses.
+
+    Returns (raw_support, max_possible, lens_reasons). raw_support is the
+    sum of lens points that vote with `direction`; max_possible is the
+    total points available from lenses that actually published a signal.
+    The caller normalizes raw_support / max_possible × ADX/Read multiplier
+    to produce a per-TF support score in roughly [0, 1.5]. Lens points:
+        struct (BOS/CHOCH): 1.0 — most recent swing event, strongest signal
+        regime (TREND_UP/DOWN, IMPULSE_*): 1.0 — stable directional bias
+        supertrend (ST=+/-): 0.7 — trend confirmation
+        cloud (above/below): 0.5 — Ichimoku bias
+        rsi extreme (>70 SHORT, <30 LONG): 0.5 — mean-reversion bias
+    """
+    if direction not in {"LONG", "SHORT"}:
+        return 0.0, 0.0, []
+    target_up = direction == "LONG"
+    raw = 0.0
+    max_possible = 0.0
+    reasons: list[str] = []
+
+    struct_dir = tf_data.get("struct_dir")
+    if struct_dir in {"UP", "DOWN"}:
+        max_possible += 1.0
+        if (struct_dir == "UP") == target_up:
+            raw += 1.0
+            reasons.append(f"{tf_data.get('struct_type', 'STRUCT')}_{struct_dir}")
+
+    regime = str(tf_data.get("regime") or "")
+    if regime in _REGIME_UP_TOKENS or regime in _REGIME_DOWN_TOKENS:
+        max_possible += 1.0
+        regime_up = regime in _REGIME_UP_TOKENS
+        if regime_up == target_up:
+            raw += 1.0
+            reasons.append(regime)
+    # RANGE / UNCLEAR / TRANSITION: no regime contribution either way.
+
+    supertrend = tf_data.get("supertrend")
+    if supertrend in {"UP", "DOWN"}:
+        max_possible += 0.7
+        if (supertrend == "UP") == target_up:
+            raw += 0.7
+            reasons.append(f"ST={'+' if supertrend == 'UP' else '-'}")
+
+    cloud = tf_data.get("cloud")
+    if cloud in {"above", "below"}:
+        max_possible += 0.5
+        if (cloud == "above") == target_up:
+            raw += 0.5
+            reasons.append(f"cloud={cloud}")
+
+    rsi = tf_data.get("rsi")
+    if isinstance(rsi, (int, float)):
+        if rsi >= 70 and not target_up:
+            raw += 0.5
+            max_possible += 0.5
+            reasons.append(f"RSI={rsi:.0f} OB")
+        elif rsi <= 30 and target_up:
+            raw += 0.5
+            max_possible += 0.5
+            reasons.append(f"RSI={rsi:.0f} OS")
+
+    return raw, max_possible, reasons
+
+
+def _tf_strength_multiplier(tf_data: dict[str, Any]) -> float:
+    """ADX strength × Read confidence = per-TF signal weight."""
+    multiplier = 1.0
+    adx = tf_data.get("adx")
+    if isinstance(adx, (int, float)):
+        if adx >= 30.0:
+            multiplier *= 1.30
+        elif adx >= 20.0:
+            multiplier *= 1.10
+        elif adx < 15.0:
+            multiplier *= 0.70
+    read_conf = tf_data.get("read_confidence")
+    if isinstance(read_conf, (int, float)):
+        # 0.0..1.0 confidence → 0.5..1.0 multiplier so a high-confidence Read
+        # boosts the weight without zeroing low-confidence TFs entirely.
+        multiplier *= 0.5 + 0.5 * float(read_conf)
+    return multiplier
+
+
+def _mtf_confluence_score(
+    intent: dict[str, Any],
+    rationale: list[str],
+    blockers: list[str],
+) -> float:
+    """7-TF × 5-lens confluence scoring with positive bias.
+
+    Aggregates per-TF lens support for the lane direction, weights by TF
+    importance (`MTF_TF_WEIGHTS`), and applies an ADX × Read confidence
+    multiplier per TF. Positive (aligned) signals scale to a +30 ceiling;
+    negative (opposing) signals are hard-capped at -10 so a single contrary
+    signal cannot zero out an otherwise-aligned setup. The rationale
+    surfaces the aligned lenses for the operator so the GPT verifier sees
+    why the lane scored positive, even when the net score is moderate.
+    """
+    direction = str(intent.get("side") or "").upper()
+    if direction not in {"LONG", "SHORT"}:
+        return 0.0
+    chart_story = _structural_chart_story(intent)
+    if not chart_story:
+        return 0.0
+    tf_data = _parse_chart_story_full(chart_story)
+    if not tf_data:
+        return 0.0
+    opposite = "SHORT" if direction == "LONG" else "LONG"
+
+    aligned_weighted = 0.0
+    opposed_weighted = 0.0
+    aligned_summary: list[str] = []
+    opposed_summary: list[str] = []
+    aligned_lens_count = 0
+
+    for tf, weight in MTF_TF_WEIGHTS.items():
+        data = tf_data.get(tf)
+        if not data:
+            continue
+        multiplier = _tf_strength_multiplier(data)
+        aligned_raw, aligned_max, aligned_reasons = _tf_lens_support(data, direction)
+        opposed_raw, opposed_max, _ = _tf_lens_support(data, opposite)
+
+        if aligned_max > 0:
+            tf_aligned = (aligned_raw / aligned_max) * multiplier
+            aligned_weighted += tf_aligned * weight
+            if aligned_raw >= 0.5:
+                aligned_lens_count += len(aligned_reasons)
+                aligned_summary.append(
+                    f"{tf}({','.join(aligned_reasons)})"
+                )
+        if opposed_max > 0 and opposed_raw >= 0.7:
+            tf_opposed = (opposed_raw / opposed_max) * multiplier
+            opposed_weighted += tf_opposed * weight
+            if opposed_raw >= 1.0:
+                opposed_summary.append(tf)
+
+    # Confluence bonus: each aligned lens beyond the 4th adds a small extra
+    # boost so a setup confirmed by many lenses outscores one confirmed by
+    # only the highest-weight TF. Caps at +5 to avoid runaway.
+    confluence_bonus = min(5.0, max(0.0, (aligned_lens_count - 4) * 0.8))
+
+    positive_score = aligned_weighted * MTF_CONFLUENCE_POSITIVE_GAIN
+    negative_score = -min(opposed_weighted * MTF_CONFLUENCE_NEGATIVE_GAIN, abs(MTF_CONFLUENCE_FLOOR))
+    total = max(MTF_CONFLUENCE_FLOOR, min(MTF_CONFLUENCE_CEILING, positive_score + negative_score + confluence_bonus))
+
+    if aligned_summary:
+        rationale.append(
+            f"MTF confluence: {direction} aligned at "
+            + " ".join(aligned_summary)
+            + f" (+{positive_score + confluence_bonus:.1f})"
+        )
+    if opposed_summary:
+        rationale.append(
+            f"MTF caution: opposing signals at {','.join(opposed_summary)} ({negative_score:.1f}, capped)"
+        )
+    if not aligned_summary and not opposed_summary:
+        rationale.append(f"MTF confluence: no decisive lens for {direction} (net 0)")
+
+    return total
 
 
 def _short_term_momentum_class(intent_or_context: dict[str, Any] | None) -> str:
@@ -455,7 +701,7 @@ class TraderBrain:
             blockers=blockers,
         )
         score += _direction_conflict_penalty(result, rationale)
-        score += _micro_structure_alignment_score(intent, rationale, blockers)
+        score += _mtf_confluence_score(intent, rationale, blockers)
         if order_type.upper() == "MARKET" and status == "LIVE_READY":
             # Regime-aware MARKET preference: catch live momentum, but don't
             # pay spread on quiet tape (user 2026-05-08 「市況によって柔軟に」
