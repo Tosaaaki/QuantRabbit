@@ -2,10 +2,52 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+# Short-term momentum thresholds (M1/M5 ADX). Above HIGH the move is live and
+# MARKET catches it; below LOW the tape is quiet and STOP-ENTRY/LIMIT save the
+# spread by waiting for the trigger. Tuned for FX major pairs in 2026 sessions
+# where M5 ADX rarely exceeds 60.
+SHORT_TERM_MOMENTUM_HIGH_ADX = 25.0
+SHORT_TERM_MOMENTUM_LOW_ADX = 18.0
+_CHART_STORY_M1_ADX_PATTERN = re.compile(r"M1\([^)]*ADX=([\d.]+)")
+_CHART_STORY_M5_ADX_PATTERN = re.compile(r"M5\([^)]*ADX=([\d.]+)")
+
+
+def _short_term_momentum_class(market_context: dict[str, Any] | None) -> str:
+    """Read M1/M5 ADX off the inline chart_story to classify momentum.
+
+    Returns "HIGH" when the average M1+M5 ADX is at/above the breakout
+    threshold (move in progress, MARKET fills catch it), "LOW" when the
+    average is at/below the quiet threshold (range/transition, pending
+    triggers fill more cheaply), and "NEUTRAL" otherwise. The chart_story
+    string carries the ADX inline because it is the same payload the
+    operator (Claude/Codex) reads — keeping the parser here avoids a wider
+    refactor to thread pair_charts data through scoring.
+    """
+    if not isinstance(market_context, dict):
+        return "NEUTRAL"
+    chart_story = str(market_context.get("chart_story") or "")
+    if not chart_story:
+        return "NEUTRAL"
+    m1 = _CHART_STORY_M1_ADX_PATTERN.search(chart_story)
+    m5 = _CHART_STORY_M5_ADX_PATTERN.search(chart_story)
+    if not m1 or not m5:
+        return "NEUTRAL"
+    try:
+        avg_adx = (float(m1.group(1)) + float(m5.group(1))) / 2.0
+    except (TypeError, ValueError):
+        return "NEUTRAL"
+    if avg_adx >= SHORT_TERM_MOMENTUM_HIGH_ADX:
+        return "HIGH"
+    if avg_adx <= SHORT_TERM_MOMENTUM_LOW_ADX:
+        return "LOW"
+    return "NEUTRAL"
 
 from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
 
@@ -328,8 +370,22 @@ class TraderBrain:
         )
         score += _direction_conflict_penalty(result, rationale)
         if order_type.upper() == "MARKET" and status == "LIVE_READY":
-            score += 5.0
-            rationale.append("market receipt can execute the current quote instead of waiting for a trigger")
+            # Regime-aware MARKET preference: catch live momentum, but don't
+            # pay spread on quiet tape (user 2026-05-08 「市況によって柔軟に」
+            # 「エントリー機会は逃さない」). Pending entries (LIMIT/STOP) cost
+            # nothing until the trigger fires, so when M1/M5 ADX is quiet we
+            # let those win the variant race; when ADX is hot we boost MARKET
+            # to outscore pendings and grab the move.
+            momentum = _short_term_momentum_class(intent.get("market_context") or {})
+            if momentum == "HIGH":
+                score += 12.0
+                rationale.append("MARKET catches active short-term momentum (M1/M5 ADX≥25)")
+            elif momentum == "LOW":
+                score -= 8.0
+                rationale.append("short-term tape quiet (M1/M5 ADX≤18); pending entry preferred over MARKET")
+            else:
+                score += 5.0
+                rationale.append("market receipt can execute the current quote instead of waiting for a trigger")
 
         if result.get("risk_issues"):
             blockers.extend(str(issue.get("message") or issue.get("code")) for issue in result.get("risk_issues", []))
@@ -455,10 +511,12 @@ def _select_entry_lane(
     sendable = tuple(item for item in scores if item.action == ACTION_SEND_ENTRY)
     if not sendable:
         return None
-    if _target_open_needs_immediate_entry(target_state_path, snapshot):
-        market = next((item for item in sendable if item.order_type.upper() == "MARKET"), None)
-        if market is not None:
-            return market
+    # The previous FLAT-with-open-target rule force-picked MARKET unconditionally,
+    # which over-paid the spread on quiet tape (user 2026-05-08 「市況によって
+    # 柔軟に」). `_score_lane` now adjusts MARKET ±points by short-term momentum
+    # (M1/M5 ADX), so the score-ranked top variant already reflects regime
+    # preference: MARKET when ADX is high (momentum live), pending entry when
+    # quiet. Trust the score; do not re-override here.
     return sendable[0]
 
 
