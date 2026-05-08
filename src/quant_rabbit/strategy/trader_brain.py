@@ -391,11 +391,47 @@ from quant_rabbit.paths import (
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_PAIR_CHARTS,
     DEFAULT_TRADER_SETTINGS,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_DECISION_REPORT,
 )
+from quant_rabbit.strategy.price_action import aggregate_price_action_score
+
+
+def _load_full_pair_charts_for_brain() -> dict[str, dict[str, Any]]:
+    """Load pair_charts.json keyed by pair, preserving the full views array.
+
+    intent_generator's `_load_pair_charts` flattens views into per-TF keys
+    for ATR/regime extraction; the price-action lens needs the raw views
+    list because swings, structure_events, liquidity, order_blocks, and
+    dealing_range live there. Returns {} on missing/malformed file so
+    scoring can degrade to MTF-only without crashing.
+    """
+    if not DEFAULT_PAIR_CHARTS.exists():
+        return {}
+    try:
+        payload = json.loads(DEFAULT_PAIR_CHARTS.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for chart in payload.get("charts", []) or []:
+        pair = chart.get("pair")
+        if isinstance(pair, str):
+            out[pair] = chart
+    return out
+
+
+def _current_price_for(pair: str, snapshot: BrokerSnapshot, side: str) -> float | None:
+    """Pick the appropriate side of the current quote for an entry."""
+    if not pair or snapshot is None:
+        return None
+    quote = (snapshot.quotes or {}).get(pair) if hasattr(snapshot, "quotes") else None
+    if quote is None:
+        return None
+    # Use ASK for LONG entries, BID for SHORT — that's what the trade fills at.
+    return quote.ask if side == "LONG" else quote.bid
 
 
 JPY_CROSSES = {"AUD_JPY", "EUR_JPY", "GBP_JPY", "USD_JPY"}
@@ -512,6 +548,12 @@ class TraderBrain:
         strategies = _strategy_index(strategy_payload)
         stories = _story_index(story_payload)
         campaign = _campaign_index(campaign_payload)
+        # Full pair_charts entries (with views array) so `_score_lane` can
+        # consult the price-action lens (swings, structure_events, dealing
+        # range, order blocks, liquidity) on every candidate. Missing /
+        # malformed file degrades gracefully — PA delta becomes 0 and the
+        # legacy MTF confluence scoring still runs.
+        full_pair_charts = _load_full_pair_charts_for_brain()
         trader_settings = _load_trader_settings(self.trader_settings_path)
         loss_cap_jpy, loss_cap_source = _resolve_trader_loss_cap(
             strategy_payload=strategy_payload,
@@ -535,6 +577,8 @@ class TraderBrain:
                         exposure_blockers,
                         trader_settings,
                         loss_cap_jpy=loss_cap_jpy,
+                        full_pair_charts=full_pair_charts,
+                        snapshot=snapshot,
                     )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
@@ -606,6 +650,8 @@ class TraderBrain:
         settings: TraderSettings,
         *,
         loss_cap_jpy: float | None,
+        full_pair_charts: dict[str, dict[str, Any]] | None = None,
+        snapshot: BrokerSnapshot | None = None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -702,6 +748,28 @@ class TraderBrain:
         )
         score += _direction_conflict_penalty(result, rationale)
         score += _mtf_confluence_score(intent, rationale, blockers)
+        # Price-action lens (user 2026-05-08「市況をちゃんとみれるようにして」):
+        # SMC structural read across H4-M5 (swings, BOS/CHOCH events, dealing
+        # range, order blocks, liquidity touches). Adds ±25 envelope to the
+        # MTF confluence score so high-conviction entries earn extra weight
+        # and weak setups (LONG into resistance, SHORT into expanding range)
+        # are demoted before reaching live_ready selection.
+        pa_pair = str(intent.get("pair") or "")
+        pa_side = str(intent.get("side") or "").upper()
+        pa_chart = (full_pair_charts or {}).get(pa_pair) if full_pair_charts else None
+        pa_price = _current_price_for(pa_pair, snapshot, pa_side) if snapshot else None
+        if pa_chart and pa_price and pa_side in {"LONG", "SHORT"}:
+            pa_pip_factor = 100.0 if pa_pair.endswith("_JPY") else 10000.0
+            pa_delta, pa_reasons = aggregate_price_action_score(
+                pa_chart, pa_side, pa_price, pa_pip_factor
+            )
+            score += pa_delta
+            if pa_reasons:
+                # Surface the strongest PA reasons inline so the operator sees
+                # the structural read in the lane rationale.
+                rationale.append(f"price-action ({pa_delta:+.1f}): " + " ; ".join(pa_reasons[:2]))
+            elif abs(pa_delta) >= 1.0:
+                rationale.append(f"price-action ({pa_delta:+.1f}): no decisive structural lens")
         if order_type.upper() == "MARKET" and status == "LIVE_READY":
             # Regime-aware MARKET preference: catch live momentum, but don't
             # pay spread on quiet tape (user 2026-05-08 「市況によって柔軟に」
