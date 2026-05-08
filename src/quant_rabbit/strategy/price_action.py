@@ -248,6 +248,183 @@ def classify_dealing_range_position(
 
 
 @dataclass(frozen=True)
+class FibLevels:
+    """Standard retracement levels derived from the SMC dealing range."""
+    swing_high: float
+    swing_low: float
+    fib_236: float    # 23.6%  shallow pullback
+    fib_382: float    # 38.2%  first real pullback
+    fib_500: float    # 50%    equilibrium (matches dealing_range.equilibrium)
+    fib_618: float    # 61.8%  golden ratio (typical institutional retracement)
+    fib_786: float    # 78.6%  deep retracement (often last defense before reversal)
+
+
+def fib_levels_from_view(view: dict[str, Any]) -> FibLevels | None:
+    """Compute Fib retracements from `dealing_range.swing_high`/`swing_low`.
+
+    The SMC dealing_range already stages the leg whose pullback we care
+    about. Returns None if the view doesn't carry a usable range. Levels
+    are oriented so `fib_236` is closest to swing_high and `fib_786` is
+    closest to swing_low — i.e. retracements measured FROM the high
+    DOWN through the low (the standard convention for a bullish leg).
+    For bearish legs the same numbers describe upward retracement; the
+    caller orients usage by side.
+    """
+    smc = view.get("smc") if isinstance(view, dict) else None
+    dr = (smc or {}).get("dealing_range") if isinstance(smc, dict) else None
+    if not isinstance(dr, dict):
+        return None
+    try:
+        sh = float(dr["swing_high"])
+        sl = float(dr["swing_low"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if sh <= sl:
+        return None
+    span = sh - sl
+    return FibLevels(
+        swing_high=sh,
+        swing_low=sl,
+        fib_236=sh - span * 0.236,
+        fib_382=sh - span * 0.382,
+        fib_500=sh - span * 0.500,
+        fib_618=sh - span * 0.618,
+        fib_786=sh - span * 0.786,
+    )
+
+
+def nearest_fib_above(fib: FibLevels, price: float) -> tuple[str, float] | None:
+    """Closest Fib level strictly above `price`. Returns (label, price)."""
+    if fib is None:
+        return None
+    candidates = [
+        ("fib_236", fib.fib_236),
+        ("fib_382", fib.fib_382),
+        ("fib_500", fib.fib_500),
+        ("fib_618", fib.fib_618),
+        ("fib_786", fib.fib_786),
+        ("swing_high", fib.swing_high),
+    ]
+    above = [(label, lvl) for label, lvl in candidates if lvl > price]
+    if not above:
+        return None
+    return min(above, key=lambda x: x[1])
+
+
+def nearest_fib_below(fib: FibLevels, price: float) -> tuple[str, float] | None:
+    """Closest Fib level strictly below `price`."""
+    if fib is None:
+        return None
+    candidates = [
+        ("fib_236", fib.fib_236),
+        ("fib_382", fib.fib_382),
+        ("fib_500", fib.fib_500),
+        ("fib_618", fib.fib_618),
+        ("fib_786", fib.fib_786),
+        ("swing_low", fib.swing_low),
+    ]
+    below = [(label, lvl) for label, lvl in candidates if lvl < price]
+    if not below:
+        return None
+    return max(below, key=lambda x: x[1])
+
+
+@dataclass(frozen=True)
+class CrossTFLevelConfluence:
+    """A price level confirmed across multiple timeframes."""
+    price: float
+    side: str           # "EQ_HIGH" or "EQ_LOW"
+    timeframes: tuple[str, ...]   # e.g. ("M5","M15","H1") — each TF that touched this price
+    total_touches: int  # sum of touch counts across the timeframes
+
+
+def cross_tf_level_confluence(
+    pair_chart: dict[str, Any] | None,
+    *,
+    above_price: float | None = None,
+    below_price: float | None = None,
+    side_filter: str | None = None,
+    cluster_pips: float = 5.0,
+    pip_factor: float = 10000.0,
+) -> tuple[CrossTFLevelConfluence, ...]:
+    """Cluster equal-high/low liquidity levels across all TFs in `pair_chart`.
+
+    Two levels within `cluster_pips` count as the same level. The output
+    sorts confluence levels by total touch count desc — a level touched
+    on M5 + M15 + H1 (8 touches each) is far stronger than one M5-only
+    level with 6 touches even though both have a single pool entry.
+
+    User 2026-05-08「何回高値いったか、どのタイムフレームで何回」: the
+    same price level being defended on multiple timeframes is the real
+    institutional level — that's where price keeps reversing.
+    """
+    if not isinstance(pair_chart, dict):
+        return ()
+    candidates: list[tuple[str, float, int, str]] = []
+    for view in pair_chart.get("views") or []:
+        gran = str(view.get("granularity") or "")
+        if not gran:
+            continue
+        structure = view.get("structure") if isinstance(view, dict) else None
+        for pool in (structure or {}).get("liquidity") or []:
+            side = str(pool.get("side") or "")
+            if side_filter and side != side_filter:
+                continue
+            try:
+                price = float(pool.get("price"))
+            except (TypeError, ValueError):
+                continue
+            if above_price is not None and price <= above_price:
+                continue
+            if below_price is not None and price >= below_price:
+                continue
+            indices = pool.get("indices") or []
+            touches = len(indices) if isinstance(indices, list) else 0
+            if touches <= 0:
+                continue
+            candidates.append((gran, price, touches, side))
+
+    if not candidates:
+        return ()
+
+    # Cluster: sort by price, group anything within `cluster_pips`.
+    candidates.sort(key=lambda x: x[1])
+    clusters: list[list[tuple[str, float, int, str]]] = []
+    cluster_threshold = cluster_pips / pip_factor
+    for entry in candidates:
+        if not clusters:
+            clusters.append([entry])
+            continue
+        last = clusters[-1][-1]
+        if abs(entry[1] - last[1]) <= cluster_threshold and entry[3] == last[3]:
+            clusters[-1].append(entry)
+        else:
+            clusters.append([entry])
+
+    out: list[CrossTFLevelConfluence] = []
+    for cluster in clusters:
+        if len(cluster) < 1:
+            continue
+        # Skip single-TF clusters that have low touches — not "confluence".
+        tfs_in_cluster = {entry[0] for entry in cluster}
+        total_touches = sum(entry[2] for entry in cluster)
+        if len(tfs_in_cluster) == 1 and total_touches < 4:
+            continue
+        avg_price = sum(entry[1] for entry in cluster) / len(cluster)
+        side = cluster[0][3]
+        out.append(
+            CrossTFLevelConfluence(
+                price=avg_price,
+                side=side,
+                timeframes=tuple(sorted(tfs_in_cluster)),
+                total_touches=total_touches,
+            )
+        )
+    out.sort(key=lambda lvl: (len(lvl.timeframes), lvl.total_touches), reverse=True)
+    return tuple(out)
+
+
+@dataclass(frozen=True)
 class OrderBlockProximity:
     """Nearest unmitigated order block on each side of current price."""
     nearest_bull_low: float | None        # support OB (LONG entry zone)
@@ -325,6 +502,121 @@ def read_timeframe(view: dict[str, Any], current_price: float, pip_factor: float
             view, min_touches=3, side_filter="EQ_LOW", below_price=current_price
         ),
     )
+
+
+def structural_tp_target(
+    pair_chart: dict[str, Any] | None,
+    *,
+    side: str,
+    current_price: float,
+    pip_factor: float,
+    intent: str,
+) -> tuple[float | None, str]:
+    """Pick a market-derived TP target for HARVEST / NARROW / EXTEND.
+
+    `intent` selects the harvest aggressiveness:
+      "HARVEST"  – lock profit at the nearest opposing structural level
+                   (cross-TF liquidity pool, OB edge, or Fib node).
+                   Falls back to nearest Fib retracement closest to price.
+      "NARROW"   – pull TP halfway toward the next opposing level.
+      "EXTEND"   – push TP to the next-but-one structural level beyond
+                   the current TP, so winners run past the obvious resistance.
+
+    Returns (target_price, reason). target_price is None when no usable
+    structural anchor was found in the chart data — caller should HOLD
+    rather than fall back to a hardcoded pip distance (AGENT_CONTRACT
+    §3.5「No Thoughtless Hardcodes / Fallbacks」).
+
+    User 2026-05-08「TPの設定は市況をみてる？テクニカル等」: HARVEST/NARROW/
+    EXTEND now anchor the new TP on actual structural levels from the
+    pair_chart instead of the previous buffer-pip literal.
+    """
+    if not isinstance(pair_chart, dict) or side not in {"LONG", "SHORT"}:
+        return None, "no chart"
+    target_up = side == "LONG"
+
+    # 1. Cross-TF level confluence in the direction of travel
+    if target_up:
+        confluence = cross_tf_level_confluence(
+            pair_chart,
+            above_price=current_price,
+            side_filter="EQ_HIGH",
+            pip_factor=pip_factor,
+        )
+    else:
+        confluence = cross_tf_level_confluence(
+            pair_chart,
+            below_price=current_price,
+            side_filter="EQ_LOW",
+            pip_factor=pip_factor,
+        )
+
+    # 2. Nearest OB edge in direction of travel (M30 view — same TF the
+    #    structural-break loss-cut consults so HARVEST and EXIT respect
+    #    the same anchor)
+    ob_edge: float | None = None
+    fib_h1: FibLevels | None = None
+    for view in pair_chart.get("views") or []:
+        gran = str(view.get("granularity") or "")
+        if gran == "M30":
+            obs = classify_order_block_proximity(view, current_price, pip_factor)
+            if target_up and obs.nearest_bear_low is not None:
+                ob_edge = obs.nearest_bear_low
+            elif not target_up and obs.nearest_bull_high is not None:
+                ob_edge = obs.nearest_bull_high
+        if gran == "H1":
+            fib_h1 = fib_levels_from_view(view)
+
+    # 3. Build candidate target list (in direction of travel)
+    candidates: list[tuple[float, str]] = []
+    for lvl in confluence:
+        candidates.append((lvl.price, f"liquidity@{lvl.price:.5f} ({lvl.total_touches}touches/{','.join(lvl.timeframes)})"))
+    if ob_edge is not None:
+        candidates.append((ob_edge, f"M30_OB_edge@{ob_edge:.5f}"))
+    if fib_h1 is not None:
+        if target_up:
+            for label, price in [
+                ("fib_500", fib_h1.fib_500),
+                ("fib_382", fib_h1.fib_382),
+                ("fib_236", fib_h1.fib_236),
+                ("swing_high", fib_h1.swing_high),
+            ]:
+                if price > current_price:
+                    candidates.append((price, f"H1_{label}@{price:.5f}"))
+        else:
+            for label, price in [
+                ("fib_500", fib_h1.fib_500),
+                ("fib_618", fib_h1.fib_618),
+                ("fib_786", fib_h1.fib_786),
+                ("swing_low", fib_h1.swing_low),
+            ]:
+                if price < current_price:
+                    candidates.append((price, f"H1_{label}@{price:.5f}"))
+
+    if not candidates:
+        return None, "no structural anchor"
+
+    # Sort candidates by distance from current price (closer first for LONG up
+    # / SHORT down)
+    if target_up:
+        candidates.sort(key=lambda x: x[0])
+    else:
+        candidates.sort(key=lambda x: -x[0])
+
+    if intent == "HARVEST":
+        target_price, reason = candidates[0]
+        return target_price, f"HARVEST→{reason}"
+    if intent == "NARROW":
+        target_price, reason = candidates[0]
+        midpoint = (current_price + target_price) / 2.0
+        return midpoint, f"NARROW→midpoint({current_price:.5f}, {reason})"
+    if intent == "EXTEND":
+        if len(candidates) >= 2:
+            target_price, reason = candidates[1]
+            return target_price, f"EXTEND→{reason} (skip first)"
+        target_price, reason = candidates[0]
+        return target_price, f"EXTEND→{reason} (only candidate)"
+    return None, "unknown intent"
 
 
 def aggregate_price_action_score(

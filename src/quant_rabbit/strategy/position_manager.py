@@ -26,6 +26,7 @@ from quant_rabbit.strategy.intent_generator import (
 from quant_rabbit.strategy.price_action import (
     aggregate_price_action_score,
     classify_order_block_proximity,
+    structural_tp_target,
 )
 
 
@@ -605,36 +606,67 @@ def _adaptive_tp_action(
         reasons.append(f"PA delta {pa_delta_lane:+.1f} demotes EXTEND→HARVEST")
 
     if action == ACTION_EXTEND_TP:
-        if tp_pips_remaining > 5.0:
-            extra_pips = max(10.0, tp_pips_remaining * 0.5)
-            new_tp = (position.take_profit + extra_pips * pip) if target_up else (position.take_profit - extra_pips * pip)
-            reasons.append(f"extend +{extra_pips:.1f}p (winners run, micro alive macro aligned)")
-        else:
-            # TP imminent — just hold
+        # Market-derived EXTEND target — push TP to the next-but-one
+        # structural level beyond the current one (skip the anchor that
+        # sits closest to current price, target the one after). No
+        # hardcoded "+X pips" extension.
+        candidate, anchor_reason = structural_tp_target(
+            pair_chart, side=lane_dir, current_price=cur,
+            pip_factor=pip_factor, intent="EXTEND",
+        )
+        if candidate is None:
             action = ACTION_HOLD_PROTECTED
-            reasons.append(f"TP {tp_pips_remaining:.1f}p imminent; hold")
-    elif action == ACTION_HARVEST_TP:
-        # Pull TP to current price + small safety buffer (5p) so the broker
-        # accepts it and the next routine bar locks the profit. Don't move
-        # backwards (wider) — bail to HOLD if our buffered TP is worse.
-        buffer_pips = 5.0
-        candidate = (cur + buffer_pips * pip) if target_up else (cur - buffer_pips * pip)
-        # Only narrow (move TP closer to current price)
-        if (target_up and candidate < position.take_profit) or (not target_up and candidate > position.take_profit):
+            reasons.append(f"extend skipped: {anchor_reason}")
+        elif (target_up and candidate > position.take_profit) or (
+            not target_up and candidate < position.take_profit
+        ):
             new_tp = candidate
-            reasons.append(f"harvest TP→cur+{buffer_pips:.0f}p (lock profit, momentum dying)")
+            reasons.append(f"extend TP→{candidate:.5f} ({anchor_reason})")
+        else:
+            # New anchor isn't farther than existing TP — TP already past
+            # the next structural level, just hold and let it fill.
+            action = ACTION_HOLD_PROTECTED
+            reasons.append(f"extend skipped: anchor {anchor_reason} not farther than current TP")
+    elif action == ACTION_HARVEST_TP:
+        # Market-derived TP target (no hardcoded buffer, no fallback).
+        # AGENT_CONTRACT §3.5 + user 2026-05-08「TPの設定は市況をみてる？
+        # テクニカル等」「ハードコードとフォールバックはなし」.
+        # `structural_tp_target` returns the nearest opposing structural
+        # level (cross-TF liquidity / OB edge / Fib node). Skip if no
+        # anchor was found — better to HOLD than place a TP at a guess.
+        candidate, anchor_reason = structural_tp_target(
+            pair_chart, side=lane_dir, current_price=cur,
+            pip_factor=pip_factor, intent="HARVEST",
+        )
+        if candidate is None:
+            action = ACTION_HOLD_PROTECTED
+            reasons.append(f"harvest skipped: {anchor_reason}")
+        elif (target_up and candidate < position.take_profit) or (
+            not target_up and candidate > position.take_profit
+        ):
+            new_tp = candidate
+            reasons.append(f"harvest TP→{candidate:.5f} ({anchor_reason})")
         else:
             action = ACTION_HOLD_PROTECTED
-            reasons.append(f"harvest skipped (current {cur} already closer than buffered TP)")
+            reasons.append(f"harvest skipped: structural anchor {anchor_reason} not closer than current TP")
     elif action == ACTION_NARROW_TP:
-        # Bring TP halfway between current price and existing TP.
-        midpoint = (cur + position.take_profit) / 2.0
-        if (target_up and midpoint < position.take_profit) or (not target_up and midpoint > position.take_profit):
-            new_tp = midpoint
-            reasons.append(f"narrow TP→midpoint {midpoint:.5f} (macro weakening, micro dying)")
+        # Same market-derived path with NARROW intent (midpoint between
+        # current price and the nearest structural anchor).
+        candidate, anchor_reason = structural_tp_target(
+            pair_chart, side=lane_dir, current_price=cur,
+            pip_factor=pip_factor, intent="NARROW",
+        )
+        if candidate is None:
+            action = ACTION_HOLD_PROTECTED
+            reasons.append(f"narrow skipped: {anchor_reason}")
+        elif (target_up and candidate < position.take_profit) or (
+            not target_up and candidate > position.take_profit
+        ):
+            new_tp = candidate
+            reasons.append(f"narrow TP→{candidate:.5f} ({anchor_reason})")
         else:
             action = ACTION_HOLD_PROTECTED
-            reasons.append("narrow skipped (midpoint not closer)")
+            reasons.append(f"narrow skipped: anchor {anchor_reason} not closer")
     elif action == ACTION_REVIEW_EXIT:
         # MARKET close handled by position_execution.py path on REVIEW_EXIT;
         # no recommended_tp needed.
