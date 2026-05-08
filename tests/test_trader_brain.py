@@ -15,12 +15,15 @@ from quant_rabbit.strategy.trader_brain import (
     MICRO_STRUCTURE_OPPOSED_PENALTY,
     MTF_CONFLUENCE_CEILING,
     MTF_CONFLUENCE_FLOOR,
+    SHORT_TERM_MOMENTUM_HIGH_ADX,
+    SHORT_TERM_MOMENTUM_LOW_ADX,
     TraderBrain,
     _micro_structure_alignment_score,
     _micro_structure_direction,
     _mtf_confluence_score,
     _narrative_risk_score,
     _parse_chart_story_full,
+    _short_term_momentum_class,
     _tf_lens_support,
     _tf_strength_multiplier,
 )
@@ -962,6 +965,61 @@ class MTFConfluenceTest(unittest.TestCase):
         raw, max_possible, reasons = _tf_lens_support(parsed["M15"], "SHORT")
         self.assertGreater(raw, 0.0)
         self.assertTrue(any("OB" in r for r in reasons))
+
+
+class ShortTermMomentumClassTest(unittest.TestCase):
+    """Coverage for f35c130 — regime-aware MARKET vs pending entry scoring.
+
+    `_short_term_momentum_class` reads M1/M5 ADX off `chart_story` and returns
+    HIGH (≥SHORT_TERM_MOMENTUM_HIGH_ADX), LOW (≤SHORT_TERM_MOMENTUM_LOW_ADX),
+    or NEUTRAL. `_score_lane` applies +12/-8/+5 to MARKET variants based on
+    this so the variant race reflects regime, not a fixed bonus.
+    """
+
+    def _ctx(self, m1_adx: float | None, m5_adx: float | None) -> dict[str, str]:
+        parts = ["EUR_USD TREND_DOWN"]
+        if m1_adx is not None:
+            parts.append(f"M1(RANGE, ADX={m1_adx} RSI=52.0 ATR=1.0p)")
+        if m5_adx is not None:
+            parts.append(f"M5(RANGE, ADX={m5_adx} RSI=53.0 ATR=2.0p)")
+        return {"chart_story": "; ".join(parts)}
+
+    def test_high_when_avg_at_or_above_high_threshold(self) -> None:
+        # avg = 25.0 == HIGH threshold (25.0).
+        self.assertEqual(_short_term_momentum_class(self._ctx(20.0, 30.0)), "HIGH")
+        # avg = 27.5 > HIGH.
+        self.assertEqual(_short_term_momentum_class(self._ctx(25.0, 30.0)), "HIGH")
+
+    def test_low_when_avg_at_or_below_low_threshold(self) -> None:
+        # avg = 18.0 == LOW threshold (18.0).
+        self.assertEqual(_short_term_momentum_class(self._ctx(15.0, 21.0)), "LOW")
+        # avg = 12.0 well below.
+        self.assertEqual(_short_term_momentum_class(self._ctx(10.0, 14.0)), "LOW")
+
+    def test_neutral_when_avg_between_thresholds(self) -> None:
+        # avg = 21.5 strictly between 18.0 and 25.0.
+        self.assertEqual(_short_term_momentum_class(self._ctx(20.0, 23.0)), "NEUTRAL")
+
+    def test_neutral_when_only_one_timeframe_present(self) -> None:
+        # Pattern requires both M1 and M5 ADX — partial → NEUTRAL.
+        self.assertEqual(_short_term_momentum_class(self._ctx(30.0, None)), "NEUTRAL")
+        self.assertEqual(_short_term_momentum_class(self._ctx(None, 30.0)), "NEUTRAL")
+
+    def test_neutral_when_chart_story_missing(self) -> None:
+        self.assertEqual(_short_term_momentum_class({}), "NEUTRAL")
+        self.assertEqual(_short_term_momentum_class({"chart_story": ""}), "NEUTRAL")
+        self.assertEqual(_short_term_momentum_class(None), "NEUTRAL")
+
+    def test_neutral_when_market_context_is_not_a_dict(self) -> None:
+        self.assertEqual(_short_term_momentum_class("EUR_USD M1(ADX=30) M5(ADX=30)"), "NEUTRAL")
+        self.assertEqual(_short_term_momentum_class([]), "NEUTRAL")
+
+    def test_thresholds_match_documented_constants(self) -> None:
+        # Guard against silent threshold drift; the constants are tuned for
+        # FX major pairs in 2026 sessions and changing them shifts every
+        # variant race outcome.
+        self.assertEqual(SHORT_TERM_MOMENTUM_HIGH_ADX, 25.0)
+        self.assertEqual(SHORT_TERM_MOMENTUM_LOW_ADX, 18.0)
 
 
 if __name__ == "__main__":
