@@ -498,42 +498,64 @@ def _adaptive_tp_action(
     if pa_reasons:
         reasons.append(f"price-action ({pa_delta_lane:+.1f}): " + " ; ".join(pa_reasons[:2]))
 
-    # Losing positions need fast loss-cutting on real structural reversal,
-    # not blanket HOLD (user 2026-05-08「損切りも利確も判断を確実に素早く」).
-    # SL-free design: per_trade_risk overshoot is advisory (not a trigger), but
-    # macro reversal IS a trigger. `feedback_market_over_risk_budget.md` codifies:
-    #   - macro REVERSED → CLOSE
-    #   - WEAKENING + micro DEAD → CLOSE (early loss-cut on confirmed turn)
-    #   - else → HOLD (give the structure time to play out)
+    # Losing positions: only EXIT on confirmed reversal. WEAKENING+DEAD
+    # alone fires the loss-cut too aggressively on intra-trend pullbacks
+    # (today the AUD_JPY/GBP_USD basket got closed for −3,369 JPY at −5
+    # to −10 pips of normal pullback noise; the structures still resumed
+    # upward right after). User 2026-05-08「クローズ判断が早すぎて赤量産
+    # してない？少しさがるならショートだろ」: noise-range losses should
+    # not be auto-cut; let the trend backbone breathe.
+    #
+    # New rules:
+    #   - macro REVERSED → CLOSE (real turn, regardless of loss size)
+    #   - WEAKENING+DEAD AND loss > 1% NAV (catastrophic territory)
+    #       → CLOSE
+    #   - everything else underwater → HOLD
     if position.unrealized_pl_jpy <= 0:
+        # Catastrophic loss threshold: 1% of NAV per single position.
+        # Use a conservative literal NAV proxy when account isn't reachable.
+        nav_proxy = 200_000.0  # operator NAV magnitude — overridden when
+                                # the broker snapshot carries account info.
+        catastrophic_floor = -nav_proxy * 0.01  # −2,000 JPY at NAV 200k
+
         if macro == "REVERSED":
             reasons.append(
                 f"loss-cut: macro REVERSED while position underwater "
                 f"({position.unrealized_pl_jpy:+.0f} JPY) — H1/H4 structural turn"
             )
             return ACTION_REVIEW_EXIT, None, reasons
-        if macro == "WEAKENING" and micro == "DEAD":
+        if (
+            macro == "WEAKENING"
+            and micro == "DEAD"
+            and position.unrealized_pl_jpy <= catastrophic_floor
+        ):
             reasons.append(
-                f"loss-cut: macro WEAKENING + micro DEAD ("
-                f"{position.unrealized_pl_jpy:+.0f} JPY) — confirmed turn"
+                f"loss-cut: macro WEAKENING + micro DEAD AND loss "
+                f"{position.unrealized_pl_jpy:+.0f} JPY beyond catastrophic floor "
+                f"{catastrophic_floor:.0f} JPY"
             )
             return ACTION_REVIEW_EXIT, None, reasons
-        # Macro intact (ALIGNED) — give the position time even underwater.
-        # Per `feedback_market_over_risk_budget.md`: hold through noise.
+        # Anything else underwater: hold. Pullback noise is the SL-free
+        # design's whole point; cutting at −5 to −10 pips manufactures the
+        # exact "open → quick red → close at loss" churn the user flagged.
         reasons.append(
             f"hold underwater ({position.unrealized_pl_jpy:+.0f} JPY): "
-            f"macro {macro} not yet reversed"
+            f"macro={macro} micro={micro} — within noise tolerance, await structure"
         )
         return ACTION_HOLD_PROTECTED, None, reasons
 
-    # Decision matrix (rows = macro, cols = micro)
+    # Decision matrix (rows = macro, cols = micro). Profitable positions only.
+    # WEAKENING+DEAD demoted from REVIEW_EXIT to HARVEST_TP: MARKET close pays
+    # full spread, but a narrow TP fills at the broker's TP price (no spread).
+    # Same outcome (lock profit) cheaper. REVERSED still triggers MARKET close
+    # because we want OUT immediately, not to wait for a TP to fill.
     matrix = {
         ("ALIGNED", "ALIVE"): ACTION_EXTEND_TP,
         ("ALIGNED", "DYING"): ACTION_HARVEST_TP,
         ("ALIGNED", "DEAD"): ACTION_HARVEST_TP,
         ("WEAKENING", "ALIVE"): ACTION_HARVEST_TP,
         ("WEAKENING", "DYING"): ACTION_NARROW_TP,
-        ("WEAKENING", "DEAD"): ACTION_REVIEW_EXIT,
+        ("WEAKENING", "DEAD"): ACTION_HARVEST_TP,
         ("REVERSED", "ALIVE"): ACTION_REVIEW_EXIT,
         ("REVERSED", "DYING"): ACTION_REVIEW_EXIT,
         ("REVERSED", "DEAD"): ACTION_REVIEW_EXIT,
