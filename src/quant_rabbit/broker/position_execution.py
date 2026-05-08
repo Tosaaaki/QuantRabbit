@@ -9,7 +9,10 @@ from typing import Any, Protocol
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
 from quant_rabbit.strategy.position_manager import (
+    ACTION_EXTEND_TP,
+    ACTION_HARVEST_TP,
     ACTION_HOLD_PROTECTED,
+    ACTION_NARROW_TP,
     ACTION_PROFIT_PROTECT,
     ACTION_REPAIR_PROTECTION,
     ACTION_REVIEW_EXIT,
@@ -151,7 +154,16 @@ class PositionProtectionGateway:
         if managed.action == ACTION_REVIEW_EXIT:
             action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
             return action
-        if managed.action not in {ACTION_REPAIR_PROTECTION, ACTION_PROFIT_PROTECT}:
+        # Adaptive TP actions fire a TP-only DEPENDENT_ORDER_REPLACE through the
+        # same path as REPAIR/PROFIT_PROTECT (user 2026-05-08「ミクロとマクロの
+        #視点」「確実に利益を取って」).
+        if managed.action not in {
+            ACTION_REPAIR_PROTECTION,
+            ACTION_PROFIT_PROTECT,
+            ACTION_HARVEST_TP,
+            ACTION_NARROW_TP,
+            ACTION_EXTEND_TP,
+        }:
             return action
 
         quote = snapshot.quotes.get(position.pair)

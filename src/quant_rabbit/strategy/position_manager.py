@@ -30,6 +30,13 @@ ACTION_HOLD_SL_FREE = "HOLD_SL_FREE"
 ACTION_PROFIT_PROTECT = "PROFIT_PROTECT_REQUIRED"
 ACTION_REVIEW_EXIT = "REVIEW_EXIT"
 ACTION_REPAIR_PROTECTION = "REPAIR_PROTECTION_REQUIRED"
+# Adaptive TP management actions (user 2026-05-08「ミクロとマクロの視点が
+# ないとできない」「確実に利益を取って」「伸ばすとこは伸ばす、限界なら
+# 見極める」). Each action carries a recommended_take_profit that the
+# position_execution gateway issues as a DEPENDENT_ORDER_REPLACE TP update.
+ACTION_HARVEST_TP = "HARVEST_TP"        # Pull TP near current price to lock profit fast
+ACTION_NARROW_TP = "NARROW_TP"          # Pull TP partway (halfway) toward current price
+ACTION_EXTEND_TP = "EXTEND_TP"          # Push TP further out when momentum keeps running
 
 
 # When `QR_TRADER_DISABLE_SL_REPAIR=1` the protection gateway treats a missing
@@ -159,6 +166,19 @@ class PositionManager:
                 if sl_free_hold:
                     reasons.append("trader SL-repair disabled (QR_TRADER_DISABLE_SL_REPAIR=1); discretionary SL-free hold")
                     action = ACTION_HOLD_SL_FREE
+                    # Adaptive TP: when the SL-free position is profitable
+                    # and chart_story available, evaluate EXTEND/HARVEST/
+                    # NARROW/EXIT (user 2026-05-08「ミクロとマクロの視点」).
+                    adaptive_action, adaptive_tp, adaptive_reasons = _adaptive_tp_action(
+                        position, quote, pair_charts
+                    )
+                    reasons.extend(adaptive_reasons)
+                    if adaptive_action != ACTION_HOLD_PROTECTED:
+                        if adaptive_action == ACTION_REVIEW_EXIT:
+                            action = ACTION_REVIEW_EXIT
+                        elif adaptive_tp is not None:
+                            recommended_take_profit = adaptive_tp
+                            action = adaptive_action
                 else:
                     recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes, snapshot.home_conversions)
                     if recommended_stop_loss is None:
@@ -285,6 +305,233 @@ class PositionManager:
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
+
+
+import re as _re
+
+_PM_TF_BLOCK = _re.compile(r"\b(D|H4|H1|M30|M15|M5|M1)\(([^)]+)\)")
+_PM_STRUCT = _re.compile(r"struct=(BOS|CHOCH)_(UP|DOWN)@")
+_PM_ADX = _re.compile(r"ADX=([\d.]+)")
+_PM_ST = _re.compile(r"ST=([+-])")
+_PM_REGIME_UP = {"TREND_UP", "IMPULSE_UP", "BULL"}
+_PM_REGIME_DOWN = {"TREND_DOWN", "IMPULSE_DOWN", "BEAR"}
+_PM_REGIME_RANGE = {"RANGE", "UNCLEAR", "TRANSITION", "FAILURE_RISK"}
+
+
+def _parse_tf(chart_story: str, tf: str) -> dict[str, Any] | None:
+    """Pull the per-timeframe block out of an inline chart_story."""
+    for m in _PM_TF_BLOCK.finditer(chart_story or ""):
+        if m.group(1) != tf:
+            continue
+        body = m.group(2)
+        head, _, rest = body.partition(",")
+        out: dict[str, Any] = {"regime": head.strip()}
+        adx_m = _PM_ADX.search(rest)
+        if adx_m:
+            try:
+                out["adx"] = float(adx_m.group(1))
+            except ValueError:
+                pass
+        st_m = _PM_ST.search(rest)
+        if st_m:
+            out["st"] = "UP" if st_m.group(1) == "+" else "DOWN"
+        s_m = _PM_STRUCT.search(rest)
+        if s_m:
+            out["struct_dir"] = s_m.group(2)
+        return out
+    return None
+
+
+def _classify_micro(chart_story: str, lane_dir: str) -> str:
+    """Return ALIVE / DYING / DEAD for the M1+M5 momentum vs lane direction.
+
+    ALIVE  – M5 ADX≥22 with regime/struct/ST aligned in lane direction.
+    DEAD   – any of M1/M5 carries opposite struct, opposite ST, or
+             opposite regime token (the lane is being walked into).
+    DYING  – everything else (ADX falling, RANGE/FAILURE_RISK, mixed).
+    """
+    if lane_dir not in {"LONG", "SHORT"}:
+        return "DYING"
+    target_up = lane_dir == "LONG"
+    m1 = _parse_tf(chart_story, "M1") or {}
+    m5 = _parse_tf(chart_story, "M5") or {}
+
+    def _flip(t: dict[str, Any]) -> bool:
+        # struct opposite, ST opposite, or regime opposite — any of these is a flip
+        sd = t.get("struct_dir")
+        if sd and ((sd == "UP") != target_up):
+            return True
+        st = t.get("st")
+        if st and ((st == "UP") != target_up):
+            return True
+        regime = str(t.get("regime") or "")
+        if (regime in _PM_REGIME_UP and not target_up) or (regime in _PM_REGIME_DOWN and target_up):
+            return True
+        return False
+
+    if _flip(m1) or _flip(m5):
+        return "DEAD"
+
+    m5_adx = m5.get("adx") if isinstance(m5.get("adx"), (int, float)) else 0.0
+    m5_regime = str(m5.get("regime") or "")
+    m5_aligned = (
+        m5_regime in (_PM_REGIME_UP if target_up else _PM_REGIME_DOWN)
+        or (m5.get("struct_dir") == ("UP" if target_up else "DOWN"))
+    )
+    if m5_aligned and m5_adx >= 22.0:
+        return "ALIVE"
+    return "DYING"
+
+
+def _classify_macro(chart_story: str, lane_dir: str) -> str:
+    """Return ALIGNED / WEAKENING / REVERSED for H1+H4+D vs lane direction.
+
+    ALIGNED   – H1 and H4 both in lane direction, D not opposing.
+    REVERSED  – H1 and H4 both opposite (or D explicitly opposite).
+    WEAKENING – partially aligned (e.g. H1 yes but H4 RANGE/UNCLEAR).
+    """
+    if lane_dir not in {"LONG", "SHORT"}:
+        return "WEAKENING"
+    target_up = lane_dir == "LONG"
+
+    def _bias(tf: str) -> str:
+        t = _parse_tf(chart_story, tf) or {}
+        regime = str(t.get("regime") or "")
+        sd = t.get("struct_dir")
+        if regime in _PM_REGIME_UP:
+            return "UP"
+        if regime in _PM_REGIME_DOWN:
+            return "DOWN"
+        if regime in _PM_REGIME_RANGE:
+            # Use struct as tie-breaker when the regime label is ambiguous
+            if sd == "UP":
+                return "UP"
+            if sd == "DOWN":
+                return "DOWN"
+            return "MIXED"
+        return "MIXED"
+
+    h1 = _bias("H1")
+    h4 = _bias("H4")
+    d = _bias("D")
+
+    aligned = "UP" if target_up else "DOWN"
+    opposite = "DOWN" if target_up else "UP"
+
+    if h1 == aligned and h4 == aligned and d != opposite:
+        return "ALIGNED"
+    if h1 == opposite and h4 == opposite:
+        return "REVERSED"
+    if d == opposite:
+        return "REVERSED"
+    return "WEAKENING"
+
+
+def _adaptive_tp_action(
+    position: BrokerPosition,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[str, float | None, list[str]]:
+    """Decide adaptive TP action for an SL-free, profitable, TP-set position.
+
+    Combines micro (M1/M5) momentum and macro (H1/H4/D) alignment to choose
+    between EXTEND / HARVEST / NARROW / EXIT / HOLD. Returns
+    (action, recommended_tp, reasons).
+
+    Conservative gates:
+    - Position must be currently profitable (`unrealized_pl_jpy > 0`).
+    - Position must already have a TP (operator-set during entry).
+    - Decision falls back to HOLD_PROTECTED on any data gap.
+
+    User directive 2026-05-08: 「確実に利益を取って。伸ばすとこは伸ばす、
+    限界なら見極める。ミクロとマクロの視点」.
+    """
+    reasons: list[str] = []
+    if position.take_profit is None or quote is None:
+        return ACTION_HOLD_PROTECTED, None, reasons
+    if position.unrealized_pl_jpy <= 0:
+        # Don't manage TPs on losing positions; let market structure decide
+        # (operator may still propose CLOSE via close_trade_ids on real reversal).
+        return ACTION_HOLD_PROTECTED, None, reasons
+
+    pc = (pair_charts or {}).get(position.pair) if pair_charts else None
+    chart_story = str(pc.get("chart_story") or "") if isinstance(pc, dict) else ""
+    if not chart_story:
+        return ACTION_HOLD_PROTECTED, None, reasons
+
+    lane_dir = position.side.value
+    target_up = lane_dir == "LONG"
+    micro = _classify_micro(chart_story, lane_dir)
+    macro = _classify_macro(chart_story, lane_dir)
+    reasons.append(f"micro={micro} macro={macro}")
+
+    # Decision matrix (rows = macro, cols = micro)
+    matrix = {
+        ("ALIGNED", "ALIVE"): ACTION_EXTEND_TP,
+        ("ALIGNED", "DYING"): ACTION_HARVEST_TP,
+        ("ALIGNED", "DEAD"): ACTION_HARVEST_TP,
+        ("WEAKENING", "ALIVE"): ACTION_HARVEST_TP,
+        ("WEAKENING", "DYING"): ACTION_NARROW_TP,
+        ("WEAKENING", "DEAD"): ACTION_REVIEW_EXIT,
+        ("REVERSED", "ALIVE"): ACTION_REVIEW_EXIT,
+        ("REVERSED", "DYING"): ACTION_REVIEW_EXIT,
+        ("REVERSED", "DEAD"): ACTION_REVIEW_EXIT,
+    }
+    action = matrix.get((macro, micro), ACTION_HOLD_PROTECTED)
+
+    pip_factor = 100.0 if position.pair.endswith("_JPY") else 10000.0
+    pip = 1.0 / pip_factor
+    cur = quote.bid if not target_up else quote.ask
+    # Distance bookkeeping (positive when TP still ahead)
+    if target_up:
+        tp_pips_remaining = (position.take_profit - cur) * pip_factor
+    else:
+        tp_pips_remaining = (cur - position.take_profit) * pip_factor
+
+    new_tp: float | None = None
+
+    if action == ACTION_EXTEND_TP:
+        # If already > 60% to TP and still alive+aligned, extend by 50% of
+        # the original distance so winners run further. Skip when the move
+        # is already late (<20% remaining might just be TP fill imminent).
+        if tp_pips_remaining > 5.0:
+            extra_pips = max(10.0, tp_pips_remaining * 0.5)
+            new_tp = (position.take_profit + extra_pips * pip) if target_up else (position.take_profit - extra_pips * pip)
+            reasons.append(f"extend +{extra_pips:.1f}p (winners run, micro alive macro aligned)")
+        else:
+            # TP imminent — just hold
+            action = ACTION_HOLD_PROTECTED
+            reasons.append(f"TP {tp_pips_remaining:.1f}p imminent; hold")
+    elif action == ACTION_HARVEST_TP:
+        # Pull TP to current price + small safety buffer (5p) so the broker
+        # accepts it and the next routine bar locks the profit. Don't move
+        # backwards (wider) — bail to HOLD if our buffered TP is worse.
+        buffer_pips = 5.0
+        candidate = (cur + buffer_pips * pip) if target_up else (cur - buffer_pips * pip)
+        # Only narrow (move TP closer to current price)
+        if (target_up and candidate < position.take_profit) or (not target_up and candidate > position.take_profit):
+            new_tp = candidate
+            reasons.append(f"harvest TP→cur+{buffer_pips:.0f}p (lock profit, momentum dying)")
+        else:
+            action = ACTION_HOLD_PROTECTED
+            reasons.append(f"harvest skipped (current {cur} already closer than buffered TP)")
+    elif action == ACTION_NARROW_TP:
+        # Bring TP halfway between current price and existing TP.
+        midpoint = (cur + position.take_profit) / 2.0
+        if (target_up and midpoint < position.take_profit) or (not target_up and midpoint > position.take_profit):
+            new_tp = midpoint
+            reasons.append(f"narrow TP→midpoint {midpoint:.5f} (macro weakening, micro dying)")
+        else:
+            action = ACTION_HOLD_PROTECTED
+            reasons.append("narrow skipped (midpoint not closer)")
+    elif action == ACTION_REVIEW_EXIT:
+        # MARKET close handled by position_execution.py path on REVIEW_EXIT;
+        # no recommended_tp needed.
+        reasons.append("EXIT (macro reversed or weak+dead micro)")
+    else:
+        reasons.append("HOLD (mixed signal)")
+
+    return action, new_tp, reasons
 
 
 def _load_scores(path: Path) -> dict[tuple[str, str], float]:
