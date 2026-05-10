@@ -78,25 +78,28 @@ def _format(level: float, state: dict) -> str:
         realized = float(equity) - float(start)
     day = state.get("campaign_day_jst", "?")
 
+    # Lead with the actual progress; mention the crossed threshold as suffix.
+    # Reader was misparsing `-3% (-4.45%)` as two metrics; flip the order so
+    # the live number is what they see first.
     if level >= 100.0:
         icon = "🎯"
-        label = f"DAILY TARGET HIT  ({pct:+.2f}%)"
+        label = f"DAILY TARGET HIT  {pct:+.2f}%"
         protect = "  → switch to protection-first; cancel trader-owned pending entries"
     elif level > 0:
         icon = "✅" if level >= 75 else "📈"
-        label = f"Target progress {level:.0f}%+  ({pct:+.2f}%)"
+        label = f"Target progress {pct:+.2f}%  (crossed {level:.0f}% level)"
         protect = ""
     elif level <= -8.0:
         icon = "🚨"
-        label = f"DRAWDOWN ALERT  ({pct:+.2f}%)"
+        label = f"DRAWDOWN ALERT {pct:+.2f}%  (crossed {level:.0f}% level)"
         protect = "  → consider stopping fresh entries until structure recovers"
     elif level <= -5.0:
         icon = "⚠️"
-        label = f"Drawdown {level:.0f}%  ({pct:+.2f}%)"
+        label = f"Drawdown {pct:+.2f}%  (crossed {level:.0f}% level)"
         protect = ""
     else:
         icon = "🟡"
-        label = f"Drawdown {level:.0f}%  ({pct:+.2f}%)"
+        label = f"Drawdown {pct:+.2f}%  (crossed {level:.0f}% level)"
         protect = ""
 
     realized_part = f"\n  Realized: {realized:+,.0f} JPY" if realized is not None else ""

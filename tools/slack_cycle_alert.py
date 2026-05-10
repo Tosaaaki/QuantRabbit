@@ -55,6 +55,10 @@ def _gap_marker_path() -> Path:
 
 
 # Status values that mean the cycle worked as intended (ok to stay quiet).
+# POSITION_ACTION_SENT covers TP-replace / SL-trail / harvest cycles — the
+# action already shows up in #qr-trades when material (or is suppressed as a
+# TP nudge). Posting it here too was producing the lane=None / GPT=not used
+# noise wall.
 QUIET_STATUSES = {
     "SENT",
     "STAGED",
@@ -69,6 +73,7 @@ QUIET_STATUSES = {
     "GPT_WAIT",
     "CLOSED_GPT_TRADES",
     "CANCELED_GPT_PENDING",
+    "POSITION_ACTION_SENT",
     "OK",
 }
 
