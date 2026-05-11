@@ -14,7 +14,7 @@
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 4.5 --target-trades-per-day 10
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot
@@ -31,7 +31,7 @@ Context fetches can outlive the quote freshness window. Refresh broker truth aga
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 4.5 --target-trades-per-day 10
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
