@@ -30,6 +30,32 @@
 - Past losses, low old capture rate, missing positive mined evidence, or stale rejection memory are audit context only after current risk geometry is `LIVE_READY`.
 - If `progress_pct < 50` and at least three `LIVE_READY` lanes exist, WAIT must reject each lane with a specific M5 chart-story sentence and cite the exact gate.
 
+### Invalid WAIT reasons (user 2026-05-11「マージン使えてないし、他の通貨も入れるんじゃないの？」)
+
+WAIT is **not** valid when any of these is the only argument:
+
+- "ASIA/quiet session, wait for London/NY" — sessions are an input to TF
+  weighting, not a blanket no-trade gate. ASIA range scalps and overnight
+  swing carryovers are valid trades when the structure says so.
+- "Existing positions cover this pair" — under SL-free + OANDA hedging
+  same-pair opposite-side adds zero margin (`feedback_hedging.md`); a SHORT
+  on a pair already LONG is a counter-trend pullback trade, not a
+  duplicate. Phase 2 mirror lanes (`feature_dynamic_tf_weighting`) exist
+  exactly so you can take that trade.
+- "Margin headroom = wait for clearer setup" — if `margin_available_jpy`
+  > one-position margin AND a `LIVE_READY` lane has combined MTF+PA
+  score ≥ +12, take it. The system was sized so 3-4 concurrent positions
+  is the design point, not the ceiling.
+- "Direction bias of pair_charts long/short_score" — that's the historical
+  aggregate. Phase 2 explicitly enables the AI trader to override it when
+  the structural lens (PA aggregate + micro override + MTF confluence)
+  favors the opposite. A SHORT lane scoring higher combined than its LONG
+  twin is a trade, not a contradiction.
+
+When margin is available AND ≥1 lane combined score ≥ +12, prefer TRADE.
+WAIT requires citing a specific *new* blocker not present at the time the
+margin freed up.
+
 ## Required TRADE Content
 
 - Selected lane id and basket lane ids.
