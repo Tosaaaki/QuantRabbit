@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,6 +11,151 @@ from typing import Any, Protocol
 
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _operator_close_override_active() -> bool:
+    """Emergency override for the CLOSE-discipline gate.
+
+    Set `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell when an out-of-
+    band close is urgently needed (broker disconnect, regulatory order,
+    user-confirmed structural reversal not yet visible to pair_charts).
+    Documented so the override is auditable rather than implicit.
+    """
+    return os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+
+
+# Matches a single per-timeframe segment in chart_reader's chart_story format.
+# Example token captured: "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"
+# Group 1 = timeframe (M1/M5/M15/M30/H1/H4/D), Group 2 = "BOS"|"CHOCH",
+# Group 3 = "UP"|"DOWN", Group 4 = numeric price.
+_STRUCT_EVENT_RE = re.compile(
+    r"\b(M1|M5|M15|M30|H1|H4|D)\([^)]*?struct=(BOS|CHOCH)_(UP|DOWN)@([0-9]+\.?[0-9]*)",
+)
+
+# Timeframes consulted when deciding whether the operator-thesis behind a
+# trader-owned position has been structurally invalidated. M15 catches the
+# fast-fail flip; H4 catches the dominant-tape reversal. Lower TFs (M1/M5)
+# would whip the gate around session noise; higher TFs (D/W) would lag past
+# the per_trade_risk_budget. Both are anchored by chart_reader.structure_events
+# rather than a JPY/pip literal, so they're §6-compliant.
+CLOSE_DISCIPLINE_TIMEFRAMES: tuple[str, ...] = ("M15", "H4")
+
+
+def _parse_struct_events(chart_story: str) -> dict[str, tuple[str, str, float]]:
+    """Return {timeframe: (event_type, direction, price)} parsed from chart_story.
+
+    Silently skips tokens whose price does not parse as a float. The
+    parser is intentionally tolerant: chart_reader format drift should
+    degrade to "no thesis-invalidation evidence" rather than crash the
+    verifier and stall the cycle.
+    """
+    if not chart_story:
+        return {}
+    out: dict[str, tuple[str, str, float]] = {}
+    for tf, event_type, direction, price_str in _STRUCT_EVENT_RE.findall(chart_story):
+        try:
+            out[tf] = (event_type, direction, float(price_str))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _pair_chart_story(packet: dict[str, Any], pair: str) -> str:
+    """Pull the per-pair chart_story string from the verifier packet."""
+    pairs_block = (
+        ((packet.get("market_context") or {}).get("pairs") or {})
+        .get(pair) or {}
+    )
+    chart = pairs_block.get("chart") if isinstance(pairs_block, dict) else None
+    if isinstance(chart, dict):
+        return str(chart.get("chart_story") or "")
+    return ""
+
+
+def _trader_position_lookup(packet: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map trade_id -> position summary for trader-owned open positions."""
+    out: dict[str, dict[str, Any]] = {}
+    snapshot = packet.get("broker_snapshot") or {}
+    for pos in snapshot.get("position_summaries", []) or []:
+        if str(pos.get("owner") or "") != "trader":
+            continue
+        tid = pos.get("trade_id")
+        if tid is None:
+            continue
+        out[str(tid)] = pos
+    return out
+
+
+def _close_thesis_invalidated(
+    packet: dict[str, Any],
+    pair: str,
+    side: str,
+    *,
+    decision: "GPTTraderDecision | None" = None,
+) -> tuple[bool, str]:
+    """Check whether the position's thesis has been invalidated.
+
+    Two acceptance paths (§6-compliant — no JPY/pip/multiplier literals):
+
+      (a) Structural BOS or CHOCH on M15 or H4 printing AGAINST the
+          position side. This is the chart_reader.structure_events lens
+          that already drives trader_brain price-action scoring; using
+          the same signal keeps prefilter and CLOSE-gate aligned.
+
+      (b) The decision receipt's `invalidation_price` + `invalidation_tf`
+          fields are populated AND broker-truth quote shows the level
+          has traded through. LONG invalidates downward, SHORT upward.
+          Pure prose `invalidation` text alone is not enough — the gate
+          requires a machine-checkable price hit.
+    """
+    side_upper = str(side or "").upper()
+    if side_upper not in {"LONG", "SHORT"}:
+        return False, "unknown position side"
+
+    chart_story = _pair_chart_story(packet, pair)
+    structs = _parse_struct_events(chart_story)
+    counter_direction = "DOWN" if side_upper == "LONG" else "UP"
+    for tf in CLOSE_DISCIPLINE_TIMEFRAMES:
+        event = structs.get(tf)
+        if event and event[1] == counter_direction:
+            event_type, direction, price = event
+            return True, (
+                f"{tf} {event_type}_{direction}@{price:g} prints against "
+                f"{side_upper} thesis"
+            )
+
+    if decision is not None and decision.invalidation_price is not None:
+        snapshot = packet.get("broker_snapshot") or {}
+        quotes = snapshot.get("quotes") or {}
+        quote = quotes.get(pair)
+        if isinstance(quote, dict):
+            bid = _optional_float(quote.get("bid"))
+            ask = _optional_float(quote.get("ask"))
+            level = decision.invalidation_price
+            tf = decision.invalidation_tf or "unspecified-TF"
+            if side_upper == "LONG" and bid is not None and bid <= level:
+                return True, (
+                    f"bid {bid:g} reached LONG invalidation {level:g} "
+                    f"on {tf} per receipt"
+                )
+            if side_upper == "SHORT" and ask is not None and ask >= level:
+                return True, (
+                    f"ask {ask:g} reached SHORT invalidation {level:g} "
+                    f"on {tf} per receipt"
+                )
+
+    return False, ""
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
@@ -102,6 +248,21 @@ class GPTTraderDecision:
     close_trade_ids: tuple[str, ...] = ()
     strategy_reviews: tuple[dict[str, Any], ...] = ()
     specialist_reviews: tuple[dict[str, Any], ...] = ()
+    # CLOSE-action discipline fields (added 2026-05-12, see
+    # `feedback_no_unilateral_close.md`). A CLOSE receipt must pass two
+    # gates: (A) market evidence that the thesis is invalidated, either
+    # via structural BOS/CHOCH against the position side on M15 or H4
+    # (parsed from pair_charts.chart_story) or via an explicit
+    # `invalidation_price` + `invalidation_tf` that broker truth confirms
+    # has been hit; (B) explicit operator authorization via
+    # `operator_close_authorized=true` or the
+    # `QR_OPERATOR_CLOSE_OVERRIDE=1` env override. Both gates must pass
+    # so the trader cannot autonomously close a position whose thesis is
+    # still structurally valid (2026-05-11 18:17 UTC mass-close of four
+    # SHORT positions for -3,291 JPY established the regression).
+    invalidation_price: float | None = None
+    invalidation_tf: str | None = None
+    operator_close_authorized: bool = False
 
 
 @dataclass(frozen=True)
@@ -298,6 +459,7 @@ class GPTTraderBrain:
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
+                "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` hit on broker truth) AND gate B (`operator_close_authorized=true` or `QR_OPERATOR_CLOSE_OVERRIDE=1`). See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -516,9 +678,13 @@ class DecisionVerifier:
                 issues.append(VerificationIssue("NO_OPEN_POSITION", f"{decision.action} requires an open position"))
             if decision.action == "CLOSE":
                 self._verify_close_trade_ids(decision, issues)
-        # CLOSE attached to TRADE: validate close_trade_ids even when action is TRADE.
+                self._verify_close_discipline(decision, issues)
+        # CLOSE attached to TRADE: validate close_trade_ids and discipline
+        # even when action is TRADE (a TRADE receipt may also retire prior
+        # positions, and those closures must clear the same gates).
         if decision.action == "TRADE" and decision.close_trade_ids:
             self._verify_close_trade_ids(decision, issues)
+            self._verify_close_discipline(decision, issues)
 
         return VerificationResult(allowed=not any(issue.severity == "BLOCK" for issue in issues), issues=tuple(issues))
 
@@ -570,6 +736,77 @@ class DecisionVerifier:
                     "UNKNOWN_CLOSE_TRADE_ID",
                     "close_trade_ids must match current trader-owned open positions: "
                     + ", ".join(unknown),
+                )
+            )
+
+    def _verify_close_discipline(
+        self,
+        decision: GPTTraderDecision,
+        issues: list[VerificationIssue],
+    ) -> None:
+        """Two-gate CLOSE discipline (see feedback_no_unilateral_close.md and
+        AGENT_CONTRACT §10):
+
+        Gate A — market evidence: every named trade must have its thesis
+        invalidated by either a structural BOS/CHOCH on M15 or H4 against
+        the position side, OR by an explicit `invalidation_price` +
+        `invalidation_tf` that broker truth confirms has been hit. Prose
+        `invalidation` text alone does not count.
+
+        Gate B — operator authorization: the decision must carry
+        `operator_close_authorized=true`, or the operator shell must
+        export `QR_OPERATOR_CLOSE_OVERRIDE=1`.
+
+        Both gates must pass; failing either rejects the receipt. This
+        is the structural fix for the 2026-05-11 18:17 UTC regression
+        where the trader autonomously closed four valid SHORT positions
+        for -3,291 JPY before their wide TPs could fire.
+        """
+        if not decision.close_trade_ids:
+            return
+
+        position_by_tid = _trader_position_lookup(self.packet)
+
+        # Gate A: thesis-still-valid check, applied to every named trade.
+        still_valid: list[str] = []
+        for tid in decision.close_trade_ids:
+            pos = position_by_tid.get(str(tid))
+            if pos is None:
+                # `_verify_close_trade_ids` already flagged the unknown id;
+                # do not double-report.
+                continue
+            pair = str(pos.get("pair") or "")
+            side = str(pos.get("side") or "")
+            invalidated, _reason = _close_thesis_invalidated(
+                self.packet,
+                pair,
+                side,
+                decision=decision,
+            )
+            if not invalidated:
+                still_valid.append(
+                    f"{tid} ({pair} {side})"
+                )
+
+        if still_valid:
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_THESIS_STILL_VALID",
+                    "CLOSE rejected: thesis still valid (no BOS/CHOCH against "
+                    "side on M15/H4 and no invalidation_price hit) for: "
+                    + ", ".join(still_valid),
+                )
+            )
+
+        # Gate B: operator authorization, regardless of Gate A outcome.
+        if not decision.operator_close_authorized and not _operator_close_override_active():
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_OPERATOR_AUTH_REQUIRED",
+                    "CLOSE rejected: requires operator_close_authorized=true in "
+                    "the receipt or QR_OPERATOR_CLOSE_OVERRIDE=1 in the shell. "
+                    "The trader cannot close trader-owned positions "
+                    "autonomously (feedback_no_unilateral_close.md).",
                 )
             )
 
@@ -687,6 +924,9 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "narrative": {"type": "string"},
         "chart_story": {"type": "string"},
         "invalidation": {"type": "string"},
+        "invalidation_price": {"type": ["number", "null"]},
+        "invalidation_tf": {"type": ["string", "null"]},
+        "operator_close_authorized": {"type": "boolean"},
         "rejected_alternatives": {"type": "array", "items": {"type": "string"}},
         "risk_notes": {"type": "array", "items": {"type": "string"}},
         "evidence_refs": {"type": "array", "items": {"type": "string"}},
@@ -758,6 +998,11 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
         evidence_refs=tuple(str(item) for item in payload.get("evidence_refs", []) or []),
         operator_summary=str(payload.get("operator_summary") or ""),
         close_trade_ids=tuple(str(item) for item in payload.get("close_trade_ids", []) or []),
+        invalidation_price=_optional_float(payload.get("invalidation_price")),
+        invalidation_tf=(
+            str(payload.get("invalidation_tf")) if payload.get("invalidation_tf") else None
+        ),
+        operator_close_authorized=bool(payload.get("operator_close_authorized", False)),
         strategy_reviews=tuple(
             dict(item)
             for item in payload.get("strategy_reviews", []) or []
@@ -846,6 +1091,27 @@ def _lane_packet(
 
 def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
     orders = snapshot.get("orders", []) or []
+    quotes_in = snapshot.get("quotes") or {}
+    # Scope quotes to pairs we actually have positions on (or are likely
+    # to reference in this cycle) so the verifier packet stays compact
+    # but the CLOSE-discipline gate has bid/ask available to check
+    # `invalidation_price` hits against current broker truth.
+    relevant_pairs: set[str] = set()
+    for item in snapshot.get("positions", []) or []:
+        if item.get("pair"):
+            relevant_pairs.add(str(item["pair"]))
+    for order in orders:
+        if order.get("pair"):
+            relevant_pairs.add(str(order["pair"]))
+    scoped_quotes = {
+        pair: {
+            "bid": q.get("bid"),
+            "ask": q.get("ask"),
+            "timestamp_utc": q.get("timestamp_utc"),
+        }
+        for pair, q in quotes_in.items()
+        if pair in relevant_pairs and isinstance(q, dict)
+    }
     return {
         "evidence_ref": "broker:snapshot",
         "fetched_at_utc": snapshot.get("fetched_at_utc"),
@@ -864,6 +1130,7 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
             for item in (snapshot.get("positions", []) or [])
         ],
         "pending_orders": _pending_order_packet(orders),
+        "quotes": scoped_quotes,
     }
 
 

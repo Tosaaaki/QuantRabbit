@@ -188,6 +188,10 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Contradicted trader-owned positions can be closed.
 - **Existing SL cannot be widened.**
 - **Existing TP is not moved by the protection gateway.**
+- **CLOSE discipline (two-gate, 2026-05-12, `feedback_no_unilateral_close.md`).** A `CLOSE` receipt — and a `TRADE` receipt that lists `close_trade_ids` — must satisfy **both** of the following or be rejected by `gpt-trader-decision`:
+  - **Gate A — market evidence of thesis invalidation.** For each named trade id, either (i) `pair_charts` reports a `BOS_<DIR>` or `CHOCH_<DIR>` against the position side on `M15` or `H4` (parsed from `chart_story`; same structure-event lens trader_brain already uses), or (ii) the receipt populates `invalidation_price` + `invalidation_tf` AND broker truth shows the level traded through (LONG needs `bid <= invalidation_price`; SHORT needs `ask >= invalidation_price`). Prose `invalidation` text alone is not enough — the gate requires a machine-checkable signal so the verifier can reproduce the operator's reasoning. Code: `_close_thesis_invalidated` in `gpt_trader.py`.
+  - **Gate B — explicit operator authorization.** The receipt must carry `operator_close_authorized: true`, or the operator shell must export `QR_OPERATOR_CLOSE_OVERRIDE=1`. The trader cannot autonomously decide to close a trader-owned position; the operator must opt in. The override env is for documented emergencies (broker disconnect, regulatory order); production cycles set the receipt field.
+- The two-gate model is a §3.5-compliant repair for the 2026-05-11 18:17 UTC regression where the GPT trader autonomously closed four valid SHORT positions for **-3,291 JPY** (12 % of the day's `daily_risk_budget_jpy`) before their wide TPs could fire. The structural gate is anchored on `chart_reader.structure_events`, not on JPY/pip literals.
 
 ---
 

@@ -101,6 +101,21 @@ PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 # If the action is CANCEL_PENDING, list only current trader-owned pending entry
 # ids in cancel_order_ids; the gateway cycle cancels verified ids and sends no
 # fresh entry in that same cycle.
+#
+# CLOSE discipline (AGENT_CONTRACT §10, feedback_no_unilateral_close.md):
+# Never autonomously emit CLOSE — the trader cannot decide on its own to close
+# trader-owned positions. A CLOSE receipt (or a TRADE receipt that lists
+# close_trade_ids) requires BOTH:
+#   - Gate A: market evidence — pair_charts shows BOS/CHOCH against the
+#     position side on M15 or H4, OR `invalidation_price` + `invalidation_tf`
+#     in the receipt with broker truth confirming the level has traded.
+#   - Gate B: operator authorization — the receipt must carry
+#     `operator_close_authorized: true`, OR the shell must export
+#     `QR_OPERATOR_CLOSE_OVERRIDE=1` (documented emergency override).
+# If either gate fails, `gpt-trader-decision` REJECTs the receipt with
+# `CLOSE_THESIS_STILL_VALID` or `CLOSE_OPERATOR_AUTH_REQUIRED`. The default
+# stance when no user instruction is present is HOLD / WAIT — do not write a
+# CLOSE receipt to "reduce risk" from a still-valid thesis.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \

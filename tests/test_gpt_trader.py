@@ -1388,5 +1388,337 @@ def _position(*, stop_loss: float | None = 1.17) -> dict:
     }
 
 
+# Helpers for CLOSE-discipline tests (2026-05-12, feedback_no_unilateral_close.md).
+
+import os as _os
+from quant_rabbit.gpt_trader import _parse_struct_events, _close_thesis_invalidated
+
+
+def _chart_story_with_struct(pair: str, m15_dir: str = "UP", h4_dir: str = "UP") -> str:
+    """Return a chart_story snippet matching chart_reader's emit format with
+    a controllable M15 and H4 struct event so tests can flip thesis-valid
+    vs thesis-invalidated. Other TFs print neutral non-counter events so
+    they never coincidentally satisfy the gate."""
+    return (
+        f"{pair} RANGE; "
+        f"M1(RANGE, ADX=15 RSI=50 ATR=1.0p struct=BOS_UP@1.0000); "
+        f"M5(RANGE, ADX=15 RSI=50 ATR=2.0p struct=BOS_UP@1.0000); "
+        f"M15(RANGE, ADX=20 RSI=50 ATR=3.0p struct=BOS_{m15_dir}@1.1000); "
+        f"M30(RANGE, ADX=20 RSI=50 ATR=4.0p struct=BOS_UP@1.0000); "
+        f"H1(RANGE, ADX=20 RSI=50 ATR=5.0p struct=BOS_UP@1.0000); "
+        f"H4(RANGE, ADX=25 RSI=50 ATR=8.0p struct=CHOCH_{h4_dir}@1.2000); "
+        f"D(RANGE, ADX=15 RSI=50 ATR=15.0p struct=BOS_UP@1.0000)"
+    )
+
+
+def _close_decision(
+    *,
+    trade_ids: list[str],
+    operator_close_authorized: bool = False,
+    invalidation_price: float | None = None,
+    invalidation_tf: str | None = None,
+) -> dict:
+    """Decision payload for action=CLOSE with the new discipline fields."""
+    decision = {
+        "action": "CLOSE",
+        "selected_lane_id": None,
+        "selected_lane_ids": [],
+        "cancel_order_ids": [],
+        "close_trade_ids": trade_ids,
+        "confidence": "MEDIUM",
+        "thesis": "Close per operator-cited invalidation.",
+        "method": "POSITION_MANAGEMENT",
+        "narrative": "Operator-directed close on trader-owned position(s).",
+        "chart_story": "See pair_charts for current structure.",
+        "invalidation": "See `invalidation_price` and `invalidation_tf` if cited.",
+        "rejected_alternatives": [],
+        "risk_notes": [],
+        "evidence_refs": ["broker:snapshot", "target:daily"],
+        "operator_summary": "Close trader-owned positions per gate-A + gate-B authorization.",
+    }
+    if invalidation_price is not None:
+        decision["invalidation_price"] = invalidation_price
+    if invalidation_tf is not None:
+        decision["invalidation_tf"] = invalidation_tf
+    if operator_close_authorized:
+        decision["operator_close_authorized"] = True
+    return decision
+
+
+def _close_fixtures(
+    root: Path,
+    *,
+    position_side: str = "SHORT",
+    m15_dir: str = "UP",
+    h4_dir: str = "UP",
+    quote_bid: float = 1.176,
+    quote_ask: float = 1.1761,
+) -> dict[str, Path]:
+    """Build minimal fixtures for a CLOSE-discipline test.
+
+    Defaults: one trader-owned EUR_USD SHORT position whose chart_story
+    prints UP-direction structure (i.e. thesis-invalidated against
+    SHORT). Override `m15_dir`/`h4_dir` to flip the gate.
+    """
+    pos = {
+        "trade_id": "555",
+        "pair": "EUR_USD",
+        "side": position_side,
+        "units": 9000,
+        "entry_price": 1.17708 if position_side == "SHORT" else 1.17400,
+        "unrealized_pl_jpy": -800.0,
+        "take_profit": 1.17060 if position_side == "SHORT" else 1.18000,
+        "stop_loss": None,
+        "owner": "trader",
+    }
+    files = _fixtures(root, positions=[pos])
+    # Override snapshot quotes to control invalidation_price hit testing.
+    snap = json.loads(files["snapshot"].read_text())
+    snap["quotes"] = {
+        "EUR_USD": {"bid": quote_bid, "ask": quote_ask, "timestamp_utc": snap["fetched_at_utc"]},
+    }
+    files["snapshot"].write_text(json.dumps(snap))
+    # Override pair_charts chart_story so the CLOSE gate sees the
+    # M15/H4 structural events we want.
+    pc = json.loads(files["pair_charts"].read_text())
+    pc["charts"][0]["chart_story"] = _chart_story_with_struct("EUR_USD", m15_dir=m15_dir, h4_dir=h4_dir)
+    files["pair_charts"].write_text(json.dumps(pc))
+    return files
+
+
+class CloseDisciplineTest(unittest.TestCase):
+    """Coverage for 2026-05-12 CLOSE two-gate discipline added in
+    response to the 2026-05-11 18:17 UTC mass-close regression where the
+    GPT trader autonomously closed four valid SHORT positions for
+    -3,291 JPY. Mirrors `feedback_no_unilateral_close.md` and the
+    AGENT_CONTRACT §10 CLOSE discipline section.
+    """
+
+    def setUp(self) -> None:
+        self._prior_override = _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+
+    def tearDown(self) -> None:
+        if self._prior_override is None:
+            _os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+        else:
+            _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = self._prior_override
+
+    def test_close_rejected_when_thesis_still_valid_even_with_operator_auth(self) -> None:
+        # SHORT position + chart_story shows BOS_UP on M15/H4? No — both
+        # set to UP would invalidate. Force both to DOWN so neither
+        # counter-direction event prints against SHORT.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            decision = _close_decision(
+                trade_ids=["555"],
+                operator_close_authorized=True,  # gate B passes
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            self.assertFalse(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_close_accepted_when_m15_bos_against_side_and_operator_authorized(self) -> None:
+        # SHORT position + M15 prints BOS_UP (against SHORT) → gate A
+        # passes via structural lens.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="DOWN")
+            decision = _close_decision(
+                trade_ids=["555"],
+                operator_close_authorized=True,
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+
+    def test_close_accepted_when_h4_choch_against_side(self) -> None:
+        # SHORT position + H4 prints CHOCH_UP (against SHORT), M15 neutral.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
+            decision = _close_decision(
+                trade_ids=["555"],
+                operator_close_authorized=True,
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+
+    def test_close_accepted_when_invalidation_price_hit_on_broker_truth(self) -> None:
+        # SHORT @ 1.17708, TP 1.17060, no structural counter-event.
+        # Receipt cites invalidation_price=1.1750 + tf=H1; broker ask
+        # 1.1761 > 1.1750 → level traded through → gate A passes.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                quote_bid=1.1760,
+                quote_ask=1.1761,
+            )
+            decision = _close_decision(
+                trade_ids=["555"],
+                operator_close_authorized=True,
+                invalidation_price=1.1750,
+                invalidation_tf="H1",
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+
+    def test_close_rejected_without_operator_authorization_even_when_thesis_invalidated(self) -> None:
+        # Structural invalidation passes (M15 BOS_UP vs SHORT) but no
+        # operator_close_authorized field and no env override → gate B fails.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            decision = _close_decision(
+                trade_ids=["555"],
+                operator_close_authorized=False,
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_close_accepted_when_qr_operator_close_override_env_set(self) -> None:
+        # Emergency override path: env QR_OPERATOR_CLOSE_OVERRIDE=1
+        # bypasses gate B even when receipt lacks operator_close_authorized.
+        # Gate A still required.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
+            decision = _close_decision(trade_ids=["555"], operator_close_authorized=False)
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+
+    def test_18_17_mass_close_regression(self) -> None:
+        # Reproduce the 2026-05-11 18:17 UTC GPT close: SHORT positions
+        # in EUR_USD/AUD_JPY whose chart_story did NOT show structural
+        # counter-events. The model emitted CLOSE; the new gate rejects.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # 2 SHORT positions, no struct counter events anywhere.
+            positions = [
+                {
+                    "trade_id": "470719", "pair": "EUR_USD", "side": "SHORT",
+                    "units": 8425, "entry_price": 1.17708,
+                    "unrealized_pl_jpy": -1060.9, "take_profit": 1.1706,
+                    "stop_loss": None, "owner": "trader",
+                },
+                {
+                    "trade_id": "470749", "pair": "AUD_JPY", "side": "SHORT",
+                    "units": 13650, "entry_price": 113.905,
+                    "unrealized_pl_jpy": -1173.9, "take_profit": 113.396,
+                    "stop_loss": None, "owner": "trader",
+                },
+            ]
+            files = _fixtures(root, positions=positions)
+            # Both pairs in pair_charts with thesis-still-valid structure.
+            snap = json.loads(files["snapshot"].read_text())
+            snap["quotes"] = {
+                "EUR_USD": {"bid": 1.17784, "ask": 1.17786, "timestamp_utc": snap["fetched_at_utc"]},
+                "AUD_JPY": {"bid": 113.98, "ask": 113.99, "timestamp_utc": snap["fetched_at_utc"]},
+            }
+            files["snapshot"].write_text(json.dumps(snap))
+            pc = json.loads(files["pair_charts"].read_text())
+            pc["charts"] = [
+                {**pc["charts"][0], "pair": "EUR_USD",
+                 "chart_story": _chart_story_with_struct("EUR_USD", m15_dir="DOWN", h4_dir="DOWN")},
+                {**pc["charts"][0], "pair": "AUD_JPY",
+                 "chart_story": _chart_story_with_struct("AUD_JPY", m15_dir="DOWN", h4_dir="DOWN")},
+            ]
+            files["pair_charts"].write_text(json.dumps(pc))
+            decision = _close_decision(
+                trade_ids=["470719", "470749"],
+                operator_close_authorized=True,  # even with auth, gate A blocks
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+
+
+class StructEventParserTest(unittest.TestCase):
+    def test_parses_all_seven_timeframes(self) -> None:
+        story = (
+            "EUR_USD RANGE; "
+            "M1(RANGE struct=BOS_UP@1.17); M5(RANGE struct=CHOCH_DOWN@1.18); "
+            "M15(RANGE struct=BOS_DOWN@1.19); M30(RANGE struct=BOS_UP@1.20); "
+            "H1(RANGE struct=CHOCH_UP@1.21); H4(RANGE struct=BOS_DOWN@1.22); "
+            "D(RANGE struct=BOS_UP@1.23)"
+        )
+        events = _parse_struct_events(story)
+        self.assertEqual(events["M15"], ("BOS", "DOWN", 1.19))
+        self.assertEqual(events["H4"], ("BOS", "DOWN", 1.22))
+        self.assertEqual(len(events), 7)
+
+    def test_invalidated_when_m15_against_long(self) -> None:
+        packet = {
+            "market_context": {
+                "pairs": {
+                    "EUR_USD": {
+                        "chart": {
+                            "chart_story": (
+                                "EUR_USD RANGE; M15(RANGE struct=BOS_DOWN@1.19); "
+                                "H4(RANGE struct=BOS_UP@1.20)"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+        ok, reason = _close_thesis_invalidated(packet, "EUR_USD", "LONG")
+        self.assertTrue(ok)
+        self.assertIn("M15", reason)
+
+    def test_not_invalidated_when_struct_aligned_with_side(self) -> None:
+        packet = {
+            "market_context": {
+                "pairs": {
+                    "EUR_USD": {
+                        "chart": {
+                            "chart_story": (
+                                "EUR_USD RANGE; M15(RANGE struct=BOS_UP@1.19); "
+                                "H4(RANGE struct=BOS_UP@1.20)"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+        ok, _ = _close_thesis_invalidated(packet, "EUR_USD", "LONG")
+        self.assertFalse(ok)
+
+
 if __name__ == "__main__":
     unittest.main()
