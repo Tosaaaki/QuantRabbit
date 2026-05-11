@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -1230,62 +1231,123 @@ class AttackAdvicePromotionTest(unittest.TestCase):
             unadvised_score = next(s for s in unadvised.scores if s.pair == "EUR_USD")
             self.assertEqual(advised_score.score, unadvised_score.score)
 
-    def test_promotion_does_not_override_block_until_new_evidence(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            strategy_path = root / "blocked_strategy.json"
-            strategy_path.write_text(
-                json.dumps(
-                    {
-                        "system_contract": {
-                            "loss_cap_jpy": 500.0,
-                            "loss_cap_source": "test current campaign cap",
-                        },
-                        "profiles": [
-                            {
-                                "pair": "EUR_USD",
-                                "direction": "LONG",
-                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
-                                "pretrade_net_jpy": -3000,
-                                "live_net_jpy": -2000,
-                                "live_worst_jpy": -1500,
-                                "positive_evidence_n": 0,
-                                "positive_tail_jpy": 0,
-                                "positive_best_jpy": 0,
-                                "seat_discovered": 10,
-                                "seat_orderable": 10,
-                                "seat_captured": 0,
-                            }
-                        ],
-                    }
+    def _blocked_strategy(self, root: Path) -> Path:
+        strategy_path = root / "blocked_strategy.json"
+        strategy_path.write_text(
+            json.dumps(
+                {
+                    "system_contract": {
+                        "loss_cap_jpy": 500.0,
+                        "loss_cap_source": "test current campaign cap",
+                    },
+                    "profiles": [
+                        {
+                            "pair": "EUR_USD",
+                            "direction": "LONG",
+                            "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                            "pretrade_net_jpy": -3000,
+                            "live_net_jpy": -2000,
+                            "live_worst_jpy": -1500,
+                            "positive_evidence_n": 0,
+                            "positive_tail_jpy": 0,
+                            "positive_best_jpy": 0,
+                            "seat_discovered": 10,
+                            "seat_orderable": 10,
+                            "seat_captured": 0,
+                        }
+                    ],
+                }
+            )
+        )
+        return strategy_path
+
+    def test_block_remains_hard_without_sl_free(self) -> None:
+        # Legacy contract: without SL-free, BLOCK_UNTIL_NEW_EVIDENCE keeps
+        # the lane out of SEND_ENTRY regardless of attack_advice overlay.
+        prior = os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                advice = self._attack_advice(
+                    root,
+                    ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
                 )
-            )
-            advice = self._attack_advice(
-                root,
-                ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
-            )
-            brain = TraderBrain(
-                intents_path=_eur_only_intents(root),
-                campaign_plan_path=_eur_only_campaign(root),
-                strategy_profile_path=strategy_path,
-                market_story_profile_path=_stories(root),
-                target_state_path=root / "missing_target.json",
-                trader_settings_path=root / "settings.json",
-                attack_advice_path=advice,
-                output_path=root / "decision.json",
-                report_path=root / "decision.md",
-            )
+                brain = TraderBrain(
+                    intents_path=_eur_only_intents(root),
+                    campaign_plan_path=_eur_only_campaign(root),
+                    strategy_profile_path=self._blocked_strategy(root),
+                    market_story_profile_path=_stories(root),
+                    target_state_path=root / "missing_target.json",
+                    trader_settings_path=root / "settings.json",
+                    attack_advice_path=advice,
+                    output_path=root / "decision.json",
+                    report_path=root / "decision.md",
+                )
 
-            decision = brain.run(_snapshot())
+                decision = brain.run(_snapshot())
 
-            score = next(s for s in decision.scores if s.pair == "EUR_USD")
-            self.assertEqual(score.action, ACTION_NO_TRADE)
-            # AGENT_CONTRACT §11: BLOCK_UNTIL_NEW_EVIDENCE is never
-            # auto-promoted, even with attack_advice overlay.
-            self.assertTrue(
-                any("BLOCK_UNTIL_NEW_EVIDENCE" in b for b in score.blockers),
-                f"Expected §11 hard block to remain; got blockers: {score.blockers}",
-            )
+                score = next(s for s in decision.scores if s.pair == "EUR_USD")
+                self.assertEqual(score.action, ACTION_NO_TRADE)
+                self.assertTrue(
+                    any("BLOCK_UNTIL_NEW_EVIDENCE" in b for b in score.blockers),
+                    f"Expected §11 hard block to remain; got blockers: {score.blockers}",
+                )
+        finally:
+            if prior is not None:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_block_becomes_advisory_under_sl_free(self) -> None:
+        # 2026-05-11 fix B-1c: under SL-free, the per_trade cap bounds
+        # the loss so non-CANDIDATE profile status (e.g.
+        # BLOCK_UNTIL_NEW_EVIDENCE) downgrades to advisory rationale
+        # instead of a hard veto, mirroring strategy_profile.validate
+        # (profile.py:125) and intent_generator's WARN downgrade. The
+        # profile status itself stays unchanged — AGENT_CONTRACT §11
+        # forbids only auto-promotion of the status field.
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                advice = self._attack_advice(
+                    root,
+                    ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+                )
+                brain = TraderBrain(
+                    intents_path=_eur_only_intents(root),
+                    campaign_plan_path=_eur_only_campaign(root),
+                    strategy_profile_path=self._blocked_strategy(root),
+                    market_story_profile_path=_stories(root),
+                    target_state_path=root / "missing_target.json",
+                    trader_settings_path=root / "settings.json",
+                    attack_advice_path=advice,
+                    output_path=root / "decision.json",
+                    report_path=root / "decision.md",
+                )
+
+                decision = brain.run(_snapshot())
+
+                score = next(s for s in decision.scores if s.pair == "EUR_USD")
+                self.assertEqual(
+                    score.action,
+                    ACTION_SEND_ENTRY,
+                    f"Expected SEND_ENTRY under SL-free; got {score.action} blockers={score.blockers}",
+                )
+                # Status text surfaces as advisory rationale rather than
+                # a blocker entry.
+                self.assertFalse(
+                    any("BLOCK_UNTIL_NEW_EVIDENCE" in b for b in score.blockers),
+                    f"BLOCK should not appear in blockers under SL-free: {score.blockers}",
+                )
+                self.assertTrue(
+                    any("BLOCK_UNTIL_NEW_EVIDENCE" in r for r in score.rationale),
+                    f"Expected BLOCK to surface in rationale; got {score.rationale}",
+                )
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
 
 if __name__ == "__main__":

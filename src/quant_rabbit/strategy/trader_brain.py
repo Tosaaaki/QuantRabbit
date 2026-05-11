@@ -749,7 +749,23 @@ class TraderBrain:
             rationale.append("strategy profile candidate")
         elif profile_status:
             score -= 25.0
-            blockers.append(f"strategy profile is {profile_status}")
+            # Mirror `strategy_profile.validate()` (profile.py:125): under
+            # SL-free the per_trade cap bounds the loss, so non-CANDIDATE
+            # profiles (BLOCK_UNTIL_NEW_EVIDENCE, RISK_REPAIR_CANDIDATE,
+            # MINE_MISSED_EDGE, WATCH_ONLY) become advisory rationale
+            # rather than hard blockers. §11 still applies — the profile
+            # status itself is never auto-promoted — but the trader can
+            # still take risk-bounded entries while waiting for the next
+            # mine-strategy / receipt-promotion cycle. Mirrors
+            # feedback_no_direction_bias_rules.md (sample-period BLOCK
+            # should not become a permanent veto). Without SL-free the
+            # legacy hard block remains.
+            if _trader_sl_repair_disabled():
+                rationale.append(
+                    f"strategy profile is {profile_status} (advisory under SL-free; per_trade cap bounds loss)"
+                )
+            else:
+                blockers.append(f"strategy profile is {profile_status}")
         else:
             score -= 40.0
             blockers.append("missing strategy profile")
@@ -1752,7 +1768,20 @@ def _discretionary_gate_check(
     if profile_status == "CANDIDATE":
         judgment.append("strategy profile is live-eligible")
     elif profile_status:
-        blockers.append(f"strategy profile is not live-eligible: {profile_status}")
+        # Mirror `strategy_profile.validate()` (profile.py:125) and the
+        # `_score_lane` profile-status branch above: under SL-free the
+        # per_trade cap is the loss bound, so non-CANDIDATE profile
+        # status (BLOCK_UNTIL_NEW_EVIDENCE / RISK_REPAIR_CANDIDATE /
+        # MINE_MISSED_EDGE / WATCH_ONLY) downgrades to advisory judgment
+        # rather than a hard blocker. The profile status field is never
+        # auto-promoted (AGENT_CONTRACT §11) — this only relaxes the
+        # trader_brain hard-veto, not the profile classification.
+        if _trader_sl_repair_disabled():
+            judgment.append(
+                f"strategy profile is {profile_status} (advisory under SL-free)"
+            )
+        else:
+            blockers.append(f"strategy profile is not live-eligible: {profile_status}")
     else:
         blockers.append("missing strategy profile")
 
@@ -1780,6 +1809,14 @@ def _discretionary_gate_check(
     adoption = str(lane.get("adoption") or "")
     if adoption in {"ORDER_INTENT_REQUIRED", "RISK_REPAIR_DRY_RUN", "TRIGGER_RECEIPT_REQUIRED"}:
         judgment.append(f"campaign lane is executable after receipts: {adoption}")
+    elif adoption and _trader_sl_repair_disabled():
+        # `plan-campaign` mirrors the strategy_profile status into
+        # adoption (REJECTED when profile is BLOCK_UNTIL_NEW_EVIDENCE,
+        # etc.). Under SL-free the per_trade cap (already enforced by
+        # RiskEngine) bounds the loss, so a stale REJECTED adoption
+        # downgrades to advisory the same way as the profile-status
+        # branches above. Without SL-free the legacy hard block remains.
+        judgment.append(f"campaign lane adoption is {adoption} (advisory under SL-free)")
     else:
         blockers.append(f"campaign lane is not executable: {adoption or 'missing'}")
 
@@ -1787,7 +1824,17 @@ def _discretionary_gate_check(
     live_net = float(strategy.get("live_net_jpy") or 0.0)
     if pretrade_net > 0 or live_net > 0 or strategy.get("receipt_promotion"):
         judgment.append("mined or repaired edge evidence is positive")
-    elif status == "LIVE_READY" and profile_status == "CANDIDATE":
+    elif status == "LIVE_READY" and (
+        profile_status == "CANDIDATE"
+        or (profile_status and _trader_sl_repair_disabled())
+    ):
+        # Under SL-free, the per_trade cap (`per_trade_risk_budget_jpy`)
+        # bounds the loss, so a LIVE_READY receipt with a non-CANDIDATE
+        # profile (BLOCK_UNTIL_NEW_EVIDENCE / RISK_REPAIR_CANDIDATE /
+        # MINE_MISSED_EDGE / WATCH_ONLY) is not vetoed by stale negative
+        # history. Otherwise sample-period statistics perpetuate
+        # themselves (feedback_no_direction_bias_rules.md) and the only
+        # path to refresh the profile is to trade — chicken-and-egg.
         judgment.append("past edge evidence is weak/negative, but the current live-ready receipt remains executable")
     else:
         blockers.append("no positive mined or repaired edge evidence")
