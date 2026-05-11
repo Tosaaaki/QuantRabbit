@@ -527,37 +527,40 @@ def _adaptive_tp_action(
             )
             return ACTION_REVIEW_EXIT, None, reasons
 
-        # Structural OB break check on M30 view (medium TF — short enough
-        # to reflect the move that just damaged the position, long enough
-        # not to fire on M5 noise wicks).
-        ob_break = False
-        ob_reason: str | None = None
+        # Multi-TF structural OB break check (user 2026-05-11「H1とH4でしか
+        # みてない？」: previous version only consulted M30, missing real
+        # breaks visible on M15/H1/H4 and overcounting M30-only false breaks).
+        # Iterate M15+M30+H1+H4 — a break on ≥2 TFs counts as confirmed
+        # structural invalidation; a single-TF break (often noise or
+        # measurement artifact) HOLDs.
+        ob_break_tfs: list[tuple[str, float]] = []  # [(tf, broken_level)]
         if isinstance(pair_chart, dict):
             for view in pair_chart.get("views") or []:
-                if view.get("granularity") != "M30":
+                gran = str(view.get("granularity") or "")
+                if gran not in {"M15", "M30", "H1", "H4"}:
                     continue
                 obs = classify_order_block_proximity(view, cur_price, pip_factor)
                 if target_up and obs.nearest_bull_low is not None:
                     if cur_price < obs.nearest_bull_low:
-                        ob_break = True
-                        ob_reason = (
-                            f"price {cur_price} below M30 BULL OB low "
-                            f"{obs.nearest_bull_low} — structural support broken"
-                        )
+                        ob_break_tfs.append((gran, obs.nearest_bull_low))
                 elif not target_up and obs.nearest_bear_high is not None:
                     if cur_price > obs.nearest_bear_high:
-                        ob_break = True
-                        ob_reason = (
-                            f"price {cur_price} above M30 BEAR OB high "
-                            f"{obs.nearest_bear_high} — structural resistance broken"
-                        )
-                break
+                        ob_break_tfs.append((gran, obs.nearest_bear_high))
 
-        if ob_break and ob_reason is not None:
+        if len(ob_break_tfs) >= 2:
+            tfs_summary = ", ".join(f"{tf}@{lvl:.5f}" for tf, lvl in ob_break_tfs)
             reasons.append(
-                f"loss-cut: {ob_reason} ({position.unrealized_pl_jpy:+.0f} JPY)"
+                f"loss-cut: structural OB broken across {len(ob_break_tfs)} TFs "
+                f"({tfs_summary}) ({position.unrealized_pl_jpy:+.0f} JPY)"
             )
             return ACTION_REVIEW_EXIT, None, reasons
+        if ob_break_tfs:
+            # Single-TF break — note in rationale but HOLD; needs 2nd TF
+            # confirmation before acting.
+            tf, lvl = ob_break_tfs[0]
+            reasons.append(
+                f"single-TF OB break ({tf}@{lvl:.5f}) — HOLD pending confirmation"
+            )
 
         # No structural break — HOLD and let the pullback resolve. The
         # SL-free philosophy: the operator placed this position, no

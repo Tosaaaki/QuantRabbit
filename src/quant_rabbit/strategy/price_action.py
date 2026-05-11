@@ -551,47 +551,51 @@ def structural_tp_target(
             pip_factor=pip_factor,
         )
 
-    # 2. Nearest OB edge in direction of travel (M30 view — same TF the
-    #    structural-break loss-cut consults so HARVEST and EXIT respect
-    #    the same anchor)
-    ob_edge: float | None = None
-    fib_h1: FibLevels | None = None
+    # 2. OB edges across multiple TFs (user 2026-05-11「H1とH4でしか見て
+    #    ない？」: pull anchors from M15+M30+H1+H4 instead of just M30
+    #    so HARVEST/EXTEND see the full structural ladder).
+    ob_edges: list[tuple[str, float]] = []   # [(tf, level)]
+    fib_per_tf: list[tuple[str, FibLevels]] = []
     for view in pair_chart.get("views") or []:
         gran = str(view.get("granularity") or "")
-        if gran == "M30":
+        if gran in {"M15", "M30", "H1", "H4"}:
             obs = classify_order_block_proximity(view, current_price, pip_factor)
             if target_up and obs.nearest_bear_low is not None:
-                ob_edge = obs.nearest_bear_low
+                ob_edges.append((gran, obs.nearest_bear_low))
             elif not target_up and obs.nearest_bull_high is not None:
-                ob_edge = obs.nearest_bull_high
-        if gran == "H1":
-            fib_h1 = fib_levels_from_view(view)
+                ob_edges.append((gran, obs.nearest_bull_high))
+        if gran in {"H1", "H4", "D"}:
+            fib_view = fib_levels_from_view(view)
+            if fib_view is not None:
+                fib_per_tf.append((gran, fib_view))
 
     # 3. Build candidate target list (in direction of travel)
     candidates: list[tuple[float, str]] = []
     for lvl in confluence:
-        candidates.append((lvl.price, f"liquidity@{lvl.price:.5f} ({lvl.total_touches}touches/{','.join(lvl.timeframes)})"))
-    if ob_edge is not None:
-        candidates.append((ob_edge, f"M30_OB_edge@{ob_edge:.5f}"))
-    if fib_h1 is not None:
+        candidates.append(
+            (lvl.price, f"liquidity@{lvl.price:.5f} ({lvl.total_touches}touches/{','.join(lvl.timeframes)})")
+        )
+    for tf, edge in ob_edges:
+        candidates.append((edge, f"{tf}_OB_edge@{edge:.5f}"))
+    for tf, fib in fib_per_tf:
         if target_up:
             for label, price in [
-                ("fib_500", fib_h1.fib_500),
-                ("fib_382", fib_h1.fib_382),
-                ("fib_236", fib_h1.fib_236),
-                ("swing_high", fib_h1.swing_high),
+                ("fib_236", fib.fib_236),
+                ("fib_382", fib.fib_382),
+                ("fib_500", fib.fib_500),
+                ("swing_high", fib.swing_high),
             ]:
                 if price > current_price:
-                    candidates.append((price, f"H1_{label}@{price:.5f}"))
+                    candidates.append((price, f"{tf}_{label}@{price:.5f}"))
         else:
             for label, price in [
-                ("fib_500", fib_h1.fib_500),
-                ("fib_618", fib_h1.fib_618),
-                ("fib_786", fib_h1.fib_786),
-                ("swing_low", fib_h1.swing_low),
+                ("fib_786", fib.fib_786),
+                ("fib_618", fib.fib_618),
+                ("fib_500", fib.fib_500),
+                ("swing_low", fib.swing_low),
             ]:
                 if price < current_price:
-                    candidates.append((price, f"H1_{label}@{price:.5f}"))
+                    candidates.append((price, f"{tf}_{label}@{price:.5f}"))
 
     if not candidates:
         return None, "no structural anchor"
