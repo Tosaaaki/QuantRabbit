@@ -414,6 +414,7 @@ from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 from quant_rabbit.paths import (
+    DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
@@ -425,6 +426,25 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_DECISION_REPORT,
 )
 from quant_rabbit.strategy.price_action import aggregate_price_action_score
+
+
+# Rank ceiling for "primary attack" lanes consumed by the trader_brain
+# prefilter. Mirrors `gpt_trader.PRIMARY_ATTACK_RANK_CEILING` so the
+# prefilter and the GPT verifier agree on which advised lanes are
+# high-conviction enough to count as primary-basket overlay. Both
+# constants must stay in sync; a regression test enforces equality.
+# The same K cap that gates verifier basket coverage gates the trader_brain
+# promotion. Per AGENT_CONTRACT §8 the operator's deterministic prefilter
+# must surface advised lanes alongside its own ranking; the rank gap below
+# K is the conviction gate that prevents low-rank lane spam from leaking
+# in. K=4 matches `RiskPolicy.max_portfolio_positions` for the live config.
+ATTACK_ADVICE_PROMOTION_RANK_CEILING = 4
+# Flat score bonus applied to LIVE_READY lanes that appear in the top-K
+# attack_advice list. Sized so it edges advised lanes ahead of unadvised
+# peers at score parity (typical _score_lane delta between adjacent
+# LIVE_READY lanes is 5–15), without dwarfing the MTF / price-action / RR
+# components that should still discriminate between advised candidates.
+ATTACK_ADVICE_PROMOTION_BONUS = 10.0
 
 
 def _load_full_pair_charts_for_brain() -> dict[str, dict[str, Any]]:
@@ -554,6 +574,7 @@ class TraderBrain:
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
         trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         output_path: Path = DEFAULT_TRADER_DECISION,
         report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
     ) -> None:
@@ -563,6 +584,7 @@ class TraderBrain:
         self.market_story_profile_path = market_story_profile_path
         self.trader_settings_path = trader_settings_path
         self.target_state_path = target_state_path
+        self.attack_advice_path = attack_advice_path
         self.output_path = output_path
         self.report_path = report_path
 
@@ -572,9 +594,18 @@ class TraderBrain:
         campaign_payload = _load_json(self.campaign_plan_path)
         strategy_payload = _load_json(self.strategy_profile_path)
         story_payload = _load_json(self.market_story_profile_path)
+        attack_payload = _load_json(self.attack_advice_path)
         strategies = _strategy_index(strategy_payload)
         stories = _story_index(story_payload)
         campaign = _campaign_index(campaign_payload)
+        # Map lane_id -> rank for the top-K advised lanes (rank 0..K-1).
+        # Used by `_score_lane` to add a documented promotion bonus +
+        # rationale so high-conviction advised setups outrank unadvised
+        # peers in the prefilter SEND_ENTRY basket without overriding any
+        # AGENT_CONTRACT §11 hard block (BLOCK_UNTIL_NEW_EVIDENCE,
+        # missing-receipt, exposure, etc.). Missing/malformed advice
+        # degrades silently — the map is empty and scoring is unchanged.
+        attack_ranks = _attack_advice_top_k_ranks(attack_payload)
         # Full pair_charts entries (with views array) so `_score_lane` can
         # consult the price-action lens (swings, structure_events, dealing
         # range, order blocks, liquidity) on every candidate. Missing /
@@ -606,6 +637,7 @@ class TraderBrain:
                         loss_cap_jpy=loss_cap_jpy,
                         full_pair_charts=full_pair_charts,
                         snapshot=snapshot,
+                        attack_ranks=attack_ranks,
                     )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
@@ -679,6 +711,7 @@ class TraderBrain:
         loss_cap_jpy: float | None,
         full_pair_charts: dict[str, dict[str, Any]] | None = None,
         snapshot: BrokerSnapshot | None = None,
+        attack_ranks: dict[str, int] | None = None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -839,9 +872,39 @@ class TraderBrain:
                 score += 5.0
                 rationale.append("market receipt can execute the current quote instead of waiting for a trigger")
 
-        if result.get("risk_issues"):
-            blockers.extend(str(issue.get("message") or issue.get("code")) for issue in result.get("risk_issues", []))
+        # Severity-aware: intent_generator emits BLOCK for hard receipt issues
+        # (geometry/units/missing-context) and WARN for advisory caveats like
+        # CHART_DIRECTION_CONFLICT under SL-free. Only BLOCK-severity drops the
+        # lane out of SEND_ENTRY; WARN issues surface in rationale and a small
+        # score nudge so aligned lanes still outrank against-bias ones at parity
+        # without becoming a hard veto. Drops the 100-point penalty that turned
+        # the intent_generator WARN downgrade into a trader_brain hard block
+        # (2026-05-11 incident: EUR_USD SHORT BREAKOUT_FAILURE held LIVE_READY
+        # in intents but trader_brain blocked it, leaving the prefilter LONG-
+        # only while ai_attack_advice ranked the SHORT side #1).
+        risk_issues = result.get("risk_issues") or []
+        hard_risk_issues = [
+            issue for issue in risk_issues
+            if str(issue.get("severity") or "").upper() == "BLOCK"
+        ]
+        warn_risk_issues = [
+            issue for issue in risk_issues
+            if str(issue.get("severity") or "").upper() == "WARN"
+        ]
+        if hard_risk_issues:
+            blockers.extend(
+                str(issue.get("message") or issue.get("code")) for issue in hard_risk_issues
+            )
             score -= 100.0
+        # Surface WARN issues at the front of rationale so the operator always
+        # sees them even after truncation; they document a *deliberately
+        # non-blocking* condition (e.g. SHORT into a LONG-biased pair_charts
+        # under SL-free) that the trader must remain aware of.
+        for warn in reversed(warn_risk_issues):
+            code = str(warn.get("code") or "")
+            msg = str(warn.get("message") or code)
+            rationale.insert(0, f"risk warn {code}: {msg}")
+            score -= 5.0
         if result.get("live_blockers"):
             blockers.extend(str(item) for item in result.get("live_blockers", []))
             score -= 100.0
@@ -856,6 +919,27 @@ class TraderBrain:
             method_pressure=method_pressure,
         )
         blockers.extend(gate_blockers)
+
+        # ai_attack_advice overlay (AGENT_CONTRACT §8): the operator's
+        # deterministic prefilter must surface advised lanes alongside its
+        # own ranking. A LIVE_READY lane sitting in the top-K of
+        # ai_attack_advice.recommended_now_lane_ids gets a flat bonus +
+        # rationale so it edges past unadvised peers at score parity. The
+        # promotion never overrides §11 hard blocks (BLOCK_UNTIL_NEW_EVIDENCE,
+        # missing strategy profile, missing receipt, exposure blockers) —
+        # those still keep the lane out of SEND_ENTRY. The bonus only applies
+        # when status == "LIVE_READY"; lanes that intent_generator already
+        # demoted stay demoted.
+        if attack_ranks and status == "LIVE_READY" and lane_id in attack_ranks:
+            rank = attack_ranks[lane_id]
+            score += ATTACK_ADVICE_PROMOTION_BONUS
+            # Insert at the front so the overlay annotation survives the
+            # rationale truncation alongside other primary context.
+            rationale.insert(
+                0,
+                f"attack_advice rank #{rank + 1} (top-{ATTACK_ADVICE_PROMOTION_RANK_CEILING}) "
+                f"promoted +{ATTACK_ADVICE_PROMOTION_BONUS:.0f}",
+            )
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
@@ -874,7 +958,13 @@ class TraderBrain:
             size_multiple=size_multiple,
             action=action,
             blockers=tuple(blockers[:8]),
-            rationale=tuple(rationale[:8]),
+            # Rationale cap raised from 8 → 12 to keep WARN risk_issues and
+            # attack_advice promotion lines visible (added 2026-05-11).
+            # The existing reasoning lines averaged 6–8 entries before the
+            # overlay; 12 leaves headroom for the WARN advisory + the
+            # attack_advice rank line without dropping mining/PA/MTF
+            # context. Resize this if the rationale grows again.
+            rationale=tuple(rationale[:12]),
             judgment=tuple(judgment[:8]),
             spread_pips=spread_pips,
         )
@@ -952,6 +1042,33 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     return json.loads(path.read_text())
+
+
+def _attack_advice_top_k_ranks(
+    payload: dict[str, Any],
+    *,
+    k: int = ATTACK_ADVICE_PROMOTION_RANK_CEILING,
+) -> dict[str, int]:
+    """Map the top-K attack-advised lane_ids to their rank (0..k-1).
+
+    Returns {} for missing/empty advice so callers degrade silently.
+    `recommended_now_lane_ids` is the canonical ranked list emitted by
+    `ai-attack-advice`; only string entries are retained, duplicates are
+    de-duped at the original ranking, and the result is bounded to k
+    entries per AGENT_CONTRACT §8 conviction-gap rationale.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    advised = payload.get("recommended_now_lane_ids") or []
+    ranks: dict[str, int] = {}
+    for raw in advised:
+        lane_id = str(raw or "")
+        if not lane_id or lane_id in ranks:
+            continue
+        ranks[lane_id] = len(ranks)
+        if len(ranks) >= k:
+            break
+    return ranks
 
 
 def _select_entry_lane(

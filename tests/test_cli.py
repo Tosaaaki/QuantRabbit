@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
-from quant_rabbit.cli import main
+from quant_rabbit.cli import _LIVE_RUNTIME_COMMANDS, _SL_FREE_RUNTIME_DEFAULTS, main
 
 
 class CliHelpTest(unittest.TestCase):
@@ -103,6 +105,102 @@ class CliHelpTest(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertTrue(digest.exists())
             self.assertTrue(flow.exists())
+
+
+class LiveRuntimeBootstrapTest(unittest.TestCase):
+    """Coverage for 2026-05-11 cli bootstrap-gate fix.
+
+    The SKILL flow invokes `gpt-trader-decision` (and friends) directly,
+    not through `scripts/run-autotrade-live.sh`, so the routine process
+    inherits the user shell env with `QR_LIVE_ENABLED` unset. Previously
+    the SL-free knob bootstrap only fired on `QR_LIVE_ENABLED=1`, which
+    meant the verifier ran without `QR_TRADER_DISABLE_SL_REPAIR=1` and
+    flagged trader-owned TP-only positions as non-layerable. Tests pin
+    the gate to fire for every command in `_LIVE_RUNTIME_COMMANDS` even
+    without QR_LIVE_ENABLED, while leaving the QR_LIVE_ENABLED=1 path
+    intact for the wrapper-driven autotrade flow.
+    """
+
+    SL_FREE_KEYS = (
+        "QR_TRADER_DISABLE_SL_REPAIR",
+        "QR_GEOMETRY_ATR_MULT",
+        "QR_GEOMETRY_SPREAD_FLOOR_MULT",
+        "QR_MAX_PORTFOLIO_POSITIONS",
+        "QR_TRADER_POSITION_NAV_PCT",
+        "QR_TRADER_BASE_UNITS",
+    )
+
+    def setUp(self) -> None:
+        self._prior: dict[str, str | None] = {}
+        for key in (*self.SL_FREE_KEYS, "QR_LIVE_ENABLED"):
+            self._prior[key] = os.environ.pop(key, None)
+
+    def tearDown(self) -> None:
+        for key, value in self._prior.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_known_live_runtime_commands(self) -> None:
+        # Guard against silent drift; widening this set requires explicit
+        # review because adding a non-live command to it would leak the
+        # SL-free env into unrelated test runs.
+        self.assertEqual(
+            _LIVE_RUNTIME_COMMANDS,
+            frozenset(
+                {
+                    "autotrade-cycle",
+                    "gpt-trader-decision",
+                    "stage-live-order",
+                    "generate-intents",
+                }
+            ),
+        )
+
+    def test_gpt_trader_decision_bootstraps_without_qr_live_enabled(self) -> None:
+        # In production the cli is invoked by the routine (not pytest), so
+        # `_running_under_test_harness()` returns False and the
+        # _LIVE_RUNTIME_COMMANDS gate fires. We mock the harness check
+        # here so the unit test can verify the production gating without
+        # bootstrapping SL-free into the rest of the unittest process.
+        stdout = io.StringIO()
+        with mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False):
+            with redirect_stdout(stdout):
+                code = main(["gpt-trader-decision", "--snapshot", "/dev/null"])
+        self.assertEqual(code, 2)
+        for key, expected in _SL_FREE_RUNTIME_DEFAULTS.items():
+            self.assertEqual(os.environ.get(key), expected, key)
+
+    def test_non_live_command_does_not_bootstrap(self) -> None:
+        stdout = io.StringIO()
+        with mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False):
+            with self.assertRaises(SystemExit), redirect_stdout(stdout):
+                main(["--help"])
+        for key in self.SL_FREE_KEYS:
+            self.assertIsNone(os.environ.get(key), key)
+
+    def test_test_harness_blocks_bootstrap_without_qr_live_enabled(self) -> None:
+        # The very behavior that prevents test pollution: live-runtime
+        # commands skip the bootstrap under unittest unless QR_LIVE_ENABLED=1
+        # is explicit.
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["gpt-trader-decision", "--snapshot", "/dev/null"])
+        self.assertEqual(code, 2)
+        for key in self.SL_FREE_KEYS:
+            self.assertIsNone(os.environ.get(key), key)
+
+    def test_qr_live_enabled_forces_bootstrap_even_under_tests(self) -> None:
+        # Tests that explicitly want the SL-free path opt in by setting
+        # QR_LIVE_ENABLED=1 (mirrors `run-autotrade-live.sh`).
+        os.environ["QR_LIVE_ENABLED"] = "1"
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = main(["gpt-trader-decision", "--snapshot", "/dev/null"])
+        self.assertEqual(code, 2)
+        for key, expected in _SL_FREE_RUNTIME_DEFAULTS.items():
+            self.assertEqual(os.environ.get(key), expected, key)
 
 
 if __name__ == "__main__":

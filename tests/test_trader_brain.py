@@ -1022,5 +1022,271 @@ class ShortTermMomentumClassTest(unittest.TestCase):
         self.assertEqual(SHORT_TERM_MOMENTUM_LOW_ADX, 18.0)
 
 
+class RiskIssueSeverityTest(unittest.TestCase):
+    """Coverage for 2026-05-11 WARN-severity fix in `_score_lane`.
+
+    intent_generator downgrades CHART_DIRECTION_CONFLICT to WARN under
+    SL-free so symmetric mirror lanes can reach LIVE_READY. Previously
+    trader_brain.`_score_lane` treated every entry in `risk_issues` as a
+    hard blocker (and -100 score), turning the WARN downgrade back into a
+    NO_TRADE veto. Tests pin the severity-aware behavior so a future
+    refactor cannot silently re-introduce the regression that left
+    EUR_USD SHORT off the prefilter while ai_attack_advice ranked it #2.
+    """
+
+    def _intents_with_risk_issues(self, root: Path, issues: list[dict]) -> Path:
+        path = root / "intents_with_issues.json"
+        lane = _result(
+            "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            "EUR_USD",
+            "LONG",
+            "TREND_CONTINUATION",
+        )
+        lane["risk_issues"] = issues
+        path.write_text(json.dumps({"results": [lane]}))
+        return path
+
+    def test_warn_risk_issue_does_not_block_send_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = self._intents_with_risk_issues(
+                root,
+                [
+                    {
+                        "code": "CHART_DIRECTION_CONFLICT",
+                        "message": "EUR_USD LONG conflicts with current pair_charts direction bias=SHORT",
+                        "severity": "WARN",
+                    }
+                ],
+            )
+            brain = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.pair == "EUR_USD")
+            self.assertEqual(score.action, ACTION_SEND_ENTRY)
+            self.assertNotIn(
+                "EUR_USD LONG conflicts",
+                " ".join(score.blockers),
+            )
+            self.assertTrue(any("risk warn CHART_DIRECTION_CONFLICT" in r for r in score.rationale))
+
+    def test_block_risk_issue_still_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = self._intents_with_risk_issues(
+                root,
+                [
+                    {
+                        "code": "TREND_MARKET_NOT_OPERATING_TREND",
+                        "message": "EUR_USD LONG MARKET trend-continuation needs M5 TREND_UP",
+                        "severity": "BLOCK",
+                    }
+                ],
+            )
+            brain = TraderBrain(
+                intents_path=intents,
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.pair == "EUR_USD")
+            self.assertEqual(score.action, ACTION_NO_TRADE)
+            self.assertIn(
+                "needs M5 TREND_UP",
+                " ".join(score.blockers),
+            )
+
+
+class AttackAdvicePromotionTest(unittest.TestCase):
+    """Coverage for AGENT_CONTRACT §8 attack-advice overlay in the
+    trader_brain prefilter (2026-05-11).
+
+    `ai_attack_advice.recommended_now_lane_ids[:K]` lanes that are
+    LIVE_READY pick up a documented score bonus + rationale so the
+    deterministic prefilter surfaces the same primary lanes the GPT
+    verifier expects. The promotion never overrides §11 hard blocks
+    (BLOCK_UNTIL_NEW_EVIDENCE, missing receipt, exposure blockers).
+    """
+
+    def _attack_advice(self, root: Path, lane_ids: list[str]) -> Path:
+        path = root / "attack_advice.json"
+        path.write_text(json.dumps({"recommended_now_lane_ids": lane_ids}))
+        return path
+
+    def test_constant_matches_gpt_trader(self) -> None:
+        from quant_rabbit.gpt_trader import PRIMARY_ATTACK_RANK_CEILING
+        from quant_rabbit.strategy.trader_brain import (
+            ATTACK_ADVICE_PROMOTION_RANK_CEILING,
+        )
+
+        self.assertEqual(ATTACK_ADVICE_PROMOTION_RANK_CEILING, PRIMARY_ATTACK_RANK_CEILING)
+
+    def test_top_k_lane_gets_bonus_and_rationale(self) -> None:
+        from quant_rabbit.strategy.trader_brain import ATTACK_ADVICE_PROMOTION_BONUS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            advice = self._attack_advice(
+                root,
+                ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+            )
+            brain_advised = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=advice,
+                output_path=root / "advised.json",
+                report_path=root / "advised.md",
+            )
+            brain_unadvised = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                output_path=root / "unadvised.json",
+                report_path=root / "unadvised.md",
+            )
+
+            advised = brain_advised.run(_snapshot())
+            unadvised = brain_unadvised.run(_snapshot())
+
+            advised_score = next(s for s in advised.scores if s.pair == "EUR_USD")
+            unadvised_score = next(s for s in unadvised.scores if s.pair == "EUR_USD")
+            self.assertAlmostEqual(
+                advised_score.score - unadvised_score.score,
+                ATTACK_ADVICE_PROMOTION_BONUS,
+                places=2,
+            )
+            self.assertTrue(any("attack_advice rank #1" in r for r in advised_score.rationale))
+
+    def test_below_top_k_lane_gets_no_bonus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The advised lane sits at rank 5 (below K=4); fill earlier
+            # ranks with throwaway lane_ids so the promoter does not
+            # promote our test lane.
+            advice = self._attack_advice(
+                root,
+                [
+                    "filler_1",
+                    "filler_2",
+                    "filler_3",
+                    "filler_4",
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                ],
+            )
+            brain_unadvised = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                output_path=root / "unadvised.json",
+                report_path=root / "unadvised.md",
+            )
+            brain_advised = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=advice,
+                output_path=root / "advised.json",
+                report_path=root / "advised.md",
+            )
+
+            advised = brain_advised.run(_snapshot())
+            unadvised = brain_unadvised.run(_snapshot())
+
+            advised_score = next(s for s in advised.scores if s.pair == "EUR_USD")
+            unadvised_score = next(s for s in unadvised.scores if s.pair == "EUR_USD")
+            self.assertEqual(advised_score.score, unadvised_score.score)
+
+    def test_promotion_does_not_override_block_until_new_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy_path = root / "blocked_strategy.json"
+            strategy_path.write_text(
+                json.dumps(
+                    {
+                        "system_contract": {
+                            "loss_cap_jpy": 500.0,
+                            "loss_cap_source": "test current campaign cap",
+                        },
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "pretrade_net_jpy": -3000,
+                                "live_net_jpy": -2000,
+                                "live_worst_jpy": -1500,
+                                "positive_evidence_n": 0,
+                                "positive_tail_jpy": 0,
+                                "positive_best_jpy": 0,
+                                "seat_discovered": 10,
+                                "seat_orderable": 10,
+                                "seat_captured": 0,
+                            }
+                        ],
+                    }
+                )
+            )
+            advice = self._attack_advice(
+                root,
+                ["trend_trader:EUR_USD:LONG:TREND_CONTINUATION"],
+            )
+            brain = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=strategy_path,
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=advice,
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(s for s in decision.scores if s.pair == "EUR_USD")
+            self.assertEqual(score.action, ACTION_NO_TRADE)
+            # AGENT_CONTRACT §11: BLOCK_UNTIL_NEW_EVIDENCE is never
+            # auto-promoted, even with attack_advice overlay.
+            self.assertTrue(
+                any("BLOCK_UNTIL_NEW_EVIDENCE" in b for b in score.blockers),
+                f"Expected §11 hard block to remain; got blockers: {score.blockers}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

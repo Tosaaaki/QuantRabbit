@@ -148,6 +148,47 @@ def _bootstrap_sl_free_defaults() -> None:
         )
 
 
+# Subcommands that read or write against real broker truth (or feed the
+# risk-geometry path that does). These always bootstrap the SL-free defaults
+# even when QR_LIVE_ENABLED is unset, because the routine-driven SKILL flow
+# invokes them outside `scripts/run-autotrade-live.sh`. Anything outside this
+# set (status reports, certify-dry-run, import-legacy, mining tools, etc.)
+# stays opt-in via QR_LIVE_ENABLED=1 so unit tests can exercise it cleanly.
+_LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
+    {
+        "autotrade-cycle",
+        "gpt-trader-decision",
+        "stage-live-order",
+        "generate-intents",
+    }
+)
+
+
+def _running_under_test_harness() -> bool:
+    """True when the cli is invoked from pytest / unittest discovery.
+
+    The SL-free env bootstrap is process-global; firing it from
+    `_LIVE_RUNTIME_COMMANDS` during a unit-test run pollutes every
+    subsequent test in the same pytest/unittest process (intent_generator
+    BLOCK vs WARN, risk engine cap derivation, position manager protection
+    flow, etc. all branch on these env vars). The wrapper-driven live
+    path still sets QR_LIVE_ENABLED=1 explicitly, so production routines
+    bootstrap as before; tests can also force-enable via QR_LIVE_ENABLED=1
+    when they want the SL-free path. Detection is conservative: it must
+    catch both pytest (sets PYTEST_CURRENT_TEST per active test) and the
+    `python -m unittest` entry point (loads `unittest.__main__`).
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if "unittest" in sys.modules and any(
+        name.startswith("unittest.") and name.endswith(("__main__", "main"))
+        for name in sys.modules
+    ):
+        return True
+    argv0 = (sys.argv[0] or "").lower()
+    return "unittest" in argv0 or "pytest" in argv0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qr-vnext")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -492,8 +533,19 @@ def main(argv: list[str] | None = None) -> int:
     # the operator-anchored attack-mode size because intents had been
     # generated under stale env. Move the bootstrap to the top of main()
     # so every command sees the same defaults the wrapper would set.
-    # Gated on QR_LIVE_ENABLED=1 so unit tests stay isolated.
-    if os.environ.get("QR_LIVE_ENABLED") == "1":
+    #
+    # Bootstrap fires when either QR_LIVE_ENABLED=1 (wrapper path) or the
+    # subcommand is a known live-runtime command. 2026-05-11 incident:
+    # `gpt-trader-decision` invoked standalone from the SKILL flow (not
+    # through run-autotrade-live.sh) had QR_LIVE_ENABLED unset, so
+    # QR_TRADER_DISABLE_SL_REPAIR stayed unset, and the verifier saw
+    # trader-owned TP-only EUR_USD LONG positions as "non-layerable",
+    # rejecting every basket-expansion TRADE with EXPOSURE_BLOCKS_TRADE.
+    # The runtime gate exists only to keep unit tests isolated; commands
+    # that read real broker truth must always see SL-free defaults.
+    if os.environ.get("QR_LIVE_ENABLED") == "1" or (
+        args.command in _LIVE_RUNTIME_COMMANDS and not _running_under_test_harness()
+    ):
         _bootstrap_sl_free_defaults()
 
     if args.command == "import-legacy":
