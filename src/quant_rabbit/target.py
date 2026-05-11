@@ -43,6 +43,7 @@ class DailyTargetSnapshot:
     current_equity_jpy: float
     campaign_day_jst: str
     daily_risk_budget_jpy: float
+    daily_risk_pct: float | None
     target_trades_per_day: int
     target_trades_per_day_source: str
     per_trade_risk_budget_jpy: float
@@ -147,12 +148,24 @@ class DailyTargetLedger:
         # Absolute JPY paths kept for backward compatibility with smoke
         # scripts and persisted state.
         #   1. CLI --daily-risk-pct (caller wants explicit % of today's NAV)
-        #   2. CLI --daily-risk-budget (caller wants explicit JPY override)
-        #   3. previous persisted daily_risk_budget_jpy (carry forward)
-        #   4. RiskPolicy.daily_risk_pct (policy default %)
+        #   2. persisted daily_risk_pct from an earlier CLI run — re-applied
+        #      to today's NAV so automation cycles stay NAV-anchored without
+        #      requiring every cycle to re-pass --daily-risk-pct
+        #   3. CLI --daily-risk-budget (caller wants explicit JPY override)
+        #   4. previous persisted daily_risk_budget_jpy (carry forward absolute)
+        #   5. RiskPolicy.daily_risk_pct (policy default %)
         explicit_pct = _coalesce_float(daily_risk_pct)
+        previous_pct = _coalesce_float(previous.get("daily_risk_pct"))
+        active_pct: float | None = None
         if explicit_pct is not None and explicit_pct > 0:
+            active_pct = explicit_pct
             risk_budget = round(start_balance * (explicit_pct / 100.0), 4)
+        elif previous_pct is not None and previous_pct > 0:
+            # An earlier CLI invocation set daily_risk_pct. Re-derive from
+            # current NAV every cycle so automation honors the operator's
+            # NAV% choice without freezing a JPY snapshot.
+            active_pct = previous_pct
+            risk_budget = round(start_balance * (previous_pct / 100.0), 4)
         else:
             explicit_budget = _coalesce_float(daily_risk_budget_jpy, previous.get("daily_risk_budget_jpy"))
             if explicit_budget is not None:
@@ -174,18 +187,29 @@ class DailyTargetLedger:
         explicit_pace = _coalesce_int(target_trades_per_day)
         pace_source = "cli" if explicit_pace is not None else ""
         if explicit_pace is None:
-            backtest_pace = _pace_from_backtest(self.pace_backtest_path)
             previous_pace = _coalesce_int(previous.get("target_trades_per_day"))
-            if backtest_pace is not None:
-                explicit_pace = max(backtest_pace, previous_pace or 0)
-                pace_source = (
-                    "ai_test_bot_required_trades"
-                    if explicit_pace == backtest_pace
-                    else "previous_state_above_ai_test_bot"
-                )
-            elif previous_pace is not None:
+            previous_pace_source = str(previous.get("target_trades_per_day_source") or "")
+            # Respect a prior CLI-set pace. The operator deliberately chose
+            # that pace; the next automation cycle (which calls .run() with
+            # no overrides) must not silently revert it via ai_test_bot
+            # required-trades — that flips per-trade size back down by an
+            # order of magnitude and re-freezes attack-mode entries
+            # (regression seen 2026-05-11: pace 10→30, per_trade 1040→346).
+            if previous_pace is not None and previous_pace_source.startswith("cli"):
                 explicit_pace = previous_pace
-                pace_source = "previous_state"
+                pace_source = "previous_cli"
+            else:
+                backtest_pace = _pace_from_backtest(self.pace_backtest_path)
+                if backtest_pace is not None:
+                    explicit_pace = max(backtest_pace, previous_pace or 0)
+                    pace_source = (
+                        "ai_test_bot_required_trades"
+                        if explicit_pace == backtest_pace
+                        else "previous_state_above_ai_test_bot"
+                    )
+                elif previous_pace is not None:
+                    explicit_pace = previous_pace
+                    pace_source = "previous_state"
             cap = policy.max_target_trades_per_day
             if (
                 explicit_pace is not None
@@ -287,6 +311,7 @@ class DailyTargetLedger:
             current_equity_jpy=current_equity,
             campaign_day_jst=campaign_day_jst,
             daily_risk_budget_jpy=round(risk_budget, 4),
+            daily_risk_pct=round(active_pct, 4) if active_pct is not None else None,
             target_trades_per_day=explicit_pace,
             target_trades_per_day_source=pace_source,
             per_trade_risk_budget_jpy=per_trade_risk_budget,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -315,12 +316,24 @@ def _pending_entries(broker: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _trader_sl_repair_disabled() -> bool:
+    return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def _is_layerable_position(position: dict[str, Any]) -> bool:
-    return (
-        str(position.get("owner") or "") == "trader"
-        and position.get("take_profit") is not None
-        and position.get("stop_loss") is not None
-    )
+    # SL-free regime (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
+    # 「SLいらない」): trader-owned SL=None is intentional and TP-only
+    # exposure remains layerable. Without this branch, every SL-free
+    # trader position gets flagged as BROKER_EXPOSURE_OPEN in completion
+    # blockers, freezing fresh entries while the operator-anchored
+    # basket is alive (5/7 unblock fix missed this leak).
+    if str(position.get("owner") or "") != "trader":
+        return False
+    if position.get("take_profit") is None:
+        return False
+    if position.get("stop_loss") is None:
+        return _trader_sl_repair_disabled()
+    return True
 
 
 def _is_operator_managed_manual(item: dict[str, Any]) -> bool:

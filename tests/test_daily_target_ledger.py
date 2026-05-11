@@ -345,16 +345,21 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day, 20)
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 200.0)
 
-    def test_backtest_required_trade_pace_overrides_stale_default_pace(self) -> None:
+    def test_cli_pace_persists_even_when_backtest_recommends_different(self) -> None:
+        """Operator-explicit CLI pace persists across automation cycles even
+        when ai_test_bot has a different recommendation. Regression seen
+        2026-05-11: routine cycles invoked daily-target-state without args,
+        which silently re-derived pace from ai_test_bot (capped to 30) and
+        flipped per_trade from 1040 JPY (CLI choice) to 346 JPY, re-freezing
+        attack-mode entries despite the per_trade unblock landing earlier.
+        The operator's explicit `--target-trades-per-day` is treated as a
+        deliberate choice; only an explicit override flips it.
+        """
         from quant_rabbit.risk import RiskPolicy
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             backtest = root / "ai_test_bot.json"
-            # Use a backtest pace under the policy cap so we still verify that
-            # backtest evidence is preferred over a stale CLI default. The
-            # absurd-pace branch is covered separately by
-            # test_backtest_required_pace_is_capped_to_policy_ceiling.
             backtest.write_text(
                 json.dumps(
                     {
@@ -380,10 +385,10 @@ class DailyTargetLedgerTest(unittest.TestCase):
             payload = json.loads((root / "target.json").read_text())
 
             self.assertLessEqual(25, RiskPolicy().max_target_trades_per_day or 25)
-            self.assertEqual(summary.target_trades_per_day, 25)
-            self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades")
-            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 25, places=4)
-            self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades")
+            self.assertEqual(summary.target_trades_per_day, 10)
+            self.assertEqual(summary.target_trades_per_day_source, "previous_cli")
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 10, places=4)
+            self.assertEqual(payload["target_trades_per_day_source"], "previous_cli")
 
     def test_backtest_required_pace_is_capped_to_policy_ceiling(self) -> None:
         """An absurd ai-test-bot pace must not silently shrink per-trade sizing.
