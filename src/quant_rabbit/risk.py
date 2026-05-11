@@ -395,11 +395,20 @@ class RiskEngine:
             if risk_issue:
                 issues.append(risk_issue)
             elif portfolio_risk + metrics.risk_jpy > self.policy.max_portfolio_loss_jpy:
+                # Under SL-free the per-day loss budget is advisory only —
+                # margin-utilization is the real ceiling, not a JPY literal.
+                # User 2026-05-08「市況>リスク」+ `feedback_offense_sizing.md`
+                # 「loss cap撤廃」+ `feedback_market_over_risk_budget.md`
+                # 「含み損%/JPYは判断材料にしない」.
+                # Surface the gate as WARN under SL-free so the operator
+                # sees the exposure but the cycle isn't blocked.
+                severity = "WARN" if _trader_sl_repair_disabled() else "BLOCK"
                 issues.append(
                     RiskIssue(
                         "PORTFOLIO_LOSS_CAP_EXCEEDED",
                         f"open risk {portfolio_risk:.0f} JPY + candidate risk {metrics.risk_jpy:.0f} JPY "
                         f"exceeds portfolio cap {self.policy.max_portfolio_loss_jpy:.0f} JPY",
+                        severity=severity,
                     )
                 )
 

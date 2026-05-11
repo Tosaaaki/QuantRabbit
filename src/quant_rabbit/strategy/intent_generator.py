@@ -1101,6 +1101,12 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
         long_score = metadata.get("m5_long_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_long_score")
         short_score = metadata.get("m5_short_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_short_score")
         scope = "M5 range" if method == TradeMethod.RANGE_ROTATION else "pair_charts"
+        # Phase 2 (user 2026-05-08「逆もまた然り」): under SL-free the AI
+        # trader is the discretionary direction picker — historical
+        # chart_score bias is one input, not a hard veto. The MTF + PA +
+        # micro-override scoring in trader_brain decides the side; this
+        # gate becomes WARN so symmetric mirror lanes reach LIVE_READY.
+        severity = "WARN" if _sl_free_active() else "BLOCK"
         issues.append(
             {
                 "code": "CHART_DIRECTION_CONFLICT",
@@ -1109,7 +1115,7 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                     f"bias={bias} (long_score={long_score}, short_score={short_score}); "
                     "wait for this side to dominate or choose the aligned lane."
                 ),
-                "severity": "BLOCK",
+                "severity": severity,
             }
         )
 
