@@ -390,6 +390,15 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 10, places=4)
             self.assertEqual(payload["target_trades_per_day_source"], "previous_cli")
 
+            # Third cycle: previous source is now "previous_cli". The naive
+            # `startswith("cli")` check would miss it and let ai_test_bot win.
+            # Lock in that the carry-forward marker is also honored.
+            summary3 = ledger.run(realized_pl_jpy=0)
+            payload3 = json.loads((root / "target.json").read_text())
+            self.assertEqual(summary3.target_trades_per_day, 10)
+            self.assertEqual(summary3.target_trades_per_day_source, "previous_cli")
+            self.assertEqual(payload3["target_trades_per_day_source"], "previous_cli")
+
     def test_backtest_required_pace_is_capped_to_policy_ceiling(self) -> None:
         """An absurd ai-test-bot pace must not silently shrink per-trade sizing.
 

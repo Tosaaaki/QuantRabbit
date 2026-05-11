@@ -195,7 +195,13 @@ class DailyTargetLedger:
             # required-trades — that flips per-trade size back down by an
             # order of magnitude and re-freezes attack-mode entries
             # (regression seen 2026-05-11: pace 10→30, per_trade 1040→346).
-            if previous_pace is not None and previous_pace_source.startswith("cli"):
+            # Detect a prior operator-explicit choice via either the first-hop
+            # source ("cli") or the carry-forward marker ("previous_cli").
+            # `startswith("cli")` only matches the former, so the protection
+            # silently dropped on the next automation cycle and ai_test_bot
+            # reclaimed pace=30 (regression seen 2026-05-11 15:46 JST).
+            previous_was_cli = previous_pace_source in {"cli", "previous_cli"}
+            if previous_pace is not None and previous_was_cli:
                 explicit_pace = previous_pace
                 pace_source = "previous_cli"
             else:
