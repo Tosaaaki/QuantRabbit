@@ -795,7 +795,14 @@ class IntentGenerator:
         context_issues = _method_context_issues(intent)
         if context_issues:
             risk_issues.extend(context_issues)
-            risk_allowed = False
+            # Only block when at least one context issue is BLOCK severity.
+            # Under SL-free CHART_DIRECTION_CONFLICT is downgraded to WARN
+            # (commit 1eee01e) so Phase 2 mirror lanes can reach LIVE_READY
+            # — but the previous code blanket-set risk_allowed=False the
+            # moment ANY context_issue existed, killing every WARN-only
+            # mirror. User 2026-05-11「他の通貨入らないね」.
+            if any(issue.get("severity") == "BLOCK" for issue in context_issues):
+                risk_allowed = False
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
