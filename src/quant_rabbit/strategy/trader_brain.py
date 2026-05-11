@@ -296,13 +296,33 @@ def _mtf_confluence_score(
         return 0.0
     opposite = "SHORT" if direction == "LONG" else "LONG"
 
+    # Dynamic TF weights (user 2026-05-11「TFの組み合わせは状況で変わる」):
+    # session × dominant_regime × method-aware weighting overrides the
+    # legacy MTF_TF_WEIGHTS literal. Falls back to the literal when no
+    # situation context is available so existing tests stay stable.
+    market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    session_str = str(market_context.get("session") or metadata.get("session_bucket") or "")
+    dominant_regime = str(market_context.get("regime") or "")
+    method_str = str(market_context.get("method") or "")
+    try:
+        from quant_rabbit.strategy.tf_weights import dynamic_tf_weights
+        weights, situation_label = dynamic_tf_weights(
+            session=session_str,
+            chart_story=chart_story,
+            dominant_regime=dominant_regime,
+            method=method_str,
+        )
+    except Exception:
+        weights, situation_label = dict(MTF_TF_WEIGHTS), "baseline"
+
     aligned_weighted = 0.0
     opposed_weighted = 0.0
     aligned_summary: list[str] = []
     opposed_summary: list[str] = []
     aligned_lens_count = 0
 
-    for tf, weight in MTF_TF_WEIGHTS.items():
+    for tf, weight in weights.items():
         data = tf_data.get(tf)
         if not data:
             continue
@@ -335,16 +355,16 @@ def _mtf_confluence_score(
 
     if aligned_summary:
         rationale.append(
-            f"MTF confluence: {direction} aligned at "
+            f"MTF confluence [{situation_label}]: {direction} aligned at "
             + " ".join(aligned_summary)
             + f" (+{positive_score + confluence_bonus:.1f})"
         )
     if opposed_summary:
         rationale.append(
-            f"MTF caution: opposing signals at {','.join(opposed_summary)} ({negative_score:.1f}, capped)"
+            f"MTF caution [{situation_label}]: opposing signals at {','.join(opposed_summary)} ({negative_score:.1f}, capped)"
         )
     if not aligned_summary and not opposed_summary:
-        rationale.append(f"MTF confluence: no decisive lens for {direction} (net 0)")
+        rationale.append(f"MTF confluence [{situation_label}]: no decisive lens for {direction} (net 0)")
 
     return total
 

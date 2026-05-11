@@ -7,6 +7,9 @@ scorer and the adaptive TP / position-manager logic can consume.
 
 User directive 2026-05-08「市況を読んでほしい」「足の形や、何回高値や
 底値をアタックしたかとか、フラッグかとか。いろいろみれるよね」.
+User directive 2026-05-11「TFの組み合わせってそのときの状況でかわる
+よね？手法のリサーチもあわせてやって」 — TF weighting for the PA
+aggregate is now situation-aware via `tf_weights.dynamic_tf_weights`.
 
 The module is intentionally pure: every helper takes a per-TF view dict
 (the entries inside `pair_charts['charts'][N]['views']`) and returns a
@@ -17,6 +20,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+
+from quant_rabbit.strategy.tf_weights import dynamic_tf_weights
 
 
 # Swing pattern classifications. The series is read newest-first.
@@ -646,9 +651,31 @@ def aggregate_price_action_score(
     """
     if not isinstance(pair_chart, dict):
         return 0.0, []
-    weights = {"H4": 0.28, "H1": 0.24, "M30": 0.20, "M15": 0.16, "M5": 0.12}
+    # Dynamic TF weights: situation-aware per session × dominant_regime ×
+    # method (user 2026-05-11「TFの組み合わせは状況で変わる」). Falls back
+    # to BASELINE_WEIGHTS internally when situation can't be classified.
+    session_obj = pair_chart.get("session")
+    session_str = ""
+    if isinstance(session_obj, dict):
+        session_str = str(session_obj.get("bucket") or session_obj.get("name") or "")
+    elif isinstance(session_obj, str):
+        session_str = session_obj
+    dominant_regime = pair_chart.get("dominant_regime")
+    chart_story = str(pair_chart.get("chart_story") or "")
+    weights, situation_label = dynamic_tf_weights(
+        session=session_str,
+        chart_story=chart_story,
+        dominant_regime=dominant_regime if isinstance(dominant_regime, str) else None,
+    )
+    # Restrict to the H4-M5 PA TF set (M1 excluded — too noisy for this
+    # aggregate; the trader_brain micro override handles M1 directly).
+    pa_tfs = {"H4", "H1", "M30", "M15", "M5"}
+    weights = {tf: w for tf, w in weights.items() if tf in pa_tfs}
+    total_weight = sum(weights.values())
+    if total_weight > 0:
+        weights = {tf: w / total_weight for tf, w in weights.items()}
     total = 0.0
-    summary: list[str] = []
+    summary: list[str] = [f"TF weighting={situation_label}"]
     for view in pair_chart.get("views") or []:
         gran = str(view.get("granularity") or "")
         if gran not in weights:
