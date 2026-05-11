@@ -651,9 +651,10 @@ def aggregate_price_action_score(
     """
     if not isinstance(pair_chart, dict):
         return 0.0, []
-    # Dynamic TF weights: situation-aware per session × dominant_regime ×
-    # method (user 2026-05-11「TFの組み合わせは状況で変わる」). Falls back
-    # to BASELINE_WEIGHTS internally when situation can't be classified.
+    # Dynamic TF weights: situation × method × pair × ATR percentile ×
+    # news calendar (user 2026-05-11「TFの組み合わせは状況で変わる」+
+    # 残研究 1/2/3). Falls back to BASELINE_WEIGHTS internally when
+    # situation can't be classified.
     session_obj = pair_chart.get("session")
     session_str = ""
     if isinstance(session_obj, dict):
@@ -662,10 +663,13 @@ def aggregate_price_action_score(
         session_str = session_obj
     dominant_regime = pair_chart.get("dominant_regime")
     chart_story = str(pair_chart.get("chart_story") or "")
+    pair_str = str(pair_chart.get("pair") or "")
     weights, situation_label = dynamic_tf_weights(
         session=session_str,
         chart_story=chart_story,
         dominant_regime=dominant_regime if isinstance(dominant_regime, str) else None,
+        pair=pair_str,
+        pair_chart=pair_chart,
     )
     # Restrict to the H4-M5 PA TF set (M1 excluded — too noisy for this
     # aggregate; the trader_brain micro override handles M1 directly).

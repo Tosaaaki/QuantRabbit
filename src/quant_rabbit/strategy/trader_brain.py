@@ -296,15 +296,17 @@ def _mtf_confluence_score(
         return 0.0
     opposite = "SHORT" if direction == "LONG" else "LONG"
 
-    # Dynamic TF weights (user 2026-05-11「TFの組み合わせは状況で変わる」):
-    # session × dominant_regime × method-aware weighting overrides the
-    # legacy MTF_TF_WEIGHTS literal. Falls back to the literal when no
-    # situation context is available so existing tests stay stable.
+    # Dynamic TF weights (user 2026-05-11「TFの組み合わせは状況で変わる」+
+    # 残研究 1/2/3): session × method × pair × ATR percentile × news
+    # calendar weighting overrides the legacy MTF_TF_WEIGHTS literal.
+    # Falls back to the literal when no situation context is available
+    # so existing tests stay stable.
     market_context = intent.get("market_context") if isinstance(intent.get("market_context"), dict) else {}
     metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
     session_str = str(market_context.get("session") or metadata.get("session_bucket") or "")
     dominant_regime = str(market_context.get("regime") or "")
     method_str = str(market_context.get("method") or "")
+    pair_str = str(intent.get("pair") or "")
     try:
         from quant_rabbit.strategy.tf_weights import dynamic_tf_weights
         weights, situation_label = dynamic_tf_weights(
@@ -312,6 +314,11 @@ def _mtf_confluence_score(
             chart_story=chart_story,
             dominant_regime=dominant_regime,
             method=method_str,
+            pair=pair_str,
+            # pair_chart not available here cheaply; ATR percentile boost
+            # therefore relies on chart_story_structural ADX values via
+            # the situation classifier. Acceptable: PA aggregate (which
+            # has pair_chart) gets the full ATR percentile boost.
         )
     except Exception:
         weights, situation_label = dict(MTF_TF_WEIGHTS), "baseline"
