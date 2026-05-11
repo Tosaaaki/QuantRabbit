@@ -112,6 +112,7 @@ class PairChart:
     chart_story: str
     warnings: tuple[str, ...] = field(default_factory=tuple)
     session: SessionContext | None = None  # killzone / Judas / Silver Bullet / JP holiday
+    confluence: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -123,6 +124,7 @@ class PairChart:
             "warnings": list(self.warnings),
             "views": [view.to_dict() for view in self.views],
             "session": _session_to_dict(self.session),
+            "confluence": self.confluence,
         }
 
 
@@ -188,6 +190,7 @@ def build_pair_chart(
 
     long_score, short_score, dominant = _aggregate(views)
     chart_story = _build_chart_story(pair, views, dominant)
+    confluence = _build_confluence(views, long_score, short_score, dominant)
     # Session context: derived from the M5 candles regardless of how they were
     # obtained (caller-supplied or fetched).
     session = _build_session_for_pair(timeframes, candles_by_tf_resolved, views)
@@ -200,6 +203,7 @@ def build_pair_chart(
         chart_story=chart_story,
         warnings=tuple(warnings),
         session=session,
+        confluence=confluence,
     )
 
 
@@ -561,6 +565,74 @@ def _aggregate(views: list[ChartView]) -> tuple[float, float, str]:
     short_score = short_w / total_w if total_w else 0.0
     dominant = max(regime_votes.items(), key=lambda kv: kv[1])[0]
     return long_score, short_score, dominant
+
+
+def _build_confluence(
+    views: list[ChartView], long_score: float, short_score: float, dominant: str
+) -> dict[str, object]:
+    """Surface the dominant-regime / higher-TF / score-balance signals
+    that the trader chronically under-weights (2026-05-11 incident:
+    SHORT into M5 TREND_DOWN while H4 TREND_UP and entry TFs all read
+    TREND_WEAK + RSI extremes).
+
+    No thresholds — just exposes existing fields under one key so the
+    Confluence Audit in `30_entry_decision.md` can be answered without
+    re-reading every view.
+    """
+
+    highest: ChartView | None = None
+    for preferred in ("D", "H4", "H1"):
+        for view in views:
+            if view.granularity == preferred:
+                highest = view
+                break
+        if highest is not None:
+            break
+
+    higher_regime = highest.regime if highest else "UNKNOWN"
+    higher_reading = None
+    if highest is not None and highest.regime_reading is not None:
+        higher_reading = {
+            "state": highest.regime_reading.state,
+            "confidence": round(highest.regime_reading.confidence, 4),
+        }
+
+    # Score-balance signal: raw gap exposed, trader interprets. The label
+    # only flips between TIED / LONG_LEAN / SHORT_LEAN when the gap exceeds
+    # the natural spread between bias votes; we surface both so the prompt
+    # can apply judgement without a frozen JPY/NAV threshold.
+    score_gap = round(long_score - short_score, 4)
+    if abs(score_gap) <= 0.05:
+        score_balance = "TIED"
+    elif score_gap > 0:
+        score_balance = "LONG_LEAN"
+    else:
+        score_balance = "SHORT_LEAN"
+
+    # Direction alignment between aggregate score lean and highest TF
+    # regime. Purely categorical — derives from existing regime labels
+    # and the score lean above.
+    higher_alignment = "MIXED"
+    if score_balance == "LONG_LEAN" and higher_regime.startswith("TREND_UP"):
+        higher_alignment = "ALIGNED"
+    elif score_balance == "SHORT_LEAN" and higher_regime.startswith("TREND_DOWN"):
+        higher_alignment = "ALIGNED"
+    elif score_balance == "LONG_LEAN" and higher_regime.startswith("TREND_DOWN"):
+        higher_alignment = "OPPOSED"
+    elif score_balance == "SHORT_LEAN" and higher_regime.startswith("TREND_UP"):
+        higher_alignment = "OPPOSED"
+    elif higher_regime in {"RANGE", "UNCLEAR"} or score_balance == "TIED":
+        higher_alignment = "NEUTRAL"
+
+    return {
+        "score_gap": score_gap,
+        "score_balance": score_balance,
+        "dominant_regime": dominant,
+        "higher_tf": highest.granularity if highest else None,
+        "higher_tf_regime": higher_regime,
+        "higher_tf_reading": higher_reading,
+        "higher_tf_alignment": higher_alignment,
+    }
 
 
 def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:

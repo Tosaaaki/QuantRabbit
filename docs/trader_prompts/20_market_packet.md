@@ -24,6 +24,12 @@
 - M5/M15 are the operating setup.
 - M30/H1 are intraday structure.
 - H4/D are higher-timeframe contradiction checks.
+- `pair_charts[pair].confluence` summarises the higher-TF anchor and
+  score balance the trader chronically under-weights — read it before
+  picking direction. Fields: `score_balance` (LONG_LEAN / SHORT_LEAN /
+  TIED), `higher_tf_regime`, `higher_tf_alignment` (ALIGNED / OPPOSED /
+  NEUTRAL / MIXED). OPPOSED requires a declared counter-trend thesis;
+  TIED demands smaller size or WAIT.
 - Cite actual numbers for ATR, regime reading, family scores, disagreement, jump filters, session tag, and structure.
 - `family_scores.disagreement > 0.7` is a stand-aside signal unless one composite dominates and the regime gate supports it.
 - New entries inside `last_jump_bars_ago < 5` require explicit justification.

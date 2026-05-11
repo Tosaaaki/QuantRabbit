@@ -56,7 +56,46 @@ When margin is available AND ≥1 lane combined score ≥ +12, prefer TRADE.
 WAIT requires citing a specific *new* blocker not present at the time the
 margin freed up.
 
-## Required TRADE Content
+## Confluence Audit (mandatory before TRADE)
+
+Regime label alone (e.g. "M5 TREND_DOWN") is not a direction signal. Before
+finalizing direction, write all five lines in `thesis`. If any is empty or
+contradicts your chosen direction, downgrade size, switch method, or WAIT.
+
+1. **Highest TF anchor** — cite D/H4 regime explicitly. SHORT against an
+   H4/D TREND_UP needs a declared counter-trend thesis (reversal, key
+   level rejection, exhaustion bounce) with a bounded scope; otherwise it
+   is method-misuse.
+2. **Entry TF quality** — for each entry TF (M5/M15/M30) cite the
+   `Read=` qualifier (TREND_FRESH / TREND_WEAK / TRANSITION /
+   BREAKOUT_PENDING / FAILURE_RISK). TREND_CONTINUATION method requires
+   FRESH, not WEAK. WEAK + TRANSITION means the move is dying — pick
+   BREAKOUT_FAILURE or wait for the next leg.
+3. **Momentum / exhaustion read** — cite RSI, %R, MFI, AroonOsc on entry
+   TFs. If multiple oscillators sit at the same extreme as your direction
+   (SHORT into RSI floor + %R near −100 + MFI floor), you are entering at
+   exhaustion. Either declare reversal thesis or step aside.
+4. **Score balance** — cite `long_score` vs `short_score`. When they are
+   close, the chart is not voting either way; size down or WAIT.
+5. **Strongest counter-argument** — name the single most damaging
+   evidence against your direction from the chart_story and explain why
+   you still win. If you can't find one, you haven't read the chart.
+
+## Hedge Timing Rubric
+
+Opening an opposite-side position on a pair you already hold is hedging,
+not new participation. Classify and justify in `thesis`:
+
+- (a) **Lock-gain hedge** — existing exposure is profitable, opposite-side
+  locks the win while preserving optionality. Usually fine.
+- (b) **Reversal hedge** — existing exposure is underwater AND a reversal
+  signal has fired (BOS / CHOCH against the existing side on entry TF +
+  higher-TF confirmation). Conditional — cite the reversal evidence.
+- (c) **Continuation hedge** — existing exposure is underwater AND price
+  is still trending against it. This freezes the loss at the worst
+  moment. **Default: avoid.** If taken, declare the structural level that
+  invalidates the existing side and why catching that move is worth
+  blocking the bounce-back recovery.
 
 - Selected lane id and basket lane ids.
 - Thesis, method, narrative, chart story, invalidation, TP, SL, units, expected reward, worst-case loss.
