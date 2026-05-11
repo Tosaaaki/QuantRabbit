@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 
@@ -167,7 +167,15 @@ class RiskPolicy:
     # Concurrent trader-owned positions cap. Default 4 caps simultaneous
     # exposure to ~4 lanes; live env can override via `QR_MAX_PORTFOLIO_POSITIONS`
     # for attack-mode multi-lane participation (`feedback_attack_mode_sizing.md`).
-    max_portfolio_positions: int = int(os.environ.get("QR_MAX_PORTFOLIO_POSITIONS", "4") or "4")
+    # NOTE: use `field(default_factory=...)` so the env override is honored at
+    # instance construction. With a bare `= int(os.environ.get(...))` the value
+    # was frozen at module import — bootstrap-time setdefault arrived too late
+    # and the cap stayed at 4 even when QR_MAX_PORTFOLIO_POSITIONS=10 was set
+    # (regression seen 2026-05-11 15:44 JST: 48 intents DRY_RUN_BLOCKED with
+    # "open trader positions 5 reached portfolio limit 4").
+    max_portfolio_positions: int = field(
+        default_factory=lambda: int(os.environ.get("QR_MAX_PORTFOLIO_POSITIONS", "4") or "4")
+    )
     max_portfolio_loss_jpy: float | None = None
 
 
