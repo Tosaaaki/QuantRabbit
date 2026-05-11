@@ -92,6 +92,7 @@ class DailyTargetLedger:
         target_return_pct: float | None = None,
         realized_pl_jpy: float | None = None,
         daily_risk_budget_jpy: float | None = None,
+        daily_risk_pct: float | None = None,
         target_trades_per_day: int | None = None,
         snapshot: BrokerSnapshot | None = None,
         snapshot_path: Path | None = None,
@@ -141,16 +142,29 @@ class DailyTargetLedger:
         # both still win. No silent JPY fallback — if percent and explicit value are both
         # missing, the policy default percent applies but is recorded in the snapshot.
         policy = RiskPolicy()
-        explicit_budget = _coalesce_float(daily_risk_budget_jpy, previous.get("daily_risk_budget_jpy"))
-        if explicit_budget is not None:
-            risk_budget = explicit_budget
+        # Risk-budget precedence (highest first). NAV%-anchored inputs
+        # auto-scale with equity — preferred per feedback_use_nav_percent.md.
+        # Absolute JPY paths kept for backward compatibility with smoke
+        # scripts and persisted state.
+        #   1. CLI --daily-risk-pct (caller wants explicit % of today's NAV)
+        #   2. CLI --daily-risk-budget (caller wants explicit JPY override)
+        #   3. previous persisted daily_risk_budget_jpy (carry forward)
+        #   4. RiskPolicy.daily_risk_pct (policy default %)
+        explicit_pct = _coalesce_float(daily_risk_pct)
+        if explicit_pct is not None and explicit_pct > 0:
+            risk_budget = round(start_balance * (explicit_pct / 100.0), 4)
         else:
-            if policy.daily_risk_pct is None or policy.daily_risk_pct <= 0:
-                raise ValueError(
-                    "daily-target-state: cannot derive daily_risk_budget_jpy. "
-                    "Pass --daily-risk-budget explicitly, or set RiskPolicy.daily_risk_pct."
-                )
-            risk_budget = round(start_balance * (policy.daily_risk_pct / 100.0), 4)
+            explicit_budget = _coalesce_float(daily_risk_budget_jpy, previous.get("daily_risk_budget_jpy"))
+            if explicit_budget is not None:
+                risk_budget = explicit_budget
+            else:
+                if policy.daily_risk_pct is None or policy.daily_risk_pct <= 0:
+                    raise ValueError(
+                        "daily-target-state: cannot derive daily_risk_budget_jpy. "
+                        "Pass --daily-risk-pct or --daily-risk-budget explicitly, "
+                        "or set RiskPolicy.daily_risk_pct."
+                    )
+                risk_budget = round(start_balance * (policy.daily_risk_pct / 100.0), 4)
         # Per-trade risk = day's risk budget / target trade pace. Splitting these
         # keeps a single losing trade from burning the whole day's risk budget,
         # which is what makes "fire many small shots, let winners run" actually

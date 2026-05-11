@@ -270,7 +270,18 @@ def main(argv: list[str] | None = None) -> int:
     p_target.add_argument("--start-balance", type=float, default=None)
     p_target.add_argument("--target-return-pct", type=float, default=None)
     p_target.add_argument("--realized-pl", type=float, default=None)
-    p_target.add_argument("--daily-risk-budget", type=float, default=None)
+    p_target.add_argument(
+        "--daily-risk-budget",
+        type=float,
+        default=None,
+        help="Absolute JPY override. Prefer --daily-risk-pct (NAV-anchored, auto-scales with equity).",
+    )
+    p_target.add_argument(
+        "--daily-risk-pct",
+        type=float,
+        default=None,
+        help="Daily risk budget as %% of starting NAV (e.g. 4.5). Overrides --daily-risk-budget and persisted JPY.",
+    )
     p_target.add_argument(
         "--target-trades-per-day",
         type=int,
@@ -1230,6 +1241,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_return_pct=args.target_return_pct,
                 realized_pl_jpy=args.realized_pl,
                 daily_risk_budget_jpy=args.daily_risk_budget,
+                daily_risk_pct=args.daily_risk_pct,
                 target_trades_per_day=args.target_trades_per_day,
                 snapshot_path=args.snapshot,
             )

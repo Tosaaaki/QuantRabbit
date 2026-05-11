@@ -52,8 +52,16 @@ export QR_GEOMETRY_ATR_MULT="${QR_GEOMETRY_ATR_MULT:-5.0}"
 export QR_GEOMETRY_SPREAD_FLOOR_MULT="${QR_GEOMETRY_SPREAD_FLOOR_MULT:-12.0}"
 export QR_TRADER_DISABLE_SL_REPAIR="${QR_TRADER_DISABLE_SL_REPAIR:-1}"
 export QR_MAX_PORTFOLIO_POSITIONS="${QR_MAX_PORTFOLIO_POSITIONS:-10}"
-# Operator-set base units. Under SL-free mode units = min(BASE_UNITS,
-# margin_budget). Loss-cap math is advisory; sizing is offense-anchored.
+# NAV-pct sizing: each new position locks % of current NAV as margin so
+# unit count auto-scales with equity (feedback_use_nav_percent.md). 30%
+# per position lands ≈10000u for EUR_USD at NAV 227k — three concurrent
+# positions reach ~90% margin utilization, just inside the 92% cap.
+# Mirrors scripts/run-autotrade-live.sh so direct CLI invocations and the
+# wrapper produce equivalent sizing.
+export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
+# Legacy fixed-units fallback used only when QR_TRADER_POSITION_NAV_PCT
+# is unset. Do NOT remove — backstops smoke scripts that pin units. The
+# NAV-pct path above takes precedence whenever set.
 export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 
 # 1. Route to the right prompt branch
@@ -61,11 +69,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 
 # 2. Refresh evidence when routed there
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-# `--daily-risk-budget` and `--target-trades-per-day` raise the per-trade cap
-# from the conservative 140 JPY default to ~1000 JPY so attack-mode sizing
-# (`feedback_attack_mode_sizing.md`) is reachable. The product still derives
-# from equity (≈4.6% of starting NAV), not a hardcoded JPY constant.
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-budget 10000 --target-trades-per-day 10
+# `--daily-risk-pct` sets the day's risk budget as % of starting NAV, so the
+# per-trade cap auto-scales with equity (feedback_use_nav_percent.md). At 4.5%
+# the per-trade slice lands near 0.45% NAV with target_trades_per_day=10, which
+# unblocks attack-mode sizing (`feedback_attack_mode_sizing.md`) without
+# hardcoding a JPY constant that biases the trader to a frozen amount.
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 4.5 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot
@@ -76,7 +85,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-budget 10000 --target-trades-per-day 10
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 4.5 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
