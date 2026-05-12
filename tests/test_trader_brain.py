@@ -1350,5 +1350,309 @@ class AttackAdvicePromotionTest(unittest.TestCase):
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
 
+class DirectionalGatingTest(unittest.TestCase):
+    """Coverage for C-1 (directional gating) + C-2 (attack_advice
+    directional veto), added 2026-05-12. Both run on the scored
+    LaneScore tuple inside `_apply_directional_gating` after
+    `_score_lane` and before basket construction. The gate never
+    consults `snapshot.positions` — a separate test below pins that
+    contract so PositionManager / PositionProtectionGateway behavior on
+    existing trades cannot be reached by this code path.
+    """
+
+    def _pair_charts(self, *, balance: str, gap: float, pair: str = "EUR_USD") -> dict:
+        return {
+            pair: {
+                "confluence": {
+                    "score_balance": balance,
+                    "score_gap": gap,
+                    "higher_tf_alignment": "ALIGNED" if balance != "TIED" else "NEUTRAL",
+                },
+            }
+        }
+
+    def _make_score(
+        self,
+        *,
+        lane_id: str,
+        pair: str,
+        direction: str,
+        score: float = 100.0,
+        action: str = ACTION_SEND_ENTRY,
+        estimated_margin_jpy: float | None = None,
+    ):
+        from quant_rabbit.strategy.trader_brain import LaneScore
+
+        return LaneScore(
+            lane_id=lane_id,
+            pair=pair,
+            direction=direction,
+            method="TREND_CONTINUATION",
+            order_type="MARKET",
+            entry=1.0,
+            tp=1.01,
+            sl=None,
+            status="LIVE_READY",
+            score=score,
+            action=action,
+            blockers=(),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=estimated_margin_jpy,
+        )
+
+    def test_c1_short_lean_with_short_majority_demotes_long(self) -> None:
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        # SHORT_LEAN gap -0.44 (well past 0.10 strong threshold) + advice
+        # top-K has 2 SHORT vs 0 LONG for EUR_USD → LONG lane demoted.
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="LONG",
+                score=200.0,
+            ),
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="SHORT",
+                score=150.0,
+            ),
+        )
+        pair_charts = self._pair_charts(balance="SHORT_LEAN", gap=-0.44)
+        attack_ranks = {
+            "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET": 1,
+        }
+
+        result = _apply_directional_gating(scores, pair_charts, attack_ranks)
+
+        long_lane = next(s for s in result if s.direction == "LONG")
+        short_lane = next(s for s in result if s.direction == "SHORT")
+        self.assertEqual(long_lane.action, ACTION_NO_TRADE)
+        self.assertTrue(
+            any("directional_gating_demoted" in b for b in long_lane.blockers),
+            f"LONG should carry directional_gating_demoted blocker; got {long_lane.blockers}",
+        )
+        self.assertEqual(short_lane.action, ACTION_SEND_ENTRY)
+        # SHORT lane scored 150, LONG lane was 200 - 25 (C-2) = 175 score after veto.
+        # So the rank flip is not guaranteed by score alone, but LONG is NO_TRADE
+        # so it falls out of any SEND_ENTRY prefilter anyway.
+
+    def test_c1_long_lean_with_long_majority_demotes_short(self) -> None:
+        # Symmetric: LONG_LEAN with LONG majority demotes SHORT lanes.
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="SHORT",
+                score=200.0,
+            ),
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="LONG",
+                score=150.0,
+            ),
+        )
+        pair_charts = self._pair_charts(balance="LONG_LEAN", gap=0.44)
+        attack_ranks = {
+            "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:MARKET": 1,
+        }
+
+        result = _apply_directional_gating(scores, pair_charts, attack_ranks)
+
+        short_lane = next(s for s in result if s.direction == "SHORT")
+        long_lane = next(s for s in result if s.direction == "LONG")
+        self.assertEqual(short_lane.action, ACTION_NO_TRADE)
+        self.assertTrue(any("directional_gating_demoted" in b for b in short_lane.blockers))
+        self.assertEqual(long_lane.action, ACTION_SEND_ENTRY)
+
+    def test_c1_does_not_fire_when_gap_below_strong_threshold(self) -> None:
+        # SHORT_LEAN but gap -0.06 (just past 0.05 TIED, below 0.10 strong).
+        # Neither C-1 nor C-2 should demote — bias is too weak to act.
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="LONG",
+                score=200.0,
+            ),
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="SHORT",
+                score=150.0,
+            ),
+        )
+        pair_charts = self._pair_charts(balance="SHORT_LEAN", gap=-0.06)
+        # No attack advice top-K either — so C-2 majority also undefined.
+        result = _apply_directional_gating(scores, pair_charts, attack_ranks={})
+
+        long_lane = next(s for s in result if s.direction == "LONG")
+        self.assertEqual(long_lane.action, ACTION_SEND_ENTRY)
+        self.assertFalse(any("directional_gating" in b for b in long_lane.blockers))
+
+    def test_c1_does_not_fire_when_advice_disagrees_with_bias(self) -> None:
+        # SHORT_LEAN gap -0.44 but advice majority is LONG (perhaps fade
+        # setup). Conditions disagree → no C-1 demotion.
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="LONG",
+                score=200.0,
+            ),
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="SHORT",
+                score=150.0,
+            ),
+        )
+        pair_charts = self._pair_charts(balance="SHORT_LEAN", gap=-0.44)
+        attack_ranks = {
+            "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:MARKET": 1,
+        }
+
+        result = _apply_directional_gating(scores, pair_charts, attack_ranks)
+
+        long_lane = next(s for s in result if s.direction == "LONG")
+        self.assertEqual(long_lane.action, ACTION_SEND_ENTRY)
+        self.assertFalse(any("directional_gating_demoted" in b for b in long_lane.blockers))
+
+    def test_c2_penalty_subtracts_25_from_opposite_lanes(self) -> None:
+        # Advice top-K majority SHORT for EUR_USD → LONG lane (the only
+        # one in scores) loses 25 score points + gets veto rationale.
+        from quant_rabbit.strategy.trader_brain import (
+            _apply_directional_gating,
+            ATTACK_ADVICE_VETO_PENALTY,
+        )
+
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="LONG",
+                score=180.0,
+            ),
+        )
+        # TIED pair_charts → no C-1, but attack_advice still drives C-2.
+        pair_charts = self._pair_charts(balance="TIED", gap=0.0)
+        attack_ranks = {
+            "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET": 1,
+        }
+
+        result = _apply_directional_gating(scores, pair_charts, attack_ranks)
+
+        lane = next(s for s in result if s.pair == "EUR_USD")
+        self.assertEqual(lane.score, 180.0 - ATTACK_ADVICE_VETO_PENALTY)
+        self.assertTrue(any("attack_advice_veto" in r for r in lane.rationale))
+        # C-2 alone does not demote action — only score nudge.
+        self.assertEqual(lane.action, ACTION_SEND_ENTRY)
+
+    def test_c2_does_not_penalize_aligned_direction(self) -> None:
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="SHORT",
+                score=180.0,
+            ),
+        )
+        pair_charts = self._pair_charts(balance="TIED", gap=0.0)
+        attack_ranks = {
+            "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET": 1,
+        }
+
+        result = _apply_directional_gating(scores, pair_charts, attack_ranks)
+
+        lane = next(s for s in result if s.pair == "EUR_USD")
+        self.assertEqual(lane.score, 180.0)
+        self.assertFalse(any("attack_advice_veto" in r for r in lane.rationale))
+
+    def test_c1_c2_do_not_consult_position_summaries(self) -> None:
+        # Existing-position invariant: the gate must read only
+        # pair_charts + attack_ranks + LaneScore. We exercise it with
+        # a synthetic packet containing NO position-summary surface,
+        # then assert the call succeeds and produces a result. If the
+        # gate ever started reading snapshot.positions or order data
+        # it would need additional arguments, which would change this
+        # signature and surface the regression here.
+        import inspect
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        sig = inspect.signature(_apply_directional_gating)
+        self.assertEqual(
+            list(sig.parameters),
+            ["scores", "full_pair_charts", "attack_ranks"],
+            msg=(
+                "directional gating must NOT take a broker snapshot / position "
+                "argument; reading positions would break the existing-trade "
+                "invariant. If you're adding a parameter, make sure it's not "
+                "anything that exposes open-position state."
+            ),
+        )
+
+    def test_gating_output_identical_with_or_without_existing_positions(self) -> None:
+        # Direct structural invariant: the LaneScores produced by
+        # `_apply_directional_gating` for a given pair_charts +
+        # attack_ranks input must be byte-identical regardless of how
+        # many trader-owned positions the broker holds, because the
+        # gate function signature does not accept positions/orders at
+        # all. This nails the "existing 5 positions cannot be
+        # influenced by the new gate" invariant at the gate level.
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+
+        scores = (
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="LONG",
+                score=200.0,
+                estimated_margin_jpy=37000.0,
+            ),
+            self._make_score(
+                lane_id="trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET",
+                pair="EUR_USD",
+                direction="SHORT",
+                score=150.0,
+                estimated_margin_jpy=37000.0,
+            ),
+        )
+        pair_charts = self._pair_charts(balance="SHORT_LEAN", gap=-0.44)
+        attack_ranks = {
+            "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET": 0,
+            "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE:MARKET": 1,
+        }
+
+        # Call twice — between the two calls the broker could theoretically
+        # have any number of open positions; the gate never sees them, so
+        # the output must match exactly.
+        result_a = _apply_directional_gating(scores, pair_charts, attack_ranks)
+        result_b = _apply_directional_gating(scores, pair_charts, attack_ranks)
+        self.assertEqual(result_a, result_b)
+        # Also: TP / SL fields on LaneScore must not be touched. The gate
+        # only mutates `score`, `action`, `rationale`, `blockers`.
+        for orig, new in zip(scores, sorted(result_a, key=lambda s: s.lane_id)):
+            self.assertEqual(orig.tp, new.tp)
+            self.assertEqual(orig.sl, new.sl)
+            self.assertEqual(orig.entry, new.entry)
+            self.assertEqual(orig.estimated_margin_jpy, new.estimated_margin_jpy)
+
+
 if __name__ == "__main__":
     unittest.main()

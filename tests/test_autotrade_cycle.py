@@ -2230,5 +2230,139 @@ def _gpt_cancel_pending_decision(cancel_order_ids: list[str]) -> dict:
     }
 
 
+class MarginAwareBasketTest(unittest.TestCase):
+    """Coverage for C-4 margin-aware basket truncation (2026-05-12).
+
+    `_basket_lane_plan` and `_expanded_gpt_basket_plan` track cumulative
+    `LaneScore.estimated_margin_jpy` and stop adding lanes once
+    `margin_available_jpy × MARGIN_AWARE_BASKET_BUFFER` would be
+    breached. This prevents the gateway from rejecting every basket
+    candidate at staging when margin is already tight (2026-05-12 14:00
+    UTC scenario: 12-lane basket, 40k margin headroom, all 12 rejected
+    with `BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`).
+    """
+
+    @staticmethod
+    def _score(lane_id: str, *, pair: str, direction: str, score: float,
+               margin_jpy: float | None, action: str = "SEND_ENTRY",
+               size_multiple: float = 1.0):
+        from quant_rabbit.strategy.trader_brain import LaneScore
+        return LaneScore(
+            lane_id=lane_id,
+            pair=pair,
+            direction=direction,
+            method="TREND_CONTINUATION",
+            order_type="MARKET",
+            entry=1.0,
+            tp=1.01,
+            sl=None,
+            status="LIVE_READY",
+            score=score,
+            action=action,
+            blockers=(),
+            rationale=(),
+            size_multiple=size_multiple,
+            estimated_margin_jpy=margin_jpy,
+        )
+
+    def _decision(self, scores: list):
+        from quant_rabbit.strategy.trader_brain import TraderDecision
+        return TraderDecision(
+            action="SEND_ENTRY",
+            selected_lane_id=scores[0].lane_id if scores else None,
+            generated_at_utc="2026-05-12T00:00:00+00:00",
+            reason="test",
+            scores=tuple(scores),
+            positions=0,
+            orders=0,
+            loss_cap_jpy=None,
+            loss_cap_source=None,
+            pending_cancel_order_ids=(),
+            selected_lane_score=scores[0].score if scores else None,
+            selected_lane_size_multiple=scores[0].size_multiple if scores else None,
+        )
+
+    def test_basket_truncates_when_cumulative_margin_exceeds_budget(self) -> None:
+        from quant_rabbit.automation import AutoTradeCycle
+        scores = [
+            self._score("a:EUR_USD:SHORT:TREND_CONTINUATION", pair="EUR_USD",
+                        direction="SHORT", score=200, margin_jpy=13000),
+            self._score("b:EUR_USD:SHORT:BREAKOUT_FAILURE", pair="EUR_USD",
+                        direction="SHORT", score=190, margin_jpy=13000),
+            self._score("c:GBP_USD:SHORT:TREND_CONTINUATION", pair="GBP_USD",
+                        direction="SHORT", score=180, margin_jpy=13000),
+            self._score("d:AUD_JPY:SHORT:TREND_CONTINUATION", pair="AUD_JPY",
+                        direction="SHORT", score=170, margin_jpy=13000),
+        ]
+        decision = self._decision(scores)
+        lane_ids, _ = AutoTradeCycle._basket_lane_plan(
+            decision=decision,
+            primary_lane_id=None,
+            primary_size_multiple=None,
+            margin_available_jpy=40000.0,
+        )
+        # 40000 * 0.9 = 36000 budget. 13000 + 13000 = 26000 fits; next
+        # add would push to 39000 > 36000 → truncate at 2 lanes.
+        self.assertEqual(len(lane_ids), 2)
+        self.assertEqual(
+            lane_ids,
+            ("a:EUR_USD:SHORT:TREND_CONTINUATION", "b:EUR_USD:SHORT:BREAKOUT_FAILURE"),
+        )
+
+    def test_basket_unchanged_when_margin_available_not_passed(self) -> None:
+        # Backwards-compat: callers that don't supply margin_available_jpy
+        # get the legacy "fit everything" behavior. Protects existing
+        # tests and ad-hoc smoke runs.
+        from quant_rabbit.automation import AutoTradeCycle
+        scores = [
+            self._score(f"l{i}:P{i}_USD:LONG:TREND_CONTINUATION", pair=f"P{i}_USD",
+                        direction="LONG", score=200 - i, margin_jpy=99999.0)
+            for i in range(4)
+        ]
+        decision = self._decision(scores)
+        lane_ids, _ = AutoTradeCycle._basket_lane_plan(
+            decision=decision,
+            primary_lane_id=None,
+            primary_size_multiple=None,
+        )
+        self.assertEqual(len(lane_ids), 4)
+
+    def test_basket_skips_lane_lacking_margin_but_continues_evaluating(self) -> None:
+        # Lanes without estimated_margin_jpy are admitted without
+        # counting (legacy fixtures may not supply the field).
+        # Subsequent lanes still respect cumulative margin.
+        from quant_rabbit.automation import AutoTradeCycle
+        scores = [
+            self._score("a:EUR_USD:SHORT:TREND_CONTINUATION", pair="EUR_USD",
+                        direction="SHORT", score=200, margin_jpy=13000),
+            self._score("b:EUR_USD:SHORT:BREAKOUT_FAILURE", pair="EUR_USD",
+                        direction="SHORT", score=190, margin_jpy=None),
+            self._score("c:GBP_USD:SHORT:TREND_CONTINUATION", pair="GBP_USD",
+                        direction="SHORT", score=180, margin_jpy=13000),
+        ]
+        decision = self._decision(scores)
+        lane_ids, _ = AutoTradeCycle._basket_lane_plan(
+            decision=decision,
+            primary_lane_id=None,
+            primary_size_multiple=None,
+            margin_available_jpy=20000.0,
+        )
+        # 20000 * 0.9 = 18000 budget. a (13000) → cumulative 13000. b
+        # (None margin) → admitted without count. c (13000) → would push
+        # known cumulative to 26000 > 18000 → reject.
+        self.assertEqual(lane_ids[:2], (
+            "a:EUR_USD:SHORT:TREND_CONTINUATION",
+            "b:EUR_USD:SHORT:BREAKOUT_FAILURE",
+        ))
+        self.assertNotIn("c:GBP_USD:SHORT:TREND_CONTINUATION", lane_ids)
+
+    def test_margin_buffer_is_documented_engineering_value(self) -> None:
+        # Guard against silent buffer drift. The documented engineering
+        # value is 0.9 = 10% drift headroom — changing it is an explicit
+        # operator decision.
+        from quant_rabbit.automation import MARGIN_AWARE_BASKET_BUFFER
+        self.assertEqual(MARGIN_AWARE_BASKET_BUFFER, 0.9)
+
+
 if __name__ == "__main__":
     unittest.main()

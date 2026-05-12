@@ -64,6 +64,20 @@ DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 
+# C-4 margin-aware basket truncation (2026-05-12). The basket builder
+# stops adding fresh-entry lanes once cumulative
+# `LaneScore.estimated_margin_jpy` would exceed the broker's currently
+# available margin multiplied by this safety buffer. The buffer is an
+# engineering tolerance — not a market-derived value — to leave room
+# for intra-cycle quote drift, spread widening, and slippage between
+# the trader_brain margin estimate and the LiveOrderGateway's final
+# pre-send revalidation. Without it, the gateway used to reject every
+# basket candidate at staging (`BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`)
+# even when one lane could fit cleanly. 0.9 = 10 % drift headroom is
+# tight enough to not waste capacity but loose enough that an ATR-class
+# pip move during the staging RTT will not flip the cap.
+MARGIN_AWARE_BASKET_BUFFER = 0.9
+
 # Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
 # only hard reasons to keep a LIVE_READY lane out of the GPT prefilter set.
 # Anything else (mining edge quality, narrative, capture-rate caution) is a
@@ -660,6 +674,9 @@ class AutoTradeCycle:
                     primary_lane_id=None,
                     primary_size_multiple=None,
                     allow_existing_pending=True,
+                    margin_available_jpy=(
+                        snapshot.account.margin_available_jpy if snapshot.account else None
+                    ),
                 )
                 if basket_lane_ids:
                     if send and self.live_enabled and not self.use_gpt_trader:
@@ -845,6 +862,9 @@ class AutoTradeCycle:
                                 decision=decision,
                                 gpt_lane_ids=gpt_lane_ids,
                                 allow_existing_pending=True,
+                                margin_available_jpy=(
+                                    snapshot.account.margin_available_jpy if snapshot.account else None
+                                ),
                             )
                         else:
                             basket_lane_ids = gpt_lane_ids
@@ -1280,6 +1300,9 @@ class AutoTradeCycle:
             basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                 decision=decision,
                 gpt_lane_ids=gpt_selected_lane_ids,
+                margin_available_jpy=(
+                    snapshot.account.margin_available_jpy if snapshot.account else None
+                ),
             )
             selected_lane_id = basket_lane_ids[0] if basket_lane_ids else selected_lane_id
             selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
@@ -1300,6 +1323,9 @@ class AutoTradeCycle:
                 decision=decision,
                 primary_lane_id=selected_lane_id,
                 primary_size_multiple=selected_lane_size_multiple,
+                margin_available_jpy=(
+                    snapshot.account.margin_available_jpy if snapshot.account else None
+                ),
             )
 
         if basket_lane_ids and send and self.live_enabled and not self.use_gpt_trader:
@@ -1597,21 +1623,46 @@ class AutoTradeCycle:
         primary_lane_id: str | None,
         primary_size_multiple: float | None,
         allow_existing_pending: bool = False,
+        margin_available_jpy: float | None = None,
     ) -> tuple[tuple[str, ...], dict[str, float]]:
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
         parent_lane_ids: set[str] = set()
+        margin_budget = (
+            margin_available_jpy * MARGIN_AWARE_BASKET_BUFFER
+            if margin_available_jpy is not None and margin_available_jpy > 0
+            else None
+        )
+        margin_lookup = {
+            score.lane_id: score.estimated_margin_jpy
+            for score in decision.scores
+            if score.estimated_margin_jpy is not None
+        }
+        cumulative_margin = 0.0
 
-        def add(lane_id: str | None, size_multiple: float | None) -> None:
+        def add(lane_id: str | None, size_multiple: float | None) -> bool:
+            nonlocal cumulative_margin
             if not lane_id or lane_id in size_multiples:
-                return
+                return False
             parent_lane_id = _basket_parent_lane_id(lane_id)
             if parent_lane_id and parent_lane_id in parent_lane_ids:
-                return
+                return False
+            # C-4 margin-aware truncation. Apply the buffer-adjusted cap
+            # only when we know the lane's estimated margin AND broker
+            # truth has surfaced an `margin_available_jpy` figure.
+            # Missing data degrades gracefully — without truncation —
+            # so unrelated tests and stub fixtures keep working.
+            if margin_budget is not None:
+                lane_margin = margin_lookup.get(lane_id)
+                if lane_margin is not None:
+                    if cumulative_margin + lane_margin > margin_budget:
+                        return False
+                    cumulative_margin += lane_margin
             lane_ids.append(lane_id)
             size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
             if parent_lane_id:
                 parent_lane_ids.add(parent_lane_id)
+            return True
 
         add(primary_lane_id, primary_size_multiple)
         for score in decision.scores:
@@ -1625,17 +1676,36 @@ class AutoTradeCycle:
         decision: TraderDecision,
         gpt_lane_ids: tuple[str, ...],
         allow_existing_pending: bool = False,
+        margin_available_jpy: float | None = None,
     ) -> tuple[tuple[str, ...], dict[str, float]]:
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
         parent_lane_ids: set[str] = set()
+        margin_budget = (
+            margin_available_jpy * MARGIN_AWARE_BASKET_BUFFER
+            if margin_available_jpy is not None and margin_available_jpy > 0
+            else None
+        )
+        margin_lookup = {
+            score.lane_id: score.estimated_margin_jpy
+            for score in decision.scores
+            if score.estimated_margin_jpy is not None
+        }
+        cumulative_margin = 0.0
 
-        def add(lane_id: str | None, size_multiple: float | None = None) -> None:
+        def add(lane_id: str | None, size_multiple: float | None = None) -> bool:
+            nonlocal cumulative_margin
             if not lane_id or lane_id in size_multiples:
-                return
+                return False
             parent_lane_id = _basket_parent_lane_id(lane_id)
             if parent_lane_id and parent_lane_id in parent_lane_ids:
-                return
+                return False
+            if margin_budget is not None:
+                lane_margin = margin_lookup.get(lane_id)
+                if lane_margin is not None:
+                    if cumulative_margin + lane_margin > margin_budget:
+                        return False
+                    cumulative_margin += lane_margin
             if size_multiple is None:
                 _, size_multiple = AutoTradeCycle._selected_lane_meta(
                     decision=decision,
@@ -1645,6 +1715,7 @@ class AutoTradeCycle:
             size_multiples[lane_id] = size_multiple if size_multiple is not None else 1.0
             if parent_lane_id:
                 parent_lane_ids.add(parent_lane_id)
+            return True
 
         for lane_id in gpt_lane_ids:
             add(lane_id)

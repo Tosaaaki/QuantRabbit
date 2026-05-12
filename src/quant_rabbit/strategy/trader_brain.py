@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -446,6 +446,40 @@ ATTACK_ADVICE_PROMOTION_RANK_CEILING = 4
 # components that should still discriminate between advised candidates.
 ATTACK_ADVICE_PROMOTION_BONUS = 10.0
 
+# === Directional gating constants (C-1 + C-2, 2026-05-12) ===
+# The trader_brain prefilter previously emitted both LONG and SHORT
+# LIVE_READY lanes for the same pair regardless of `pair_charts`
+# directional bias. Under margin pressure the gateway then rejected
+# every candidate at the staging step
+# (`BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`), so neither side entered
+# on a clear reversal. The directional gate runs over the scored lane
+# tuple after `_score_lane` but before basket construction and demotes
+# the losing direction so the surviving side can claim available
+# margin. These constants drive that gate.
+#
+# Threshold for what counts as a "decisive" pair_charts bias. The
+# chart_reader's `_build_confluence` (chart_reader.py:604–610)
+# already documents 0.05 as the natural noise floor between LONG and
+# SHORT bias votes — gaps inside ±0.05 are labeled TIED. The strong
+# threshold is twice that floor: a gap of |0.10|+ means the bias is
+# twice as decisive as the documented noise band, which empirically
+# corresponds to score_balance leans that survive an intra-cycle
+# refresh. The multiplier is the smallest integer step that respects
+# the chart_reader contract without copying a new market-derived
+# literal into trader_brain.
+_TIED_SCORE_GAP_BOUNDARY = 0.05  # mirrors chart_reader.py:605
+DIRECTIONAL_GATING_STRONG_GAP_MULTIPLIER = 2.0
+DIRECTIONAL_GATING_STRONG_GAP = (
+    _TIED_SCORE_GAP_BOUNDARY * DIRECTIONAL_GATING_STRONG_GAP_MULTIPLIER
+)
+# C-2 attack_advice directional veto: score penalty applied to lanes
+# whose direction is opposite to the top-K attack_advice majority for
+# their pair. Magnitude matches the existing `-25` penalty applied
+# elsewhere in `_score_lane` for non-CANDIDATE strategy profiles and
+# direction-conflict downgrades — so the veto is internally
+# consistent with the rest of the discretionary penalty grid.
+ATTACK_ADVICE_VETO_PENALTY = 25.0
+
 
 def _load_full_pair_charts_for_brain() -> dict[str, dict[str, Any]]:
     """Load pair_charts.json keyed by pair, preserving the full views array.
@@ -532,6 +566,17 @@ class LaneScore:
     size_multiple: float = 1.0
     judgment: tuple[str, ...] = ()
     spread_pips: float | None = None
+    # Per-lane margin estimate from intent_generator
+    # (`risk_metrics.estimated_margin_jpy`). Threaded through so the
+    # automation-layer margin-aware basket truncation (C-4, 2026-05-12)
+    # can stop adding lanes when cumulative margin would exceed the
+    # broker's `margin_available_jpy × MARGIN_AWARE_BASKET_BUFFER`
+    # ceiling. Old smoke runs left this implicit and the gateway
+    # rejected every candidate at the staging step with
+    # `BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`; surfacing it earlier
+    # lets the basket converge on a sendable subset instead of
+    # whack-a-mole rejecting all 12 lanes.
+    estimated_margin_jpy: float | None = None
 
 
 @dataclass(frozen=True)
@@ -646,6 +691,14 @@ class TraderBrain:
                 reverse=True,
             )
         )
+        # C-1 + C-2 directional gating (2026-05-12). Operates on the
+        # scored lane tuple BEFORE entry selection / basket construction.
+        # Existing-position management (`_position_manager()` /
+        # `_position_gateway()`) is invoked in `automation.py` against
+        # `snapshot.positions` directly and does not read this tuple,
+        # so the directional gate cannot reach SL/TP/CLOSE behavior on
+        # any open trade — only the NEW-entry lane set is reshaped.
+        scores = _apply_directional_gating(scores, full_pair_charts, attack_ranks)
         if exposure_blockers or pending_entries:
             pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
             decision = TraderDecision(
@@ -960,6 +1013,7 @@ class TraderBrain:
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
         action = ACTION_SEND_ENTRY if status == "LIVE_READY" and not blockers else ACTION_NO_TRADE
+        estimated_margin_jpy = _optional_float(risk_metrics.get("estimated_margin_jpy"))
         return LaneScore(
             lane_id=lane_id,
             pair=pair,
@@ -983,6 +1037,7 @@ class TraderBrain:
             rationale=tuple(rationale[:12]),
             judgment=tuple(judgment[:8]),
             spread_pips=spread_pips,
+            estimated_margin_jpy=estimated_margin_jpy,
         )
 
     def _write(self, decision: TraderDecision) -> None:
@@ -1085,6 +1140,173 @@ def _attack_advice_top_k_ranks(
         if len(ranks) >= k:
             break
     return ranks
+
+
+def _pair_charts_directional_bias(
+    full_pair_charts: dict[str, dict[str, Any]],
+    pair: str,
+) -> tuple[str, float] | None:
+    """Read `pair_charts[pair].confluence` and return (lean, |gap|) if the
+    bias is decisive enough to gate the opposite direction.
+
+    Decisive = `score_balance` is LONG_LEAN or SHORT_LEAN AND
+    `|score_gap| >= DIRECTIONAL_GATING_STRONG_GAP`. Returns None when
+    pair_charts is missing/malformed or the bias is too weak.
+    """
+    chart = full_pair_charts.get(pair) if isinstance(full_pair_charts, dict) else None
+    if not isinstance(chart, dict):
+        return None
+    conf = chart.get("confluence") if isinstance(chart.get("confluence"), dict) else None
+    if not isinstance(conf, dict):
+        return None
+    balance = str(conf.get("score_balance") or "")
+    if balance not in {"LONG_LEAN", "SHORT_LEAN"}:
+        return None
+    try:
+        gap = abs(float(conf.get("score_gap") or 0.0))
+    except (TypeError, ValueError):
+        return None
+    if gap < DIRECTIONAL_GATING_STRONG_GAP:
+        return None
+    return balance, gap
+
+
+def _attack_advice_pair_majority(
+    advised_lane_ids: list[str],
+    pair: str,
+) -> str | None:
+    """Return 'LONG' or 'SHORT' if the top-K advised lanes for this pair
+    have a strict majority in one direction.
+
+    Returns None when there are 0 advised lanes for the pair (no signal)
+    or when the lanes are evenly split (no decisive direction).
+    """
+    longs = 0
+    shorts = 0
+    for lane_id in advised_lane_ids:
+        parts = lane_id.split(":")
+        # lane_id pattern: desk:PAIR:DIRECTION:METHOD[:MARKET]
+        if len(parts) >= 3 and parts[1] == pair:
+            direction = parts[2].upper()
+            if direction == "LONG":
+                longs += 1
+            elif direction == "SHORT":
+                shorts += 1
+    if longs == 0 and shorts == 0:
+        return None
+    if longs == shorts:
+        return None
+    return "LONG" if longs > shorts else "SHORT"
+
+
+def _apply_directional_gating(
+    scores: tuple[LaneScore, ...],
+    full_pair_charts: dict[str, dict[str, Any]],
+    attack_ranks: dict[str, int],
+) -> tuple[LaneScore, ...]:
+    """Apply the C-1 + C-2 directional gating to the scored lane tuple.
+
+    C-1 — directional gating layer: when `pair_charts[pair].confluence`
+    shows a decisive bias (LONG_LEAN/SHORT_LEAN with
+    |score_gap| >= DIRECTIONAL_GATING_STRONG_GAP) AND the attack_advice
+    top-K majority direction for this pair agrees with that bias,
+    every LIVE_READY lane in the OPPOSITE direction is demoted from
+    SEND_ENTRY to NO_TRADE with rationale.
+
+    C-2 — attack_advice directional veto: separately, when the
+    attack_advice top-K majority for a pair points one direction,
+    every lane in the opposite direction (regardless of pair_charts
+    bias) receives an ATTACK_ADVICE_VETO_PENALTY score subtraction
+    and a rationale annotation.
+
+    Both gates run only on the basket-construction view of the lane
+    set. Existing-position management (`PositionManager` /
+    `PositionProtectionGateway`) reads `snapshot.positions` directly
+    and never consults this function or the LaneScore tuple, so this
+    pass cannot modify SL/TP/CLOSE behavior on any open trade.
+
+    Returns a new tuple — `LaneScore` is frozen, so mutations are
+    expressed as `dataclasses.replace`.
+    """
+    if not scores:
+        return scores
+    advised_lane_ids = sorted(attack_ranks.keys(), key=lambda lid: attack_ranks[lid])
+
+    # Pre-compute per-pair gating context once.
+    pairs_in_scores = {item.pair for item in scores if item.pair}
+    gating_ctx: dict[str, dict[str, Any]] = {}
+    for pair in pairs_in_scores:
+        bias = _pair_charts_directional_bias(full_pair_charts, pair)
+        majority = _attack_advice_pair_majority(advised_lane_ids, pair)
+        gating_ctx[pair] = {"bias": bias, "majority": majority}
+
+    new_scores: list[LaneScore] = []
+    for item in scores:
+        ctx = gating_ctx.get(item.pair, {})
+        bias = ctx.get("bias")
+        majority = ctx.get("majority")
+        direction = (item.direction or "").upper()
+        if direction not in {"LONG", "SHORT"}:
+            new_scores.append(item)
+            continue
+
+        new_score = item.score
+        new_action = item.action
+        new_rationale: list[str] = list(item.rationale)
+        new_blockers: list[str] = list(item.blockers)
+
+        # C-2: attack_advice veto for opposite-direction lanes.
+        if majority is not None and majority != direction:
+            new_score = round(new_score - ATTACK_ADVICE_VETO_PENALTY, 2)
+            new_rationale.insert(
+                0,
+                f"attack_advice_veto: top-{ATTACK_ADVICE_PROMOTION_RANK_CEILING} "
+                f"majority={majority}, lane is {direction}, penalty="
+                f"-{ATTACK_ADVICE_VETO_PENALTY:.0f}",
+            )
+
+        # C-1: directional gating demotion. Requires BOTH a decisive
+        # pair_charts bias AND attack_advice majority agreement.
+        if bias is not None and majority is not None:
+            bias_balance, bias_gap = bias
+            bias_direction = "LONG" if bias_balance == "LONG_LEAN" else "SHORT"
+            if bias_direction == majority and direction != bias_direction:
+                if item.action == ACTION_SEND_ENTRY:
+                    new_action = ACTION_NO_TRADE
+                    new_blockers.insert(
+                        0,
+                        f"directional_gating_demoted: bias={bias_balance}, "
+                        f"|gap|={bias_gap:.3f} >= {DIRECTIONAL_GATING_STRONG_GAP:.3f}, "
+                        f"advice_majority={majority}",
+                    )
+                else:
+                    new_rationale.insert(
+                        0,
+                        f"directional_gating: bias={bias_balance}, |gap|={bias_gap:.3f}, "
+                        f"advice_majority={majority} (already NO_TRADE)",
+                    )
+
+        if (
+            new_score == item.score
+            and new_action == item.action
+            and new_rationale == list(item.rationale)
+            and new_blockers == list(item.blockers)
+        ):
+            new_scores.append(item)
+            continue
+
+        new_scores.append(
+            replace(
+                item,
+                score=new_score,
+                action=new_action,
+                rationale=tuple(new_rationale[:12]),
+                blockers=tuple(new_blockers[:8]),
+            )
+        )
+    # Re-sort by score (descending) so the basket-construction layer
+    # sees the gating-adjusted ranking, not the pre-gating order.
+    return tuple(sorted(new_scores, key=lambda it: it.score, reverse=True))
 
 
 def _select_entry_lane(
