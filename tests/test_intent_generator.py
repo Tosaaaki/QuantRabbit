@@ -1042,5 +1042,134 @@ class NavPctSizingTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
 
 
+class MinLotFloorIntentTest(unittest.TestCase):
+    """Coverage for 2026-05-12 emergency fix B in
+    `_risk_budgeted_units` + the `MARGIN_TOO_THIN_FOR_MIN_LOT` BLOCK that
+    the intent_generator now emits when the budget can only fund a
+    sub-`MIN_PRODUCTION_LOT_UNITS` lot. The bug surfaced when 470901 (201u
+    EUR/USD), 470904 (322u AUD/JPY), 470907 (2u GBP/USD) all filled at
+    micro size after a tight-margin cycle. Each lot's round-trip spread
+    cost exceeded any realistic pip target — guaranteed-loss trades.
+    """
+
+    def _stub_snapshot(self, margin_used: float = 0.0, margin_available: float = 200000.0):
+        from quant_rabbit.models import AccountSummary, BrokerSnapshot, Quote
+        now = datetime.now(timezone.utc)
+        return BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": Quote(pair="EUR_USD", bid=1.17280, ask=1.17290, timestamp_utc=now),
+                "USD_JPY": Quote(pair="USD_JPY", bid=157.0, ask=157.01, timestamp_utc=now),
+            },
+            home_conversions={"USD": 157.005},
+            account=AccountSummary(
+                balance_jpy=227000.0,
+                nav_jpy=227000.0,
+                margin_used_jpy=margin_used,
+                margin_available_jpy=margin_available,
+                unrealized_pl_jpy=0.0,
+                financing_jpy=0.0,
+                pl_jpy=0.0,
+                fetched_at_utc=now,
+                hedging_enabled=True,
+                last_transaction_id="0",
+            ),
+        )
+
+    def setUp(self) -> None:
+        import os
+        self._prior = os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
+
+    def tearDown(self) -> None:
+        import os
+        if self._prior is None:
+            os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
+        else:
+            os.environ["QR_ALLOW_TEST_MICRO_LOT"] = self._prior
+
+    def test_risk_budgeted_units_returns_zero_when_budget_subfloor(self) -> None:
+        # Budget so small that loss_budget_units < 1000.
+        # max_loss_jpy=50 JPY, stop ≈ 20 pip → loss_budget ≈ 159 units.
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=50.0,
+            snapshot=self._stub_snapshot(),
+        )
+        self.assertEqual(units, 0)
+
+    def test_risk_budgeted_units_returns_1000_when_just_at_floor(self) -> None:
+        # max_loss_jpy ~315 JPY → loss_budget ≈ 1003 units → rounds to 1000.
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=315.0,
+            snapshot=self._stub_snapshot(),
+        )
+        self.assertGreaterEqual(units, 1000)
+        self.assertEqual(units % 1000, 0)  # rounded down to 1000-step
+
+    def test_risk_budgeted_units_returns_5000_for_clear_budget(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=2000.0,
+            snapshot=self._stub_snapshot(),
+        )
+        self.assertGreaterEqual(units, 5000)
+        self.assertEqual(units % 1000, 0)
+
+    def test_test_micro_lot_override_restores_legacy_fallback(self) -> None:
+        import os
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+        os.environ["QR_ALLOW_TEST_MICRO_LOT"] = "1"
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=50.0,
+            snapshot=self._stub_snapshot(),
+        )
+        # Override active → falls back to legacy `max(1, int(max_units))`.
+        self.assertGreater(units, 0)
+        self.assertLess(units, 1000)
+
+    def test_account_none_keeps_legacy_fallback_for_test_fixtures(self) -> None:
+        # Fixture-style snapshot without an account must not trigger the
+        # production floor — many legacy test fixtures construct snapshots
+        # without an `AccountSummary` and rely on the historical
+        # micro-unit fallback.
+        from quant_rabbit.models import BrokerSnapshot, Quote
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+        now = datetime.now(timezone.utc)
+        no_account = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": Quote(pair="EUR_USD", bid=1.17280, ask=1.17290, timestamp_utc=now),
+                "USD_JPY": Quote(pair="USD_JPY", bid=157.0, ask=157.01, timestamp_utc=now),
+            },
+            home_conversions={"USD": 157.005},
+            account=None,
+        )
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=50.0,
+            snapshot=no_account,
+        )
+        self.assertGreater(units, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

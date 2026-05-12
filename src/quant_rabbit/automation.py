@@ -651,18 +651,31 @@ class AutoTradeCycle:
                 status = "POSITION_ACTION_STAGED"
             elif position_execution.status == "BLOCKED":
                 status = "POSITION_ACTION_BLOCKED"
-            if send and self.live_enabled and trader_positions == 0 and decision.pending_cancel_order_ids:
-                for order_id in decision.pending_cancel_order_ids:
-                    self.client.cancel_order(order_id)
-                    canceled_orders.append(order_id)
-                status = "CANCELED_CONTAMINATED_PENDING"
+            # Target-reached takes precedence over per-cycle contamination
+            # (2026-05-12 reorder, see `test_target_reached_cancels_trader_pending_entry`):
+            # when the campaign target is hit, the correct dominant
+            # signal is "day is done, protect" — labeling the cancel as
+            # CONTAM hides the campaign milestone behind a per-cycle
+            # lane veto. Both branches still cancel the same trader-owned
+            # pending orders; only the status label changes.
             target_reached = target_summary is not None and target_summary.status == "TARGET_REACHED_PROTECT"
-            if not canceled_orders and target_reached and send and self.live_enabled:
+            if target_reached and send and self.live_enabled:
                 for order_id in _trader_pending_entry_order_ids(snapshot):
                     self.client.cancel_order(order_id)
                     canceled_orders.append(order_id)
                 if canceled_orders:
                     status = "CANCELED_TARGET_REACHED_PENDING"
+            if (
+                not canceled_orders
+                and send
+                and self.live_enabled
+                and trader_positions == 0
+                and decision.pending_cancel_order_ids
+            ):
+                for order_id in decision.pending_cancel_order_ids:
+                    self.client.cancel_order(order_id)
+                    canceled_orders.append(order_id)
+                status = "CANCELED_CONTAMINATED_PENDING"
             target_open = (
                 target_summary is not None
                 and target_summary.status == "PURSUE_TARGET"

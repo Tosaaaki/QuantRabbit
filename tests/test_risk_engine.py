@@ -703,5 +703,94 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("STALE_CONVERSION_QUOTE", {issue.code for issue in decision.issues})
 
 
+class MinLotFloorTest(unittest.TestCase):
+    """Coverage for 2026-05-12 emergency fix C — `RiskEngine.validate` must
+    refuse sub-`MIN_PRODUCTION_LOT_UNITS` orders even if the caller skipped
+    intent_generator's fix B path. The 470901/470904/470907 sequence on
+    2026-05-12T07:46 UTC fired three sub-1000u entries (201u / 322u / 2u)
+    whose round-trip spread cost dominated any pip target; this gate is
+    the second-line defense so a manual `stage-live-order` or replayed
+    legacy receipt cannot reach the broker at micro size.
+    """
+
+    def setUp(self) -> None:
+        import os
+        self._prior = os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
+
+    def tearDown(self) -> None:
+        import os
+        if self._prior is None:
+            os.environ.pop("QR_ALLOW_TEST_MICRO_LOT", None)
+        else:
+            os.environ["QR_ALLOW_TEST_MICRO_LOT"] = self._prior
+
+    def _intent(self, units: int):
+        return OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=units,
+            tp=1.17000,
+            sl=1.17500,
+            thesis="min_lot_floor_test",
+        )
+
+    def test_999_units_blocked_with_min_lot_violation(self) -> None:
+        decision = RiskEngine().validate(self._intent(999), snapshot())
+        codes = {issue.code for issue in decision.issues}
+        self.assertIn("MIN_LOT_VIOLATION", codes)
+        self.assertFalse(decision.allowed)
+
+    def test_322_units_blocked_with_min_lot_violation(self) -> None:
+        # The exact 470904 AUD/JPY SHORT 322u scenario.
+        decision = RiskEngine().validate(self._intent(322), snapshot())
+        self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
+
+    def test_2_units_blocked_with_min_lot_violation(self) -> None:
+        # The exact 470907 GBP/USD SHORT 2u scenario.
+        decision = RiskEngine().validate(self._intent(2), snapshot())
+        self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
+
+    def test_1000_units_passes_min_lot_floor(self) -> None:
+        decision = RiskEngine().validate(self._intent(1000), snapshot())
+        self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
+
+    def test_5000_units_passes_min_lot_floor(self) -> None:
+        decision = RiskEngine().validate(self._intent(5000), snapshot())
+        self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
+
+    def test_zero_units_does_not_fire_min_lot_violation(self) -> None:
+        # `units == 0` is BAD_UNITS territory (intent didn't reach broker
+        # path at all), not MIN_LOT_VIOLATION. The gate covers sub-floor
+        # *fillable* sizes.
+        decision = RiskEngine().validate(self._intent(0), snapshot())
+        codes = {issue.code for issue in decision.issues}
+        self.assertNotIn("MIN_LOT_VIOLATION", codes)
+        self.assertIn("BAD_UNITS", codes)
+
+    def test_qr_allow_test_micro_lot_disables_gate(self) -> None:
+        import os
+        os.environ["QR_ALLOW_TEST_MICRO_LOT"] = "1"
+        decision = RiskEngine().validate(self._intent(500), snapshot())
+        self.assertNotIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
+
+    def test_short_side_negative_units_also_gated(self) -> None:
+        # OrderIntent units carries the sign for SHORT in some code paths;
+        # the gate checks `abs()` so SHORT micro orders are caught too.
+        from quant_rabbit.risk import MIN_PRODUCTION_LOT_UNITS
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=500,
+            tp=1.17000,
+            sl=1.17500,
+            thesis="short_micro_lot_negative_path",
+        )
+        decision = RiskEngine().validate(intent, snapshot())
+        self.assertIn("MIN_LOT_VIOLATION", {issue.code for issue in decision.issues})
+        self.assertEqual(MIN_PRODUCTION_LOT_UNITS, 1000)
+
+
 if __name__ == "__main__":
     unittest.main()

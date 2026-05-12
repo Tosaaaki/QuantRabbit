@@ -19,8 +19,10 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.risk import (
     DEFAULT_SPECS,
+    MIN_PRODUCTION_LOT_UNITS,
     RiskEngine,
     RiskPolicy,
+    _min_lot_test_override_active,
     estimate_required_margin_jpy,
     margin_budget_jpy,
     resolve_max_loss_jpy,
@@ -774,6 +776,28 @@ class IntentGenerator:
             risk_allowed = False
         else:
             risk_allowed = risk.allowed
+        # Fix B (2026-05-12): _risk_budgeted_units returns 0 when the
+        # current margin headroom can only support a sub-1000u lot. Surface
+        # that as a BLOCK so the intent becomes DRY_RUN_BLOCKED — never
+        # LIVE_READY — and the gateway never receives a fillable receipt at
+        # an unprofitable lot size. 2026-05-12T07:46 UTC produced 201u
+        # EUR_USD, 322u AUD_JPY, 2u GBP_USD entries whose spread cost
+        # dominated any pip target; this gate stops the same pattern.
+        if int(intent.units) == 0 and not _min_lot_test_override_active():
+            risk_issues.append(
+                {
+                    "code": "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                    "message": (
+                        f"available margin headroom can only fund "
+                        f"<{MIN_PRODUCTION_LOT_UNITS}u for {pair}; refusing to "
+                        "emit a sub-floor receipt because round-trip spread cost "
+                        "would dominate the pip target. Free margin or wait for "
+                        "open positions to harvest TP."
+                    ),
+                    "severity": "BLOCK",
+                }
+            )
+            risk_allowed = False
         method = TradeMethod.parse(str(lane["method"]))
         if (
             method == TradeMethod.RANGE_ROTATION
@@ -1627,6 +1651,27 @@ def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: fl
         max_units = min(loss_budget_units, margin_budget_units) if margin_budget_units is not None else loss_budget_units
     if max_units >= 1000:
         return max(1000, int(max_units // 1000) * 1000)
+    # 2026-05-12 emergency fix B: when margin headroom can only support
+    # sub-MIN_PRODUCTION_LOT_UNITS, refuse to emit a fillable intent.
+    # Returning 0 propagates `intent.units == 0`, which the build-intent
+    # caller turns into a `MARGIN_TOO_THIN_FOR_MIN_LOT` BLOCK so the lane
+    # becomes DRY_RUN_BLOCKED instead of being staged at a few hundred
+    # units (where the OANDA spread cost dominates any pip target — the
+    # 470901/470904/470907 sequence on 2026-05-12T07:46 UTC).
+    #
+    # The floor only fires when the broker snapshot carries an account
+    # (production). Test fixtures that construct a snapshot without an
+    # `AccountSummary` keep the historical micro-lot fallback so they
+    # can still exercise legacy geometry/narrative edge cases without
+    # rewriting every fixture; `QR_ALLOW_TEST_MICRO_LOT=1` is the
+    # explicit opt-out for callers that want the old behavior even with
+    # an account present.
+    if (
+        max_units < MIN_PRODUCTION_LOT_UNITS
+        and snapshot.account is not None
+        and not _min_lot_test_override_active()
+    ):
+        return 0
     return max(1, int(max_units))
 
 

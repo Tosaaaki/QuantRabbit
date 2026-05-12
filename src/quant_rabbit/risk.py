@@ -31,6 +31,45 @@ from .instruments import DEFAULT_TRADER_PAIRS, NORMAL_SPREAD_PIPS, instrument_pi
 # `/accounts/{id}/instruments` marginRate once that adapter is wired.
 OANDA_JP_RETAIL_FX_MARGIN_RATE = 0.04
 
+# Minimum order size (units) the production trader will emit or accept.
+#
+# What this represents: the lot size below which expected pip-target reward is
+# dominated by the OANDA spread cost on the round trip. At 1u in a JPY-quoted
+# pair the JPY-per-pip is 0.01 JPY; a 1.3-pip normal spread already costs more
+# than any realistic pip target captured at micro size, so the trade is
+# guaranteed to lose money once spread is paid. The 1000u floor matches the
+# existing rounding granularity used in `_risk_budgeted_units` (which floors
+# >=1000-units results to the nearest 1000) and the broker-supplied 1000u
+# default trade granularity for FX retail accounts.
+#
+# Why it is a constant rather than market-derived: spread × micro-lot
+# economics is a broker-policy reality, not a session-by-session market
+# condition. The floor moves only when the broker offers a fundamentally
+# different minimum trade size; intra-day liquidity does not change it.
+# Per AGENT_CONTRACT §3.5, this constant carries its (a)/(b)/(c) docstring
+# right here.
+#
+# What should replace it: if the broker contract changes (e.g. tighter
+# spreads + true micro-lot pricing where 100u becomes economic), revisit
+# this floor — do not bypass it in the moment.
+MIN_PRODUCTION_LOT_UNITS = 1000
+
+
+def _min_lot_test_override_active() -> bool:
+    """Whether the production minimum-lot gate is disabled for the current
+    process.
+
+    Production behavior: `MIN_PRODUCTION_LOT_UNITS` is enforced by both
+    `intent_generator._risk_budgeted_units` (sub-floor → 0 units → DRY_RUN_BLOCKED)
+    and `RiskEngine.validate` (`MIN_LOT_VIOLATION` BLOCK). Some unit tests
+    deliberately exercise sub-1000 unit fixtures (broker-API edge cases,
+    legacy receipt replay). They opt out by setting `QR_ALLOW_TEST_MICRO_LOT=1`
+    in the test's setUp.
+    """
+    return os.environ.get("QR_ALLOW_TEST_MICRO_LOT", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+
 
 @dataclass(frozen=True)
 class InstrumentSpec:
@@ -203,6 +242,26 @@ class RiskEngine:
             issues.append(RiskIssue("OWNER_NOT_TRADER", f"order owner must be trader, got {intent.owner.value}"))
         if intent.units <= 0:
             issues.append(RiskIssue("BAD_UNITS", f"units must be positive, got {intent.units}"))
+        # Fix C (2026-05-12) defense-in-depth: even if intent_generator's
+        # Fix B path is bypassed (manual stage-live-order, replayed legacy
+        # receipt, ad-hoc CLI scripts), the gateway must refuse sub-floor
+        # lots. Sub-MIN_PRODUCTION_LOT_UNITS lots cannot capture a pip
+        # target larger than the broker spread on the round trip, so the
+        # trade is structurally unprofitable. `QR_ALLOW_TEST_MICRO_LOT=1`
+        # disables this for fixtures that intentionally exercise micro
+        # sizes.
+        if (
+            0 < abs(int(intent.units)) < MIN_PRODUCTION_LOT_UNITS
+            and not _min_lot_test_override_active()
+        ):
+            issues.append(
+                RiskIssue(
+                    "MIN_LOT_VIOLATION",
+                    f"order size {abs(int(intent.units))}u is below the "
+                    f"{MIN_PRODUCTION_LOT_UNITS}u production floor; round-trip "
+                    "spread cost would dominate any realistic pip target.",
+                )
+            )
         if not intent.thesis.strip():
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
