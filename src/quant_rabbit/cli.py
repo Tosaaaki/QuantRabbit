@@ -1566,10 +1566,13 @@ def main(argv: list[str] | None = None) -> int:
         snapshot = client.parse_snapshot(snapshot_payload) if hasattr(client, "parse_snapshot") else None
         if snapshot is None:
             # Fall back to direct construction from broker_snapshot.json.
+            # NOTE: `datetime` is imported at module level (line 8); a
+            # local `from datetime import …` here would shadow that and
+            # break sibling commands (`pair-charts` etc.) inside this
+            # same `main()` function with UnboundLocalError.
             from quant_rabbit.models import (
                 BrokerSnapshot, BrokerPosition, BrokerOrder, AccountSummary, Quote, Owner, Side,
             )
-            from datetime import datetime, timezone
             def _owner(s):
                 try:
                     return Owner(s) if s else Owner.UNKNOWN
