@@ -170,6 +170,21 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         "gpt-trader-decision",
         "stage-live-order",
         "generate-intents",
+        # daily-target-state reads each open trader-owned position and
+        # decides whether it is `protected`. Under SL-free mode the
+        # absence of a stopLossOrder is intentional (per `target.py`
+        # `_position_risk` lines 416-423) but that branch only fires
+        # when `QR_TRADER_DISABLE_SL_REPAIR=1` is set in the
+        # subprocess env. Without the SL-free bootstrap the command
+        # produces `missing=['SL']` and `protected=False` for every
+        # SL-free trader-owned position, which then bleeds into
+        # daily_target_state.json + position_management.json and
+        # confuses the operator into proposing redundant PROTECT
+        # repairs. Adding the command here ensures every routine
+        # invocation sees the same SL-free env that autotrade-cycle
+        # sees, so the protected flag is computed consistently
+        # across both paths.
+        "daily-target-state",
     }
 )
 
