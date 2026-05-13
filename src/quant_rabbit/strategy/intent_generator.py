@@ -67,6 +67,87 @@ GEOMETRY_ATR_MULT = _env_float("QR_GEOMETRY_ATR_MULT", 1.0, minimum=0.5)
 GEOMETRY_SPREAD_FLOOR_MULT = _env_float("QR_GEOMETRY_SPREAD_FLOOR_MULT", 6.0, minimum=5.1)
 GEOMETRY_ATR_TIMEFRAME = "M5"
 
+# F — Noise-resistant initial SL geometry (2026-05-13).
+#
+# 2026-05-12T15:33 UTC mass-close incident drove the operator demand:
+# new-entry SL must not be hit by routine M5 wick noise. The M5-ATR-based
+# stop (`atr_pips × GEOMETRY_ATR_MULT`) sits in the wick band of higher
+# timeframes; a tight broker SL there is the very failure mode the
+# operator is preventing with the new broker-side SL push.
+#
+# When `QR_NEW_ENTRY_INITIAL_SL=1` is exported, intent geometry
+# additionally floors the stop distance at:
+#   `H4 atr × QR_NEW_ENTRY_SL_H4_ATR_MULT (default 1.5)`
+# AND applies a session-aware widening multiplier when liquidity is
+# thin. The override env keeps the multiplier tunable in production
+# without code edits.
+#
+# Per AGENT_CONTRACT §3.5:
+# (a) market reality: H4 ATR represents one typical multi-hour swing.
+#     1.5× sits outside the noise band of the lower TFs the trader
+#     actually reads; the SL only triggers when price has decisively
+#     broken away from the structural setup.
+# (b) constants rather than market-derived: the multiplier is an
+#     operator-policy widening dial. The base (H4 ATR) is fully
+#     market-derived; the multiplier is the operator's risk
+#     preference. JPY/pip literals are zero.
+# (c) replace via: tune `QR_NEW_ENTRY_SL_H4_ATR_MULT` per post-trade
+#     learning if SL hits cluster at H4-ATR-band edges.
+NEW_ENTRY_SL_H4_ATR_MULT = _env_float(
+    "QR_NEW_ENTRY_SL_H4_ATR_MULT", 1.5, minimum=0.5
+)
+# Session-aware widening: thin-liquidity sessions (Tokyo open,
+# OFF_HOURS overnight, JP holidays) print wider wicks per pip moved,
+# so the noise floor must widen to compensate. Multipliers ride on top
+# of the H4-ATR floor.
+NEW_ENTRY_SL_THIN_SESSION_MULT = _env_float(
+    "QR_NEW_ENTRY_SL_THIN_SESSION_MULT", 1.3, minimum=1.0
+)
+NEW_ENTRY_SL_OFF_HOURS_MULT = _env_float(
+    "QR_NEW_ENTRY_SL_OFF_HOURS_MULT", 1.4, minimum=1.0
+)
+
+
+def _new_entry_initial_sl_active() -> bool:
+    return os.environ.get("QR_NEW_ENTRY_INITIAL_SL", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+
+
+# I — Session-aware spread tolerance multipliers (2026-05-13).
+#
+# AGENT_CONTRACT §3.5 mandates spread tolerance be liquidity-derived,
+# not a static 2.5× multiplier. Trading the same `max_spread_multiple`
+# during Tokyo open and London-NY overlap means we either reject every
+# Tokyo entry (cap too tight) or accept overspread London garbage (cap
+# too loose). The session multiplier is applied on top of
+# `RiskPolicy.max_spread_multiple` so the policy default still anchors
+# the tolerance.
+#
+# Per AGENT_CONTRACT §3.5:
+# (a) market reality: London_NY overlap is the deepest book of the day;
+#     Tokyo and OFF_HOURS hold the highest spread variance. Tighten in
+#     liquid hours, loosen in thin hours.
+# (b) policy constants over market-derived: chart_reader publishes the
+#     session bucket; these multipliers are the operator's response.
+# (c) replace via: post-trade-learning evidence on spread-driven
+#     rejections per session, or tighter broker-truth flow snapshots.
+SESSION_SPREAD_MULT_LONDON_NY_OVERLAP = _env_float(
+    "QR_SESSION_SPREAD_MULT_LONDON_NY", 0.8, minimum=0.5
+)
+SESSION_SPREAD_MULT_LONDON = _env_float(
+    "QR_SESSION_SPREAD_MULT_LONDON", 1.0, minimum=0.5
+)
+SESSION_SPREAD_MULT_NY_AM = _env_float(
+    "QR_SESSION_SPREAD_MULT_NY_AM", 1.0, minimum=0.5
+)
+SESSION_SPREAD_MULT_TOKYO = _env_float(
+    "QR_SESSION_SPREAD_MULT_TOKYO", 1.25, minimum=0.5
+)
+SESSION_SPREAD_MULT_OFF_HOURS = _env_float(
+    "QR_SESSION_SPREAD_MULT_OFF_HOURS", 1.5, minimum=0.5
+)
+
 # Regime-derived reward/risk multipliers per AGENT_CONTRACT §3.5: "Trend regimes
 # deserve wider targets; range regimes deserve faster rotation." Applied after
 # the lane's base target_reward_risk to convert regime context into geometry
@@ -390,6 +471,22 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "atr_percentile_24h": _optional_float(conf.get("atr_percentile_24h")),
         "range_24h_sigma_multiple": _optional_float(conf.get("range_24h_sigma_multiple")),
         "tf_agreement_score": _optional_float(conf.get("tf_agreement_score")),
+        # F (2026-05-13) — H4 ATR pips for noise-resistant initial SL.
+        # Consumed by `_generic_geometry` only when
+        # QR_NEW_ENTRY_INITIAL_SL=1; raw value is published here so the
+        # operator can audit the SL widening on a per-cycle basis.
+        "h4_atr_pips": _optional_float(
+            (per_tf.get("H4") if isinstance(per_tf.get("H4"), dict) else {}).get("atr_pips")
+        ),
+        # I (2026-05-13) — session liquidity tag for spread tolerance
+        # and SL widening. Producer: chart_reader._build_session_for_pair.
+        # Distinct key from the existing `session_bucket` which carries
+        # the normalized session-name token (TOKYO/LONDON/NY/etc.);
+        # this carries the chart_reader killzone label
+        # (LONDON_KILLZONE/JUDAS/OFF_HOURS/etc.) used by the F/I rules.
+        "session_current_tag": _text_or_none(
+            (per_tf.get("session") if isinstance(per_tf.get("session"), dict) else {}).get("current_tag")
+        ),
     }
 
 
@@ -1281,6 +1378,16 @@ def _geometry(
         )
         if range_geometry is not None:
             return range_geometry
+    h4_atr_pips = None
+    session_bucket: str | None = None
+    if isinstance(chart_context, dict):
+        h4_atr_pips = _optional_float(chart_context.get("h4_atr_pips"))
+        # Prefer the chart_reader killzone label
+        # (`session_current_tag`); fall back to the older
+        # `session_bucket` name if a caller passed only that.
+        session_bucket = _text_or_none(
+            chart_context.get("session_current_tag") or chart_context.get("session_bucket")
+        )
     return _generic_geometry(
         pair,
         side,
@@ -1290,7 +1397,29 @@ def _geometry(
         atr_pips=atr_pips,
         chart_indicators=chart_indicators,
         stop_widen_mult=stop_widen_mult,
+        h4_atr_pips=h4_atr_pips,
+        session_bucket=session_bucket,
     )
+
+
+def _session_widening_mult(session_bucket: str | None) -> float:
+    """F (2026-05-13) — multiplier on top of H4-ATR noise floor by
+    session liquidity tier. Thin / OFF_HOURS sessions widen the
+    floor; deep London-NY overlap is the default 1.0.
+
+    Falls back to 1.0 when the session bucket is unknown so missing
+    data never silently shrinks the noise floor — AGENT_CONTRACT §3.5.
+    """
+    if not session_bucket:
+        return 1.0
+    tag = str(session_bucket).upper().strip()
+    if tag in {"OFF_HOURS", "OFF-HOURS", "OFFHOURS", "JP_HOLIDAY"}:
+        return NEW_ENTRY_SL_OFF_HOURS_MULT
+    if tag in {"TOKYO_KILLZONE", "ASIA_OPEN", "TOKYO"}:
+        return NEW_ENTRY_SL_THIN_SESSION_MULT
+    # London / NY (and the LONDON_NY overlap) are the deep-liquidity
+    # band — no extra widening.
+    return 1.0
 
 
 def _generic_geometry(
@@ -1303,6 +1432,8 @@ def _generic_geometry(
     atr_pips: float | None,
     chart_indicators: dict[str, Any] | None = None,
     stop_widen_mult: float = 1.0,
+    h4_atr_pips: float | None = None,
+    session_bucket: str | None = None,
 ) -> tuple[float, float, float]:
     pip_factor = PIP_FACTORS[pair]
     pip = 1.0 / pip_factor
@@ -1316,6 +1447,17 @@ def _generic_geometry(
     # invalidation distance so wick noise does not stop the trade prematurely.
     # Floor at the spread-only distance to keep the spread guarantee.
     stop_pips = max(stop_pips * max(stop_widen_mult, 1.0), spread_floor)
+    # F (2026-05-13) — noise-resistant initial-SL floor.
+    # When the operator wants a broker-side SL on new entries
+    # (`QR_NEW_ENTRY_INITIAL_SL=1`), the stop distance must sit outside
+    # the M5/M15 wick band so routine noise cannot hit it. The floor is
+    # H4 ATR × NEW_ENTRY_SL_H4_ATR_MULT; the M5-derived stop is kept as
+    # the lower bound, never the upper. Session-thin liquidity expands
+    # the floor further (Tokyo open / OFF_HOURS print wider wicks).
+    if _new_entry_initial_sl_active() and h4_atr_pips is not None and h4_atr_pips > 0:
+        h4_floor = h4_atr_pips * NEW_ENTRY_SL_H4_ATR_MULT
+        session_mult = _session_widening_mult(session_bucket)
+        stop_pips = max(stop_pips, h4_floor * session_mult)
     trigger_offset_pips = spread_pips * PENDING_ENTRY_OFFSET_SPREAD_MULT
     if order_type == OrderType.LIMIT:
         entry = quote.bid - trigger_offset_pips * pip if side == Side.LONG else quote.ask + trigger_offset_pips * pip

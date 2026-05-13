@@ -1507,13 +1507,13 @@ class CloseDisciplineTest(unittest.TestCase):
         # SHORT position + chart_story shows BOS_UP on M15/H4? No — both
         # set to UP would invalidate. Force both to DOWN so neither
         # counter-direction event prints against SHORT.
+        # Gate B via env override (J hardening 2026-05-13) so the only
+        # reason to reject is Gate A (thesis still valid).
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
-            decision = _close_decision(
-                trade_ids=["555"],
-                operator_close_authorized=True,  # gate B passes
-            )
+            decision = _close_decision(trade_ids=["555"])
             brain = _brain(root, files, decision)
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -1526,14 +1526,14 @@ class CloseDisciplineTest(unittest.TestCase):
 
     def test_close_accepted_when_m15_bos_against_side_and_operator_authorized(self) -> None:
         # SHORT position + M15 prints BOS_UP (against SHORT) → gate A
-        # passes via structural lens.
+        # passes via structural lens. Gate B via env override (J hardening
+        # 2026-05-13: receipt's operator_close_authorized field is
+        # advisory-only and no longer satisfies Gate B by itself).
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="DOWN")
-            decision = _close_decision(
-                trade_ids=["555"],
-                operator_close_authorized=True,
-            )
+            decision = _close_decision(trade_ids=["555"])
             brain = _brain(root, files, decision)
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -1543,13 +1543,12 @@ class CloseDisciplineTest(unittest.TestCase):
 
     def test_close_accepted_when_h4_choch_against_side(self) -> None:
         # SHORT position + H4 prints CHOCH_UP (against SHORT), M15 neutral.
+        # Gate B via env override (J hardening 2026-05-13).
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="UP")
-            decision = _close_decision(
-                trade_ids=["555"],
-                operator_close_authorized=True,
-            )
+            decision = _close_decision(trade_ids=["555"])
             brain = _brain(root, files, decision)
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -1560,6 +1559,8 @@ class CloseDisciplineTest(unittest.TestCase):
         # SHORT @ 1.17708, TP 1.17060, no structural counter-event.
         # Receipt cites invalidation_price=1.1750 + tf=H1; broker ask
         # 1.1761 > 1.1750 → level traded through → gate A passes.
+        # Gate B via env override (J hardening 2026-05-13).
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(
@@ -1572,7 +1573,6 @@ class CloseDisciplineTest(unittest.TestCase):
             )
             decision = _close_decision(
                 trade_ids=["555"],
-                operator_close_authorized=True,
                 invalidation_price=1.1750,
                 invalidation_tf="H1",
             )
@@ -1621,6 +1621,9 @@ class CloseDisciplineTest(unittest.TestCase):
         # Reproduce the 2026-05-11 18:17 UTC GPT close: SHORT positions
         # in EUR_USD/AUD_JPY whose chart_story did NOT show structural
         # counter-events. The model emitted CLOSE; the new gate rejects.
+        # Gate B via env override (J hardening 2026-05-13) so the test
+        # exercises Gate A in isolation.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             # 2 SHORT positions, no struct counter events anywhere.
@@ -1656,7 +1659,8 @@ class CloseDisciplineTest(unittest.TestCase):
             files["pair_charts"].write_text(json.dumps(pc))
             decision = _close_decision(
                 trade_ids=["470719", "470749"],
-                operator_close_authorized=True,  # even with auth, gate A blocks
+                # No operator_close_authorized — gate B passes via env
+                # override above; gate A is what blocks.
             )
             brain = _brain(root, files, decision)
 
@@ -1718,6 +1722,148 @@ class StructEventParserTest(unittest.TestCase):
         }
         ok, _ = _close_thesis_invalidated(packet, "EUR_USD", "LONG")
         self.assertFalse(ok)
+
+
+class OperatorCloseTokenFreshnessTest(unittest.TestCase):
+    """Coverage for the J (2026-05-13) Gate B hardening: the receipt's
+    `operator_close_authorized` JSON field is no longer accepted on its
+    own. Authorization must come from either `QR_OPERATOR_CLOSE_OVERRIDE`
+    in the operator shell or a fresh `data/.operator_close_token` file.
+    """
+
+    def test_missing_token_returns_false(self) -> None:
+        from quant_rabbit.gpt_trader import _operator_close_token_fresh
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "data"
+            root.mkdir()
+            self.assertFalse(_operator_close_token_fresh(data_root=root))
+
+    def test_fresh_token_returns_true(self) -> None:
+        from quant_rabbit.gpt_trader import _operator_close_token_fresh
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "data"
+            root.mkdir()
+            (root / ".operator_close_token").write_text("ok")
+            self.assertTrue(_operator_close_token_fresh(data_root=root))
+
+    def test_stale_token_returns_false(self) -> None:
+        import os as _os_mod
+        from quant_rabbit.gpt_trader import (
+            _operator_close_token_fresh,
+            OPERATOR_CLOSE_TOKEN_FRESH_SECONDS,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "data"
+            root.mkdir()
+            token = root / ".operator_close_token"
+            token.write_text("stale")
+            # Push mtime past the freshness window.
+            old = datetime.now(timezone.utc).timestamp() - (OPERATOR_CLOSE_TOKEN_FRESH_SECONDS + 60)
+            _os_mod.utime(token, (old, old))
+            self.assertFalse(_operator_close_token_fresh(data_root=root))
+
+
+class NoiseResistantSLGeometryTest(unittest.TestCase):
+    """Coverage for the F (2026-05-13) noise-resistant SL geometry:
+    new-entry SL is floored at `H4_ATR * NEW_ENTRY_SL_H4_ATR_MULT`,
+    widened by session multiplier for thin/off-hours liquidity. Activated
+    via `QR_NEW_ENTRY_INITIAL_SL=1` (which the SL-free bootstrap sets
+    automatically — see cli._SL_FREE_RUNTIME_DEFAULTS).
+    """
+
+    def test_session_widening_mult_off_hours(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            _session_widening_mult,
+            NEW_ENTRY_SL_OFF_HOURS_MULT,
+        )
+        self.assertAlmostEqual(_session_widening_mult("OFF_HOURS"), NEW_ENTRY_SL_OFF_HOURS_MULT)
+
+    def test_session_widening_mult_tokyo_thin(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            _session_widening_mult,
+            NEW_ENTRY_SL_THIN_SESSION_MULT,
+        )
+        # TOKYO_KILLZONE is treated as thin.
+        self.assertAlmostEqual(
+            _session_widening_mult("TOKYO_KILLZONE"),
+            NEW_ENTRY_SL_THIN_SESSION_MULT,
+        )
+
+    def test_session_widening_mult_deep_liquidity_no_widen(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _session_widening_mult
+        # London/NY overlap is deep — no widening.
+        self.assertAlmostEqual(_session_widening_mult("LONDON_NY_OVERLAP"), 1.0)
+
+    def test_session_widening_mult_unknown_tag_no_widen(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _session_widening_mult
+        self.assertAlmostEqual(_session_widening_mult(None), 1.0)
+        self.assertAlmostEqual(_session_widening_mult("UNKNOWN_TAG"), 1.0)
+
+    def test_new_entry_initial_sl_active_respects_env(self) -> None:
+        import os as _os_mod
+        from quant_rabbit.strategy.intent_generator import _new_entry_initial_sl_active
+        prior = _os_mod.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            _os_mod.environ["QR_NEW_ENTRY_INITIAL_SL"] = "1"
+            self.assertTrue(_new_entry_initial_sl_active())
+            _os_mod.environ["QR_NEW_ENTRY_INITIAL_SL"] = "0"
+            self.assertFalse(_new_entry_initial_sl_active())
+        finally:
+            if prior is None:
+                _os_mod.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                _os_mod.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior
+
+
+class SessionAwareSpreadCapTest(unittest.TestCase):
+    """Coverage for the I (2026-05-13) session-aware spread tolerance:
+    `RiskPolicy.max_spread_multiple` is multiplied by a session-tag
+    factor before the spread check. Deep sessions (London/NY overlap)
+    tighten; thin sessions (Tokyo, off-hours, JP holiday) loosen.
+    """
+
+    def test_off_hours_loosens_spread_cap(self) -> None:
+        from quant_rabbit.risk import _SPREAD_SESSION_MULTS
+        self.assertGreater(_SPREAD_SESSION_MULTS["OFF_HOURS"], 1.0)
+        self.assertGreater(_SPREAD_SESSION_MULTS["JP_HOLIDAY"], 1.0)
+
+    def test_london_ny_overlap_tightens_spread_cap(self) -> None:
+        from quant_rabbit.risk import _SPREAD_SESSION_MULTS
+        self.assertLess(_SPREAD_SESSION_MULTS["LONDON_NY_OVERLAP"], 1.0)
+
+    def test_tokyo_loosens_spread_cap(self) -> None:
+        from quant_rabbit.risk import _SPREAD_SESSION_MULTS
+        self.assertGreater(_SPREAD_SESSION_MULTS["TOKYO_KILLZONE"], 1.0)
+
+    def test_spread_session_multiplier_reads_session_current_tag(self) -> None:
+        from quant_rabbit.risk import _spread_session_multiplier, _SPREAD_SESSION_MULTS
+
+        class _Stub:
+            metadata = {"session_current_tag": "OFF_HOURS"}
+
+        self.assertAlmostEqual(
+            _spread_session_multiplier(_Stub()),
+            _SPREAD_SESSION_MULTS["OFF_HOURS"],
+        )
+
+    def test_spread_session_multiplier_falls_back_to_session_bucket(self) -> None:
+        from quant_rabbit.risk import _spread_session_multiplier, _SPREAD_SESSION_MULTS
+
+        class _Stub:
+            metadata = {"session_bucket": "TOKYO_KILLZONE"}
+
+        self.assertAlmostEqual(
+            _spread_session_multiplier(_Stub()),
+            _SPREAD_SESSION_MULTS["TOKYO_KILLZONE"],
+        )
+
+    def test_spread_session_multiplier_default_when_missing(self) -> None:
+        from quant_rabbit.risk import _spread_session_multiplier
+
+        class _Stub:
+            metadata = {}
+
+        self.assertAlmostEqual(_spread_session_multiplier(_Stub()), 1.0)
 
 
 if __name__ == "__main__":

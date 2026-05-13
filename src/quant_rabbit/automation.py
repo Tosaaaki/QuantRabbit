@@ -527,6 +527,13 @@ class AutoTradeCycle:
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
         resolved_max_loss_jpy = self._resolve_max_loss_jpy()
+        # H (2026-05-13) — Trailing SL pass. Runs ONCE per cycle on
+        # trader-owned positions that already carry a broker SL. By
+        # construction `apply_trailing_sls` skips every position with
+        # `stop_loss is None`, so every SL-free legacy position is
+        # mechanically untouchable. Opt out for tests via
+        # `QR_DISABLE_TRAILING_SL=1`; production cycles default ON.
+        self._maybe_apply_trailing_sls(snapshot, send=send)
         if not trader_positions and not pending_entries and target_summary and target_summary.status == "TARGET_REACHED_PROTECT":
             summary = AutoTradeCycleSummary(
                 status="TARGET_REACHED_PROTECT",
@@ -1546,6 +1553,43 @@ class AutoTradeCycle:
         self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
+
+    def _maybe_apply_trailing_sls(self, snapshot, *, send: bool) -> None:
+        """H (2026-05-13) — trailing SL pass on trader-owned positions
+        that ALREADY have a broker SL set. Skips SL-free positions by
+        construction; every existing legacy trade is mechanically
+        untouchable. Errors propagate as logs so the broker can be
+        temporarily unavailable without stopping the cycle.
+
+        Gated:
+          - `QR_DISABLE_TRAILING_SL=1` skips entirely (test escape).
+          - Only runs when `send=True` and `self.live_enabled=True`;
+            dry-run cycles do not modify broker state.
+        """
+        if os.environ.get("QR_DISABLE_TRAILING_SL", "").strip() in {
+            "1", "true", "TRUE", "yes", "YES",
+        }:
+            return
+        if not send or not self.live_enabled:
+            return
+        try:
+            from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
+            pair_charts_payload = (
+                json.loads(self.pair_charts_path.read_text())
+                if self.pair_charts_path and self.pair_charts_path.exists()
+                else {}
+            )
+            apply_trailing_sls(
+                snapshot=snapshot,
+                pair_charts_payload=pair_charts_payload,
+                broker_client=self.client,
+                dry_run=False,
+            )
+        except Exception:
+            # Trailing SL is advisory protection; broker errors during
+            # update must not stop the cycle. Position remains at its
+            # existing SL.
+            return
 
     def _load_snapshot_artifact(self):
         if not self.snapshot_path.exists():

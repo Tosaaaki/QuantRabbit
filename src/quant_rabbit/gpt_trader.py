@@ -35,6 +35,48 @@ def _operator_close_override_active() -> bool:
     }
 
 
+# J (2026-05-13) — Operator close token file. A token-file authorization
+# path that the GPT trader code path cannot self-set. Operator creates
+# the file by `touch` (or `qr-vnext operator-authorize-close ...`); the
+# verifier reads its mtime and rejects if older than the documented
+# freshness window.
+#
+# 2026-05-12T15:33 UTC mass-close incident proved that
+# `operator_close_authorized: true` JSON field is honor-system: the
+# trader fills its own receipt. The token file lives in `data/`, a
+# directory the trader process can technically write to, but it would
+# require the model to identify, name, and `touch` the file — none of
+# which match the normal write-this-decision-receipt flow. The
+# `operator_close_authorized` JSON field is now treated as advisory
+# audit only; it is NOT accepted as Gate B authorization.
+OPERATOR_CLOSE_TOKEN_FILENAME = ".operator_close_token"
+OPERATOR_CLOSE_TOKEN_FRESH_SECONDS = 300  # 5 minutes documented window
+
+
+def _operator_close_token_fresh(data_root: Path | None = None) -> bool:
+    """Whether a fresh operator close-authorization token file exists.
+
+    The default location is `data/.operator_close_token` under the
+    repo root; tests inject their own path. A token older than
+    `OPERATOR_CLOSE_TOKEN_FRESH_SECONDS` is treated as stale and the
+    gate fails — operators must explicitly re-authorize before each
+    CLOSE batch.
+    """
+    if data_root is None:
+        # Lazy import to avoid module-level cwd dependency in tests.
+        from quant_rabbit.paths import ROOT
+        data_root = ROOT / "data"
+    token = data_root / OPERATOR_CLOSE_TOKEN_FILENAME
+    if not token.exists():
+        return False
+    try:
+        mtime = token.stat().st_mtime
+    except OSError:
+        return False
+    age = datetime.now(timezone.utc).timestamp() - mtime
+    return age <= OPERATOR_CLOSE_TOKEN_FRESH_SECONDS
+
+
 # Matches a single per-timeframe segment in chart_reader's chart_story format.
 # Example token captured: "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"
 # Group 1 = timeframe (M1/M5/M15/M30/H1/H4/D), Group 2 = "BOS"|"CHOCH",
@@ -753,14 +795,28 @@ class DecisionVerifier:
         `invalidation_tf` that broker truth confirms has been hit. Prose
         `invalidation` text alone does not count.
 
-        Gate B — operator authorization: the decision must carry
-        `operator_close_authorized=true`, or the operator shell must
-        export `QR_OPERATOR_CLOSE_OVERRIDE=1`.
+        Gate B — operator authorization (hardened 2026-05-13 after
+        the 00:33 JST mass-close incident proved the JSON-field
+        version was honor-system). The decision-receipt
+        `operator_close_authorized` boolean is NO LONGER ACCEPTED as
+        authorization on its own — a trader that fills its own JSON
+        receipt can set the flag. Authorization must come from a
+        path the trader code cannot self-set within the receipt-write
+        flow:
 
-        Both gates must pass; failing either rejects the receipt. This
-        is the structural fix for the 2026-05-11 18:17 UTC regression
-        where the trader autonomously closed four valid SHORT positions
-        for -3,291 JPY before their wide TPs could fire.
+          1. `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR
+          2. A fresh `data/.operator_close_token` file (mtime within
+             OPERATOR_CLOSE_TOKEN_FRESH_SECONDS = 5 minutes), created
+             by `touch data/.operator_close_token` or the
+             `qr-vnext operator-authorize-close` CLI before each
+             CLOSE batch.
+
+        The `operator_close_authorized` JSON field remains in the
+        schema for backward compatibility and audit trail (the verifier
+        logs whether the trader claimed authorization) but is treated
+        as advisory only.
+
+        Both gates must pass; failing either rejects the receipt.
         """
         if not decision.close_trade_ids:
             return
@@ -798,15 +854,22 @@ class DecisionVerifier:
                 )
             )
 
-        # Gate B: operator authorization, regardless of Gate A outcome.
-        if not decision.operator_close_authorized and not _operator_close_override_active():
+        # Gate B (hardened 2026-05-13): operator authorization can come
+        # only from env or token file — NEVER from the JSON receipt
+        # field. The trader fills its own decision payload, so the
+        # boolean was a self-authorizing escape that drove the 15:33
+        # UTC mass-close.
+        if not _operator_close_override_active() and not _operator_close_token_fresh():
             issues.append(
                 VerificationIssue(
                     "CLOSE_OPERATOR_AUTH_REQUIRED",
-                    "CLOSE rejected: requires operator_close_authorized=true in "
-                    "the receipt or QR_OPERATOR_CLOSE_OVERRIDE=1 in the shell. "
-                    "The trader cannot close trader-owned positions "
-                    "autonomously (feedback_no_unilateral_close.md).",
+                    "CLOSE rejected: requires QR_OPERATOR_CLOSE_OVERRIDE=1 in "
+                    "the operator shell OR a fresh data/.operator_close_token "
+                    f"(mtime within {OPERATOR_CLOSE_TOKEN_FRESH_SECONDS}s). The "
+                    "receipt's `operator_close_authorized` field is advisory "
+                    "only and is no longer accepted as authorization "
+                    "(2026-05-12T15:33 UTC mass-close incident, "
+                    "feedback_no_unilateral_close.md).",
                 )
             )
 

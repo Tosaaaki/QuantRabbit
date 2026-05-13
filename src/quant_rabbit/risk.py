@@ -71,6 +71,57 @@ def _min_lot_test_override_active() -> bool:
     }
 
 
+# I (2026-05-13) — session-aware spread tolerance multipliers.
+# Read once at module load from env so the operator can tune without
+# code edit. Defaults mirror `intent_generator` constants — both must
+# agree because the trader prompt narrates the tolerance band.
+def _env_float_or(name: str, default: float, *, minimum: float = 0.0) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if value < minimum:
+        return minimum
+    return value
+
+
+_SPREAD_SESSION_MULTS: dict[str, float] = {
+    # Deep-liquidity sessions: tighten the spread cap below policy.
+    "LONDON_NY_OVERLAP": _env_float_or("QR_SESSION_SPREAD_MULT_LONDON_NY", 0.8, minimum=0.5),
+    "LONDON_KILLZONE": _env_float_or("QR_SESSION_SPREAD_MULT_LONDON", 1.0, minimum=0.5),
+    "LONDON_OPEN": _env_float_or("QR_SESSION_SPREAD_MULT_LONDON", 1.0, minimum=0.5),
+    "LONDON": _env_float_or("QR_SESSION_SPREAD_MULT_LONDON", 1.0, minimum=0.5),
+    "NY_AM_KILLZONE": _env_float_or("QR_SESSION_SPREAD_MULT_NY_AM", 1.0, minimum=0.5),
+    "NY_OPEN": _env_float_or("QR_SESSION_SPREAD_MULT_NY_AM", 1.0, minimum=0.5),
+    "NY": _env_float_or("QR_SESSION_SPREAD_MULT_NY_AM", 1.0, minimum=0.5),
+    # Thin-liquidity sessions: loosen so we don't reject every Tokyo
+    # entry as overspread. JP_HOLIDAY uses the OFF_HOURS widening.
+    "TOKYO_KILLZONE": _env_float_or("QR_SESSION_SPREAD_MULT_TOKYO", 1.25, minimum=0.5),
+    "TOKYO_OPEN": _env_float_or("QR_SESSION_SPREAD_MULT_TOKYO", 1.25, minimum=0.5),
+    "TOKYO": _env_float_or("QR_SESSION_SPREAD_MULT_TOKYO", 1.25, minimum=0.5),
+    "ASIA": _env_float_or("QR_SESSION_SPREAD_MULT_TOKYO", 1.25, minimum=0.5),
+    "OFF_HOURS": _env_float_or("QR_SESSION_SPREAD_MULT_OFF_HOURS", 1.5, minimum=0.5),
+    "JP_HOLIDAY": _env_float_or("QR_SESSION_SPREAD_MULT_OFF_HOURS", 1.5, minimum=0.5),
+}
+
+
+def _spread_session_multiplier(intent: OrderIntent) -> float:
+    """Return the session-aware multiplier on top of
+    `RiskPolicy.max_spread_multiple`. Reads from intent.metadata
+    (producer: intent_generator._chart_context_for). Missing metadata
+    falls back to 1.0 so the policy default still applies.
+    """
+    metadata = intent.metadata or {}
+    tag_raw = metadata.get("session_current_tag") or metadata.get("session_bucket")
+    if not tag_raw:
+        return 1.0
+    tag = str(tag_raw).upper().strip()
+    return _SPREAD_SESSION_MULTS.get(tag, 1.0)
+
+
 @dataclass(frozen=True)
 class InstrumentSpec:
     pair: str
@@ -375,12 +426,21 @@ class RiskEngine:
             )
 
         spread_pips = abs(quote.ask - quote.bid) * spec.pip_factor
-        if spread_pips > spec.normal_spread_pips * self.policy.max_spread_multiple:
+        # I (2026-05-13) — session-aware spread tolerance per
+        # AGENT_CONTRACT §3.5 "spread tolerance must be liquidity-
+        # derived". Read the session tag from intent.metadata
+        # (producer: intent_generator._chart_context_for). Multipliers
+        # are operator-tuned per session liquidity tier; the policy
+        # `max_spread_multiple` remains the anchor.
+        session_mult = _spread_session_multiplier(intent)
+        effective_spread_cap_mult = self.policy.max_spread_multiple * session_mult
+        if spread_pips > spec.normal_spread_pips * effective_spread_cap_mult:
             issues.append(
                 RiskIssue(
                     "SPREAD_TOO_WIDE",
                     f"{intent.pair} spread {spread_pips:.1f}pip exceeds "
-                    f"{self.policy.max_spread_multiple:.1f}x normal {spec.normal_spread_pips:.1f}pip",
+                    f"{effective_spread_cap_mult:.2f}x normal {spec.normal_spread_pips:.1f}pip "
+                    f"(policy={self.policy.max_spread_multiple:.1f}x, session_mult={session_mult:.2f})",
                 )
             )
 

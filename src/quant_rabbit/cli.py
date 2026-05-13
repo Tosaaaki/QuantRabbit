@@ -131,6 +131,16 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # positions reach ~90% margin utilization, just inside the 92% cap.
     "QR_TRADER_POSITION_NAV_PCT": "30",
     "QR_TRADER_BASE_UNITS": "3000",
+    # G (2026-05-13) — auto-enable broker-side initial SL on new
+    # entries. 2026-05-12T15:33 UTC mass-close incident proved that
+    # an honor-system `operator_close_authorized` is not structural
+    # protection: a panic-close trader self-sets the flag. The only
+    # mechanical defense is a broker-side SL attached on entry.
+    # `_oanda_order_request` reads this env to decide whether to add
+    # `stopLossOnFill` to every new order; intent.sl is already
+    # noise-resistant (F path: H4-ATR × 1.5 + session widening).
+    # Set OFF only for legacy SL-free-only tests.
+    "QR_NEW_ENTRY_INITIAL_SL": "1",
 }
 
 
