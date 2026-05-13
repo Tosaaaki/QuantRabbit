@@ -147,6 +147,14 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
+# 4c. Adverse-continuation partial close: positions ≥1.5×ATR
+# underwater AND no reversal-signal firing get 50% partial-closed to
+# free margin. Keeps the thesis (remaining 50% still on) while
+# unsticking the basket so the trader can fund new lanes. Does NOT
+# go through Gate A/B because it's a margin action, not a thesis
+# decision.
+PYTHONPATH=src python3 -m quant_rabbit.cli adverse-partial-close
+
 # 5. Run one gateway cycle only
 # The gateway cycle syncs data/execution_ledger.db before and after broker work
 # and records live_order / position_execution receipts.

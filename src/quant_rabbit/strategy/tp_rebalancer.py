@@ -52,6 +52,18 @@ ADVERSE_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_ADVERSE_ATR_MULT", "1.0
 MIN_LOCK_IN_PIPS = float(os.environ.get("QR_TP_REBALANCE_MIN_LOCK_IN_PIPS", "8"))
 LOCK_IN_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_LOCK_IN_ATR_MULT", "0.5"))
 
+# Trailing-TP tuning (2026-05-14): when a position is in profit ≥
+# TRAILING_TRIGGER_ATR_MULT × ATR, the rebalancer also considers a
+# "trailing" candidate anchored on CURRENT PRICE (not entry):
+# `current_price ± TRAILING_LOCK_BEHIND_ATR_MULT × ATR`. The new TP is
+# the MAX of (entry-anchored desired, trailing candidate, existing) so
+# it only moves further away. As price advances into profit, the
+# trailing branch becomes binding and pushes TP ahead, extending the
+# planned win. User feedback 2026-05-14:「平均勝ち +460 が小さい、
+# 利鞘を稼げてない」.
+TRAILING_TRIGGER_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_TRAILING_TRIGGER_ATR_MULT", "1.0"))
+TRAILING_LOCK_BEHIND_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_TRAILING_LOCK_BEHIND_ATR_MULT", "1.5"))
+
 
 @dataclass(frozen=True)
 class TPAdjustment:
@@ -172,12 +184,44 @@ def compute_tp_adjustment(
                 candidate_tp = entry_price - desired_distance_pips * pip_size
     else:
         mode = "expand_only"
-        if desired_distance_pips <= distance_old:
-            return None
+        # Entry-anchored candidate.
         if side_up == "LONG":
-            candidate_tp = entry_price + desired_distance_pips * pip_size
+            entry_anchored = entry_price + desired_distance_pips * pip_size
         else:
-            candidate_tp = entry_price - desired_distance_pips * pip_size
+            entry_anchored = entry_price - desired_distance_pips * pip_size
+
+        # Trailing candidate: anchored on CURRENT PRICE so TP advances
+        # as price moves into profit. Only considered when the
+        # position is meaningfully in profit (≥ TRAILING_TRIGGER_ATR_MULT
+        # × ATR) so we don't trail in noise.
+        profit_pips: float
+        if side_up == "LONG":
+            profit_pips = (current_price - entry_price) * pip_factor
+        else:
+            profit_pips = (entry_price - current_price) * pip_factor
+        trailing_eligible = profit_pips >= TRAILING_TRIGGER_ATR_MULT * atr_pips
+        if trailing_eligible:
+            trail_distance_pips = TRAILING_LOCK_BEHIND_ATR_MULT * atr_pips
+            if side_up == "LONG":
+                trailing_anchored = current_price + trail_distance_pips * pip_size
+            else:
+                trailing_anchored = current_price - trail_distance_pips * pip_size
+        else:
+            trailing_anchored = entry_anchored  # neutralize
+
+        # Pick the candidate that is FURTHEST from entry (= the most
+        # aggressive let-winners-run target).
+        if side_up == "LONG":
+            candidate_tp = max(entry_anchored, trailing_anchored)
+        else:
+            candidate_tp = min(entry_anchored, trailing_anchored)
+
+        # Now apply the expand-only invariant.
+        candidate_distance = abs(candidate_tp - entry_price) * pip_factor
+        if candidate_distance <= distance_old:
+            return None
+        if trailing_eligible and candidate_tp == trailing_anchored:
+            mode = "trailing"
 
     # Safety: TP must not fire immediately. Keep at least
     # MIN_TP_TO_MARKET_PIPS distance from current price. TP must remain
@@ -195,7 +239,9 @@ def compute_tp_adjustment(
             return None
 
     new_tp = _round_price(pair, candidate_tp)
-    change_pips = abs(new_tp - current_tp) * pip_factor
+    # Round to 1 decimal place before comparison so float precision
+    # noise (e.g., 9.99999 vs 10.0) doesn't block legitimate adjustments.
+    change_pips = round(abs(new_tp - current_tp) * pip_factor, 1)
     if change_pips < HYSTERESIS_PIPS:
         return None
 

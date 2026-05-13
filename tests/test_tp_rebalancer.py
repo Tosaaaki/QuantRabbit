@@ -103,6 +103,40 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
         self.assertLess(adj.new_tp, 160.0)  # below entry, SHORT TP
 
+    def test_trailing_mode_pushes_tp_ahead_of_price(self) -> None:
+        """LONG in profit ≥ TRAILING_TRIGGER_ATR_MULT × ATR triggers
+        trailing branch: new TP anchored on current_price + lock-behind."""
+        self._kill_switch_off()
+        # LONG entry 1.3000, current 1.3050 (50 pip profit), ATR 25
+        # entry_anchored = entry + rr*atr = 1.3000 + 2.0*25*pip = 1.3050
+        # trailing eligible (50 ≥ 1.0 × 25): trailing = current + 1.5*25 = 1.3050 + 37.5pip = 1.30875
+        # trailing > entry_anchored → mode = trailing
+        adj = compute_tp_adjustment(
+            trade_id="t-trail", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=1.3045,
+            current_price=1.3050,
+            atr_pips=25, reward_risk=2.0,
+        )
+        self.assertIsNotNone(adj)
+        self.assertGreater(adj.new_tp, adj.current_tp)
+        self.assertIn("trailing", adj.rationale)
+
+    def test_trailing_mode_not_eligible_when_profit_below_atr(self) -> None:
+        """Profit < 1×ATR → trailing branch disabled, fall through to
+        entry-anchored expand_only."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="t-no-trail", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=1.3040,
+            current_price=1.3005,  # 5 pip profit
+            atr_pips=25, reward_risk=2.0,  # entry_anchored 50pip
+        )
+        # New TP should be entry-anchored = 1.3050, NOT current+trailing
+        self.assertIsNotNone(adj)
+        # entry_anchored distance = 50, trailing would be 5 + 37 = 42, so entry wins
+        # Just check rationale mode = expand_only (not trailing)
+        self.assertNotIn("trailing", adj.rationale)
+
     def test_reversal_firing_expands_even_when_underwater(self) -> None:
         """LONG underwater BUT reversal signal fires: expand mode wins,
         contraction is skipped. 'Let the bounce run further.'"""

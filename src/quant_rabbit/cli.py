@@ -493,6 +493,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Compute adjustments but do not call broker.replace_trade_dependent_orders.",
     )
 
+    p_advpart = sub.add_parser(
+        "adverse-partial-close",
+        help="Partial-close trader-owned positions that are ≥1.5×ATR underwater with no reversal — frees margin without abandoning thesis.",
+    )
+    p_advpart.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_advpart.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_advpart.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute actions but do not call broker.close_trade().",
+    )
+
     p_cert = sub.add_parser("certify-dry-run", help="Certify dry-run receipts before live expansion.")
     p_cert.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_cert.add_argument("--execution-replay", type=Path, default=DEFAULT_EXECUTION_REPLAY)
@@ -1792,6 +1804,63 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "OK",
                 "dry_run": args.dry_run,
                 "adjustments_count": len(adjustments),
+                "results": results,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ))
+        return 0
+    if args.command == "adverse-partial-close":
+        from quant_rabbit.strategy.adverse_partial_close import (
+            apply_partial_closes,
+            compute_all_partial_closes,
+        )
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        def _owner_apc(s):
+            try:
+                return Owner(s) if s else Owner.UNKNOWN
+            except Exception:
+                return Owner.UNKNOWN
+        positions = []
+        for p in snapshot_payload.get("positions", []):
+            try:
+                positions.append(BrokerPosition(
+                    trade_id=p.get("trade_id"),
+                    pair=p.get("pair"),
+                    side=Side(p.get("side")),
+                    units=int(p.get("units", 0)),
+                    entry_price=float(p.get("entry_price", 0.0)),
+                    take_profit=p.get("take_profit"),
+                    stop_loss=p.get("stop_loss"),
+                    unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
+                    owner=_owner_apc(p.get("owner")),
+                ))
+            except Exception:
+                continue
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        pair_charts_keyed: dict = {}
+        for chart in pair_charts_payload.get("charts", []) or []:
+            if isinstance(chart, dict) and chart.get("pair"):
+                pair_charts_keyed[chart["pair"]] = chart
+        quotes_keyed: dict = {}
+        for pair_key, quote_data in (snapshot_payload.get("quotes") or {}).items():
+            if isinstance(quote_data, dict):
+                quotes_keyed[pair_key] = quote_data
+        actions = compute_all_partial_closes(
+            positions=positions,
+            quotes=quotes_keyed,
+            pair_charts=pair_charts_keyed,
+        )
+        client = None
+        if not args.dry_run and actions:
+            client = OandaExecutionClient()
+        results = apply_partial_closes(actions, client, dry_run=args.dry_run)
+        print(json.dumps(
+            {
+                "status": "OK",
+                "dry_run": args.dry_run,
+                "actions_count": len(actions),
                 "results": results,
             },
             indent=2,
