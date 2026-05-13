@@ -167,6 +167,100 @@ REGIME_REWARD_RISK_TREND_MULT = 1.3
 REGIME_REWARD_RISK_IMPULSE_MULT = 1.5
 REGIME_REWARD_RISK_UNCLEAR_MULT = 1.0
 
+# Dynamic reward_risk adders (AGENT_CONTRACT §3.5: target_reward_risk
+# must be regime-derived, not a fixed literal). Each adder reads a
+# current market input and pushes reward_risk up (room to run) or down
+# (no room). Values are bounded operator knobs — tune via post-trade-
+# learning, but never set to 0 because that would mute the dynamic
+# response and revert to the static-1.5 anti-pattern the contract
+# explicitly forbids.
+DYNAMIC_RR_BASE = float(os.environ.get("QR_DYNAMIC_RR_BASE", "2.0"))
+DYNAMIC_RR_ATR_PCTILE_HIGH = 0.7   # ≥ this → +ATR_HIGH bonus
+DYNAMIC_RR_ATR_PCTILE_LOW = 0.3    # ≤ this → -ATR_LOW penalty
+DYNAMIC_RR_ATR_HIGH_BONUS = float(os.environ.get("QR_DYNAMIC_RR_ATR_HIGH_BONUS", "1.5"))
+DYNAMIC_RR_ATR_LOW_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_ATR_LOW_PENALTY", "0.5"))
+DYNAMIC_RR_ADX_TREND_THRESHOLD = 25.0
+DYNAMIC_RR_ADX_RANGE_THRESHOLD = 18.0
+DYNAMIC_RR_ADX_TREND_BONUS = float(os.environ.get("QR_DYNAMIC_RR_ADX_TREND_BONUS", "1.5"))
+DYNAMIC_RR_ADX_RANGE_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_ADX_RANGE_PENALTY", "0.5"))
+DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD = 2.5
+DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY", "0.8"))
+DYNAMIC_RR_SESSION_OVERLAP_BONUS = float(os.environ.get("QR_DYNAMIC_RR_SESSION_OVERLAP_BONUS", "0.5"))
+DYNAMIC_RR_SESSION_THIN_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_SESSION_THIN_PENALTY", "0.5"))
+DYNAMIC_RR_FLOOR = float(os.environ.get("QR_DYNAMIC_RR_FLOOR", "1.5"))
+DYNAMIC_RR_CEILING = float(os.environ.get("QR_DYNAMIC_RR_CEILING", "5.0"))
+
+
+def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
+    """Compute reward_risk from current market state.
+
+    Inputs (all from `chart_context`, which `_chart_context_for`
+    flattens from pair_charts.json):
+      - confluence.atr_percentile_24h: 0.0-1.0
+      - h1_adx or h4_adx: trend strength (0-100)
+      - confluence.range_24h_sigma_multiple: 0+ (exhaustion proxy)
+      - session_current_tag: LONDON_NY_OVERLAP / OFF_HOURS / TOKYO_KILLZONE / ...
+
+    Returns (reward_risk, rationale_lines). Falls back to
+    DYNAMIC_RR_BASE when chart_context is missing entirely. Never
+    silently returns the legacy 1.5 literal.
+    """
+    rationale: list[str] = []
+    rr = DYNAMIC_RR_BASE
+
+    if not chart_context:
+        return DYNAMIC_RR_BASE, ["chart_context missing → base reward_risk"]
+
+    # ATR percentile (24h band).
+    confluence = chart_context.get("confluence") or {}
+    try:
+        atr_pct = float(confluence.get("atr_percentile_24h"))
+    except (TypeError, ValueError):
+        atr_pct = None
+    if atr_pct is not None:
+        if atr_pct >= DYNAMIC_RR_ATR_PCTILE_HIGH:
+            rr += DYNAMIC_RR_ATR_HIGH_BONUS
+            rationale.append(f"ATR %ile {atr_pct:.2f} ≥ {DYNAMIC_RR_ATR_PCTILE_HIGH} → +{DYNAMIC_RR_ATR_HIGH_BONUS}")
+        elif atr_pct <= DYNAMIC_RR_ATR_PCTILE_LOW:
+            rr -= DYNAMIC_RR_ATR_LOW_PENALTY
+            rationale.append(f"ATR %ile {atr_pct:.2f} ≤ {DYNAMIC_RR_ATR_PCTILE_LOW} → -{DYNAMIC_RR_ATR_LOW_PENALTY}")
+
+    # ADX (use H1 by default).
+    try:
+        adx = float(chart_context.get("h1_adx") or chart_context.get("h4_adx"))
+    except (TypeError, ValueError):
+        adx = None
+    if adx is not None:
+        if adx >= DYNAMIC_RR_ADX_TREND_THRESHOLD:
+            rr += DYNAMIC_RR_ADX_TREND_BONUS
+            rationale.append(f"ADX {adx:.1f} ≥ {DYNAMIC_RR_ADX_TREND_THRESHOLD} → +{DYNAMIC_RR_ADX_TREND_BONUS}")
+        elif adx <= DYNAMIC_RR_ADX_RANGE_THRESHOLD:
+            rr -= DYNAMIC_RR_ADX_RANGE_PENALTY
+            rationale.append(f"ADX {adx:.1f} ≤ {DYNAMIC_RR_ADX_RANGE_THRESHOLD} → -{DYNAMIC_RR_ADX_RANGE_PENALTY}")
+
+    # 24h range exhaustion.
+    try:
+        sigma_24h = float(confluence.get("range_24h_sigma_multiple"))
+    except (TypeError, ValueError):
+        sigma_24h = None
+    if sigma_24h is not None and sigma_24h >= DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD:
+        rr -= DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY
+        rationale.append(f"24h σ {sigma_24h:.2f} ≥ {DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD} → -{DYNAMIC_RR_SIGMA_EXHAUSTED_PENALTY}")
+
+    # Session adjustment.
+    session = str(chart_context.get("session_current_tag") or chart_context.get("session_bucket") or "").upper()
+    if "LONDON_NY_OVERLAP" in session:
+        rr += DYNAMIC_RR_SESSION_OVERLAP_BONUS
+        rationale.append(f"LDN/NY overlap session → +{DYNAMIC_RR_SESSION_OVERLAP_BONUS}")
+    elif session in ("OFF_HOURS", "JP_HOLIDAY"):
+        rr -= DYNAMIC_RR_SESSION_THIN_PENALTY
+        rationale.append(f"{session} → -{DYNAMIC_RR_SESSION_THIN_PENALTY}")
+
+    rr_clamped = max(DYNAMIC_RR_FLOOR, min(DYNAMIC_RR_CEILING, rr))
+    if rr_clamped != rr:
+        rationale.append(f"clamped to [{DYNAMIC_RR_FLOOR}, {DYNAMIC_RR_CEILING}]")
+    return round(rr_clamped, 2), rationale
+
 # Regime-derived stop widening per AGENT_CONTRACT §3.5 + feedback_no_tight_sl_thin_market.md.
 # Wider SL is engaged when noise/uncertainty is elevated so the trade is not
 # stopped out by the wick-noise floor of an unclear regime.
@@ -632,7 +726,14 @@ def _execution_target_reward_risk(
     chart_context: dict[str, Any] | None,
     side: Side,
 ) -> float:
-    target_reward_risk = round(base_reward_risk * _regime_reward_risk_multiplier(execution_regime), 2)
+    # AGENT_CONTRACT §3.5: reward_risk must be regime-derived. The
+    # `base_reward_risk` (from lane definition or legacy 1.5 fallback) is
+    # treated as a SUGGESTION; the live market-derived value from
+    # `_market_derived_reward_risk` is used as the floor so static
+    # base values cannot reduce a dynamic-high regime to a tight TP.
+    market_rr, _rationale = _market_derived_reward_risk(chart_context)
+    blended_rr = max(base_reward_risk, market_rr)
+    target_reward_risk = round(blended_rr * _regime_reward_risk_multiplier(execution_regime), 2)
     if (
         method == TradeMethod.RANGE_ROTATION
         and order_type == OrderType.MARKET
