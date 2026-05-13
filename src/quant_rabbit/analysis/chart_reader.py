@@ -775,6 +775,11 @@ def _build_chart_story(pair: str, views: list[ChartView], dominant: str) -> str:
             bits.append(f"cloud={cloud}")
         if view.structure and view.structure.last_event:
             ev = view.structure.last_event
-            bits.append(f"struct={ev.kind}@{ev.broken_pivot_price:.4f}")
+            # `:wick` suffix flags a wick-only break (new swing pivot's
+            # candle closed BACK inside the prior range). gpt_trader's
+            # CLOSE Gate A ignores wick-only events; trader_brain still
+            # sees them as advisory swing information.
+            wick_tag = "" if ev.close_confirmed else ":wick"
+            bits.append(f"struct={ev.kind}@{ev.broken_pivot_price:.4f}{wick_tag}")
         fragments.append(f"{view.granularity}({view.regime}, {' '.join(bits)})")
     return "; ".join(fragments)

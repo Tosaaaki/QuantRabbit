@@ -33,6 +33,13 @@ class StructureEvent:
     timestamp_iso: str
     kind: str  # "BOS_UP" / "BOS_DOWN" / "CHOCH_UP" / "CHOCH_DOWN"
     broken_pivot_price: float
+    # True when the candle that printed the new swing pivot ALSO closed
+    # beyond the broken pivot price (real structural break). False when
+    # only the wick of the new pivot pierced the prior pivot — the classic
+    # stop-hunt / liquidity-sweep pattern that should NOT authorize CLOSE
+    # Gate A on its own. Default True for backward compatibility with
+    # legacy fixtures and existing test snapshots.
+    close_confirmed: bool = True
 
 
 @dataclass(frozen=True)
@@ -78,13 +85,15 @@ class StructureReading:
             ],
             "structure_events": [
                 {"index": e.index, "timestamp": e.timestamp_iso, "kind": e.kind,
-                 "broken_pivot_price": e.broken_pivot_price}
+                 "broken_pivot_price": e.broken_pivot_price,
+                 "close_confirmed": e.close_confirmed}
                 for e in self.structure_events
             ],
             "last_event": (
                 {"index": self.last_event.index, "timestamp": self.last_event.timestamp_iso,
                  "kind": self.last_event.kind,
-                 "broken_pivot_price": self.last_event.broken_pivot_price}
+                 "broken_pivot_price": self.last_event.broken_pivot_price,
+                 "close_confirmed": self.last_event.close_confirmed}
                 if self.last_event else None
             ),
             "order_blocks": [
@@ -176,22 +185,37 @@ def _detect_structure_events(swings: list[SwingPivot], candles: Sequence[Candle]
     last_trend: str | None = None  # "UP" or "DOWN"
     last_high: SwingPivot | None = None
     last_low: SwingPivot | None = None
+    n_candles = len(candles)
     for piv in swings:
         if piv.side == "HIGH":
             if last_high is not None and piv.price > last_high.price:
                 kind = "BOS_UP" if last_trend == "UP" else "CHOCH_UP"
+                # The new swing pivot's candle close confirms the break only
+                # when it also clears the broken pivot price. Otherwise the
+                # high is a wick — the prior pivot was swept but the market
+                # closed back inside the range (stop-hunt pattern).
+                close_confirmed = (
+                    0 <= piv.index < n_candles
+                    and candles[piv.index].close > last_high.price
+                )
                 events.append(StructureEvent(
                     index=piv.index, timestamp_iso=piv.timestamp_iso, kind=kind,
                     broken_pivot_price=last_high.price,
+                    close_confirmed=close_confirmed,
                 ))
                 last_trend = "UP"
             last_high = piv
         else:
             if last_low is not None and piv.price < last_low.price:
                 kind = "BOS_DOWN" if last_trend == "DOWN" else "CHOCH_DOWN"
+                close_confirmed = (
+                    0 <= piv.index < n_candles
+                    and candles[piv.index].close < last_low.price
+                )
                 events.append(StructureEvent(
                     index=piv.index, timestamp_iso=piv.timestamp_iso, kind=kind,
                     broken_pivot_price=last_low.price,
+                    close_confirmed=close_confirmed,
                 ))
                 last_trend = "DOWN"
             last_low = piv

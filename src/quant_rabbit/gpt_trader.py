@@ -78,11 +78,17 @@ def _operator_close_token_fresh(data_root: Path | None = None) -> bool:
 
 
 # Matches a single per-timeframe segment in chart_reader's chart_story format.
-# Example token captured: "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"
+# Example tokens captured:
+#   "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"        (close confirmed)
+#   "M15(RANGE, ADX=15.4 ... struct=BOS_UP@114.1460:wick)"     (wick-only)
 # Group 1 = timeframe (M1/M5/M15/M30/H1/H4/D), Group 2 = "BOS"|"CHOCH",
-# Group 3 = "UP"|"DOWN", Group 4 = numeric price.
+# Group 3 = "UP"|"DOWN", Group 4 = numeric price, Group 5 = ":wick" tag or "".
+# The optional ":wick" suffix marks a break whose breaking candle closed
+# back inside the prior range — Gate A treats it as a stop-hunt that does
+# NOT authorize CLOSE on its own (added 2026-05-13, structure.py
+# close_confirmed flag).
 _STRUCT_EVENT_RE = re.compile(
-    r"\b(M1|M5|M15|M30|H1|H4|D)\([^)]*?struct=(BOS|CHOCH)_(UP|DOWN)@([0-9]+\.?[0-9]*)",
+    r"\b(M1|M5|M15|M30|H1|H4|D)\([^)]*?struct=(BOS|CHOCH)_(UP|DOWN)@([0-9]+\.?[0-9]*)(:wick)?",
 )
 
 # Timeframes consulted when deciding whether the operator-thesis behind a
@@ -94,20 +100,31 @@ _STRUCT_EVENT_RE = re.compile(
 CLOSE_DISCIPLINE_TIMEFRAMES: tuple[str, ...] = ("M15", "H4")
 
 
-def _parse_struct_events(chart_story: str) -> dict[str, tuple[str, str, float]]:
-    """Return {timeframe: (event_type, direction, price)} parsed from chart_story.
+def _parse_struct_events(
+    chart_story: str,
+) -> dict[str, tuple[str, str, float, bool]]:
+    """Return {timeframe: (event_type, direction, price, close_confirmed)} parsed
+    from chart_story.
 
     Silently skips tokens whose price does not parse as a float. The
     parser is intentionally tolerant: chart_reader format drift should
     degrade to "no thesis-invalidation evidence" rather than crash the
     verifier and stall the cycle.
+
+    `close_confirmed` is False when chart_reader appended the `:wick`
+    suffix — the breaking candle's close did not clear the prior pivot,
+    so the high/low was swept but the close held inside the range. Gate
+    A treats wick-only breaks as advisory, not as CLOSE authorization.
     """
     if not chart_story:
         return {}
-    out: dict[str, tuple[str, str, float]] = {}
-    for tf, event_type, direction, price_str in _STRUCT_EVENT_RE.findall(chart_story):
+    out: dict[str, tuple[str, str, float, bool]] = {}
+    for tf, event_type, direction, price_str, wick_tag in _STRUCT_EVENT_RE.findall(
+        chart_story
+    ):
         try:
-            out[tf] = (event_type, direction, float(price_str))
+            close_confirmed = wick_tag != ":wick"
+            out[tf] = (event_type, direction, float(price_str), close_confirmed)
         except (TypeError, ValueError):
             continue
     return out
@@ -171,10 +188,17 @@ def _close_thesis_invalidated(
     for tf in CLOSE_DISCIPLINE_TIMEFRAMES:
         event = structs.get(tf)
         if event and event[1] == counter_direction:
-            event_type, direction, price = event
+            event_type, direction, price, close_confirmed = event
+            if not close_confirmed:
+                # Wick-only break (the candle that printed the new pivot
+                # closed back inside the prior range). Classic stop-hunt
+                # / liquidity-sweep — does NOT authorize Gate A on its
+                # own. The structural high/low was tagged but the move
+                # was rejected.
+                continue
             return True, (
                 f"{tf} {event_type}_{direction}@{price:g} prints against "
-                f"{side_upper} thesis"
+                f"{side_upper} thesis (close-confirmed)"
             )
 
     if decision is not None and decision.invalidation_price is not None:

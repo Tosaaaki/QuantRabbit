@@ -39,14 +39,20 @@ SL-free the per-trade risk number is advisory; market structure is authoritative
 
 - **Structure-event invalidation (§10 Gate A — primary)**: M15 OR H4 prints BOS
   or CHOCH against the position side (LONG → counter-direction is DOWN, SHORT →
-  UP). This is the path implemented in `gpt_trader._close_thesis_invalidated`;
-  a single counter-side BOS/CHOCH on **either** M15 or H4 is sufficient. Cite
-  the TF + event + price in the receipt (e.g. "H4 BOS_UP@113.587 prints against
-  SHORT thesis"). Do **not** wait for H4/H1/M30 regime labels to all print
-  aligned TREND — `chart_reader` regimes lag structure during reversals
-  (transitions sit at UNCLEAR/RANGE/FAILURE_RISK while swing structure has
-  already flipped), and waiting for the lag is what locks losing positions
-  underwater while the move runs.
+  UP) AND the event is **close-confirmed** (chart_story does NOT carry the
+  `:wick` suffix). This is the path implemented in
+  `gpt_trader._close_thesis_invalidated`; a single counter-side BOS/CHOCH on
+  **either** M15 or H4 is sufficient when its breaking candle closed beyond
+  the broken pivot. Cite the TF + event + price in the receipt (e.g. "H4
+  BOS_UP@113.587 prints against SHORT thesis, close-confirmed"). Do **not**
+  wait for H4/H1/M30 regime labels to all print aligned TREND — `chart_reader`
+  regimes lag structure during reversals (transitions sit at
+  UNCLEAR/RANGE/FAILURE_RISK while swing structure has already flipped), and
+  waiting for the lag is what locks losing positions underwater while the
+  move runs. Also do **not** propose CLOSE on a `struct=...:wick` event — the
+  wick suffix marks a stop-hunt sweep where the high/low was tagged but the
+  close held inside the prior range (added 2026-05-13 after the AUD_JPY M15
+  BOS_UP@114.146 0.4-pip wick incident).
 - **Invalidation-price hit (§10 Gate A — receipt-driven)**: receipt populates
   `invalidation_price` + `invalidation_tf` AND broker bid/ask trades through
   the level (LONG: bid ≤ level, SHORT: ask ≥ level). Cite the level + TF.

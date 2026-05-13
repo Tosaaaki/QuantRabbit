@@ -1682,9 +1682,20 @@ class StructEventParserTest(unittest.TestCase):
             "D(RANGE struct=BOS_UP@1.23)"
         )
         events = _parse_struct_events(story)
-        self.assertEqual(events["M15"], ("BOS", "DOWN", 1.19))
-        self.assertEqual(events["H4"], ("BOS", "DOWN", 1.22))
+        # Default (no `:wick` suffix) means close-confirmed.
+        self.assertEqual(events["M15"], ("BOS", "DOWN", 1.19, True))
+        self.assertEqual(events["H4"], ("BOS", "DOWN", 1.22, True))
         self.assertEqual(len(events), 7)
+
+    def test_parses_wick_suffix_as_not_close_confirmed(self) -> None:
+        story = (
+            "AUD_JPY RANGE; "
+            "M15(RANGE struct=BOS_UP@114.1460:wick); "
+            "H4(RANGE struct=BOS_UP@113.5870)"
+        )
+        events = _parse_struct_events(story)
+        self.assertEqual(events["M15"], ("BOS", "UP", 114.146, False))
+        self.assertEqual(events["H4"], ("BOS", "UP", 113.587, True))
 
     def test_invalidated_when_m15_against_long(self) -> None:
         packet = {
@@ -1704,6 +1715,7 @@ class StructEventParserTest(unittest.TestCase):
         ok, reason = _close_thesis_invalidated(packet, "EUR_USD", "LONG")
         self.assertTrue(ok)
         self.assertIn("M15", reason)
+        self.assertIn("close-confirmed", reason)
 
     def test_not_invalidated_when_struct_aligned_with_side(self) -> None:
         packet = {
@@ -1722,6 +1734,54 @@ class StructEventParserTest(unittest.TestCase):
         }
         ok, _ = _close_thesis_invalidated(packet, "EUR_USD", "LONG")
         self.assertFalse(ok)
+
+    def test_not_invalidated_when_only_event_is_wick_only_break(self) -> None:
+        # Stop-hunt regression (2026-05-13). The wick of a new swing pivot
+        # taps the prior pivot but the candle closes back inside the
+        # range. Gate A must NOT fire on this signal alone.
+        packet = {
+            "market_context": {
+                "pairs": {
+                    "AUD_JPY": {
+                        "chart": {
+                            "chart_story": (
+                                "AUD_JPY RANGE; "
+                                "M15(RANGE struct=BOS_UP@114.1460:wick); "
+                                "H4(RANGE struct=BOS_UP@113.5870:wick)"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+        ok, _ = _close_thesis_invalidated(packet, "AUD_JPY", "SHORT")
+        self.assertFalse(ok)
+
+    def test_h4_close_confirmed_still_fires_when_m15_is_wick_only(self) -> None:
+        # The 2026-05-13 AUD_JPY scenario: M15 BOS_UP@114.146 was a
+        # 0.4-pip wick break (no close confirmation), but H4
+        # BOS_UP@113.587 was a 46-pip clean structural break. Gate A
+        # should fire on the H4 close-confirmed event and ignore the
+        # M15 wick.
+        packet = {
+            "market_context": {
+                "pairs": {
+                    "AUD_JPY": {
+                        "chart": {
+                            "chart_story": (
+                                "AUD_JPY RANGE; "
+                                "M15(RANGE struct=BOS_UP@114.1460:wick); "
+                                "H4(RANGE struct=BOS_UP@113.5870)"
+                            ),
+                        }
+                    }
+                }
+            }
+        }
+        ok, reason = _close_thesis_invalidated(packet, "AUD_JPY", "SHORT")
+        self.assertTrue(ok)
+        self.assertIn("H4", reason)
+        self.assertIn("close-confirmed", reason)
 
 
 class OperatorCloseTokenFreshnessTest(unittest.TestCase):
