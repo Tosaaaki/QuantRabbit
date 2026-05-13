@@ -83,6 +83,7 @@ def compute_partial_close(
     atr_pips: float,
     is_reversal_firing: bool,
     owner: str = "trader",
+    chart_context: Optional[Dict[str, Any]] = None,
 ) -> Optional[PartialCloseAction]:
     """Compute a partial-close action for one position.
 
@@ -109,27 +110,36 @@ def compute_partial_close(
     else:
         return None
 
-    if adverse_pips < ADVERSE_PARTIAL_TRIGGER_ATR_MULT * atr_pips:
-        return None  # not deep enough underwater
+    # Market-derived threshold & fraction (AGENT_CONTRACT §3.5).
+    # Higher-TF AGAINST → close earlier + bigger chunk.
+    # Higher-TF WITH → give room + keep more on.
+    from quant_rabbit.strategy.dynamic_position_policy import (
+        adverse_trigger_mult,
+        partial_close_fraction,
+    )
+    trigger_mult, _ = adverse_trigger_mult(chart_context, side_up)
+    fraction, _ = partial_close_fraction(chart_context, side_up)
+    threshold_pips = trigger_mult * atr_pips
+
+    if adverse_pips < threshold_pips:
+        return None
 
     absolute_units = abs(int(units))
     if absolute_units < MIN_POSITION_UNITS_FOR_PARTIAL:
-        return None  # too small to halve meaningfully
+        return None
 
-    close_units_raw = int(absolute_units * PARTIAL_CLOSE_FRACTION)
-    # Round down to nearest 100 (OANDA minimum trade size lots)
+    close_units_raw = int(absolute_units * fraction)
     close_units = (close_units_raw // 100) * 100
     if close_units < 100:
         return None
     if close_units >= absolute_units:
-        return None  # would be a full close — out of scope here
+        return None
 
     remaining = absolute_units - close_units
     rationale = (
-        f"adverse {adverse_pips:.1f}pip ≥ {ADVERSE_PARTIAL_TRIGGER_ATR_MULT}×ATR "
-        f"({ADVERSE_PARTIAL_TRIGGER_ATR_MULT * atr_pips:.1f}pip), no reversal → "
-        f"close {close_units}/{absolute_units} ({PARTIAL_CLOSE_FRACTION:.0%}), "
-        f"remaining {remaining}"
+        f"adverse {adverse_pips:.1f}pip ≥ {trigger_mult:.2f}×ATR "
+        f"({threshold_pips:.1f}pip), no reversal → close "
+        f"{close_units}/{absolute_units} ({fraction:.0%}), remaining {remaining}"
     )
     return PartialCloseAction(
         trade_id=trade_id,
@@ -155,7 +165,10 @@ def compute_all_partial_closes(
         return []
     # Lazy imports to avoid circulars + keep this module standalone.
     from quant_rabbit.strategy.reversal_signal import detect_reversal
-    from quant_rabbit.strategy.tp_rebalancer import _extract_atr_pips  # reuse
+    from quant_rabbit.strategy.tp_rebalancer import (
+        _extract_atr_pips,
+        _chart_context_from_chart,
+    )
 
     actions: list[PartialCloseAction] = []
     for position in positions:
@@ -196,6 +209,7 @@ def compute_all_partial_closes(
             atr_pips=atr_pips,
             is_reversal_firing=(reversal is not None),
             owner=owner_str.lower(),
+            chart_context=_chart_context_from_chart(chart),
         )
         if action is not None:
             actions.append(action)

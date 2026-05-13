@@ -102,6 +102,7 @@ def compute_tp_adjustment(
     reward_risk: float,
     is_reversal_firing: bool = False,
     owner: str = "trader",
+    chart_context: Optional[Dict[str, Any]] = None,
 ) -> Optional[TPAdjustment]:
     """Compute a new TP for one position.
 
@@ -191,17 +192,22 @@ def compute_tp_adjustment(
             entry_anchored = entry_price - desired_distance_pips * pip_size
 
         # Trailing candidate: anchored on CURRENT PRICE so TP advances
-        # as price moves into profit. Only considered when the
-        # position is meaningfully in profit (≥ TRAILING_TRIGGER_ATR_MULT
-        # × ATR) so we don't trail in noise.
+        # as price moves into profit. Trigger AND lock-behind both
+        # market-derived from chart_context (AGENT_CONTRACT §3.5).
+        from quant_rabbit.strategy.dynamic_position_policy import (
+            trailing_trigger_mult,
+            trailing_lock_behind_mult,
+        )
+        trigger_mult, _ = trailing_trigger_mult(chart_context)
+        lock_mult, _ = trailing_lock_behind_mult(chart_context)
         profit_pips: float
         if side_up == "LONG":
             profit_pips = (current_price - entry_price) * pip_factor
         else:
             profit_pips = (entry_price - current_price) * pip_factor
-        trailing_eligible = profit_pips >= TRAILING_TRIGGER_ATR_MULT * atr_pips
+        trailing_eligible = profit_pips >= trigger_mult * atr_pips
         if trailing_eligible:
-            trail_distance_pips = TRAILING_LOCK_BEHIND_ATR_MULT * atr_pips
+            trail_distance_pips = lock_mult * atr_pips
             if side_up == "LONG":
                 trailing_anchored = current_price + trail_distance_pips * pip_size
             else:
@@ -339,6 +345,7 @@ def compute_all_tp_adjustments(
             reward_risk=float(reward_risk_value),
             is_reversal_firing=(reversal is not None),
             owner=owner_str.lower(),
+            chart_context=_chart_context_from_chart(chart),
         )
         if adj is not None:
             adjustments.append(adj)
