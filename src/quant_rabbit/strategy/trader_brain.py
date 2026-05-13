@@ -426,6 +426,23 @@ from quant_rabbit.paths import (
     DEFAULT_TRADER_DECISION_REPORT,
 )
 from quant_rabbit.strategy.price_action import aggregate_price_action_score
+from quant_rabbit.strategy.lane_history_ledger import (
+    LaneHistorySnapshot,
+    compute_lane_history,
+    lane_history_modifier,
+)
+from quant_rabbit.strategy.regime_classifier import (
+    RegimeSnapshot,
+    classify_all as regime_classify_all,
+    regime_score_modifier,
+)
+from quant_rabbit.strategy.entry_timing_gate import check_entry_timing
+from quant_rabbit.strategy.trader_overrides import (
+    TraderOverrides,
+    load_trader_overrides,
+    overrides_block_check,
+    overrides_score_delta,
+)
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -688,6 +705,19 @@ class TraderBrain:
             target_state_path=self.target_state_path,
             snapshot=snapshot,
         )
+        # Per-cycle context: lane history (recent (pair, direction) P&L
+        # → bias modifier) and per-pair regime snapshot. Both computed
+        # once per cycle and passed to _score_lane to avoid recomputing
+        # on every candidate. They degrade gracefully — missing
+        # execution_ledger.db or pair_charts → empty dicts → 0 modifier.
+        from quant_rabbit.paths import ROOT as _QR_ROOT
+        lane_history = compute_lane_history(_QR_ROOT / "data" / "execution_ledger.db")
+        # full_pair_charts is keyed-by-pair dict; rebuild minimal payload
+        # for regime_classifier which expects {"charts": [...]}.
+        regime_snapshots = regime_classify_all({"charts": list(full_pair_charts.values())}) if full_pair_charts else {}
+        # Module C: daily-review feedback. Empty when file is absent or
+        # expired — no behavior change in that case.
+        trader_overrides = load_trader_overrides(_QR_ROOT / "data")
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
@@ -707,6 +737,9 @@ class TraderBrain:
                         full_pair_charts=full_pair_charts,
                         snapshot=snapshot,
                         attack_ranks=attack_ranks,
+                        lane_history=lane_history,
+                        regime_snapshots=regime_snapshots,
+                        trader_overrides=trader_overrides,
                     )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
@@ -804,6 +837,9 @@ class TraderBrain:
         full_pair_charts: dict[str, dict[str, Any]] | None = None,
         snapshot: BrokerSnapshot | None = None,
         attack_ranks: dict[str, int] | None = None,
+        lane_history: dict[tuple[str, str], LaneHistorySnapshot] | None = None,
+        regime_snapshots: dict[str, RegimeSnapshot] | None = None,
+        trader_overrides: TraderOverrides | None = None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -1048,6 +1084,56 @@ class TraderBrain:
                 f"attack_advice rank #{rank + 1} (top-{ATTACK_ADVICE_PROMOTION_RANK_CEILING}) "
                 f"promoted +{ATTACK_ADVICE_PROMOTION_BONUS:.0f}",
             )
+
+        # Module B: lane history bias — recent (pair, direction) P&L
+        # adjusts score so a losing-streak direction gets downweighted
+        # and a winning-streak direction gets upweighted. Bounded ±25.
+        # Stops the 2026-05-12/13 pattern of repeated same-direction
+        # entries through a regime reversal.
+        if lane_history:
+            lh_delta, lh_rationale = lane_history_modifier(lane_history, pair, direction)
+            if lh_delta != 0.0:
+                score += lh_delta
+                if lh_rationale:
+                    rationale.insert(0, lh_rationale)
+
+        # Module A: regime classifier — REVERSAL_RISK pair + same-side
+        # entry direction gets penalty proportional to risk score.
+        # STABLE_TREND pair + trend-aligned entry gets a modest reward.
+        # Prevents the "buying the top / selling the bottom" pattern.
+        if regime_snapshots:
+            rg_snap = regime_snapshots.get(pair)
+            rg_delta, rg_rationale = regime_score_modifier(rg_snap, direction)
+            if rg_delta != 0.0:
+                score += rg_delta
+                if rg_rationale:
+                    rationale.insert(0, rg_rationale)
+
+        # Module D: entry timing gate — last 3 M5 candles vs intent
+        # direction. ALIGNED rewards, MIXED small penalty, AGAINST big
+        # penalty. Catches "entering at the top" timing errors that the
+        # existing micro-override hard veto misses when M1 disagrees but
+        # the 3-candle slope is still hostile.
+        pa_chart_for_timing = (full_pair_charts or {}).get(pair) if full_pair_charts else None
+        timing = check_entry_timing(pa_chart_for_timing, direction)
+        if timing.score_delta != 0.0:
+            score += timing.score_delta
+            if timing.rationale:
+                rationale.insert(0, timing.rationale)
+
+        # Module C: daily-review overrides (lane_id blocks + (pair, direction)
+        # score bias). Empty overrides → no-op. Expired overrides already
+        # short-circuited at load time.
+        if trader_overrides is not None:
+            blocked, block_msg = overrides_block_check(trader_overrides, lane_id)
+            if blocked:
+                blockers.append(block_msg or f"trader_overrides blocked {lane_id}")
+                score -= 100.0
+            ov_delta, ov_rationale = overrides_score_delta(trader_overrides, pair, direction)
+            if ov_delta != 0.0:
+                score += ov_delta
+                if ov_rationale:
+                    rationale.insert(0, ov_rationale)
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
