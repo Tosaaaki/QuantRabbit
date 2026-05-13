@@ -481,6 +481,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Compute updates but do not call broker.replace_trade_dependent_orders.",
     )
 
+    p_tprebal = sub.add_parser(
+        "tp-rebalance",
+        help="Expand/contract TP on trader-owned positions as market regime shifts (dynamic reward_risk × current ATR).",
+    )
+    p_tprebal.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_tprebal.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_tprebal.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute adjustments but do not call broker.replace_trade_dependent_orders.",
+    )
+
     p_cert = sub.add_parser("certify-dry-run", help="Certify dry-run receipts before live expansion.")
     p_cert.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_cert.add_argument("--execution-replay", type=Path, default=DEFAULT_EXECUTION_REPLAY)
@@ -1719,6 +1731,71 @@ def main(argv: list[str] | None = None) -> int:
                 "count": len(updates),
             },
             indent=2,
+        ))
+        return 0
+    if args.command == "tp-rebalance":
+        from quant_rabbit.strategy.tp_rebalancer import (
+            apply_tp_adjustments,
+            compute_all_tp_adjustments,
+        )
+        from quant_rabbit.strategy.intent_generator import _market_derived_reward_risk
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        # Reuse the same snapshot-parsing pattern as trailing-sl-update so
+        # we share the model decoding without duplicating it.
+        from quant_rabbit.models import (
+            BrokerSnapshot, BrokerPosition, BrokerOrder, AccountSummary, Quote, Owner, Side,
+        )
+        def _owner_tp(s):
+            try:
+                return Owner(s) if s else Owner.UNKNOWN
+            except Exception:
+                return Owner.UNKNOWN
+        positions = []
+        for p in snapshot_payload.get("positions", []):
+            try:
+                positions.append(BrokerPosition(
+                    trade_id=p.get("trade_id"),
+                    pair=p.get("pair"),
+                    side=Side(p.get("side")),
+                    units=int(p.get("units", 0)),
+                    entry_price=float(p.get("entry_price", 0.0)),
+                    take_profit=p.get("take_profit"),
+                    stop_loss=p.get("stop_loss"),
+                    unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
+                    owner=_owner_tp(p.get("owner")),
+                ))
+            except Exception:
+                continue
+        # Pair charts keyed by pair.
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        pair_charts_keyed: dict = {}
+        for chart in pair_charts_payload.get("charts", []) or []:
+            if isinstance(chart, dict) and chart.get("pair"):
+                pair_charts_keyed[chart["pair"]] = chart
+        # Quotes from snapshot.
+        quotes_keyed: dict = {}
+        for pair_key, quote_data in (snapshot_payload.get("quotes") or {}).items():
+            if isinstance(quote_data, dict):
+                quotes_keyed[pair_key] = quote_data
+        adjustments = compute_all_tp_adjustments(
+            positions=positions,
+            quotes=quotes_keyed,
+            pair_charts=pair_charts_keyed,
+            market_reward_risk_fn=_market_derived_reward_risk,
+        )
+        client = None
+        if not args.dry_run and adjustments:
+            client = OandaExecutionClient()
+        results = apply_tp_adjustments(adjustments, client, dry_run=args.dry_run)
+        print(json.dumps(
+            {
+                "status": "OK",
+                "dry_run": args.dry_run,
+                "adjustments_count": len(adjustments),
+                "results": results,
+            },
+            indent=2,
+            ensure_ascii=False,
         ))
         return 0
     if args.command == "certify-dry-run":

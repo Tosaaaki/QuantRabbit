@@ -140,6 +140,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 
+# 4b. Dynamic TP rebalance: expand/contract TP on open positions as
+# market regime shifts. SL-free positions keep stop_loss=None
+# untouched; only the takeProfit order on broker-side gets reshaped
+# per current ATR × market-derived reward_risk. Hysteresis +
+# entry-side + safety-margin invariants prevent accidental fires.
+PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
+
 # 5. Run one gateway cycle only
 # The gateway cycle syncs data/execution_ledger.db before and after broker work
 # and records live_order / position_execution receipts.
