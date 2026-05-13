@@ -723,8 +723,21 @@ class TraderBrain:
         # so the directional gate cannot reach SL/TP/CLOSE behavior on
         # any open trade — only the NEW-entry lane set is reshaped.
         scores = _apply_directional_gating(scores, full_pair_charts, attack_ranks)
-        if exposure_blockers or pending_entries:
-            pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
+        # Compute contaminated pending ids unconditionally so stale pendings
+        # are flagged for cleanup whether we MONITOR or layer (AGENT_CONTRACT §11
+        # — protected trader-owned exposure is not by itself a no-trade gate,
+        # and a self-contradicting pending must not silently lock the basket).
+        pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
+        # MONITOR only when the open exposure is unprotected (portfolio_add_allowed
+        # is False) and there's something to monitor. A pending entry alone does
+        # NOT lock the basket when portfolio_add_allowed=True: the pending will
+        # either get canceled here (if contaminated) or coexist with the new
+        # entry via gateway basket validation. Prior behavior (2026-05-13 fix):
+        # `if exposure_blockers or pending_entries:` self-locked the basket on a
+        # single stale pending while 9 portfolio slots were free, contradicting
+        # §11 and starving daily-target progress when the cycle held one
+        # protected position.
+        if exposure_blockers or (pending_entries and not portfolio_add_allowed):
             decision = TraderDecision(
                 action=ACTION_MONITOR_EXISTING,
                 selected_lane_id=None,
@@ -756,6 +769,7 @@ class TraderBrain:
                     scores=scores,
                     positions=positions,
                     orders=orders,
+                    pending_cancel_order_ids=pending_cancel_order_ids,
                     loss_cap_jpy=loss_cap_jpy,
                     loss_cap_source=loss_cap_source,
                 )
@@ -770,6 +784,7 @@ class TraderBrain:
                     scores=scores,
                     positions=positions,
                     orders=orders,
+                    pending_cancel_order_ids=pending_cancel_order_ids,
                     loss_cap_jpy=loss_cap_jpy,
                     loss_cap_source=loss_cap_source,
                 )
