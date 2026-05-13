@@ -23,7 +23,17 @@ PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
+PYTHONPATH=src python3 -m quant_rabbit.cli news-snapshot
 ```
+
+`news-snapshot` is mandatory — it refreshes `logs/news_digest.md` and
+`logs/news_flow_log.md`, the macro-narrative inputs that
+`strategy/market_story.py` reads for CPI prints, central-bank tone,
+intervention risk, and risk-on/off shifts. Skipping it leaves the cycle
+trading against an obsolete narrative. 2026-05-13 incident: the digest
+was 7 days stale (last refresh 2026-05-06) while live US CPI
+reaccelerated to 3.8% and DXY rallied; the cycle entered EUR/USD LONG
+and GBP/USD LONG against the actual session's USD strength.
 
 ## Reprice Intents
 
