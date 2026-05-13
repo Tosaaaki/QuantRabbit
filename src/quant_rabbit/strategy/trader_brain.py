@@ -444,6 +444,7 @@ from quant_rabbit.strategy.trader_overrides import (
     overrides_score_delta,
 )
 from quant_rabbit.strategy.news_themes import NewsThemes, parse_news_themes
+from quant_rabbit.strategy.reversal_signal import detect_reversal
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1094,17 +1095,32 @@ class TraderBrain:
                 f"promoted +{ATTACK_ADVICE_PROMOTION_BONUS:.0f}",
             )
 
+        # Detect reversal-from-extreme EARLIER in the modifier cascade so
+        # we can suppress lane_history / trader_overrides at confirmed
+        # reversal points. A losing-streak direction stays penalised in
+        # normal trend conditions, but when price is at an extreme AND
+        # structure confirms the reversal, the historical bias is
+        # exactly the WRONG signal — that's the bottom we should buy.
+        pair_chart_for_reversal = (full_pair_charts or {}).get(pair) if full_pair_charts else None
+        _reversal_detected = detect_reversal(pair_chart_for_reversal, direction)
+
         # Module B: lane history bias — recent (pair, direction) P&L
         # adjusts score so a losing-streak direction gets downweighted
         # and a winning-streak direction gets upweighted. Bounded ±25.
-        # Stops the 2026-05-12/13 pattern of repeated same-direction
-        # entries through a regime reversal.
-        if lane_history:
+        # SUPPRESSED when reversal_signal fires for the same direction:
+        # history is a look-back signal that contradicts a confirmed
+        # turn-from-extreme.
+        if lane_history and _reversal_detected is None:
             lh_delta, lh_rationale = lane_history_modifier(lane_history, pair, direction)
             if lh_delta != 0.0:
                 score += lh_delta
                 if lh_rationale:
                     rationale.insert(0, lh_rationale)
+        elif _reversal_detected is not None and lane_history:
+            # Surface the suppression in rationale for audit.
+            lh_delta_check, _ = lane_history_modifier(lane_history, pair, direction)
+            if lh_delta_check < 0:
+                rationale.insert(0, f"lane_history {lh_delta_check:+.1f} SUPPRESSED by reversal signal")
 
         # Module A: regime classifier — REVERSAL_RISK pair + same-side
         # entry direction gets penalty proportional to risk score.
@@ -1133,6 +1149,10 @@ class TraderBrain:
         # Module C: daily-review overrides (lane_id blocks + (pair, direction)
         # score bias). Empty overrides → no-op. Expired overrides already
         # short-circuited at load time.
+        # Bias overrides are suppressed when reversal_signal fires (same
+        # rationale as lane_history); explicit `blocked_lanes` are kept
+        # in force because they represent the operator's hard decision
+        # (e.g. "do not touch this lane today" from daily-review).
         if trader_overrides is not None:
             blocked, block_msg = overrides_block_check(trader_overrides, lane_id)
             if blocked:
@@ -1140,9 +1160,12 @@ class TraderBrain:
                 score -= 100.0
             ov_delta, ov_rationale = overrides_score_delta(trader_overrides, pair, direction)
             if ov_delta != 0.0:
-                score += ov_delta
-                if ov_rationale:
-                    rationale.insert(0, ov_rationale)
+                if _reversal_detected is None:
+                    score += ov_delta
+                    if ov_rationale:
+                        rationale.insert(0, ov_rationale)
+                elif ov_delta < 0:
+                    rationale.insert(0, f"trader_overrides {ov_delta:+.1f} SUPPRESSED by reversal signal")
 
         # News themes: macro narrative converted to per-(pair, direction)
         # bias by news_themes.parse_news_themes. Currency-strength themes,
@@ -1154,6 +1177,19 @@ class TraderBrain:
                 score += nt_delta
                 if nt_rationale:
                     rationale.insert(0, nt_rationale)
+
+        # Reversal-from-extreme override (2026-05-13): when price is at
+        # an extreme percentile (≤0.15 for LONG, ≥0.85 for SHORT) on
+        # 24h OR 7d AND M1/M5/M15 prints a close-confirmed BOS/CHOCH
+        # in the entry direction, add REVERSAL_BONUS. lane_history and
+        # trader_overrides bias overrides were already suppressed
+        # earlier in this function so the bonus is added on top of a
+        # cleaned-up base. User feedback 2026-05-13:
+        # 「安く買って高く売る、高く売って安く買う。こういう基本的なことが
+        # できてない」.
+        if _reversal_detected is not None:
+            score += _reversal_detected.bonus
+            rationale.insert(0, _reversal_detected.rationale)
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
