@@ -37,15 +37,33 @@ SL-free the per-trade risk number is advisory; market structure is authoritative
 
 ### Valid CLOSE triggers (any one is sufficient)
 
-- **MTF reversal**: H4/H1/M30 all flip against position (TREND_DOWN→TREND_UP or vice
-  versa). Cite each TF's regime + struct (BOS/CHOCH) in the receipt.
+- **Structure-event invalidation (§10 Gate A — primary)**: M15 OR H4 prints BOS
+  or CHOCH against the position side (LONG → counter-direction is DOWN, SHORT →
+  UP). This is the path implemented in `gpt_trader._close_thesis_invalidated`;
+  a single counter-side BOS/CHOCH on **either** M15 or H4 is sufficient. Cite
+  the TF + event + price in the receipt (e.g. "H4 BOS_UP@113.587 prints against
+  SHORT thesis"). Do **not** wait for H4/H1/M30 regime labels to all print
+  aligned TREND — `chart_reader` regimes lag structure during reversals
+  (transitions sit at UNCLEAR/RANGE/FAILURE_RISK while swing structure has
+  already flipped), and waiting for the lag is what locks losing positions
+  underwater while the move runs.
+- **Invalidation-price hit (§10 Gate A — receipt-driven)**: receipt populates
+  `invalidation_price` + `invalidation_tf` AND broker bid/ask trades through
+  the level (LONG: bid ≤ level, SHORT: ask ≥ level). Cite the level + TF.
 - **Macro shock**: news event (intervention, FOMC, NFP gap, geopolitical) invalidates
   the pair thesis. Cite the news_digest line in evidence_refs.
 - **Structural margin pressure**: closing this position is the only way to free
-  margin so the portfolio can keep capturing better setups. Quantify the margin
-  trade-off in receipt.
+  margin so the portfolio can keep capturing better setups. Trigger when
+  `margin_available_jpy` is below the `MIN_PRODUCTION_LOT_UNITS` floor for
+  every fresh `LIVE_READY` lane (i.e. the basket cannot add a single 1000u
+  entry without freeing capital). Quantify the margin trade-off in receipt.
 - **Loss > NAV 5%** (≈11k JPY at current equity): structural collapse territory per
   `feedback_independent_judgment.md`. Operator may CLOSE to cap damage.
+
+All five triggers are anchored on broker-truth / chart-reader fields, not on
+JPY/pip/multiplier literals (§3.5-compliant). Gate B (`operator_close_authorized:
+true` in the receipt, or `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell)
+is still required on top of any Gate A trigger.
 
 ### NOT valid CLOSE triggers (do NOT propose CLOSE on these alone)
 
