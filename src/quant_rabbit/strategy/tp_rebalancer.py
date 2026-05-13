@@ -42,6 +42,16 @@ HYSTERESIS_PIPS = float(os.environ.get("QR_TP_REBALANCE_HYSTERESIS_PIPS", "10"))
 MIN_TP_TO_MARKET_PIPS = float(os.environ.get("QR_TP_REBALANCE_MIN_TP_TO_MARKET", "5"))
 MAX_TP_DISTANCE_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_MAX_DISTANCE_ATR", "10"))
 
+# Contract-mode tuning (2026-05-13 second iteration after user feedback).
+# When a position is ≥ ADVERSE_ATR_MULT × ATR underwater AND no reversal
+# signal is firing, the trader pulls TP closer to entry to lock in a
+# small bounce-back profit instead of waiting for the original wide
+# target that may never be hit. User directive:「下げ基調のとき TP を狭める
+# のはいい。下げを否定し始めたときに TP 広げて利鞘を稼ぐ」.
+ADVERSE_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_ADVERSE_ATR_MULT", "1.0"))
+MIN_LOCK_IN_PIPS = float(os.environ.get("QR_TP_REBALANCE_MIN_LOCK_IN_PIPS", "8"))
+LOCK_IN_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_LOCK_IN_ATR_MULT", "0.5"))
+
 
 @dataclass(frozen=True)
 class TPAdjustment:
@@ -78,9 +88,28 @@ def compute_tp_adjustment(
     current_price: float,
     atr_pips: float,
     reward_risk: float,
+    is_reversal_firing: bool = False,
     owner: str = "trader",
 ) -> Optional[TPAdjustment]:
     """Compute a new TP for one position.
+
+    Three modes (2026-05-13 iteration after the 471029 regression):
+
+    1. **expand_reversal** — reversal signal fires for this side:
+       use the full `reward_risk × ATR` distance from entry, letting
+       the bounce run further. May expand or be a no-op (never
+       contract here — reversal means we want MORE room).
+    2. **contract_adverse** — position is ≥ `ADVERSE_ATR_MULT × ATR`
+       underwater AND no reversal signal: pull TP to
+       `entry + max(MIN_LOCK_IN_PIPS, atr × LOCK_IN_ATR_MULT)` (LONG;
+       mirrored for SHORT). User directive 2026-05-13:「下げ基調の
+       とき TP を狭めるのはいい。下げを否定し始めたときに TP 広げて
+       利鞘を稼がないといけないんじゃないの？」 — settle for a small
+       bounce-back profit instead of waiting for the original wide
+       target that may never be hit.
+    3. **expand_only** — otherwise (in profit, or barely adverse, no
+       reversal signal): TP can only move FURTHER from entry. The
+       original "let winners run" rule.
 
     Returns None when the position should not be adjusted (wrong
     owner, no existing TP, change below hysteresis, safety violation).
@@ -90,55 +119,76 @@ def compute_tp_adjustment(
     if owner != "trader":
         return None
     if current_tp is None:
-        # SL-free mode keeps TP attached; if TP is missing entirely the
-        # position-protection gateway repair path should handle it, not
-        # this module.
         return None
     if atr_pips <= 0 or reward_risk <= 0:
         return None
 
     pip_factor = _pip_factor(pair)
     pip_size = 1.0 / pip_factor
-
-    # Desired TP distance from entry: market reward_risk × current ATR.
-    # Cap at MAX_TP_DISTANCE_ATR_MULT × ATR to bound greed.
-    desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
     side_up = side.upper()
-
-    # Core invariant (2026-05-13 fix after 471029 mishap): TP can only
-    # move FURTHER from entry, never closer. "Let winners run, never
-    # pull profit targets in." The original safety_margin logic
-    # accidentally clamped contraction-cases to `current_price + 5pip`,
-    # which on 471029 collapsed an 88pip TP down to 2.6pip and fired
-    # the position for +442JPY instead of letting it ride toward the
-    # original 88pip target. User feedback: 「TP動かした?利確されちゃった」.
-    # If the market-derived desired distance is SHORTER than the
-    # existing TP distance, we leave the existing TP alone — the
-    # operator/intent_generator already set a wider target and the
-    # rebalancer must not be the one that locked in less profit.
-    distance_old = abs(current_tp - entry_price) * pip_factor
-    if desired_distance_pips <= distance_old:
-        return None  # never contract — let winners run
-
-    if side_up == "LONG":
-        candidate_tp = entry_price + desired_distance_pips * pip_size
-    elif side_up == "SHORT":
-        candidate_tp = entry_price - desired_distance_pips * pip_size
-    else:
+    if side_up not in ("LONG", "SHORT"):
         return None
 
+    distance_old = abs(current_tp - entry_price) * pip_factor
+    desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
+
+    # Adverse detection (only matters for contract_adverse mode).
+    if side_up == "LONG":
+        is_adverse = current_price < entry_price
+        adverse_pips = (entry_price - current_price) * pip_factor
+    else:
+        is_adverse = current_price > entry_price
+        adverse_pips = (current_price - entry_price) * pip_factor
+    is_significant_adverse = is_adverse and adverse_pips >= ADVERSE_ATR_MULT * atr_pips
+
+    # Pick mode.
+    if is_reversal_firing:
+        mode = "expand_reversal"
+        if side_up == "LONG":
+            candidate_tp = entry_price + desired_distance_pips * pip_size
+        else:
+            candidate_tp = entry_price - desired_distance_pips * pip_size
+        # In reversal mode we never want to contract; if the desired
+        # distance is shorter than the old TP, leave it alone.
+        if desired_distance_pips <= distance_old:
+            return None
+    elif is_significant_adverse:
+        mode = "contract_adverse"
+        lock_in_pips = max(MIN_LOCK_IN_PIPS, atr_pips * LOCK_IN_ATR_MULT)
+        if side_up == "LONG":
+            candidate_tp = entry_price + lock_in_pips * pip_size
+        else:
+            candidate_tp = entry_price - lock_in_pips * pip_size
+        # Only fire if the lock-in TP is actually CLOSER than the
+        # existing TP (we're contracting). If it would EXPAND, fall
+        # through to expand_only mode which has stricter rules.
+        if abs(candidate_tp - entry_price) >= distance_old:
+            mode = "expand_only"
+            if desired_distance_pips <= distance_old:
+                return None
+            if side_up == "LONG":
+                candidate_tp = entry_price + desired_distance_pips * pip_size
+            else:
+                candidate_tp = entry_price - desired_distance_pips * pip_size
+    else:
+        mode = "expand_only"
+        if desired_distance_pips <= distance_old:
+            return None
+        if side_up == "LONG":
+            candidate_tp = entry_price + desired_distance_pips * pip_size
+        else:
+            candidate_tp = entry_price - desired_distance_pips * pip_size
+
     # Safety: TP must not fire immediately. Keep at least
-    # MIN_TP_TO_MARKET_PIPS distance from current price. This only
-    # matters in pathological cases — since we just guaranteed
-    # `desired_distance > existing TP distance`, the new TP is by
-    # construction further from current price than the old TP was.
+    # MIN_TP_TO_MARKET_PIPS distance from current price. TP must remain
+    # on the correct side of entry (avoid locking in a loss).
     safety_margin = MIN_TP_TO_MARKET_PIPS * pip_size
     if side_up == "LONG":
         if candidate_tp < current_price + safety_margin:
-            return None  # market already overshot — leave alone
+            return None
         if candidate_tp <= entry_price:
             return None
-    else:  # SHORT
+    else:
         if candidate_tp > current_price - safety_margin:
             return None
         if candidate_tp >= entry_price:
@@ -150,9 +200,10 @@ def compute_tp_adjustment(
         return None
 
     distance_new = abs(new_tp - entry_price) * pip_factor
+    direction_label = "expanded" if distance_new > distance_old else "contracted"
     rationale = (
-        f"TP expanded {distance_old:.1f}→{distance_new:.1f}pip "
-        f"(reward_risk={reward_risk:.2f}, atr={atr_pips:.1f}pip, "
+        f"TP {direction_label} {distance_old:.1f}→{distance_new:.1f}pip "
+        f"(mode={mode}, reward_risk={reward_risk:.2f}, atr={atr_pips:.1f}pip, "
         f"change={change_pips:.1f}pip)"
     )
     return TPAdjustment(
@@ -222,6 +273,15 @@ def compute_all_tp_adjustments(
         if atr_pips is None or atr_pips <= 0:
             continue
 
+        # Check reversal signal for the position's direction. If firing,
+        # tp_rebalancer enters expand_reversal mode and the contract
+        # branch is short-circuited.
+        try:
+            from quant_rabbit.strategy.reversal_signal import detect_reversal as _detect_reversal
+            reversal = _detect_reversal(chart, side_up)
+        except Exception:
+            reversal = None
+
         adj = compute_tp_adjustment(
             trade_id=str(getattr(position, "trade_id", "")),
             pair=pair,
@@ -231,6 +291,7 @@ def compute_all_tp_adjustments(
             current_price=current_price,
             atr_pips=atr_pips,
             reward_risk=float(reward_risk_value),
+            is_reversal_firing=(reversal is not None),
             owner=owner_str.lower(),
         )
         if adj is not None:
