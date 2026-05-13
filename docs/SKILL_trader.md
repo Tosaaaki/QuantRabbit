@@ -97,6 +97,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 # symlink and clobber the curated digest. If the digest goes stale (the
 # routine fails or is paused), `strategy/market_story.py` will surface
 # missing-evidence rationale on lanes but will not crash.
+#
+# daily-review: refresh `data/trader_overrides.json` from the last 24h
+# of realized P&L so trader_brain's Module C reads a current snapshot.
+# Idempotent and fast (single SQLite read, no network), so safe to run
+# every cycle. Expiry is JST midnight, so this also keeps the file
+# rolling without manual intervention.
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-review
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync

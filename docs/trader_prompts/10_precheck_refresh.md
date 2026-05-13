@@ -41,6 +41,17 @@ was a standalone file, 7 days stale (last refresh 2026-05-06), while
 the dev routine was writing fresh hourly to its own file the trader
 never read. Symlink resolves the bridge.
 
+**daily-review** runs every cycle (idempotent, no network) to refresh
+`data/trader_overrides.json` from execution_ledger.db. trader_brain's
+Module C reads that file for direction-bias overrides + blocked-lane
+hints derived from the last 24h of realized P&L. Running every cycle
+keeps the override rolling without a separate scheduled task and lets
+new closed trades immediately influence the next cycle's scoring.
+
+```bash
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-review
+```
+
 ## Reprice Intents
 
 Context fetches can outlive the quote freshness window. Refresh broker truth again immediately before intent pricing.
