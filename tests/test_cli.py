@@ -128,6 +128,12 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         "QR_MAX_PORTFOLIO_POSITIONS",
         "QR_TRADER_POSITION_NAV_PCT",
         "QR_TRADER_BASE_UNITS",
+        # Added 2026-05-13 (feedback_broker_sl_noise_hunt.md): broker
+        # SL on new entries and trailing SL are BOTH off by default
+        # under the SL-free runtime. Routine cycles never silently
+        # attach a tight broker SL or trail an existing one.
+        "QR_NEW_ENTRY_INITIAL_SL",
+        "QR_DISABLE_TRAILING_SL",
     )
 
     def setUp(self) -> None:

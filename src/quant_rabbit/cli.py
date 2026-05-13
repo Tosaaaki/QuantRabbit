@@ -131,16 +131,23 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # positions reach ~90% margin utilization, just inside the 92% cap.
     "QR_TRADER_POSITION_NAV_PCT": "30",
     "QR_TRADER_BASE_UNITS": "3000",
-    # G (2026-05-13) — auto-enable broker-side initial SL on new
-    # entries. 2026-05-12T15:33 UTC mass-close incident proved that
-    # an honor-system `operator_close_authorized` is not structural
-    # protection: a panic-close trader self-sets the flag. The only
-    # mechanical defense is a broker-side SL attached on entry.
-    # `_oanda_order_request` reads this env to decide whether to add
-    # `stopLossOnFill` to every new order; intent.sl is already
-    # noise-resistant (F path: H4-ATR × 1.5 + session widening).
-    # Set OFF only for legacy SL-free-only tests.
-    "QR_NEW_ENTRY_INITIAL_SL": "1",
+    # SL-free invariant restored 2026-05-13 (feedback_broker_sl_noise_hunt.md).
+    # f382dc6 F shipped `QR_NEW_ENTRY_INITIAL_SL=1` to attach a broker SL
+    # to every new entry "for noise resistance". In practice the
+    # ATR×1.5 floor + session multiplier left the SL inside the M15
+    # noise band on thin sessions; combined with the f382dc6 H trailing
+    # path (which itself tightened the broker SL toward the next BOS
+    # event), the live cycle harvested its own broker SL three times in
+    # 16 minutes on 2026-05-13 (AUD_JPY 470989 -52 JPY at 4 pip; 470997
+    # -546 JPY at 42 pip; total -1,053 JPY of pure noise loss). The
+    # operator directive 「SLいらない」 (`feedback_no_tight_sl_thin_market.md`)
+    # is absolute — broker-side SL on new entries is OFF by default,
+    # and the trailing path is disabled. Both knobs can still be
+    # explicitly turned ON via env if a future setup proves it needs
+    # broker-side SL (e.g. tomorrow's NFP), but the live default must
+    # not silently re-introduce noise-band stops.
+    "QR_NEW_ENTRY_INITIAL_SL": "0",
+    "QR_DISABLE_TRAILING_SL": "1",
 }
 
 
