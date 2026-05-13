@@ -86,13 +86,17 @@ PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
-# news-snapshot is mandatory: refreshes logs/news_digest.md +
-# logs/news_flow_log.md, which strategy/market_story.py reads for the
-# day's macro narrative (CPI, central banks, intervention risk, risk
-# on/off). Skipping it leaves the cycle trading a stale story —
-# 2026-05-13 incident: the digest was 7 days stale, the cycle traded
-# EUR/USD LONG + GBP/USD LONG against a live US CPI 3.8% / DXY rally.
-PYTHONPATH=src python3 -m quant_rabbit.cli news-snapshot
+# News is produced by a separate dedicated routine (`qr-news-digest`,
+# Claude Desktop, hourly at :23 JST). That routine runs in the dev
+# worktree at `/Users/tossaki/App/QuantRabbit/` and writes
+# WebSearch-curated trader-perspective content to its own
+# `logs/news_digest.md` + `logs/news_flow_log.md`. The live worktree's
+# `logs/news_digest.md` is symlinked to the dev path so this cycle sees
+# the dedicated routine's curated digest. The trader cycle must NOT run
+# `news-snapshot` here — that would write raw RSS output through the
+# symlink and clobber the curated digest. If the digest goes stale (the
+# routine fails or is paused), `strategy/market_story.py` will surface
+# missing-evidence rationale on lanes but will not crash.
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
