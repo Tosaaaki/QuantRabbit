@@ -45,18 +45,35 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertLess(adj.new_tp, adj.current_tp)  # TP moves DOWN for SHORT = wider
         self.assertGreater(adj.distance_pips_new, adj.distance_pips_old)
 
-    def test_long_contracted_tp(self) -> None:
-        """When reward_risk shrinks, TP should contract toward entry."""
+    def test_contraction_is_refused(self) -> None:
+        """TP must never contract toward entry (2026-05-13 fix after the
+        471029 incident where an 88pip TP was clamped to 2.6pip and fired
+        for +442JPY instead of riding to the original 88pip target).
+        When market reward_risk × ATR is SHORTER than the existing TP
+        distance, leave the existing TP alone."""
         self._kill_switch_off()
         adj = compute_tp_adjustment(
             trade_id="t3", pair="EUR_USD", side="LONG",
             entry_price=1.3000, current_tp=1.3100,  # 100 pip TP
             current_price=1.3010,  # tiny profit
-            atr_pips=15, reward_risk=1.5,  # 22.5 pip desired
+            atr_pips=15, reward_risk=1.5,  # 22.5 pip desired (< 100)
         )
-        self.assertIsNotNone(adj)
-        self.assertLess(adj.new_tp, adj.current_tp)  # contracted
-        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+        self.assertIsNone(adj)
+
+    def test_regression_471029_long_tp_must_not_collapse_to_safety_margin(self) -> None:
+        """Exact 471029 incident: entry 1.35077, original TP 1.35956
+        (88pip), current price 1.35100, market_rr small enough that
+        candidate_tp falls below current+5pip. Old logic clamped to
+        current+5pip = 1.35150, firing immediately. New logic must
+        refuse the contraction and leave TP alone."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471029", pair="GBP_USD", side="LONG",
+            entry_price=1.35077, current_tp=1.35956,
+            current_price=1.35100,
+            atr_pips=2.0, reward_risk=1.5,  # 3 pip desired — well below 88pip
+        )
+        self.assertIsNone(adj)
 
     def test_hysteresis_blocks_small_change(self) -> None:
         self._kill_switch_off()

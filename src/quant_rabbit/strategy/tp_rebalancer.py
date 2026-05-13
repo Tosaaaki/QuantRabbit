@@ -104,6 +104,22 @@ def compute_tp_adjustment(
     # Cap at MAX_TP_DISTANCE_ATR_MULT × ATR to bound greed.
     desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
     side_up = side.upper()
+
+    # Core invariant (2026-05-13 fix after 471029 mishap): TP can only
+    # move FURTHER from entry, never closer. "Let winners run, never
+    # pull profit targets in." The original safety_margin logic
+    # accidentally clamped contraction-cases to `current_price + 5pip`,
+    # which on 471029 collapsed an 88pip TP down to 2.6pip and fired
+    # the position for +442JPY instead of letting it ride toward the
+    # original 88pip target. User feedback: 「TP動かした?利確されちゃった」.
+    # If the market-derived desired distance is SHORTER than the
+    # existing TP distance, we leave the existing TP alone — the
+    # operator/intent_generator already set a wider target and the
+    # rebalancer must not be the one that locked in less profit.
+    distance_old = abs(current_tp - entry_price) * pip_factor
+    if desired_distance_pips <= distance_old:
+        return None  # never contract — let winners run
+
     if side_up == "LONG":
         candidate_tp = entry_price + desired_distance_pips * pip_size
     elif side_up == "SHORT":
@@ -112,20 +128,19 @@ def compute_tp_adjustment(
         return None
 
     # Safety: TP must not fire immediately. Keep at least
-    # MIN_TP_TO_MARKET_PIPS distance from current price.
+    # MIN_TP_TO_MARKET_PIPS distance from current price. This only
+    # matters in pathological cases — since we just guaranteed
+    # `desired_distance > existing TP distance`, the new TP is by
+    # construction further from current price than the old TP was.
     safety_margin = MIN_TP_TO_MARKET_PIPS * pip_size
     if side_up == "LONG":
-        # TP > current + margin
-        min_allowed_tp = current_price + safety_margin
-        if candidate_tp < min_allowed_tp:
-            candidate_tp = min_allowed_tp
-        # And TP must remain > entry (avoid locking in a loss)
+        if candidate_tp < current_price + safety_margin:
+            return None  # market already overshot — leave alone
         if candidate_tp <= entry_price:
             return None
     else:  # SHORT
-        max_allowed_tp = current_price - safety_margin
-        if candidate_tp > max_allowed_tp:
-            candidate_tp = max_allowed_tp
+        if candidate_tp > current_price - safety_margin:
+            return None
         if candidate_tp >= entry_price:
             return None
 
@@ -134,11 +149,9 @@ def compute_tp_adjustment(
     if change_pips < HYSTERESIS_PIPS:
         return None
 
-    distance_old = abs(current_tp - entry_price) * pip_factor
     distance_new = abs(new_tp - entry_price) * pip_factor
-    direction = "expanded" if distance_new > distance_old else "contracted"
     rationale = (
-        f"TP {direction} {distance_old:.1f}→{distance_new:.1f}pip "
+        f"TP expanded {distance_old:.1f}→{distance_new:.1f}pip "
         f"(reward_risk={reward_risk:.2f}, atr={atr_pips:.1f}pip, "
         f"change={change_pips:.1f}pip)"
     )
