@@ -32,6 +32,21 @@ from quant_rabbit.models import BrokerSnapshot, Owner, Side
 # the override env knob is documented.
 TRAILING_SL_SPREAD_BUFFER_MULT = 2.0
 
+# Market-derived minimum distance between trailing SL and entry. A
+# trailing SL candidate that would land closer to entry than
+# `TRAILING_SL_MIN_ENTRY_DISTANCE_ATR_MULT × M15_ATR` is rejected — the
+# BOS print is inside the noise band the M15 candle is fluctuating
+# through, so tightening the SL to it is equivalent to inviting a
+# routine wick to harvest it. 1.5σ is the documented one-standard-
+# deviation extreme on M15 ATR (per `chart_reader` BB convention) plus
+# a 0.5σ buffer, which is the smallest distance that survives a single
+# adverse ATR-band swing without SL hit. This boundary is market-
+# derived (M15 ATR) and the multiplier is a statistical noise-band
+# boundary, not a JPY/pip literal. The 2026-05-13 AUD_JPY 470989/470997
+# 4-pip SL hits at entry+0.4pip-from-entry are the regression this floor
+# prevents.
+TRAILING_SL_MIN_ENTRY_DISTANCE_ATR_MULT = 1.5
+
 
 @dataclass(frozen=True)
 class TrailingUpdate:
@@ -48,10 +63,25 @@ class TrailingUpdate:
 
 # Regex matches the chart_reader chart_story format:
 #   "M15(REGIME, ADX=… struct=BOS_UP@1.1234)"
-# Captures (timeframe, event_type, direction, price).
+#   "M15(REGIME, ADX=… struct=BOS_UP@1.1234:wick)"   (wick-only sweep)
+# Captures (timeframe, event_type, direction, price, optional ":wick").
+# The `:wick` suffix is the 2026-05-13 close_confirmed flag emitted by
+# `analysis.structure` / `chart_reader`; trailing must NOT fire on a
+# wick-only event because the breaking candle closed back inside the
+# prior range — the structure did not actually break, only its high or
+# low was tagged. Same lens `gpt_trader._close_thesis_invalidated` uses.
 _STRUCT_RE = re.compile(
-    r"\b(M5|M15|M30|H1|H4|D)\([^)]*?struct=(BOS|CHOCH)_(UP|DOWN)@([0-9]+\.?[0-9]*)"
+    r"\b(M5|M15|M30|H1|H4|D)\([^)]*?struct=(BOS|CHOCH)_(UP|DOWN)@([0-9]+\.?[0-9]*)(:wick)?"
 )
+
+# Extracts M15 ATR (in pips) from the chart_story so the trailing SL
+# floor (`TRAILING_SL_MIN_ENTRY_DISTANCE_ATR_MULT × M15_ATR`) is anchored
+# in current market volatility rather than a JPY/pip literal. The
+# trailing TFs are M15/M30/H1, but M15 is the dominant noise-band
+# generator on a fresh entry — using H1/H4 ATR would over-loosen the
+# floor on calm session. Returns None if the field is absent so the
+# floor degrades safely to "no floor" rather than crashing the cycle.
+_M15_ATR_RE = re.compile(r"\bM15\([^)]*?ATR=([0-9]+\.?[0-9]*)p")
 
 # Only these timeframes can drive a trailing update. M5/M1 print BOS
 # events on routine noise; H4/D fire too rarely to be useful for
@@ -59,16 +89,41 @@ _STRUCT_RE = re.compile(
 TRAILING_TIMEFRAMES = ("M15", "M30", "H1")
 
 
-def _parse_struct_events(chart_story: str) -> dict[str, tuple[str, str, float]]:
-    out: dict[str, tuple[str, str, float]] = {}
+def _parse_struct_events(
+    chart_story: str,
+) -> dict[str, tuple[str, str, float, bool]]:
+    """Return {timeframe: (event_type, direction, price, close_confirmed)}.
+
+    `close_confirmed` is False when chart_reader appended the `:wick`
+    suffix — the new swing pivot's candle closed back inside the prior
+    range. Trailing skips those events because the structure did not
+    actually break.
+    """
+    out: dict[str, tuple[str, str, float, bool]] = {}
     if not chart_story:
         return out
-    for tf, event_type, direction, price_str in _STRUCT_RE.findall(chart_story):
+    for tf, event_type, direction, price_str, wick_tag in _STRUCT_RE.findall(
+        chart_story
+    ):
         try:
-            out[tf] = (event_type, direction, float(price_str))
+            close_confirmed = wick_tag != ":wick"
+            out[tf] = (event_type, direction, float(price_str), close_confirmed)
         except (TypeError, ValueError):
             continue
     return out
+
+
+def _m15_atr_pips(chart_story: str) -> float | None:
+    """Pull M15 ATR in pips from chart_story, or None if absent."""
+    if not chart_story:
+        return None
+    m = _M15_ATR_RE.search(chart_story)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except (TypeError, ValueError):
+        return None
 
 
 def _spread_pips(snapshot: BrokerSnapshot, pair: str) -> float | None:
@@ -91,9 +146,11 @@ def _round_price(pair: str, value: float) -> float:
 def _compute_new_sl(
     *,
     side: str,
+    entry_price: float,
     current_sl: float,
     bos_price: float,
     spread_pips: float | None,
+    m15_atr_pips: float | None,
     pair: str,
 ) -> float | None:
     """Return a tighter SL anchored on the BOS price + spread buffer.
@@ -104,19 +161,46 @@ def _compute_new_sl(
     moved if the candidate is CLOSER to the current price than the
     existing SL — broker SL must never be widened (AGENT_CONTRACT
     §10: "Existing SL cannot be widened").
+
+    Additionally, the candidate SL must stay AT LEAST
+    `TRAILING_SL_MIN_ENTRY_DISTANCE_ATR_MULT × M15_ATR` away from the
+    position's entry price. Without this market-derived floor, a BOS
+    print right next to entry tightens the SL into the M15 noise band
+    and gets stopped on routine wicking. This is the 2026-05-13
+    AUD_JPY 470989 / 470997 regression: SHORT entry at 114.200 with a
+    BOS_UP printing at 114.146 had trailing pull the SL down to
+    ~114.204 (entry + 0.4 pip), which routine bid jitter then tagged
+    twice in 16 minutes. If `m15_atr_pips` is None (chart_story
+    format drift), the floor degrades to no-floor — the cycle reads
+    market truth before the next trailing pass anyway, so a single
+    skipped floor cannot generate a runaway state.
     """
     if spread_pips is None:
         return None
     buffer = spread_pips * TRAILING_SL_SPREAD_BUFFER_MULT * _pip_size(pair)
     side_upper = side.upper()
+    if m15_atr_pips is not None and m15_atr_pips > 0:
+        min_distance = m15_atr_pips * TRAILING_SL_MIN_ENTRY_DISTANCE_ATR_MULT * _pip_size(pair)
+    else:
+        min_distance = 0.0
     if side_upper == "LONG":
         # LONG SL is below price; tighter means HIGHER (closer to price).
         candidate = bos_price - buffer
+        # Noise-band floor: SL must stay at least `min_distance` BELOW
+        # entry. If the BOS-derived candidate is too close to entry
+        # (above entry - min_distance), the trailing print is inside
+        # the M15 noise band — skip this update entirely.
+        if min_distance > 0 and candidate > entry_price - min_distance:
+            return None
         if candidate > current_sl:
             return _round_price(pair, candidate)
     elif side_upper == "SHORT":
         # SHORT SL is above price; tighter means LOWER.
         candidate = bos_price + buffer
+        # Symmetric noise-band floor: SL must stay at least
+        # `min_distance` ABOVE entry.
+        if min_distance > 0 and candidate < entry_price + min_distance:
+            return None
         if candidate < current_sl:
             return _round_price(pair, candidate)
     return None
@@ -195,16 +279,25 @@ def apply_trailing_sls(
         chart = chart_by_pair.get(pair) or {}
         chart_story = str(chart.get("chart_story") or "")
         structs = _parse_struct_events(chart_story)
+        m15_atr_pips = _m15_atr_pips(chart_story)
 
         counter_dir = "DOWN" if side.upper() == "LONG" else "UP"
         bos_event = None
         bos_tf = None
         for tf in TRAILING_TIMEFRAMES:
             event = structs.get(tf)
-            if event and event[1] == counter_dir:
-                bos_event = event
-                bos_tf = tf
-                break
+            if event is None or event[1] != counter_dir:
+                continue
+            # Skip wick-only events: the breaking candle closed back
+            # inside the prior range, so the structure did not actually
+            # break — chasing it with a tighter SL just invites a
+            # routine wick to harvest it. Mirrors the close_confirmed
+            # filter in `gpt_trader._close_thesis_invalidated`.
+            if not event[3]:
+                continue
+            bos_event = event
+            bos_tf = tf
+            break
         if bos_event is None:
             continue
 
@@ -212,9 +305,11 @@ def apply_trailing_sls(
         bos_price = bos_event[2]
         new_sl = _compute_new_sl(
             side=side,
+            entry_price=float(pos.entry_price),
             current_sl=pos.stop_loss,
             bos_price=bos_price,
             spread_pips=spread_pips,
+            m15_atr_pips=m15_atr_pips,
             pair=pair,
         )
         if new_sl is None:
