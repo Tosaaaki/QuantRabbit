@@ -443,6 +443,7 @@ from quant_rabbit.strategy.trader_overrides import (
     overrides_block_check,
     overrides_score_delta,
 )
+from quant_rabbit.strategy.news_themes import NewsThemes, parse_news_themes
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -718,6 +719,12 @@ class TraderBrain:
         # Module C: daily-review feedback. Empty when file is absent or
         # expired — no behavior change in that case.
         trader_overrides = load_trader_overrides(_QR_ROOT / "data")
+        # Module A-extension: news theme parser. Reads the curated
+        # `logs/news_digest.md` (produced by qr-news-digest routine) and
+        # converts macro themes (USD strong, risk-off, pair-specific
+        # bearish/bullish notes) into bounded per-(pair, direction)
+        # score biases. Empty when digest is missing or unparseable.
+        news_themes = parse_news_themes(_QR_ROOT / "logs" / "news_digest.md")
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
@@ -740,6 +747,7 @@ class TraderBrain:
                         lane_history=lane_history,
                         regime_snapshots=regime_snapshots,
                         trader_overrides=trader_overrides,
+                        news_themes=news_themes,
                     )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
@@ -840,6 +848,7 @@ class TraderBrain:
         lane_history: dict[tuple[str, str], LaneHistorySnapshot] | None = None,
         regime_snapshots: dict[str, RegimeSnapshot] | None = None,
         trader_overrides: TraderOverrides | None = None,
+        news_themes: NewsThemes | None = None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -1134,6 +1143,17 @@ class TraderBrain:
                 score += ov_delta
                 if ov_rationale:
                     rationale.insert(0, ov_rationale)
+
+        # News themes: macro narrative converted to per-(pair, direction)
+        # bias by news_themes.parse_news_themes. Currency-strength themes,
+        # risk-on/off, and explicit pair-specific notes all roll into a
+        # single bounded delta. Empty when news_digest.md is missing.
+        if news_themes is not None:
+            nt_delta, nt_rationale = news_themes.for_pair(pair, direction)
+            if nt_delta != 0.0:
+                score += nt_delta
+                if nt_rationale:
+                    rationale.insert(0, nt_rationale)
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)

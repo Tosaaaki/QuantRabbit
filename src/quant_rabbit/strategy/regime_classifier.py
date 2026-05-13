@@ -126,8 +126,15 @@ def classify_pair(pair_chart: Dict[str, Any]) -> RegimeSnapshot:
 
     reversal_risk = min(1.0, reversal_risk)
 
-    # Label assignment.
-    if reversal_risk >= REGIME_REVERSAL_RISK_GATE:
+    # Detect "no usable signal" up front so empty/malformed payloads do
+    # not silently land in RANGING. UNKNOWN preserves the "we cannot
+    # tell" state through the scoring path and avoids the small
+    # RANGING penalty when there is genuinely no data.
+    has_confluence = (sigma_24h is not None) or (atr_pct is not None) or (tf_agreement is not None)
+    has_tf_bias = any(d != "NEUTRAL" for d in tf_directions.values())
+    if not has_confluence and not has_tf_bias:
+        label = "UNKNOWN"
+    elif reversal_risk >= REGIME_REVERSAL_RISK_GATE:
         label = "REVERSAL_RISK"
     elif len(distinct_dirs) <= 1 and direction_hint != "NEUTRAL":
         label = "STABLE_TREND"

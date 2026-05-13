@@ -288,6 +288,34 @@ def main(argv: list[str] | None = None) -> int:
     p_opt.add_argument("--output", type=Path, default=DEFAULT_OPTION_SKEW)
     p_opt.add_argument("--report", type=Path, default=DEFAULT_OPTION_SKEW_REPORT)
 
+    p_dreview = sub.add_parser(
+        "daily-review",
+        help="Build data/trader_overrides.json from recent realized P&L (Module C producer).",
+    )
+    p_dreview.add_argument(
+        "--ledger-db",
+        type=Path,
+        default=Path("data/execution_ledger.db"),
+        help="Path to execution_ledger.db (default: data/execution_ledger.db).",
+    )
+    p_dreview.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/trader_overrides.json"),
+        help="Where to write trader_overrides.json (default: data/trader_overrides.json).",
+    )
+    p_dreview.add_argument(
+        "--lookback-hours",
+        type=float,
+        default=None,
+        help="Lookback window in hours (default: env QR_DAILY_REVIEW_LOOKBACK_HOURS or 24).",
+    )
+    p_dreview.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute and print report but do not write the output file.",
+    )
+
     p_news = sub.add_parser("news-snapshot", help="Fetch public news feeds into ignored data/log artifacts.")
     p_news.add_argument("--no-fetch", action="store_true", help="Skip network fetch and emit a missing-feed issue.")
     p_news.add_argument("--lookback-hours", type=int, default=None)
@@ -1268,6 +1296,25 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({
             "output_path": str(args.output), "report_path": str(args.report),
             "reports": len(snap.reports), "issues": list(snap.issues),
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "daily-review":
+        from quant_rabbit.strategy.daily_review import (
+            DAILY_REVIEW_LOOKBACK_HOURS,
+            compute_daily_review,
+            write_trader_overrides,
+        )
+        lookback = args.lookback_hours if args.lookback_hours is not None else DAILY_REVIEW_LOOKBACK_HOURS
+        report = compute_daily_review(args.ledger_db, lookback_hours=lookback)
+        if not args.dry_run:
+            write_trader_overrides(report, args.output)
+        print(json.dumps({
+            "output_path": str(args.output) if not args.dry_run else "(dry-run, not written)",
+            "expires_at_utc": report.expires_at_utc,
+            "narrative_summary": report.narrative_summary,
+            "bias_overrides": report.bias_overrides,
+            "blocked_lanes": report.blocked_lanes,
+            "lookback_hours": lookback,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "option-skew":
