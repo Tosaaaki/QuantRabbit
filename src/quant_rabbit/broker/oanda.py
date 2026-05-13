@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import urllib.parse
@@ -49,14 +50,31 @@ class OandaReadOnlyClient:
 
     def snapshot(self, pairs: Iterable[str]) -> BrokerSnapshot:
         fetched_at = datetime.now(timezone.utc)
-        positions = tuple(self._open_positions())
-        orders = tuple(self._pending_orders())
+        positions = list(self._open_positions())
+        orders = list(self._pending_orders())
+        # OANDA's /v3/accounts/{id}/openTrades response embeds the
+        # currently-attached TP order under each trade as `takeProfitOrder`.
+        # Legacy positions whose TP was created before the owner tag was
+        # introduced sometimes come back with `takeProfitOrder=null` even
+        # though the same TP order is still PENDING in
+        # /v3/accounts/{id}/pendingOrders (with `tradeID` pointing back at
+        # the position). Without backfill, target._position_risk marks the
+        # position protected=False and PositionManager queues a redundant
+        # PROTECT repair — which is exactly the EUR_USD 470960/470948 case
+        # observed on 2026-05-13 after the AUD_JPY 3-position CLOSE. Pull
+        # the TP price from the pending list when the trade-side reference
+        # is missing. SL is NOT backfilled the same way: under SL-free
+        # operating mode (QR_TRADER_DISABLE_SL_REPAIR=1) the absence of
+        # `stopLossOrder` is intentional, and joining stale pending SL
+        # orders back into a position summary would defeat the SL-free
+        # design.
+        positions = _backfill_take_profit_from_pending(positions, orders)
         quotes, home_conversions = self._pricing(tuple(pairs))
         account = self._account_summary_safe(fetched_at)
         return BrokerSnapshot(
             fetched_at_utc=fetched_at,
-            positions=positions,
-            orders=orders,
+            positions=tuple(positions),
+            orders=tuple(orders),
             quotes=quotes,
             account=account,
             home_conversions=home_conversions,
@@ -181,6 +199,58 @@ def _nested_price(payload: object) -> float | None:
     if not isinstance(payload, dict):
         return None
     return _optional_float(payload.get("price"))
+
+
+def _backfill_take_profit_from_pending(
+    positions: list[BrokerPosition],
+    orders: list[BrokerOrder],
+) -> list[BrokerPosition]:
+    """Join pending TAKE_PROFIT orders into positions that lack one.
+
+    OANDA's openTrades response should embed each trade's currently-attached
+    TP order under `takeProfitOrder`, but legacy positions whose TP was
+    created before owner tagging sometimes come back with that field unset
+    while the same TP is still PENDING in the pendingOrders list with a
+    `tradeID` pointing back at the position. The downstream `protected`
+    flag (`target._position_risk`) reads `position.take_profit` directly,
+    so the position is flagged `protected=False` even though the broker
+    actually holds the TP. This backfill closes that gap.
+
+    STOP_LOSS is intentionally NOT backfilled. Under SL-free operating
+    mode (`QR_TRADER_DISABLE_SL_REPAIR=1`) the absence of a position-side
+    `stopLossOrder` is a deliberate design choice (per
+    `feedback_no_tight_sl_thin_market.md` and `feedback_offense_sizing.md`);
+    silently joining a stray pending SL would defeat the SL-free invariant.
+    """
+    if not positions or not orders:
+        return positions
+    by_trade_tp: dict[str, float] = {}
+    for order in orders:
+        tid = str(order.trade_id or "")
+        if not tid or order.price is None:
+            continue
+        otype = str(order.order_type or "").upper()
+        state = str(order.state or "").upper()
+        if state and state != "PENDING":
+            continue
+        if otype != "TAKE_PROFIT":
+            continue
+        # First TP per trade wins; OANDA should only ever have one
+        # active TP per trade at a time.
+        by_trade_tp.setdefault(tid, float(order.price))
+    if not by_trade_tp:
+        return positions
+    backfilled: list[BrokerPosition] = []
+    for pos in positions:
+        if pos.take_profit is not None:
+            backfilled.append(pos)
+            continue
+        tp = by_trade_tp.get(str(pos.trade_id))
+        if tp is None:
+            backfilled.append(pos)
+            continue
+        backfilled.append(dataclasses.replace(pos, take_profit=tp))
+    return backfilled
 
 
 def _optional_float(value: object) -> float | None:

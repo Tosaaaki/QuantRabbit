@@ -144,6 +144,172 @@ class OandaAccountSummaryTest(unittest.TestCase):
         self.assertEqual(len(snapshot.quotes), 1)
         self.assertAlmostEqual(snapshot.home_conversions["USD"], 157.1)
 
+    def test_snapshot_backfills_take_profit_from_pending_orders(self) -> None:
+        # Regression for the 2026-05-13 EUR_USD 470960/470948 case where
+        # openTrades returned takeProfitOrder=null but pendingOrders still
+        # carried the TP order with tradeID matching the open position.
+        # The position must come back protected (take_profit set) so
+        # PositionManager does not queue a redundant PROTECT repair.
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        with patch.dict(
+            "os.environ",
+            {
+                "QR_OANDA_TOKEN": "qr-token",
+                "QR_OANDA_ACCOUNT_ID": "qr-account",
+                "QR_OANDA_BASE_URL": "https://example.invalid/",
+            },
+            clear=True,
+        ):
+            client = OandaReadOnlyClient()
+
+        def _route(path, query=None):
+            if path.endswith("/openTrades"):
+                return {
+                    "trades": [
+                        {
+                            "id": "470960",
+                            "instrument": "EUR_USD",
+                            "currentUnits": "-8000",
+                            "price": "1.17340",
+                            "unrealizedPL": "-630.0",
+                            # takeProfitOrder intentionally absent
+                        }
+                    ]
+                }
+            if path.endswith("/pendingOrders"):
+                return {
+                    "orders": [
+                        {
+                            "id": "470967",
+                            "type": "TAKE_PROFIT",
+                            "tradeID": "470960",
+                            "price": "1.17291",
+                            "state": "PENDING",
+                            "instrument": None,
+                        }
+                    ]
+                }
+            if "/pricing" in path:
+                now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                return {
+                    "prices": [
+                        {
+                            "instrument": "EUR_USD",
+                            "bids": [{"price": "1.1733"}],
+                            "asks": [{"price": "1.1734"}],
+                            "time": now,
+                        }
+                    ],
+                    "homeConversions": [],
+                }
+            if path.endswith("/summary"):
+                return {
+                    "account": {
+                        "NAV": "207000",
+                        "balance": "207000",
+                        "marginUsed": "100000",
+                        "marginAvailable": "107000",
+                        "lastTransactionID": "470967",
+                        "hedgingEnabled": True,
+                    }
+                }
+            return {}
+
+        with patch.object(client, "get_json", side_effect=_route):
+            snapshot = client.snapshot(["EUR_USD"])
+
+        self.assertEqual(len(snapshot.positions), 1)
+        pos = snapshot.positions[0]
+        self.assertEqual(pos.trade_id, "470960")
+        # take_profit should be backfilled from the pending TP order.
+        self.assertIsNotNone(pos.take_profit)
+        self.assertAlmostEqual(pos.take_profit, 1.17291, places=5)
+        # stop_loss must stay None — SL-free positions must not pick up
+        # a stray pending SL via the same path.
+        self.assertIsNone(pos.stop_loss)
+
+    def test_snapshot_does_not_backfill_stop_loss(self) -> None:
+        # SL-free design invariant: a position with stop_loss=None must
+        # not be silently joined to a pending STOP_LOSS order even if one
+        # exists with the matching tradeID. Only TP is backfilled.
+        from datetime import datetime, timezone
+        from unittest.mock import patch
+
+        with patch.dict(
+            "os.environ",
+            {
+                "QR_OANDA_TOKEN": "qr-token",
+                "QR_OANDA_ACCOUNT_ID": "qr-account",
+                "QR_OANDA_BASE_URL": "https://example.invalid/",
+            },
+            clear=True,
+        ):
+            client = OandaReadOnlyClient()
+
+        def _route(path, query=None):
+            if path.endswith("/openTrades"):
+                return {
+                    "trades": [
+                        {
+                            "id": "470960",
+                            "instrument": "EUR_USD",
+                            "currentUnits": "-8000",
+                            "price": "1.17340",
+                            "unrealizedPL": "-630.0",
+                        }
+                    ]
+                }
+            if path.endswith("/pendingOrders"):
+                return {
+                    "orders": [
+                        {
+                            "id": "470968",
+                            "type": "STOP_LOSS",
+                            "tradeID": "470960",
+                            "price": "1.18000",
+                            "state": "PENDING",
+                            "instrument": None,
+                        }
+                    ]
+                }
+            if "/pricing" in path:
+                now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                return {
+                    "prices": [
+                        {
+                            "instrument": "EUR_USD",
+                            "bids": [{"price": "1.1733"}],
+                            "asks": [{"price": "1.1734"}],
+                            "time": now,
+                        }
+                    ],
+                    "homeConversions": [],
+                }
+            if path.endswith("/summary"):
+                return {
+                    "account": {
+                        "NAV": "207000",
+                        "balance": "207000",
+                        "marginUsed": "100000",
+                        "marginAvailable": "107000",
+                        "lastTransactionID": "470968",
+                        "hedgingEnabled": True,
+                    }
+                }
+            return {}
+
+        with patch.object(client, "get_json", side_effect=_route):
+            snapshot = client.snapshot(["EUR_USD"])
+
+        self.assertEqual(len(snapshot.positions), 1)
+        pos = snapshot.positions[0]
+        # SL stays None (SL-free invariant).
+        self.assertIsNone(pos.stop_loss)
+        # TP also stays None (no pending TP available).
+        self.assertIsNone(pos.take_profit)
+
 
 if __name__ == "__main__":
     unittest.main()
