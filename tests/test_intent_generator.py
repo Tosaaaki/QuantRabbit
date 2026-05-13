@@ -1171,5 +1171,69 @@ class MinLotFloorIntentTest(unittest.TestCase):
         self.assertGreater(units, 0)
 
 
+class ExhaustionRangeChaseTest(unittest.TestCase):
+    """Coverage for 2026-05-13 filter C: refuse same-direction entries
+    after a 2σ-equivalent 24h range extension. Operates via
+    `_method_context_issues` against the intent's metadata, so it
+    fires at intent-generation time without touching open positions.
+    """
+
+    def _intent(self, *, side, sigma_mult, price_pct_24h, pair: str = "EUR_USD"):
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
+        return OrderIntent(
+            pair=pair,
+            side=Side.LONG if side == "LONG" else Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=5000,
+            tp=1.18 if side == "LONG" else 1.17,
+            sl=1.17 if side == "LONG" else 1.18,
+            thesis="test thesis",
+            owner=Owner.TRADER,
+            market_context=MarketContext(
+                regime="TREND_UP",
+                narrative="test",
+                chart_story="test",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="sl trades",
+            ),
+            metadata={
+                "range_24h_sigma_multiple": sigma_mult,
+                "price_percentile_24h": price_pct_24h,
+            },
+        )
+
+    def test_long_at_top_after_2sigma_range_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(side="LONG", sigma_mult=2.5, price_pct_24h=0.92)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_short_at_bottom_after_2sigma_range_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(side="SHORT", sigma_mult=2.5, price_pct_24h=0.08)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_long_at_bottom_after_2sigma_range_passes(self) -> None:
+        # LONG mean-reversion entry at low — not a chase.
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(side="LONG", sigma_mult=2.5, price_pct_24h=0.10)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_sigma_below_threshold_passes(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(side="LONG", sigma_mult=1.5, price_pct_24h=0.97)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_missing_sigma_no_block(self) -> None:
+        # AGENT_CONTRACT §3.5: no data → no filter.
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(side="LONG", sigma_mult=None, price_pct_24h=0.97)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+
 if __name__ == "__main__":
     unittest.main()

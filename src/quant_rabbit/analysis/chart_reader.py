@@ -191,6 +191,13 @@ def build_pair_chart(
     long_score, short_score, dominant = _aggregate(views)
     chart_story = _build_chart_story(pair, views, dominant)
     confluence = _build_confluence(views, long_score, short_score, dominant)
+    # 2026-05-13 emergency precision additions (B/C/D for trader_brain
+    # and attack_advisor consumption). All metrics are market-derived
+    # from the candles already fetched; no JPY/pip literals introduced.
+    # `confluence` is the canonical place to publish; readers
+    # (trader_brain, attack_advisor) pull from this dict so adding new
+    # keys does not force a schema migration.
+    confluence.update(_build_extended_confluence(views, candles_by_tf_resolved))
     # Session context: derived from the M5 candles regardless of how they were
     # obtained (caller-supplied or fetched).
     session = _build_session_for_pair(timeframes, candles_by_tf_resolved, views)
@@ -205,6 +212,98 @@ def build_pair_chart(
         session=session,
         confluence=confluence,
     )
+
+
+def _build_extended_confluence(
+    views: list[ChartView],
+    candles_by_tf: dict[str, tuple],
+) -> dict[str, object]:
+    """B/C/D market-derived extras (2026-05-13).
+
+    Returned dict is merged into PairChart.confluence so existing
+    consumers stay untouched. All values are floats or None — None
+    when the underlying data is missing rather than substituting a
+    JPY/pip literal (AGENT_CONTRACT §3.5).
+
+    Keys produced:
+      - `price_percentile_24h` (0.0-1.0): where the current close sits
+        in the last-24h H1 close distribution.
+      - `price_percentile_7d` (0.0-1.0): same against the last 7d H4
+        close distribution (42 H4 bars).
+      - `atr_percentile_24h`: H1 atr_pips percentile vs trailing
+        distribution (read from the H1 indicators if available).
+      - `range_24h_sigma_multiple`: (H1 24h high − H1 24h low) divided
+        by the median H1 ATR over the same window. >1 means the pair
+        has already covered more than one ATR span — buying tops or
+        selling bottoms after this point is statistically expensive.
+      - `tf_agreement_score` (0.0-1.0): fraction of M15/M30/H1
+        agreeing on regime direction (TREND_UP / TREND_DOWN / RANGE /
+        UNCLEAR). 1.0 means all three agree, 0.33 means each TF
+        prints a different label.
+    """
+    out: dict[str, object] = {
+        "price_percentile_24h": None,
+        "price_percentile_7d": None,
+        "atr_percentile_24h": None,
+        "range_24h_sigma_multiple": None,
+        "tf_agreement_score": None,
+    }
+
+    h1_candles = candles_by_tf.get("H1")
+    if h1_candles and len(h1_candles) >= 24:
+        last_24 = h1_candles[-24:]
+        highs = [c.high for c in last_24]
+        lows = [c.low for c in last_24]
+        closes_24 = [c.close for c in last_24]
+        current = closes_24[-1]
+        lo = min(lows)
+        hi = max(highs)
+        if hi > lo:
+            out["price_percentile_24h"] = round(
+                max(0.0, min(1.0, (current - lo) / (hi - lo))), 4
+            )
+        # Range vs typical hourly ATR over the same window. We use the
+        # median per-bar high-low to avoid one wick blowing the metric.
+        per_bar_ranges = sorted(c.high - c.low for c in last_24 if c.high > c.low)
+        if per_bar_ranges:
+            median_range = per_bar_ranges[len(per_bar_ranges) // 2]
+            if median_range > 0:
+                out["range_24h_sigma_multiple"] = round((hi - lo) / median_range, 3)
+
+    h4_candles = candles_by_tf.get("H4")
+    if h4_candles and len(h4_candles) >= 42:
+        last_42 = h4_candles[-42:]
+        closes_7d = [c.close for c in last_42]
+        current = closes_7d[-1]
+        lo = min(closes_7d)
+        hi = max(closes_7d)
+        if hi > lo:
+            out["price_percentile_7d"] = round(
+                max(0.0, min(1.0, (current - lo) / (hi - lo))), 4
+            )
+
+    # ATR percentile preferentially from H1 indicators (already
+    # percentile-of-trailing on the IndicatorSet).
+    for view in views:
+        if view.granularity == "H1" and view.indicators is not None:
+            pct = getattr(view.indicators, "atr_percentile_100", None)
+            if pct is not None:
+                out["atr_percentile_24h"] = round(float(pct), 4)
+            break
+
+    # tf_agreement: M15 / M30 / H1 regime labels, fraction in majority.
+    target_tfs = {"M15", "M30", "H1"}
+    regimes: list[str] = [
+        view.regime for view in views if view.granularity in target_tfs and view.regime
+    ]
+    if len(regimes) == 3:
+        from collections import Counter
+
+        counts = Counter(regimes)
+        top_count = max(counts.values())
+        out["tf_agreement_score"] = round(top_count / 3.0, 4)
+
+    return out
 
 
 def _build_reading_layer(

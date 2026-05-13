@@ -234,6 +234,12 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             # pair_charts.json. The narrative chart_story on `MarketContext`
             # is news/quality_audit excerpts and is left untouched.
             "chart_story": chart.get("chart_story", "") or "",
+            # 2026-05-13 precision filters (B/C/D) sourced from
+            # chart_reader._build_extended_confluence. Carrying the whole
+            # confluence dict here means consumers (intent_generator
+            # context issues, trader_brain gating, attack_advisor) all
+            # see the same statistic without re-deriving anything.
+            "confluence": chart.get("confluence") if isinstance(chart.get("confluence"), dict) else {},
         }
         for view in chart.get("views", []) or []:
             granularity = view.get("granularity")
@@ -354,6 +360,7 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         bias = Side.LONG.value if long_score > short_score else Side.SHORT.value
     m5_indicators = per_tf.get("M5") if isinstance(per_tf.get("M5"), dict) else {}
     m5_family = per_tf.get("M5__family_scores") if isinstance(per_tf.get("M5__family_scores"), dict) else {}
+    conf = per_tf.get("confluence") if isinstance(per_tf.get("confluence"), dict) else {}
     return {
         "chart_long_score": long_score,
         "chart_short_score": short_score,
@@ -372,6 +379,17 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         # structure / momentum scoring. Distinct key from market_context's
         # narrative `chart_story` (news/quality_audit excerpts).
         "chart_story_structural": str(per_tf.get("chart_story") or ""),
+        # 2026-05-13 precision context (B/C/D feed). Producers:
+        # chart_reader._build_extended_confluence. Consumers:
+        # _method_context_issues for the C-gate (24h sigma BLOCK on
+        # same-side entry after a 2+σ move), trader_brain
+        # _apply_directional_gating for B and D scoring, and
+        # attack_advisor confidence ranking.
+        "price_percentile_24h": _optional_float(conf.get("price_percentile_24h")),
+        "price_percentile_7d": _optional_float(conf.get("price_percentile_7d")),
+        "atr_percentile_24h": _optional_float(conf.get("atr_percentile_24h")),
+        "range_24h_sigma_multiple": _optional_float(conf.get("range_24h_sigma_multiple")),
+        "tf_agreement_score": _optional_float(conf.get("tf_agreement_score")),
     }
 
 
@@ -1164,7 +1182,47 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                     "severity": "BLOCK",
                 }
             )
+
+    # C — 2026-05-13 "no chasing exhausted moves" filter. When the pair
+    # has already covered >= EXHAUSTION_RANGE_SIGMA_MULTIPLE (= 2.0,
+    # standard 2σ boundary) of its typical H1 range in the last 24
+    # hours, AND the new entry direction is aligned with where the
+    # move travelled (LONG into a 24h high, SHORT into a 24h low),
+    # block it. Fading the exhausted move (opposite direction) is not
+    # blocked; same-direction chasing is the failure mode
+    # 2026-05-12T15:33 UTC drove the operator to demand killing.
+    sigma_mult = _optional_float(metadata.get("range_24h_sigma_multiple"))
+    ppct_24h = _optional_float(metadata.get("price_percentile_24h"))
+    if sigma_mult is not None and sigma_mult >= EXHAUSTION_RANGE_SIGMA_MULTIPLE:
+        chasing = False
+        if intent.side == Side.LONG and ppct_24h is not None and ppct_24h >= 0.5:
+            chasing = True
+        if intent.side == Side.SHORT and ppct_24h is not None and ppct_24h <= 0.5:
+            chasing = True
+        if chasing:
+            issues.append(
+                {
+                    "code": "EXHAUSTION_RANGE_CHASE",
+                    "message": (
+                        f"{intent.pair} {intent.side.value} chases a move already "
+                        f"{sigma_mult:.2f}× typical hourly range over 24h "
+                        f"(p24h={ppct_24h:.2f}); refuse same-direction entry after the "
+                        f"{EXHAUSTION_RANGE_SIGMA_MULTIPLE:.1f}σ-equivalent extension."
+                    ),
+                    "severity": "BLOCK",
+                }
+            )
     return issues
+
+
+# C — 2σ-equivalent extension boundary. (high_24h - low_24h) divided
+# by median H1 range over the same window above this multiple means
+# the pair has already exhausted >= 2× typical hourly motion in 24h.
+# Same-side entries after this point chase a move that has already
+# happened; spread + slippage on the late entry dominate the
+# remaining edge. 2.0 is the documented 2σ boundary used in
+# standard-deviation extreme detection — not a tuned market literal.
+EXHAUSTION_RANGE_SIGMA_MULTIPLE = 2.0
 
 
 def _method_direction_bias(metadata: dict[str, Any], method: TradeMethod | None) -> str:

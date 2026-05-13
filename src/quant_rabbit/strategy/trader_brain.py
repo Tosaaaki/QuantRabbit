@@ -480,6 +480,30 @@ DIRECTIONAL_GATING_STRONG_GAP = (
 # consistent with the rest of the discretionary penalty grid.
 ATTACK_ADVICE_VETO_PENALTY = 25.0
 
+# === Precision filters (B/C/D, 2026-05-13) ===
+# 2026-05-12T15:33 UTC mass-close incident drove the operator demand:
+# the trader must stop chasing trends after the move has already
+# happened, must reject entries when the multi-timeframe regime
+# picture disagrees, and must penalize same-side participation at
+# 24h-distribution extremes. The thresholds below are documented
+# market-statistic boundaries, never JPY/pip literals.
+
+# B — price percentile extremes. 0.95 / 0.05 are the standard 95%/5%
+# distribution boundaries used everywhere from VaR to RSI extreme
+# detection; entries at these tails are statistically late.
+PRICE_PERCENTILE_EXTREME_HIGH = 0.95
+PRICE_PERCENTILE_EXTREME_LOW = 0.05
+PRICE_PERCENTILE_EXTREME_PENALTY = 25.0  # same magnitude as the other §6 penalty grid
+PRICE_PERCENTILE_MEAN_REV_BONUS = 15.0   # smaller bonus for fading the extreme
+
+# D — multi-TF agreement. Below this score the M15/M30/H1 regime
+# picture is too fractured for confident participation. 0.67 = 2/3
+# of timeframes agree — the smallest integer majority for a 3-TF
+# panel, so it is the documented "majority" minimum, not a tuned
+# market threshold.
+TF_AGREEMENT_MAJORITY_THRESHOLD = 2.0 / 3.0
+TF_AGREEMENT_DISAGREEMENT_PENALTY = 25.0
+
 
 def _load_full_pair_charts_for_brain() -> dict[str, dict[str, Any]]:
     """Load pair_charts.json keyed by pair, preserving the full views array.
@@ -1204,22 +1228,17 @@ def _apply_directional_gating(
     full_pair_charts: dict[str, dict[str, Any]],
     attack_ranks: dict[str, int],
 ) -> tuple[LaneScore, ...]:
-    """Apply the C-1 + C-2 directional gating to the scored lane tuple.
+    """Apply the C-1 / C-2 directional gating + 2026-05-13 precision
+    filters (B price-percentile, D multi-TF agreement) to the scored
+    lane tuple.
 
-    C-1 — directional gating layer: when `pair_charts[pair].confluence`
-    shows a decisive bias (LONG_LEAN/SHORT_LEAN with
-    |score_gap| >= DIRECTIONAL_GATING_STRONG_GAP) AND the attack_advice
-    top-K majority direction for this pair agrees with that bias,
-    every LIVE_READY lane in the OPPOSITE direction is demoted from
-    SEND_ENTRY to NO_TRADE with rationale.
+    Pass order:
+      C-2 — attack_advice veto on opposite direction
+      C-1 — pair_charts bias + advice agreement demotion
+      B   — price-percentile extreme penalty / mean-rev bonus
+      D   — multi-TF disagreement penalty
 
-    C-2 — attack_advice directional veto: separately, when the
-    attack_advice top-K majority for a pair points one direction,
-    every lane in the opposite direction (regardless of pair_charts
-    bias) receives an ATTACK_ADVICE_VETO_PENALTY score subtraction
-    and a rationale annotation.
-
-    Both gates run only on the basket-construction view of the lane
+    All passes run only on the basket-construction view of the lane
     set. Existing-position management (`PositionManager` /
     `PositionProtectionGateway`) reads `snapshot.positions` directly
     and never consults this function or the LaneScore tuple, so this
@@ -1238,7 +1257,17 @@ def _apply_directional_gating(
     for pair in pairs_in_scores:
         bias = _pair_charts_directional_bias(full_pair_charts, pair)
         majority = _attack_advice_pair_majority(advised_lane_ids, pair)
-        gating_ctx[pair] = {"bias": bias, "majority": majority}
+        # B/D context comes from chart_reader's extended confluence.
+        chart = full_pair_charts.get(pair) if isinstance(full_pair_charts, dict) else None
+        conf = chart.get("confluence") if isinstance(chart, dict) else None
+        ppct_24h = _optional_float((conf or {}).get("price_percentile_24h"))
+        tf_agree = _optional_float((conf or {}).get("tf_agreement_score"))
+        gating_ctx[pair] = {
+            "bias": bias,
+            "majority": majority,
+            "price_percentile_24h": ppct_24h,
+            "tf_agreement_score": tf_agree,
+        }
 
     new_scores: list[LaneScore] = []
     for item in scores:
@@ -1285,6 +1314,62 @@ def _apply_directional_gating(
                         f"directional_gating: bias={bias_balance}, |gap|={bias_gap:.3f}, "
                         f"advice_majority={majority} (already NO_TRADE)",
                     )
+
+        # B — price percentile extremes (2026-05-13). Same-side entry at
+        # the top of 24h distribution (LONG @ >= 0.95) or bottom
+        # (SHORT @ <= 0.05) is statistically late; opposite-side entry
+        # at the same extreme is the mean-reversion side and gets a
+        # smaller bonus.
+        ppct = ctx.get("price_percentile_24h")
+        if ppct is not None:
+            if direction == "LONG":
+                if ppct >= PRICE_PERCENTILE_EXTREME_HIGH:
+                    new_score = round(new_score - PRICE_PERCENTILE_EXTREME_PENALTY, 2)
+                    new_rationale.insert(
+                        0,
+                        f"price_percentile_extreme: LONG @ p24h={ppct:.2f} "
+                        f">= {PRICE_PERCENTILE_EXTREME_HIGH:.2f} "
+                        f"(-{PRICE_PERCENTILE_EXTREME_PENALTY:.0f})",
+                    )
+                elif ppct <= PRICE_PERCENTILE_EXTREME_LOW:
+                    new_score = round(new_score + PRICE_PERCENTILE_MEAN_REV_BONUS, 2)
+                    new_rationale.insert(
+                        0,
+                        f"price_percentile_mean_rev: LONG @ p24h={ppct:.2f} "
+                        f"<= {PRICE_PERCENTILE_EXTREME_LOW:.2f} "
+                        f"(+{PRICE_PERCENTILE_MEAN_REV_BONUS:.0f})",
+                    )
+            elif direction == "SHORT":
+                if ppct <= PRICE_PERCENTILE_EXTREME_LOW:
+                    new_score = round(new_score - PRICE_PERCENTILE_EXTREME_PENALTY, 2)
+                    new_rationale.insert(
+                        0,
+                        f"price_percentile_extreme: SHORT @ p24h={ppct:.2f} "
+                        f"<= {PRICE_PERCENTILE_EXTREME_LOW:.2f} "
+                        f"(-{PRICE_PERCENTILE_EXTREME_PENALTY:.0f})",
+                    )
+                elif ppct >= PRICE_PERCENTILE_EXTREME_HIGH:
+                    new_score = round(new_score + PRICE_PERCENTILE_MEAN_REV_BONUS, 2)
+                    new_rationale.insert(
+                        0,
+                        f"price_percentile_mean_rev: SHORT @ p24h={ppct:.2f} "
+                        f">= {PRICE_PERCENTILE_EXTREME_HIGH:.2f} "
+                        f"(+{PRICE_PERCENTILE_MEAN_REV_BONUS:.0f})",
+                    )
+
+        # D — multi-TF disagreement (2026-05-13). When M15/M30/H1
+        # regimes do not have a 2/3 majority, the directional picture is
+        # too fractured to chase. Penalise any direction; the operator's
+        # response is to wait for alignment, not to fade.
+        tf_agree = ctx.get("tf_agreement_score")
+        if tf_agree is not None and tf_agree < TF_AGREEMENT_MAJORITY_THRESHOLD:
+            new_score = round(new_score - TF_AGREEMENT_DISAGREEMENT_PENALTY, 2)
+            new_rationale.insert(
+                0,
+                f"tf_disagreement: M15/M30/H1 agreement={tf_agree:.2f} "
+                f"< {TF_AGREEMENT_MAJORITY_THRESHOLD:.2f} "
+                f"(-{TF_AGREEMENT_DISAGREEMENT_PENALTY:.0f})",
+            )
 
         if (
             new_score == item.score

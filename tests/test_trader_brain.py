@@ -1654,5 +1654,123 @@ class DirectionalGatingTest(unittest.TestCase):
             self.assertEqual(orig.estimated_margin_jpy, new.estimated_margin_jpy)
 
 
+class PrecisionFilterTest(unittest.TestCase):
+    """Coverage for 2026-05-13 precision filters B (price percentile)
+    + D (multi-TF agreement). Both run inside
+    `_apply_directional_gating` after the C-1/C-2 pass. They operate on
+    pair_charts.confluence extended metrics — never on broker positions
+    — so existing trades cannot be touched by these gates.
+    """
+
+    def _scores(self, *, pair: str = "EUR_USD", direction: str = "LONG", score: float = 200.0):
+        from quant_rabbit.strategy.trader_brain import LaneScore, ACTION_SEND_ENTRY
+        return (
+            LaneScore(
+                lane_id=f"trend_trader:{pair}:{direction}:TREND_CONTINUATION:MARKET",
+                pair=pair,
+                direction=direction,
+                method="TREND_CONTINUATION",
+                order_type="MARKET",
+                entry=1.0, tp=1.01, sl=None,
+                status="LIVE_READY",
+                score=score,
+                action=ACTION_SEND_ENTRY,
+                blockers=(), rationale=(), size_multiple=1.0,
+            ),
+        )
+
+    def _pair_charts(self, *, price_pct_24h: float | None = None, tf_agreement: float | None = None,
+                     pair: str = "EUR_USD") -> dict:
+        return {
+            pair: {
+                "confluence": {
+                    "score_balance": "TIED",
+                    "score_gap": 0.0,
+                    "price_percentile_24h": price_pct_24h,
+                    "tf_agreement_score": tf_agreement,
+                }
+            }
+        }
+
+    def test_long_at_top_percentile_loses_25(self) -> None:
+        from quant_rabbit.strategy.trader_brain import (
+            _apply_directional_gating,
+            PRICE_PERCENTILE_EXTREME_PENALTY,
+        )
+        scores = self._scores(direction="LONG", score=200.0)
+        result = _apply_directional_gating(
+            scores, self._pair_charts(price_pct_24h=0.97), attack_ranks={}
+        )
+        lane = result[0]
+        self.assertEqual(lane.score, 200.0 - PRICE_PERCENTILE_EXTREME_PENALTY)
+        self.assertTrue(any("price_percentile_extreme" in r for r in lane.rationale))
+
+    def test_short_at_bottom_percentile_loses_25(self) -> None:
+        from quant_rabbit.strategy.trader_brain import (
+            _apply_directional_gating,
+            PRICE_PERCENTILE_EXTREME_PENALTY,
+        )
+        scores = self._scores(direction="SHORT", score=200.0)
+        result = _apply_directional_gating(
+            scores, self._pair_charts(price_pct_24h=0.03), attack_ranks={}
+        )
+        lane = result[0]
+        self.assertEqual(lane.score, 200.0 - PRICE_PERCENTILE_EXTREME_PENALTY)
+
+    def test_long_at_bottom_percentile_gains_mean_rev_bonus(self) -> None:
+        from quant_rabbit.strategy.trader_brain import (
+            _apply_directional_gating,
+            PRICE_PERCENTILE_MEAN_REV_BONUS,
+        )
+        scores = self._scores(direction="LONG", score=200.0)
+        result = _apply_directional_gating(
+            scores, self._pair_charts(price_pct_24h=0.03), attack_ranks={}
+        )
+        lane = result[0]
+        self.assertEqual(lane.score, 200.0 + PRICE_PERCENTILE_MEAN_REV_BONUS)
+
+    def test_neutral_percentile_no_change(self) -> None:
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+        scores = self._scores(direction="LONG", score=200.0)
+        result = _apply_directional_gating(
+            scores, self._pair_charts(price_pct_24h=0.5), attack_ranks={}
+        )
+        self.assertEqual(result[0].score, 200.0)
+
+    def test_low_tf_agreement_penalizes_any_direction(self) -> None:
+        from quant_rabbit.strategy.trader_brain import (
+            _apply_directional_gating,
+            TF_AGREEMENT_DISAGREEMENT_PENALTY,
+        )
+        for direction in ("LONG", "SHORT"):
+            scores = self._scores(direction=direction, score=200.0)
+            result = _apply_directional_gating(
+                scores,
+                self._pair_charts(tf_agreement=0.33),
+                attack_ranks={},
+            )
+            self.assertEqual(
+                result[0].score,
+                200.0 - TF_AGREEMENT_DISAGREEMENT_PENALTY,
+                msg=f"direction={direction}",
+            )
+
+    def test_high_tf_agreement_no_penalty(self) -> None:
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+        scores = self._scores(direction="LONG", score=200.0)
+        result = _apply_directional_gating(
+            scores, self._pair_charts(tf_agreement=1.0), attack_ranks={}
+        )
+        self.assertEqual(result[0].score, 200.0)
+
+    def test_missing_confluence_no_change(self) -> None:
+        # AGENT_CONTRACT §3.5: missing data → no filter, no silent
+        # fallback to a JPY/pip literal.
+        from quant_rabbit.strategy.trader_brain import _apply_directional_gating
+        scores = self._scores()
+        result = _apply_directional_gating(scores, full_pair_charts={}, attack_ranks={})
+        self.assertEqual(result[0].score, 200.0)
+
+
 if __name__ == "__main__":
     unittest.main()

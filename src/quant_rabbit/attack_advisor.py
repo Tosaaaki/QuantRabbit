@@ -131,7 +131,17 @@ class AttackAdvisor:
             if isinstance(item, dict) and isinstance(item.get("intent"), dict)
         )
         live_ready = tuple(lane for lane in lanes if lane.status == "LIVE_READY" and not lane.blockers)
-        ranked = tuple(sorted(live_ready, key=lambda lane: (lane.score, lane.reward_jpy, lane.lane_id), reverse=True))
+        # E (2026-05-13): precision filter — drop lanes that the
+        # operator's B/D filters in trader_brain would penalise so
+        # the advice surface matches the prefilter SEND_ENTRY view.
+        # Pulls per-lane chart context from the intent metadata
+        # already populated by intent_generator (_chart_context_for).
+        precision_index = _precision_index_from_intents(intents)
+        live_ready_filtered = tuple(
+            lane for lane in live_ready
+            if _precision_lane_passes(lane, precision_index)
+        )
+        ranked = tuple(sorted(live_ready_filtered, key=lambda lane: (lane.score, lane.reward_jpy, lane.lane_id), reverse=True))
         recommended = _recommend_now(ranked, remaining_risk_jpy=remaining_risk, remaining_target_jpy=remaining_target)
         watchlist = tuple(lane for lane in ranked if lane.lane_id not in {item.lane_id for item in recommended})[:REPORT_LANE_LIMIT]
         live_ready_reward = _round(sum(lane.reward_jpy for lane in _dedupe_geometry(live_ready)))
@@ -779,3 +789,59 @@ def _optional_float(value: object) -> float | None:
 
 def _round(value: float) -> float:
     return round(value, 4)
+
+
+# E — precision filter constants (2026-05-13). Same statistical
+# boundaries as trader_brain's B/D filters so the prefilter and the
+# advice surface agree on what counts as "extreme" or "fractured".
+ATTACK_PRECISION_EXTREME_HIGH = 0.95
+ATTACK_PRECISION_EXTREME_LOW = 0.05
+ATTACK_PRECISION_TF_AGREEMENT_MIN = 2.0 / 3.0
+
+
+def _precision_index_from_intents(intents: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map lane_id -> precision context pulled from intent.metadata.
+
+    Producer is intent_generator._chart_context_for; consumer is
+    `_precision_lane_passes` to drop lanes that the operator's B/D
+    filters would penalise. Lanes without metadata or without the
+    relevant fields fall through (no signal == no filter).
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for item in intents.get("results", []) or []:
+        if not isinstance(item, dict):
+            continue
+        lane_id = item.get("lane_id")
+        if not isinstance(lane_id, str):
+            continue
+        intent_doc = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        metadata = intent_doc.get("metadata") if isinstance(intent_doc.get("metadata"), dict) else {}
+        out[lane_id] = {
+            "price_percentile_24h": _optional_float(metadata.get("price_percentile_24h")),
+            "tf_agreement_score": _optional_float(metadata.get("tf_agreement_score")),
+            "range_24h_sigma_multiple": _optional_float(metadata.get("range_24h_sigma_multiple")),
+            "direction": (intent_doc.get("side") or "").upper(),
+        }
+    return out
+
+
+def _precision_lane_passes(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any]]) -> bool:
+    """E: drop lanes from the advice surface if their direction is
+    same-side at a 24h percentile extreme, or if M15/M30/H1 are too
+    fractured to chase. Missing context = lane passes (no filter
+    when the data isn't there to make the call — AGENT_CONTRACT §3.5).
+    """
+    ctx = idx.get(lane.lane_id)
+    if ctx is None:
+        return True
+    direction = (lane.direction or "").upper()
+    ppct = ctx.get("price_percentile_24h")
+    if ppct is not None and direction in {"LONG", "SHORT"}:
+        if direction == "LONG" and ppct >= ATTACK_PRECISION_EXTREME_HIGH:
+            return False
+        if direction == "SHORT" and ppct <= ATTACK_PRECISION_EXTREME_LOW:
+            return False
+    tf_agree = ctx.get("tf_agreement_score")
+    if tf_agree is not None and tf_agree < ATTACK_PRECISION_TF_AGREEMENT_MIN:
+        return False
+    return True

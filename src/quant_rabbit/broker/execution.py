@@ -1043,11 +1043,23 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         "clientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
         "tradeClientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
     }
-    # SL-free regime: omit stopLossOnFill so the broker does not enforce a
-    # tight noise-range SL. The intent.sl is still computed for sizing/risk
-    # math but is not sent to OANDA. User directive 「SLいらない」 / 「損失を
-    # 出さないで稼ぎまくる」 (2026-05-07).
-    if not _trader_sl_repair_disabled():
+    # SL handling. Two production modes can coexist:
+    #
+    # - SL-attached mode (default 2026-05-13 onward, post 00:33 JST
+    #   mass-close incident): the operator demands every NEW entry
+    #   carry a broker-side `stopLossOnFill` so a panic-close trader
+    #   cannot bypass it via the autonomous CLOSE path. Controlled by
+    #   `QR_NEW_ENTRY_INITIAL_SL=1`. Existing positions are not
+    #   retroactively given an SL — they remain SL-free.
+    #
+    # - SL-free legacy mode (`QR_TRADER_DISABLE_SL_REPAIR=1`, no
+    #   `QR_NEW_ENTRY_INITIAL_SL`): the original 2026-05-07 directive
+    #   「SLいらない」 widening; the broker enforces no SL and the
+    #   intent.sl is sizing/math only. Kept for backward compatibility.
+    initial_sl_on = os.environ.get("QR_NEW_ENTRY_INITIAL_SL", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+    if initial_sl_on or not _trader_sl_repair_disabled():
         order["stopLossOnFill"] = {"price": _price(intent.pair, intent.sl)}
     if intent.order_type == OrderType.MARKET:
         order["timeInForce"] = "FOK"

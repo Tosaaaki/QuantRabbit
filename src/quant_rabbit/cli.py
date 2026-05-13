@@ -409,6 +409,18 @@ def main(argv: list[str] | None = None) -> int:
     p_learn.add_argument("--output", type=Path, default=DEFAULT_POST_TRADE_LEARNING)
     p_learn.add_argument("--report", type=Path, default=DEFAULT_POST_TRADE_LEARNING_REPORT)
 
+    p_trailing = sub.add_parser(
+        "trailing-sl-update",
+        help="Tighten broker-side SL on trader-owned positions when M15/M30/H1 BOS prints against the position.",
+    )
+    p_trailing.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_trailing.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_trailing.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Compute updates but do not call broker.replace_trade_dependent_orders.",
+    )
+
     p_cert = sub.add_parser("certify-dry-run", help="Certify dry-run receipts before live expansion.")
     p_cert.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_cert.add_argument("--execution-replay", type=Path, default=DEFAULT_EXECUTION_REPLAY)
@@ -1545,6 +1557,87 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        return 0
+    if args.command == "trailing-sl-update":
+        from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        # Reconstruct snapshot object (use the read-only client to parse).
+        client = OandaReadOnlyClient()
+        snapshot = client.parse_snapshot(snapshot_payload) if hasattr(client, "parse_snapshot") else None
+        if snapshot is None:
+            # Fall back to direct construction from broker_snapshot.json.
+            from quant_rabbit.models import (
+                BrokerSnapshot, BrokerPosition, BrokerOrder, AccountSummary, Quote, Owner, Side,
+            )
+            from datetime import datetime, timezone
+            def _owner(s):
+                try:
+                    return Owner(s) if s else Owner.UNKNOWN
+                except Exception:
+                    return Owner.UNKNOWN
+            positions = [
+                BrokerPosition(
+                    trade_id=p.get("trade_id"),
+                    pair=p.get("pair", ""),
+                    side=Side(p.get("side", "LONG")),
+                    units=int(p.get("units", 0)),
+                    entry_price=float(p.get("entry_price", 0)),
+                    take_profit=p.get("take_profit"),
+                    stop_loss=p.get("stop_loss"),
+                    owner=_owner(p.get("owner", "unknown")),
+                    unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0)),
+                )
+                for p in snapshot_payload.get("positions", []) or []
+            ]
+            quotes = {
+                pair: Quote(pair=pair, bid=q.get("bid", 0.0), ask=q.get("ask", 0.0))
+                for pair, q in (snapshot_payload.get("quotes") or {}).items()
+                if isinstance(q, dict)
+            }
+            acc_in = snapshot_payload.get("account") or {}
+            account = AccountSummary(
+                balance_jpy=float(acc_in.get("balance_jpy", 0.0)),
+                nav_jpy=float(acc_in.get("nav_jpy", 0.0)),
+                margin_used_jpy=float(acc_in.get("margin_used_jpy", 0.0)),
+                margin_available_jpy=float(acc_in.get("margin_available_jpy", 0.0)),
+                unrealized_pl_jpy=float(acc_in.get("unrealized_pl_jpy", 0.0)),
+                pl_jpy=float(acc_in.get("pl_jpy", 0.0)),
+                financing_jpy=float(acc_in.get("financing_jpy", 0.0)),
+                hedging_enabled=bool(acc_in.get("hedging_enabled", True)),
+                last_transaction_id=str(acc_in.get("last_transaction_id", "")),
+            ) if acc_in else None
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime.now(timezone.utc),
+                positions=tuple(positions),
+                orders=tuple(),
+                quotes=quotes,
+                home_conversions=snapshot_payload.get("home_conversions", {}),
+                account=account,
+            )
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        updates = apply_trailing_sls(
+            snapshot=snapshot,
+            pair_charts_payload=pair_charts_payload,
+            broker_client=client,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(
+            {
+                "status": "OK",
+                "dry_run": args.dry_run,
+                "updates": [
+                    {
+                        "trade_id": u.trade_id, "pair": u.pair, "side": u.side,
+                        "old_sl": u.old_sl, "new_sl": u.new_sl,
+                        "bos_tf": u.bos_tf, "bos_price": u.bos_price,
+                        "reason": u.reason, "applied": u.applied,
+                    }
+                    for u in updates
+                ],
+                "count": len(updates),
+            },
+            indent=2,
+        ))
         return 0
     if args.command == "certify-dry-run":
         summary = DryRunCertifier(
