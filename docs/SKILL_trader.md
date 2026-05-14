@@ -45,7 +45,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 
 ```bash
 # 0. Export SL-free strategy env vars so generate-intents and risk validation
-#    pick up the wider stop geometry, suppressed SL repair, and expanded
+#    pick up market-derived geometry, suppressed SL repair, disabled
+#    broker-side SL/trailing, advisory REVIEW_EXIT, and the expanded
 #    portfolio cap. These mirror `scripts/run-autotrade-live.sh` defaults so
 #    direct CLI invocations and the wrapper produce identical receipts.
 export QR_GEOMETRY_ATR_MULT="${QR_GEOMETRY_ATR_MULT:-5.0}"
@@ -63,6 +64,14 @@ export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
 # is unset. Do NOT remove — backstops smoke scripts that pin units. The
 # NAV-pct path above takes precedence whenever set.
 export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
+# Deterministic REVIEW_EXIT is advisory by default in SL-free live mode.
+# Full closes must pass the gpt_trader close discipline and operator token.
+export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
+# Broker-side SL/trailing are opt-in only. The live default keeps NEW
+# entries SL-free because widened broker SLs were still harvested by
+# thin-session noise on 2026-05-13.
+export QR_NEW_ENTRY_INITIAL_SL="${QR_NEW_ENTRY_INITIAL_SL:-0}"
+export QR_DISABLE_TRAILING_SL="${QR_DISABLE_TRAILING_SL:-1}"
 
 # 1. Route to the right prompt branch
 PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
@@ -127,9 +136,10 @@ PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 #   - Gate A: market evidence — pair_charts shows BOS/CHOCH against the
 #     position side on M15 or H4, OR `invalidation_price` + `invalidation_tf`
 #     in the receipt with broker truth confirming the level has traded.
-#   - Gate B: operator authorization — the receipt must carry
-#     `operator_close_authorized: true`, OR the shell must export
-#     `QR_OPERATOR_CLOSE_OVERRIDE=1` (documented emergency override).
+#   - Gate B: operator authorization — require either
+#     `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
+#     `data/.operator_close_token` file. The receipt field
+#     `operator_close_authorized: true` is advisory audit text only.
 # If either gate fails, `gpt-trader-decision` REJECTs the receipt with
 # `CLOSE_THESIS_STILL_VALID` or `CLOSE_OPERATOR_AUTH_REQUIRED`. The default
 # stance when no user instruction is present is HOLD / WAIT — do not write a

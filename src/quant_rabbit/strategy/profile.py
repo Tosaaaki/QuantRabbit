@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.models import OrderIntent, RiskIssue
+from quant_rabbit.models import OrderIntent, OrderType, RiskIssue
 
 
 def _sl_free_active() -> bool:
@@ -67,9 +67,10 @@ class StrategyProfile:
 
     def validate(self, intent: OrderIntent, *, for_live_send: bool = False) -> tuple[RiskIssue, ...]:
         # Under SL-free the AI trader is the discretionary direction picker;
-        # missing/blocked strategy_profile entries become WARN so symmetric
-        # mirror lanes (intent_generator._mirror_lane) reach LIVE_READY and
-        # the scoring layer can choose between LONG and SHORT for itself.
+        # missing profile entries remain advisory for candidate discovery, but
+        # strategy statuses that explicitly require fresh evidence must still
+        # block live sends. Otherwise MARKET lanes marked MINE_MISSED_EDGE
+        # are sent even though the mined fix says "trigger/pending only".
         sl_free = _sl_free_active()
         live_block_severity = "WARN" if sl_free else ("BLOCK" if for_live_send else "WARN")
 
@@ -111,11 +112,22 @@ class StrategyProfile:
                 ),
             )
         if entry.status == "MINE_MISSED_EDGE":
+            severity = live_block_severity
+            if for_live_send and intent.order_type == OrderType.MARKET:
+                severity = "BLOCK"
             return (
                 RiskIssue(
                     "STRATEGY_TRIGGER_RECEIPT_REQUIRED",
                     f"{entry.pair} {entry.direction} requires trigger/pending-entry receipts before live use: {entry.required_fix}",
-                    severity=live_block_severity,
+                    severity=severity,
+                ),
+            )
+        if entry.status == "BLOCK_UNTIL_NEW_EVIDENCE" and for_live_send:
+            return (
+                RiskIssue(
+                    "STRATEGY_NOT_ELIGIBLE",
+                    f"{entry.pair} {entry.direction}{_method_suffix(entry)} is {entry.status}: {entry.required_fix}",
+                    severity="BLOCK",
                 ),
             )
         return (

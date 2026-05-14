@@ -133,10 +133,18 @@ class DailyTargetLedger:
                 "or a broker snapshot with account summary on first run"
             )
         target_pct = _coalesce_float(target_return_pct, previous.get("target_return_pct"), 10.0)
-        if is_new_campaign_day and realized_pl_jpy is None:
+        if realized_pl_jpy is not None:
+            realized = float(realized_pl_jpy)
+        elif is_new_campaign_day:
             realized = 0.0
         else:
-            realized = _coalesce_float(realized_pl_jpy, previous.get("realized_pl_jpy"), 0.0)
+            realized = (
+                _realized_pl_from_snapshot(snapshot=snapshot, start_balance_jpy=start_balance)
+                if previous_day is not None
+                else None
+            )
+            if realized is None:
+                realized = _coalesce_float(previous.get("realized_pl_jpy"), 0.0)
         # Equity-derived risk budget: per-trade worst-case loss cap is sized to the day's
         # starting equity, not a hardcoded JPY literal. Default uses RiskPolicy.daily_risk_pct
         # (% of starting equity); explicit caller override and previous-day persistence
@@ -530,6 +538,23 @@ def _start_balance_from_snapshot(
         return None
     realized = float(realized_pl_jpy) if realized_pl_jpy is not None else 0.0
     return float(snapshot.account.balance_jpy) - realized
+
+
+def _realized_pl_from_snapshot(
+    *, snapshot: BrokerSnapshot | None, start_balance_jpy: float
+) -> float | None:
+    """Derive same-day realized P/L from OANDA cash balance.
+
+    OANDA `balance` excludes open P/L, so against a persisted campaign
+    start balance it is the broker-truth realized P/L for the day. Without
+    this derivation the ledger keeps reporting realized=0 after losing
+    closes, which makes the trader continue as if the daily target gap and
+    risk budget were still intact.
+    """
+
+    if snapshot is None or snapshot.account is None:
+        return None
+    return float(snapshot.account.balance_jpy) - float(start_balance_jpy)
 
 
 def _coalesce_float(*values: object) -> float | None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from dataclasses import replace
@@ -220,6 +221,43 @@ class PositionManagerTest(unittest.TestCase):
             self.assertEqual(result.action, ACTION_REVIEW_EXIT)
             self.assertIsNone(result.positions[0].recommended_stop_loss)
             self.assertIn("needs exit review", (root / "pm.md").read_text())
+
+    def test_auto_close_kill_switch_demotes_exit_review_without_crashing(self) -> None:
+        prior = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=-20,
+                        take_profit=1.2020,
+                        stop_loss=None,
+                    ),
+                    include_usd_jpy=False,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=root / "missing_pair_charts.json",
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+                self.assertIn("QR_DISABLE_AUTO_CLOSE=1", (root / "pm.md").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior
 
     def test_operator_manual_position_is_not_managed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

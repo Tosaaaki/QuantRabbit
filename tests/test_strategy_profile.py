@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,9 +35,13 @@ class StrategyProfileTest(unittest.TestCase):
                 )
             )
             profile = StrategyProfile.load(path)
-            blocked = profile.validate(_intent("USD_JPY"), for_live_send=True)
-            repair_dry = profile.validate(_intent("EUR_USD"), for_live_send=False)
-            repair_live = profile.validate(_intent("EUR_USD"), for_live_send=True)
+            prior = _disable_sl_free_for_test()
+            try:
+                blocked = profile.validate(_intent("USD_JPY"), for_live_send=True)
+                repair_dry = profile.validate(_intent("EUR_USD"), for_live_send=False)
+                repair_live = profile.validate(_intent("EUR_USD"), for_live_send=True)
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
 
             self.assertEqual(blocked[0].code, "STRATEGY_NOT_ELIGIBLE")
             self.assertEqual(blocked[0].severity, "BLOCK")
@@ -64,25 +69,117 @@ class StrategyProfileTest(unittest.TestCase):
             )
             profile = StrategyProfile.load(path)
 
-            breakout = profile.validate(
-                _intent("EUR_USD", method=TradeMethod.BREAKOUT_FAILURE),
-                for_live_send=True,
-            )
-            trend = profile.validate(
-                _intent("EUR_USD", method=TradeMethod.TREND_CONTINUATION),
-                for_live_send=True,
-            )
+            prior = _disable_sl_free_for_test()
+            try:
+                breakout = profile.validate(
+                    _intent("EUR_USD", method=TradeMethod.BREAKOUT_FAILURE),
+                    for_live_send=True,
+                )
+                trend = profile.validate(
+                    _intent("EUR_USD", method=TradeMethod.TREND_CONTINUATION),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
 
             self.assertEqual(breakout, ())
             self.assertEqual(trend[0].code, "STRATEGY_METHOD_PROFILE_MISSING")
             self.assertEqual(trend[0].severity, "BLOCK")
 
+    def test_mine_missed_edge_blocks_market_live_send_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="MINE_MISSED_EDGE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.MARKET,
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
 
-def _intent(pair: str, *, method: TradeMethod = TradeMethod.TREND_CONTINUATION) -> OrderIntent:
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_TRIGGER_RECEIPT_REQUIRED")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
+    def test_mine_missed_edge_allows_pending_trigger_receipt_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="MINE_MISSED_EDGE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.STOP_ENTRY,
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_TRIGGER_RECEIPT_REQUIRED")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_block_until_new_evidence_blocks_live_send_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="BLOCK_UNTIL_NEW_EVIDENCE"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.STOP_ENTRY,
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
+
+def _profile(root: Path, *, status: str) -> Path:
+    path = root / "strategy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "status": status,
+                        "required_fix": "build trigger/pending-entry receipts before live execution",
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _intent(
+    pair: str,
+    *,
+    method: TradeMethod = TradeMethod.TREND_CONTINUATION,
+    order_type: OrderType = OrderType.MARKET,
+) -> OrderIntent:
     return OrderIntent(
         pair=pair,
         side=Side.LONG,
-        order_type=OrderType.MARKET,
+        order_type=order_type,
         units=1000,
         entry=1.0,
         tp=1.01,
@@ -97,6 +194,19 @@ def _intent(pair: str, *, method: TradeMethod = TradeMethod.TREND_CONTINUATION) 
             invalidation="test",
         ),
     )
+
+
+def _restore_env(key: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = value
+
+
+def _disable_sl_free_for_test() -> str | None:
+    prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+    return prior
 
 
 if __name__ == "__main__":

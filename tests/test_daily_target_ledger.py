@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.target import DailyTargetLedger
 
 
@@ -168,6 +168,83 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_jpy, 15_000)
             self.assertEqual(summary.progress_jpy, 1500)
             self.assertEqual(summary.remaining_target_jpy, 13_500)
+
+    def test_same_day_snapshot_derives_realized_pl_from_account_balance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = DailyTargetLedger(state_path=root / "target.json", report_path=root / "target.md")
+            now = datetime(2026, 5, 14, 1, 0, tzinfo=timezone.utc)
+
+            ledger.run(
+                start_balance_jpy=200_000,
+                realized_pl_jpy=0,
+                now_utc=now,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="t4",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1000,
+                        unrealized_pl_jpy=-200.0,
+                        take_profit=1.1020,
+                        stop_loss=1.0990,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={"USD_JPY": Quote("USD_JPY", 156.99, 157.0, timestamp_utc=now)},
+                account=AccountSummary(
+                    nav_jpy=198_300.0,
+                    balance_jpy=198_500.0,
+                    unrealized_pl_jpy=-200.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = ledger.run(snapshot=snapshot, now_utc=now)
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(summary.progress_jpy, -1700.0)
+            self.assertEqual(summary.remaining_target_jpy, 21_700.0)
+            self.assertEqual(payload["realized_pl_jpy"], -1500.0)
+            self.assertEqual(payload["current_equity_jpy"], 198_300.0)
+
+    def test_legacy_state_without_campaign_day_preserves_realized_pl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "start_balance_jpy": 100_000,
+                        "target_return_pct": 10.0,
+                        "realized_pl_jpy": 500.0,
+                        "daily_risk_budget_jpy": 2_000,
+                    }
+                )
+            )
+            now = datetime(2026, 5, 14, 1, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=200_000.0,
+                    balance_jpy=200_000.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(state_path=state_path, report_path=root / "target.md").run(
+                snapshot=snapshot,
+                now_utc=now,
+            )
+            payload = json.loads(state_path.read_text())
+
+            self.assertEqual(summary.progress_jpy, 500.0)
+            self.assertEqual(payload["realized_pl_jpy"], 500.0)
 
     def test_snapshotless_update_preserves_existing_open_risk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

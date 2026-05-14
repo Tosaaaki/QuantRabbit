@@ -146,6 +146,11 @@ class PositionManager:
                     demoted.append(ManagedPosition(
                         trade_id=m.trade_id, pair=m.pair, side=m.side,
                         units=m.units, action=ACTION_HOLD_PROTECTED,
+                        unrealized_pl_jpy=m.unrealized_pl_jpy,
+                        remaining_risk_jpy=m.remaining_risk_jpy,
+                        remaining_reward_jpy=m.remaining_reward_jpy,
+                        same_direction_score=m.same_direction_score,
+                        opposite_direction_score=m.opposite_direction_score,
                         reasons=new_reasons,
                         recommended_stop_loss=m.recommended_stop_loss,
                         recommended_take_profit=m.recommended_take_profit,
