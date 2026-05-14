@@ -1769,7 +1769,6 @@ def main(argv: list[str] | None = None) -> int:
             generate_limits_from_projections,
             serialize_limit_orders,
         )
-        from quant_rabbit.broker.oanda import OandaExecutionClient
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
         pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
         charts_by_pair: dict = {}
