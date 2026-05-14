@@ -128,6 +128,31 @@ class PositionManager:
         pair_charts = _load_pair_charts(self.pair_charts_path)
         trader_positions = tuple(position for position in snapshot.positions if position.owner == Owner.TRADER)
         managed = tuple(self._manage_position(position, snapshot, scores, pair_charts) for position in trader_positions)
+        # Global kill switch (2026-05-15): when `QR_DISABLE_AUTO_CLOSE=1`,
+        # demote every REVIEW_EXIT to HOLD_PROTECTED before aggregation.
+        # The 2026-05-14 24h cycle leaked -¥8,983 through deterministic
+        # PositionManager REVIEW_EXIT firings on five separate branches
+        # (macro=REVERSED OB break, profitable-matrix REVERSED, etc.).
+        # The user's explicit directive 「資産減らしてるだけ」 means we
+        # stop the auto-close pathway entirely; CLOSE decisions must
+        # now flow through gpt_trader Gate A/B with operator token.
+        if os.environ.get("QR_DISABLE_AUTO_CLOSE", "").strip() in {"1", "true", "TRUE", "yes", "YES"}:
+            demoted: list[ManagedPosition] = []
+            for m in managed:
+                if m.action == ACTION_REVIEW_EXIT:
+                    new_reasons = tuple(list(m.reasons) + [
+                        "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; close must go through gpt_trader Gate A/B",
+                    ])
+                    demoted.append(ManagedPosition(
+                        trade_id=m.trade_id, pair=m.pair, side=m.side,
+                        units=m.units, action=ACTION_HOLD_PROTECTED,
+                        reasons=new_reasons,
+                        recommended_stop_loss=m.recommended_stop_loss,
+                        recommended_take_profit=m.recommended_take_profit,
+                    ))
+                else:
+                    demoted.append(m)
+            managed = tuple(demoted)
         action = _aggregate_action(managed)
         decision = PositionManagementDecision(generated_at_utc=generated_at, action=action, positions=managed)
         self._write(decision)
