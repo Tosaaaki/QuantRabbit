@@ -147,13 +147,16 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
-# 4c. Adverse-continuation partial close: positions ≥1.5×ATR
-# underwater AND no reversal-signal firing get 50% partial-closed to
-# free margin. Keeps the thesis (remaining 50% still on) while
-# unsticking the basket so the trader can fund new lanes. Does NOT
-# go through Gate A/B because it's a margin action, not a thesis
-# decision.
-PYTHONPATH=src python3 -m quant_rabbit.cli adverse-partial-close
+# 4c. adverse-partial-close is DISABLED 2026-05-14:
+# The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based
+# on adverse-pips threshold, violating feedback_market_over_risk_budget.md
+# (「SL-free 下で CLOSE 判断は構造/MTF/thesis のみ。含み損%/JPY は
+# 遅行指標で判断材料にしない」). Locking in losses on adverse-pip
+# threshold IS the anti-pattern SL-free was designed to avoid.
+# Module file kept in src/quant_rabbit/strategy/adverse_partial_close.py
+# for reference + future "structural-trigger only" rewrite; CLI line
+# below is commented out so no cycle invokes it.
+# PYTHONPATH=src python3 -m quant_rabbit.cli adverse-partial-close
 
 # 5. Run one gateway cycle only
 # The gateway cycle syncs data/execution_ledger.db before and after broker work
