@@ -26,7 +26,12 @@ from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
 # time-exhaustion runs (≤10 bars). Bounded so pair_charts.json stays
 # under a few hundred KB even with 7 timeframes × N pairs.
 RECENT_CANDLES_PUBLISH = 30
-from quant_rabbit.analysis.indicators import IndicatorSet, compute_indicators
+from quant_rabbit.analysis.indicators import (
+    IndicatorSet,
+    compute_indicators,
+    compute_rsi_series,
+    compute_macd_hist_series,
+)
 from quant_rabbit.analysis.structure import StructureReading, analyze_structure
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 
@@ -98,6 +103,12 @@ class ChartView:
     # recent RECENT_CANDLES_PUBLISH bars to keep pair_charts.json size
     # bounded; downstream consumers should not expect a long history.
     recent_candles: tuple[Candle, ...] = field(default_factory=tuple)
+    # 2026-05-14: indicator time series for true divergence detectors.
+    # Last RECENT_CANDLES_PUBLISH values of key oscillators aligned to
+    # `recent_candles` so a downstream consumer can take the i-th
+    # element of both. Empty tuples when there aren't enough bars to
+    # seed the indicator (early-startup case).
+    indicator_series: dict[str, tuple[float, ...]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -118,6 +129,7 @@ class ChartView:
                 }
                 for c in self.recent_candles
             ],
+            "indicator_series": {k: list(v) for k, v in self.indicator_series.items()},
         }
 
 
@@ -192,6 +204,13 @@ def build_pair_chart(
         regime_reading, family_scores, stat_filters, smc_reading = _build_reading_layer(
             candles=candles, indicators=indicators, granularity=tf
         )
+        # Indicator series for divergence detection. Empty when there
+        # aren't enough bars to seed the indicator.
+        closes_for_series = tuple(c.close for c in candles)
+        series_map = {
+            "rsi_14": compute_rsi_series(closes_for_series, period=14, count=RECENT_CANDLES_PUBLISH),
+            "macd_hist": compute_macd_hist_series(closes_for_series, count=RECENT_CANDLES_PUBLISH),
+        }
         views.append(
             ChartView(
                 granularity=tf,
@@ -205,6 +224,7 @@ def build_pair_chart(
                 stat_filters=stat_filters,
                 smc=smc_reading,
                 recent_candles=tuple(candles[-RECENT_CANDLES_PUBLISH:]) if candles else tuple(),
+                indicator_series=series_map,
             )
         )
 

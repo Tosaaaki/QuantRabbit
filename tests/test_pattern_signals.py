@@ -269,30 +269,166 @@ class TimeExhaustionTest(unittest.TestCase):
 
 
 class RSIDivergenceTest(unittest.TestCase):
+    """True divergence using bar-aligned RSI series against price swings."""
+
     def setUp(self) -> None:
         if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
             del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
 
-    def test_bearish_divergence_fires_down(self) -> None:
-        view = {"granularity": "M15", "indicators": {"rsi_14": 65, "rsi_percentile_100": 60}}
-        chart = {"pair": "EUR_USD", "confluence": {"price_percentile_24h": 0.95}, "views": [view]}
-        signals = detect_pattern_signals(chart)
-        div = [s for s in signals if "divergence" in s.name]
-        self.assertEqual(div[0].direction, "DOWN")
-        self.assertEqual(div[0].name, "bearish_rsi_divergence")
+    def _candle(self, idx: int, high: float, low: float, bull: bool = True) -> dict:
+        # Build a candle of given high/low with a small body
+        return {"o": low + 0.0001, "h": high, "l": low,
+                "c": high - 0.0001 if bull else low + 0.0001, "v": 100}
 
-    def test_bullish_divergence_fires_up(self) -> None:
-        view = {"granularity": "M15", "indicators": {"rsi_14": 35, "rsi_percentile_100": 40}}
-        chart = {"pair": "EUR_USD", "confluence": {"price_percentile_24h": 0.05}, "views": [view]}
+    def test_bearish_rsi_divergence_fires_down(self) -> None:
+        """Price makes HH, RSI makes LH between two swings."""
+        # 30 candles: build two swing highs (indices 5 and 25) with HH but
+        # corresponding RSI values with LH.
+        candles = []
+        for i in range(30):
+            # Default low candles
+            candles.append(self._candle(i, high=1.10, low=1.099))
+        # Insert swing highs at idx 5 (high=1.103) and idx 25 (HH=1.105)
+        candles[5] = self._candle(5, high=1.103, low=1.099)
+        candles[25] = self._candle(25, high=1.105, low=1.099)
+        # RSI series: 30 entries; RSI at idx 5 = 75, at idx 25 = 65 (LH).
+        # Pad surrounding values lower than the swing peaks so swing detection works.
+        rsi_series = [50.0] * 30
+        rsi_series[5] = 75.0
+        rsi_series[25] = 65.0
+        view = {"granularity": "M15", "indicators": {},
+                "recent_candles": candles,
+                "indicator_series": {"rsi_14": rsi_series}}
+        chart = {"pair": "EUR_USD", "views": [view]}
         signals = detect_pattern_signals(chart)
-        div = [s for s in signals if "divergence" in s.name]
+        div = [s for s in signals if "rsi_14_divergence" in s.name]
+        self.assertEqual(len(div), 1)
+        self.assertEqual(div[0].direction, "DOWN")
+        self.assertEqual(div[0].name, "bearish_rsi_14_divergence")
+
+    def test_bullish_rsi_divergence_fires_up(self) -> None:
+        candles = []
+        for i in range(30):
+            candles.append(self._candle(i, high=1.105, low=1.10))
+        candles[5] = self._candle(5, high=1.105, low=1.097)   # swing low
+        candles[25] = self._candle(25, high=1.105, low=1.095)  # LL
+        rsi_series = [50.0] * 30
+        rsi_series[5] = 25.0
+        rsi_series[25] = 32.0  # HL (rsi up despite price down)
+        view = {"granularity": "M15", "indicators": {},
+                "recent_candles": candles,
+                "indicator_series": {"rsi_14": rsi_series}}
+        chart = {"pair": "EUR_USD", "views": [view]}
+        signals = detect_pattern_signals(chart)
+        div = [s for s in signals if "rsi_14_divergence" in s.name]
         self.assertEqual(div[0].direction, "UP")
 
-    def test_no_divergence_when_both_confirm(self) -> None:
-        view = {"granularity": "M15", "indicators": {"rsi_14": 80, "rsi_percentile_100": 95}}
-        chart = {"pair": "EUR_USD", "confluence": {"price_percentile_24h": 0.95}, "views": [view]}
+    def test_no_divergence_when_indicator_confirms(self) -> None:
+        """Price HH + RSI HH = no divergence."""
+        candles = []
+        for i in range(30):
+            candles.append(self._candle(i, high=1.10, low=1.099))
+        candles[5] = self._candle(5, high=1.103, low=1.099)
+        candles[25] = self._candle(25, high=1.105, low=1.099)
+        rsi_series = [50.0] * 30
+        rsi_series[5] = 65.0
+        rsi_series[25] = 78.0  # HH confirms — no divergence
+        view = {"granularity": "M15", "indicators": {},
+                "recent_candles": candles,
+                "indicator_series": {"rsi_14": rsi_series}}
+        chart = {"pair": "EUR_USD", "views": [view]}
         signals = detect_pattern_signals(chart)
-        self.assertEqual([s for s in signals if "divergence" in s.name], [])
+        self.assertEqual([s for s in signals if "rsi_14_divergence" in s.name], [])
+
+    def test_no_divergence_when_series_missing(self) -> None:
+        view = {"granularity": "M15", "indicators": {"rsi_14": 80},
+                "recent_candles": [self._candle(0, 1.1, 1.099) for _ in range(30)]}
+        chart = {"pair": "EUR_USD", "views": [view]}
+        signals = detect_pattern_signals(chart)
+        self.assertEqual([s for s in signals if "rsi_14_divergence" in s.name], [])
+
+
+class ThreeBarPatternTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
+            del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
+
+    def test_morning_star_fires_up(self) -> None:
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            # c1: bear (o=1.110, c=1.100)
+            {"o": 1.110, "h": 1.112, "l": 1.098, "c": 1.100, "v": 100},
+            # c2: narrow body (small range, body 0.0005 vs range 0.002 = 25%)
+            {"o": 1.100, "h": 1.102, "l": 1.099, "c": 1.1005, "v": 100},
+            # c3: bull closing above midpoint of c1 (mid = (1.110+1.100)/2 = 1.105)
+            {"o": 1.101, "h": 1.108, "l": 1.100, "c": 1.107, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("morning_star", [s.name for s in signals])
+
+    def test_evening_star_fires_down(self) -> None:
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            {"o": 1.100, "h": 1.112, "l": 1.099, "c": 1.110, "v": 100},
+            {"o": 1.110, "h": 1.111, "l": 1.108, "c": 1.1095, "v": 100},
+            {"o": 1.109, "h": 1.110, "l": 1.102, "c": 1.103, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("evening_star", [s.name for s in signals])
+
+    def test_three_white_soldiers(self) -> None:
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            {"o": 1.100, "h": 1.103, "l": 1.099, "c": 1.102, "v": 100},
+            {"o": 1.1015, "h": 1.105, "l": 1.101, "c": 1.104, "v": 100},
+            {"o": 1.1035, "h": 1.107, "l": 1.103, "c": 1.106, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("three_white_soldiers", [s.name for s in signals])
+
+    def test_three_black_crows(self) -> None:
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            {"o": 1.106, "h": 1.107, "l": 1.103, "c": 1.104, "v": 100},
+            {"o": 1.1045, "h": 1.105, "l": 1.101, "c": 1.102, "v": 100},
+            {"o": 1.1025, "h": 1.103, "l": 1.099, "c": 1.100, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("three_black_crows", [s.name for s in signals])
+
+
+class InsideBarBreakTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
+            del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
+
+    def test_inside_bar_break_up(self) -> None:
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            # Mother
+            {"o": 1.100, "h": 1.110, "l": 1.095, "c": 1.105, "v": 100},
+            # Inside (high < mother.high, low > mother.low)
+            {"o": 1.104, "h": 1.108, "l": 1.099, "c": 1.106, "v": 100},
+            # Break UP (close > mother.high 1.110)
+            {"o": 1.107, "h": 1.115, "l": 1.106, "c": 1.112, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        names = [s.name for s in signals]
+        self.assertIn("inside_bar_break_up", names)
+
+    def test_inside_bar_break_down(self) -> None:
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            {"o": 1.105, "h": 1.110, "l": 1.095, "c": 1.100, "v": 100},
+            {"o": 1.101, "h": 1.108, "l": 1.099, "c": 1.103, "v": 100},
+            {"o": 1.102, "h": 1.103, "l": 1.090, "c": 1.092, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("inside_bar_break_down", [s.name for s in signals])
+
+    def test_no_break_when_inside_continues(self) -> None:
+        """Mother → inside → still-inside (no break)."""
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": [
+            {"o": 1.100, "h": 1.110, "l": 1.095, "c": 1.105, "v": 100},
+            {"o": 1.104, "h": 1.108, "l": 1.099, "c": 1.106, "v": 100},
+            {"o": 1.105, "h": 1.107, "l": 1.100, "c": 1.103, "v": 100},
+        ]}])
+        signals = detect_pattern_signals(chart)
+        self.assertEqual([s for s in signals if "inside_bar_break" in s.name], [])
 
 
 class KillSwitchTest(unittest.TestCase):

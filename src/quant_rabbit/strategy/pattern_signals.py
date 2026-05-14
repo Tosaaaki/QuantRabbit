@@ -53,6 +53,17 @@ INSIDE_BAR_BONUS = float(os.environ.get("QR_INSIDE_BAR_BONUS", "5.0"))
 VOLUME_SPIKE_BONUS = float(os.environ.get("QR_VOLUME_SPIKE_BONUS", "10.0"))
 TIME_EXHAUSTION_BONUS = float(os.environ.get("QR_TIME_EXHAUSTION_BONUS", "12.0"))
 RSI_DIVERGENCE_BONUS = float(os.environ.get("QR_RSI_DIVERGENCE_BONUS", "14.0"))
+MACD_DIVERGENCE_BONUS = float(os.environ.get("QR_MACD_DIVERGENCE_BONUS", "12.0"))
+THREE_BAR_REVERSAL_BONUS = float(os.environ.get("QR_THREE_BAR_REVERSAL_BONUS", "14.0"))
+THREE_SOLDIERS_CROWS_BONUS = float(os.environ.get("QR_THREE_SOLDIERS_CROWS_BONUS", "10.0"))
+INSIDE_BAR_BREAK_BONUS = float(os.environ.get("QR_INSIDE_BAR_BREAK_BONUS", "11.0"))
+
+# Swing detection sensitivity for divergence: a local extreme requires
+# being higher/lower than the N bars on each side. 2 is reasonable for
+# 30-bar windows.
+DIVERGENCE_SWING_STRENGTH = int(os.environ.get("QR_DIVERGENCE_SWING_STRENGTH", "2"))
+# Minimum bar separation between the two swings used in divergence.
+DIVERGENCE_MIN_SEPARATION = int(os.environ.get("QR_DIVERGENCE_MIN_SEPARATION", "5"))
 
 # Volume-spike threshold: current bar volume must be at least this
 # multiple of the rolling N-bar average to qualify.
@@ -415,48 +426,215 @@ def _detect_time_exhaustion(view: Dict[str, Any], tf: str) -> List[PatternSignal
     )]
 
 
-def _detect_rsi_divergence(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
-    """Bullish divergence: price makes a lower low, but RSI makes a higher low.
-    Bearish divergence: price makes a higher high, but RSI doesn't.
+def _find_swings(values: list[float], strength: int = 2, find_highs: bool = True) -> list[int]:
+    """Return indices of local extremes.
 
-    Without an RSI time-series we approximate by comparing the CURRENT
-    RSI vs the RSI implied by the most recent swing extreme. Since
-    pair_charts doesn't ship RSI history, we use a lightweight proxy:
-    compare current RSI to rsi_percentile_100 — if price is at a new
-    24h extreme but RSI percentile shows the indicator is NOT also at
-    extreme, that's a structural divergence.
+    A local high at index i requires `values[i]` to be > all values in
+    [i-strength, i-1] AND > all values in [i+1, i+strength]. Mirror for
+    lows. Endpoints (within `strength` of either edge) cannot be swings.
     """
-    ind = view.get("indicators") or {}
-    rsi = _to_float(ind.get("rsi_14"))
-    rsi_pctile = _to_float(ind.get("rsi_percentile_100"))
-    confluence = (view.get("confluence") if isinstance(view.get("confluence"), dict) else None) or {}
-    price_pctile_24h = _to_float(confluence.get("price_percentile_24h"))
-    # Fall back: pair-level confluence isn't stored on view; rely on
-    # view-level fields if the parent passes them via chart_context.
-    if price_pctile_24h is None:
-        # No 24h price percentile here; divergence can't be confirmed.
+    if len(values) < 2 * strength + 1:
         return []
-    if rsi is None or rsi_pctile is None:
+    out: list[int] = []
+    for i in range(strength, len(values) - strength):
+        center = values[i]
+        left = values[i - strength: i]
+        right = values[i + 1: i + 1 + strength]
+        if find_highs:
+            if all(center > x for x in left) and all(center > x for x in right):
+                out.append(i)
+        else:
+            if all(center < x for x in left) and all(center < x for x in right):
+                out.append(i)
+    return out
+
+
+def _detect_indicator_divergence(view: Dict[str, Any], tf: str, indicator_key: str, bonus: float) -> List[PatternSignal]:
+    """True divergence using bar-aligned indicator series against
+    price swings in `recent_candles`.
+
+    Returns at most one signal per call (the most recent qualifying
+    divergence). Both bearish (price HH + indicator LH) and bullish
+    (price LL + indicator HL) classes are evaluated; pick whichever
+    last fired.
+    """
+    candles_raw = view.get("recent_candles") or []
+    series_map = view.get("indicator_series") or {}
+    indicator_series = series_map.get(indicator_key) or []
+    if not isinstance(indicator_series, (list, tuple)):
         return []
-    # Bearish divergence: price at extreme high (≥0.9) but RSI percentile
-    # NOT at extreme (≤0.7).
-    if price_pctile_24h >= 0.9 and rsi_pctile <= 70:
-        gap = (price_pctile_24h * 100) - rsi_pctile
+    if len(candles_raw) < 2 * DIVERGENCE_SWING_STRENGTH + DIVERGENCE_MIN_SEPARATION:
+        return []
+    if len(indicator_series) < len(candles_raw):
+        # series shorter than candles → align right (most recent
+        # values correspond to most recent candles).
+        offset = len(candles_raw) - len(indicator_series)
+    else:
+        offset = 0
+    if offset < 0:
+        return []
+
+    highs_price = [_candle_metrics(c)["high"] if _candle_metrics(c) else None for c in candles_raw]
+    lows_price = [_candle_metrics(c)["low"] if _candle_metrics(c) else None for c in candles_raw]
+    if None in highs_price or None in lows_price:
+        return []
+
+    high_swings = _find_swings(highs_price, strength=DIVERGENCE_SWING_STRENGTH, find_highs=True)
+    low_swings = _find_swings(lows_price, strength=DIVERGENCE_SWING_STRENGTH, find_highs=False)
+
+    def _ind_at(candle_idx: int) -> Optional[float]:
+        series_idx = candle_idx - offset
+        if series_idx < 0 or series_idx >= len(indicator_series):
+            return None
+        return float(indicator_series[series_idx])
+
+    # Bearish divergence: take last 2 swing highs, check price HH but indicator LH.
+    if len(high_swings) >= 2:
+        a, b = high_swings[-2], high_swings[-1]
+        if (b - a) >= DIVERGENCE_MIN_SEPARATION:
+            ind_a = _ind_at(a); ind_b = _ind_at(b)
+            if ind_a is not None and ind_b is not None:
+                if highs_price[b] > highs_price[a] and ind_b < ind_a:
+                    gap = (highs_price[b] - highs_price[a]) / (highs_price[a] or 1.0)
+                    ind_drop = (ind_a - ind_b) / (abs(ind_a) + 1e-9)
+                    confidence = min(1.0, 0.4 + abs(ind_drop))
+                    return [PatternSignal(
+                        name=f"bearish_{indicator_key}_divergence",
+                        timeframe=tf, direction="DOWN",
+                        confidence=confidence, bonus_magnitude=bonus,
+                        rationale=f"{tf} price HH {highs_price[a]:.5f}→{highs_price[b]:.5f} but {indicator_key} LH {ind_a:.2f}→{ind_b:.2f} → bearish divergence",
+                    )]
+    # Bullish divergence: take last 2 swing lows, check price LL but indicator HL.
+    if len(low_swings) >= 2:
+        a, b = low_swings[-2], low_swings[-1]
+        if (b - a) >= DIVERGENCE_MIN_SEPARATION:
+            ind_a = _ind_at(a); ind_b = _ind_at(b)
+            if ind_a is not None and ind_b is not None:
+                if lows_price[b] < lows_price[a] and ind_b > ind_a:
+                    ind_rise = (ind_b - ind_a) / (abs(ind_a) + 1e-9)
+                    confidence = min(1.0, 0.4 + abs(ind_rise))
+                    return [PatternSignal(
+                        name=f"bullish_{indicator_key}_divergence",
+                        timeframe=tf, direction="UP",
+                        confidence=confidence, bonus_magnitude=bonus,
+                        rationale=f"{tf} price LL {lows_price[a]:.5f}→{lows_price[b]:.5f} but {indicator_key} HL {ind_a:.2f}→{ind_b:.2f} → bullish divergence",
+                    )]
+    return []
+
+
+def _detect_rsi_divergence(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
+    """True bar-aligned RSI divergence against price swings.
+
+    Replaces the prior `price_percentile_24h` proxy with the proper
+    swing-vs-swing comparison. Requires `view.indicator_series.rsi_14`
+    (produced by chart_reader 2026-05-14+); falls back to no-fire when
+    the series is missing.
+    """
+    return _detect_indicator_divergence(view, tf, "rsi_14", RSI_DIVERGENCE_BONUS)
+
+
+def _detect_macd_divergence(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
+    """Bar-aligned MACD histogram divergence."""
+    return _detect_indicator_divergence(view, tf, "macd_hist", MACD_DIVERGENCE_BONUS)
+
+
+def _detect_three_bar_patterns(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
+    """Morning star, evening star, three white soldiers, three black crows.
+
+    Needs at least 3 recent candles. Each pattern emits at most one
+    signal per view. Patterns:
+
+    - **Morning star (bullish reversal)**: bear → small body (doji-ish)
+      → bull that closes ≥ midpoint of the first candle's body.
+    - **Evening star (bearish reversal)**: bull → small body → bear
+      that closes ≤ midpoint of the first candle's body.
+    - **Three white soldiers (bullish continuation/reversal)**: 3
+      consecutive bull candles, each closing higher than the previous
+      and opening within (not below) the previous body.
+    - **Three black crows (bearish)**: mirror.
+    """
+    candles_raw = view.get("recent_candles") or []
+    if len(candles_raw) < 3:
+        return []
+    c1 = _candle_metrics(candles_raw[-3])
+    c2 = _candle_metrics(candles_raw[-2])
+    c3 = _candle_metrics(candles_raw[-1])
+    if c1 is None or c2 is None or c3 is None:
+        return []
+    out: List[PatternSignal] = []
+
+    # Morning star
+    if (c1["is_bear"]
+        and c2["body"] / c2["range"] <= 0.35  # narrow middle
+        and c3["is_bull"]
+        and c3["close"] >= (c1["open"] + c1["close"]) / 2.0):
+        out.append(PatternSignal(
+            name="morning_star", timeframe=tf, direction="UP",
+            confidence=0.75, bonus_magnitude=THREE_BAR_REVERSAL_BONUS,
+            rationale=f"{tf} morning star (bear / narrow / bull closing ≥ first body midpoint) → reversal UP",
+        ))
+    # Evening star
+    if (c1["is_bull"]
+        and c2["body"] / c2["range"] <= 0.35
+        and c3["is_bear"]
+        and c3["close"] <= (c1["open"] + c1["close"]) / 2.0):
+        out.append(PatternSignal(
+            name="evening_star", timeframe=tf, direction="DOWN",
+            confidence=0.75, bonus_magnitude=THREE_BAR_REVERSAL_BONUS,
+            rationale=f"{tf} evening star → reversal DOWN",
+        ))
+    # Three white soldiers
+    if (c1["is_bull"] and c2["is_bull"] and c3["is_bull"]
+        and c2["close"] > c1["close"] and c3["close"] > c2["close"]
+        and c2["open"] >= c1["open"] and c2["open"] <= c1["close"]
+        and c3["open"] >= c2["open"] and c3["open"] <= c2["close"]):
+        out.append(PatternSignal(
+            name="three_white_soldiers", timeframe=tf, direction="UP",
+            confidence=0.6, bonus_magnitude=THREE_SOLDIERS_CROWS_BONUS,
+            rationale=f"{tf} three white soldiers (3 bulls, each opens within prev body, closes higher) → UP",
+        ))
+    # Three black crows
+    if (c1["is_bear"] and c2["is_bear"] and c3["is_bear"]
+        and c2["close"] < c1["close"] and c3["close"] < c2["close"]
+        and c2["open"] <= c1["open"] and c2["open"] >= c1["close"]
+        and c3["open"] <= c2["open"] and c3["open"] >= c2["close"]):
+        out.append(PatternSignal(
+            name="three_black_crows", timeframe=tf, direction="DOWN",
+            confidence=0.6, bonus_magnitude=THREE_SOLDIERS_CROWS_BONUS,
+            rationale=f"{tf} three black crows → DOWN",
+        ))
+    return out
+
+
+def _detect_inside_bar_break(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
+    """Three-candle pattern: mother → inside → break.
+
+    Inside bar (candle 2): high ≤ mother.high AND low ≥ mother.low.
+    Break (candle 3, latest): close > mother.high → UP break;
+                              close < mother.low → DOWN break.
+    """
+    candles_raw = view.get("recent_candles") or []
+    if len(candles_raw) < 3:
+        return []
+    mother = _candle_metrics(candles_raw[-3])
+    inside = _candle_metrics(candles_raw[-2])
+    breaker = _candle_metrics(candles_raw[-1])
+    if mother is None or inside is None or breaker is None:
+        return []
+    # Confirm inside bar:
+    if not (inside["high"] <= mother["high"] and inside["low"] >= mother["low"]):
+        return []
+    if breaker["close"] > mother["high"]:
         return [PatternSignal(
-            name="bearish_rsi_divergence", timeframe=tf, direction="DOWN",
-            confidence=min(1.0, gap / 50.0 + 0.4),
-            bonus_magnitude=RSI_DIVERGENCE_BONUS,
-            rationale=f"{tf} price pctile {price_pctile_24h:.2f} at extreme but RSI pctile {rsi_pctile:.0f} not confirming → bearish divergence",
+            name="inside_bar_break_up", timeframe=tf, direction="UP",
+            confidence=0.7, bonus_magnitude=INSIDE_BAR_BREAK_BONUS,
+            rationale=f"{tf} inside bar break UP (mother.high {mother['high']:.5f} → breaker.close {breaker['close']:.5f})",
         )]
-    # Bullish divergence: price at extreme low (≤0.1) but RSI percentile
-    # NOT at extreme low (≥30).
-    if price_pctile_24h <= 0.1 and rsi_pctile >= 30:
-        gap = rsi_pctile - (price_pctile_24h * 100)
+    if breaker["close"] < mother["low"]:
         return [PatternSignal(
-            name="bullish_rsi_divergence", timeframe=tf, direction="UP",
-            confidence=min(1.0, gap / 50.0 + 0.4),
-            bonus_magnitude=RSI_DIVERGENCE_BONUS,
-            rationale=f"{tf} price pctile {price_pctile_24h:.2f} at extreme low but RSI pctile {rsi_pctile:.0f} not confirming → bullish divergence",
+            name="inside_bar_break_down", timeframe=tf, direction="DOWN",
+            confidence=0.7, bonus_magnitude=INSIDE_BAR_BREAK_BONUS,
+            rationale=f"{tf} inside bar break DOWN",
         )]
     return []
 
@@ -488,7 +666,10 @@ def detect_pattern_signals(
         out.extend(_detect_candlestick_patterns(view, tf))
         out.extend(_detect_volume_spike(view, tf))
         out.extend(_detect_time_exhaustion(view, tf))
-        out.extend(_detect_rsi_divergence(view_with_confluence, tf))
+        out.extend(_detect_rsi_divergence(view, tf))
+        out.extend(_detect_macd_divergence(view, tf))
+        out.extend(_detect_three_bar_patterns(view, tf))
+        out.extend(_detect_inside_bar_break(view, tf))
     return out
 
 

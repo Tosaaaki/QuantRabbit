@@ -440,6 +440,77 @@ def _ema_slope(values: Sequence[float], *, span: int, lookback: int, pip: float)
     return (end - start) / pip
 
 
+def compute_rsi_series(values: Sequence[float], *, period: int = 14, count: int = 30) -> tuple[float, ...]:
+    """Return the LAST `count` RSI values as a tuple.
+
+    Public companion to `_rsi`. Internally walks the Wilder-smoothing
+    accumulator once and emits a tuple of the most recent `count`
+    values. Returns () when there aren't enough bars to seed the
+    average. Used by pattern_signals to detect true RSI divergence
+    against price swings.
+    """
+    if len(values) <= period:
+        return tuple()
+    gains: list[float] = []
+    losses: list[float] = []
+    for i in range(1, period + 1):
+        diff = values[i] - values[i - 1]
+        gains.append(max(diff, 0.0))
+        losses.append(max(-diff, 0.0))
+    avg_gain = sum(gains) / period
+    avg_loss = sum(losses) / period
+    series: list[float] = []
+    if avg_loss == 0:
+        series.append(100.0)
+    else:
+        rs = avg_gain / avg_loss
+        series.append(100.0 - (100.0 / (1.0 + rs)))
+    for i in range(period + 1, len(values)):
+        diff = values[i] - values[i - 1]
+        gain = max(diff, 0.0)
+        loss = max(-diff, 0.0)
+        avg_gain = (avg_gain * (period - 1) + gain) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+        if avg_loss == 0:
+            series.append(100.0)
+        else:
+            rs = avg_gain / avg_loss
+            series.append(100.0 - (100.0 / (1.0 + rs)))
+    return tuple(series[-count:])
+
+
+def compute_macd_hist_series(values: Sequence[float], *, fast: int = 12, slow: int = 26, signal: int = 9, count: int = 30) -> tuple[float, ...]:
+    """Return the LAST `count` MACD histogram values as a tuple.
+
+    Built from `_ema_series` for both legs, then a signal EMA across
+    the MACD line. Used for divergence detection — comparing histogram
+    extrema at the same swing points as the price extrema.
+    """
+    fast_series = _ema_series(values, fast)
+    slow_series = _ema_series(values, slow)
+    if fast_series is None or slow_series is None:
+        return tuple()
+    macd_line: list[float | None] = []
+    for f, s in zip(fast_series, slow_series):
+        if f is None or s is None:
+            macd_line.append(None)
+        else:
+            macd_line.append(f - s)
+    # Drop None prefix
+    macd_clean = [m for m in macd_line if m is not None]
+    if len(macd_clean) < signal:
+        return tuple()
+    signal_series = _ema_series(macd_clean, signal)
+    if signal_series is None:
+        return tuple()
+    hist: list[float] = []
+    for m, sv in zip(macd_clean, signal_series):
+        if sv is None:
+            continue
+        hist.append(m - sv)
+    return tuple(hist[-count:])
+
+
 def _rsi(values: Sequence[float], period: int = 14) -> float | None:
     if len(values) <= period:
         return None
