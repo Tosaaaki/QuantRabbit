@@ -1224,8 +1224,16 @@ class TraderBrain:
         # lag, session expansion. UNlike pattern_signals (which read
         # past events), these are predictive — "what's about to happen".
         # User directive 2026-05-14:「相場が動いてから動いちゃだめ」.
+        # 2026-05-14 (later): each projection signal is RECORDED to
+        # projection_ledger.jsonl and the layer's confidence weights
+        # are CALIBRATED from the rolling hit-rate of past predictions.
+        # Detectors that don't pan out get dampened; strong ones get
+        # boosted. User directive:「予測の精度を最大限高める」.
         from quant_rabbit.paths import DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT
-        from quant_rabbit.models import Side as _Side
+        from quant_rabbit.strategy.projection_ledger import (
+            compute_hit_rates as _compute_hit_rates,
+            record_projections as _record_projections,
+        )
         if pair_chart_for_reversal is not None and snapshot is not None:
             cur_price_for_proj = _current_price_for(pair, snapshot, direction) if snapshot else None
             _projection_signals = detect_forward_projections(
@@ -1236,9 +1244,26 @@ class TraderBrain:
                 cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
             )
             if _projection_signals:
+                # Load rolling hit rates for calibration. Empty when
+                # ledger hasn't accumulated samples yet — calibration
+                # multiplier defaults to 1.0 in that case.
+                _hit_rates = _compute_hit_rates(_QR_ROOT / "data")
                 _proj_delta, _proj_rationales = aggregate_projection_score(
-                    _projection_signals, direction
+                    _projection_signals, direction,
+                    hit_rates=_hit_rates, pair=pair,
                 )
+                # Record predictions ONCE per cycle (idempotent by
+                # timestamp + signal_name + pair). The dedup happens
+                # downstream in verify when the same timestamp re-appears.
+                try:
+                    _record_projections(
+                        _projection_signals,
+                        pair=pair,
+                        current_price=cur_price_for_proj,
+                        data_root=_QR_ROOT / "data",
+                    )
+                except Exception:
+                    pass  # ledger write failure must not break scoring
                 if _proj_delta != 0.0:
                     score += _proj_delta
                     rationale.insert(0, f"forward-proj {_proj_delta:+.1f}: " + "; ".join(_proj_rationales[:3]))

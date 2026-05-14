@@ -147,6 +147,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
+# 4d. Verify pending forward-projection predictions against OANDA
+# prices. Resolves PENDING → HIT/MISS/TIMEOUT in
+# data/projection_ledger.jsonl. The next trader cycle reads the
+# rolling hit-rate from this ledger and calibrates the projection
+# layer's confidence weights — self-improving feedback loop.
+PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
+
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based
 # on adverse-pips threshold, violating feedback_market_over_risk_budget.md

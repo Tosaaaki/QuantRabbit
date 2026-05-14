@@ -391,32 +391,61 @@ def detect_forward_projections(
 def aggregate_projection_score(
     signals: List[ProjectionSignal],
     intent_direction: str,
+    *,
+    hit_rates: Optional[Dict[str, Dict[str, Any]]] = None,
+    pair: Optional[str] = None,
 ) -> Tuple[float, List[str]]:
     """Sum aligned projection signals, subtract opposed (half-weight).
 
+    Optional `hit_rates` (per-detector historical hit rate from
+    `projection_ledger.compute_hit_rates`) recalibrates each signal's
+    `confidence` via `confidence_calibration` — detectors with poor
+    track records get dampened; strong ones boosted.
+
+    Confluence multiplier: when ≥ 3 signals agree on intent direction,
+    the aligned-side contributions get multiplied by 1.3 (capped via
+    PROJECTION_TOTAL_CAP). High-confluence setups are explicitly
+    rewarded so the trader's setup-grade A/B/C distinction maps to
+    score magnitude.
+
     `direction == "EITHER"` signals (BB squeeze, news catalyst, session
     expansion) apply their `bonus_magnitude` as-is regardless of intent
-    direction. For news catalyst, magnitude is negative (entry penalty)
-    when ANY high-impact event is pending.
+    direction. News catalyst is negative (entry penalty).
     """
+    from quant_rabbit.strategy.projection_ledger import confidence_calibration
+
     intent_up = intent_direction.upper() == "LONG"
+    aligned_count = sum(
+        1 for s in signals
+        if s.direction != "EITHER" and (s.direction.upper() == "UP") == intent_up
+    )
+    confluence_mult = 1.3 if aligned_count >= 3 else (1.15 if aligned_count == 2 else 1.0)
+
     total = 0.0
     rationales: List[str] = []
     for s in signals:
-        contribution = s.bonus_magnitude * s.confidence
+        cal_mult = 1.0
+        if hit_rates is not None and pair:
+            cal_mult = confidence_calibration(s.name, pair, hit_rates=hit_rates)
+        contribution = s.bonus_magnitude * s.confidence * cal_mult
+        cal_note = f" [cal×{cal_mult:.2f}]" if cal_mult != 1.0 else ""
         if s.direction == "EITHER":
-            total += contribution  # may be negative (news catalyst)
-            rationales.append(f"{'+' if contribution >= 0 else ''}{contribution:.1f} {s.rationale}")
+            total += contribution
+            rationales.append(f"{'+' if contribution >= 0 else ''}{contribution:.1f}{cal_note} {s.rationale}")
         else:
             signal_up = s.direction.upper() == "UP"
             if signal_up == intent_up:
-                total += contribution
-                rationales.append(f"+{contribution:.1f} {s.rationale}")
+                # Aligned: apply confluence multiplier
+                final = contribution * confluence_mult
+                total += final
+                rationales.append(f"+{final:.1f}{cal_note} {s.rationale}")
             else:
                 total -= contribution * 0.5
-                rationales.append(f"-{contribution * 0.5:.1f} AGAINST {s.rationale}")
+                rationales.append(f"-{contribution * 0.5:.1f}{cal_note} AGAINST {s.rationale}")
     if total > PROJECTION_TOTAL_CAP:
         total = PROJECTION_TOTAL_CAP
     elif total < -PROJECTION_TOTAL_CAP:
         total = -PROJECTION_TOTAL_CAP
+    if confluence_mult > 1.0:
+        rationales.insert(0, f"confluence×{confluence_mult:.2f} ({aligned_count} aligned signals)")
     return round(total, 2), rationales

@@ -481,6 +481,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Compute updates but do not call broker.replace_trade_dependent_orders.",
     )
 
+    p_vproj = sub.add_parser(
+        "verify-projections",
+        help="Verify pending forward-projection predictions against current OANDA prices; resolves HIT/MISS/TIMEOUT.",
+    )
+    p_vproj.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_vproj.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+
     p_tprebal = sub.add_parser(
         "tp-rebalance",
         help="Expand/contract TP on trader-owned positions as market regime shifts (dynamic reward_risk × current ATR).",
@@ -1744,6 +1751,46 @@ def main(argv: list[str] | None = None) -> int:
             },
             indent=2,
         ))
+        return 0
+    if args.command == "verify-projections":
+        from quant_rabbit.strategy.projection_ledger import (
+            compute_hit_rates,
+            verify_pending,
+        )
+        from pathlib import Path as _P
+        data_root = _P("data")
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        quotes_by_pair: dict = {}
+        for pair_key, quote_data in (snapshot_payload.get("quotes") or {}).items():
+            if isinstance(quote_data, dict):
+                quotes_by_pair[pair_key] = {
+                    "bid": float(quote_data.get("bid", 0)),
+                    "ask": float(quote_data.get("ask", 0)),
+                }
+        # Per-pair ATR for EITHER / directional thresholding.
+        atr_pips_by_pair: dict = {}
+        if args.pair_charts.exists():
+            pc = json.loads(args.pair_charts.read_text())
+            for c in pc.get("charts", []) or []:
+                pair = c.get("pair")
+                if not pair:
+                    continue
+                for v in c.get("views", []):
+                    if v.get("granularity") == "H1":
+                        atr = (v.get("indicators") or {}).get("atr_pips")
+                        if atr:
+                            atr_pips_by_pair[pair] = float(atr)
+                            break
+        counts = verify_pending(data_root, quotes_by_pair=quotes_by_pair, atr_pips_by_pair=atr_pips_by_pair)
+        hr = compute_hit_rates(data_root)
+        print(json.dumps({
+            "status": "OK",
+            "resolution_counts": counts,
+            "hit_rates_by_signal": {
+                sig: {pair: round(d.get("hit_rate", 0), 3) for pair, d in by_pair.items()}
+                for sig, by_pair in hr.items()
+            },
+        }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "tp-rebalance":
         from quant_rabbit.strategy.tp_rebalancer import (
