@@ -521,11 +521,51 @@ def _adaptive_tp_action(
     # levels priced by SMC), not from a literal JPY floor.
     if position.unrealized_pl_jpy <= 0:
         if macro == "REVERSED":
-            reasons.append(
-                f"loss-cut: macro REVERSED while position underwater "
-                f"({position.unrealized_pl_jpy:+.0f} JPY) — H1/H4 structural turn"
-            )
-            return ACTION_REVIEW_EXIT, None, reasons
+            # 2026-05-14 fix: require CLOSE-CONFIRMED structural event
+            # before auto-exit. The `_classify_macro` label flips on
+            # noisy intraday regime swings (M15/M30/H1 regime tags
+            # change on wick prints), causing the trader to exit
+            # positions within 10 minutes of entry on a temporary
+            # macro re-classification. Recent live incidents
+            # (471061 EUR/JPY closed -154 in 1h, 471077 EUR/JPY closed
+            # -217 in 9min) both fired here with no real structural
+            # break to back them up. Mirrors the Gate A close_confirmed
+            # filter on gpt_trader (feedback_structure_close_vs_wick.md).
+            expected_struct_dir = "DOWN" if target_up else "UP"
+            close_confirmed_break = False
+            if isinstance(pair_chart, dict):
+                for view in pair_chart.get("views") or []:
+                    tf = str(view.get("granularity") or "").upper()
+                    if tf not in ("H1", "H4"):
+                        continue
+                    events = ((view.get("structure") or {}).get("structure_events") or [])
+                    for ev in events[-4:]:
+                        if not isinstance(ev, dict):
+                            continue
+                        if not ev.get("close_confirmed"):
+                            continue
+                        kind = str(ev.get("kind") or "")
+                        if expected_struct_dir in kind:
+                            close_confirmed_break = True
+                            break
+                    if close_confirmed_break:
+                        break
+            if not close_confirmed_break:
+                reasons.append(
+                    f"macro=REVERSED on label but no H1/H4 close-confirmed "
+                    f"BOS/CHOCH against {lane_dir} → HOLD pending structural confirm "
+                    f"(2026-05-14 anti-churn fix)"
+                )
+                # Fall through to OB-break check below; if that also
+                # doesn't confirm, the function reaches the default
+                # HOLD at the bottom.
+            else:
+                reasons.append(
+                    f"loss-cut: macro REVERSED + H1/H4 close-confirmed "
+                    f"structural break against {lane_dir} "
+                    f"({position.unrealized_pl_jpy:+.0f} JPY)"
+                )
+                return ACTION_REVIEW_EXIT, None, reasons
 
         # Multi-TF structural OB break check (user 2026-05-11「H1とH4でしか
         # みてない？」: previous version only consulted M30, missing real
