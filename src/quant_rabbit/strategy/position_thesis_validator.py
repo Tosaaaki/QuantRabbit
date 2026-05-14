@@ -125,6 +125,8 @@ def assess_position(
         detect_paths,
     )
     from quant_rabbit.strategy.reversal_signal import detect_reversal
+    from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
+    from quant_rabbit.strategy.forecast_persistence_tracker import assess_position as _persistence_assess
 
     rationale_lines: List[str] = []
     side_up = side.upper()

@@ -462,6 +462,14 @@ from quant_rabbit.strategy.path_projection import (
     aggregate_path_score,
     detect_paths,
 )
+from quant_rabbit.strategy.directional_forecaster import (
+    DirectionalForecast,
+    ENTRY_CONFIDENCE_MIN,
+    synthesize_forecast,
+)
+from quant_rabbit.strategy.forecast_persistence_tracker import (
+    record_forecast,
+)
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1337,18 +1345,90 @@ class TraderBrain:
         # Multi-step path projection (2026-05-14): sweep → FVG fill →
         # continuation. Requires M15 view with liquidity + FVG data.
         # Silent no-op when chart is missing structural artifacts.
+        _paths_for_forecast: list = []
         if pair_chart_for_reversal is not None and snapshot is not None:
             try:
                 _cur_for_path = _current_price_for(pair, snapshot, direction) if snapshot else None
                 if _cur_for_path is not None:
-                    _paths = detect_paths(pair_chart_for_reversal, direction, _cur_for_path)
-                    if _paths:
-                        _path_delta, _path_rat = aggregate_path_score(_paths, direction)
+                    _paths_for_forecast = list(detect_paths(pair_chart_for_reversal, direction, _cur_for_path))
+                    if _paths_for_forecast:
+                        _path_delta, _path_rat = aggregate_path_score(_paths_for_forecast, direction)
                         if _path_delta != 0.0:
                             score += _path_delta
                             rationale.insert(0, f"path-proj {_path_delta:+.1f}: " + "; ".join(_path_rat[:2]))
             except Exception:
                 pass
+
+        # 2026-05-15: Directional forecaster — synthesize all detector
+        # outputs into ONE single forecast: UP / DOWN / RANGE / UNCLEAR.
+        # This is the user-defined Stage 1 (予測) of the trading process.
+        # Gates entry:
+        #   - direction == UP + side == LONG (forecast matches) AND
+        #     confidence >= ENTRY_CONFIDENCE_MIN → ALLOW entry
+        #   - direction == DOWN + side == SHORT → ALLOW
+        #   - direction == RANGE / UNCLEAR → BLOCK entry (no edge)
+        #   - direction == UP + side == SHORT → BLOCK (forecast says
+        #     opposite — don't bet against the forecast)
+        # User insight 2026-05-15: 「論理や計算、経験や統計で仮説や予測
+        # をたてる。その方向にベットする。レンジとかもあるから、それも
+        # 予測段階」.
+        try:
+            if pair_chart_for_reversal is not None and snapshot is not None:
+                _cur_for_forecast = _current_price_for(pair, snapshot, direction) if snapshot else None
+                if _cur_for_forecast is not None:
+                    _forecast = synthesize_forecast(
+                        pair=pair,
+                        pair_chart=pair_chart_for_reversal,
+                        current_price=_cur_for_forecast,
+                        pattern_signals=_pattern_signals if '_pattern_signals' in locals() else [],
+                        projection_signals=_projection_signals if '_projection_signals' in locals() else [],
+                        correlation_signals=_corr_signals if '_corr_signals' in locals() else [],
+                        paths=_paths_for_forecast,
+                        reversal_long=_reversal_detected if (_reversal_detected is not None and getattr(_reversal_detected, 'side', '') == 'LONG') else None,
+                        reversal_short=_reversal_detected if (_reversal_detected is not None and getattr(_reversal_detected, 'side', '') == 'SHORT') else None,
+                        hit_rates=_hit_rates if '_hit_rates' in locals() else None,
+                        regime=_proj_regime if '_proj_regime' in locals() else None,
+                    )
+                    # Record forecast EVERY cycle (one per pair per cycle;
+                    # acceptable to record once per lane scoring even if
+                    # multiple lanes for same pair — first wins).
+                    try:
+                        record_forecast(_forecast, data_root=_QR_ROOT / "data")
+                    except Exception:
+                        pass
+                    # Gate entry on forecast direction matching intent.
+                    intent_up = direction.upper() == "LONG"
+                    forecast_up = _forecast.direction == "UP"
+                    forecast_down = _forecast.direction == "DOWN"
+                    forecast_decisive = _forecast.direction in ("UP", "DOWN")
+                    if not forecast_decisive:
+                        # RANGE / UNCLEAR → block entry; this is the
+                        # missing piece per user 2026-05-15.
+                        blockers.append(
+                            f"forecast={_forecast.direction} (no directional edge); rationale: {_forecast.rationale_summary}"
+                        )
+                        score -= 60.0
+                        rationale.insert(0, f"forecast {_forecast.direction} conf={_forecast.confidence:.2f} → BLOCK entry")
+                    elif (intent_up and not forecast_up) or (not intent_up and not forecast_down):
+                        # Forecast OPPOSITE intent → block
+                        blockers.append(
+                            f"forecast={_forecast.direction} opposite to intent {direction}; rationale: {_forecast.rationale_summary}"
+                        )
+                        score -= 80.0
+                        rationale.insert(0, f"forecast {_forecast.direction} AGAINST {direction} → BLOCK")
+                    elif _forecast.confidence < ENTRY_CONFIDENCE_MIN:
+                        blockers.append(
+                            f"forecast confidence {_forecast.confidence:.2f} < {ENTRY_CONFIDENCE_MIN} threshold"
+                        )
+                        score -= 30.0
+                        rationale.insert(0, f"forecast {_forecast.direction} conf {_forecast.confidence:.2f} too low")
+                    else:
+                        # Forecast aligned and confident → reward
+                        reward = 20.0 * _forecast.confidence
+                        score += reward
+                        rationale.insert(0, f"forecast {_forecast.direction} aligned conf={_forecast.confidence:.2f} → +{reward:.1f}")
+        except Exception:
+            pass
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
