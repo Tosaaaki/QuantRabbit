@@ -449,6 +449,10 @@ from quant_rabbit.strategy.pattern_signals import (
     aggregate_pattern_score,
     detect_pattern_signals,
 )
+from quant_rabbit.strategy.forward_projection import (
+    aggregate_projection_score,
+    detect_forward_projections,
+)
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1214,6 +1218,30 @@ class TraderBrain:
                     # report to avoid bloating; signals themselves are
                     # available via the structured dict if a caller needs.
                     rationale.insert(0, f"patterns {_pattern_delta:+.1f}: " + "; ".join(_pattern_rationales[:3]))
+
+        # Forward-projection layer (2026-05-14): BB squeeze→expansion,
+        # liquidity sweep targets, news-catalyst lookahead, cross-asset
+        # lag, session expansion. UNlike pattern_signals (which read
+        # past events), these are predictive — "what's about to happen".
+        # User directive 2026-05-14:「相場が動いてから動いちゃだめ」.
+        from quant_rabbit.paths import DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT
+        from quant_rabbit.models import Side as _Side
+        if pair_chart_for_reversal is not None and snapshot is not None:
+            cur_price_for_proj = _current_price_for(pair, snapshot, direction) if snapshot else None
+            _projection_signals = detect_forward_projections(
+                pair_chart_for_reversal,
+                pair=pair,
+                current_price=cur_price_for_proj,
+                calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
+                cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+            )
+            if _projection_signals:
+                _proj_delta, _proj_rationales = aggregate_projection_score(
+                    _projection_signals, direction
+                )
+                if _proj_delta != 0.0:
+                    score += _proj_delta
+                    rationale.insert(0, f"forward-proj {_proj_delta:+.1f}: " + "; ".join(_proj_rationales[:3]))
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
