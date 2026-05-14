@@ -19,6 +19,13 @@ from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
+
+# How many of the most-recent OHLCV bars to publish per view. 30 is
+# enough for candlestick-pattern detectors (look back 1-3 bars),
+# volume-spike rolling averages (20-bar baseline), and short-window
+# time-exhaustion runs (≤10 bars). Bounded so pair_charts.json stays
+# under a few hundred KB even with 7 timeframes × N pairs.
+RECENT_CANDLES_PUBLISH = 30
 from quant_rabbit.analysis.indicators import IndicatorSet, compute_indicators
 from quant_rabbit.analysis.structure import StructureReading, analyze_structure
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
@@ -86,6 +93,11 @@ class ChartView:
     family_scores: FamilyScores | None = None  # Trend/MeanRev/Breakout composites
     stat_filters: StatFilterReading | None = None  # jumps / autocorr / ACF / kurt
     smc: SMCReading | None = None  # SwingPivot/BOS/OB/FVG/Sweep/Breaker/iFVG/Displacement/DealingRange/OTE
+    # 2026-05-14: raw OHLCV history for downstream candlestick-pattern,
+    # volume-spike, and time-exhaustion detectors. Capped to the most
+    # recent RECENT_CANDLES_PUBLISH bars to keep pair_charts.json size
+    # bounded; downstream consumers should not expect a long history.
+    recent_candles: tuple[Candle, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -99,6 +111,13 @@ class ChartView:
             "family_scores": _family_scores_to_dict(self.family_scores),
             "stat_filters": _stat_filters_to_dict(self.stat_filters),
             "smc": _smc_to_dict(self.smc),
+            "recent_candles": [
+                {
+                    "t": c.timestamp_utc.isoformat() if hasattr(c.timestamp_utc, "isoformat") else str(c.timestamp_utc),
+                    "o": c.open, "h": c.high, "l": c.low, "c": c.close, "v": c.volume,
+                }
+                for c in self.recent_candles
+            ],
         }
 
 
@@ -185,6 +204,7 @@ def build_pair_chart(
                 family_scores=family_scores,
                 stat_filters=stat_filters,
                 smc=smc_reading,
+                recent_candles=tuple(candles[-RECENT_CANDLES_PUBLISH:]) if candles else tuple(),
             )
         )
 

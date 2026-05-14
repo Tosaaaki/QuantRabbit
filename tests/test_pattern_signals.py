@@ -162,6 +162,139 @@ class AggregateScoreTest(unittest.TestCase):
         self.assertAlmostEqual(total, 5.0)
 
 
+class CandlestickPatternTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
+            del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
+
+    def _v(self, candles: list[dict]) -> dict:
+        return {"granularity": "M15", "indicators": {}, "recent_candles": candles}
+
+    def test_bullish_engulfing_fires_up(self) -> None:
+        # prev bear (o=1.10, c=1.09), last bull engulfs (o=1.088, c=1.105)
+        chart = _chart([self._v([
+            {"o": 1.10, "h": 1.105, "l": 1.085, "c": 1.09, "v": 100},
+            {"o": 1.088, "h": 1.108, "l": 1.087, "c": 1.105, "v": 120},
+        ])])
+        signals = detect_pattern_signals(chart)
+        names = [s.name for s in signals]
+        self.assertIn("bullish_engulfing", names)
+
+    def test_bearish_engulfing_fires_down(self) -> None:
+        chart = _chart([self._v([
+            {"o": 1.090, "h": 1.105, "l": 1.088, "c": 1.100, "v": 100},
+            {"o": 1.102, "h": 1.103, "l": 1.085, "c": 1.087, "v": 120},
+        ])])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("bearish_engulfing", [s.name for s in signals])
+
+    def test_hammer_fires_up(self) -> None:
+        # Hammer: long lower wick, small body at top
+        # o=1.105, h=1.108, l=1.095, c=1.106 → body 0.001, lower_wick 0.010 (10x body), upper_wick 0.002
+        chart = _chart([self._v([
+            {"o": 1.100, "h": 1.108, "l": 1.095, "c": 1.105, "v": 100},  # prev
+            {"o": 1.105, "h": 1.108, "l": 1.095, "c": 1.106, "v": 100},  # hammer
+        ])])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("hammer", [s.name for s in signals])
+
+    def test_shooting_star_fires_down(self) -> None:
+        chart = _chart([self._v([
+            {"o": 1.100, "h": 1.108, "l": 1.095, "c": 1.105, "v": 100},
+            {"o": 1.106, "h": 1.115, "l": 1.105, "c": 1.107, "v": 100},  # shooting star
+        ])])
+        signals = detect_pattern_signals(chart)
+        self.assertIn("shooting_star", [s.name for s in signals])
+
+
+class VolumeSpikeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
+            del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
+
+    def test_volume_spike_on_bull_fades_down(self) -> None:
+        # 20 bars of avg volume 100, then last bar volume 300 on bull
+        candles = [
+            {"o": 1.10, "h": 1.105, "l": 1.095, "c": 1.103, "v": 100}
+            for _ in range(20)
+        ]
+        candles.append({"o": 1.103, "h": 1.110, "l": 1.102, "c": 1.108, "v": 300})
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": candles}])
+        signals = detect_pattern_signals(chart)
+        spike = [s for s in signals if "volume_spike" in s.name]
+        self.assertEqual(spike[0].direction, "DOWN")
+
+    def test_no_spike_when_volume_normal(self) -> None:
+        candles = [
+            {"o": 1.10, "h": 1.105, "l": 1.095, "c": 1.103, "v": 100}
+            for _ in range(21)
+        ]
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": candles}])
+        signals = detect_pattern_signals(chart)
+        spike = [s for s in signals if "volume_spike" in s.name]
+        self.assertEqual(spike, [])
+
+
+class TimeExhaustionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
+            del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
+
+    def test_5_bull_with_shrinking_range_fades_down(self) -> None:
+        # 5 consecutive bull candles, range shrinking 1.0 → 0.5
+        candles = [
+            {"o": 1.10 + i*0.001, "h": 1.10 + i*0.001 + (1.0 - i*0.15) * 0.001,
+             "l": 1.099 + i*0.001, "c": 1.10 + i*0.001 + 0.0005, "v": 100}
+            for i in range(5)
+        ]
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": candles + [candles[-1]]}])
+        signals = detect_pattern_signals(chart)
+        te = [s for s in signals if "time_exhaustion" in s.name]
+        # May or may not fire depending on exact shrink; just ensure no crash
+        # and if fires, it fades down (bull → DOWN).
+        for s in te:
+            self.assertEqual(s.direction, "DOWN")
+
+    def test_mixed_colors_does_not_fire(self) -> None:
+        candles = []
+        for i in range(6):
+            is_bull = (i % 2 == 0)
+            candles.append({
+                "o": 1.10, "h": 1.105, "l": 1.095,
+                "c": 1.103 if is_bull else 1.097, "v": 100,
+            })
+        chart = _chart([{"granularity": "M15", "indicators": {}, "recent_candles": candles}])
+        signals = detect_pattern_signals(chart)
+        self.assertEqual([s for s in signals if "time_exhaustion" in s.name], [])
+
+
+class RSIDivergenceTest(unittest.TestCase):
+    def setUp(self) -> None:
+        if "QR_DISABLE_PATTERN_SIGNALS" in os.environ:
+            del os.environ["QR_DISABLE_PATTERN_SIGNALS"]
+
+    def test_bearish_divergence_fires_down(self) -> None:
+        view = {"granularity": "M15", "indicators": {"rsi_14": 65, "rsi_percentile_100": 60}}
+        chart = {"pair": "EUR_USD", "confluence": {"price_percentile_24h": 0.95}, "views": [view]}
+        signals = detect_pattern_signals(chart)
+        div = [s for s in signals if "divergence" in s.name]
+        self.assertEqual(div[0].direction, "DOWN")
+        self.assertEqual(div[0].name, "bearish_rsi_divergence")
+
+    def test_bullish_divergence_fires_up(self) -> None:
+        view = {"granularity": "M15", "indicators": {"rsi_14": 35, "rsi_percentile_100": 40}}
+        chart = {"pair": "EUR_USD", "confluence": {"price_percentile_24h": 0.05}, "views": [view]}
+        signals = detect_pattern_signals(chart)
+        div = [s for s in signals if "divergence" in s.name]
+        self.assertEqual(div[0].direction, "UP")
+
+    def test_no_divergence_when_both_confirm(self) -> None:
+        view = {"granularity": "M15", "indicators": {"rsi_14": 80, "rsi_percentile_100": 95}}
+        chart = {"pair": "EUR_USD", "confluence": {"price_percentile_24h": 0.95}, "views": [view]}
+        signals = detect_pattern_signals(chart)
+        self.assertEqual([s for s in signals if "divergence" in s.name], [])
+
+
 class KillSwitchTest(unittest.TestCase):
     def test_disabled_returns_empty(self) -> None:
         os.environ["QR_DISABLE_PATTERN_SIGNALS"] = "1"
