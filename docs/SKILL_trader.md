@@ -171,6 +171,18 @@ PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 # required to actually close.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 
+# 4e2. Thesis evolution check (2026-05-15, user directive: 「どの視点で
+# エントリーしたのか、時間がたって今のポジ状況はエントリーしたときと
+# 市況が変わってないか」). Reads the entry-time thesis recorded at
+# fill time from data/entry_thesis_ledger.jsonl and compares against
+# the latest per-cycle forecast in data/forecast_history.jsonl.
+# Emits data/thesis_evolution_report.json with per-position
+# STILL_VALID / WEAKENED / BROKEN + HOLD / EXTEND / RECOMMEND_CLOSE.
+# INFORMATION ONLY — Gate A/B still required for actual close. Pairs
+# with TP-なし・SL-なし mode: trader holds runners on STILL_VALID,
+# considers manual close on BROKEN.
+PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
+
 # 4f. Generate predictive LIMIT orders for Grade A setups (path Step
 # B + liquidity sweep fades). Default dry-run writes
 # data/predictive_limit_orders.json for inspection; add --send to

@@ -1,0 +1,299 @@
+"""Unit tests for strategy/entry_thesis_ledger.py."""
+
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+from quant_rabbit.strategy.entry_thesis_ledger import (
+    EntryThesis,
+    evaluate_all_open_positions,
+    evaluate_thesis_evolution,
+    load_entry_thesis,
+    load_latest_forecast,
+    record_entry_thesis,
+    record_entry_thesis_from_response,
+    write_thesis_evolution_report,
+)
+
+
+class _Forecast:
+    """Lightweight stand-in for `DirectionalForecast`."""
+
+    def __init__(self, direction: str, confidence: float) -> None:
+        self.direction = direction
+        self.confidence = confidence
+
+
+class _SideEnum:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class _Position:
+    def __init__(
+        self,
+        *,
+        trade_id: str,
+        pair: str,
+        side: str,
+        owner: str = "trader",
+        open_time_utc: str | None = None,
+    ) -> None:
+        self.trade_id = trade_id
+        self.pair = pair
+        self.side = _SideEnum(side)
+        self.owner = _SideEnum(owner)
+        self.open_time_utc = open_time_utc
+
+
+class EntryThesisLedgerTest(unittest.TestCase):
+    def test_record_and_load_roundtrip(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            thesis = EntryThesis(
+                timestamp_utc="2026-05-15T10:00:00Z",
+                trade_id="42",
+                pair="EUR_JPY",
+                side="LONG",
+                entry_price=163.12,
+                forecast_direction="UP",
+                forecast_confidence=0.72,
+                regime="TREND",
+                invalidation_price=162.50,
+                target_price=164.50,
+                key_drivers=["pattern", "projection"],
+            )
+            record_entry_thesis(thesis, root)
+            loaded = load_entry_thesis("42", root)
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.pair, "EUR_JPY")
+            self.assertEqual(loaded.forecast_direction, "UP")
+            self.assertAlmostEqual(loaded.forecast_confidence, 0.72)
+
+    def test_load_latest_forecast_returns_most_recent_per_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fh = root / "forecast_history.jsonl"
+            entries = [
+                {"pair": "EUR_JPY", "direction": "UP", "confidence": 0.4},
+                {"pair": "USD_JPY", "direction": "DOWN", "confidence": 0.6},
+                {"pair": "EUR_JPY", "direction": "DOWN", "confidence": 0.7},
+            ]
+            fh.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+            latest = load_latest_forecast("EUR_JPY", root)
+            self.assertEqual(latest, entries[2])
+            self.assertEqual(load_latest_forecast("USD_JPY", root), entries[1])
+            self.assertIsNone(load_latest_forecast("GBP_USD", root))
+
+    def test_record_from_send_response_extracts_trade_id(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "EUR_JPY", "direction": "UP", "confidence": 0.7,
+                "invalidation_price": 162.5, "target_price": 164.5,
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "EUR_JPY"
+                side = _SideEnum("LONG")
+                thesis = "EUR_JPY LONG breakout retest"
+                entry = 163.10
+                metadata = {"desk": "spec", "regime_state": "TREND"}
+
+            response = {
+                "orderFillTransaction": {
+                    "tradeOpened": {"tradeID": "999999"},
+                    "price": 163.12,
+                }
+            }
+            written = record_entry_thesis_from_response(
+                response=response, intent=FakeIntent(), data_root=root,
+            )
+            self.assertIsNotNone(written)
+            assert written is not None
+            self.assertEqual(written.trade_id, "999999")
+            self.assertEqual(written.pair, "EUR_JPY")
+            self.assertEqual(written.side, "LONG")
+            self.assertEqual(written.forecast_direction, "UP")
+            self.assertAlmostEqual(written.forecast_confidence, 0.7)
+            # Verify it was actually appended to the ledger
+            loaded = load_entry_thesis("999999", root)
+            self.assertIsNotNone(loaded)
+
+    def test_record_from_response_no_trade_id_returns_none(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+
+            class FakeIntent:
+                pair = "EUR_JPY"
+                side = _SideEnum("LONG")
+                thesis = "x"
+                entry = 163.10
+                metadata: dict = {}
+
+            # Response with no tradeOpened block
+            response = {"orderRejectTransaction": {"reason": "x"}}
+            written = record_entry_thesis_from_response(
+                response=response, intent=FakeIntent(), data_root=root,
+            )
+            self.assertIsNone(written)
+
+    def _seed_thesis(self, root: Path) -> None:
+        record_entry_thesis(
+            EntryThesis(
+                timestamp_utc="2026-05-15T10:00:00Z",
+                trade_id="T1",
+                pair="EUR_JPY",
+                side="LONG",
+                entry_price=163.0,
+                forecast_direction="UP",
+                forecast_confidence=0.7,
+                regime="TREND",
+                invalidation_price=162.0,
+                target_price=164.5,
+                key_drivers=[],
+            ),
+            root,
+        )
+
+    def test_evolution_broken_when_forecast_flips(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("DOWN", 0.65),
+                current_regime="TREND",
+                data_root=root,
+                now=datetime(2026, 5, 15, 13, 0, tzinfo=timezone.utc),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("FORECAST FLIPPED", ev.rationale)
+
+    def test_evolution_still_valid_when_aligned(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("UP", 0.85),
+                current_regime="TREND",
+                data_root=root,
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "STILL_VALID")
+            # higher confidence than entry → EXTEND
+            self.assertEqual(ev.verdict, "EXTEND")
+
+    def test_evolution_weakened_on_range(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("RANGE", 0.4),
+                current_regime="RANGE",
+                data_root=root,
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+
+    def test_evolution_returns_none_for_missing_thesis(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            # No thesis recorded
+            ev = evaluate_thesis_evolution(
+                trade_id="UNKNOWN", pair="EUR_JPY", side="LONG",
+                open_time_utc=None,
+                current_forecast=_Forecast("UP", 0.7),
+                current_regime="TREND",
+                data_root=root,
+            )
+            self.assertIsNone(ev)
+
+    def test_regime_shift_demotes_still_valid_to_weakened(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)  # entry regime=TREND
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("UP", 0.75),
+                current_regime="RANGE",  # SHIFTED
+                data_root=root,
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertIn("regime SHIFTED", ev.rationale)
+
+    def test_evaluate_all_positions_filters_non_trader(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            positions = [
+                _Position(trade_id="T1", pair="EUR_JPY", side="LONG", owner="trader",
+                          open_time_utc="2026-05-15T10:00:00Z"),
+                _Position(trade_id="T2", pair="USD_JPY", side="SHORT", owner="user",
+                          open_time_utc="2026-05-15T10:00:00Z"),
+            ]
+            forecasts = {
+                "EUR_JPY": _Forecast("DOWN", 0.7),
+                "USD_JPY": _Forecast("UP", 0.7),
+            }
+            regimes = {"EUR_JPY": "TREND", "USD_JPY": "TREND"}
+            evs = evaluate_all_open_positions(
+                positions,
+                current_forecasts_by_pair=forecasts,
+                current_regimes_by_pair=regimes,
+                data_root=root,
+            )
+            # Only T1 (trader-owned + has thesis) returned
+            self.assertEqual(len(evs), 1)
+            self.assertEqual(evs[0].trade_id, "T1")
+
+    def test_write_report_summarizes_status_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev_broken = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc=None,
+                current_forecast=_Forecast("DOWN", 0.7),
+                current_regime="TREND",
+                data_root=root,
+            )
+            ev_valid = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc=None,
+                current_forecast=_Forecast("UP", 0.8),
+                current_regime="TREND",
+                data_root=root,
+            )
+            assert ev_broken is not None and ev_valid is not None
+            path = write_thesis_evolution_report(
+                [ev_broken, ev_valid], data_root=root,
+            )
+            self.assertTrue(path.exists())
+            payload = json.loads(path.read_text())
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(payload["by_status"]["BROKEN"], 1)
+            self.assertEqual(payload["by_status"]["STILL_VALID"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -494,6 +494,14 @@ def main(argv: list[str] | None = None) -> int:
     p_pthesis.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_pthesis.add_argument("--output", type=Path, default=Path("data/position_thesis_report.json"))
 
+    p_tevol = sub.add_parser(
+        "thesis-evolution-check",
+        help="Compare each open position's CURRENT forecast against its entry-time thesis; emit STILL_VALID/WEAKENED/BROKEN to data/thesis_evolution_report.json. INFORMATION ONLY — close decisions still go through Gate A/B.",
+    )
+    p_tevol.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_tevol.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_tevol.add_argument("--output", type=Path, default=Path("data/thesis_evolution_report.json"))
+
     p_plim = sub.add_parser(
         "generate-predictive-limits",
         help="Generate LIMIT orders from Grade-A forward-projection setups (path Step B + liquidity sweep fades).",
@@ -1894,6 +1902,98 @@ def main(argv: list[str] | None = None) -> int:
             "orders_count": len(all_orders),
             "sent": args.send,
             "output_path": str(args.output),
+        }, indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "thesis-evolution-check":
+        # Compare entry-time thesis vs latest cycle forecast per open
+        # position. Reads the canonical latest forecast from
+        # data/forecast_history.jsonl (written each cycle by trader_brain)
+        # rather than re-running the 17-detector stack — keeps this CLI
+        # cheap and aligned with what trader_brain saw.
+        from quant_rabbit.strategy.entry_thesis_ledger import (
+            evaluate_all_open_positions,
+            load_latest_forecast,
+            write_thesis_evolution_report,
+        )
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        charts_by_pair: dict = {}
+        for c in pair_charts_payload.get("charts", []) or []:
+            if isinstance(c, dict) and c.get("pair"):
+                charts_by_pair[c["pair"]] = c
+        positions = []
+        for p in snapshot_payload.get("positions", []) or []:
+            try:
+                positions.append(BrokerPosition(
+                    trade_id=p.get("trade_id"),
+                    pair=p.get("pair"),
+                    side=Side(p.get("side")),
+                    units=int(p.get("units", 0)),
+                    entry_price=float(p.get("entry_price", 0.0)),
+                    take_profit=p.get("take_profit"),
+                    stop_loss=p.get("stop_loss"),
+                    unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
+                    owner=Owner(p.get("owner", "trader")) if p.get("owner") else Owner.UNKNOWN,
+                ))
+            except Exception:
+                continue
+
+        class _ForecastShim:
+            __slots__ = ("direction", "confidence")
+            def __init__(self, direction: str, confidence: float):
+                self.direction = direction
+                self.confidence = confidence
+
+        data_root = Path("data")
+        forecasts_by_pair: dict = {}
+        regimes_by_pair: dict = {}
+        for pos in positions:
+            pair = pos.pair
+            if pair in forecasts_by_pair:
+                continue
+            f = load_latest_forecast(pair, data_root)
+            if f is not None:
+                forecasts_by_pair[pair] = _ForecastShim(
+                    direction=str(f.get("direction", "UNCLEAR")),
+                    confidence=float(f.get("confidence", 0.0)),
+                )
+            chart = charts_by_pair.get(pair) or {}
+            conf = chart.get("confluence") or {}
+            regime_raw = str(conf.get("dominant_regime") or "").upper()
+            if "TREND" in regime_raw:
+                regimes_by_pair[pair] = "TREND"
+            elif "RANGE" in regime_raw:
+                regimes_by_pair[pair] = "RANGE"
+            else:
+                regimes_by_pair[pair] = None
+
+        evolutions = evaluate_all_open_positions(
+            positions,
+            current_forecasts_by_pair=forecasts_by_pair,
+            current_regimes_by_pair=regimes_by_pair,
+            data_root=data_root,
+        )
+        report_path = write_thesis_evolution_report(evolutions, data_root=data_root)
+        # If the operator passed a non-default --output, ALSO copy there.
+        if args.output != report_path:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(report_path.read_text(encoding="utf-8"), encoding="utf-8")
+        print(json.dumps({
+            "status": "OK",
+            "evolution_count": len(evolutions),
+            "by_status": {
+                "STILL_VALID": sum(1 for e in evolutions if e.status == "STILL_VALID"),
+                "WEAKENED": sum(1 for e in evolutions if e.status == "WEAKENED"),
+                "BROKEN": sum(1 for e in evolutions if e.status == "BROKEN"),
+            },
+            "verdicts": [
+                {"trade_id": e.trade_id, "pair": e.pair, "side": e.side,
+                 "status": e.status, "verdict": e.verdict,
+                 "rationale": e.rationale}
+                for e in evolutions
+            ],
+            "output_path": str(report_path),
         }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "verify-projections":

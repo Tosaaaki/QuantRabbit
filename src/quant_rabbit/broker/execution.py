@@ -14,6 +14,7 @@ from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, Orde
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 from quant_rabbit.paths import (
+    ROOT as _QR_ROOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
@@ -166,6 +167,23 @@ class LiveOrderGateway:
             response = self.client.post_order_json(order_request)
             sent = True
             status = "SENT"
+            # Record entry thesis (2026-05-15, user directive: 「どの視点で
+            # エントリーしたのか、時間がたって今のポジ状況はエントリー
+            # したときと市況が変わってないか」). Best-effort: never raises
+            # back into the live order path. Reads the latest forecast
+            # for this pair that trader_brain wrote earlier in the cycle
+            # and snapshots it alongside the SENT trade_id.
+            try:
+                from quant_rabbit.strategy.entry_thesis_ledger import (
+                    record_entry_thesis_from_response,
+                )
+                record_entry_thesis_from_response(
+                    response=response,
+                    intent=intent,
+                    data_root=_QR_ROOT / "data",
+                )
+            except Exception:
+                pass
         result = {
             "generated_at_utc": generated_at,
             "status": status,
@@ -482,6 +500,18 @@ class LiveOrderGateway:
             response = self.client.post_order_json(order_request)
             sent = True
             status = "SENT"
+            # Entry thesis recording — see comment in run() for rationale.
+            try:
+                from quant_rabbit.strategy.entry_thesis_ledger import (
+                    record_entry_thesis_from_response,
+                )
+                record_entry_thesis_from_response(
+                    response=response,
+                    intent=intent,
+                    data_root=_QR_ROOT / "data",
+                )
+            except Exception:
+                pass
         return {
             "generated_at_utc": generated_at,
             "status": status,
@@ -1039,10 +1069,21 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         "instrument": intent.pair,
         "units": str(signed_units),
         "positionFill": _position_fill(intent),
-        "takeProfitOnFill": {"price": _price(intent.pair, intent.tp)},
         "clientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
         "tradeClientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
     }
+    # TP attachment (2026-05-15): `QR_DISABLE_AUTO_TP=1` skips the
+    # `takeProfitOnFill` block entirely so the trade runs without a
+    # broker-side cap. User directive 2026-05-15: 「TP なし・SL なし、
+    # 利を伸ばす、損切りは思想が崩れたときだけ手動」. Combined with
+    # the SL-free default (no `stopLossOnFill`), the resulting trade
+    # is fully discretionary — the operator/Claude routine closes
+    # only when forecast persistence + thesis tracker flag invalidation.
+    disable_auto_tp = os.environ.get("QR_DISABLE_AUTO_TP", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+    if not disable_auto_tp:
+        order["takeProfitOnFill"] = {"price": _price(intent.pair, intent.tp)}
     # SL handling. Two production modes can coexist:
     #
     # - SL-attached mode (default 2026-05-13 onward, post 00:33 JST
