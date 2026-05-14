@@ -1229,7 +1229,7 @@ class TraderBrain:
         # are CALIBRATED from the rolling hit-rate of past predictions.
         # Detectors that don't pan out get dampened; strong ones get
         # boosted. User directive:「予測の精度を最大限高める」.
-        from quant_rabbit.paths import DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT
+        from quant_rabbit.paths import ROOT as _QR_ROOT, DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT
         from quant_rabbit.strategy.projection_ledger import (
             compute_hit_rates as _compute_hit_rates,
             record_projections as _record_projections,
