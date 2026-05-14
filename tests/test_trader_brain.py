@@ -24,10 +24,12 @@ from quant_rabbit.strategy.trader_brain import (
     _mtf_confluence_score,
     _narrative_risk_score,
     _parse_chart_story_full,
+    _forecast_lane_gate,
     _short_term_momentum_class,
     _tf_lens_support,
     _tf_strength_multiplier,
 )
+from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
 
 
 class TraderBrainTest(unittest.TestCase):
@@ -429,6 +431,64 @@ class TraderBrainTest(unittest.TestCase):
         rationale_text = " ".join(rationale)
         self.assertIn("stale narrative WAIT language ignored", rationale_text)
         self.assertIn("stale visual rejection marker ignored", rationale_text)
+
+
+class ForecastLaneGateTest(unittest.TestCase):
+    def _forecast(self, direction: str, confidence: float = 0.8) -> DirectionalForecast:
+        return DirectionalForecast(
+            pair="EUR_USD",
+            direction=direction,
+            confidence=confidence,
+            invalidation_price=None,
+            target_price=None,
+            horizon_min=60,
+            drivers_for=(),
+            drivers_against=(),
+            rationale_summary="test forecast",
+        )
+
+    def test_range_forecast_allows_executable_range_rotation(self) -> None:
+        intent = {
+            "metadata": {
+                "geometry_model": "RANGE_RAIL_LIMIT",
+                "range_support": 1.171,
+                "range_resistance": 1.176,
+                "range_tp_is_inside_box": True,
+                "range_sl_outside_box": True,
+            }
+        }
+
+        ok, reason = _forecast_lane_gate(
+            self._forecast("RANGE"),
+            direction="LONG",
+            method="RANGE_ROTATION",
+            intent=intent,
+        )
+
+        self.assertTrue(ok)
+        self.assertIn("supports range rotation", reason)
+
+    def test_range_forecast_blocks_trend_chase_without_range_geometry(self) -> None:
+        ok, reason = _forecast_lane_gate(
+            self._forecast("RANGE"),
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            intent={"metadata": {}},
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("requires executable RANGE_ROTATION", reason)
+
+    def test_directional_forecast_blocks_opposite_side(self) -> None:
+        ok, reason = _forecast_lane_gate(
+            self._forecast("UP"),
+            direction="SHORT",
+            method="TREND_CONTINUATION",
+            intent={},
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("opposes SHORT", reason)
 
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:

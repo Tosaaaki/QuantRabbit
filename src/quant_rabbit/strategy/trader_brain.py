@@ -583,6 +583,203 @@ def _current_price_for(pair: str, snapshot: BrokerSnapshot, side: str) -> float 
     return quote.ask if side == "LONG" else quote.bid
 
 
+def _current_mid_price_for(pair: str, snapshot: BrokerSnapshot) -> float | None:
+    """Return the quote midpoint for pair-level forecasting.
+
+    Pair forecasts must be independent of candidate lane direction. Entry
+    scoring still uses ask/bid through `_current_price_for`; the forecast uses
+    midpoint so a LONG lane and a SHORT lane cannot synthesize different
+    "single" forecasts just because they read opposite sides of the spread.
+    """
+    if not pair or snapshot is None:
+        return None
+    quote = (snapshot.quotes or {}).get(pair) if hasattr(snapshot, "quotes") else None
+    if quote is None:
+        return None
+    try:
+        bid = float(quote.bid)
+        ask = float(quote.ask)
+    except (TypeError, ValueError):
+        return None
+    if bid <= 0 or ask <= 0:
+        return None
+    return (bid + ask) / 2.0
+
+
+def _forecast_regime_label(pair_chart: dict[str, Any] | None) -> str | None:
+    if not isinstance(pair_chart, dict):
+        return None
+    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
+    raw = str((confluence or {}).get("dominant_regime") or "").upper()
+    if "TREND" in raw:
+        return "TREND"
+    if "RANGE" in raw:
+        return "RANGE"
+    return raw[:20] if raw else None
+
+
+def _pair_forecast(
+    *,
+    pair: str,
+    pair_chart: dict[str, Any] | None,
+    full_pair_charts: dict[str, dict[str, Any]] | None,
+    snapshot: BrokerSnapshot | None,
+    forecast_cache: dict[str, DirectionalForecast | None] | None,
+    forecast_cycle_id: str | None,
+) -> DirectionalForecast | None:
+    """Build one pair-level forecast and cache it for the whole cycle.
+
+    The previous implementation synthesized inside each candidate lane, so a
+    LONG lane could see a LONG-biased forecast while a SHORT lane for the same
+    pair saw a different SHORT-biased forecast, and both writes counted in the
+    persistence ledger. This helper makes prediction a pair-level fact first;
+    lane scoring then asks whether the lane agrees with that fact.
+    """
+    if not pair or pair_chart is None or snapshot is None:
+        return None
+    if forecast_cache is not None and pair in forecast_cache:
+        return forecast_cache[pair]
+
+    current_price = _current_mid_price_for(pair, snapshot)
+    if current_price is None:
+        if forecast_cache is not None:
+            forecast_cache[pair] = None
+        return None
+
+    cot_payload = None
+    option_skew_payload = None
+    try:
+        from quant_rabbit.paths import ROOT as _QR_ROOT
+
+        cot_path = _QR_ROOT / "data" / "cot_snapshot.json"
+        if cot_path.exists():
+            cot_payload = json.loads(cot_path.read_text())
+        option_path = _QR_ROOT / "data" / "option_skew_snapshot.json"
+        if option_path.exists():
+            option_skew_payload = json.loads(option_path.read_text())
+    except Exception:
+        pass
+
+    pattern_signals = []
+    projection_signals = []
+    correlation_signals = []
+    paths = []
+    hit_rates = None
+    regime_label = _forecast_regime_label(pair_chart)
+    try:
+        pattern_signals = detect_pattern_signals(
+            pair_chart,
+            cot_payload=cot_payload,
+            option_skew_payload=option_skew_payload,
+        )
+    except Exception:
+        pattern_signals = []
+    try:
+        from quant_rabbit.paths import (
+            DEFAULT_CALENDAR_SNAPSHOT,
+            DEFAULT_CROSS_ASSET_SNAPSHOT,
+            ROOT as _QR_ROOT,
+        )
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates as _compute_hit_rates
+
+        hit_rates = _compute_hit_rates(_QR_ROOT / "data")
+        projection_signals = detect_forward_projections(
+            pair_chart,
+            pair=pair,
+            current_price=current_price,
+            calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
+            cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+        )
+    except Exception:
+        projection_signals = []
+    try:
+        if full_pair_charts and pair in full_pair_charts:
+            correlation_signals = detect_correlation_lag(pair, full_pair_charts)
+    except Exception:
+        correlation_signals = []
+    try:
+        # Evaluate both sides so the forecast is not biased by whichever lane
+        # happened to call `_score_lane` first.
+        paths = list(detect_paths(pair_chart, "LONG", current_price))
+        paths.extend(detect_paths(pair_chart, "SHORT", current_price))
+    except Exception:
+        paths = []
+    try:
+        reversal_long = detect_reversal(pair_chart, "LONG")
+    except Exception:
+        reversal_long = None
+    try:
+        reversal_short = detect_reversal(pair_chart, "SHORT")
+    except Exception:
+        reversal_short = None
+
+    forecast = synthesize_forecast(
+        pair=pair,
+        pair_chart=pair_chart,
+        current_price=current_price,
+        pattern_signals=pattern_signals,
+        projection_signals=projection_signals,
+        correlation_signals=correlation_signals,
+        paths=paths,
+        reversal_long=reversal_long,
+        reversal_short=reversal_short,
+        hit_rates=hit_rates,
+        regime=regime_label,
+    )
+    if forecast_cache is not None:
+        forecast_cache[pair] = forecast
+    try:
+        from quant_rabbit.paths import ROOT as _QR_ROOT
+
+        record_forecast(
+            forecast,
+            data_root=_QR_ROOT / "data",
+            cycle_id=forecast_cycle_id,
+        )
+    except Exception:
+        pass
+    return forecast
+
+
+def _range_rotation_forecast_ready(intent: dict[str, Any]) -> bool:
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    model = str(metadata.get("geometry_model") or "")
+    if model == "RANGE_DIRECTIONAL_MARKET":
+        return bool(metadata.get("range_directional_market"))
+    if model not in {"RANGE_RAIL_LIMIT", "RANGE_RAIL_MARKET"}:
+        return False
+    return bool(metadata.get("range_tp_is_inside_box")) and bool(metadata.get("range_sl_outside_box"))
+
+
+def _forecast_lane_gate(
+    forecast: DirectionalForecast,
+    *,
+    direction: str,
+    method: str,
+    intent: dict[str, Any],
+) -> tuple[bool, str]:
+    """Return whether a candidate lane agrees with the pair forecast."""
+    side = direction.upper()
+    if forecast.direction == "UP":
+        return side == "LONG", f"forecast UP {'aligned' if side == 'LONG' else 'opposes'} {side}"
+    if forecast.direction == "DOWN":
+        return side == "SHORT", f"forecast DOWN {'aligned' if side == 'SHORT' else 'opposes'} {side}"
+    if forecast.direction == "RANGE":
+        if method == TradeMethod.RANGE_ROTATION.value and _range_rotation_forecast_ready(intent):
+            metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+            return (
+                True,
+                "forecast RANGE supports range rotation "
+                f"({metadata.get('geometry_model')}, rails="
+                f"{metadata.get('range_support')}–{metadata.get('range_resistance')})",
+            )
+        return (
+            False,
+            "forecast RANGE requires executable RANGE_ROTATION rail geometry, not trend/breakout chase",
+        )
+    return False, f"forecast {forecast.direction} has no executable edge"
+
+
 JPY_CROSSES = {"AUD_JPY", "EUR_JPY", "GBP_JPY", "USD_JPY"}
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 ACTION_SEND_ENTRY = "SEND_ENTRY"
@@ -756,6 +953,7 @@ class TraderBrain:
         pending_entries = _pending_entry_order_count(snapshot)
         portfolio_add_allowed = _portfolio_add_allowed(snapshot)
         exposure_blockers = () if portfolio_add_allowed else _exposure_blockers(snapshot)
+        forecast_cache: dict[str, DirectionalForecast | None] = {}
         scores = tuple(
             sorted(
                 (
@@ -774,6 +972,8 @@ class TraderBrain:
                         regime_snapshots=regime_snapshots,
                         trader_overrides=trader_overrides,
                         news_themes=news_themes,
+                        forecast_cache=forecast_cache,
+                        forecast_cycle_id=generated_at,
                     )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
@@ -875,6 +1075,8 @@ class TraderBrain:
         regime_snapshots: dict[str, RegimeSnapshot] | None = None,
         trader_overrides: TraderOverrides | None = None,
         news_themes: NewsThemes | None = None,
+        forecast_cache: dict[str, DirectionalForecast | None] | None = None,
+        forecast_cycle_id: str | None = None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -1359,74 +1561,68 @@ class TraderBrain:
             except Exception:
                 pass
 
-        # 2026-05-15: Directional forecaster — synthesize all detector
-        # outputs into ONE single forecast: UP / DOWN / RANGE / UNCLEAR.
-        # This is the user-defined Stage 1 (予測) of the trading process.
-        # Gates entry:
-        #   - direction == UP + side == LONG (forecast matches) AND
-        #     confidence >= ENTRY_CONFIDENCE_MIN → ALLOW entry
-        #   - direction == DOWN + side == SHORT → ALLOW
-        #   - direction == RANGE / UNCLEAR → BLOCK entry (no edge)
-        #   - direction == UP + side == SHORT → BLOCK (forecast says
-        #     opposite — don't bet against the forecast)
-        # User insight 2026-05-15: 「論理や計算、経験や統計で仮説や予測
-        # をたてる。その方向にベットする。レンジとかもあるから、それも
-        # 予測段階」.
+        # 2026-05-15: Pair-level forecaster — synthesize all detectors into
+        # ONE forecast per pair per cycle: UP / DOWN / RANGE / UNCLEAR. This
+        # is the user-defined Stage 1 (予測). Directional forecasts must align
+        # with the lane side; RANGE forecasts are tradable only through an
+        # executable RANGE_ROTATION rail setup, because "レンジ幅を見極める" is a
+        # valid market read, not a blanket no-trade state.
         try:
-            if pair_chart_for_reversal is not None and snapshot is not None:
-                _cur_for_forecast = _current_price_for(pair, snapshot, direction) if snapshot else None
-                if _cur_for_forecast is not None:
-                    _forecast = synthesize_forecast(
-                        pair=pair,
-                        pair_chart=pair_chart_for_reversal,
-                        current_price=_cur_for_forecast,
-                        pattern_signals=_pattern_signals if '_pattern_signals' in locals() else [],
-                        projection_signals=_projection_signals if '_projection_signals' in locals() else [],
-                        correlation_signals=_corr_signals if '_corr_signals' in locals() else [],
-                        paths=_paths_for_forecast,
-                        reversal_long=_reversal_detected if (_reversal_detected is not None and getattr(_reversal_detected, 'side', '') == 'LONG') else None,
-                        reversal_short=_reversal_detected if (_reversal_detected is not None and getattr(_reversal_detected, 'side', '') == 'SHORT') else None,
-                        hit_rates=_hit_rates if '_hit_rates' in locals() else None,
-                        regime=_proj_regime if '_proj_regime' in locals() else None,
+            metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+            forecast_context_present = bool(
+                metadata.get("chart_story_structural")
+                or metadata.get("chart_direction_bias")
+                or metadata.get("m5_regime")
+                or metadata.get("price_percentile_24h") is not None
+                or metadata.get("range_support") is not None
+                or metadata.get("range_resistance") is not None
+            )
+            # Unit tests and replay fixtures often carry synthetic intents
+            # without the chart metadata generated by `generate-intents`.
+            # Do not let the developer worktree's live `data/pair_charts.json`
+            # leak into those synthetic receipts and veto them. Production
+            # intents include these metadata keys, so live cycles still get the
+            # pair-level forecast gate.
+            _forecast = None
+            if forecast_context_present:
+                _forecast = _pair_forecast(
+                    pair=pair,
+                    pair_chart=pair_chart_for_reversal,
+                    full_pair_charts=full_pair_charts,
+                    snapshot=snapshot,
+                    forecast_cache=forecast_cache,
+                    forecast_cycle_id=forecast_cycle_id,
+                )
+            if _forecast is not None:
+                gate_ok, gate_reason = _forecast_lane_gate(
+                    _forecast,
+                    direction=direction,
+                    method=method,
+                    intent=intent,
+                )
+                if _forecast.confidence < ENTRY_CONFIDENCE_MIN:
+                    blockers.append(
+                        f"forecast confidence {_forecast.confidence:.2f} < {ENTRY_CONFIDENCE_MIN} threshold"
                     )
-                    # Record forecast EVERY cycle (one per pair per cycle;
-                    # acceptable to record once per lane scoring even if
-                    # multiple lanes for same pair — first wins).
-                    try:
-                        record_forecast(_forecast, data_root=_QR_ROOT / "data")
-                    except Exception:
-                        pass
-                    # Gate entry on forecast direction matching intent.
-                    intent_up = direction.upper() == "LONG"
-                    forecast_up = _forecast.direction == "UP"
-                    forecast_down = _forecast.direction == "DOWN"
-                    forecast_decisive = _forecast.direction in ("UP", "DOWN")
-                    if not forecast_decisive:
-                        # RANGE / UNCLEAR → block entry; this is the
-                        # missing piece per user 2026-05-15.
-                        blockers.append(
-                            f"forecast={_forecast.direction} (no directional edge); rationale: {_forecast.rationale_summary}"
-                        )
-                        score -= 60.0
-                        rationale.insert(0, f"forecast {_forecast.direction} conf={_forecast.confidence:.2f} → BLOCK entry")
-                    elif (intent_up and not forecast_up) or (not intent_up and not forecast_down):
-                        # Forecast OPPOSITE intent → block
-                        blockers.append(
-                            f"forecast={_forecast.direction} opposite to intent {direction}; rationale: {_forecast.rationale_summary}"
-                        )
-                        score -= 80.0
-                        rationale.insert(0, f"forecast {_forecast.direction} AGAINST {direction} → BLOCK")
-                    elif _forecast.confidence < ENTRY_CONFIDENCE_MIN:
-                        blockers.append(
-                            f"forecast confidence {_forecast.confidence:.2f} < {ENTRY_CONFIDENCE_MIN} threshold"
-                        )
-                        score -= 30.0
-                        rationale.insert(0, f"forecast {_forecast.direction} conf {_forecast.confidence:.2f} too low")
-                    else:
-                        # Forecast aligned and confident → reward
-                        reward = 20.0 * _forecast.confidence
-                        score += reward
-                        rationale.insert(0, f"forecast {_forecast.direction} aligned conf={_forecast.confidence:.2f} → +{reward:.1f}")
+                    score -= 30.0
+                    rationale.insert(
+                        0,
+                        f"forecast {_forecast.direction} conf {_forecast.confidence:.2f} too low",
+                    )
+                elif not gate_ok:
+                    blockers.append(f"{gate_reason}; rationale: {_forecast.rationale_summary}")
+                    score -= 80.0 if _forecast.direction in {"UP", "DOWN"} else 60.0
+                    rationale.insert(
+                        0,
+                        f"forecast {_forecast.direction} conf={_forecast.confidence:.2f} → BLOCK: {gate_reason}",
+                    )
+                else:
+                    reward = (15.0 if _forecast.direction == "RANGE" else 20.0) * _forecast.confidence
+                    score += reward
+                    rationale.insert(
+                        0,
+                        f"forecast {_forecast.direction} conf={_forecast.confidence:.2f} → +{reward:.1f}: {gate_reason}",
+                    )
         except Exception:
             pass
 

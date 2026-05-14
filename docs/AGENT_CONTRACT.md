@@ -97,6 +97,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Build an autonomous professional FX trader where the operator (Codex or Claude) reasons, compares evidence, and chooses trades through executable system contracts.
 - The completion target is a trader that can pursue **10 % of that day's starting equity as daily profit** without bypassing risk gates.
 - Treat the 10 % daily target as a mandatory product KPI, campaign metric, backtest / live-simulation benchmark, and risk-bounded execution objective.
+- Track **5 % of that day's starting equity as the same-day minimum progress floor**. The 5 % floor does not replace the 10 % target and does not guarantee returns; it makes the daily campaign visibly accountable before the final 10 % objective is reached.
 - If the system cannot reach 10 % in evidence review, backtests, simulation, or live dry-runs, treat the gap as a product blocker and improve strategy, timing, risk geometry, or execution quality.
 - **Never describe the 10 % daily target as a guaranteed return**, and never use it as permission to bypass broker truth, protection, or risk validation.
 - The trader must behave like a professional: wait when edge is absent, size from risk geometry, protect exposure, and explain decisions in receipts.
@@ -106,10 +107,12 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 ## 5. Daily 10 % Campaign
 
 - Each trading day starts with a recorded starting equity and a target profit equal to 10 % of that starting equity.
+- `daily-target-state` must also record the 5 % minimum floor (`minimum_target_jpy`, `remaining_minimum_jpy`, `minimum_progress_pct`) from the same starting equity, without JPY literals or stale persistence.
 - Starting equity is sourced from the latest broker snapshot via `daily-target-state` (OANDA `/v3/accounts/{id}/summary` → `balance`). Do **not** hardcode JPY figures.
 - Campaign planning translates the 10 % target into candidate lanes, required reward / risk, maximum acceptable loss, and exposure budget.
 - The system is not complete while it merely avoids bad trades — it must actively search for valid high-quality opportunities capable of reaching the daily target.
 - Campaign pressure must become **bounded execution behavior**: better timing, better filtering, stronger confluence, clearer invalidation, disciplined sizing.
+- The first prediction question each cycle is: is today's next exploitable state directional, or is it a range with enough executable width? A `RANGE` forecast is not a no-trade state by itself; it can authorize `RANGE_ROTATION` only when range rails, TP-inside-box, and SL-outside-box geometry are present. Directional methods must still align with the pair-level forecast.
 - **Campaign exposure occupancy.** While `daily_target_state.json` is `PURSUE_TARGET` with `remaining_target_jpy > 0`, if no trader-owned position is active and at least one current `LIVE_READY` lane survives deterministic prefiltering, the cycle must not end as flat WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE. Existing trader-owned pending entries must be counted through basket risk/margin/geometry validation; they satisfy occupancy only when basket capacity or duplicate/stale-pending gates block every additional lane. Manual/tagless operator exposure does not satisfy this occupancy requirement and does not block it.
 - When the 10 % target is missed, produce a gap report (missed setup, blocked trade, market absence, risk rejection, execution cost, timing error, or strategy weakness).
 - Reaching the daily target triggers **protection-first** behavior; do not keep adding risk just because more trades are possible. Trader-owned pending entry orders are canceled rather than left fillable after the target is reached.

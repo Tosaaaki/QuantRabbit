@@ -6,7 +6,7 @@
   - Positions, pending orders, owner tags, quote timestamps, spreads, account truth.
   - Manual/tagless exposure is observed only; the trader does not protect, close, or use it as a fresh-entry blocker.
 - `data/daily_target_state.json`
-  - `status`, `target_jpy`, `progress_jpy`, `remaining_target_jpy`.
+  - `status`, `target_jpy`, `minimum_target_jpy`, `progress_jpy`, `progress_pct`, `minimum_progress_pct`, `remaining_minimum_jpy`, `remaining_target_jpy`.
   - `daily_risk_budget_jpy` is the whole-day risk budget.
   - `per_trade_risk_budget_jpy` is the single-shot cap used by intents.
   - Do not conflate the whole-day and per-trade caps.
@@ -31,6 +31,7 @@
   NEUTRAL / MIXED). OPPOSED requires a declared counter-trend thesis;
   TIED demands smaller size or WAIT.
 - Cite actual numbers for ATR, regime reading, family scores, disagreement, jump filters, session tag, and structure.
+- State the next forecast first: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`. `RANGE` is actionable only when the lane is `RANGE_ROTATION` and the intent metadata proves executable rails / box geometry.
 - `family_scores.disagreement > 0.7` is a stand-aside signal unless one composite dominates and the regime gate supports it.
 - New entries inside `last_jump_bars_ago < 5` require explicit justification.
 - `chart.session` is mandatory context: current tag, `judas_armed`, `ny_midnight_open_price`, next killzone, and JPY holiday flag.

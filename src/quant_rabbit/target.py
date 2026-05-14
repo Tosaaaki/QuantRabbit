@@ -35,10 +35,14 @@ class DailyTargetSnapshot:
     start_balance_jpy: float
     target_return_pct: float
     target_jpy: float
+    minimum_return_pct: float
+    minimum_target_jpy: float
     realized_pl_jpy: float
     unrealized_pl_jpy: float
     progress_jpy: float
     progress_pct: float
+    minimum_progress_pct: float
+    remaining_minimum_jpy: float
     remaining_target_jpy: float
     current_equity_jpy: float
     campaign_day_jst: str
@@ -62,8 +66,11 @@ class DailyTargetSummary:
     report_path: Path
     status: str
     target_jpy: float
+    minimum_target_jpy: float
     progress_jpy: float
     progress_pct: float
+    minimum_progress_pct: float
+    remaining_minimum_jpy: float
     remaining_target_jpy: float
     remaining_risk_budget_jpy: float
     target_trades_per_day: int
@@ -300,10 +307,22 @@ class DailyTargetLedger:
         )
         progress = round(realized + unrealized, 4)
         target_jpy = round(start_balance * (target_pct / 100.0), 2)
+        # The 10% target remains the campaign objective. The 5% floor is a
+        # same-day minimum-progress line requested by the operator; it is
+        # derived from the same broker-truth start balance so no JPY literal
+        # enters production behavior.
+        minimum_pct = min(5.0, target_pct) if target_pct > 0 else 0.0
+        minimum_target_jpy = round(start_balance * (minimum_pct / 100.0), 2)
         remaining_target = round(max(0.0, target_jpy - progress), 4)
+        remaining_minimum = round(max(0.0, minimum_target_jpy - progress), 4)
         remaining_risk_budget = 0.0 if unprotected else round(max(0.0, risk_budget - open_risk), 4)
         current_equity = round(start_balance + progress, 4)
         progress_pct = round((progress / target_jpy) * 100.0, 4) if target_jpy else 0.0
+        minimum_progress_pct = (
+            round((progress / minimum_target_jpy) * 100.0, 4)
+            if minimum_target_jpy
+            else 0.0
+        )
         blockers = tuple(_blockers(positions, open_risk=open_risk, risk_budget=risk_budget, remaining_target=remaining_target))
         status = _status(
             progress_jpy=progress,
@@ -317,10 +336,14 @@ class DailyTargetLedger:
             start_balance_jpy=round(start_balance, 4),
             target_return_pct=round(target_pct, 4),
             target_jpy=target_jpy,
+            minimum_return_pct=round(minimum_pct, 4),
+            minimum_target_jpy=minimum_target_jpy,
             realized_pl_jpy=round(realized, 4),
             unrealized_pl_jpy=unrealized,
             progress_jpy=progress,
             progress_pct=progress_pct,
+            minimum_progress_pct=minimum_progress_pct,
+            remaining_minimum_jpy=remaining_minimum,
             remaining_target_jpy=remaining_target,
             current_equity_jpy=current_equity,
             campaign_day_jst=campaign_day_jst,
@@ -344,8 +367,11 @@ class DailyTargetLedger:
             report_path=self.report_path,
             status=state.status,
             target_jpy=state.target_jpy,
+            minimum_target_jpy=state.minimum_target_jpy,
             progress_jpy=state.progress_jpy,
             progress_pct=state.progress_pct,
+            minimum_progress_pct=state.minimum_progress_pct,
+            remaining_minimum_jpy=state.remaining_minimum_jpy,
             remaining_target_jpy=state.remaining_target_jpy,
             remaining_risk_budget_jpy=state.remaining_risk_budget_jpy,
             target_trades_per_day=state.target_trades_per_day,
@@ -373,9 +399,11 @@ class DailyTargetLedger:
             f"- Start equity: `{state.start_balance_jpy:.0f} JPY`",
             f"- Campaign day (JST9): `{state.campaign_day_jst}`",
             f"- Target: `{state.target_jpy:.0f} JPY` (`{state.target_return_pct:.1f}%`)",
+            f"- Minimum daily floor: `{state.minimum_target_jpy:.0f} JPY` (`{state.minimum_return_pct:.1f}%`)",
             f"- Realized PnL: `{state.realized_pl_jpy:.0f} JPY`",
             f"- Trader unrealized PnL: `{state.unrealized_pl_jpy:.0f} JPY`",
             f"- Progress: `{state.progress_jpy:.0f} JPY` (`{state.progress_pct:.1f}%` of target)",
+            f"- Minimum-floor progress: `{state.minimum_progress_pct:.1f}%`; remaining floor `{state.remaining_minimum_jpy:.0f} JPY`",
             f"- Remaining target: `{state.remaining_target_jpy:.0f} JPY`",
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",
             f"- Remaining risk budget: `{state.remaining_risk_budget_jpy:.0f} JPY`",
@@ -406,6 +434,7 @@ class DailyTargetLedger:
                 "## Target Contract",
                 "",
                 "- The 10% daily target is tracked as a product KPI and execution objective, not a guaranteed return.",
+                "- The 5% daily floor is tracked as the minimum same-day progress line; reaching it does not stop the 10% campaign by itself.",
                 "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is observed but not managed by the trader.",
                 "- Reaching the target switches the system toward protection-first behavior before any new risk is added.",
             ]

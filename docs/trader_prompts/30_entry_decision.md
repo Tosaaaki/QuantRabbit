@@ -9,13 +9,14 @@
 ## Decision Order
 
 1. Read `docs/trader_prompts/20_market_packet.md`.
-2. List every current `LIVE_READY` lane.
-3. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
-4. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
-5. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
-6. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons.
-7. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
-8. Write exactly one `data/codex_trader_decision_response.json`.
+2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`.
+3. List every current `LIVE_READY` lane.
+4. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
+5. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
+6. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
+7. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons.
+8. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
+9. Write exactly one `data/codex_trader_decision_response.json`.
 
 ## Valid Actions
 

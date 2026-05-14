@@ -48,11 +48,16 @@ class DailyTargetLedgerTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "PURSUE_TARGET")
             self.assertEqual(summary.target_jpy, 20_000)
+            self.assertEqual(summary.minimum_target_jpy, 10_000)
             self.assertEqual(summary.progress_jpy, 1200)
+            self.assertEqual(summary.remaining_minimum_jpy, 8_800)
             self.assertEqual(summary.remaining_target_jpy, 18_800)
             self.assertAlmostEqual(summary.remaining_risk_budget_jpy, 343.0)
             payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["minimum_return_pct"], 5.0)
+            self.assertEqual(payload["minimum_progress_pct"], 12.0)
             self.assertEqual(payload["positions"][0]["remaining_risk_jpy"], 157.0)
+            self.assertIn("Minimum daily floor", (root / "target.md").read_text())
             self.assertIn("Remaining target", (root / "target.md").read_text())
 
     def test_usd_quote_position_risk_uses_snapshot_conversion(self) -> None:

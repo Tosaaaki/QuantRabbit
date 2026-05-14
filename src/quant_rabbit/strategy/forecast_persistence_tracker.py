@@ -77,6 +77,7 @@ def record_forecast(
     *,
     data_root: Path,
     now: Optional[datetime] = None,
+    cycle_id: str | None = None,
 ) -> None:
     """Append a `DirectionalForecast` to forecast_history.jsonl."""
     if _is_disabled():
@@ -86,6 +87,7 @@ def record_forecast(
     now = now or datetime.now(timezone.utc)
     entry = {
         "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
+        "cycle_id": cycle_id,
         "pair": getattr(forecast, "pair", ""),
         "direction": getattr(forecast, "direction", "UNCLEAR"),
         "confidence": float(getattr(forecast, "confidence", 0)),
@@ -102,7 +104,11 @@ def _load_recent(data_root: Path, pair: str, count: int) -> List[Dict[str, Any]]
     path = data_root / HISTORY_FILENAME
     if not path.exists():
         return []
-    out: List[Dict[str, Any]] = []
+    # Forecast persistence is cycle-based. TraderBrain may score several lanes
+    # for the same pair inside one automation cycle; those candidate-lane
+    # passes must not count as multiple "persistent" flips.
+    by_cycle: dict[str, Dict[str, Any]] = {}
+    cycle_order: list[str] = []
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -113,10 +119,13 @@ def _load_recent(data_root: Path, pair: str, count: int) -> List[Dict[str, Any]]
             except json.JSONDecodeError:
                 continue
             if d.get("pair") == pair:
-                out.append(d)
+                key = str(d.get("cycle_id") or d.get("timestamp_utc") or len(cycle_order))
+                if key not in by_cycle:
+                    cycle_order.append(key)
+                by_cycle[key] = d
     except OSError:
         return []
-    return out[-count:]
+    return [by_cycle[key] for key in cycle_order][-count:]
 
 
 def assess_position(
