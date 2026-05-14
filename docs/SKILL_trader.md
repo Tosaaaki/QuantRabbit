@@ -154,6 +154,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 # layer's confidence weights — self-improving feedback loop.
 PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 
+# 4e. Position thesis check — apply the full prediction stack to each
+# open position. Emits data/position_thesis_report.json with per-position
+# EXTEND / HOLD / REVIEW_CLOSE verdicts and score breakdowns. The GPT
+# trader reads this as evidence for CLOSE decisions; Gate A/B still
+# required to actually close.
+PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
+
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based
 # on adverse-pips threshold, violating feedback_market_over_risk_budget.md

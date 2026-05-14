@@ -481,6 +481,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Compute updates but do not call broker.replace_trade_dependent_orders.",
     )
 
+    p_pthesis = sub.add_parser(
+        "position-thesis-check",
+        help="Apply full prediction stack to each open position; emit EXTEND/HOLD/REVIEW_CLOSE verdicts to data/position_thesis_report.json.",
+    )
+    p_pthesis.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_pthesis.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_pthesis.add_argument("--output", type=Path, default=Path("data/position_thesis_report.json"))
+
     p_plim = sub.add_parser(
         "generate-predictive-limits",
         help="Generate LIMIT orders from Grade-A forward-projection setups (path Step B + liquidity sweep fades).",
@@ -1760,6 +1768,74 @@ def main(argv: list[str] | None = None) -> int:
             },
             indent=2,
         ))
+        return 0
+    if args.command == "position-thesis-check":
+        from quant_rabbit.strategy.position_thesis_validator import assess_all_positions
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        charts_by_pair: dict = {}
+        for c in pair_charts_payload.get("charts", []) or []:
+            if isinstance(c, dict) and c.get("pair"):
+                charts_by_pair[c["pair"]] = c
+        quotes_by_pair = snapshot_payload.get("quotes") or {}
+        # Build BrokerPosition objects
+        positions = []
+        for p in snapshot_payload.get("positions", []) or []:
+            try:
+                positions.append(BrokerPosition(
+                    trade_id=p.get("trade_id"),
+                    pair=p.get("pair"),
+                    side=Side(p.get("side")),
+                    units=int(p.get("units", 0)),
+                    entry_price=float(p.get("entry_price", 0.0)),
+                    take_profit=p.get("take_profit"),
+                    stop_loss=p.get("stop_loss"),
+                    unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
+                    owner=Owner(p.get("owner", "trader")) if p.get("owner") else Owner.UNKNOWN,
+                ))
+            except Exception:
+                continue
+        # COT + option_skew payloads
+        cot_payload = None
+        option_skew_payload = None
+        try:
+            cot_path = Path("data/cot_snapshot.json")
+            if cot_path.exists():
+                cot_payload = json.loads(cot_path.read_text())
+            opt_path = Path("data/option_skew_snapshot.json")
+            if opt_path.exists():
+                option_skew_payload = json.loads(opt_path.read_text())
+        except Exception:
+            pass
+        hit_rates = compute_hit_rates(Path("data"))
+        assessments = assess_all_positions(
+            positions,
+            quotes_by_pair=quotes_by_pair,
+            pair_charts_full=charts_by_pair,
+            cot_payload=cot_payload,
+            option_skew_payload=option_skew_payload,
+            calendar_path=Path("data/economic_calendar.json"),
+            cross_asset_path=Path("data/cross_asset_snapshot.json"),
+            hit_rates=hit_rates,
+        )
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps({
+            "generated_at_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "assessments": [a.to_dict() for a in assessments],
+        }, ensure_ascii=False, indent=2))
+        # Surface verdict summary to stdout
+        print(json.dumps({
+            "status": "OK",
+            "position_count": len(assessments),
+            "verdicts": [
+                {"trade_id": a.trade_id, "pair": a.pair, "side": a.side,
+                 "score": a.aggregate_score, "verdict": a.verdict}
+                for a in assessments
+            ],
+            "output_path": str(args.output),
+        }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "generate-predictive-limits":
         from quant_rabbit.strategy.forward_projection import detect_forward_projections
