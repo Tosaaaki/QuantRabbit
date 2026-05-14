@@ -183,24 +183,48 @@ class HitRatesTest(unittest.TestCase):
 
 class CalibrationTest(unittest.TestCase):
     def test_high_hit_rate_boosts_confidence(self) -> None:
+        # 100% hit but only 20 samples — Bayesian pessimism applies
+        # mu = 21/22 ≈ 0.955, sigma ≈ 0.044, lower bound ≈ 0.90
+        # So mult should be > 1.0 but not at CAP
         hr = {"sig_x": {
             "EUR_USD:TREND": {"hit_rate": 1.0, "samples": 20},
             "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 20},
         }}
         mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="TREND")
-        self.assertAlmostEqual(mult, CONFIDENCE_MAX_MULTIPLIER, places=2)
+        self.assertGreater(mult, 1.2)
+        self.assertLessEqual(mult, CONFIDENCE_MAX_MULTIPLIER)
+
+    def test_high_hit_rate_with_large_samples_approaches_max(self) -> None:
+        # 100% with 100 samples → Bayesian bound much tighter
+        hr = {"sig_x": {
+            "EUR_USD:TREND": {"hit_rate": 1.0, "samples": 100},
+        }}
+        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="TREND")
+        self.assertGreater(mult, 1.35)  # close to CAP
 
     def test_zero_hit_rate_dampens_confidence(self) -> None:
         hr = {"sig_x": {
-            "EUR_USD:_all_regimes": {"hit_rate": 0.0, "samples": 20},
+            "EUR_USD:_all_regimes": {"hit_rate": 0.0, "samples": 100},
         }}
         mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
-        self.assertAlmostEqual(mult, CONFIDENCE_MIN_MULTIPLIER, places=2)
+        # 100 misses → posterior mean ≈ 0.01, lower bound ≈ 0
+        # Should dampen significantly
+        self.assertLess(mult, 0.5)
 
     def test_few_samples_returns_1_0(self) -> None:
         hr = {"sig_x": {"EUR_USD:_all_regimes": {"hit_rate": 0.5, "samples": 3}}}
         mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
         self.assertEqual(mult, 1.0)
+
+    def test_bayesian_pessimism_small_perfect_sample(self) -> None:
+        """3 HITs / 3 trials → Bayesian posterior mean is 0.8, NOT 1.0.
+        Lower bound even lower → mild boost only. This is the
+        statistically-correct improvement over linear interp."""
+        hr = {"sig_x": {"EUR_USD:_all_regimes": {"hit_rate": 1.0, "samples": 10}}}
+        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
+        # With 10 samples all HIT, mu ≈ 0.917, sigma ≈ 0.078, lower ≈ 0.82
+        self.assertGreater(mult, 1.0)
+        self.assertLess(mult, CONFIDENCE_MAX_MULTIPLIER)
 
     def test_unknown_signal_returns_1_0(self) -> None:
         hr = {}

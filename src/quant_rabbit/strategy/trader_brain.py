@@ -453,6 +453,15 @@ from quant_rabbit.strategy.forward_projection import (
     aggregate_projection_score,
     detect_forward_projections,
 )
+from quant_rabbit.strategy.correlation_predictor import (
+    aggregate_correlation_lag_score,
+    build_correlation_map,
+    detect_correlation_lag,
+)
+from quant_rabbit.strategy.path_projection import (
+    aggregate_path_score,
+    detect_paths,
+)
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1211,15 +1220,21 @@ class TraderBrain:
             # filters internally). File-not-present → cot_payload=None
             # → COT shift detector silently skipped.
             _cot_payload = None
+            _option_skew_payload = None
             try:
                 from quant_rabbit.paths import ROOT as __QR_ROOT
                 _cot_path = __QR_ROOT / "data" / "cot_snapshot.json"
                 if _cot_path.exists():
                     _cot_payload = json.loads(_cot_path.read_text())
+                _opt_path = __QR_ROOT / "data" / "option_skew_snapshot.json"
+                if _opt_path.exists():
+                    _option_skew_payload = json.loads(_opt_path.read_text())
             except Exception:
-                _cot_payload = None
+                pass
             _pattern_signals = detect_pattern_signals(
-                pair_chart_for_reversal, cot_payload=_cot_payload
+                pair_chart_for_reversal,
+                cot_payload=_cot_payload,
+                option_skew_payload=_option_skew_payload,
             )
             if _pattern_signals:
                 _pattern_delta, _pattern_rationales = aggregate_pattern_score(
@@ -1302,6 +1317,38 @@ class TraderBrain:
                 if _proj_delta != 0.0:
                     score += _proj_delta
                     rationale.insert(0, f"forward-proj {_proj_delta:+.1f}: " + "; ".join(_proj_rationales[:3]))
+
+        # Cross-pair correlation lag (2026-05-14): when a strongly
+        # correlated leader pair has moved but this pair hasn't yet,
+        # project catch-up direction. Pair-level signal, runs once per
+        # pair using the full pair_charts dict (other charts as
+        # leaders). Skipped silently when full_pair_charts is sparse.
+        if full_pair_charts and pair in full_pair_charts:
+            try:
+                _corr_signals = detect_correlation_lag(pair, full_pair_charts)
+                if _corr_signals:
+                    _corr_delta, _corr_rat = aggregate_correlation_lag_score(_corr_signals, direction)
+                    if _corr_delta != 0.0:
+                        score += _corr_delta
+                        rationale.insert(0, f"corr-lag {_corr_delta:+.1f}: " + "; ".join(_corr_rat[:2]))
+            except Exception:
+                pass
+
+        # Multi-step path projection (2026-05-14): sweep → FVG fill →
+        # continuation. Requires M15 view with liquidity + FVG data.
+        # Silent no-op when chart is missing structural artifacts.
+        if pair_chart_for_reversal is not None and snapshot is not None:
+            try:
+                _cur_for_path = _current_price_for(pair, snapshot, direction) if snapshot else None
+                if _cur_for_path is not None:
+                    _paths = detect_paths(pair_chart_for_reversal, direction, _cur_for_path)
+                    if _paths:
+                        _path_delta, _path_rat = aggregate_path_score(_paths, direction)
+                        if _path_delta != 0.0:
+                            score += _path_delta
+                            rationale.insert(0, f"path-proj {_path_delta:+.1f}: " + "; ".join(_path_rat[:2]))
+            except Exception:
+                pass
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)

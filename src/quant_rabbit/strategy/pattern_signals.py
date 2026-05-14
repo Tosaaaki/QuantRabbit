@@ -59,6 +59,12 @@ THREE_SOLDIERS_CROWS_BONUS = float(os.environ.get("QR_THREE_SOLDIERS_CROWS_BONUS
 INSIDE_BAR_BREAK_BONUS = float(os.environ.get("QR_INSIDE_BAR_BREAK_BONUS", "11.0"))
 VOLUME_PROFILE_HVN_BONUS = float(os.environ.get("QR_VOLUME_HVN_BONUS", "9.0"))
 COT_SHIFT_BONUS = float(os.environ.get("QR_COT_SHIFT_BONUS", "11.0"))
+OPTION_SKEW_BONUS = float(os.environ.get("QR_OPTION_SKEW_BONUS", "10.0"))
+
+# Option-skew threshold — RR (risk reversal) magnitude. RR > threshold
+# means call skew > put skew (bullish positioning); RR < -threshold
+# means put skew > call skew (bearish positioning).
+OPTION_SKEW_RR_THRESHOLD = float(os.environ.get("QR_OPTION_SKEW_RR_THRESHOLD", "0.5"))
 
 # Volume profile: HVN (high volume node) detection — the price level
 # where the most volume has transacted in recent N bars. Price returns
@@ -687,6 +693,62 @@ def _detect_volume_profile_hvn(view: Dict[str, Any], tf: str) -> List[PatternSig
     )]
 
 
+def _detect_option_skew(pair: str, option_skew_payload: Optional[Dict[str, Any]]) -> List[PatternSignal]:
+    """Option-skew (Risk Reversal) directional bias.
+
+    Reads `data/option_skew_snapshot.json` readings entries for the
+    target pair. RR (25-delta risk reversal):
+    - `rr_25d > OPTION_SKEW_RR_THRESHOLD` → calls more expensive than
+      puts → bullish positioning → UP bias
+    - `rr_25d < -OPTION_SKEW_RR_THRESHOLD` → puts more expensive →
+      bearish → DOWN bias
+
+    Returns empty when:
+    - No provider configured (rr_25d == None) — common state until
+      a paid option-vol feed is wired up
+    - RR within ±threshold band (no decisive bias)
+
+    Preference: 1M tenor (most actionable for swing positioning),
+    fall back to 1W if 1M missing.
+    """
+    if not option_skew_payload:
+        return []
+    readings = option_skew_payload.get("readings") or []
+    if not isinstance(readings, list):
+        return []
+    # Pick 1M tenor first, else 1W
+    target_reading = None
+    for tenor_pref in ("1M", "1W", "3M"):
+        for r in readings:
+            if not isinstance(r, dict):
+                continue
+            if r.get("pair") != pair:
+                continue
+            if r.get("tenor") != tenor_pref:
+                continue
+            if r.get("rr_25d") is not None:
+                target_reading = r
+                break
+        if target_reading is not None:
+            break
+    if target_reading is None:
+        return []
+    rr = _to_float(target_reading.get("rr_25d"))
+    if rr is None:
+        return []
+    tenor = str(target_reading.get("tenor") or "")
+    if abs(rr) < OPTION_SKEW_RR_THRESHOLD:
+        return []
+    direction = "UP" if rr > 0 else "DOWN"
+    return [PatternSignal(
+        name="option_skew_rr",
+        timeframe=None, direction=direction,
+        confidence=min(1.0, abs(rr) / (OPTION_SKEW_RR_THRESHOLD * 3)),
+        bonus_magnitude=OPTION_SKEW_BONUS,
+        rationale=f"option skew {tenor} RR_25d={rr:+.2f} ({direction} positioning bias)",
+    )]
+
+
 def _detect_cot_positioning_shift(pair: str, cot_payload: Optional[Dict[str, Any]]) -> List[PatternSignal]:
     """COT large-spec positioning shift detector.
 
@@ -777,15 +839,88 @@ def _detect_inside_bar_break(view: Dict[str, Any], tf: str) -> List[PatternSigna
     return []
 
 
+def _detect_multi_tf_volume_hvn(pair_chart: Dict[str, Any]) -> List[PatternSignal]:
+    """Aggregate volume profile across M1, M5, M15 simultaneously.
+
+    Per-view HVN detection (already done in `_detect_volume_profile_hvn`)
+    can miss HVNs that are weaker on any single TF but strong when
+    aggregated. This module combines all three short TFs into a single
+    price-volume histogram and emits a stronger signal when the
+    multi-TF HVN aligns with current price.
+
+    Returns at most ONE signal per pair (the strongest combined HVN).
+    """
+    aggregate_pv: List[tuple[float, float]] = []
+    current_close: Optional[float] = None
+    atr_pips: Optional[float] = None
+    pair = str(pair_chart.get("pair", ""))
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        tf = str(view.get("granularity") or "").upper()
+        if tf not in ("M1", "M5", "M15"):
+            continue
+        ind = view.get("indicators") or {}
+        if current_close is None:
+            current_close = _to_float(ind.get("close"))
+        if atr_pips is None:
+            atr_pips = _to_float(ind.get("atr_pips"))
+        for c in view.get("recent_candles") or []:
+            m = _candle_metrics(c)
+            if m is None:
+                continue
+            mid = (m["high"] + m["low"]) / 2.0
+            aggregate_pv.append((mid, m["volume"]))
+    if not aggregate_pv or current_close is None or atr_pips is None:
+        return []
+
+    prices = [p for p, _ in aggregate_pv]
+    p_min, p_max = min(prices), max(prices)
+    if p_max <= p_min:
+        return []
+    bin_count = VOLUME_PROFILE_BINS
+    bin_size = (p_max - p_min) / bin_count
+    if bin_size <= 0:
+        return []
+    bins = [0.0] * bin_count
+    total = 0.0
+    for price, vol in aggregate_pv:
+        idx = min(bin_count - 1, int((price - p_min) / bin_size))
+        bins[idx] += vol
+        total += vol
+    if total <= 0:
+        return []
+    max_bin = max(range(bin_count), key=lambda i: bins[i])
+    hvn_price = p_min + (max_bin + 0.5) * bin_size
+    concentration = bins[max_bin] / total
+    if concentration < 0.12:
+        return []
+    pip_factor = 100.0 if pair.endswith("_JPY") else 10000.0
+    distance = abs(current_close - hvn_price)
+    threshold_distance = (VOLUME_PROFILE_NEAR_HVN_ATR_MULT * atr_pips) / pip_factor
+    if distance > threshold_distance:
+        return []
+    direction = "UP" if current_close < hvn_price else "DOWN"
+    return [PatternSignal(
+        name="multi_tf_volume_hvn",
+        timeframe="M1+M5+M15", direction=direction,
+        confidence=min(1.0, concentration * 2 + 0.4),
+        bonus_magnitude=VOLUME_PROFILE_HVN_BONUS * 1.3,  # multi-TF stronger
+        rationale=f"multi-TF HVN at {hvn_price:.5f} ({concentration:.0%} of M1+M5+M15 vol) — magnet → {direction}",
+    )]
+
+
 def detect_pattern_signals(
     pair_chart: Optional[Dict[str, Any]],
     *,
     cot_payload: Optional[Dict[str, Any]] = None,
+    option_skew_payload: Optional[Dict[str, Any]] = None,
 ) -> List[PatternSignal]:
     """Run all pattern detectors against every relevant timeframe view.
 
-    `cot_payload`: optional `data/cot_snapshot.json` content for the
-    COT positioning-shift detector. When omitted, that detector is skipped.
+    `cot_payload`: optional `data/cot_snapshot.json` content.
+    `option_skew_payload`: optional `data/option_skew_snapshot.json` content.
+    Both are pair-level (not per-view) and skipped silently when missing.
     """
     if _is_disabled():
         return []
@@ -795,6 +930,9 @@ def detect_pattern_signals(
     pair = str(pair_chart.get("pair") or "")
     if pair and cot_payload:
         out.extend(_detect_cot_positioning_shift(pair, cot_payload))
+    if pair and option_skew_payload:
+        out.extend(_detect_option_skew(pair, option_skew_payload))
+    out.extend(_detect_multi_tf_volume_hvn(pair_chart))
     # Pair-level confluence used by some detectors (divergence). Inject
     # it onto each view so detectors don't need the parent chart.
     pair_confluence = pair_chart.get("confluence") or {}

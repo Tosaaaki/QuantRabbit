@@ -351,6 +351,35 @@ def compute_hit_rates(
     return out
 
 
+def _bayesian_posterior_mean(hits: int, total: int, alpha_prior: float = 1.0, beta_prior: float = 1.0) -> float:
+    """Beta-Bernoulli posterior mean for hit-rate.
+
+    Prior Beta(α, β) updated by `hits` Hs and `total - hits` Ms gives
+    posterior Beta(α + hits, β + total - hits). The posterior mean is
+    `(α + hits) / (α + β + total)`.
+
+    Default uniform prior Beta(1, 1) treats no-prior-info as 50/50 but
+    SHRINKS the estimate toward 50% as `total` decreases. This is the
+    statistically correct way to handle low-sample buckets — much more
+    robust than the linear hit-rate which trusted 4 HITs / 4 trials
+    as "100% hit rate" when really it's "we don't know yet".
+    """
+    if total <= 0:
+        return alpha_prior / (alpha_prior + beta_prior)
+    return (alpha_prior + hits) / (alpha_prior + beta_prior + total)
+
+
+def _bayesian_posterior_variance(hits: int, total: int, alpha_prior: float = 1.0, beta_prior: float = 1.0) -> float:
+    """Beta posterior variance — used to apply lower-confidence-bound
+    pessimism on small samples (Bayesian UCB / Wilson interval style)."""
+    a = alpha_prior + hits
+    b = beta_prior + (total - hits)
+    denom = (a + b) ** 2 * (a + b + 1)
+    if denom <= 0:
+        return 0.25  # max variance
+    return (a * b) / denom
+
+
 def confidence_calibration(
     signal_name: str,
     pair: str,
@@ -359,17 +388,23 @@ def confidence_calibration(
     regime: Optional[str] = None,
 ) -> float:
     """Return a multiplier ∈ [CONFIDENCE_MIN_MULTIPLIER, CONFIDENCE_MAX_MULTIPLIER]
-    to apply to raw `confidence`, based on past hit-rate.
+    to apply to raw `confidence`, based on Bayesian Beta-Bernoulli posterior
+    of past hit-rate.
 
-    Falls back to 1.0 (no adjustment) when there aren't enough samples
-    to be confident in the calibration (< CONFIDENCE_MIN_SAMPLES).
+    2026-05-14: Upgraded from linear interp to Beta-Bernoulli posterior:
+    - Posterior mean = `(α + hits) / (α + β + total)` with α=β=1 prior
+    - Posterior variance gives a pessimism shrink: we use the LOWER 90%
+      bound (μ - 1.28 σ) to be conservative on small samples
+    - This means "3 HITs / 3 trials" → posterior mean 0.8 (not 1.0),
+      lower bound ~0.55 — much more reliable than the naive 100%
+    - As sample count grows, the bound approaches the true rate
+    - Self-pessimizing on uncertainty, self-confident on lots of data
 
     Preference order (most specific → most general):
-    1. pair × regime
-    2. pair × all regimes
-    3. all pairs × regime
-    4. all pairs × all regimes
+    1. pair × regime  →  2. pair × all regimes  →  3. all pairs × regime
+       →  4. all pairs × all regimes
     """
+    import math
     by_key = hit_rates.get(signal_name) or {}
     candidates_in_order: List[Optional[Dict[str, Any]]] = []
     if regime is not None:
@@ -386,16 +421,32 @@ def confidence_calibration(
 
     chosen = None
     for c in candidates_in_order:
-        if c and c.get("samples", 0) >= CONFIDENCE_MIN_SAMPLES:
+        if c is None:
+            continue
+        # Need raw samples count; old "_all_pairs" / new buckets all have "samples".
+        samples = c.get("samples", 0)
+        if samples >= CONFIDENCE_MIN_SAMPLES:
             chosen = c
             break
     if chosen is None:
         return 1.0
-    hit_rate = chosen.get("hit_rate", 0.5)
-    if hit_rate >= 0.5:
-        mult = 1.0 + (hit_rate - 0.5) * 2.0 * (CONFIDENCE_MAX_MULTIPLIER - 1.0)
+
+    hit_rate_obs = chosen.get("hit_rate", 0.5)
+    samples = chosen.get("samples", 0)
+    hits = int(round(hit_rate_obs * samples))
+    # Bayesian posterior mean + variance
+    mu = _bayesian_posterior_mean(hits, samples)
+    var = _bayesian_posterior_variance(hits, samples)
+    sigma = math.sqrt(var)
+    # Lower 90% bound (1.28σ) — pessimistic estimate. As samples grow,
+    # σ shrinks toward 0, so bound approaches mean.
+    pessimistic = max(0.0, min(1.0, mu - 1.28 * sigma))
+    # Map [0, 1] hit-rate to [MIN_MULT, MAX_MULT] via linear interp
+    # centered at 0.5 = 1.0.
+    if pessimistic >= 0.5:
+        mult = 1.0 + (pessimistic - 0.5) * 2.0 * (CONFIDENCE_MAX_MULTIPLIER - 1.0)
     else:
-        mult = 1.0 - (0.5 - hit_rate) * 2.0 * (1.0 - CONFIDENCE_MIN_MULTIPLIER)
+        mult = 1.0 - (0.5 - pessimistic) * 2.0 * (1.0 - CONFIDENCE_MIN_MULTIPLIER)
     return round(mult, 3)
 
 
