@@ -445,6 +445,10 @@ from quant_rabbit.strategy.trader_overrides import (
 )
 from quant_rabbit.strategy.news_themes import NewsThemes, parse_news_themes
 from quant_rabbit.strategy.reversal_signal import detect_reversal
+from quant_rabbit.strategy.pattern_signals import (
+    aggregate_pattern_score,
+    detect_pattern_signals,
+)
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1190,6 +1194,26 @@ class TraderBrain:
         if _reversal_detected is not None:
             score += _reversal_detected.bonus
             rationale.insert(0, _reversal_detected.rationale)
+
+        # Pattern-recognition layer (2026-05-14): failed breakout (trap
+        # fade), RSI extreme + BB rail, dealing-range edge exhaustion,
+        # Aroon strong cross. Each detected signal contributes a bounded
+        # score; aligned with intent gets the full bonus, against gets
+        # half-magnitude penalty. The whole layer is clamped to
+        # ±PATTERN_TOTAL_CAP (default 30) so it can't dominate the model.
+        # Discretionary "そろそろ感" via existing indicator data.
+        if pair_chart_for_reversal is not None:  # already loaded above
+            _pattern_signals = detect_pattern_signals(pair_chart_for_reversal)
+            if _pattern_signals:
+                _pattern_delta, _pattern_rationales = aggregate_pattern_score(
+                    _pattern_signals, direction
+                )
+                if _pattern_delta != 0.0:
+                    score += _pattern_delta
+                    # Keep just the strongest 2-3 rationales on the lane
+                    # report to avoid bloating; signals themselves are
+                    # available via the structured dict if a caller needs.
+                    rationale.insert(0, f"patterns {_pattern_delta:+.1f}: " + "; ".join(_pattern_rationales[:3]))
 
         adjusted_score = round(score + settings.score_bias, 2)
         size_multiple = _size_multiple(adjusted_score, settings)
