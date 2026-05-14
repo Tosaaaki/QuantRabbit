@@ -394,6 +394,7 @@ def aggregate_projection_score(
     *,
     hit_rates: Optional[Dict[str, Dict[str, Any]]] = None,
     pair: Optional[str] = None,
+    regime: Optional[str] = None,
 ) -> Tuple[float, List[str]]:
     """Sum aligned projection signals, subtract opposed (half-weight).
 
@@ -426,7 +427,7 @@ def aggregate_projection_score(
     for s in signals:
         cal_mult = 1.0
         if hit_rates is not None and pair:
-            cal_mult = confidence_calibration(s.name, pair, hit_rates=hit_rates)
+            cal_mult = confidence_calibration(s.name, pair, hit_rates=hit_rates, regime=regime)
         contribution = s.bonus_magnitude * s.confidence * cal_mult
         cal_note = f" [cal×{cal_mult:.2f}]" if cal_mult != 1.0 else ""
         if s.direction == "EITHER":

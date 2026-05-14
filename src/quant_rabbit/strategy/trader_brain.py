@@ -1207,7 +1207,20 @@ class TraderBrain:
         # ±PATTERN_TOTAL_CAP (default 30) so it can't dominate the model.
         # Discretionary "そろそろ感" via existing indicator data.
         if pair_chart_for_reversal is not None:  # already loaded above
-            _pattern_signals = detect_pattern_signals(pair_chart_for_reversal)
+            # COT payload loaded lazily per cycle (per-pair detector
+            # filters internally). File-not-present → cot_payload=None
+            # → COT shift detector silently skipped.
+            _cot_payload = None
+            try:
+                from quant_rabbit.paths import ROOT as __QR_ROOT
+                _cot_path = __QR_ROOT / "data" / "cot_snapshot.json"
+                if _cot_path.exists():
+                    _cot_payload = json.loads(_cot_path.read_text())
+            except Exception:
+                _cot_payload = None
+            _pattern_signals = detect_pattern_signals(
+                pair_chart_for_reversal, cot_payload=_cot_payload
+            )
             if _pattern_signals:
                 _pattern_delta, _pattern_rationales = aggregate_pattern_score(
                     _pattern_signals, direction
@@ -1248,19 +1261,41 @@ class TraderBrain:
                 # ledger hasn't accumulated samples yet — calibration
                 # multiplier defaults to 1.0 in that case.
                 _hit_rates = _compute_hit_rates(_QR_ROOT / "data")
+                # Regime label (for hit_rate bucketing)
+                _proj_regime = None
+                if pair_chart_for_reversal:
+                    _conf2 = pair_chart_for_reversal.get("confluence") or {}
+                    _rg_raw = str(_conf2.get("dominant_regime") or "").upper()
+                    if "TREND" in _rg_raw:
+                        _proj_regime = "TREND"
+                    elif "RANGE" in _rg_raw:
+                        _proj_regime = "RANGE"
                 _proj_delta, _proj_rationales = aggregate_projection_score(
                     _projection_signals, direction,
-                    hit_rates=_hit_rates, pair=pair,
+                    hit_rates=_hit_rates, pair=pair, regime=_proj_regime,
                 )
                 # Record predictions ONCE per cycle (idempotent by
                 # timestamp + signal_name + pair). The dedup happens
                 # downstream in verify when the same timestamp re-appears.
                 try:
+                    # Extract regime label from confluence for
+                    # hit_rate bucketing.
+                    _regime_label = None
+                    if pair_chart_for_reversal:
+                        _conf = pair_chart_for_reversal.get("confluence") or {}
+                        _regime_raw = str(_conf.get("dominant_regime") or "").upper()
+                        if "TREND" in _regime_raw:
+                            _regime_label = "TREND"
+                        elif "RANGE" in _regime_raw:
+                            _regime_label = "RANGE"
+                        elif _regime_raw:
+                            _regime_label = _regime_raw[:20]
                     _record_projections(
                         _projection_signals,
                         pair=pair,
                         current_price=cur_price_for_proj,
                         data_root=_QR_ROOT / "data",
+                        regime_at_emission=_regime_label,
                     )
                 except Exception:
                     pass  # ledger write failure must not break scoring

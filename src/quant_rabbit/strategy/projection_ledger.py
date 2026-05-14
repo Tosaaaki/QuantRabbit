@@ -67,6 +67,11 @@ class LedgerEntry:
     resolved_at_utc: Optional[str] = None
     resolution_evidence: str = ""
     pre_emission_range_pips: Optional[float] = None
+    # 2026-05-14: regime tagging for segmented hit_rate calculation.
+    # Detectors that fire in TREND regimes often perform very differently
+    # from the same detector in RANGE regimes — bucketing the calibration
+    # by regime makes the multiplier much more accurate.
+    regime_at_emission: Optional[str] = None  # "TREND" | "RANGE" | "REVERSAL_RISK" | "UNCLEAR" | None
 
     def to_dict(self) -> dict:
         return {
@@ -83,6 +88,7 @@ class LedgerEntry:
             "resolved_at_utc": self.resolved_at_utc,
             "resolution_evidence": self.resolution_evidence,
             "pre_emission_range_pips": self.pre_emission_range_pips,
+            "regime_at_emission": self.regime_at_emission,
         }
 
     @classmethod
@@ -101,6 +107,7 @@ class LedgerEntry:
             resolved_at_utc=d.get("resolved_at_utc"),
             resolution_evidence=str(d.get("resolution_evidence", "")),
             pre_emission_range_pips=d.get("pre_emission_range_pips"),
+            regime_at_emission=d.get("regime_at_emission"),
         )
 
 
@@ -115,6 +122,7 @@ def record_projections(
     current_price: Optional[float],
     data_root: Path,
     pre_emission_range_pips: Optional[float] = None,
+    regime_at_emission: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> int:
     """Append all signals to the ledger. Returns count written.
@@ -148,6 +156,7 @@ def record_projections(
                 resolution_window_min=float(getattr(s, "lead_time_min", 0)) * 2.0,
                 resolution_status="PENDING",
                 pre_emission_range_pips=pre_emission_range_pips,
+                regime_at_emission=regime_at_emission,
             )
             f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
             written += 1
@@ -299,37 +308,46 @@ def compute_hit_rates(
     data_root: Path,
     *,
     lookback: int = HIT_RATE_LOOKBACK,
-) -> Dict[str, Dict[str, float]]:
-    """Per `(signal_name, pair)` hit-rate from last `lookback` resolved entries.
+) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Per `(signal_name, pair, regime)` hit-rate from last `lookback`
+    resolved entries.
 
     Returns:
         {
             "<signal_name>": {
-                "<pair>": {"hit_rate": 0.0-1.0, "samples": int},
-                "_all_pairs": {"hit_rate": 0.0-1.0, "samples": int},
+                "<pair>:<regime>": {"hit_rate": 0.0-1.0, "samples": int},
+                "<pair>:_all_regimes": {...},
+                "_all_pairs:_all_regimes": {...},
             },
             ...
         }
+
+    The hierarchical keys let `confidence_calibration` prefer the most
+    specific bucket (pair × regime) but fall back to less specific
+    buckets when there aren't enough samples in the granular one.
     """
     entries = load_ledger(data_root)
     resolved = [e for e in entries if e.resolution_status in ("HIT", "MISS")]
-    resolved = resolved[-lookback * 5:]  # rough bound on size
-    # Group
+    resolved = resolved[-lookback * 10:]  # rough bound on size
     grouped: Dict[str, Dict[str, List[bool]]] = {}
     for e in resolved:
         s = grouped.setdefault(e.signal_name, {})
-        s.setdefault(e.pair, []).append(e.resolution_status == "HIT")
-        s.setdefault("_all_pairs", []).append(e.resolution_status == "HIT")
+        regime = e.regime_at_emission or "UNCLEAR"
+        # 3-level bucketing: most specific → most general
+        s.setdefault(f"{e.pair}:{regime}", []).append(e.resolution_status == "HIT")
+        s.setdefault(f"{e.pair}:_all_regimes", []).append(e.resolution_status == "HIT")
+        s.setdefault(f"_all_pairs:{regime}", []).append(e.resolution_status == "HIT")
+        s.setdefault("_all_pairs:_all_regimes", []).append(e.resolution_status == "HIT")
     out: Dict[str, Dict[str, Dict[str, float]]] = {}
-    for sig, by_pair in grouped.items():
+    for sig, by_key in grouped.items():
         out[sig] = {}
-        for pair, results in by_pair.items():
+        for key, results in by_key.items():
             n = min(len(results), lookback)
             recent = results[-n:]
             if not recent:
                 continue
             hr = sum(1 for r in recent if r) / float(n)
-            out[sig][pair] = {"hit_rate": round(hr, 3), "samples": n}
+            out[sig][key] = {"hit_rate": round(hr, 3), "samples": n}
     return out
 
 
@@ -338,6 +356,7 @@ def confidence_calibration(
     pair: str,
     *,
     hit_rates: Dict[str, Dict[str, Any]],
+    regime: Optional[str] = None,
 ) -> float:
     """Return a multiplier ∈ [CONFIDENCE_MIN_MULTIPLIER, CONFIDENCE_MAX_MULTIPLIER]
     to apply to raw `confidence`, based on past hit-rate.
@@ -345,18 +364,34 @@ def confidence_calibration(
     Falls back to 1.0 (no adjustment) when there aren't enough samples
     to be confident in the calibration (< CONFIDENCE_MIN_SAMPLES).
 
-    Preference order: per-pair hit-rate → all-pairs hit-rate → 1.0.
+    Preference order (most specific → most general):
+    1. pair × regime
+    2. pair × all regimes
+    3. all pairs × regime
+    4. all pairs × all regimes
     """
-    by_pair = hit_rates.get(signal_name) or {}
-    per_pair = by_pair.get(pair)
-    candidate = per_pair if (per_pair and per_pair.get("samples", 0) >= CONFIDENCE_MIN_SAMPLES) else None
-    if candidate is None:
-        all_pairs = by_pair.get("_all_pairs")
-        candidate = all_pairs if (all_pairs and all_pairs.get("samples", 0) >= CONFIDENCE_MIN_SAMPLES) else None
-    if candidate is None:
+    by_key = hit_rates.get(signal_name) or {}
+    candidates_in_order: List[Optional[Dict[str, Any]]] = []
+    if regime is not None:
+        candidates_in_order.append(by_key.get(f"{pair}:{regime}"))
+    candidates_in_order.append(by_key.get(f"{pair}:_all_regimes"))
+    if regime is not None:
+        candidates_in_order.append(by_key.get(f"_all_pairs:{regime}"))
+    candidates_in_order.append(by_key.get("_all_pairs:_all_regimes"))
+    # Backward compatibility: previous schema used just "<pair>" / "_all_pairs"
+    if pair in by_key and isinstance(by_key[pair], dict):
+        candidates_in_order.append(by_key.get(pair))
+    if "_all_pairs" in by_key and isinstance(by_key["_all_pairs"], dict):
+        candidates_in_order.append(by_key.get("_all_pairs"))
+
+    chosen = None
+    for c in candidates_in_order:
+        if c and c.get("samples", 0) >= CONFIDENCE_MIN_SAMPLES:
+            chosen = c
+            break
+    if chosen is None:
         return 1.0
-    hit_rate = candidate.get("hit_rate", 0.5)
-    # Linear interp: 0.0 → MIN_MULT, 0.5 → 1.0, 1.0 → MAX_MULT
+    hit_rate = chosen.get("hit_rate", 0.5)
     if hit_rate >= 0.5:
         mult = 1.0 + (hit_rate - 0.5) * 2.0 * (CONFIDENCE_MAX_MULTIPLIER - 1.0)
     else:

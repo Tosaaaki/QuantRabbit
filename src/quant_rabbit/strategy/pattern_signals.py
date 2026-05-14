@@ -57,6 +57,17 @@ MACD_DIVERGENCE_BONUS = float(os.environ.get("QR_MACD_DIVERGENCE_BONUS", "12.0")
 THREE_BAR_REVERSAL_BONUS = float(os.environ.get("QR_THREE_BAR_REVERSAL_BONUS", "14.0"))
 THREE_SOLDIERS_CROWS_BONUS = float(os.environ.get("QR_THREE_SOLDIERS_CROWS_BONUS", "10.0"))
 INSIDE_BAR_BREAK_BONUS = float(os.environ.get("QR_INSIDE_BAR_BREAK_BONUS", "11.0"))
+VOLUME_PROFILE_HVN_BONUS = float(os.environ.get("QR_VOLUME_HVN_BONUS", "9.0"))
+COT_SHIFT_BONUS = float(os.environ.get("QR_COT_SHIFT_BONUS", "11.0"))
+
+# Volume profile: HVN (high volume node) detection — the price level
+# where the most volume has transacted in recent N bars. Price returns
+# to HVN tend to find support/resistance.
+VOLUME_PROFILE_BINS = int(os.environ.get("QR_VOL_PROFILE_BINS", "20"))
+VOLUME_PROFILE_NEAR_HVN_ATR_MULT = float(os.environ.get("QR_VOL_PROFILE_NEAR_HVN_ATR", "0.5"))
+
+# COT shift: percentile shift of large-spec net positioning vs prior week.
+COT_SHIFT_THRESHOLD = float(os.environ.get("QR_COT_SHIFT_THRESHOLD", "0.10"))  # 10% week-over-week
 
 # Swing detection sensitivity for divergence: a local extreme requires
 # being higher/lower than the N bars on each side. 2 is reasonable for
@@ -606,6 +617,133 @@ def _detect_three_bar_patterns(view: Dict[str, Any], tf: str) -> List[PatternSig
     return out
 
 
+def _detect_volume_profile_hvn(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
+    """Volume profile HVN proximity.
+
+    Builds a histogram of (close, volume) from `recent_candles` and
+    identifies the HVN — the bin with the highest cumulative volume.
+    When current price is within `VOLUME_PROFILE_NEAR_HVN_ATR_MULT × ATR`
+    of an HVN, the level acts as magnet (support OR resistance depending
+    on approach direction).
+
+    Direction inference: if current price is BELOW the HVN, it's
+    likely to rise toward it (UP); ABOVE → likely to fall toward it (DOWN).
+    Confidence scales with the HVN's volume concentration vs total.
+    """
+    candles_raw = view.get("recent_candles") or []
+    if len(candles_raw) < 10:
+        return []
+    ind = view.get("indicators") or {}
+    atr_pips = _to_float(ind.get("atr_pips"))
+    current_close = _to_float(ind.get("close"))
+    if not atr_pips or atr_pips <= 0 or current_close is None:
+        return []
+    # Build price-volume histogram
+    pip_factor = 100.0 if "JPY" in str(ind.get("pair") or "") else 10000.0  # fallback; real value comes from caller
+    # Determine price range from candles
+    highs = []; lows = []; price_vol_pairs = []
+    for c in candles_raw:
+        m = _candle_metrics(c)
+        if m is None:
+            continue
+        highs.append(m["high"]); lows.append(m["low"])
+        mid = (m["high"] + m["low"]) / 2.0
+        price_vol_pairs.append((mid, m["volume"]))
+    if not highs:
+        return []
+    p_min, p_max = min(lows), max(highs)
+    if p_max <= p_min:
+        return []
+    bin_size = (p_max - p_min) / VOLUME_PROFILE_BINS
+    if bin_size <= 0:
+        return []
+    bins = [0.0] * VOLUME_PROFILE_BINS
+    total_vol = 0.0
+    for price, vol in price_vol_pairs:
+        idx = min(VOLUME_PROFILE_BINS - 1, int((price - p_min) / bin_size))
+        bins[idx] += vol
+        total_vol += vol
+    if total_vol <= 0:
+        return []
+    max_bin = max(range(VOLUME_PROFILE_BINS), key=lambda i: bins[i])
+    hvn_price = p_min + (max_bin + 0.5) * bin_size
+    hvn_concentration = bins[max_bin] / total_vol
+    # Need at least 15% concentration to be meaningful
+    if hvn_concentration < 0.15:
+        return []
+    # Pip factor heuristic from price magnitude
+    pip_factor_local = 100.0 if (p_max < 1000 and p_max > 50) else 10000.0
+    distance = abs(current_close - hvn_price)
+    threshold_distance = (VOLUME_PROFILE_NEAR_HVN_ATR_MULT * atr_pips) / pip_factor_local
+    if distance > threshold_distance:
+        return []
+    direction = "UP" if current_close < hvn_price else "DOWN"
+    return [PatternSignal(
+        name="volume_profile_hvn_magnet",
+        timeframe=tf, direction=direction,
+        confidence=min(1.0, hvn_concentration * 2 + 0.3),
+        bonus_magnitude=VOLUME_PROFILE_HVN_BONUS,
+        rationale=f"{tf} HVN at {hvn_price:.5f} ({hvn_concentration:.0%} of vol) — price magnet → {direction}",
+    )]
+
+
+def _detect_cot_positioning_shift(pair: str, cot_payload: Optional[Dict[str, Any]]) -> List[PatternSignal]:
+    """COT large-spec positioning shift detector.
+
+    Reads `data/cot_snapshot.json` reports. For the pair's BASE currency,
+    inspects `week_change_leveraged_net` — the week-over-week change in
+    leveraged (large-spec / hedge-fund) net positioning. A meaningful
+    shift (≥ COT_SHIFT_THRESHOLD × open_interest) signals institutional
+    intent change.
+
+    Positive `week_change_leveraged_net` for the base currency →
+    institutions are increasing LONG → pair UP bias.
+    Negative → pair DOWN bias.
+
+    Confidence scales with the magnitude vs OI; lead time ≈ 1 week
+    since COT data is weekly release.
+    """
+    if not cot_payload:
+        return []
+    reports = cot_payload.get("reports") or []
+    if not reports:
+        return []
+    base, quote = _split_pair_for_cot(pair)
+    if not base:
+        return []
+    target_report = None
+    for r in reports:
+        if not isinstance(r, dict):
+            continue
+        if str(r.get("currency", "")).upper() == base.upper():
+            target_report = r
+            break
+    if target_report is None:
+        return []
+    open_interest = _to_float(target_report.get("open_interest"))
+    week_change = _to_float(target_report.get("week_change_leveraged_net"))
+    if open_interest is None or week_change is None or open_interest <= 0:
+        return []
+    shift_ratio = week_change / open_interest
+    if abs(shift_ratio) < COT_SHIFT_THRESHOLD:
+        return []
+    direction = "UP" if shift_ratio > 0 else "DOWN"
+    return [PatternSignal(
+        name="cot_positioning_shift",
+        timeframe=None, direction=direction,
+        confidence=min(1.0, abs(shift_ratio) / (COT_SHIFT_THRESHOLD * 3)),
+        bonus_magnitude=COT_SHIFT_BONUS,
+        rationale=f"COT {base} large-spec week_net {week_change:+.0f} ({shift_ratio:+.1%} of OI) → {direction}",
+    )]
+
+
+def _split_pair_for_cot(pair: str) -> tuple[str, str]:
+    parts = pair.split("_")
+    if len(parts) != 2:
+        return ("", "")
+    return parts[0], parts[1]
+
+
 def _detect_inside_bar_break(view: Dict[str, Any], tf: str) -> List[PatternSignal]:
     """Three-candle pattern: mother → inside → break.
 
@@ -641,13 +779,22 @@ def _detect_inside_bar_break(view: Dict[str, Any], tf: str) -> List[PatternSigna
 
 def detect_pattern_signals(
     pair_chart: Optional[Dict[str, Any]],
+    *,
+    cot_payload: Optional[Dict[str, Any]] = None,
 ) -> List[PatternSignal]:
-    """Run all pattern detectors against every relevant timeframe view."""
+    """Run all pattern detectors against every relevant timeframe view.
+
+    `cot_payload`: optional `data/cot_snapshot.json` content for the
+    COT positioning-shift detector. When omitted, that detector is skipped.
+    """
     if _is_disabled():
         return []
     if not pair_chart:
         return []
     out: List[PatternSignal] = []
+    pair = str(pair_chart.get("pair") or "")
+    if pair and cot_payload:
+        out.extend(_detect_cot_positioning_shift(pair, cot_payload))
     # Pair-level confluence used by some detectors (divergence). Inject
     # it onto each view so detectors don't need the parent chart.
     pair_confluence = pair_chart.get("confluence") or {}
@@ -670,6 +817,7 @@ def detect_pattern_signals(
         out.extend(_detect_macd_divergence(view, tf))
         out.extend(_detect_three_bar_patterns(view, tf))
         out.extend(_detect_inside_bar_break(view, tf))
+        out.extend(_detect_volume_profile_hvn(view, tf))
     return out
 
 

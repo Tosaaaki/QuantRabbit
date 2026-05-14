@@ -481,6 +481,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Compute updates but do not call broker.replace_trade_dependent_orders.",
     )
 
+    p_plim = sub.add_parser(
+        "generate-predictive-limits",
+        help="Generate LIMIT orders from Grade-A forward-projection setups (path Step B + liquidity sweep fades).",
+    )
+    p_plim.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_plim.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_plim.add_argument("--send", action="store_true", help="Send LIMITs via OANDA. Default is dry-run JSON only.")
+    p_plim.add_argument("--output", type=Path, default=Path("data/predictive_limit_orders.json"))
+
     p_vproj = sub.add_parser(
         "verify-projections",
         help="Verify pending forward-projection predictions against current OANDA prices; resolves HIT/MISS/TIMEOUT.",
@@ -1751,6 +1760,61 @@ def main(argv: list[str] | None = None) -> int:
             },
             indent=2,
         ))
+        return 0
+    if args.command == "generate-predictive-limits":
+        from quant_rabbit.strategy.forward_projection import detect_forward_projections
+        from quant_rabbit.strategy.path_projection import detect_paths
+        from quant_rabbit.strategy.predictive_limit_orders import (
+            apply_limit_orders,
+            generate_limits_from_projections,
+            serialize_limit_orders,
+        )
+        from quant_rabbit.broker.oanda import OandaExecutionClient
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        charts_by_pair: dict = {}
+        for chart in pair_charts_payload.get("charts", []) or []:
+            if isinstance(chart, dict) and chart.get("pair"):
+                charts_by_pair[chart["pair"]] = chart
+        quotes_by_pair = snapshot_payload.get("quotes") or {}
+        all_orders = []
+        for pair, chart in charts_by_pair.items():
+            q = quotes_by_pair.get(pair) or {}
+            bid = float(q.get("bid", 0)); ask = float(q.get("ask", 0))
+            if bid <= 0 or ask <= 0:
+                continue
+            mid = (bid + ask) / 2.0
+            projections = detect_forward_projections(
+                chart, pair=pair, current_price=mid,
+                calendar_path=Path("data/economic_calendar.json"),
+                cross_asset_path=Path("data/cross_asset_snapshot.json"),
+            )
+            # Try both directions for paths (we don't know which the trader will pick)
+            paths_long = detect_paths(chart, "LONG", mid)
+            paths_short = detect_paths(chart, "SHORT", mid)
+            paths = list(paths_long) + list(paths_short)
+            orders = generate_limits_from_projections(
+                pair=pair, pair_chart=chart, current_bid=bid, current_ask=ask,
+                projection_signals=projections, paths=paths,
+            )
+            all_orders.extend(orders)
+        results = []
+        if all_orders:
+            client = OandaExecutionClient() if args.send else None
+            results = apply_limit_orders(all_orders, client, dry_run=not args.send)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps({
+            "generated_at_utc": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "dry_run": not args.send,
+            "orders": serialize_limit_orders(all_orders),
+            "send_results": results,
+        }, ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "status": "OK",
+            "orders_count": len(all_orders),
+            "sent": args.send,
+            "output_path": str(args.output),
+        }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "verify-projections":
         from quant_rabbit.strategy.projection_ledger import (

@@ -123,12 +123,12 @@ class VerifyTest(unittest.TestCase):
 
 
 class HitRatesTest(unittest.TestCase):
-    def test_compute_hit_rates_per_pair(self) -> None:
+    def test_compute_hit_rates_per_pair_regime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             from quant_rabbit.strategy.projection_ledger import write_ledger
             entries = []
-            # 3 HITs and 1 MISS for bb_squeeze on EUR_USD
+            # 3 HITs and 1 MISS for bb_squeeze on EUR_USD in TREND regime
             for status in ["HIT", "HIT", "HIT", "MISS"]:
                 entries.append(LedgerEntry(
                     timestamp_emitted_utc="2026-05-14T00:00:00Z",
@@ -136,33 +136,69 @@ class HitRatesTest(unittest.TestCase):
                     lead_time_min=10, confidence=0.7,
                     entry_price=1.0, predicted_target_price=None,
                     resolution_window_min=20, resolution_status=status,
+                    regime_at_emission="TREND",
                 ))
             write_ledger(entries, root)
             hr = compute_hit_rates(root)
             self.assertIn("bb_squeeze", hr)
-            self.assertEqual(hr["bb_squeeze"]["EUR_USD"]["samples"], 4)
-            self.assertAlmostEqual(hr["bb_squeeze"]["EUR_USD"]["hit_rate"], 0.75)
+            # New schema: "<pair>:<regime>" keying
+            self.assertIn("EUR_USD:TREND", hr["bb_squeeze"])
+            self.assertEqual(hr["bb_squeeze"]["EUR_USD:TREND"]["samples"], 4)
+            self.assertAlmostEqual(hr["bb_squeeze"]["EUR_USD:TREND"]["hit_rate"], 0.75)
+            # Aggregate buckets also present
+            self.assertIn("EUR_USD:_all_regimes", hr["bb_squeeze"])
+            self.assertIn("_all_pairs:_all_regimes", hr["bb_squeeze"])
+
+    def test_regime_segmented_separates_by_regime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = []
+            # TREND: 4 HITs
+            for _ in range(4):
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    pair="EUR_USD", signal_name="sig_x", direction="UP",
+                    lead_time_min=10, confidence=0.7,
+                    entry_price=1.0, predicted_target_price=None,
+                    resolution_window_min=20, resolution_status="HIT",
+                    regime_at_emission="TREND",
+                ))
+            # RANGE: 4 MISSes
+            for _ in range(4):
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    pair="EUR_USD", signal_name="sig_x", direction="UP",
+                    lead_time_min=10, confidence=0.7,
+                    entry_price=1.0, predicted_target_price=None,
+                    resolution_window_min=20, resolution_status="MISS",
+                    regime_at_emission="RANGE",
+                ))
+            write_ledger(entries, root)
+            hr = compute_hit_rates(root)
+            self.assertAlmostEqual(hr["sig_x"]["EUR_USD:TREND"]["hit_rate"], 1.0)
+            self.assertAlmostEqual(hr["sig_x"]["EUR_USD:RANGE"]["hit_rate"], 0.0)
+            self.assertAlmostEqual(hr["sig_x"]["EUR_USD:_all_regimes"]["hit_rate"], 0.5)
 
 
 class CalibrationTest(unittest.TestCase):
     def test_high_hit_rate_boosts_confidence(self) -> None:
-        # 20 samples 100% hit
         hr = {"sig_x": {
-            "EUR_USD": {"hit_rate": 1.0, "samples": 20},
-            "_all_pairs": {"hit_rate": 1.0, "samples": 20},
+            "EUR_USD:TREND": {"hit_rate": 1.0, "samples": 20},
+            "_all_pairs:_all_regimes": {"hit_rate": 1.0, "samples": 20},
         }}
-        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
+        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="TREND")
         self.assertAlmostEqual(mult, CONFIDENCE_MAX_MULTIPLIER, places=2)
 
     def test_zero_hit_rate_dampens_confidence(self) -> None:
         hr = {"sig_x": {
-            "EUR_USD": {"hit_rate": 0.0, "samples": 20},
+            "EUR_USD:_all_regimes": {"hit_rate": 0.0, "samples": 20},
         }}
         mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
         self.assertAlmostEqual(mult, CONFIDENCE_MIN_MULTIPLIER, places=2)
 
     def test_few_samples_returns_1_0(self) -> None:
-        hr = {"sig_x": {"EUR_USD": {"hit_rate": 0.5, "samples": 3}}}
+        hr = {"sig_x": {"EUR_USD:_all_regimes": {"hit_rate": 0.5, "samples": 3}}}
         mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
         self.assertEqual(mult, 1.0)
 
@@ -171,13 +207,25 @@ class CalibrationTest(unittest.TestCase):
         mult = confidence_calibration("unknown", "EUR_USD", hit_rates=hr)
         self.assertEqual(mult, 1.0)
 
-    def test_per_pair_takes_precedence_over_all_pairs(self) -> None:
+    def test_regime_specific_overrides_all_regimes(self) -> None:
+        """Same signal x pair: TREND regime hit_rate 0.9 should win
+        over _all_regimes 0.3 when both have ≥10 samples and regime is TREND."""
         hr = {"sig_x": {
-            "EUR_USD": {"hit_rate": 0.9, "samples": 15},
-            "_all_pairs": {"hit_rate": 0.3, "samples": 100},
+            "EUR_USD:TREND": {"hit_rate": 0.9, "samples": 15},
+            "EUR_USD:_all_regimes": {"hit_rate": 0.3, "samples": 50},
         }}
-        # Per-pair has enough samples (≥10) → its 0.9 wins, not all-pairs 0.3
-        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr)
+        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="TREND")
+        self.assertGreater(mult, 1.0)
+        # And in RANGE, the _all_regimes 0.3 → < 1.0
+        mult_range = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="RANGE")
+        self.assertLess(mult_range, 1.0)
+
+    def test_falls_back_through_hierarchy(self) -> None:
+        """With no pair:regime specific data, falls back to pair:_all_regimes."""
+        hr = {"sig_x": {
+            "EUR_USD:_all_regimes": {"hit_rate": 0.8, "samples": 15},
+        }}
+        mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="TREND")
         self.assertGreater(mult, 1.0)
 
 
