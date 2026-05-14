@@ -161,6 +161,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 # required to actually close.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 
+# 4f. Generate predictive LIMIT orders for Grade A setups (path Step
+# B + liquidity sweep fades). Default dry-run writes
+# data/predictive_limit_orders.json for inspection; add --send to
+# actually place via OANDA. Operator decides whether to wire --send.
+PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
+
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based
 # on adverse-pips threshold, violating feedback_market_over_risk_budget.md
