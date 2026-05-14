@@ -502,6 +502,13 @@ def main(argv: list[str] | None = None) -> int:
     p_tevol.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_tevol.add_argument("--output", type=Path, default=Path("data/thesis_evolution_report.json"))
 
+    p_fperst = sub.add_parser(
+        "forecast-persistence-check",
+        help="Read forecast_history.jsonl and emit per-position persistence verdicts (RECOMMEND_CLOSE on N-cycle flip / EXTEND on N-cycle aligned / HOLD on mixed) to data/forecast_persistence_report.json. INFORMATION ONLY.",
+    )
+    p_fperst.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_fperst.add_argument("--output", type=Path, default=Path("data/forecast_persistence_report.json"))
+
     p_plim = sub.add_parser(
         "generate-predictive-limits",
         help="Generate LIMIT orders from Grade-A forward-projection setups (path Step B + liquidity sweep fades).",
@@ -1994,6 +2001,62 @@ def main(argv: list[str] | None = None) -> int:
                 for e in evolutions
             ],
             "output_path": str(report_path),
+        }, indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "forecast-persistence-check":
+        # Read trader-owned positions, evaluate forecast persistence for
+        # each, emit per-position verdict (HOLD / EXTEND / RECOMMEND_CLOSE).
+        # The verdict logic lives in forecast_persistence_tracker — this
+        # CLI just surfaces it for the operator.
+        from quant_rabbit.strategy.forecast_persistence_tracker import (
+            assess_all_positions as _persistence_assess_all,
+        )
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        positions = []
+        for p in snapshot_payload.get("positions", []) or []:
+            try:
+                positions.append(BrokerPosition(
+                    trade_id=p.get("trade_id"),
+                    pair=p.get("pair"),
+                    side=Side(p.get("side")),
+                    units=int(p.get("units", 0)),
+                    entry_price=float(p.get("entry_price", 0.0)),
+                    take_profit=p.get("take_profit"),
+                    stop_loss=p.get("stop_loss"),
+                    unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
+                    owner=Owner(p.get("owner", "trader")) if p.get("owner") else Owner.UNKNOWN,
+                ))
+            except Exception:
+                continue
+        verdicts = _persistence_assess_all(positions, data_root=Path("data"))
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps({
+            "generated_at_utc": __import__("datetime").datetime.now(
+                __import__("datetime").timezone.utc
+            ).isoformat(),
+            "count": len(verdicts),
+            "by_verdict": {
+                "RECOMMEND_CLOSE": sum(1 for v in verdicts if v.verdict == "RECOMMEND_CLOSE"),
+                "EXTEND": sum(1 for v in verdicts if v.verdict == "EXTEND"),
+                "HOLD": sum(1 for v in verdicts if v.verdict == "HOLD"),
+            },
+            "verdicts": [v.to_dict() for v in verdicts],
+        }, ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "status": "OK",
+            "position_count": len(verdicts),
+            "by_verdict": {
+                "RECOMMEND_CLOSE": sum(1 for v in verdicts if v.verdict == "RECOMMEND_CLOSE"),
+                "EXTEND": sum(1 for v in verdicts if v.verdict == "EXTEND"),
+                "HOLD": sum(1 for v in verdicts if v.verdict == "HOLD"),
+            },
+            "verdicts": [
+                {"trade_id": v.trade_id, "pair": v.pair, "side": v.side,
+                 "verdict": v.verdict, "reason": v.reason}
+                for v in verdicts
+            ],
+            "output_path": str(args.output),
         }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "verify-projections":

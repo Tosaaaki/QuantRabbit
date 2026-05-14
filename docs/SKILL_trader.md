@@ -183,6 +183,18 @@ PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 # considers manual close on BROKEN.
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 
+# 4e3. Forecast persistence check — N-cycle consistency rule. Reads
+# data/forecast_history.jsonl (written every cycle by trader_brain)
+# and asks: are the last N forecasts for this pair pointing AGAINST
+# the position (≥ QR_FORECAST_FLIP_PERSISTENCE=3 cycles) or have they
+# all gone RANGE/UNCLEAR (≥ QR_FORECAST_RANGE_PERSISTENCE=5 cycles)?
+# Either pattern → RECOMMEND_CLOSE. Aligned ≥3 cycles → EXTEND.
+# Single-cycle noise does NOT trigger close. Output goes to
+# data/forecast_persistence_report.json. Pairs with the
+# thesis-evolution-check verdict; the trader/operator decides whether
+# to close manually + Gate A/B. INFORMATION ONLY.
+PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
+
 # 4f. Generate predictive LIMIT orders for Grade A setups (path Step
 # B + liquidity sweep fades). Default dry-run writes
 # data/predictive_limit_orders.json for inspection; add --send to
