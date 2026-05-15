@@ -334,16 +334,23 @@ RANGE_RESISTANCE_LEVEL_KEYS = ("bb_upper", "donchian_high", "avwap_upper_2sd", "
 # and resistance rails exist; a squeeze / BREAKOUT_PENDING box is explicitly
 # not a range-fade setup. The 1.0 evidence floor means one explicit current
 # range read (dominant or M5/M15/H1 state) is enough only when rails are also
-# present. ADX<20 and Chop>61.8 are the same Wilder/Dreiss range defaults used
-# elsewhere in the regime layer, not pair-specific P/L decisions. Replace with
-# ledger-calibrated pair/session thresholds once enough RANGE_ROTATION outcomes
-# exist.
+# present. ADX<20 and Chop>61.8 are the same Wilder/Dreiss stable-range
+# defaults used elsewhere in the regime layer. RANGE_FORMING uses ADX<25 (not
+# strong trend), Chop>=45 (mixed/choppy tape), or BB-width percentile<=35
+# (compression beginning but not bottom-25% squeeze); those are pre-existing
+# range-phase / breakout-pending boundaries from the forecaster, not
+# pair-specific P/L decisions. Replace with ledger-calibrated pair/session
+# thresholds once enough RANGE_ROTATION / range-breakout outcomes exist.
 RANGE_AUTOLANE_TIMEFRAMES = ("M5", "M15", "M30", "H1")
 RANGE_AUTOLANE_MIN_EVIDENCE = 1.0
 RANGE_AUTOLANE_TARGET_RR_CAP = 2.0
+RANGE_BREAKOUT_AUTOLANE_TARGET_RR_FLOOR = 2.0
 RANGE_AUTOLANE_ADX_MAX = 20.0
 RANGE_AUTOLANE_CHOP_MIN = 61.8
 RANGE_AUTOLANE_SQUEEZE_PCT_MAX = 25.0
+RANGE_AUTOLANE_FORMING_ADX_MAX = 25.0
+RANGE_AUTOLANE_FORMING_CHOP_MIN = 45.0
+RANGE_AUTOLANE_FORMING_BB_WIDTH_PCT_MAX = 35.0
 
 # Broker-side TP attachment mode. Small-wave / range / failed-break setups
 # should bank at the nearest structural target, while strong trend setups
@@ -574,6 +581,7 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     per_tf = charts.get(pair)
     if not per_tf:
         return {}
+    range_phase, range_breakout_direction = _current_range_phase(pair, charts)
     long_score = _optional_float(per_tf.get("long_score"))
     short_score = _optional_float(per_tf.get("short_score"))
     bias = None
@@ -619,6 +627,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "chart_score_gap": _optional_float(conf.get("score_gap")),
         "higher_tf_regime": _text_or_none(conf.get("higher_tf_regime")),
         "higher_tf_alignment": _text_or_none(conf.get("higher_tf_alignment")),
+        "range_phase": range_phase,
+        "range_breakout_direction": range_breakout_direction,
         # F (2026-05-13) — H4 ATR pips for noise-resistant initial SL.
         # Consumed by `_generic_geometry` only when
         # QR_NEW_ENTRY_INITIAL_SL=1; raw value is published here so the
@@ -745,7 +755,7 @@ def _range_indicators_for(
     return indicators if isinstance(indicators, dict) and indicators else None
 
 
-def _append_current_range_rotation_lanes(
+def _append_current_range_phase_lanes(
     lanes: list[dict[str, Any]],
     charts: dict[str, dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
@@ -754,41 +764,83 @@ def _append_current_range_rotation_lanes(
     out = list(lanes)
     seen = {(lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) for lane in out}
     for lane in lanes:
-        method = str(lane.get("method") or "")
-        if method == TradeMethod.RANGE_ROTATION.value:
-            continue
         pair = str(lane.get("pair") or "")
-        direction = str(lane.get("direction") or "")
-        if direction not in {Side.LONG.value, Side.SHORT.value}:
+        source_direction = str(lane.get("direction") or "")
+        if source_direction not in {Side.LONG.value, Side.SHORT.value}:
             continue
-        if not _pair_has_current_range_rotation_edge(pair, charts):
-            continue
-        synthetic = dict(lane)
-        base_rr = _optional_float(synthetic.get("target_reward_risk")) or RANGE_AUTOLANE_TARGET_RR_CAP
-        synthetic.update(
-            {
-                "desk": "range_trader",
-                "method": TradeMethod.RANGE_ROTATION.value,
-                "campaign_role": f"{str(lane.get('campaign_role') or 'NOW')}_CURRENT_RANGE",
-                "reason": (
-                    f"{lane.get('reason') or 'evidence-backed lane'}; "
-                    "current chart is stable range with executable rails"
-                ),
-                "required_receipt": (
-                    "Use exact range rail/box order intent; market only if quote is already at executable rail."
-                ),
-                "target_reward_risk": min(base_rr, RANGE_AUTOLANE_TARGET_RR_CAP),
-            }
-        )
-        key = (synthetic.get("desk"), synthetic.get("pair"), synthetic.get("direction"), synthetic.get("method"))
-        if key in seen:
-            continue
-        out.append(synthetic)
-        seen.add(key)
+        phase, breakout_direction = _current_range_phase(pair, charts)
+        if phase in {"IN_RANGE", "RANGE_FORMING"}:
+            method = str(lane.get("method") or "")
+            if method == TradeMethod.RANGE_ROTATION.value:
+                continue
+            if not _pair_has_current_range_rotation_edge(pair, charts, phase=phase):
+                continue
+            synthetic = dict(lane)
+            base_rr = _optional_float(synthetic.get("target_reward_risk")) or RANGE_AUTOLANE_TARGET_RR_CAP
+            forming = phase == "RANGE_FORMING"
+            synthetic.update(
+                {
+                    "desk": "range_trader",
+                    "method": TradeMethod.RANGE_ROTATION.value,
+                    "campaign_role": (
+                        f"{str(lane.get('campaign_role') or 'NOW')}_"
+                        f"{'CURRENT_RANGE_FORMING' if forming else 'CURRENT_RANGE'}"
+                    ),
+                    "reason": (
+                        f"{lane.get('reason') or 'evidence-backed lane'}; "
+                        f"current chart phase={phase} with executable rails"
+                    ),
+                    "required_receipt": (
+                        "Use exact forming-range rail/box LIMIT order intent; no market chase."
+                        if forming
+                        else "Use exact range rail/box order intent; market only if quote is already at executable rail."
+                    ),
+                    "target_reward_risk": min(base_rr, RANGE_AUTOLANE_TARGET_RR_CAP),
+                }
+            )
+            key = (synthetic.get("desk"), synthetic.get("pair"), synthetic.get("direction"), synthetic.get("method"))
+            if key in seen:
+                continue
+            out.append(synthetic)
+            seen.add(key)
+        elif phase in {"BREAKOUT_UP", "BREAKOUT_DOWN"} and breakout_direction in {"UP", "DOWN"}:
+            breakout_side = Side.LONG.value if breakout_direction == "UP" else Side.SHORT.value
+            method = str(lane.get("method") or "")
+            if method == TradeMethod.TREND_CONTINUATION.value and source_direction == breakout_side:
+                continue
+            synthetic = dict(lane)
+            base_rr = _optional_float(synthetic.get("target_reward_risk")) or 0.0
+            synthetic.update(
+                {
+                    "desk": "trend_trader",
+                    "direction": breakout_side,
+                    "method": TradeMethod.TREND_CONTINUATION.value,
+                    "campaign_role": f"{str(lane.get('campaign_role') or 'NOW')}_CURRENT_RANGE_BREAKOUT",
+                    "reason": (
+                        f"{lane.get('reason') or 'evidence-backed lane'}; "
+                        f"current chart phase={phase} confirms range break {breakout_direction}"
+                    ),
+                    "required_receipt": (
+                        "Use STOP-ENTRY or retest continuation after a close-confirmed range break; "
+                        "do not fade the broken rail."
+                    ),
+                    "target_reward_risk": max(base_rr, RANGE_BREAKOUT_AUTOLANE_TARGET_RR_FLOOR),
+                }
+            )
+            key = (synthetic.get("desk"), synthetic.get("pair"), synthetic.get("direction"), synthetic.get("method"))
+            if key in seen:
+                continue
+            out.append(synthetic)
+            seen.add(key)
     return out
 
 
-def _pair_has_current_range_rotation_edge(pair: str, charts: dict[str, dict[str, Any]]) -> bool:
+def _pair_has_current_range_rotation_edge(
+    pair: str,
+    charts: dict[str, dict[str, Any]],
+    *,
+    phase: str | None = None,
+) -> bool:
     per_tf = charts.get(pair)
     if not per_tf:
         return False
@@ -800,6 +852,10 @@ def _pair_has_current_range_rotation_edge(pair: str, charts: dict[str, dict[str,
     dominant = str(per_tf.get("dominant_regime") or "").upper()
     if "BREAKOUT" in dominant or "SQUEEZE" in dominant:
         return False
+    if phase in {"BREAKOUT_PENDING", "BREAKOUT_UP", "BREAKOUT_DOWN"}:
+        return False
+    if phase in {"IN_RANGE", "RANGE_FORMING"}:
+        evidence += 1.0
     if "RANGE" in dominant:
         evidence += 1.0
 
@@ -826,6 +882,59 @@ def _pair_has_current_range_rotation_edge(pair: str, charts: dict[str, dict[str,
         ):
             evidence += 0.5
     return evidence >= RANGE_AUTOLANE_MIN_EVIDENCE
+
+
+def _current_range_phase(pair: str, charts: dict[str, dict[str, Any]] | None) -> tuple[str, str | None]:
+    if charts is None:
+        return "NONE", None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return "NONE", None
+    raw_chart = per_tf.get("__raw_chart")
+    if isinstance(raw_chart, dict):
+        try:
+            from quant_rabbit.strategy.directional_forecaster import _range_phase_analysis
+
+            phase = _range_phase_analysis(raw_chart)
+            phase_name = str(getattr(phase, "phase", "") or "NONE").upper()
+            direction = getattr(phase, "direction", None)
+            direction_name = str(direction).upper() if direction is not None else None
+            if phase_name != "NONE":
+                return phase_name, direction_name
+        except Exception:
+            pass
+    return _fallback_range_phase_from_indexed_chart(per_tf)
+
+
+def _fallback_range_phase_from_indexed_chart(per_tf: dict[str, Any]) -> tuple[str, str | None]:
+    has_stable_range = False
+    has_forming_range = False
+    dominant = str(per_tf.get("dominant_regime") or "").upper()
+    for timeframe in RANGE_AUTOLANE_TIMEFRAMES:
+        state = _regime_reading_state(per_tf, timeframe)
+        regime = str(per_tf.get(f"{timeframe}__regime") or "").upper()
+        indicators = per_tf.get(timeframe) if isinstance(per_tf.get(timeframe), dict) else {}
+        if state == "BREAKOUT_PENDING" or "BREAKOUT_PENDING" in regime or _has_squeeze_breakout_risk(indicators, per_tf, timeframe):
+            return "BREAKOUT_PENDING", None
+        if state == "RANGE" or "RANGE" in regime:
+            has_stable_range = True
+        if state in {"TREND_WEAK", "TRANSITION"} or regime in {"TREND_WEAK", "TRANSITION"}:
+            adx = _optional_float((indicators or {}).get("adx_14") or (indicators or {}).get("adx"))
+            chop = _optional_float((indicators or {}).get("choppiness_14"))
+            bb_width_pct = _percent_0_100((indicators or {}).get("bb_width_percentile_100"))
+            if (
+                (adx is not None and adx < RANGE_AUTOLANE_FORMING_ADX_MAX)
+                or (chop is not None and chop >= RANGE_AUTOLANE_FORMING_CHOP_MIN)
+                or (bb_width_pct is not None and bb_width_pct <= RANGE_AUTOLANE_FORMING_BB_WIDTH_PCT_MAX)
+            ):
+                has_forming_range = True
+    if has_stable_range:
+        return "IN_RANGE", None
+    if dominant.startswith("TREND_") or dominant.startswith("IMPULSE_"):
+        return "NONE", None
+    if has_forming_range:
+        return "RANGE_FORMING", None
+    return "NONE", None
 
 
 def _has_range_rails(indicators: dict[str, Any]) -> bool:
@@ -1011,14 +1120,15 @@ class IntentGenerator:
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
         # Load ATR / regime per pair from pair_charts.json before lane
-        # expansion. When the live chart is a stable box, synthesize
-        # RANGE_ROTATION coverage from the existing evidence-backed pair/side
-        # so a RANGE forecast has an executable rail candidate instead of
-        # starving behind trend-only campaign lanes.
+        # expansion. Range phases need different executable tactics:
+        # forming/stable boxes get rail LIMIT rotation coverage; confirmed
+        # range breaks get a breakout-side STOP-ENTRY continuation candidate.
+        # BREAKOUT_PENDING / squeeze remains a wait state so the bot does not
+        # fade the box just before expansion.
         pair_charts = _load_pair_charts(self.pair_charts_path)
         if snapshot is not None:
             range_seed_count = len(lanes)
-            lanes = _append_current_range_rotation_lanes(lanes, pair_charts)
+            lanes = _append_current_range_phase_lanes(lanes, pair_charts)
             if len(lanes) > range_seed_count:
                 max_candidates = max(max_candidates, len(lanes))
         # Phase 2 (user 2026-05-08「短期SHORTなら長期LONGでもSHORTいけるでしょ。
@@ -1588,6 +1698,19 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
             {
                 "code": "TREND_CONTINUATION_DIRECTION_CONFLICT",
                 "message": f"{intent.pair} {intent.side.value} {trend_hard_block}",
+                "severity": "BLOCK",
+            }
+        )
+
+    range_phase = str(metadata.get("range_phase") or "").upper()
+    if method == TradeMethod.RANGE_ROTATION and range_phase in {"BREAKOUT_PENDING", "BREAKOUT_UP", "BREAKOUT_DOWN"}:
+        issues.append(
+            {
+                "code": "RANGE_PHASE_NOT_ROTATION",
+                "message": (
+                    f"{intent.pair} {intent.side.value} RANGE_ROTATION is invalid in range_phase={range_phase}; "
+                    "wait during pending squeeze or use the confirmed breakout-side continuation lane."
+                ),
                 "severity": "BLOCK",
             }
         )

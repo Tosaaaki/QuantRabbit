@@ -574,6 +574,122 @@ class IntentGeneratorTest(unittest.TestCase):
 
             self.assertNotIn("range_trader:EUR_USD:LONG:RANGE_ROTATION", lane_ids)
 
+    def test_range_forming_synthesizes_limit_only_rotation_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.55,
+                    short_score=0.45,
+                    dominant_regime="UNCLEAR",
+                    m5_regime="TREND_WEAK",
+                    m5_long_bias=0.56,
+                    m5_short_bias=0.44,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                    regime_state="TREND_WEAK",
+                    adx=18.0,
+                    choppiness=55.0,
+                    bb_width_percentile=0.30,
+                ),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            lane_ids = {item["lane_id"] for item in payload["results"]}
+            range_limit = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+
+            self.assertIn("range_trader:EUR_USD:LONG:RANGE_ROTATION", lane_ids)
+            self.assertNotIn("range_trader:EUR_USD:LONG:RANGE_ROTATION:MARKET", lane_ids)
+            self.assertEqual(range_limit["intent"]["order_type"], "LIMIT")
+            self.assertEqual(range_limit["intent"]["metadata"]["range_phase"], "RANGE_FORMING")
+
+    def test_confirmed_range_breakout_synthesizes_breakout_stop_entry_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.64,
+                    short_score=0.36,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.66,
+                    m5_short_bias=0.34,
+                    regime_quantile="NORMAL",
+                    atr_pips=3.2,
+                    regime_state="BREAKOUT_PENDING",
+                    close=1.17645,
+                    trend_score=0.75,
+                    breakout_score=0.85,
+                ),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            breakout = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            )
+
+            self.assertEqual(breakout["intent"]["order_type"], "STOP-ENTRY")
+            self.assertEqual(breakout["intent"]["metadata"]["range_phase"], "BREAKOUT_UP")
+            self.assertEqual(breakout["intent"]["metadata"]["range_breakout_direction"], "UP")
+
+    def test_existing_range_rotation_blocks_during_breakout_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_range_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.55,
+                    short_score=0.45,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.56,
+                    m5_short_bias=0.44,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                    regime_state="BREAKOUT_PENDING",
+                ),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            range_limit = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+            issue_codes = {issue["code"] for issue in range_limit["risk_issues"]}
+
+            self.assertEqual(range_limit["status"], "DRY_RUN_BLOCKED")
+            self.assertIn("RANGE_PHASE_NOT_ROTATION", issue_codes)
+
     def test_low_vol_directional_range_market_uses_tight_risk_budgeted_units(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -981,6 +1097,12 @@ def _pair_charts_with_direction(
     regime_state: str = "TREND_WEAK",
     bb_squeeze: bool = False,
     atr_percentile: float = 50.0,
+    adx: float = 22.0,
+    choppiness: float = 50.0,
+    bb_width_percentile: float = 50.0,
+    close: float = 1.1735,
+    trend_score: float = 0.2,
+    breakout_score: float = 0.1,
 ) -> Path:
     path = root / "pair_charts_direction.json"
     path.write_text(
@@ -1011,11 +1133,12 @@ def _pair_charts_with_direction(
                                 "regime_reading": {"state": regime_state, "confidence": 0.6, "atr_percentile": atr_percentile},
                                 "family_scores": {
                                     "mean_rev_score": 1.1,
-                                    "trend_score": 0.2,
-                                    "breakout_score": 0.1,
+                                    "trend_score": trend_score,
+                                    "breakout_score": breakout_score,
                                     "disagreement": 0.2,
                                 },
                                 "indicators": {
+                                    "close": close,
                                     "atr_pips": atr_pips,
                                     "regime_quantile": regime_quantile,
                                     "bb_lower": 1.1710,
@@ -1031,7 +1154,10 @@ def _pair_charts_with_direction(
                                     "linreg_channel_upper": 1.1761,
                                     "swing_low": 1.1705,
                                     "swing_high": 1.1767,
+                                    "adx_14": adx,
+                                    "choppiness_14": choppiness,
                                     "atr_percentile_100": atr_percentile,
+                                    "bb_width_percentile_100": bb_width_percentile,
                                     "bb_squeeze": bb_squeeze,
                                 },
                             }
