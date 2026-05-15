@@ -188,6 +188,81 @@ def record_projections(
     return written
 
 
+def record_directional_forecast(
+    forecast: Any,
+    *,
+    pair: str,
+    current_price: Optional[float],
+    data_root: Path,
+    regime_at_emission: Optional[str] = None,
+    cycle_id: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> int:
+    """Record the synthesized pair-level forecast in the same calibration ledger.
+
+    Individual projection detectors already self-calibrate through this file, but
+    the final `DirectionalForecast` used by trader_brain was previously written
+    only to `forecast_history.jsonl`. That meant
+    `confidence_calibration("directional_forecast", ...)` had no samples and
+    always returned the neutral 1.0 multiplier. This entry closes that loop.
+    """
+    direction = str(getattr(forecast, "direction", "") or "").upper()
+    if direction not in {"UP", "DOWN"}:
+        return 0
+    entry_price = current_price
+    if entry_price is None:
+        entry_price = getattr(forecast, "current_price", None)
+    try:
+        parsed_entry = float(entry_price) if entry_price is not None else None
+    except (TypeError, ValueError):
+        parsed_entry = None
+    if parsed_entry is None or parsed_entry <= 0:
+        return 0
+    target_price = getattr(forecast, "target_price", None)
+    try:
+        parsed_target = float(target_price) if target_price is not None else None
+    except (TypeError, ValueError):
+        parsed_target = None
+    try:
+        horizon_min = float(getattr(forecast, "horizon_min", 0) or 0)
+    except (TypeError, ValueError):
+        horizon_min = 0.0
+    if horizon_min <= 0:
+        horizon_min = 60.0
+    now = now or datetime.now(timezone.utc)
+    ts = now.isoformat().replace("+00:00", "Z")
+    key = _projection_key(
+        cycle_id=cycle_id,
+        pair=pair,
+        signal_name="directional_forecast",
+        direction=direction,
+        entry_price=parsed_entry,
+        target_price=parsed_target,
+    )
+    if cycle_id and key in _existing_projection_keys(data_root, cycle_id=cycle_id, pair=pair):
+        return 0
+    entry = LedgerEntry(
+        timestamp_emitted_utc=ts,
+        pair=pair,
+        signal_name="directional_forecast",
+        direction=direction,
+        lead_time_min=horizon_min,
+        confidence=float(getattr(forecast, "confidence", 0.0) or 0.0),
+        entry_price=parsed_entry,
+        predicted_target_price=parsed_target,
+        resolution_window_min=horizon_min,
+        resolution_status="PENDING",
+        pre_emission_range_pips=None,
+        regime_at_emission=regime_at_emission,
+        cycle_id=cycle_id,
+    )
+    path = _ledger_path(data_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+    return 1
+
+
 def _projection_key(
     *,
     cycle_id: Optional[str],
@@ -569,13 +644,14 @@ def compute_hit_rates(
     resolved = resolved[-lookback * 10:]  # rough bound on size
     grouped: Dict[str, Dict[str, List[bool]]] = {}
     for e in resolved:
-        s = grouped.setdefault(e.signal_name, {})
-        regime = e.regime_at_emission or "UNCLEAR"
-        # 3-level bucketing: most specific → most general
-        s.setdefault(f"{e.pair}:{regime}", []).append(e.resolution_status == "HIT")
-        s.setdefault(f"{e.pair}:_all_regimes", []).append(e.resolution_status == "HIT")
-        s.setdefault(f"_all_pairs:{regime}", []).append(e.resolution_status == "HIT")
-        s.setdefault("_all_pairs:_all_regimes", []).append(e.resolution_status == "HIT")
+        for signal_name in _calibration_signal_names(e):
+            s = grouped.setdefault(signal_name, {})
+            regime = e.regime_at_emission or "UNCLEAR"
+            # 3-level bucketing: most specific → most general
+            s.setdefault(f"{e.pair}:{regime}", []).append(e.resolution_status == "HIT")
+            s.setdefault(f"{e.pair}:_all_regimes", []).append(e.resolution_status == "HIT")
+            s.setdefault(f"_all_pairs:{regime}", []).append(e.resolution_status == "HIT")
+            s.setdefault("_all_pairs:_all_regimes", []).append(e.resolution_status == "HIT")
     out: Dict[str, Dict[str, Dict[str, float]]] = {}
     for sig, by_key in grouped.items():
         out[sig] = {}
@@ -587,6 +663,14 @@ def compute_hit_rates(
             hr = sum(1 for r in recent if r) / float(n)
             out[sig][key] = {"hit_rate": round(hr, 3), "samples": n}
     return out
+
+
+def _calibration_signal_names(entry: LedgerEntry) -> tuple[str, ...]:
+    names = [entry.signal_name]
+    direction = str(entry.direction or "").upper()
+    if entry.signal_name == "directional_forecast" and direction in {"UP", "DOWN"}:
+        names.append(f"directional_forecast_{direction.lower()}")
+    return tuple(names)
 
 
 def _bayesian_posterior_mean(hits: int, total: int, alpha_prior: float = 1.0, beta_prior: float = 1.0) -> float:

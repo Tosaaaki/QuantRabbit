@@ -91,9 +91,18 @@ def record_forecast(
         "pair": getattr(forecast, "pair", ""),
         "direction": getattr(forecast, "direction", "UNCLEAR"),
         "confidence": float(getattr(forecast, "confidence", 0)),
+        "current_price": getattr(forecast, "current_price", None),
         "invalidation_price": getattr(forecast, "invalidation_price", None),
         "target_price": getattr(forecast, "target_price", None),
         "horizon_min": int(getattr(forecast, "horizon_min", 0)),
+        "raw_confidence": getattr(forecast, "raw_confidence", None),
+        "calibration_multiplier": getattr(forecast, "calibration_multiplier", None),
+        "up_score": getattr(forecast, "up_score", None),
+        "down_score": getattr(forecast, "down_score", None),
+        "range_score": getattr(forecast, "range_score", None),
+        "drivers_for": list(getattr(forecast, "drivers_for", ()) or ()),
+        "drivers_against": list(getattr(forecast, "drivers_against", ()) or ()),
+        "rationale_summary": getattr(forecast, "rationale_summary", ""),
     }
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")

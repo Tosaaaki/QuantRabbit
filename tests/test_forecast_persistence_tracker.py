@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,6 +63,29 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
 
             self.assertEqual(verdict.verdict, "RECOMMEND_CLOSE")
             self.assertIn("flipped to DOWN", verdict.reason)
+
+    def test_record_forecast_persists_audit_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = _forecast("EUR_USD", "UP", 0.67)
+            forecast.current_price = 1.1000
+            forecast.raw_confidence = 0.8
+            forecast.calibration_multiplier = 0.84
+            forecast.up_score = 42.0
+            forecast.down_score = 12.0
+            forecast.range_score = 4.0
+            forecast.drivers_for = ("M15 BOS_UP",)
+            forecast.drivers_against = ("H4 TREND_DOWN",)
+            forecast.rationale_summary = "UP=42 DOWN=12"
+
+            record_forecast(forecast, data_root=root, cycle_id="cycle-1")
+
+            row = json.loads((root / "forecast_history.jsonl").read_text())
+            self.assertEqual(row["cycle_id"], "cycle-1")
+            self.assertEqual(row["current_price"], 1.1)
+            self.assertEqual(row["drivers_for"], ["M15 BOS_UP"])
+            self.assertEqual(row["drivers_against"], ["H4 TREND_DOWN"])
+            self.assertEqual(row["up_score"], 42.0)
 
 
 if __name__ == "__main__":

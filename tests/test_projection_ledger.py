@@ -15,6 +15,7 @@ from quant_rabbit.strategy.projection_ledger import (
     compute_hit_rates,
     confidence_calibration,
     load_ledger,
+    record_directional_forecast,
     record_projections,
     setup_grade,
     verify_pending,
@@ -76,6 +77,47 @@ class RecordTest(unittest.TestCase):
             entries = load_ledger(root)
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0].cycle_id, "2026-05-15T00:00:00Z")
+
+    def test_record_directional_forecast_feeds_calibration_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = type(
+                "Forecast",
+                (),
+                {
+                    "direction": "DOWN",
+                    "confidence": 0.73,
+                    "current_price": 1.1000,
+                    "target_price": 1.0950,
+                    "horizon_min": 60,
+                },
+            )()
+
+            first = record_directional_forecast(
+                forecast,
+                pair="EUR_USD",
+                current_price=None,
+                data_root=root,
+                regime_at_emission="TREND",
+                cycle_id="cycle-1",
+            )
+            second = record_directional_forecast(
+                forecast,
+                pair="EUR_USD",
+                current_price=None,
+                data_root=root,
+                regime_at_emission="TREND",
+                cycle_id="cycle-1",
+            )
+
+            self.assertEqual(first, 1)
+            self.assertEqual(second, 0)
+            entries = load_ledger(root)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].signal_name, "directional_forecast")
+            self.assertEqual(entries[0].direction, "DOWN")
+            self.assertEqual(entries[0].entry_price, 1.1000)
+            self.assertEqual(entries[0].predicted_target_price, 1.0950)
 
 
 class VerifyTest(unittest.TestCase):
@@ -300,6 +342,28 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(hr["sig_x"]["EUR_USD:TREND"]["hit_rate"], 1.0)
             self.assertAlmostEqual(hr["sig_x"]["EUR_USD:RANGE"]["hit_rate"], 0.0)
             self.assertAlmostEqual(hr["sig_x"]["EUR_USD:_all_regimes"]["hit_rate"], 0.5)
+
+    def test_directional_forecast_hit_rates_are_split_by_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = []
+            for status, direction in [("MISS", "UP"), ("HIT", "DOWN")]:
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    pair="EUR_USD", signal_name="directional_forecast", direction=direction,
+                    lead_time_min=60, confidence=0.7,
+                    entry_price=1.0, predicted_target_price=None,
+                    resolution_window_min=60, resolution_status=status,
+                    regime_at_emission="TREND",
+                ))
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+
+            self.assertAlmostEqual(hr["directional_forecast"]["EUR_USD:TREND"]["hit_rate"], 0.5)
+            self.assertAlmostEqual(hr["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"], 0.0)
+            self.assertAlmostEqual(hr["directional_forecast_down"]["EUR_USD:TREND"]["hit_rate"], 1.0)
 
 
 class CalibrationTest(unittest.TestCase):

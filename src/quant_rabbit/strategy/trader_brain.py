@@ -738,10 +738,21 @@ def _pair_forecast(
         forecast_cache[pair] = forecast
     try:
         from quant_rabbit.paths import ROOT as _QR_ROOT
+        from quant_rabbit.strategy.projection_ledger import (
+            record_directional_forecast as _record_directional_forecast,
+        )
 
         record_forecast(
             forecast,
             data_root=_QR_ROOT / "data",
+            cycle_id=forecast_cycle_id,
+        )
+        _record_directional_forecast(
+            forecast,
+            pair=pair,
+            current_price=current_price,
+            data_root=_QR_ROOT / "data",
+            regime_at_emission=regime_label,
             cycle_id=forecast_cycle_id,
         )
     except Exception:

@@ -64,4 +64,80 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertLess(forecast.target_price, 1.1000)
         self.assertIsNotNone(forecast.invalidation_price)
         self.assertGreater(forecast.invalidation_price, 1.1000)
+        self.assertIn("breakdown", " ".join(forecast.drivers_for))
+        self.assertEqual(forecast.current_price, 1.1)
+        self.assertGreater(forecast.down_score, 0.0)
 
+    def test_strong_htf_downtrend_prevents_micro_up_signal_from_owning_forecast(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "SHORT_LEAN",
+                "score_gap": -0.75,
+                "tf_agreement_score": 1.0,
+                "dominant_regime": "TREND_DOWN",
+            },
+            "views": [
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 48.0},
+                    "structure": {"structure_events": []},
+                },
+                {
+                    "granularity": "H4",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 35.0},
+                    "structure": {"structure_events": []},
+                },
+                {
+                    "granularity": "M1",
+                    "regime": "RANGE",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 12.0},
+                    "structure": {
+                        "structure_events": [
+                            {"kind": "BOS_UP", "close_confirmed": True, "broken_pivot_price": 1.1001}
+                        ]
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[_Sig("UP", 40.0, 1.0, "M1-only bottom bounce")],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertNotEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.down_score, forecast.up_score)
+        self.assertIn("SHORT_LEAN", " ".join(forecast.drivers_for))
+
+    def test_forecast_calibration_prefers_direction_specific_history(self) -> None:
+        hit_rates = {
+            "directional_forecast": {
+                "EUR_USD:TREND": {"hit_rate": 1.0, "samples": 100},
+            },
+            "directional_forecast_up": {
+                "EUR_USD:TREND": {"hit_rate": 0.0, "samples": 100},
+            },
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart={"views": [{"granularity": "M15", "indicators": {"pip_size": 0.0001}}]},
+            current_price=1.1000,
+            pattern_signals=[_Sig("UP", 60.0, 1.0, "up setup")],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertLess(forecast.calibration_multiplier, 0.5)
+        self.assertLess(forecast.confidence, 0.5)
