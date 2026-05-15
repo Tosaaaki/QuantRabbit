@@ -23,7 +23,7 @@ mean-reverted is still counted correctly:
   `*_low` uses window low).
 
 Resolved entries get tagged HIT / MISS / TIMEOUT. Rolling hit-rate per
-`(signal_name, pair)` is then queryable by `confidence_calibration()`
+`(signal_name, pair, regime, direction)` is then queryable by `confidence_calibration()`
 which returns a multiplier on the raw confidence — when a detector
 has a poor hit-rate (e.g., 30%), its confidence is dampened; when
 strong (e.g., 80%), boosted. This creates a self-improving feedback
@@ -667,10 +667,90 @@ def compute_hit_rates(
 
 def _calibration_signal_names(entry: LedgerEntry) -> tuple[str, ...]:
     names = [entry.signal_name]
-    direction = str(entry.direction or "").upper()
-    if entry.signal_name == "directional_forecast" and direction in {"UP", "DOWN"}:
-        names.append(f"directional_forecast_{direction.lower()}")
+    directional_name = directional_calibration_signal_name(entry.signal_name, entry.direction)
+    if directional_name is not None and directional_name not in names:
+        names.append(directional_name)
     return tuple(names)
+
+
+def directional_calibration_signal_name(signal_name: str, direction: str) -> Optional[str]:
+    """Return the direction-specific calibration alias for directional signals.
+
+    The base bucket is still recorded for compatibility, but detectors such as
+    liquidity sweeps can have opposite edge by direction. Keeping UP and DOWN
+    aliases lets calibration dampen the failing side without starving the good
+    side of the same detector.
+    """
+    base = str(signal_name or "").strip()
+    direction_norm = str(direction or "").upper()
+    if not base or direction_norm not in {"UP", "DOWN"}:
+        return None
+    suffix = direction_norm.lower()
+    if base.endswith(f"_{suffix}"):
+        return base
+    return f"{base}_{suffix}"
+
+
+def has_confidence_calibration_samples(
+    signal_name: str,
+    pair: str,
+    *,
+    hit_rates: Dict[str, Dict[str, Any]],
+    regime: Optional[str] = None,
+) -> bool:
+    """Whether `confidence_calibration` has enough samples for this bucket."""
+    by_key = hit_rates.get(signal_name) or {}
+    for candidate in _calibration_candidates(by_key, pair=pair, regime=regime):
+        if not isinstance(candidate, dict):
+            continue
+        try:
+            samples = int(candidate.get("samples", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        if samples >= CONFIDENCE_MIN_SAMPLES:
+            return True
+    return False
+
+
+def select_calibration_signal_name(
+    signal_name: str,
+    direction: str,
+    pair: str,
+    *,
+    hit_rates: Dict[str, Dict[str, Any]],
+    regime: Optional[str] = None,
+) -> str:
+    """Prefer direction-specific calibration when it has enough evidence."""
+    directional_name = directional_calibration_signal_name(signal_name, direction)
+    if directional_name is not None and has_confidence_calibration_samples(
+        directional_name,
+        pair,
+        hit_rates=hit_rates,
+        regime=regime,
+    ):
+        return directional_name
+    return signal_name
+
+
+def _calibration_candidates(
+    by_key: Dict[str, Any],
+    *,
+    pair: str,
+    regime: Optional[str] = None,
+) -> List[Optional[Dict[str, Any]]]:
+    candidates_in_order: List[Optional[Dict[str, Any]]] = []
+    if regime is not None:
+        candidates_in_order.append(by_key.get(f"{pair}:{regime}"))
+    candidates_in_order.append(by_key.get(f"{pair}:_all_regimes"))
+    if regime is not None:
+        candidates_in_order.append(by_key.get(f"_all_pairs:{regime}"))
+    candidates_in_order.append(by_key.get("_all_pairs:_all_regimes"))
+    # Backward compatibility: previous schema used just "<pair>" / "_all_pairs".
+    if pair in by_key and isinstance(by_key[pair], dict):
+        candidates_in_order.append(by_key.get(pair))
+    if "_all_pairs" in by_key and isinstance(by_key["_all_pairs"], dict):
+        candidates_in_order.append(by_key.get("_all_pairs"))
+    return candidates_in_order
 
 
 def _bayesian_posterior_mean(hits: int, total: int, alpha_prior: float = 1.0, beta_prior: float = 1.0) -> float:
@@ -728,21 +808,9 @@ def confidence_calibration(
     """
     import math
     by_key = hit_rates.get(signal_name) or {}
-    candidates_in_order: List[Optional[Dict[str, Any]]] = []
-    if regime is not None:
-        candidates_in_order.append(by_key.get(f"{pair}:{regime}"))
-    candidates_in_order.append(by_key.get(f"{pair}:_all_regimes"))
-    if regime is not None:
-        candidates_in_order.append(by_key.get(f"_all_pairs:{regime}"))
-    candidates_in_order.append(by_key.get("_all_pairs:_all_regimes"))
-    # Backward compatibility: previous schema used just "<pair>" / "_all_pairs"
-    if pair in by_key and isinstance(by_key[pair], dict):
-        candidates_in_order.append(by_key.get(pair))
-    if "_all_pairs" in by_key and isinstance(by_key["_all_pairs"], dict):
-        candidates_in_order.append(by_key.get("_all_pairs"))
 
     chosen = None
-    for c in candidates_in_order:
+    for c in _calibration_candidates(by_key, pair=pair, regime=regime):
         if c is None:
             continue
         # Need raw samples count; old "_all_pairs" / new buckets all have "samples".

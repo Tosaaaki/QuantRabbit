@@ -6,6 +6,7 @@ import unittest
 from dataclasses import dataclass
 
 from quant_rabbit.strategy.forward_projection import (
+    ProjectionSignal,
     aggregate_projection_score,
     detect_forward_projections,
 )
@@ -68,6 +69,38 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
 
         self.assertGreater(long_score, 0.0, long_reasons)
         self.assertLess(short_score, 0.0, short_reasons)
+
+    def test_projection_score_prefers_direction_specific_calibration(self) -> None:
+        signals = [
+            ProjectionSignal(
+                name="liquidity_sweep_high",
+                timeframe="M5",
+                direction="UP",
+                lead_time_min=10,
+                confidence=1.0,
+                bonus_magnitude=10.0,
+                rationale="EUR_USD sweep-high UP historically fails",
+            )
+        ]
+        hit_rates = {
+            "liquidity_sweep_high": {
+                "EUR_USD:TREND": {"hit_rate": 1.0, "samples": 100},
+            },
+            "liquidity_sweep_high_up": {
+                "EUR_USD:TREND": {"hit_rate": 0.0, "samples": 100},
+            },
+        }
+
+        score, reasons = aggregate_projection_score(
+            signals,
+            "LONG",
+            hit_rates=hit_rates,
+            pair="EUR_USD",
+            regime="TREND",
+        )
+
+        self.assertLess(score, 5.0)
+        self.assertTrue(any("[cal×" in reason for reason in reasons), reasons)
 
     def test_predictive_limit_fades_equal_high_by_signal_name(self) -> None:
         signals = [

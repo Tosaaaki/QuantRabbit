@@ -410,37 +410,6 @@ def _top_reasons(
     return tuple(f"{rationale} ({mag:.1f})" for mag, rationale in items[:limit])
 
 
-def _has_calibration_samples(
-    hit_rates: Dict[str, Dict[str, Any]],
-    signal_name: str,
-    pair: str,
-    *,
-    regime: Optional[str] = None,
-) -> bool:
-    try:
-        from quant_rabbit.strategy.projection_ledger import CONFIDENCE_MIN_SAMPLES
-    except Exception:
-        return False
-    by_key = hit_rates.get(signal_name) or {}
-    candidates: list[Optional[Dict[str, Any]]] = []
-    if regime is not None:
-        candidates.append(by_key.get(f"{pair}:{regime}"))
-    candidates.append(by_key.get(f"{pair}:_all_regimes"))
-    if regime is not None:
-        candidates.append(by_key.get(f"_all_pairs:{regime}"))
-    candidates.append(by_key.get("_all_pairs:_all_regimes"))
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        try:
-            samples = int(candidate.get("samples", 0) or 0)
-        except (TypeError, ValueError):
-            continue
-        if samples >= CONFIDENCE_MIN_SAMPLES:
-            return True
-    return False
-
-
 def synthesize_forecast(
     *,
     pair: str,
@@ -601,17 +570,17 @@ def synthesize_forecast(
 
     # Bayesian calibration at forecast level
     if hit_rates is not None:
-        from quant_rabbit.strategy.projection_ledger import confidence_calibration
-        cal_signal_name = "directional_forecast"
-        if winner in {"UP", "DOWN"}:
-            directional_cal_signal_name = f"directional_forecast_{winner.lower()}"
-            if _has_calibration_samples(
-                hit_rates,
-                directional_cal_signal_name,
-                pair,
-                regime=regime,
-            ):
-                cal_signal_name = directional_cal_signal_name
+        from quant_rabbit.strategy.projection_ledger import (
+            confidence_calibration,
+            select_calibration_signal_name,
+        )
+        cal_signal_name = select_calibration_signal_name(
+            "directional_forecast",
+            winner,
+            pair,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
         cal_mult = confidence_calibration(
             cal_signal_name, pair, hit_rates=hit_rates, regime=regime,
         )

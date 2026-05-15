@@ -17,6 +17,7 @@ from quant_rabbit.strategy.projection_ledger import (
     load_ledger,
     record_directional_forecast,
     record_projections,
+    select_calibration_signal_name,
     setup_grade,
     verify_pending,
 )
@@ -365,6 +366,36 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(hr["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"], 0.0)
             self.assertAlmostEqual(hr["directional_forecast_down"]["EUR_USD:TREND"]["hit_rate"], 1.0)
 
+    def test_detector_hit_rates_are_split_by_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = []
+            for status, direction in [("MISS", "UP"), ("HIT", "DOWN")]:
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    pair="EUR_USD",
+                    signal_name="liquidity_sweep_high",
+                    direction=direction,
+                    lead_time_min=10, confidence=0.7,
+                    entry_price=1.0, predicted_target_price=None,
+                    resolution_window_min=20, resolution_status=status,
+                    regime_at_emission="TREND",
+                ))
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+
+            self.assertAlmostEqual(
+                hr["liquidity_sweep_high"]["EUR_USD:TREND"]["hit_rate"], 0.5,
+            )
+            self.assertAlmostEqual(
+                hr["liquidity_sweep_high_up"]["EUR_USD:TREND"]["hit_rate"], 0.0,
+            )
+            self.assertAlmostEqual(
+                hr["liquidity_sweep_high_down"]["EUR_USD:TREND"]["hit_rate"], 1.0,
+            )
+
 
 class CalibrationTest(unittest.TestCase):
     def test_high_hit_rate_boosts_confidence(self) -> None:
@@ -436,6 +467,30 @@ class CalibrationTest(unittest.TestCase):
         }}
         mult = confidence_calibration("sig_x", "EUR_USD", hit_rates=hr, regime="TREND")
         self.assertGreater(mult, 1.0)
+
+    def test_select_calibration_signal_name_prefers_directional_bucket(self) -> None:
+        hr = {
+            "sig_x": {"EUR_USD:TREND": {"hit_rate": 0.8, "samples": 100}},
+            "sig_x_up": {"EUR_USD:TREND": {"hit_rate": 0.0, "samples": 100}},
+        }
+
+        selected = select_calibration_signal_name(
+            "sig_x", "UP", "EUR_USD", hit_rates=hr, regime="TREND",
+        )
+
+        self.assertEqual(selected, "sig_x_up")
+
+    def test_select_calibration_signal_name_keeps_base_for_thin_directional_sample(self) -> None:
+        hr = {
+            "sig_x": {"EUR_USD:TREND": {"hit_rate": 0.8, "samples": 100}},
+            "sig_x_up": {"EUR_USD:TREND": {"hit_rate": 0.0, "samples": 3}},
+        }
+
+        selected = select_calibration_signal_name(
+            "sig_x", "UP", "EUR_USD", hit_rates=hr, regime="TREND",
+        )
+
+        self.assertEqual(selected, "sig_x")
 
 
 class SetupGradeTest(unittest.TestCase):

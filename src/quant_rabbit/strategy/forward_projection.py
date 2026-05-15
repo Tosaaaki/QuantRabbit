@@ -416,7 +416,10 @@ def aggregate_projection_score(
     expansion) apply their `bonus_magnitude` as-is regardless of intent
     direction. News catalyst is negative (entry penalty).
     """
-    from quant_rabbit.strategy.projection_ledger import confidence_calibration
+    from quant_rabbit.strategy.projection_ledger import (
+        confidence_calibration,
+        select_calibration_signal_name,
+    )
 
     intent_up = intent_direction.upper() == "LONG"
     aligned_count = sum(
@@ -430,7 +433,19 @@ def aggregate_projection_score(
     for s in signals:
         cal_mult = 1.0
         if hit_rates is not None and pair:
-            cal_mult = confidence_calibration(s.name, pair, hit_rates=hit_rates, regime=regime)
+            cal_signal_name = select_calibration_signal_name(
+                s.name,
+                s.direction,
+                pair,
+                hit_rates=hit_rates,
+                regime=regime,
+            )
+            cal_mult = confidence_calibration(
+                cal_signal_name,
+                pair,
+                hit_rates=hit_rates,
+                regime=regime,
+            )
         contribution = s.bonus_magnitude * s.confidence * cal_mult
         cal_note = f" [cal×{cal_mult:.2f}]" if cal_mult != 1.0 else ""
         if s.direction == "EITHER":
