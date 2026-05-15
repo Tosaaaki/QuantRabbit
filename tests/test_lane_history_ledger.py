@@ -18,7 +18,7 @@ from quant_rabbit.strategy.lane_history_ledger import (
 
 
 def _make_db(path: Path, trades: list[dict]) -> None:
-    """Write a minimal execution_events table with TRADE_CLOSED rows."""
+    """Write a minimal execution_events table with realized outcome rows."""
     conn = sqlite3.connect(path)
     conn.execute(
         """
@@ -51,16 +51,18 @@ def _make_db(path: Path, trades: list[dict]) -> None:
         conn.execute(
             """
             INSERT INTO execution_events
-                (event_uid, ts_utc, source, event_type, pair, side,
-                 realized_pl_jpy, related_transaction_ids_json, raw_json, inserted_at_utc)
-            VALUES (?, ?, 'test', ?, ?, ?, ?, '[]', '{}', ?)
+                (event_uid, ts_utc, source, event_type, trade_id, pair, side,
+                 units, realized_pl_jpy, related_transaction_ids_json, raw_json, inserted_at_utc)
+            VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, '[]', '{}', ?)
             """,
             (
                 f"uid-{i}",
                 t["ts_utc"],
                 t.get("event_type", "TRADE_CLOSED"),
+                t.get("trade_id", f"trade-{i}"),
                 t["pair"],
                 t["side"],
+                t.get("units"),
                 t["pl"],
                 t["ts_utc"],
             ),
@@ -98,6 +100,58 @@ class LaneHistoryLedgerTest(unittest.TestCase):
             self.assertIn(("GBP_USD", "LONG"), hist)
             self.assertIn(("AUD_JPY", "SHORT"), hist)
             self.assertNotIn(("GBP_USD", "SHORT"), hist)
+            self.assertNotIn(("AUD_JPY", "LONG"), hist)
+
+    def test_partial_reductions_are_aggregated_by_original_position_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "AUD_JPY",
+                        "side": "SHORT",
+                        "units": -9700,
+                        "pl": None,
+                        "event_type": "ORDER_FILLED",
+                        "trade_id": "471020",
+                        "ts_utc": "2026-05-14T01:00:00Z",
+                    },
+                    {
+                        "pair": "AUD_JPY",
+                        "side": "LONG",
+                        "units": 6500,
+                        "pl": -2515.5,
+                        "event_type": "TRADE_REDUCED",
+                        "trade_id": "471020",
+                        "ts_utc": "2026-05-14T04:55:17Z",
+                    },
+                    {
+                        "pair": "AUD_JPY",
+                        "side": "LONG",
+                        "units": 3200,
+                        "pl": -1276.8,
+                        "event_type": "TRADE_REDUCED",
+                        "trade_id": "471020",
+                        "ts_utc": "2026-05-14T05:37:54Z",
+                    },
+                    {
+                        "pair": "AUD_JPY",
+                        "side": "LONG",
+                        "units": 3300,
+                        "pl": -155.1,
+                        "event_type": "TRADE_CLOSED",
+                        "trade_id": "471020",
+                        "ts_utc": "2026-05-14T16:20:47Z",
+                    },
+                ],
+            )
+
+            hist = compute_lane_history(path)
+
+            snap = hist[("AUD_JPY", "SHORT")]
+            self.assertEqual(snap.sample_size, 1)
+            self.assertAlmostEqual(snap.net_pl_jpy, -3947.4)
             self.assertNotIn(("AUD_JPY", "LONG"), hist)
 
     def test_modifier_negative_for_losing_streak(self) -> None:
@@ -175,8 +229,8 @@ class LaneHistoryLedgerTest(unittest.TestCase):
             self.assertEqual(snap.sample_size, 1)
             self.assertAlmostEqual(snap.net_pl_jpy, -500.0)
 
-    def test_skips_non_closed_events(self) -> None:
-        """Only TRADE_CLOSED rows contribute; ORDER_FILLED / others ignored.
+    def test_skips_non_realized_events(self) -> None:
+        """Only realized rows contribute; ORDER_FILLED / others ignored.
 
         The ORDER_FILLED LONG +1000 should NOT show up. The TRADE_CLOSED
         with close_side=SHORT inverts to original LONG, net -500.

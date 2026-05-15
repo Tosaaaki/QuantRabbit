@@ -577,14 +577,40 @@ def _execution_ledger_rows(db_path: Path) -> Iterator[OutcomeRow]:
             return
         for row in conn.execute(
             """
-            SELECT ts_utc, lane_id, pair, side, realized_pl_jpy, raw_json
-            FROM execution_events
-            WHERE pair IS NOT NULL AND side IS NOT NULL AND realized_pl_jpy IS NOT NULL
+            WITH entries AS (
+                SELECT
+                    trade_id,
+                    CASE
+                        WHEN MAX(units) > 0 THEN 'LONG'
+                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        ELSE NULL
+                    END AS position_side
+                FROM execution_events
+                WHERE event_type = 'ORDER_FILLED'
+                  AND trade_id IS NOT NULL
+                  AND trade_id != ''
+                  AND units IS NOT NULL
+                GROUP BY trade_id
+            )
+            SELECT
+                e.ts_utc,
+                e.lane_id,
+                e.pair,
+                e.side AS close_side,
+                e.realized_pl_jpy,
+                e.raw_json,
+                entries.position_side
+            FROM execution_events e
+            LEFT JOIN entries ON entries.trade_id = e.trade_id
+            WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+              AND e.pair IS NOT NULL
+              AND e.side IS NOT NULL
+              AND e.realized_pl_jpy IS NOT NULL
             """
         ):
             raw = _load_json(row["raw_json"])
             pair = _norm(row["pair"])
-            direction = _norm(row["side"])
+            direction = _norm(row["position_side"]) or _opposite_close_side(_norm(row["close_side"]))
             value = _float(row["realized_pl_jpy"])
             if not pair or not direction or value is None:
                 continue
@@ -1089,6 +1115,14 @@ def _norm(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip().upper().replace("/", "_").replace(" ", "_") or ""
+
+
+def _opposite_close_side(value: str) -> str:
+    if value == "LONG":
+        return "SHORT"
+    if value == "SHORT":
+        return "LONG"
+    return ""
 
 
 def _float(value: object) -> float | None:

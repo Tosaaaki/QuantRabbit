@@ -11,10 +11,10 @@ already reads `trader_overrides.json`; this is the producer side.
 Heuristics (deterministic, env-tunable):
 
 - **Direction bias**: when (pair, direction) has ≥ N_TRADES_FOR_BIAS
-  trades closed with net P&L beyond ±BIAS_NET_PL_THRESHOLD, emit a
+  realized trade outcomes with net P&L beyond ±BIAS_NET_PL_THRESHOLD, emit a
   bias_override scaled `tanh(net_pl / SATURATION) × MAX_BIAS`.
 - **Lane block**: when a specific lane_id has ≥ N_LOSSES_FOR_BLOCK
-  losing closes in the lookback window, add it to blocked_lanes.
+  losing realized outcomes in the lookback window, add it to blocked_lanes.
 - **Expiry**: next JST 00:00 in UTC, so the override is valid for the
   current trading day only.
 
@@ -84,10 +84,8 @@ def _read_recent_closes(
     window_start_utc: datetime,
     window_end_utc: datetime,
 ) -> list[tuple[str, str, float, str | None]]:
-    """Return (pair, original_side, realized_pl_jpy, lane_id) tuples
-    for trades closed within the window. Side is INVERTED from the
-    closing-fill direction (see lane_history_ledger for the same
-    rationale)."""
+    """Return (pair, original_side, realized_pl_jpy, lane_id) tuples for
+    realized trade outcomes inside the window."""
     if not db_path.exists():
         return []
     try:
@@ -98,14 +96,53 @@ def _read_recent_closes(
     try:
         cur = conn.execute(
             """
-            SELECT pair, side, realized_pl_jpy, lane_id, ts_utc
-            FROM execution_events
-            WHERE event_type = 'TRADE_CLOSED'
-              AND realized_pl_jpy IS NOT NULL
-              AND pair IS NOT NULL
-              AND side IS NOT NULL
-              AND ts_utc >= ?
-              AND ts_utc <= ?
+            WITH entries AS (
+                SELECT
+                    trade_id,
+                    CASE
+                        WHEN MAX(units) > 0 THEN 'LONG'
+                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        ELSE NULL
+                    END AS position_side
+                FROM execution_events
+                WHERE event_type = 'ORDER_FILLED'
+                  AND trade_id IS NOT NULL
+                  AND trade_id != ''
+                  AND units IS NOT NULL
+                GROUP BY trade_id
+            ),
+            realized AS (
+                SELECT
+                    COALESCE(NULLIF(e.trade_id, ''), e.event_uid) AS outcome_id,
+                    e.ts_utc,
+                    e.pair,
+                    e.lane_id,
+                    COALESCE(
+                        entries.position_side,
+                        CASE
+                            WHEN UPPER(e.side) = 'LONG' THEN 'SHORT'
+                            WHEN UPPER(e.side) = 'SHORT' THEN 'LONG'
+                            ELSE NULL
+                        END
+                    ) AS original_side,
+                    e.realized_pl_jpy
+                FROM execution_events e
+                LEFT JOIN entries ON entries.trade_id = e.trade_id
+                WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                  AND e.realized_pl_jpy IS NOT NULL
+                  AND e.pair IS NOT NULL
+                  AND e.ts_utc >= ?
+                  AND e.ts_utc <= ?
+            )
+            SELECT
+                pair,
+                original_side,
+                SUM(realized_pl_jpy) AS realized_pl_jpy,
+                lane_id,
+                MAX(ts_utc) AS ts_utc
+            FROM realized
+            WHERE original_side IS NOT NULL
+            GROUP BY outcome_id, pair, original_side, lane_id
             ORDER BY ts_utc ASC
             """,
             (
@@ -113,8 +150,7 @@ def _read_recent_closes(
                 window_end_utc.isoformat().replace("+00:00", "Z"),
             ),
         )
-        for pair, close_side, pl, lane_id, _ts in cur.fetchall():
-            original_side = "SHORT" if str(close_side).upper() == "LONG" else "LONG"
+        for pair, original_side, pl, lane_id, _ts in cur.fetchall():
             rows.append((str(pair), original_side, float(pl), lane_id))
     except sqlite3.Error:
         pass

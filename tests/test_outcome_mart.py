@@ -156,6 +156,31 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertEqual(validation["matched_edges"], [])
             self.assertEqual(validation["status"], "INSUFFICIENT_PRIOR_CONDITION_HISTORY")
 
+    def test_execution_ledger_uses_original_position_side_not_close_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_empty_history_db(db)
+            _seed_execution_ledger_with_close_side_rows(ledger)
+
+            summary = OutcomeMartBuilder(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "outcome_mart.json",
+                report_path=root / "outcome_mart.md",
+            ).run()
+
+            payload = json.loads((root / "outcome_mart.json").read_text())
+            edges = {item["key"]: item for item in payload["pair_direction_edges"]}
+            self.assertEqual(summary.execution_ledger_outcomes, 2)
+            self.assertEqual(edges["GBP_USD:LONG:ALL:ALL:ALL:ALL"]["net_jpy"], -1200.0)
+            self.assertEqual(edges["GBP_USD:LONG:ALL:ALL:ALL:ALL"]["execution_ledger_outcome_n"], 1)
+            self.assertEqual(edges["AUD_JPY:SHORT:ALL:ALL:ALL:ALL"]["net_jpy"], 500.0)
+            self.assertEqual(edges["AUD_JPY:SHORT:ALL:ALL:ALL:ALL"]["execution_ledger_outcome_n"], 1)
+            self.assertNotIn("GBP_USD:SHORT:ALL:ALL:ALL:ALL", edges)
+            self.assertNotIn("AUD_JPY:LONG:ALL:ALL:ALL:ALL", edges)
+
 
 def _seed_history_db(path: Path) -> None:
     conn = sqlite3.connect(path)
@@ -269,6 +294,114 @@ def _seed_history_db(path: Path) -> None:
                 }
             ),
         ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _seed_empty_history_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE legacy_records (
+            source_table TEXT NOT NULL,
+            source_id TEXT,
+            session_date TEXT,
+            pair TEXT,
+            direction TEXT,
+            pl REAL,
+            execution_style TEXT,
+            allocation_band TEXT,
+            thesis TEXT,
+            raw_json TEXT NOT NULL
+        );
+        CREATE TABLE jsonl_events (
+            source_name TEXT NOT NULL,
+            line_no INTEGER NOT NULL,
+            event_type TEXT,
+            timestamp_utc TEXT,
+            pair TEXT,
+            direction TEXT,
+            raw_json TEXT NOT NULL,
+            PRIMARY KEY (source_name, line_no)
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE execution_events (
+            ts_utc TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            lane_id TEXT,
+            trade_id TEXT,
+            pair TEXT,
+            side TEXT,
+            units INTEGER,
+            realized_pl_jpy REAL,
+            raw_json TEXT NOT NULL
+        );
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO execution_events (
+            ts_utc, event_type, lane_id, trade_id, pair, side, units,
+            realized_pl_jpy, raw_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "2026-05-13T00:00:00Z",
+                "ORDER_FILLED",
+                "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+                "long-loss",
+                "GBP_USD",
+                "LONG",
+                8000,
+                None,
+                json.dumps({"reason": "MARKET_ORDER"}),
+            ),
+            (
+                "2026-05-13T01:00:00Z",
+                "TRADE_CLOSED",
+                "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+                "long-loss",
+                "GBP_USD",
+                "SHORT",
+                8000,
+                -1200.0,
+                json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+            ),
+            (
+                "2026-05-13T02:00:00Z",
+                "ORDER_FILLED",
+                "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+                "short-win",
+                "AUD_JPY",
+                "SHORT",
+                -3000,
+                None,
+                json.dumps({"reason": "LIMIT_ORDER"}),
+            ),
+            (
+                "2026-05-13T03:00:00Z",
+                "TRADE_REDUCED",
+                "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+                "short-win",
+                "AUD_JPY",
+                "LONG",
+                3000,
+                500.0,
+                json.dumps({"reason": "TRADE_CLOSE"}),
+            ),
+        ],
     )
     conn.commit()
     conn.close()

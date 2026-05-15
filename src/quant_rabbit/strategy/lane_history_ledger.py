@@ -2,10 +2,10 @@
 
 Reads `data/execution_ledger.db` (already populated by `execution-ledger-sync`
 each cycle) and computes a per-(pair, direction) bias modifier from the last
-N closed trades. The modifier is added to lane scores so:
+N realized trade outcomes. The modifier is added to lane scores so:
 
-- Pair × direction with recent losses → negative modifier → score downweight
-- Pair × direction with recent wins → positive modifier → score upweight
+- Pair × direction with recent realized losses → negative modifier → score downweight
+- Pair × direction with recent realized wins → positive modifier → score upweight
 - Pair × direction with no history → 0 modifier → no change
 
 This breaks the 2026-05-12/13 pattern where the trader kept entering
@@ -53,7 +53,7 @@ class LaneHistorySnapshot:
 
 
 def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnapshot]:
-    """Read execution_ledger.db, aggregate the last N closed trades per
+    """Read execution_ledger.db, aggregate the last N realized outcomes per
     (pair, direction), and emit bias modifiers.
 
     Returns an empty dict on any database error so the trader degrades
@@ -66,20 +66,56 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
     except sqlite3.Error:
         return {}
     try:
-        # TRADE_CLOSED events are the authoritative record of realized
-        # P&L per closed trade. Their `side` field records the CLOSING
-        # transaction direction, which is the OPPOSITE of the original
-        # position direction (closing a LONG position issues a SELL).
-        # We invert below so that the (pair, direction) key reflects the
-        # position's original side, not the close fill side.
+        # TRADE_CLOSED and TRADE_REDUCED events are authoritative realized
+        # P&L. Their `side` field records the CLOSING transaction direction,
+        # which is the OPPOSITE of the original position direction. Prefer
+        # the opening ORDER_FILLED units when available, and fall back to
+        # inverting the close fill side for older rows.
         cur = conn.execute(
             """
-            SELECT pair, side, realized_pl_jpy, ts_utc
-            FROM execution_events
-            WHERE event_type = 'TRADE_CLOSED'
-              AND realized_pl_jpy IS NOT NULL
-              AND pair IS NOT NULL
-              AND side IS NOT NULL
+            WITH entries AS (
+                SELECT
+                    trade_id,
+                    CASE
+                        WHEN MAX(units) > 0 THEN 'LONG'
+                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        ELSE NULL
+                    END AS position_side
+                FROM execution_events
+                WHERE event_type = 'ORDER_FILLED'
+                  AND trade_id IS NOT NULL
+                  AND trade_id != ''
+                  AND units IS NOT NULL
+                GROUP BY trade_id
+            ),
+            realized AS (
+                SELECT
+                    COALESCE(NULLIF(e.trade_id, ''), e.event_uid) AS outcome_id,
+                    e.ts_utc,
+                    e.pair,
+                    COALESCE(
+                        entries.position_side,
+                        CASE
+                            WHEN UPPER(e.side) = 'LONG' THEN 'SHORT'
+                            WHEN UPPER(e.side) = 'SHORT' THEN 'LONG'
+                            ELSE NULL
+                        END
+                    ) AS original_side,
+                    e.realized_pl_jpy
+                FROM execution_events e
+                LEFT JOIN entries ON entries.trade_id = e.trade_id
+                WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                  AND e.realized_pl_jpy IS NOT NULL
+                  AND e.pair IS NOT NULL
+            )
+            SELECT
+                pair,
+                original_side,
+                SUM(realized_pl_jpy) AS realized_pl_jpy,
+                MAX(ts_utc) AS ts_utc
+            FROM realized
+            WHERE original_side IS NOT NULL
+            GROUP BY outcome_id, pair, original_side
             ORDER BY ts_utc DESC
             LIMIT 500
             """
@@ -91,11 +127,9 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
     conn.close()
 
     grouped: Dict[Tuple[str, str], list] = {}
-    for pair, close_side, pl, ts in rows:
-        if pl is None or pair is None or close_side is None:
+    for pair, original_side, pl, ts in rows:
+        if pl is None or pair is None or original_side is None:
             continue
-        # Invert: CLOSE direction is opposite of original position direction.
-        original_side = "SHORT" if str(close_side).upper() == "LONG" else "LONG"
         key = (str(pair), original_side)
         bucket = grouped.setdefault(key, [])
         if len(bucket) < LANE_HISTORY_LOOKBACK_TRADES:

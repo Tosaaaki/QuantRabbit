@@ -1218,8 +1218,10 @@ class TraderBrain:
         m5_opp = bool(m5_struct and ((m5_struct.group(2) == "DOWN") == target_up))
         if m1_opp and m5_opp:
             score -= 30.0
-            rationale.append(
-                f"micro override: M1+M5 both struct opposite to {intent_side} — historical bias ignored"
+            blockers.append(f"micro_structure_opposed: M1+M5 both struct opposite to {intent_side}")
+            rationale.insert(
+                0,
+                f"micro override: M1+M5 both struct opposite to {intent_side} — entry blocked"
             )
         elif m1_opp or m5_opp:
             score -= 10.0

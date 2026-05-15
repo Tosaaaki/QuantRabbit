@@ -19,7 +19,7 @@ from quant_rabbit.strategy.daily_review import (
 
 
 def _make_db(path: Path, trades: list[dict]) -> None:
-    """Minimal execution_events table with TRADE_CLOSED rows."""
+    """Minimal execution_events table with realized outcome rows."""
     conn = sqlite3.connect(path)
     conn.execute(
         """
@@ -29,8 +29,10 @@ def _make_db(path: Path, trades: list[dict]) -> None:
             source TEXT NOT NULL,
             event_type TEXT NOT NULL,
             lane_id TEXT,
+            trade_id TEXT,
             pair TEXT,
             side TEXT,
+            units INTEGER,
             realized_pl_jpy REAL,
             related_transaction_ids_json TEXT NOT NULL,
             raw_json TEXT NOT NULL,
@@ -42,17 +44,20 @@ def _make_db(path: Path, trades: list[dict]) -> None:
         conn.execute(
             """
             INSERT INTO execution_events
-                (event_uid, ts_utc, source, event_type, pair, side, realized_pl_jpy,
-                 lane_id, related_transaction_ids_json, raw_json, inserted_at_utc)
-            VALUES (?, ?, 'test', 'TRADE_CLOSED', ?, ?, ?, ?, '[]', '{}', ?)
+                (event_uid, ts_utc, source, event_type, lane_id, trade_id, pair, side,
+                 units, realized_pl_jpy, related_transaction_ids_json, raw_json, inserted_at_utc)
+            VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, ?, '[]', '{}', ?)
             """,
             (
                 f"uid-{i}",
                 t["ts_utc"],
-                t["pair"],
-                t["close_side"],
-                t["pl"],
+                t.get("event_type", "TRADE_CLOSED"),
                 t.get("lane_id"),
+                t.get("trade_id", f"trade-{i}"),
+                t["pair"],
+                t.get("close_side", t.get("side")),
+                t.get("units"),
+                t["pl"],
                 t["ts_utc"],
             ),
         )
@@ -171,6 +176,60 @@ class DailyReviewTest(unittest.TestCase):
             ])
             report = compute_daily_review(path, now=self.now)
             self.assertEqual(report.blocked_lanes, [])
+
+    def test_partial_reductions_collapse_to_one_trade_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            lane_id = "range_trader:AUD_JPY:SHORT:RANGE_ROTATION"
+            _make_db(path, [
+                {
+                    "pair": "AUD_JPY",
+                    "side": "SHORT",
+                    "units": -9700,
+                    "pl": None,
+                    "event_type": "ORDER_FILLED",
+                    "trade_id": "471020",
+                    "ts_utc": self._ts(20),
+                    "lane_id": lane_id,
+                },
+                {
+                    "pair": "AUD_JPY",
+                    "close_side": "LONG",
+                    "units": 6500,
+                    "pl": -2515.5,
+                    "event_type": "TRADE_REDUCED",
+                    "trade_id": "471020",
+                    "ts_utc": self._ts(19),
+                    "lane_id": lane_id,
+                },
+                {
+                    "pair": "AUD_JPY",
+                    "close_side": "LONG",
+                    "units": 3200,
+                    "pl": -1276.8,
+                    "event_type": "TRADE_REDUCED",
+                    "trade_id": "471020",
+                    "ts_utc": self._ts(18),
+                    "lane_id": lane_id,
+                },
+                {
+                    "pair": "AUD_JPY",
+                    "close_side": "LONG",
+                    "units": 3300,
+                    "pl": -155.1,
+                    "event_type": "TRADE_CLOSED",
+                    "trade_id": "471020",
+                    "ts_utc": self._ts(17),
+                    "lane_id": lane_id,
+                },
+            ])
+
+            report = compute_daily_review(path, now=self.now)
+
+            self.assertEqual(report.lane_loss_counts[lane_id], 1)
+            self.assertEqual(report.blocked_lanes, [])
+            self.assertNotIn("AUD_JPY", report.bias_overrides)
+            self.assertAlmostEqual(report.pair_pl_breakdown[("AUD_JPY", "SHORT")], -3947.4)
 
     def test_expiry_is_next_jst_midnight(self) -> None:
         # now = 2026-05-13 12:00 UTC = 21:00 JST May 13

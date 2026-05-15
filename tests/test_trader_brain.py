@@ -48,6 +48,8 @@ class TraderBrainTest(unittest.TestCase):
                 market_story_profile_path=_stories(root),
                 target_state_path=root / "missing_target.json",
                 trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
                 output_path=root / "decision.json",
                 report_path=root / "decision.md",
             )
@@ -288,6 +290,41 @@ class TraderBrainTest(unittest.TestCase):
             self.assertEqual(lane.action, ACTION_NO_TRADE)
             self.assertIn("missing trader thesis", " ".join(lane.blockers))
             self.assertIn("missing market context", " ".join(lane.blockers))
+
+    def test_blocks_live_ready_lane_when_m1_and_m5_structure_oppose_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            lane = _result(
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "EUR_USD",
+                "LONG",
+                "TREND_CONTINUATION",
+            )
+            lane["intent"]["market_context"]["chart_story"] = (
+                "EUR_USD TREND_DOWN; "
+                "M1(UNCLEAR, ADX=24.6 RSI=33.6 struct=CHOCH_DOWN@1.1649); "
+                "M5(TREND_DOWN, ADX=50.7 RSI=25.0 struct=BOS_DOWN@1.1652)"
+            )
+            path.write_text(json.dumps({"results": [lane]}))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.pair == "EUR_USD")
+            self.assertEqual(score.action, ACTION_NO_TRADE)
+            self.assertTrue(any("micro_structure_opposed" in blocker for blocker in score.blockers))
+            self.assertTrue(any("M1+M5 both struct opposite" in item for item in score.rationale))
 
     def test_historical_worst_loss_is_scaled_by_current_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
