@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -580,6 +581,62 @@ class DailyTargetLedgerTest(unittest.TestCase):
             ).run(start_balance_jpy=100_000, snapshot=snapshot)
 
             self.assertAlmostEqual(summary.target_jpy, 10_000.0, places=2)
+
+    def test_first_run_reconstructs_current_day_realized_from_execution_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                conn.execute(
+                    "CREATE TABLE execution_events (ts_utc TEXT, event_type TEXT, realized_pl_jpy REAL)"
+                )
+                conn.executemany(
+                    "INSERT INTO execution_events (ts_utc, event_type, realized_pl_jpy) VALUES (?, ?, ?)",
+                    [
+                        ("2026-05-15T00:30:00+00:00", "TRADE_CLOSED", -5641.44),
+                        ("2026-05-14T23:30:00+00:00", "TRADE_CLOSED", 1000.0),
+                    ],
+                )
+            now = datetime(2026, 5, 15, 1, 0, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="t1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1000,
+                        unrealized_pl_jpy=-300.0,
+                        take_profit=1.1020,
+                        stop_loss=1.0990,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.1004, 1.1005, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 149.99, 150.0, timestamp_utc=now),
+                },
+                account=AccountSummary(
+                    nav_jpy=193_300.0,
+                    balance_jpy=193_600.0,
+                    unrealized_pl_jpy=-300.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(snapshot=snapshot, now_utc=now)
+
+            self.assertAlmostEqual(summary.progress_jpy, -5941.44)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["campaign_day_jst"], "2026-05-15")
+            self.assertAlmostEqual(payload["start_balance_jpy"], 199241.44)
+            self.assertAlmostEqual(payload["realized_pl_jpy"], -5641.44)
+            self.assertAlmostEqual(payload["progress_jpy"], -5941.44)
 
 
 if __name__ == "__main__":

@@ -397,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     p_target.add_argument("--snapshot", type=Path, default=None)
     p_target.add_argument("--state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_target.add_argument("--report", type=Path, default=DEFAULT_DAILY_TARGET_REPORT)
+    p_target.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
 
     p_replay = sub.add_parser("replay-backtest", help="Replay imported legacy days against 10%% target coverage.")
     p_replay.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
@@ -1453,6 +1454,7 @@ def main(argv: list[str] | None = None) -> int:
                 state_path=args.state,
                 report_path=args.report,
                 pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+                execution_ledger_path=args.execution_ledger_db,
             ).run(
                 start_balance_jpy=args.start_balance,
                 target_return_pct=args.target_return_pct,

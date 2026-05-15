@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -88,10 +89,12 @@ class DailyTargetLedger:
         state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         report_path: Path = DEFAULT_DAILY_TARGET_REPORT,
         pace_backtest_path: Path | None = None,
+        execution_ledger_path: Path | None = None,
     ) -> None:
         self.state_path = state_path
         self.report_path = report_path
         self.pace_backtest_path = pace_backtest_path
+        self.execution_ledger_path = execution_ledger_path
 
     def run(
         self,
@@ -114,6 +117,11 @@ class DailyTargetLedger:
         campaign_day_jst = _campaign_day_key(reference_time)
         previous_day = _coalesce_campaign_day(previous)
         is_new_campaign_day = previous_day is not None and previous_day != campaign_day_jst
+        ledger_realized = (
+            None
+            if realized_pl_jpy is not None
+            else _realized_pl_from_execution_ledger(self.execution_ledger_path, campaign_day_jst)
+        )
 
         # Priority order:
         # 1. Explicit --start-balance argument (caller override).
@@ -122,7 +130,8 @@ class DailyTargetLedger:
         # 3. New campaign day without snapshot.account: roll over previous current_equity.
         # 4. Otherwise reuse previous start_balance.
         snapshot_start_balance = _start_balance_from_snapshot(
-            snapshot=snapshot, realized_pl_jpy=realized_pl_jpy
+            snapshot=snapshot,
+            realized_pl_jpy=realized_pl_jpy if realized_pl_jpy is not None else ledger_realized,
         )
         start_balance = _coalesce_float(start_balance_jpy)
         if start_balance is None and is_new_campaign_day and snapshot_start_balance is not None:
@@ -142,6 +151,8 @@ class DailyTargetLedger:
         target_pct = _coalesce_float(target_return_pct, previous.get("target_return_pct"), 10.0)
         if realized_pl_jpy is not None:
             realized = float(realized_pl_jpy)
+        elif ledger_realized is not None and (previous_day is None or is_new_campaign_day):
+            realized = ledger_realized
         elif is_new_campaign_day:
             realized = 0.0
         else:
@@ -150,6 +161,8 @@ class DailyTargetLedger:
                 if previous_day is not None
                 else None
             )
+            if realized is None and ledger_realized is not None:
+                realized = ledger_realized
             if realized is None:
                 realized = _coalesce_float(previous.get("realized_pl_jpy"), 0.0)
         # Equity-derived risk budget: per-trade worst-case loss cap is sized to the day's
@@ -584,6 +597,34 @@ def _realized_pl_from_snapshot(
     if snapshot is None or snapshot.account is None:
         return None
     return float(snapshot.account.balance_jpy) - float(start_balance_jpy)
+
+
+def _realized_pl_from_execution_ledger(path: Path | None, campaign_day_jst: str) -> float | None:
+    """Read closed-trade P/L for the current JST9 campaign day.
+
+    `_campaign_day_key()` is equivalent to the UTC calendar date because the
+    campaign resets at 09:00 JST. The execution ledger stores UTC timestamps,
+    so filtering by the first 10 chars of `ts_utc` matches the same boundary.
+    """
+
+    if path is None or not path.exists():
+        return None
+    try:
+        with sqlite3.connect(path) as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(COALESCE(realized_pl_jpy, 0.0)), 0.0)
+                FROM execution_events
+                WHERE event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                  AND substr(ts_utc, 1, 10) = ?
+                """,
+                (campaign_day_jst,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return 0.0
+    return float(row[0] or 0.0)
 
 
 def _coalesce_float(*values: object) -> float | None:

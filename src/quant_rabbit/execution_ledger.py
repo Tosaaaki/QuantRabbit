@@ -321,10 +321,11 @@ def _events_from_gateway_receipt(kind: str, payload: dict[str, Any], now: str) -
 def _gateway_live_order_event(payload: dict[str, Any], *, now: str, index: int) -> dict[str, Any]:
     order = payload.get("order_request") if isinstance(payload.get("order_request"), dict) else {}
     response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+    status = str(payload.get("status") or "").upper()
     event_type = "GATEWAY_ORDER_STAGED"
     if payload.get("sent"):
         event_type = "GATEWAY_ORDER_SENT"
-    elif payload.get("send_requested") and payload.get("status") == "BLOCKED":
+    elif status == "BLOCKED":
         event_type = "GATEWAY_ORDER_BLOCKED"
     lane_id = _text(payload.get("lane_id"))
     order_id = _response_order_id(response)

@@ -104,6 +104,58 @@ class ExecutionLedgerTest(unittest.TestCase):
                 1.17,
             ))
 
+    def test_records_blocked_gateway_child_even_without_send_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "live_order.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-15T00:00:00+00:00",
+                        "status": "STAGED",
+                        "orders": [
+                            {
+                                "generated_at_utc": "2026-05-15T00:00:01+00:00",
+                                "status": "BLOCKED",
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "order_request": {
+                                    "instrument": "EUR_USD",
+                                    "type": "MARKET",
+                                    "units": "1000",
+                                },
+                                "risk_issues": [
+                                    {
+                                        "severity": "BLOCK",
+                                        "code": "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
+                                    }
+                                ],
+                                "send_requested": False,
+                                "sent": False,
+                            }
+                        ],
+                    }
+                )
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.record_gateway_receipt(kind="live_order", receipt_path=receipt)
+
+            self.assertEqual(summary.events_inserted, 1)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    "SELECT event_type, lane_id, pair, side, units FROM execution_events"
+                ).fetchone()
+            self.assertEqual(
+                row,
+                (
+                    "GATEWAY_ORDER_BLOCKED",
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                    "EUR_USD",
+                    "LONG",
+                    1000,
+                ),
+            )
+
 
 class FakeTransactionClient:
     def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:

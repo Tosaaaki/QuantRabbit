@@ -844,9 +844,10 @@ class LaneScore:
     # (`risk_metrics.estimated_margin_jpy`). Threaded through so the
     # automation-layer margin-aware basket truncation (C-4, 2026-05-12)
     # can stop adding lanes when cumulative margin would exceed the
-    # broker's `margin_available_jpy × MARGIN_AWARE_BASKET_BUFFER`
-    # ceiling. Old smoke runs left this implicit and the gateway
-    # rejected every candidate at the staging step with
+    # gateway-equivalent effective room
+    # `min(marginAvailable, NAV * cap - marginUsed) ×
+    # MARGIN_AWARE_BASKET_BUFFER`. Old smoke runs left this implicit
+    # and the gateway rejected every candidate at the staging step with
     # `BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`; surfacing it earlier
     # lets the basket converge on a sendable subset instead of
     # whack-a-mole rejecting all 12 lanes.

@@ -44,7 +44,7 @@ from quant_rabbit.paths import (
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
-from quant_rabbit.risk import RiskPolicy, resolve_max_loss_jpy
+from quant_rabbit.risk import RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
 from quant_rabbit.strategy.market_story import MarketStoryMiner
@@ -64,19 +64,43 @@ DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 
-# C-4 margin-aware basket truncation (2026-05-12). The basket builder
-# stops adding fresh-entry lanes once cumulative
-# `LaneScore.estimated_margin_jpy` would exceed the broker's currently
-# available margin multiplied by this safety buffer. The buffer is an
-# engineering tolerance — not a market-derived value — to leave room
-# for intra-cycle quote drift, spread widening, and slippage between
-# the trader_brain margin estimate and the LiveOrderGateway's final
-# pre-send revalidation. Without it, the gateway used to reject every
-# basket candidate at staging (`BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`)
-# even when one lane could fit cleanly. 0.9 = 10 % drift headroom is
-# tight enough to not waste capacity but loose enough that an ATR-class
-# pip move during the staging RTT will not flip the cap.
+# C-4 margin-aware basket truncation (2026-05-12, repaired 2026-05-15).
+# The basket builder stops adding fresh-entry lanes once cumulative
+# `LaneScore.estimated_margin_jpy` would exceed the same effective margin
+# room used by `RiskEngine` (`min(marginAvailable, NAV * cap - marginUsed)`)
+# multiplied by this safety buffer. The buffer is an engineering tolerance
+# — not a market-derived value — to leave room for intra-cycle quote drift,
+# spread widening, and slippage between the trader_brain margin estimate and
+# the LiveOrderGateway's final pre-send revalidation. Using raw
+# marginAvailable here was a bug: the discretionary receipt could claim a
+# basket fit while the gateway correctly rejected it with
+# `BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED`.
 MARGIN_AWARE_BASKET_BUFFER = 0.9
+
+
+def _basket_margin_room_jpy(snapshot: object) -> float | None:
+    account = getattr(snapshot, "account", None)
+    if account is None:
+        return None
+    max_margin_pct = RiskPolicy().max_margin_utilization_pct
+    if max_margin_pct is None:
+        return max(0.0, float(account.margin_available_jpy))
+    return max(0.0, margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct))
+
+
+def _buffered_basket_margin_budget_jpy(
+    *,
+    margin_room_jpy: float | None,
+    margin_available_jpy: float | None,
+) -> float | None:
+    # `margin_available_jpy` is retained for tests and older callers. Live
+    # automation passes `margin_room_jpy`, which is the same effective room
+    # used by RiskEngine / LiveOrderGateway.
+    base = margin_room_jpy if margin_room_jpy is not None else margin_available_jpy
+    if base is None:
+        return None
+    return max(0.0, float(base)) * MARGIN_AWARE_BASKET_BUFFER
+
 
 # Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
 # only hard reasons to keep a LIVE_READY lane out of the GPT prefilter set.
@@ -694,9 +718,7 @@ class AutoTradeCycle:
                     primary_lane_id=None,
                     primary_size_multiple=None,
                     allow_existing_pending=True,
-                    margin_available_jpy=(
-                        snapshot.account.margin_available_jpy if snapshot.account else None
-                    ),
+                    margin_room_jpy=_basket_margin_room_jpy(snapshot),
                 )
                 if basket_lane_ids:
                     if send and self.live_enabled and not self.use_gpt_trader:
@@ -882,9 +904,7 @@ class AutoTradeCycle:
                                 decision=decision,
                                 gpt_lane_ids=gpt_lane_ids,
                                 allow_existing_pending=True,
-                                margin_available_jpy=(
-                                    snapshot.account.margin_available_jpy if snapshot.account else None
-                                ),
+                                margin_room_jpy=_basket_margin_room_jpy(snapshot),
                             )
                         else:
                             basket_lane_ids = gpt_lane_ids
@@ -1320,9 +1340,7 @@ class AutoTradeCycle:
             basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                 decision=decision,
                 gpt_lane_ids=gpt_selected_lane_ids,
-                margin_available_jpy=(
-                    snapshot.account.margin_available_jpy if snapshot.account else None
-                ),
+                margin_room_jpy=_basket_margin_room_jpy(snapshot),
             )
             selected_lane_id = basket_lane_ids[0] if basket_lane_ids else selected_lane_id
             selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
@@ -1343,9 +1361,7 @@ class AutoTradeCycle:
                 decision=decision,
                 primary_lane_id=selected_lane_id,
                 primary_size_multiple=selected_lane_size_multiple,
-                margin_available_jpy=(
-                    snapshot.account.margin_available_jpy if snapshot.account else None
-                ),
+                margin_room_jpy=_basket_margin_room_jpy(snapshot),
             )
 
         if basket_lane_ids and send and self.live_enabled and not self.use_gpt_trader:
@@ -1621,6 +1637,7 @@ class AutoTradeCycle:
             state_path=self.target_state_path,
             report_path=report_path,
             pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+            execution_ledger_path=self.execution_ledger_db_path,
         ).run(snapshot=snapshot)
 
     def _receipt_promoter(self) -> ReceiptPromoter:
@@ -1681,15 +1698,15 @@ class AutoTradeCycle:
         primary_lane_id: str | None,
         primary_size_multiple: float | None,
         allow_existing_pending: bool = False,
+        margin_room_jpy: float | None = None,
         margin_available_jpy: float | None = None,
     ) -> tuple[tuple[str, ...], dict[str, float]]:
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
         parent_lane_ids: set[str] = set()
-        margin_budget = (
-            margin_available_jpy * MARGIN_AWARE_BASKET_BUFFER
-            if margin_available_jpy is not None and margin_available_jpy > 0
-            else None
+        margin_budget = _buffered_basket_margin_budget_jpy(
+            margin_room_jpy=margin_room_jpy,
+            margin_available_jpy=margin_available_jpy,
         )
         margin_lookup = {
             score.lane_id: score.estimated_margin_jpy
@@ -1705,9 +1722,9 @@ class AutoTradeCycle:
             parent_lane_id = _basket_parent_lane_id(lane_id)
             if parent_lane_id and parent_lane_id in parent_lane_ids:
                 return False
-            # C-4 margin-aware truncation. Apply the buffer-adjusted cap
-            # only when we know the lane's estimated margin AND broker
-            # truth has surfaced an `margin_available_jpy` figure.
+            # C-4 margin-aware truncation. Apply the buffer-adjusted
+            # effective margin room only when we know the lane's estimated
+            # margin AND broker truth has surfaced an account figure.
             # Missing data degrades gracefully — without truncation —
             # so unrelated tests and stub fixtures keep working.
             if margin_budget is not None:
@@ -1734,27 +1751,37 @@ class AutoTradeCycle:
         decision: TraderDecision,
         gpt_lane_ids: tuple[str, ...],
         allow_existing_pending: bool = False,
+        margin_room_jpy: float | None = None,
         margin_available_jpy: float | None = None,
     ) -> tuple[tuple[str, ...], dict[str, float]]:
         lane_ids: list[str] = []
         size_multiples: dict[str, float] = {}
         parent_lane_ids: set[str] = set()
-        margin_budget = (
-            margin_available_jpy * MARGIN_AWARE_BASKET_BUFFER
-            if margin_available_jpy is not None and margin_available_jpy > 0
-            else None
+        margin_budget = _buffered_basket_margin_budget_jpy(
+            margin_room_jpy=margin_room_jpy,
+            margin_available_jpy=margin_available_jpy,
         )
         margin_lookup = {
             score.lane_id: score.estimated_margin_jpy
             for score in decision.scores
             if score.estimated_margin_jpy is not None
         }
+        score_lookup = {score.lane_id: score for score in decision.scores}
         cumulative_margin = 0.0
 
-        def add(lane_id: str | None, size_multiple: float | None = None) -> bool:
+        def add(
+            lane_id: str | None,
+            size_multiple: float | None = None,
+            *,
+            require_current_prefilter: bool = False,
+        ) -> bool:
             nonlocal cumulative_margin
             if not lane_id or lane_id in size_multiples:
                 return False
+            if require_current_prefilter:
+                score = score_lookup.get(lane_id)
+                if score is None or not _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
+                    return False
             parent_lane_id = _basket_parent_lane_id(lane_id)
             if parent_lane_id and parent_lane_id in parent_lane_ids:
                 return False
@@ -1776,7 +1803,11 @@ class AutoTradeCycle:
             return True
 
         for lane_id in gpt_lane_ids:
-            add(lane_id)
+            # GPT receipts can go stale between decision writing and gateway
+            # execution. Do not force a now-DRY_RUN_BLOCKED / non-prefiltered
+            # lane into LiveOrderGateway; recover through the current
+            # deterministic LIVE_READY basket below.
+            add(lane_id, require_current_prefilter=True)
         for score in decision.scores:
             if _passes_basket_prefilter(score, allow_existing_pending=allow_existing_pending):
                 add(score.lane_id, score.size_multiple)

@@ -13,9 +13,66 @@ from typing import Any
 from quant_rabbit.automation import AutoTradeCycle, _snapshot_to_json
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_expanded_gpt_basket_recovers_from_stale_selected_lane(self) -> None:
+        current_lane = LaneScore(
+            lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            direction="LONG",
+            method="BREAKOUT_FAILURE",
+            order_type="STOP-ENTRY",
+            entry=1.16522,
+            tp=1.16878,
+            sl=1.16401,
+            status="LIVE_READY",
+            score=110.0,
+            action=ACTION_SEND_ENTRY,
+            blockers=(),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=7_400.0,
+        )
+        stale_gpt_lane = LaneScore(
+            lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            pair="EUR_USD",
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            order_type="STOP-ENTRY",
+            entry=1.16522,
+            tp=1.16878,
+            sl=1.16401,
+            status="DRY_RUN_BLOCKED",
+            score=120.0,
+            action=ACTION_NO_TRADE,
+            blockers=("intent status is DRY_RUN_BLOCKED",),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=7_400.0,
+        )
+        decision = TraderDecision(
+            action=ACTION_SEND_ENTRY,
+            selected_lane_id=current_lane.lane_id,
+            selected_lane_score=current_lane.score,
+            selected_lane_size_multiple=current_lane.size_multiple,
+            generated_at_utc=datetime.now(timezone.utc).isoformat(),
+            reason="current prefilter selected the breakout-failure repair lane",
+            scores=(current_lane, stale_gpt_lane),
+            positions=2,
+            orders=1,
+        )
+
+        lane_ids, size_multiples = AutoTradeCycle._expanded_gpt_basket_plan(
+            decision=decision,
+            gpt_lane_ids=(stale_gpt_lane.lane_id,),
+            margin_room_jpy=10_000.0,
+        )
+
+        self.assertEqual(lane_ids, (current_lane.lane_id,))
+        self.assertEqual(size_multiples, {current_lane.lane_id: 1.0})
+
     def test_direct_send_cycle_refuses_existing_live_lock(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -693,6 +750,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 market_story_profile_path=_stories(root),
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
                 refresh_market_story=False,
                 live_enabled=True,
             ).run(send=True)
@@ -758,6 +816,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 market_story_profile_path=_stories(root),
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
+                execution_ledger_db_path=root / "execution_ledger.db",
                 refresh_market_story=False,
                 live_enabled=True,
             ).run(send=True)
@@ -2236,7 +2295,7 @@ class MarginAwareBasketTest(unittest.TestCase):
 
     `_basket_lane_plan` and `_expanded_gpt_basket_plan` track cumulative
     `LaneScore.estimated_margin_jpy` and stop adding lanes once
-    `margin_available_jpy × MARGIN_AWARE_BASKET_BUFFER` would be
+    effective margin room × `MARGIN_AWARE_BASKET_BUFFER` would be
     breached. This prevents the gateway from rejecting every basket
     candidate at staging when margin is already tight (2026-05-12 14:00
     UTC scenario: 12-lane basket, 40k margin headroom, all 12 rejected
@@ -2309,6 +2368,26 @@ class MarginAwareBasketTest(unittest.TestCase):
             lane_ids,
             ("a:EUR_USD:SHORT:TREND_CONTINUATION", "b:EUR_USD:SHORT:BREAKOUT_FAILURE"),
         )
+
+    def test_basket_uses_effective_margin_room_before_raw_margin_available(self) -> None:
+        from quant_rabbit.automation import AutoTradeCycle
+        scores = [
+            self._score("a:EUR_USD:LONG:TREND_CONTINUATION", pair="EUR_USD",
+                        direction="LONG", score=200, margin_jpy=7400),
+            self._score("b:GBP_USD:LONG:TREND_CONTINUATION", pair="GBP_USD",
+                        direction="LONG", score=190, margin_jpy=8500),
+        ]
+        decision = self._decision(scores)
+        lane_ids, _ = AutoTradeCycle._expanded_gpt_basket_plan(
+            decision=decision,
+            gpt_lane_ids=(scores[0].lane_id, scores[1].lane_id),
+            margin_room_jpy=9300.0,
+            margin_available_jpy=24600.0,
+        )
+        # The fixed live path passes RiskEngine-equivalent margin room.
+        # 9300 * 0.9 = 8370, so only the first 7400 JPY lane fits even
+        # though raw marginAvailable would have admitted both.
+        self.assertEqual(lane_ids, (scores[0].lane_id,))
 
     def test_basket_unchanged_when_margin_available_not_passed(self) -> None:
         # Backwards-compat: callers that don't supply margin_available_jpy
