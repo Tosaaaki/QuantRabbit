@@ -2204,11 +2204,23 @@ def main(argv: list[str] | None = None) -> int:
         for pair_key, quote_data in (snapshot_payload.get("quotes") or {}).items():
             if isinstance(quote_data, dict):
                 quotes_keyed[pair_key] = quote_data
+        latest_forecasts_by_pair: dict = {}
+        try:
+            from quant_rabbit.strategy.entry_thesis_ledger import load_latest_forecast
+
+            data_root = Path("data")
+            for pair_key in {str(getattr(p, "pair", "")) for p in positions if getattr(p, "pair", None)}:
+                latest = load_latest_forecast(pair_key, data_root)
+                if latest is not None:
+                    latest_forecasts_by_pair[pair_key] = latest
+        except Exception:
+            latest_forecasts_by_pair = {}
         adjustments = compute_all_tp_adjustments(
             positions=positions,
             quotes=quotes_keyed,
             pair_charts=pair_charts_keyed,
             market_reward_risk_fn=_market_derived_reward_risk,
+            latest_forecasts_by_pair=latest_forecasts_by_pair,
         )
         client = None
         if not args.dry_run and adjustments:

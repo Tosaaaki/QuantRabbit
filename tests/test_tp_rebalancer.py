@@ -21,6 +21,8 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
             del os.environ["QR_DISABLE_TP_REBALANCE"]
         if "QR_ENABLE_MISSING_TP_REPAIR" in os.environ:
             del os.environ["QR_ENABLE_MISSING_TP_REPAIR"]
+        if "QR_DISABLE_INSURANCE_TP" in os.environ:
+            del os.environ["QR_DISABLE_INSURANCE_TP"]
 
     def test_long_expanded_tp(self) -> None:
         self._kill_switch_off()
@@ -218,6 +220,76 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertIsNone(adj.current_tp)
         self.assertGreater(adj.new_tp, 1.3010)
         self.assertIn("manual_tp_repair", adj.rationale)
+
+    def test_profit_runner_without_tp_gets_insurance_when_forecast_cannot_reach_next_session(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="runner-low-forecast", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=None,
+            current_price=1.3050, atr_pips=20, reward_risk=3.0,
+            owner="trader",
+            latest_forecast={"direction": "UNCLEAR", "confidence": 0.1, "horizon_min": 0},
+            chart_context={
+                "confluence": {"tf_agreement_score": 1.0},
+                "session": {"minutes_to_next_killzone": 45},
+                "indicators_by_tf": {},
+            },
+        )
+        self.assertIsNotNone(adj)
+        self.assertEqual(adj.current_tp, None)
+        self.assertGreater(adj.new_tp, 1.3050)
+        self.assertIn("insurance_tp", adj.rationale)
+        self.assertIn("forecast UNCLEAR", adj.rationale)
+
+    def test_profit_runner_without_tp_keeps_running_when_forecast_is_strong_and_no_pressure(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="runner-strong", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=None,
+            current_price=1.3050, atr_pips=20, reward_risk=3.0,
+            owner="trader",
+            latest_forecast={"direction": "UP", "confidence": 0.8, "horizon_min": 180},
+            chart_context={
+                "confluence": {"tf_agreement_score": 1.0, "range_24h_sigma_multiple": 1.0},
+                "session": {"minutes_to_next_killzone": 45},
+                "indicators_by_tf": {"M15": {"rsi_14": 55, "stoch_rsi": 0.5}},
+            },
+        )
+        self.assertIsNone(adj)
+
+    def test_profit_runner_without_tp_ignores_single_technical_warning(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="runner-one-warning", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=None,
+            current_price=1.3050, atr_pips=20, reward_risk=3.0,
+            owner="trader",
+            latest_forecast={"direction": "UP", "confidence": 0.8, "horizon_min": 180},
+            chart_context={
+                "confluence": {"price_percentile_24h": 0.96, "tf_agreement_score": 1.0},
+                "session": {"minutes_to_next_killzone": 45},
+                "indicators_by_tf": {"M15": {"rsi_14": 55, "stoch_rsi": 0.5}},
+            },
+        )
+        self.assertIsNone(adj)
+
+    def test_profit_runner_without_tp_gets_insurance_on_technical_exhaustion(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="runner-exhausted", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=None,
+            current_price=1.3050, atr_pips=20, reward_risk=3.0,
+            owner="trader",
+            latest_forecast={"direction": "UP", "confidence": 0.8, "horizon_min": 180},
+            chart_context={
+                "confluence": {"price_percentile_24h": 0.96, "tf_agreement_score": 1.0},
+                "session": {"minutes_to_next_killzone": 45},
+                "indicators_by_tf": {"M15": {"rsi_14": 72}},
+            },
+        )
+        self.assertIsNotNone(adj)
+        self.assertIn("insurance_tp", adj.rationale)
+        self.assertIn("price percentile", adj.rationale)
 
     def test_long_tp_never_below_entry(self) -> None:
         """Even with extreme contraction, LONG TP must stay > entry."""

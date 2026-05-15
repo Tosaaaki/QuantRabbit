@@ -23,8 +23,12 @@ Invariants:
 - Trader-owned plus operator-managed manual / unknown-owner positions
   are eligible for TP-only profit capture. External positions are skipped.
 - Missing broker TP is not auto-created by default. A manually deleted TP is
-  treated as an operator decision to run without a broker cap. Set
-  `QR_ENABLE_MISSING_TP_REPAIR=1` to restore the old repair behavior.
+  treated as an operator decision to run without a broker cap. Exception:
+  when a runner is already in profit and the latest forecast / technical
+  stack cannot justify carrying it into the next session, the rebalancer may
+  place an insurance TP close to current reward-side price. Set
+  `QR_ENABLE_MISSING_TP_REPAIR=1` to restore the old unconditional repair
+  behavior for manual / unknown-owner positions.
 - SL is NEVER touched here. This module is TP-only. The SL-free
   invariant `stop_loss is None` is respected by skipping any
   attempt to read/write SL.
@@ -97,8 +101,157 @@ def _missing_tp_repair_enabled() -> bool:
     return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
+def _insurance_tp_disabled() -> bool:
+    return os.environ.get("QR_DISABLE_INSURANCE_TP", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def _profit_take_owner_allowed(owner: str) -> bool:
     return owner.strip().lower() in {"trader", "manual", "unknown"}
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _forecast_direction_for_side(side: str) -> str:
+    return "UP" if side.upper() == "LONG" else "DOWN"
+
+
+def _insurance_tp_reasons(
+    *,
+    side: str,
+    profit_pips: float,
+    atr_pips: float,
+    latest_forecast: Optional[Dict[str, Any]],
+    chart_context: Optional[Dict[str, Any]],
+) -> list[str]:
+    """Return reasons to add an insurance TP to a TP-less runner.
+
+    This is intentionally stricter than missing-TP repair: it only acts on
+    positions already in profit, because the purpose is MFE capture / session
+    handoff insurance, not capping a losing position's recovery path.
+    """
+    if _insurance_tp_disabled() or profit_pips <= 0:
+        return []
+    milestone_reasons: list[str] = []
+    forecast_reasons: list[str] = []
+    session_reasons: list[str] = []
+
+    try:
+        from quant_rabbit.strategy.dynamic_position_policy import trailing_trigger_mult
+
+        trigger_mult, trigger_reasons = trailing_trigger_mult(chart_context)
+    except Exception:
+        trigger_mult, trigger_reasons = None, []
+    if trigger_mult is not None and atr_pips > 0 and profit_pips >= trigger_mult * atr_pips:
+        reason = f"profit {profit_pips:.1f}pip reached runner milestone {trigger_mult:.2f}×ATR"
+        if trigger_reasons:
+            reason += " (" + "; ".join(trigger_reasons[:2]) + ")"
+        milestone_reasons.append(reason)
+
+    aligned_direction = _forecast_direction_for_side(side)
+    if latest_forecast:
+        direction = str(latest_forecast.get("direction") or "UNCLEAR").upper()
+        confidence = _optional_float(latest_forecast.get("confidence")) or 0.0
+        horizon_min = _optional_float(latest_forecast.get("horizon_min")) or 0.0
+        session = (chart_context or {}).get("session") if isinstance(chart_context, dict) else {}
+        next_minutes = _optional_float((session or {}).get("minutes_to_next_killzone"))
+        if direction in {"RANGE", "UNCLEAR"}:
+            forecast_reasons.append(f"forecast {direction} has no directional runner edge")
+        elif direction != aligned_direction:
+            forecast_reasons.append(f"forecast {direction} opposes {side.upper()} runner")
+        else:
+            try:
+                from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+            except Exception:
+                ENTRY_CONFIDENCE_MIN = 0.55
+            if confidence < ENTRY_CONFIDENCE_MIN:
+                forecast_reasons.append(
+                    f"forecast {direction} confidence {confidence:.2f} below runner threshold {ENTRY_CONFIDENCE_MIN:.2f}"
+                )
+        if next_minutes is not None and (horizon_min <= 0 or horizon_min < next_minutes):
+            session_reasons.append(
+                f"forecast horizon {horizon_min:.0f}m does not cover next session in {next_minutes:.0f}m"
+            )
+
+    technical_reasons = _technical_harvest_pressure(side=side, chart_context=chart_context)
+    technical_stack_reasons = technical_reasons if len(technical_reasons) >= 2 else []
+    if not technical_stack_reasons and not (forecast_reasons and (milestone_reasons or session_reasons)):
+        return []
+    return (milestone_reasons + forecast_reasons + session_reasons + technical_stack_reasons)[:8]
+
+
+def _technical_harvest_pressure(*, side: str, chart_context: Optional[Dict[str, Any]]) -> list[str]:
+    if not chart_context:
+        return []
+    side_up = side.upper()
+    confluence = chart_context.get("confluence") or {}
+    reasons: list[str] = []
+
+    price_pct_24h = _optional_float(confluence.get("price_percentile_24h"))
+    price_pct_7d = _optional_float(confluence.get("price_percentile_7d"))
+    if side_up == "LONG":
+        if price_pct_24h is not None and price_pct_24h >= 0.95:
+            reasons.append(f"LONG at 24h price percentile {price_pct_24h:.2f} (upper extreme)")
+        if price_pct_7d is not None and price_pct_7d >= 0.95:
+            reasons.append(f"LONG at 7d price percentile {price_pct_7d:.2f} (upper extreme)")
+    else:
+        if price_pct_24h is not None and price_pct_24h <= 0.05:
+            reasons.append(f"SHORT at 24h price percentile {price_pct_24h:.2f} (lower extreme)")
+        if price_pct_7d is not None and price_pct_7d <= 0.05:
+            reasons.append(f"SHORT at 7d price percentile {price_pct_7d:.2f} (lower extreme)")
+
+    tf_agreement = _optional_float(confluence.get("tf_agreement_score"))
+    # 2/3 is the documented majority boundary on the M15/M30/H1 panel.
+    if tf_agreement is not None and tf_agreement < (2.0 / 3.0):
+        reasons.append(f"TF agreement {tf_agreement:.2f} below majority")
+    sigma_24h = _optional_float(confluence.get("range_24h_sigma_multiple"))
+    # 2σ is the existing exhaustion boundary used by intent generation.
+    if sigma_24h is not None and sigma_24h >= 2.0:
+        reasons.append(f"24h range {sigma_24h:.2f}σ exhausted")
+
+    for tf in ("M15", "M30", "H1"):
+        indicators = (chart_context.get("indicators_by_tf") or {}).get(tf) or {}
+        rsi = _optional_float(indicators.get("rsi_14"))
+        stoch_rsi = _optional_float(indicators.get("stoch_rsi"))
+        williams = _optional_float(indicators.get("williams_r_14"))
+        close = _optional_float(indicators.get("close"))
+        bb_upper = _optional_float(indicators.get("bb_upper"))
+        bb_lower = _optional_float(indicators.get("bb_lower"))
+        donchian_high = _optional_float(indicators.get("donchian_high"))
+        donchian_low = _optional_float(indicators.get("donchian_low"))
+
+        # RSI 70/30, StochRSI 0.8/0.2, and Williams %R -20/-80 are
+        # standard overbought/oversold technical boundaries, not tuned
+        # QuantRabbit profit targets.
+        if side_up == "LONG":
+            if rsi is not None and rsi >= 70:
+                reasons.append(f"{tf} RSI {rsi:.1f} overbought")
+            if stoch_rsi is not None and stoch_rsi >= 0.8:
+                reasons.append(f"{tf} StochRSI {stoch_rsi:.2f} overbought")
+            if williams is not None and williams >= -20:
+                reasons.append(f"{tf} Williams %R {williams:.1f} overbought")
+            if close is not None and bb_upper is not None and close >= bb_upper:
+                reasons.append(f"{tf} close at/above BB upper")
+            if close is not None and donchian_high is not None and close >= donchian_high:
+                reasons.append(f"{tf} close at/above Donchian high")
+        else:
+            if rsi is not None and rsi <= 30:
+                reasons.append(f"{tf} RSI {rsi:.1f} oversold")
+            if stoch_rsi is not None and stoch_rsi <= 0.2:
+                reasons.append(f"{tf} StochRSI {stoch_rsi:.2f} oversold")
+            if williams is not None and williams <= -80:
+                reasons.append(f"{tf} Williams %R {williams:.1f} oversold")
+            if close is not None and bb_lower is not None and close <= bb_lower:
+                reasons.append(f"{tf} close at/below BB lower")
+            if close is not None and donchian_low is not None and close <= donchian_low:
+                reasons.append(f"{tf} close at/below Donchian low")
+    return reasons[:6]
 
 
 def compute_tp_adjustment(
@@ -114,6 +267,7 @@ def compute_tp_adjustment(
     is_reversal_firing: bool = False,
     owner: str = "trader",
     chart_context: Optional[Dict[str, Any]] = None,
+    latest_forecast: Optional[Dict[str, Any]] = None,
 ) -> Optional[TPAdjustment]:
     """Compute a new TP for one position.
 
@@ -148,8 +302,6 @@ def compute_tp_adjustment(
         and owner_normalized in {"manual", "unknown"}
         and _missing_tp_repair_enabled()
     )
-    if current_tp is None and not manual_missing_tp_repair:
-        return None
     if atr_pips <= 0 or reward_risk <= 0:
         return None
 
@@ -157,6 +309,25 @@ def compute_tp_adjustment(
     pip_size = 1.0 / pip_factor
     side_up = side.upper()
     if side_up not in ("LONG", "SHORT"):
+        return None
+
+    if side_up == "LONG":
+        profit_pips = (current_price - entry_price) * pip_factor
+    else:
+        profit_pips = (entry_price - current_price) * pip_factor
+    insurance_reasons = (
+        _insurance_tp_reasons(
+            side=side_up,
+            profit_pips=profit_pips,
+            atr_pips=atr_pips,
+            latest_forecast=latest_forecast,
+            chart_context=chart_context,
+        )
+        if current_tp is None
+        else []
+    )
+    insurance_missing_tp = current_tp is None and bool(insurance_reasons)
+    if current_tp is None and not (manual_missing_tp_repair or insurance_missing_tp):
         return None
 
     distance_old = abs(current_tp - entry_price) * pip_factor if current_tp is not None else 0.0
@@ -172,7 +343,20 @@ def compute_tp_adjustment(
     is_significant_adverse = is_adverse and adverse_pips >= ADVERSE_ATR_MULT * atr_pips
 
     # Pick mode.
-    if manual_missing_tp_repair:
+    if insurance_missing_tp:
+        mode = "insurance_tp"
+        lock_in_pips = max(MIN_LOCK_IN_PIPS, atr_pips * LOCK_IN_ATR_MULT)
+        if side_up == "LONG":
+            if profit_pips > 0:
+                candidate_tp = current_price + MIN_TP_TO_MARKET_PIPS * pip_size
+            else:
+                candidate_tp = entry_price + lock_in_pips * pip_size
+        else:
+            if profit_pips > 0:
+                candidate_tp = current_price - MIN_TP_TO_MARKET_PIPS * pip_size
+            else:
+                candidate_tp = entry_price - lock_in_pips * pip_size
+    elif manual_missing_tp_repair:
         mode = "manual_tp_repair"
         if side_up == "LONG":
             entry_anchored = entry_price + desired_distance_pips * pip_size
@@ -285,6 +469,8 @@ def compute_tp_adjustment(
         f"(mode={mode}, reward_risk={reward_risk:.2f}, atr={atr_pips:.1f}pip, "
         f"change={change_pips:.1f}pip)"
     )
+    if insurance_missing_tp:
+        rationale += "; insurance: " + "; ".join(insurance_reasons[:4])
     return TPAdjustment(
         trade_id=trade_id,
         pair=pair,
@@ -304,6 +490,7 @@ def compute_all_tp_adjustments(
     quotes: Dict[str, Dict[str, float]],
     pair_charts: Dict[str, Dict[str, Any]],
     market_reward_risk_fn,
+    latest_forecasts_by_pair: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> list[TPAdjustment]:
     """Loop profit-managed positions and compute TP adjustments.
 
@@ -373,19 +560,11 @@ def compute_all_tp_adjustments(
             is_reversal_firing=(reversal is not None),
             owner=owner_str.lower(),
             chart_context=_chart_context_from_chart(chart),
+            latest_forecast=(latest_forecasts_by_pair or {}).get(pair),
         )
         if adj is not None:
             adjustments.append(adj)
     return adjustments
-
-
-def _optional_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _chart_context_from_chart(chart: Dict[str, Any]) -> Dict[str, Any]:
@@ -397,11 +576,15 @@ def _chart_context_from_chart(chart: Dict[str, Any]) -> Dict[str, Any]:
     """
     context: Dict[str, Any] = {}
     context["confluence"] = chart.get("confluence") or {}
+    context["session"] = chart.get("session") if isinstance(chart.get("session"), dict) else {}
+    context["indicators_by_tf"] = {}
     for view in chart.get("views", []) or []:
         if not isinstance(view, dict):
             continue
         tf = str(view.get("granularity") or view.get("timeframe") or view.get("tf") or "").upper()
         indicators = view.get("indicators") or {}
+        if tf:
+            context["indicators_by_tf"][tf] = indicators
         adx = indicators.get("adx_14") or indicators.get("adx") or indicators.get("ADX")
         if adx is None:
             continue

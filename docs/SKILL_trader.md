@@ -154,9 +154,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # market regime shifts. Trader-owned and manual/tagless positions with
 # an existing broker TP are eligible for TP-only management. Missing
 # broker TP is preserved as a no-broker-TP runner unless
-# QR_ENABLE_MISSING_TP_REPAIR=1 is explicitly set. SL-free positions
-# keep stop_loss=None untouched; only an existing takeProfit order on
-# broker-side gets reshaped per current ATR × market-derived reward_risk.
+# QR_ENABLE_MISSING_TP_REPAIR=1 is explicitly set, or unless an
+# already-profitable runner needs insurance because forecast horizon /
+# confidence, next-session timing, or multiple technical exhaustion
+# readings say MFE capture is at risk. SL-free positions keep
+# stop_loss=None untouched; only takeProfit orders are written.
 # Hysteresis + entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
