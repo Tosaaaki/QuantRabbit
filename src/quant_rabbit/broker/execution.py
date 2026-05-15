@@ -21,7 +21,14 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_STRATEGY_PROFILE,
 )
-from quant_rabbit.risk import RiskEngine, RiskIssue, RiskPolicy, resolve_max_loss_jpy
+from quant_rabbit.risk import (
+    MIN_PRODUCTION_LOT_UNITS,
+    RiskEngine,
+    RiskIssue,
+    RiskPolicy,
+    _min_lot_test_override_active,
+    resolve_max_loss_jpy,
+)
 from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
 from quant_rabbit.strategy.intent_generator import _daily_risk_budget_from_state, _per_trade_risk_from_state
 from quant_rabbit.strategy.profile import StrategyProfile
@@ -50,6 +57,12 @@ class LiveOrderStageSummary:
 # windows (Asia, London, NY) is the coarse session model already used by the
 # archive outcome evidence; the fixed policy cap remains the fallback floor.
 ACTIVE_FX_SESSION_BUCKETS_PER_DAY = 3
+
+# Synthetic loss distance for trader-owned SL-free exposure in basket math.
+# This mirrors `risk._open_portfolio_risk_jpy`: it is a structural accounting
+# proxy for no-broker-SL mode, not an execution stop. Replace both copies with
+# a shared policy field once SL-free risk accounting is centralized.
+SL_FREE_SYNTHETIC_RISK_PIPS = 30.0
 
 
 class LiveOrderGateway:
@@ -451,7 +464,11 @@ class LiveOrderGateway:
             if scale_issue is not None:
                 scale_issues.append(scale_issue)
             if 0.0 < scale_multiple < 1.0:
-                scaled_units, extra_scale_issues = _scaled_units(intent.units, scale_multiple)
+                scaled_units, extra_scale_issues = _scaled_units(
+                    intent.units,
+                    scale_multiple,
+                    sub_min_lot_mode="block",
+                )
                 scale_issues.extend(extra_scale_issues)
                 if scaled_units is not None:
                     intent = replace(intent, units=scaled_units)
@@ -698,12 +715,43 @@ def _snapshot_pairs(payload: dict[str, Any], intent: OrderIntent) -> tuple[str, 
     return tuple(sorted(pairs))
 
 
-def _scaled_units(units: int, size_multiple: float) -> tuple[int | None, list[RiskIssue]]:
+def _scaled_units(
+    units: int,
+    size_multiple: float,
+    *,
+    sub_min_lot_mode: str = "clamp",
+) -> tuple[int | None, list[RiskIssue]]:
     if not math.isfinite(size_multiple) or size_multiple <= 0:
         return None, [RiskIssue("INVALID_SIZE_MULTIPLE", "size_multiple must be a finite positive number")]
     scaled_abs = int(math.floor(abs(units) * size_multiple))
     if scaled_abs < 1:
         return None, [RiskIssue("SIZE_MULTIPLIER_TOO_SMALL", "scaled units would round to zero")]
+    original_abs = abs(int(units))
+    if (
+        original_abs >= MIN_PRODUCTION_LOT_UNITS
+        and scaled_abs < MIN_PRODUCTION_LOT_UNITS
+        and not _min_lot_test_override_active()
+    ):
+        if sub_min_lot_mode == "block":
+            return None, [
+                RiskIssue(
+                    "BASKET_CAPACITY_BELOW_MIN_LOT",
+                    f"capacity scaling would reduce {original_abs}u to {scaled_abs}u, below the "
+                    f"{MIN_PRODUCTION_LOT_UNITS}u production floor; skip this lane until "
+                    "risk or margin room can fit the minimum lot.",
+                )
+            ]
+        scaled_abs = MIN_PRODUCTION_LOT_UNITS
+        scaled = scaled_abs if units >= 0 else -scaled_abs
+        return scaled, [
+            RiskIssue(
+                "SIZE_MULTIPLE_CLAMPED_TO_MIN_LOT",
+                f"size_multiple {size_multiple:.4g} would reduce {original_abs}u to "
+                f"{int(math.floor(original_abs * size_multiple))}u; keeping "
+                f"{MIN_PRODUCTION_LOT_UNITS}u production floor.",
+                "WARN",
+            )
+        ]
     scaled = scaled_abs if units >= 0 else -scaled_abs
     return scaled, []
 
@@ -913,9 +961,6 @@ def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, Ri
             continue
         if not order.pair or order.price is None or not order.units:
             return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} is missing pair/price/units")
-        sl = _raw_dependent_price(order.raw, "stopLossOnFill")
-        if sl is None:
-            return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} has no stopLossOnFill")
         spec = DEFAULT_SPECS.get(order.pair)
         if spec is None:
             return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} pair {order.pair} is unsupported")
@@ -923,7 +968,13 @@ def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, Ri
         if quote_to_jpy is None:
             return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"missing conversion quote for pending order {order.order_id}")
         side = Side.LONG if order.units > 0 else Side.SHORT
-        if side == Side.LONG:
+        sl = _raw_dependent_price(order.raw, "stopLossOnFill")
+        if sl is None:
+            if _trader_sl_repair_disabled():
+                loss_pips = SL_FREE_SYNTHETIC_RISK_PIPS
+            else:
+                return 0.0, 0.0, RiskIssue("PENDING_RISK_UNKNOWN", f"pending order {order.order_id} has no stopLossOnFill")
+        elif side == Side.LONG:
             loss_pips = (order.price - sl) * spec.pip_factor
         else:
             loss_pips = (sl - order.price) * spec.pip_factor
@@ -941,10 +992,6 @@ def _pending_risk_margin_jpy(snapshot: BrokerSnapshot) -> tuple[float, float, Ri
 def _open_trader_position_risk_jpy(snapshot: BrokerSnapshot) -> tuple[float, RiskIssue | None]:
     risk = 0.0
     sl_free_active = _trader_sl_repair_disabled()
-    # Synthetic SL distance for trader-owned SL-free positions (basket math).
-    # Mirror the value used in `risk._open_portfolio_risk_jpy` so basket and
-    # portfolio gates see the same number.
-    SL_FREE_SYNTHETIC_PIPS = 30.0
     for position in snapshot.positions:
         if position.owner != Owner.TRADER:
             continue
@@ -956,7 +1003,7 @@ def _open_trader_position_risk_jpy(snapshot: BrokerSnapshot) -> tuple[float, Ris
             return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"missing conversion quote for position {position.trade_id}")
         if position.stop_loss is None:
             if sl_free_active:
-                loss_pips = SL_FREE_SYNTHETIC_PIPS
+                loss_pips = SL_FREE_SYNTHETIC_RISK_PIPS
             else:
                 return 0.0, RiskIssue("BASKET_OPEN_RISK_UNKNOWN", f"trader position {position.trade_id} has no SL")
         else:

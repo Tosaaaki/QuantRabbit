@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from typing import Any
 
 import quant_rabbit.broker.execution as execution_module
 from quant_rabbit.broker.execution import LiveOrderGateway
-from quant_rabbit.models import AccountSummary, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.risk import OANDA_JP_RETAIL_FX_MARGIN_RATE
 
 
@@ -253,6 +254,43 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
         self.assertEqual(scaled, 1153)
         self.assertEqual(issues, [])
+
+    def test_score_size_multiple_keeps_min_lot_floor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=_intents(root),
+                lane_ids=("lane:EUR_USD:LONG",),
+                size_multiples={"lane:EUR_USD:LONG": 0.95},
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            order_result = payload["orders"][0]
+            self.assertEqual(order_result["requested_units"], 1000)
+            self.assertEqual(order_result["scaled_units"], 1000)
+            self.assertEqual(order_result["order_request"]["units"], "1000")
+            issue_codes = {issue["code"] for issue in order_result["risk_issues"]}
+            self.assertIn("SIZE_MULTIPLE_CLAMPED_TO_MIN_LOT", issue_codes)
+            self.assertNotIn("MIN_LOT_VIOLATION", issue_codes)
+
+    def test_capacity_downsize_below_min_lot_blocks_lane(self) -> None:
+        scaled, issues = execution_module._scaled_units(
+            1000,
+            0.95,
+            sub_min_lot_mode="block",
+        )
+
+        self.assertIsNone(scaled)
+        self.assertEqual(["BASKET_CAPACITY_BELOW_MIN_LOT"], [issue.code for issue in issues])
 
     def test_portfolio_position_cap_scales_with_target_trade_pace(self) -> None:
         execution_module._target_trades_per_day_from_state = lambda path=None: 12
@@ -587,6 +625,66 @@ class LiveOrderGatewayTest(unittest.TestCase):
             result = json.loads((root / "request.json").read_text())
             self.assertIsNone(result["order_request"])
             self.assertIn("ORDER_REQUEST_INVALID", {issue["code"] for issue in result["risk_issues"]})
+
+    def test_sl_free_pending_order_without_broker_sl_has_synthetic_basket_risk(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_initial_sl = os.environ.get("QR_NEW_ENTRY_INITIAL_SL")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                client.snapshot_value = BrokerSnapshot(
+                    fetched_at_utc=client.snapshot_value.fetched_at_utc,
+                    positions=(),
+                    orders=(
+                        BrokerOrder(
+                            order_id="471248",
+                            pair="EUR_USD",
+                            order_type="LIMIT",
+                            price=1.16512,
+                            units=1000,
+                            owner=Owner.TRADER,
+                            raw={
+                                "id": "471248",
+                                "instrument": "EUR_USD",
+                                "type": "LIMIT_ORDER",
+                                "price": "1.16512",
+                                "units": "1000",
+                                "takeProfitOnFill": {"price": "1.16826"},
+                            },
+                        ),
+                    ),
+                    quotes=client.snapshot_value.quotes,
+                    account=client.snapshot_value.account,
+                )
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run_batch(
+                    intents_path=_intents(root),
+                    lane_ids=("lane:EUR_USD:LONG",),
+                )
+
+                self.assertEqual(summary.status, "STAGED")
+                payload = json.loads((root / "request.json").read_text())
+                issue_codes = {issue["code"] for issue in payload["risk_issues"]}
+                self.assertNotIn("PENDING_RISK_UNKNOWN", issue_codes)
+                self.assertNotIn("stopLossOnFill", payload["orders"][0]["order_request"])
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_initial_sl is None:
+                os.environ.pop("QR_NEW_ENTRY_INITIAL_SL", None)
+            else:
+                os.environ["QR_NEW_ENTRY_INITIAL_SL"] = prior_initial_sl
 
 
 class FakeExecutionClient:
