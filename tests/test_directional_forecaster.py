@@ -211,6 +211,58 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "UP")
         self.assertIn("countertrend UP allowed", forecast.rationale_summary)
 
+    def test_score_momentum_and_market_location_allow_early_turn_forecast(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "SHORT_LEAN",
+                "score_gap": -0.30,
+                "tf_agreement_score": 1.0,
+                "dominant_regime": "TREND_DOWN",
+                "price_percentile_24h": 0.04,
+                "price_percentile_7d": 0.06,
+                "score_momentum": {
+                    "direction": "UP",
+                    "elapsed_min": 60.0,
+                    "long_score_delta": 0.24,
+                    "short_score_delta": -0.26,
+                    "score_gap_delta": 0.40,
+                    "score_gap_slope_per_hour": 0.40,
+                    "previous_score_gap": -0.70,
+                    "current_score_gap": -0.30,
+                },
+            },
+            "views": [
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 32.0},
+                    "structure": {"structure_events": []},
+                },
+                {
+                    "granularity": "H4",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 31.0},
+                    "structure": {"structure_events": []},
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[_Sig("UP", 20.0, 1.0, "fresh lower sweep")],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.up_score, forecast.down_score)
+        self.assertIn("score momentum", " ".join(forecast.drivers_for))
+        self.assertIn("market location", " ".join(forecast.drivers_for))
+        self.assertIn("score momentum gap", forecast.rationale_summary)
+
     def test_forecast_calibration_prefers_direction_specific_history(self) -> None:
         hit_rates = {
             "directional_forecast": {

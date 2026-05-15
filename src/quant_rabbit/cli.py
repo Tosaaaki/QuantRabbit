@@ -1006,6 +1006,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "pair-charts":
         from quant_rabbit.analysis.chart_reader import build_pair_chart
+        from quant_rabbit.analysis.score_momentum import attach_score_momentum
 
         pairs = [part.strip().upper() for part in args.pairs.split(",") if part.strip()]
         timeframes = tuple(part.strip().upper() for part in args.timeframes.split(",") if part.strip())
@@ -1022,6 +1023,13 @@ def main(argv: list[str] | None = None) -> int:
 
         generated_at = datetime.now(timezone.utc).isoformat()
         chart_payloads = [chart.to_dict() for chart in charts]
+        previous_pair_charts = None
+        if args.output and args.output.exists():
+            try:
+                previous_pair_charts = json.loads(args.output.read_text())
+            except (OSError, json.JSONDecodeError, ValueError):
+                previous_pair_charts = None
+        attach_score_momentum(chart_payloads, previous_pair_charts, generated_at)
         chart_payloads.sort(key=lambda c: max(c["long_score"], c["short_score"]), reverse=True)
         output_payload = {
             "generated_at_utc": generated_at,
@@ -1044,20 +1052,30 @@ def main(argv: list[str] | None = None) -> int:
                 "",
                 "## Pair Score Table",
                 "",
-                "| Pair | Side | Long | Short | Regime | Story |",
-                "|---|---|---|---|---|---|",
+                "| Pair | Side | Long | Short | Momentum | Regime | Story |",
+                "|---|---|---|---|---|---|---|",
             ]
             for c in chart_payloads:
                 side = "LONG" if c["long_score"] >= c["short_score"] else "SHORT"
                 story = c["chart_story"].replace("|", "/")
+                confluence = c.get("confluence") if isinstance(c.get("confluence"), dict) else {}
+                momentum = (confluence or {}).get("score_momentum") if isinstance((confluence or {}).get("score_momentum"), dict) else {}
+                momentum_cell = "-"
+                if momentum:
+                    momentum_cell = (
+                        f"{momentum.get('direction', 'FLAT')} "
+                        f"gapΔ={float(momentum.get('score_gap_delta', 0.0)):+.3f}/"
+                        f"{float(momentum.get('elapsed_min', 0.0)):.0f}m"
+                    )
                 lines.append(
-                    f"| `{c['pair']}` | `{side}` | `{c['long_score']:.3f}` | `{c['short_score']:.3f}` | `{c['dominant_regime']}` | {story} |"
+                    f"| `{c['pair']}` | `{side}` | `{c['long_score']:.3f}` | `{c['short_score']:.3f}` | `{momentum_cell}` | `{c['dominant_regime']}` | {story} |"
                 )
             lines.extend([
                 "",
                 "## How To Read",
                 "",
                 "- Long/Short scores are 0..1 indicator-agreement values weighted by timeframe (D>H4>H1>M30>M15>M5>M1).",
+                "- Momentum is the previous-snapshot slope of long-short score_gap; UP means the chart's evidence is rotating toward long, even if the current score still leans short.",
                 "- A high score is a *signal of where the chart leans*, not an order. The trader still chooses.",
                 "- Regime is the dominant tag across timeframes (TREND_UP/DOWN, RANGE, IMPULSE_UP/DOWN, FAILURE_RISK, UNCLEAR).",
                 "- Pairs are sorted by max(long, short); the top entries are where edges line up.",
@@ -1070,7 +1088,8 @@ def main(argv: list[str] | None = None) -> int:
             "pairs": len(charts),
             "top": [
                 {"pair": c["pair"], "side": "LONG" if c["long_score"] >= c["short_score"] else "SHORT",
-                 "long": round(c["long_score"], 3), "short": round(c["short_score"], 3), "regime": c["dominant_regime"]}
+                 "long": round(c["long_score"], 3), "short": round(c["short_score"], 3), "regime": c["dominant_regime"],
+                 "momentum": ((c.get("confluence") or {}).get("score_momentum") or {}).get("direction")}
                 for c in chart_payloads[:5]
             ],
         }, ensure_ascii=False, indent=2, sort_keys=True))

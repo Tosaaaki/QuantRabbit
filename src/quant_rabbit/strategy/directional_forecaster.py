@@ -68,6 +68,12 @@ RANGE_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_RANGE_PERSISTENCE", "
 # should be a prior that reversal/short-term patterns must overcome.
 FORECAST_SCORE_GAP_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_SCORE_GAP_PRIOR_GAIN", "35.0"))
 FORECAST_SCORE_GAP_PRIOR_CAP = float(os.environ.get("QR_FORECAST_SCORE_GAP_PRIOR_CAP", "30.0"))
+FORECAST_SCORE_MOMENTUM_MIN_DELTA = float(os.environ.get("QR_FORECAST_SCORE_MOMENTUM_MIN_DELTA", "0.08"))
+FORECAST_SCORE_MOMENTUM_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_SCORE_MOMENTUM_PRIOR_GAIN", "50.0"))
+FORECAST_SCORE_MOMENTUM_PRIOR_CAP = float(os.environ.get("QR_FORECAST_SCORE_MOMENTUM_PRIOR_CAP", "24.0"))
+FORECAST_MARKET_LOCATION_EXTREME = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_EXTREME", "0.15"))
+FORECAST_MARKET_LOCATION_PRIOR_BASE = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_PRIOR_BASE", "5.0"))
+FORECAST_MARKET_LOCATION_PRIOR_CAP = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_PRIOR_CAP", "12.0"))
 FORECAST_HTF_TREND_PRIOR_PER_TF = float(os.environ.get("QR_FORECAST_HTF_TREND_PRIOR_PER_TF", "12.0"))
 FORECAST_STRONG_ADX = float(os.environ.get("QR_FORECAST_STRONG_ADX", "25.0"))
 FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
@@ -289,6 +295,92 @@ def _regime_direction(regime: object) -> str | None:
     return None
 
 
+def _score_momentum_prior(confluence: Dict[str, Any]) -> tuple[str, float, str] | None:
+    momentum = confluence.get("score_momentum")
+    if not isinstance(momentum, dict):
+        return None
+    gap_delta = _to_float(momentum.get("score_gap_delta"))
+    if gap_delta is None or abs(gap_delta) < FORECAST_SCORE_MOMENTUM_MIN_DELTA:
+        return None
+    direction = "UP" if gap_delta > 0 else "DOWN"
+    magnitude = min(FORECAST_SCORE_MOMENTUM_PRIOR_CAP, abs(gap_delta) * FORECAST_SCORE_MOMENTUM_PRIOR_GAIN)
+    if magnitude <= 0:
+        return None
+    long_delta = _to_float(momentum.get("long_score_delta"))
+    short_delta = _to_float(momentum.get("short_score_delta"))
+    slope = _to_float(momentum.get("score_gap_slope_per_hour"))
+    elapsed = _to_float(momentum.get("elapsed_min"))
+    details: list[str] = [f"gapΔ={gap_delta:+.3f}"]
+    if long_delta is not None and short_delta is not None:
+        details.append(f"longΔ={long_delta:+.3f} shortΔ={short_delta:+.3f}")
+    if slope is not None:
+        details.append(f"slope/h={slope:+.3f}")
+    if elapsed is not None:
+        details.append(f"{elapsed:.0f}m")
+    return (
+        direction,
+        magnitude,
+        f"pair_chart score momentum {' '.join(details)} → {direction} turn prior {magnitude:.1f}",
+    )
+
+
+def _market_location_priors(confluence: Dict[str, Any]) -> list[tuple[str, float, str]]:
+    """Convert broad chart location into a small directional prior.
+
+    Location is not a standalone entry trigger. It answers "where are we in the
+    story?" so a late short at the 24h/7d floor or a late long at the ceiling is
+    penalized by the opposing side's forecast evidence.
+    """
+    p24 = _to_float(confluence.get("price_percentile_24h"))
+    p7 = _to_float(confluence.get("price_percentile_7d"))
+    sigma = _to_float(confluence.get("range_24h_sigma_multiple"))
+    priors: list[tuple[str, float, str]] = []
+
+    def _location_prior(direction: str, strength: float, labels: list[str]) -> None:
+        if strength <= 0:
+            return
+        sigma_boost = 0.0
+        if sigma is not None and sigma >= 3.0:
+            sigma_boost = 0.2
+            labels.append(f"24h_range={sigma:.2f}x")
+        strength = min(1.0, strength + sigma_boost)
+        magnitude = min(
+            FORECAST_MARKET_LOCATION_PRIOR_CAP,
+            FORECAST_MARKET_LOCATION_PRIOR_BASE
+            + strength * (FORECAST_MARKET_LOCATION_PRIOR_CAP - FORECAST_MARKET_LOCATION_PRIOR_BASE),
+        )
+        priors.append(
+            (
+                direction,
+                magnitude,
+                f"market location {' '.join(labels)} → {direction} location prior {magnitude:.1f}",
+            )
+        )
+
+    lower_strength = 0.0
+    lower_labels: list[str] = []
+    if p24 is not None and p24 <= FORECAST_MARKET_LOCATION_EXTREME:
+        lower_strength = max(lower_strength, (FORECAST_MARKET_LOCATION_EXTREME - p24) / FORECAST_MARKET_LOCATION_EXTREME)
+        lower_labels.append(f"24h_pct={p24:.2f}")
+    if p7 is not None and p7 <= FORECAST_MARKET_LOCATION_EXTREME:
+        lower_strength = max(lower_strength, (FORECAST_MARKET_LOCATION_EXTREME - p7) / FORECAST_MARKET_LOCATION_EXTREME)
+        lower_labels.append(f"7d_pct={p7:.2f}")
+    _location_prior("UP", lower_strength, lower_labels)
+
+    upper_strength = 0.0
+    upper_labels: list[str] = []
+    upper_cutoff = 1.0 - FORECAST_MARKET_LOCATION_EXTREME
+    if p24 is not None and p24 >= upper_cutoff:
+        upper_strength = max(upper_strength, (p24 - upper_cutoff) / FORECAST_MARKET_LOCATION_EXTREME)
+        upper_labels.append(f"24h_pct={p24:.2f}")
+    if p7 is not None and p7 >= upper_cutoff:
+        upper_strength = max(upper_strength, (p7 - upper_cutoff) / FORECAST_MARKET_LOCATION_EXTREME)
+        upper_labels.append(f"7d_pct={p7:.2f}")
+    _location_prior("DOWN", upper_strength, upper_labels)
+
+    return priors
+
+
 def _pair_chart_prior(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]]:
     """Turn the multi-timeframe indicator panel into forecast priors.
 
@@ -312,6 +404,12 @@ def _pair_chart_prior(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]
                     f"pair_chart {balance} score_gap={score_gap:.3f} → {direction} prior {magnitude:.1f}",
                 )
             )
+
+    momentum_prior = _score_momentum_prior(confluence)
+    if momentum_prior is not None:
+        priors.append(momentum_prior)
+
+    priors.extend(_market_location_priors(confluence))
 
     for tf in ("H1", "H4"):
         view = _view_by_tf(pair_chart, tf)
@@ -364,6 +462,37 @@ def _latest_close_confirmed_structure_direction(view: Dict[str, Any] | None) -> 
     return latest[1] if latest is not None else None
 
 
+def _score_reversal_location_confirmation(pair_chart: Dict[str, Any], direction: str) -> str | None:
+    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
+    momentum = (confluence or {}).get("score_momentum") if isinstance((confluence or {}).get("score_momentum"), dict) else {}
+    gap_delta = _to_float((momentum or {}).get("score_gap_delta"))
+    if gap_delta is None:
+        return None
+
+    p24 = _to_float((confluence or {}).get("price_percentile_24h"))
+    p7 = _to_float((confluence or {}).get("price_percentile_7d"))
+    lower_extreme = (
+        (p24 is not None and p24 <= FORECAST_MARKET_LOCATION_EXTREME)
+        or (p7 is not None and p7 <= FORECAST_MARKET_LOCATION_EXTREME)
+    )
+    upper_extreme = (
+        (p24 is not None and p24 >= 1.0 - FORECAST_MARKET_LOCATION_EXTREME)
+        or (p7 is not None and p7 >= 1.0 - FORECAST_MARKET_LOCATION_EXTREME)
+    )
+    min_confirmation_delta = max(FORECAST_SCORE_MOMENTUM_MIN_DELTA * 2.5, 0.2)
+    if direction == "UP" and gap_delta >= min_confirmation_delta and lower_extreme:
+        return (
+            f"countertrend UP allowed: score momentum gapΔ={gap_delta:+.3f} from lower market location "
+            f"24h_pct={p24} 7d_pct={p7}"
+        )
+    if direction == "DOWN" and gap_delta <= -min_confirmation_delta and upper_extreme:
+        return (
+            f"countertrend DOWN allowed: score momentum gapΔ={gap_delta:+.3f} from upper market location "
+            f"24h_pct={p24} 7d_pct={p7}"
+        )
+    return None
+
+
 def _countertrend_adjustment(
     pair_chart: Dict[str, Any],
     winner: str,
@@ -387,6 +516,9 @@ def _countertrend_adjustment(
             f"countertrend {winner} allowed: M15/H1 close-confirmed structure offsets "
             f"{balance} score_gap={score_gap:.3f}"
         )
+    score_reversal_reason = _score_reversal_location_confirmation(pair_chart, winner)
+    if score_reversal_reason:
+        return winner_score, score_reversal_reason
     adjusted = winner_score * FORECAST_COUNTERTREND_UNCONFIRMED_MULT
     return adjusted, (
         f"countertrend {winner} damped {winner_score:.1f}→{adjusted:.1f}: "
