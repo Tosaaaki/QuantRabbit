@@ -95,26 +95,28 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 ## 4. Product Goal
 
 - Build an autonomous professional FX trader where the operator (Codex or Claude) reasons, compares evidence, and chooses trades through executable system contracts.
-- The completion target is a trader that can pursue **10 % of that day's starting equity as daily profit** without bypassing risk gates.
-- Treat the 10 % daily target as a mandatory product KPI, campaign metric, backtest / live-simulation benchmark, and risk-bounded execution objective.
-- Track **5 % of that day's starting equity as the same-day minimum progress floor**. The 5 % floor does not replace the 10 % target and does not guarantee returns; it makes the daily campaign visibly accountable before the final 10 % objective is reached.
-- If the system cannot reach 10 % in evidence review, backtests, simulation, or live dry-runs, treat the gap as a product blocker and improve strategy, timing, risk geometry, or execution quality.
-- **Never describe the 10 % daily target as a guaranteed return**, and never use it as permission to bypass broker truth, protection, or risk validation.
+- The completion target is a trader that can deliver a **5 % guaranteed same-day profit floor** and pursue **10 % of that day's starting equity as an attainable daily profit objective** without bypassing broker truth, protection, or risk gates.
+- Treat the 5 % floor as the mandatory daily guarantee in the product contract. The system must plan, size, sequence entries, rebalance TP, and cut wrong-direction exposure so that at least 5 % of starting equity is banked within the same trading day.
+- A miss of the 5 % guaranteed floor is not acceptable drift. It is a product / strategy incident that requires a gap report, root-cause analysis, and immediate repair of forecast, timing, range-width recognition, TP capture, stop discipline, sizing, execution cost, or opportunity coverage.
+- Treat the 10 % daily target as an attainable stretch objective: mandatory as a product KPI, campaign metric, backtest / live-simulation benchmark, and risk-bounded execution objective, but not a promise that overrides the 5 % guarantee or risk validation.
+- If the system cannot show a credible route to 10 % in evidence review, backtests, simulation, or live dry-runs, treat the gap as a product blocker and improve strategy, timing, risk geometry, or execution quality.
+- Do not call the 10 % target guaranteed. The 5 % guarantee is a system obligation and audit contract, not permission to lie about broker truth, overfit receipts, hide losses, or bypass live-risk validation.
 - The trader must behave like a professional: wait when edge is absent, size from risk geometry, protect exposure, and explain decisions in receipts.
 
 ---
 
-## 5. Daily 10 % Campaign
+## 5. Daily 5 % Guarantee / 10 % Campaign
 
-- Each trading day starts with a recorded starting equity and a target profit equal to 10 % of that starting equity.
-- `daily-target-state` must also record the 5 % minimum floor (`minimum_target_jpy`, `remaining_minimum_jpy`, `minimum_progress_pct`) from the same starting equity, without JPY literals or stale persistence.
+- Each trading day starts with a recorded starting equity, a guaranteed minimum profit equal to 5 % of that starting equity, and an attainable target profit equal to 10 % of that starting equity.
+- `daily-target-state` must record both the guaranteed 5 % floor (`minimum_target_jpy`, `remaining_minimum_jpy`, `minimum_progress_pct`) and the 10 % target (`target_profit_jpy`, `remaining_target_jpy`, `progress_pct`) from the same starting equity, without JPY literals or stale persistence.
 - Starting equity is sourced from the latest broker snapshot via `daily-target-state` (OANDA `/v3/accounts/{id}/summary` → `balance`). Do **not** hardcode JPY figures.
-- Campaign planning translates the 10 % target into candidate lanes, required reward / risk, maximum acceptable loss, and exposure budget.
-- The system is not complete while it merely avoids bad trades — it must actively search for valid high-quality opportunities capable of reaching the daily target.
+- Campaign planning first satisfies the 5 % guarantee, then extends toward the attainable 10 % target. Candidate lanes, required reward / risk, maximum acceptable loss, exposure budget, TP rebalance, and exit urgency must all cite which layer they serve: `GUARANTEE_5` or `TARGET_10`.
+- The system is not complete while it merely avoids bad trades — it must actively search for valid high-quality opportunities capable of securing the 5 % guarantee and then reaching the 10 % target.
 - Campaign pressure must become **bounded execution behavior**: better timing, better filtering, stronger confluence, clearer invalidation, disciplined sizing.
 - The first prediction question each cycle is: is today's next exploitable state directional, or is it a range with enough executable width? A `RANGE` forecast is not a no-trade state by itself; it can authorize `RANGE_ROTATION` only when range rails, TP-inside-box, and SL-outside-box geometry are present. Directional methods must still align with the pair-level forecast.
-- **Campaign exposure occupancy.** While `daily_target_state.json` is `PURSUE_TARGET` with `remaining_target_jpy > 0`, if no trader-owned position is active and at least one current `LIVE_READY` lane survives deterministic prefiltering, the cycle must not end as flat WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE. Existing trader-owned pending entries must be counted through basket risk/margin/geometry validation; they satisfy occupancy only when basket capacity or duplicate/stale-pending gates block every additional lane. Manual/tagless operator exposure does not satisfy this occupancy requirement and does not block it.
-- When the 10 % target is missed, produce a gap report (missed setup, blocked trade, market absence, risk rejection, execution cost, timing error, or strategy weakness).
+- **Campaign exposure occupancy.** While `daily_target_state.json` is `PURSUE_TARGET` with either `remaining_minimum_jpy > 0` or `remaining_target_jpy > 0`, if no trader-owned position is active and at least one current `LIVE_READY` lane survives deterministic prefiltering, the cycle must not end as flat WAIT / REQUEST_EVIDENCE / discretionary NO_TRADE. Existing trader-owned pending entries must be counted through basket risk/margin/geometry validation; they satisfy occupancy only when basket capacity or duplicate/stale-pending gates block every additional lane. Manual/tagless operator exposure does not satisfy this occupancy requirement and does not block it.
+- Profit capture discipline changes by layer. Before the 5 % guarantee is secured, valid winners must be converted into realized progress aggressively when the next forecast weakens, range rail is reached, or reward / risk has compressed. After the 5 % guarantee is secured, the trader may continue toward 10 % with protection-first behavior and tighter giveback control.
+- When the 5 % guarantee is missed, produce a same-day guarantee gap report (missed setup, wrong directional forecast, range-width misread, premature TP, late TP, delayed stop, blocked trade, market absence, risk rejection, execution cost, timing error, or strategy weakness). When the 10 % target is missed after the 5 % guarantee is secured, produce a target-extension gap report.
 - Reaching the daily target triggers **protection-first** behavior; do not keep adding risk just because more trades are possible. Trader-owned pending entry orders are canceled rather than left fillable after the target is reached.
 
 ---
@@ -149,7 +151,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Every live order intent includes: entry, TP, SL, worst-case JPY loss, reward / risk, spread, owner, units, lane id.
 - Every executable lane includes: thesis, method, narrative, chart story, invalidation, TP, SL, units.
 - Do **not** reduce entry selection to a single score threshold.
-- Daily 10 % campaign planning is a target ledger, not permission to force weak trades or exceed risk gates.
+- Daily 5 % guarantee / 10 % campaign planning is a target ledger, not permission to force weak trades or exceed risk gates.
 
 ---
 
@@ -288,7 +290,7 @@ If both contributed in the same commit, include both lines.
 - Document the live-risk failure mode for accepted rebuild components.
 - Preserve dry-run receipt paths for new execution features.
 - **No live side effect unless explicitly enabled.**
-- Never promise guaranteed returns; convert campaign pressure into bounded, testable execution behavior.
+- Never promise market-guaranteed returns. Encode the 5 % guarantee as a system obligation, audit ledger, incident trigger, and bounded, testable execution behavior.
 
 ---
 
