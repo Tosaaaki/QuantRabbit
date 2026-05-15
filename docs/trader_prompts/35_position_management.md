@@ -35,7 +35,7 @@
 CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
 SL-free the per-trade risk number is advisory; market structure is authoritative.
 
-### Valid CLOSE triggers (any one is sufficient)
+### Valid CLOSE triggers (machine-checkable Gate A)
 
 - **Structure-event invalidation (§10 Gate A — primary)**: M15 OR H4 prints BOS
   or CHOCH against the position side (LONG → counter-direction is DOWN, SHORT →
@@ -56,18 +56,11 @@ SL-free the per-trade risk number is advisory; market structure is authoritative
 - **Invalidation-price hit (§10 Gate A — receipt-driven)**: receipt populates
   `invalidation_price` + `invalidation_tf` AND broker bid/ask trades through
   the level (LONG: bid ≤ level, SHORT: ask ≥ level). Cite the level + TF.
-- **Macro shock**: news event (intervention, FOMC, NFP gap, geopolitical) invalidates
-  the pair thesis. Cite the news_digest line in evidence_refs.
-- **Structural margin pressure**: closing this position is the only way to free
-  margin so the portfolio can keep capturing better setups. Trigger when
-  `margin_available_jpy` is below the `MIN_PRODUCTION_LOT_UNITS` floor for
-  every fresh `LIVE_READY` lane (i.e. the basket cannot add a single 1000u
-  entry without freeing capital). Quantify the margin trade-off in receipt.
-- **Loss > NAV 5%** (≈11k JPY at current equity): structural collapse territory per
-  `feedback_independent_judgment.md`. Operator may CLOSE to cap damage.
 
-All five triggers are anchored on broker-truth / chart-reader fields, not on
-JPY/pip/multiplier literals (§3.5-compliant). Gate B still requires
+Macro shock, large unrealized loss, or margin pressure can strengthen the
+reason to review a thesis, but none of them is a standalone Gate A. Convert the
+concern into one of the two machine-checkable triggers above, or WAIT. Gate B
+still requires
 operator-controlled authorization: `QR_OPERATOR_CLOSE_OVERRIDE=1` in the
 operator shell, or a fresh `data/.operator_close_token` file. The receipt's
 `operator_close_authorized` field is advisory audit text only and is not
@@ -77,6 +70,17 @@ accepted as authorization.
 
 - `unrealized_pl_jpy < -per_trade_risk_budget_jpy` — under SL-free this is **advisory
   only**, not a hard close gate. -1,000 JPY ≈ 0.4% NAV is noise.
+- **Margin pressure is not a CLOSE trigger.** Thin `margin_available_jpy`
+  blocks new entries, cancels stale pending risk, and forces smaller future
+  baskets. It does **not** authorize closing a directionally valid position.
+  A professional trader sizes so the broker never decides; once a position
+  exists, CLOSE still needs Gate A thesis invalidation plus Gate B operator
+  authorization.
+- `Loss > NAV 5%` by itself — large drawdown is an incident and requires review,
+  but it is not a machine-checkable thesis invalidation unless structure or an
+  explicit invalidation price confirms the thesis is wrong.
+- Macro/news shock by itself — cite it as context, but still express the thesis
+  break through structure or a broker-truth invalidation level.
 - `chart_aggregate.long_score > short_score` (or vice versa) on its own — long/short
   scores aggregate per-TF reads but a single noise flip on M5/M1 can move them.
   Look at H4/H1/M30 directly before acting on aggregate.

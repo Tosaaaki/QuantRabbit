@@ -57,6 +57,19 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertNotIn("operator-authorize-close", text)
             self.assertNotIn("operator_close_authorized=true` or", text)
 
+    def test_position_prompt_does_not_allow_margin_pressure_close(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        prompt = (repo / "docs" / "trader_prompts" / "35_position_management.md").read_text()
+        contract = (repo / "docs" / "AGENT_CONTRACT.md").read_text()
+
+        for text in (prompt, contract):
+            self.assertIn("Margin pressure is not a CLOSE trigger", text)
+        self.assertIn("blocks new entries", prompt)
+        self.assertIn("cancel", prompt)
+        self.assertIn("CLOSE still needs", prompt)
+        self.assertNotIn("Structural margin pressure", prompt)
+        self.assertNotIn("All five triggers", prompt)
+
     def test_accepts_batch_trade_when_selected_lanes_are_live_ready_and_cited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
