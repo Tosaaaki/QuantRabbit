@@ -11,10 +11,12 @@ to `data/projection_ledger.jsonl` at emission time with:
 - resolution_status = "PENDING" initially
 
 After the resolution window elapses, `verify_pending_projections()`
-checks each PENDING entry against price truth (current OANDA bid/ask):
-- "UP" direction → did high since emission exceed entry by ≥ ATR_pips × 0.5?
-- "DOWN" → did low go below by ≥ same?
-- "EITHER" → did volatility expand (range ≥ 1.5× pre-emission range)?
+checks each PENDING entry against price truth. Prefer the M1 candle path
+covering the emitted→expiry window, so a target that was reached and then
+mean-reverted is still counted correctly:
+- "UP" direction → did window high exceed entry by ≥ ATR_pips × 0.5?
+- "DOWN" → did window low go below by ≥ same?
+- "EITHER" → did the window range expand by the same ATR-based threshold?
 - For liquidity_sweep: did price reach the predicted target?
 
 Resolved entries get tagged HIT / MISS / TIMEOUT. Rolling hit-rate per
@@ -37,9 +39,11 @@ import json
 import math
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from quant_rabbit.instruments import instrument_pip_factor
 
 
 LEDGER_FILENAME = "projection_ledger.jsonl"
@@ -72,6 +76,7 @@ class LedgerEntry:
     # from the same detector in RANGE regimes — bucketing the calibration
     # by regime makes the multiplier much more accurate.
     regime_at_emission: Optional[str] = None  # "TREND" | "RANGE" | "REVERSAL_RISK" | "UNCLEAR" | None
+    cycle_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -89,6 +94,7 @@ class LedgerEntry:
             "resolution_evidence": self.resolution_evidence,
             "pre_emission_range_pips": self.pre_emission_range_pips,
             "regime_at_emission": self.regime_at_emission,
+            "cycle_id": self.cycle_id,
         }
 
     @classmethod
@@ -108,6 +114,7 @@ class LedgerEntry:
             resolution_evidence=str(d.get("resolution_evidence", "")),
             pre_emission_range_pips=d.get("pre_emission_range_pips"),
             regime_at_emission=d.get("regime_at_emission"),
+            cycle_id=d.get("cycle_id"),
         )
 
 
@@ -123,14 +130,16 @@ def record_projections(
     data_root: Path,
     pre_emission_range_pips: Optional[float] = None,
     regime_at_emission: Optional[str] = None,
+    cycle_id: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> int:
     """Append all signals to the ledger. Returns count written.
 
-    Idempotency: this is APPEND-ONLY. Duplicate writes are tolerated
-    because verifier picks up by timestamp + signal_name + pair. To
-    keep file size bounded, callers can periodically truncate to last
-    N days externally.
+    Idempotency: when `cycle_id` is supplied, a signal with the same
+    cycle/pair/name/direction/entry/target is written only once. The
+    trader brain scores multiple candidate lanes per pair; without this
+    key, one market prediction is counted repeatedly and corrupts hit-rate
+    calibration.
     """
     if not signals:
         return 0
@@ -139,11 +148,22 @@ def record_projections(
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     written = 0
+    seen_keys = _existing_projection_keys(data_root, cycle_id=cycle_id, pair=pair) if cycle_id else set()
     with path.open("a", encoding="utf-8") as f:
         for s in signals:
             # Liquidity sweep signals carry an implied target price in
             # the rationale; capture it heuristically when present.
             target_price = _extract_target_price_from_rationale(getattr(s, "rationale", ""))
+            key = _projection_key(
+                cycle_id=cycle_id,
+                pair=pair,
+                signal_name=getattr(s, "name", "?"),
+                direction=getattr(s, "direction", "?"),
+                entry_price=current_price,
+                target_price=target_price,
+            )
+            if cycle_id and key in seen_keys:
+                continue
             entry = LedgerEntry(
                 timestamp_emitted_utc=ts,
                 pair=pair,
@@ -157,10 +177,60 @@ def record_projections(
                 resolution_status="PENDING",
                 pre_emission_range_pips=pre_emission_range_pips,
                 regime_at_emission=regime_at_emission,
+                cycle_id=cycle_id,
             )
             f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+            seen_keys.add(key)
             written += 1
     return written
+
+
+def _projection_key(
+    *,
+    cycle_id: Optional[str],
+    pair: str,
+    signal_name: str,
+    direction: str,
+    entry_price: Optional[float],
+    target_price: Optional[float],
+) -> tuple:
+    return (
+        cycle_id,
+        pair,
+        signal_name,
+        direction,
+        _round_key_price(entry_price),
+        _round_key_price(target_price),
+    )
+
+
+def _round_key_price(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return round(float(value), 8)
+    except (TypeError, ValueError):
+        return None
+
+
+def _existing_projection_keys(data_root: Path, *, cycle_id: Optional[str], pair: str) -> set[tuple]:
+    if not cycle_id:
+        return set()
+    keys: set[tuple] = set()
+    for entry in load_ledger(data_root):
+        if entry.cycle_id != cycle_id or entry.pair != pair:
+            continue
+        keys.add(
+            _projection_key(
+                cycle_id=entry.cycle_id,
+                pair=entry.pair,
+                signal_name=entry.signal_name,
+                direction=entry.direction,
+                entry_price=entry.entry_price,
+                target_price=entry.predicted_target_price,
+            )
+        )
+    return keys
 
 
 def _extract_target_price_from_rationale(rationale: str) -> Optional[float]:
@@ -208,13 +278,17 @@ def write_ledger(entries: List[LedgerEntry], data_root: Path) -> None:
 def verify_pending(
     data_root: Path,
     *,
-    quotes_by_pair: Dict[str, Dict[str, float]],
+    quotes_by_pair: Optional[Dict[str, Dict[str, float]]] = None,
     atr_pips_by_pair: Optional[Dict[str, float]] = None,
+    candles_by_pair: Optional[Dict[str, List[Any]]] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, int]:
     """Walk PENDING ledger entries; resolve those past their window.
 
-    `quotes_by_pair`: {pair: {"bid": float, "ask": float}}.
+    `candles_by_pair`: {pair: [M1 Candle-like]} is preferred and resolves
+    against the high/low path inside the resolution window.
+    `quotes_by_pair`: {pair: {"bid": float, "ask": float}} is a legacy
+    fallback when the caller has not supplied historical candle truth.
     `atr_pips_by_pair`: optional per-pair ATR pips for EITHER signal
     expansion check.
 
@@ -225,6 +299,7 @@ def verify_pending(
     if not entries:
         return {"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0}
 
+    quotes_by_pair = quotes_by_pair or {}
     atr_pips_by_pair = atr_pips_by_pair or {}
     counts = {"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0}
     for e in entries:
@@ -238,70 +313,205 @@ def verify_pending(
         if elapsed_min < e.resolution_window_min:
             counts["PENDING"] += 1
             continue
-        # Past the window — try to resolve
-        quote = quotes_by_pair.get(e.pair)
-        if not quote:
+
+        expires_at = emitted_at + timedelta(minutes=e.resolution_window_min)
+        price_path = _price_path_for_entry(e, emitted_at=emitted_at, expires_at=expires_at, candles_by_pair=candles_by_pair)
+        if price_path is None:
+            if candles_by_pair is not None:
+                e.resolution_status = "TIMEOUT"
+                e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                e.resolution_evidence = "no M1 candle truth for projection window"
+                counts["TIMEOUT"] += 1
+                continue
+            price_path = _quote_point_path(e, quotes_by_pair=quotes_by_pair)
+        if price_path is None:
             e.resolution_status = "TIMEOUT"
             e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-            e.resolution_evidence = "no quote for pair at verification time"
-            counts["TIMEOUT"] += 1
-            continue
-        current_price = (float(quote.get("bid", 0)) + float(quote.get("ask", 0))) / 2.0
-        if e.entry_price is None or current_price <= 0:
-            e.resolution_status = "TIMEOUT"
-            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-            e.resolution_evidence = "missing entry_price or current_price"
+            e.resolution_evidence = "no quote/candle truth for pair at verification time"
             counts["TIMEOUT"] += 1
             continue
 
-        pip_factor = 100.0 if e.pair.endswith("_JPY") else 10000.0
-        atr_pips = atr_pips_by_pair.get(e.pair) or 10.0
-        move_threshold_price = atr_pips * 0.5 / pip_factor
+        entry_price = e.entry_price if e.entry_price is not None else price_path["entry"]
+        if entry_price is None or entry_price <= 0:
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "missing entry_price"
+            counts["TIMEOUT"] += 1
+            continue
+
+        pip_factor = float(instrument_pip_factor(e.pair))
+        atr_pips = atr_pips_by_pair.get(e.pair)
+        move_threshold_price = None
+        if e.predicted_target_price is None and (atr_pips is None or atr_pips <= 0):
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "missing ATR threshold for projection verification"
+            counts["TIMEOUT"] += 1
+            continue
+        if atr_pips is not None and atr_pips > 0:
+            move_threshold_price = atr_pips * 0.5 / pip_factor
 
         if e.predicted_target_price is not None:
             # Liquidity sweep — did price reach the target?
             target = e.predicted_target_price
-            if e.direction == "UP" and current_price >= target:
+            if e.direction == "UP" and target <= entry_price:
+                e.resolution_status = "MISS"
+                e.resolution_evidence = f"invalid UP target geometry target {target:.5f} <= entry {entry_price:.5f}"
+                counts["MISS"] += 1
+            elif e.direction == "DOWN" and target >= entry_price:
+                e.resolution_status = "MISS"
+                e.resolution_evidence = f"invalid DOWN target geometry target {target:.5f} >= entry {entry_price:.5f}"
+                counts["MISS"] += 1
+            elif e.direction == "UP" and price_path["high"] >= target:
                 e.resolution_status = "HIT"
-                e.resolution_evidence = f"price {current_price:.5f} reached target {target:.5f}"
+                e.resolution_evidence = f"window high {price_path['high']:.5f} reached target {target:.5f}"
                 counts["HIT"] += 1
-            elif e.direction == "DOWN" and current_price <= target:
+            elif e.direction == "DOWN" and price_path["low"] <= target:
                 e.resolution_status = "HIT"
-                e.resolution_evidence = f"price {current_price:.5f} reached target {target:.5f}"
+                e.resolution_evidence = f"window low {price_path['low']:.5f} reached target {target:.5f}"
                 counts["HIT"] += 1
             else:
                 e.resolution_status = "MISS"
-                e.resolution_evidence = f"price {current_price:.5f} did not reach {target:.5f}"
+                e.resolution_evidence = (
+                    f"window high/low {price_path['high']:.5f}/{price_path['low']:.5f} "
+                    f"did not reach {target:.5f}"
+                )
                 counts["MISS"] += 1
         elif e.direction == "EITHER":
-            # Volatility expansion — did absolute move exceed threshold?
-            move = abs(current_price - e.entry_price)
-            if move >= move_threshold_price:
+            if move_threshold_price is None or atr_pips is None:
+                e.resolution_status = "TIMEOUT"
+                e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                e.resolution_evidence = "missing ATR threshold for projection verification"
+                counts["TIMEOUT"] += 1
+                continue
+            # Volatility expansion — did the whole window expand?
+            window_range = price_path["high"] - price_path["low"]
+            if window_range >= move_threshold_price:
                 e.resolution_status = "HIT"
-                e.resolution_evidence = f"abs move {move * pip_factor:.1f}pip ≥ {atr_pips * 0.5:.1f}pip threshold"
+                e.resolution_evidence = (
+                    f"window range {window_range * pip_factor:.1f}pip ≥ "
+                    f"{atr_pips * 0.5:.1f}pip threshold"
+                )
                 counts["HIT"] += 1
             else:
                 e.resolution_status = "MISS"
-                e.resolution_evidence = f"abs move {move * pip_factor:.1f}pip < threshold (no expansion)"
+                e.resolution_evidence = (
+                    f"window range {window_range * pip_factor:.1f}pip < threshold (no expansion)"
+                )
                 counts["MISS"] += 1
         else:
-            # UP/DOWN directional — current price vs entry
-            move = current_price - e.entry_price
+            if move_threshold_price is None:
+                e.resolution_status = "TIMEOUT"
+                e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                e.resolution_evidence = "missing ATR threshold for projection verification"
+                counts["TIMEOUT"] += 1
+                continue
+            # UP/DOWN directional — favorable excursion inside the window.
+            move = price_path["high"] - entry_price if e.direction == "UP" else entry_price - price_path["low"]
             if e.direction == "UP":
-                hit = move >= move_threshold_price
+                signed_close_move = price_path["close"] - entry_price
             else:
-                hit = (-move) >= move_threshold_price
-            if hit:
+                signed_close_move = entry_price - price_path["close"]
+            if move >= move_threshold_price:
                 e.resolution_status = "HIT"
-                e.resolution_evidence = f"price moved {move * pip_factor:+.1f}pip toward {e.direction}"
+                e.resolution_evidence = f"favorable excursion {move * pip_factor:.1f}pip toward {e.direction}"
                 counts["HIT"] += 1
             else:
                 e.resolution_status = "MISS"
-                e.resolution_evidence = f"price moved {move * pip_factor:+.1f}pip (not enough toward {e.direction})"
+                e.resolution_evidence = (
+                    f"favorable excursion {move * pip_factor:.1f}pip; "
+                    f"close move {signed_close_move * pip_factor:+.1f}pip"
+                )
                 counts["MISS"] += 1
         e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
     write_ledger(entries, data_root)
     return counts
+
+
+def _price_path_for_entry(
+    entry: LedgerEntry,
+    *,
+    emitted_at: datetime,
+    expires_at: datetime,
+    candles_by_pair: Optional[Dict[str, List[Any]]],
+) -> Optional[dict[str, float]]:
+    if candles_by_pair is None:
+        return None
+    candles = candles_by_pair.get(entry.pair) or []
+    window = []
+    # M1 candles are timestamped at bar open. Include the candle that overlaps
+    # the emission minute, accepting minute-level precision for verification.
+    overlap_start = emitted_at - timedelta(minutes=1)
+    for c in candles:
+        norm = _normalise_candle(c)
+        if norm is None:
+            continue
+        ts = norm["timestamp"]
+        if overlap_start <= ts <= expires_at:
+            window.append(norm)
+    if not window:
+        return None
+    window.sort(key=lambda item: item["timestamp"])
+    return {
+        "entry": window[0]["close"],
+        "high": max(item["high"] for item in window),
+        "low": min(item["low"] for item in window),
+        "close": window[-1]["close"],
+    }
+
+
+def _quote_point_path(
+    entry: LedgerEntry,
+    *,
+    quotes_by_pair: Dict[str, Dict[str, float]],
+) -> Optional[dict[str, float]]:
+    quote = quotes_by_pair.get(entry.pair)
+    if not quote:
+        return None
+    try:
+        current_price = (float(quote.get("bid", 0)) + float(quote.get("ask", 0))) / 2.0
+    except (TypeError, ValueError):
+        return None
+    if current_price <= 0:
+        return None
+    return {
+        "entry": entry.entry_price if entry.entry_price is not None else current_price,
+        "high": current_price,
+        "low": current_price,
+        "close": current_price,
+    }
+
+
+def _normalise_candle(candle: Any) -> Optional[dict[str, Any]]:
+    ts = getattr(candle, "timestamp_utc", None)
+    high = getattr(candle, "high", None)
+    low = getattr(candle, "low", None)
+    close = getattr(candle, "close", None)
+    if isinstance(candle, dict):
+        ts = candle.get("timestamp_utc") or candle.get("timestamp") or candle.get("time")
+        high = candle.get("high")
+        low = candle.get("low")
+        close = candle.get("close")
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if not isinstance(ts, datetime):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    else:
+        ts = ts.astimezone(timezone.utc)
+    try:
+        high_f = float(high)
+        low_f = float(low)
+        close_f = float(close)
+    except (TypeError, ValueError):
+        return None
+    if high_f <= 0 or low_f <= 0 or close_f <= 0:
+        return None
+    return {"timestamp": ts, "high": high_f, "low": low_f, "close": close_f}
 
 
 def compute_hit_rates(

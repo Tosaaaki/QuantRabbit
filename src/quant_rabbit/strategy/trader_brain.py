@@ -806,10 +806,11 @@ MEDIUM_RISK_CAP_FRACTION = 0.90
 PENDING_ENTRY_REPLACE_SPREAD_MULT = 8.0
 
 # Narrative penalties are score/ranking inputs, not risk gates. The JPY
-# intervention penalty must be larger than a normal positive-evidence boost so
-# rate-check / intervention risk actually reduces size while still leaving a
-# current LIVE_READY receipt executable under AGENT_CONTRACT §6.
-JPY_INTERVENTION_SCORE_PENALTY = 90.0
+# intervention penalty must clear the size-multiple rounding step, otherwise
+# rate-check / intervention risk can be visible in rationale but still round
+# back to 1.00 size. It remains advisory: LIVE_READY receipts stay executable
+# under AGENT_CONTRACT §6.
+JPY_INTERVENTION_SCORE_PENALTY = 100.0
 JPY_LIQUIDITY_SCORE_PENALTY = 25.0
 
 
@@ -1499,9 +1500,10 @@ class TraderBrain:
                     _projection_signals, direction,
                     hit_rates=_hit_rates, pair=pair, regime=_proj_regime,
                 )
-                # Record predictions ONCE per cycle (idempotent by
-                # timestamp + signal_name + pair). The dedup happens
-                # downstream in verify when the same timestamp re-appears.
+                # Record predictions once per cycle/pair/signal. `_score_lane`
+                # evaluates multiple candidate lanes for the same pair; the
+                # ledger key keeps that scoring fan-out from inflating hit-rate
+                # evidence.
                 try:
                     # Extract regime label from confluence for
                     # hit_rate bucketing.
@@ -1521,6 +1523,7 @@ class TraderBrain:
                         current_price=cur_price_for_proj,
                         data_root=_QR_ROOT / "data",
                         regime_at_emission=_regime_label,
+                        cycle_id=forecast_cycle_id,
                     )
                 except Exception:
                     pass  # ledger write failure must not break scoring

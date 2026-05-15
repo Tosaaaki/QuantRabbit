@@ -53,6 +53,30 @@ class RecordTest(unittest.TestCase):
             n = record_projections([], pair="EUR_USD", current_price=1.0, data_root=Path(tmp))
             self.assertEqual(n, 0)
 
+    def test_record_dedupes_same_cycle_pair_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sig = _Sig("liquidity_sweep_low", "DOWN", 15, 0.9, 12.0, "M5 equal-lows at 1.16800 (4.0pip down)")
+            first = record_projections(
+                [sig],
+                pair="EUR_USD",
+                current_price=1.16840,
+                data_root=root,
+                cycle_id="2026-05-15T00:00:00Z",
+            )
+            second = record_projections(
+                [sig],
+                pair="EUR_USD",
+                current_price=1.16840,
+                data_root=root,
+                cycle_id="2026-05-15T00:00:00Z",
+            )
+            self.assertEqual(first, 1)
+            self.assertEqual(second, 0)
+            entries = load_ledger(root)
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].cycle_id, "2026-05-15T00:00:00Z")
+
 
 class VerifyTest(unittest.TestCase):
     def _setup(self, signal, ts_offset_min=30):
@@ -110,6 +134,63 @@ class VerifyTest(unittest.TestCase):
             )
             # Mid 1.1720 reaches target → HIT
             self.assertEqual(counts["HIT"], 1)
+
+    def test_liquidity_target_does_not_require_atr(self) -> None:
+        tmp, root = self._setup({
+            "direction": "UP", "lead_time_min": 5, "window": 10,
+            "entry_price": 1.1700, "target": 1.1720,
+        })
+        with tmp:
+            counts = verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1719, "ask": 1.1721}},
+                atr_pips_by_pair={},
+            )
+            self.assertEqual(counts["HIT"], 1)
+
+    def test_liquidity_target_uses_window_high_not_current_quote(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "direction": "UP", "lead_time_min": 5, "window": 10,
+            "entry_price": 1.1700, "target": 1.1720,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+            counts = verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1701, "ask": 1.1702}},
+                atr_pips_by_pair={"EUR_USD": 10.0},
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                            "high": 1.1721,
+                            "low": 1.1698,
+                            "close": 1.1702,
+                        }
+                    ]
+                },
+            )
+            self.assertEqual(counts["HIT"], 1)
+            self.assertEqual(load_ledger(root)[0].resolution_status, "HIT")
+
+    def test_candle_mode_times_out_when_window_truth_missing(self) -> None:
+        tmp, root = self._setup({
+            "direction": "UP", "lead_time_min": 5, "window": 10,
+            "entry_price": 1.1700,
+        })
+        with tmp:
+            counts = verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1800, "ask": 1.1801}},
+                atr_pips_by_pair={"EUR_USD": 10.0},
+                candles_by_pair={},
+            )
+            self.assertEqual(counts["TIMEOUT"], 1)
+            self.assertEqual(load_ledger(root)[0].resolution_status, "TIMEOUT")
 
     def test_pending_within_window(self) -> None:
         # Emitted just now with 60-min window → still pending

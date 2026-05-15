@@ -52,6 +52,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from quant_rabbit.instruments import instrument_pip_factor
+from quant_rabbit.strategy.price_action import structural_tp_target
+
 
 # Minimum confidence to enable entry. Below this → no trade.
 ENTRY_CONFIDENCE_MIN = float(os.environ.get("QR_FORECAST_ENTRY_CONFIDENCE_MIN", "0.55"))
@@ -100,6 +103,142 @@ def _to_float(v: Any) -> Optional[float]:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _pip_factor(pair: str, pair_chart: Dict[str, Any]) -> float:
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        pip_size = _to_float((indicators or {}).get("pip_size"))
+        if pip_size is not None and pip_size > 0:
+            return 1.0 / pip_size
+    return float(instrument_pip_factor(pair))
+
+
+def _round_price(pair: str, price: Optional[float]) -> Optional[float]:
+    if price is None:
+        return None
+    return round(price, 3 if instrument_pip_factor(pair) == 100 else 5)
+
+
+def _collect_structural_levels(pair_chart: Dict[str, Any], *, side: str) -> list[float]:
+    """Collect same-side price anchors from all chart views.
+
+    The forecast target must be a market level, not a fixed pip guess. Pull
+    from liquidity pools, swing pivots, dealing range rails, and indicator
+    channel rails already derived by the chart reader.
+    """
+    side = side.upper()
+    prices: list[float] = []
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+        for pool in (structure or {}).get("liquidity") or []:
+            if not isinstance(pool, dict):
+                continue
+            pool_side = str(pool.get("side") or "").upper()
+            if side == "HIGH" and "HIGH" not in pool_side:
+                continue
+            if side == "LOW" and "LOW" not in pool_side:
+                continue
+            price = _to_float(pool.get("price"))
+            if price is not None and price > 0:
+                prices.append(price)
+        for swing in (structure or {}).get("swings") or []:
+            if not isinstance(swing, dict):
+                continue
+            if str(swing.get("side") or "").upper() != side:
+                continue
+            price = _to_float(swing.get("price"))
+            if price is not None and price > 0:
+                prices.append(price)
+
+        smc = view.get("smc") if isinstance(view.get("smc"), dict) else {}
+        dealing_range = (smc or {}).get("dealing_range") if isinstance((smc or {}).get("dealing_range"), dict) else {}
+        dr_key = "swing_high" if side == "HIGH" else "swing_low"
+        price = _to_float((dealing_range or {}).get(dr_key))
+        if price is not None and price > 0:
+            prices.append(price)
+
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        indicator_keys = (
+            ("donchian_high", "linreg_channel_upper", "bb_upper", "avwap_upper_1sd", "avwap_upper_2sd", "avwap_swing_high")
+            if side == "HIGH"
+            else ("donchian_low", "linreg_channel_lower", "bb_lower", "avwap_lower_1sd", "avwap_lower_2sd", "avwap_swing_low")
+        )
+        for key in indicator_keys:
+            price = _to_float((indicators or {}).get(key))
+            if price is not None and price > 0:
+                prices.append(price)
+    return prices
+
+
+def _nearest_level(prices: list[float], *, above: Optional[float] = None, below: Optional[float] = None) -> Optional[float]:
+    if above is not None:
+        candidates = [p for p in prices if p > above]
+        return min(candidates) if candidates else None
+    if below is not None:
+        candidates = [p for p in prices if p < below]
+        return max(candidates) if candidates else None
+    return None
+
+
+def _geometry_valid(direction: str, *, current_price: float, target_price: Optional[float], invalidation_price: Optional[float]) -> tuple[Optional[float], Optional[float]]:
+    if direction == "UP":
+        target = target_price if target_price is not None and target_price > current_price else None
+        invalidation = invalidation_price if invalidation_price is not None and invalidation_price < current_price else None
+        return target, invalidation
+    if direction == "DOWN":
+        target = target_price if target_price is not None and target_price < current_price else None
+        invalidation = invalidation_price if invalidation_price is not None and invalidation_price > current_price else None
+        return target, invalidation
+    return None, None
+
+
+def _forecast_geometry(
+    *,
+    pair: str,
+    pair_chart: Dict[str, Any],
+    direction: str,
+    current_price: float,
+) -> tuple[Optional[float], Optional[float]]:
+    """Return target/invalidation levels that are on the correct side.
+
+    This is deliberately strict: a DOWN forecast with a target above current
+    price is not a target, it is bad evidence. Invalid geometry is nulled
+    instead of being persisted into forecast_history.
+    """
+    if direction not in {"UP", "DOWN"}:
+        return None, None
+
+    pip_factor = _pip_factor(pair, pair_chart)
+    side = "LONG" if direction == "UP" else "SHORT"
+    structural_target, _reason = structural_tp_target(
+        pair_chart,
+        side=side,
+        current_price=current_price,
+        pip_factor=pip_factor,
+        intent="HARVEST",
+    )
+
+    high_levels = _collect_structural_levels(pair_chart, side="HIGH")
+    low_levels = _collect_structural_levels(pair_chart, side="LOW")
+    if direction == "UP":
+        target_price = structural_target or _nearest_level(high_levels, above=current_price)
+        invalidation_price = _nearest_level(low_levels, below=current_price)
+    else:
+        target_price = structural_target or _nearest_level(low_levels, below=current_price)
+        invalidation_price = _nearest_level(high_levels, above=current_price)
+
+    target_price, invalidation_price = _geometry_valid(
+        direction,
+        current_price=current_price,
+        target_price=target_price,
+        invalidation_price=invalidation_price,
+    )
+    return _round_price(pair, target_price), _round_price(pair, invalidation_price)
 
 
 def synthesize_forecast(
@@ -238,41 +377,12 @@ def synthesize_forecast(
         cal_mult = 1.0
         calibrated_confidence = raw_confidence
 
-    # Compute invalidation + target prices using liquidity pools
-    invalidation_price = None
-    target_price = None
-    for v in pair_chart.get("views") or []:
-        if not isinstance(v, dict):
-            continue
-        if str(v.get("granularity") or "").upper() != "M15":
-            continue
-        struct = v.get("structure") or {}
-        liq = struct.get("liquidity") or []
-        if not isinstance(liq, list):
-            break
-        eq_highs = sorted(
-            [_to_float(e.get("price")) for e in liq
-             if isinstance(e, dict) and "HIGH" in str(e.get("side", "")).upper()
-             and _to_float(e.get("price")) is not None]
-        )
-        eq_lows = sorted(
-            [_to_float(e.get("price")) for e in liq
-             if isinstance(e, dict) and "LOW" in str(e.get("side", "")).upper()
-             and _to_float(e.get("price")) is not None]
-        )
-        if winner == "UP":
-            # Target: nearest equal-high above current
-            above = [p for p in eq_highs if p > current_price]
-            target_price = min(above) if above else None
-            # Invalidation: nearest equal-low below current
-            below = [p for p in eq_lows if p < current_price]
-            invalidation_price = max(below) if below else None
-        elif winner == "DOWN":
-            below = [p for p in eq_lows if p < current_price]
-            target_price = max(below) if below else None
-            above = [p for p in eq_highs if p > current_price]
-            invalidation_price = min(above) if above else None
-        break
+    target_price, invalidation_price = _forecast_geometry(
+        pair=pair,
+        pair_chart=pair_chart,
+        direction=winner,
+        current_price=current_price,
+    )
 
     horizon_min = 60 if winner != "RANGE" else 120
 

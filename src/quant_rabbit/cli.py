@@ -520,10 +520,16 @@ def main(argv: list[str] | None = None) -> int:
 
     p_vproj = sub.add_parser(
         "verify-projections",
-        help="Verify pending forward-projection predictions against current OANDA prices; resolves HIT/MISS/TIMEOUT.",
+        help="Verify pending forward-projection predictions against M1 price truth; resolves HIT/MISS/TIMEOUT.",
     )
     p_vproj.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_vproj.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_vproj.add_argument(
+        "--m1-count",
+        type=int,
+        default=int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500")),
+        help="Recent M1 candles to fetch per pending pair for path-based verification. Use 0 to fall back to snapshot quotes.",
+    )
 
     p_tprebal = sub.add_parser(
         "tp-rebalance",
@@ -2062,8 +2068,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify-projections":
         from quant_rabbit.strategy.projection_ledger import (
             compute_hit_rates,
+            load_ledger,
             verify_pending,
         )
+        from quant_rabbit.analysis.candles import fetch_candles_via_client
         from pathlib import Path as _P
         data_root = _P("data")
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
@@ -2088,11 +2096,41 @@ def main(argv: list[str] | None = None) -> int:
                         if atr:
                             atr_pips_by_pair[pair] = float(atr)
                             break
-        counts = verify_pending(data_root, quotes_by_pair=quotes_by_pair, atr_pips_by_pair=atr_pips_by_pair)
+        pending_pairs = sorted({e.pair for e in load_ledger(data_root) if e.resolution_status == "PENDING"})
+        candles_by_pair = None
+        candle_counts: dict[str, int] = {}
+        candle_errors: dict[str, str] = {}
+        if pending_pairs and args.m1_count > 0:
+            candles_by_pair = {}
+            try:
+                client = OandaReadOnlyClient()
+            except Exception as exc:
+                candle_errors["_client"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                candles_by_pair = None
+            else:
+                for pair in pending_pairs:
+                    try:
+                        candles = fetch_candles_via_client(client, pair, "M1", count=int(args.m1_count))
+                        candles_by_pair[pair] = list(candles)
+                        candle_counts[pair] = len(candles)
+                    except Exception as exc:
+                        candle_errors[pair] = f"{type(exc).__name__}: {str(exc)[:160]}"
+        counts = verify_pending(
+            data_root,
+            quotes_by_pair=quotes_by_pair,
+            atr_pips_by_pair=atr_pips_by_pair,
+            candles_by_pair=candles_by_pair,
+        )
         hr = compute_hit_rates(data_root)
         print(json.dumps({
             "status": "OK",
             "resolution_counts": counts,
+            "price_truth": {
+                "pending_pairs": pending_pairs,
+                "m1_count_requested": int(args.m1_count),
+                "m1_candles_loaded": candle_counts,
+                "m1_errors": candle_errors,
+            },
             "hit_rates_by_signal": {
                 sig: {pair: round(d.get("hit_rate", 0), 3) for pair, d in by_pair.items()}
                 for sig, by_pair in hr.items()
