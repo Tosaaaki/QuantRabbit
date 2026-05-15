@@ -330,23 +330,38 @@ def _pair_chart_prior(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]
 
 def _has_close_confirmed_structure(pair_chart: Dict[str, Any], direction: str) -> bool:
     expected = "UP" if direction == "UP" else "DOWN"
-    # Reversal against a strong higher-TF move needs at least M15 or H1
-    # close-confirmed structure. M1/M5 can alert, but should not carry the
-    # pair-level forecast by itself.
-    for tf in ("M15", "H1"):
-        view = _view_by_tf(pair_chart, tf)
-        if not isinstance(view, dict):
+    # Reversal against a strong higher-TF move must be current structure, not
+    # any stale historical BOS/CHOCH in the retained event list. H1 dominates
+    # M15 when available; otherwise M15 is the fallback confirmation frame.
+    h1 = _latest_close_confirmed_structure_direction(_view_by_tf(pair_chart, "H1"))
+    if h1 is not None:
+        return h1 == expected
+    m15 = _latest_close_confirmed_structure_direction(_view_by_tf(pair_chart, "M15"))
+    return m15 == expected if m15 is not None else False
+
+
+def _latest_close_confirmed_structure_direction(view: Dict[str, Any] | None) -> str | None:
+    if not isinstance(view, dict):
+        return None
+    structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+    latest: tuple[float, str] | None = None
+    for order, event in enumerate((structure or {}).get("structure_events") or []):
+        if not isinstance(event, dict):
             continue
-        structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
-        for event in (structure or {}).get("structure_events") or []:
-            if not isinstance(event, dict):
-                continue
-            if not bool(event.get("close_confirmed")):
-                continue
-            kind = str(event.get("kind") or "").upper().split(":", 1)[0]
-            if kind.endswith(f"_{expected}"):
-                return True
-    return False
+        if not bool(event.get("close_confirmed")):
+            continue
+        kind = str(event.get("kind") or "").upper().split(":", 1)[0]
+        if kind.endswith("_UP"):
+            event_dir = "UP"
+        elif kind.endswith("_DOWN"):
+            event_dir = "DOWN"
+        else:
+            continue
+        index = _to_float(event.get("index"))
+        sort_key = index if index is not None else float(order)
+        if latest is None or sort_key >= latest[0]:
+            latest = (sort_key, event_dir)
+    return latest[1] if latest is not None else None
 
 
 def _countertrend_adjustment(

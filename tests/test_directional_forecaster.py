@@ -116,6 +116,101 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertGreater(forecast.down_score, forecast.up_score)
         self.assertIn("SHORT_LEAN", " ".join(forecast.drivers_for))
 
+    def test_countertrend_confirmation_ignores_stale_m15_h1_structure(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "SHORT_LEAN",
+                "score_gap": -0.75,
+                "tf_agreement_score": 1.0,
+                "dominant_regime": "TREND_DOWN",
+            },
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 38.0},
+                    "structure": {
+                        "structure_events": [
+                            {"kind": "CHOCH_UP", "close_confirmed": True, "index": 100},
+                            {"kind": "BOS_DOWN", "close_confirmed": True, "index": 194},
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 52.0},
+                    "structure": {
+                        "structure_events": [
+                            {"kind": "BOS_UP", "close_confirmed": True, "index": 109},
+                            {"kind": "BOS_DOWN", "close_confirmed": True, "index": 153},
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H4",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 35.0},
+                    "structure": {"structure_events": []},
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[_Sig("UP", 90.0, 1.0, "stale reversal should not dominate")],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertNotEqual(forecast.direction, "UP")
+        self.assertLess(forecast.up_score, 90.0)
+
+    def test_countertrend_confirmation_accepts_latest_h1_reversal(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "SHORT_LEAN",
+                "score_gap": -0.75,
+                "tf_agreement_score": 1.0,
+                "dominant_regime": "TREND_DOWN",
+            },
+            "views": [
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 52.0},
+                    "structure": {
+                        "structure_events": [
+                            {"kind": "BOS_DOWN", "close_confirmed": True, "index": 153},
+                            {"kind": "CHOCH_UP", "close_confirmed": True, "index": 168},
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H4",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 35.0},
+                    "structure": {"structure_events": []},
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[_Sig("UP", 90.0, 1.0, "fresh H1 reversal")],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertIn("countertrend UP allowed", forecast.rationale_summary)
+
     def test_forecast_calibration_prefers_direction_specific_history(self) -> None:
         hit_rates = {
             "directional_forecast": {
