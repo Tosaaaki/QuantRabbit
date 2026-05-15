@@ -275,6 +275,11 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
             continue
         owner = str(position.get("owner") or "")
         if owner in {"manual", "unknown"}:
+            if position.get("take_profit") is None:
+                reasons.append(
+                    "manual/tagless position needs TP-only profit management: "
+                    f"{position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
+                )
             continue
         tp_missing = position.get("take_profit") is None
         sl_missing = position.get("stop_loss") is None

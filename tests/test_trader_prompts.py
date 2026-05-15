@@ -138,6 +138,49 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_POSITION)
 
+    def test_manual_position_missing_tp_routes_to_tp_only_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "manual-999",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": None,
+                        "stop_loss": None,
+                        "owner": "unknown",
+                    }
+                ],
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertIn("TP-only profit management", route.reasons[0])
+
+    def test_manual_position_with_tp_missing_sl_does_not_force_position_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "manual-1000",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.1800,
+                        "stop_loss": None,
+                        "owner": "manual",
+                    }
+                ],
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+
     def test_routes_existing_decision_response_to_verify_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

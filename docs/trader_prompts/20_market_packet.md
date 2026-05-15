@@ -4,7 +4,7 @@
 
 - `data/broker_snapshot.json`
   - Positions, pending orders, owner tags, quote timestamps, spreads, account truth.
-  - Manual/tagless exposure is observed only; the trader does not protect, close, or use it as a fresh-entry blocker.
+  - Manual/tagless exposure is TP-managed only; the trader does not SL, loss-close, or use it as a fresh-entry blocker.
 - `data/daily_target_state.json`
   - `status`, `target_jpy`, `minimum_target_jpy`, `progress_jpy`, `progress_pct`, `minimum_progress_pct`, `remaining_minimum_jpy`, `remaining_target_jpy`.
   - `daily_risk_budget_jpy` is the whole-day risk budget.

@@ -11,6 +11,7 @@
 
 ## Execution Contract
 
-- Position writes are risk-reducing only: close the trade, create missing protection, or tighten an existing SL.
-- Existing SL cannot be widened. Existing TP is not moved by this gateway.
+- Trader-owned position writes are risk-reducing only: close the trade, create missing protection, tighten an existing SL, or update TP.
+- Manual/tagless position writes are TP-only profit management; SL writes and market closes are forbidden.
+- Existing SL cannot be widened. Existing TP may be moved only by TP-management actions.
 - Live execution requires the autotrade send path and `QR_LIVE_ENABLED=1`.

@@ -448,7 +448,7 @@ class DailyTargetLedger:
                 "",
                 "- The 10% daily target is tracked as a product KPI and execution objective, not a guaranteed return.",
                 "- The 5% daily floor is tracked as the minimum same-day progress line; reaching it does not stop the 10% campaign by itself.",
-                "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is observed but not managed by the trader.",
+                "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is TP-managed only and does not block fresh entries.",
                 "- Reaching the target switches the system toward protection-first behavior before any new risk is added.",
             ]
         )

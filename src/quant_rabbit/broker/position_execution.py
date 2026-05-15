@@ -15,6 +15,7 @@ from quant_rabbit.strategy.position_manager import (
     ACTION_NARROW_TP,
     ACTION_PROFIT_PROTECT,
     ACTION_REPAIR_PROTECTION,
+    ACTION_REPAIR_TAKE_PROFIT,
     ACTION_REVIEW_EXIT,
     ManagedPosition,
     PositionManagementDecision,
@@ -140,18 +141,28 @@ class PositionProtectionGateway:
                 }
             )
             return action
-        if position.owner != Owner.TRADER:
+        manual_tp_owner = position.owner in {Owner.MANUAL, Owner.UNKNOWN}
+        if position.owner not in {Owner.TRADER, Owner.MANUAL, Owner.UNKNOWN}:
             action["issues"].append(
                 {
                     "severity": "BLOCK",
                     "code": "NON_TRADER_POSITION",
-                    "message": f"refusing to modify {position.owner.value} position id={position.trade_id}",
+                    "message": f"refusing to modify external position id={position.trade_id}",
                 }
             )
             return action
         if managed.action == ACTION_HOLD_PROTECTED:
             return action
         if managed.action == ACTION_REVIEW_EXIT:
+            if manual_tp_owner:
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "MANUAL_POSITION_CLOSE_FORBIDDEN",
+                        "message": "manual/tagless positions are TP-managed only; loss close is forbidden",
+                    }
+                )
+                return action
             action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
             return action
         # Adaptive TP actions fire a TP-only DEPENDENT_ORDER_REPLACE through the
@@ -160,6 +171,7 @@ class PositionProtectionGateway:
         if managed.action not in {
             ACTION_REPAIR_PROTECTION,
             ACTION_PROFIT_PROTECT,
+            ACTION_REPAIR_TAKE_PROFIT,
             ACTION_HARVEST_TP,
             ACTION_NARROW_TP,
             ACTION_EXTEND_TP,
@@ -169,14 +181,23 @@ class PositionProtectionGateway:
         quote = snapshot.quotes.get(position.pair)
         order_request: dict[str, Any] = {}
         if managed.recommended_stop_loss is not None:
-            stop_issue = _stop_update_issue(position, float(managed.recommended_stop_loss), quote)
-            if stop_issue:
-                action["issues"].append(stop_issue)
+            if manual_tp_owner:
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "MANUAL_POSITION_STOP_LOSS_FORBIDDEN",
+                        "message": "manual/tagless positions are TP-managed only; stop-loss writes are forbidden",
+                    }
+                )
             else:
-                order_request["stopLoss"] = {
-                    "timeInForce": "GTC",
-                    "price": _price(position.pair, float(managed.recommended_stop_loss)),
-                }
+                stop_issue = _stop_update_issue(position, float(managed.recommended_stop_loss), quote)
+                if stop_issue:
+                    action["issues"].append(stop_issue)
+                else:
+                    order_request["stopLoss"] = {
+                        "timeInForce": "GTC",
+                        "price": _price(position.pair, float(managed.recommended_stop_loss)),
+                    }
         if managed.recommended_take_profit is not None:
             current_tp = position.take_profit
             new_tp = float(managed.recommended_take_profit)
@@ -236,8 +257,9 @@ class PositionProtectionGateway:
                 "",
                 "## Execution Contract",
                 "",
-                "- Position writes are risk-reducing only: close the trade, create missing protection, or tighten an existing SL.",
-                "- Existing SL cannot be widened. Existing TP is not moved by this gateway.",
+                "- Trader-owned position writes are risk-reducing only: close the trade, create missing protection, tighten an existing SL, or update TP.",
+                "- Manual/tagless position writes are TP-only profit management; SL writes and market closes are forbidden.",
+                "- Existing SL cannot be widened. Existing TP may be moved only by TP-management actions.",
                 "- Live execution requires the autotrade send path and `QR_LIVE_ENABLED=1`.",
             ]
         )

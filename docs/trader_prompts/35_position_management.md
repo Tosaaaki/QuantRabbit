@@ -4,6 +4,7 @@
 
 - Trader-owned position exists.
 - Trader-owned position is missing TP or SL.
+- Manual/tagless position is missing TP or has a profit-side TP/partial-close opportunity.
 - Trader-owned pending entry needs cancel review.
 - Target reached and protection-first behavior is active.
 
@@ -11,6 +12,7 @@
 
 - `PROTECT`
 - `TIGHTEN_SL`
+- `TAKE_PROFIT`
 - `CLOSE`
 - `CANCEL_PENDING`
 - `WAIT`
@@ -20,9 +22,11 @@
 - Missing TP / SL on trader-owned exposure is a repair requirement, **except** under
   SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`): trader-owned SL=None with TP set
   is intentional, treat as protected, do NOT propose PROTECT/TIGHTEN_SL.
-- Operator-managed manual/tagless positions are observed only.
+- Operator-managed manual/tagless positions are TP-only: TP repair/rebalance and
+  profit-side partial close are allowed when already profitable, but SL writes,
+  adverse partial closes, and market CLOSE are forbidden.
 - Existing SL must not be widened.
-- Existing TP is not moved by the protection gateway.
+- Existing TP may be moved only by TP-management actions with current-price safety.
 - Profitable protected positions may tighten SL to break-even or better — **disabled
   under SL-free**: do NOT auto-tighten on profit, the operator harvests via TP only.
 - Contradicted trader-owned positions may close, **but only on market-structure

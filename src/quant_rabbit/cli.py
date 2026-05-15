@@ -538,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_tprebal = sub.add_parser(
         "tp-rebalance",
-        help="Expand/contract TP on trader-owned positions as market regime shifts (dynamic reward_risk × current ATR).",
+        help="Expand/contract TP on trader-owned and manual/tagless positions as market regime shifts.",
     )
     p_tprebal.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_tprebal.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
@@ -562,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_profitpart = sub.add_parser(
         "profit-partial-close",
-        help="Stage/send profit-side partial closes at ATR-derived milestones while leaving a runner.",
+        help="Stage/send profit-side partial closes for trader-owned and manual/tagless positions at ATR milestones.",
     )
     p_profitpart.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_profitpart.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
@@ -2394,7 +2394,8 @@ def main(argv: list[str] | None = None) -> int:
                 "",
                 "## Contract",
                 "",
-                "- Profit partial close only reduces already-profitable trader-owned exposure.",
+                "- Profit partial close only reduces already-profitable trader-owned or manual/tagless exposure.",
+                "- Manual/tagless profit partials never realize an adverse P/L loss and never write stop-loss orders.",
                 "- Same trade milestone is persisted in state after a successful send to avoid repeat closes.",
                 "- Live send requires `--send --confirm-live` and `QR_LIVE_ENABLED=1`.",
             ]

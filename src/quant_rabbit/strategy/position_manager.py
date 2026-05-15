@@ -21,6 +21,7 @@ from quant_rabbit.strategy.intent_generator import (
     GEOMETRY_SPREAD_FLOOR_MULT,
     _atr_pips_for,
     _load_pair_charts,
+    _market_derived_reward_risk,
     _session_bucket_for,
 )
 from quant_rabbit.strategy.price_action import (
@@ -28,6 +29,7 @@ from quant_rabbit.strategy.price_action import (
     classify_order_block_proximity,
     structural_tp_target,
 )
+from quant_rabbit.strategy.tp_rebalancer import MAX_TP_DISTANCE_ATR_MULT, MIN_TP_TO_MARKET_PIPS
 
 
 def _load_full_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]]:
@@ -58,6 +60,7 @@ ACTION_HOLD_SL_FREE = "HOLD_SL_FREE"
 ACTION_PROFIT_PROTECT = "PROFIT_PROTECT_REQUIRED"
 ACTION_REVIEW_EXIT = "REVIEW_EXIT"
 ACTION_REPAIR_PROTECTION = "REPAIR_PROTECTION_REQUIRED"
+ACTION_REPAIR_TAKE_PROFIT = "REPAIR_TAKE_PROFIT_REQUIRED"
 # Adaptive TP management actions (user 2026-05-08「ミクロとマクロの視点が
 # ないとできない」「確実に利益を取って」「伸ばすとこは伸ばす、限界なら
 # 見極める」). Each action carries a recommended_take_profit that the
@@ -74,6 +77,14 @@ ACTION_EXTEND_TP = "EXTEND_TP"          # Push TP further out when momentum keep
 # exits still apply.
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _manual_take_profit_owner(owner: Owner) -> bool:
+    return owner in {Owner.MANUAL, Owner.UNKNOWN}
+
+
+def _position_management_owner(owner: Owner) -> bool:
+    return owner == Owner.TRADER or _manual_take_profit_owner(owner)
 
 # Profit protection must not move SL to breakeven while the market is still
 # inside ordinary execution noise. Use the same spread floor as entry geometry
@@ -126,8 +137,10 @@ class PositionManager:
         generated_at = datetime.now(timezone.utc).isoformat()
         scores = _load_scores(self.trader_decision_path)
         pair_charts = _load_pair_charts(self.pair_charts_path)
-        trader_positions = tuple(position for position in snapshot.positions if position.owner == Owner.TRADER)
-        managed = tuple(self._manage_position(position, snapshot, scores, pair_charts) for position in trader_positions)
+        manageable_positions = tuple(
+            position for position in snapshot.positions if _position_management_owner(position.owner)
+        )
+        managed = tuple(self._manage_position(position, snapshot, scores, pair_charts) for position in manageable_positions)
         # Global kill switch (2026-05-15): when `QR_DISABLE_AUTO_CLOSE=1`,
         # demote every REVIEW_EXIT to HOLD_PROTECTED before aggregation.
         # The 2026-05-14 24h cycle leaked -¥8,983 through deterministic
@@ -170,6 +183,9 @@ class PositionManager:
         scores: dict[tuple[str, str], float],
         pair_charts: dict[str, dict[str, Any]] | None,
     ) -> ManagedPosition:
+        if _manual_take_profit_owner(position.owner):
+            return self._manage_manual_take_profit_position(position, snapshot, scores, pair_charts)
+
         same_score = scores.get((position.pair, position.side.value))
         opposite_score = scores.get((position.pair, _opposite(position.side)))
         remaining_risk = _remaining_risk_jpy(position, snapshot.quotes, snapshot.home_conversions)
@@ -323,6 +339,66 @@ class PositionManager:
             reasons=tuple(reasons),
         )
 
+    def _manage_manual_take_profit_position(
+        self,
+        position: BrokerPosition,
+        snapshot: BrokerSnapshot,
+        scores: dict[tuple[str, str], float],
+        pair_charts: dict[str, dict[str, Any]] | None,
+    ) -> ManagedPosition:
+        same_score = scores.get((position.pair, position.side.value))
+        opposite_score = scores.get((position.pair, _opposite(position.side)))
+        remaining_risk = _remaining_risk_jpy(position, snapshot.quotes, snapshot.home_conversions)
+        remaining_reward = _remaining_reward_jpy(position, snapshot.quotes, snapshot.home_conversions)
+        quote = snapshot.quotes.get(position.pair)
+        recommended_take_profit: float | None = None
+        reasons: list[str] = []
+        reasons.extend(_session_protection_notes(position, quote, pair_charts))
+        reasons.append(
+            "manual/tagless position: TP-only profit management enabled; SL and loss-close management disabled"
+        )
+
+        if position.take_profit is None:
+            recommended_take_profit, tp_reason = _market_take_profit_repair_candidate(
+                position, quote, pair_charts
+            )
+            if recommended_take_profit is None:
+                action = ACTION_HOLD_SL_FREE
+                reasons.append(f"manual/tagless TP repair skipped: {tp_reason}")
+            else:
+                action = ACTION_REPAIR_TAKE_PROFIT
+                reasons.append(f"manual/tagless TP repair candidate {recommended_take_profit:.5f}: {tp_reason}")
+        else:
+            action = ACTION_HOLD_SL_FREE
+            reasons.append("manual/tagless take-profit already present; stop-loss untouched")
+
+        if remaining_risk is not None:
+            reasons.append(f"remaining risk about {remaining_risk:.0f} JPY (observed only; no SL action)")
+        elif position.stop_loss is not None:
+            reasons.append("remaining risk cannot be converted to JPY from current broker snapshot")
+        if remaining_reward is not None:
+            reasons.append(f"remaining reward about {remaining_reward:.0f} JPY")
+        elif position.take_profit is not None:
+            reasons.append("remaining reward cannot be converted to JPY from current broker snapshot")
+
+        return ManagedPosition(
+            trade_id=position.trade_id,
+            pair=position.pair,
+            side=position.side.value,
+            units=position.units,
+            action=action,
+            unrealized_pl_jpy=round(position.unrealized_pl_jpy, 4),
+            remaining_risk_jpy=round(remaining_risk, 2) if remaining_risk is not None else None,
+            remaining_reward_jpy=round(remaining_reward, 2) if remaining_reward is not None else None,
+            same_direction_score=same_score,
+            opposite_direction_score=opposite_score,
+            recommended_stop_loss=None,
+            recommended_take_profit=round(recommended_take_profit, _price_precision(position.pair))
+            if recommended_take_profit is not None
+            else None,
+            reasons=tuple(reasons),
+        )
+
     def _write(self, decision: PositionManagementDecision) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_path.write_text(json.dumps(asdict(decision), ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -356,7 +432,8 @@ class PositionManager:
                 "## Management Contract",
                 "",
                 "- Existing positions are managed before any new entry is considered.",
-                "- Operator-managed manual/tagless positions are observed in broker truth but ignored by this gateway.",
+                "- Operator-managed manual/tagless positions are eligible for TP-only profit management.",
+                "- Manual/tagless positions must never receive SL repair, SL tightening, or loss-close actions.",
                 "- Missing TP/SL is a repair requirement, not a passive monitor state.",
                 "- Profit protection is required once open profit clears remaining stop risk plus current session noise.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
@@ -773,6 +850,8 @@ def _aggregate_action(positions: tuple[ManagedPosition, ...]) -> str:
     actions = {position.action for position in positions}
     if ACTION_REPAIR_PROTECTION in actions:
         return ACTION_REPAIR_PROTECTION
+    if ACTION_REPAIR_TAKE_PROFIT in actions:
+        return ACTION_REPAIR_TAKE_PROFIT
     if ACTION_REVIEW_EXIT in actions:
         return ACTION_REVIEW_EXIT
     if ACTION_PROFIT_PROTECT in actions:
@@ -976,6 +1055,50 @@ def _repair_take_profit(position: BrokerPosition, stop_loss: float | None, quote
     if position.side == Side.SHORT and candidate >= quote.bid:
         return None
     return candidate
+
+
+def _market_take_profit_repair_candidate(
+    position: BrokerPosition,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[float | None, str]:
+    if quote is None:
+        return None, "quote unavailable; cannot enforce current-price TP safety margin"
+    chart_context = (pair_charts or {}).get(position.pair) if pair_charts else None
+    if not chart_context:
+        return None, "pair chart context unavailable; no silent TP fallback"
+    atr_pips = _atr_pips_for(position.pair, pair_charts, GEOMETRY_ATR_TIMEFRAME)
+    if atr_pips is None or atr_pips <= 0:
+        return None, f"{GEOMETRY_ATR_TIMEFRAME} ATR unavailable; no silent TP fallback"
+    reward_risk, rr_reasons = _market_derived_reward_risk(chart_context)
+    if reward_risk <= 0:
+        return None, "market-derived reward_risk is not positive"
+
+    pip_factor = _pip_factor(position.pair)
+    pip_size = 1.0 / pip_factor
+    distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
+    safety_distance = MIN_TP_TO_MARKET_PIPS * pip_size
+    if position.side == Side.LONG:
+        entry_candidate = position.entry_price + distance_pips * pip_size
+        market_candidate = quote.ask + safety_distance
+        candidate = max(entry_candidate, market_candidate)
+        if candidate <= position.entry_price:
+            return None, "computed LONG TP is not on reward side of entry"
+    else:
+        entry_candidate = position.entry_price - distance_pips * pip_size
+        market_candidate = quote.bid - safety_distance
+        candidate = min(entry_candidate, market_candidate)
+        if candidate >= position.entry_price:
+            return None, "computed SHORT TP is not on reward side of entry"
+
+    rationale = (
+        f"{GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip × reward_risk {reward_risk:.2f} "
+        f"capped at {MAX_TP_DISTANCE_ATR_MULT:.1f}×ATR; "
+        f"current-price safety {MIN_TP_TO_MARKET_PIPS:.1f}pip"
+    )
+    if rr_reasons:
+        rationale += "; rr: " + "; ".join(rr_reasons[:2])
+    return candidate, rationale
 
 
 def _market_valid_stop(position: BrokerPosition, stop_loss: float, quote) -> bool:

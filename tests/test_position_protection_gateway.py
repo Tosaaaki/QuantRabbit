@@ -8,7 +8,13 @@ from typing import Any
 
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
-from quant_rabbit.strategy.position_manager import ACTION_PROFIT_PROTECT, ACTION_REVIEW_EXIT, ManagedPosition, PositionManagementDecision
+from quant_rabbit.strategy.position_manager import (
+    ACTION_PROFIT_PROTECT,
+    ACTION_REPAIR_TAKE_PROFIT,
+    ACTION_REVIEW_EXIT,
+    ManagedPosition,
+    PositionManagementDecision,
+)
 
 
 class PositionProtectionGatewayTest(unittest.TestCase):
@@ -73,6 +79,63 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
 
+    def test_manual_position_allows_take_profit_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_REPAIR_TAKE_PROFIT, stop=None, take_profit=1.1750),
+                snapshot=_snapshot(owner=Owner.UNKNOWN, take_profit=None, stop_loss=None),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.dependent_orders[0][1]["takeProfit"]["price"], "1.17500")
+            self.assertNotIn("stopLoss", client.dependent_orders[0][1])
+
+    def test_manual_position_blocks_stop_loss_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_PROFIT_PROTECT, stop=1.1729),
+                snapshot=_snapshot(owner=Owner.MANUAL, stop_loss=None),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(client.dependent_orders, [])
+            self.assertIn("MANUAL_POSITION_STOP_LOSS_FORBIDDEN", (root / "exec.md").read_text())
+
+    def test_manual_position_blocks_market_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_REVIEW_EXIT, stop=None),
+                snapshot=_snapshot(owner=Owner.UNKNOWN),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(client.closed, [])
+            self.assertIn("MANUAL_POSITION_CLOSE_FORBIDDEN", (root / "exec.md").read_text())
+
 
 class FakePositionClient:
     def __init__(self) -> None:
@@ -88,7 +151,12 @@ class FakePositionClient:
         return {"relatedTransactionIDs": ["20"]}
 
 
-def _decision(action: str, *, stop: float | None) -> PositionManagementDecision:
+def _decision(
+    action: str,
+    *,
+    stop: float | None,
+    take_profit: float | None = None,
+) -> PositionManagementDecision:
     return PositionManagementDecision(
         generated_at_utc="2026-05-01T00:00:00+00:00",
         action=action,
@@ -105,14 +173,19 @@ def _decision(action: str, *, stop: float | None) -> PositionManagementDecision:
                 same_direction_score=160.0,
                 opposite_direction_score=120.0,
                 recommended_stop_loss=stop,
-                recommended_take_profit=None,
+                recommended_take_profit=take_profit,
                 reasons=("test",),
             ),
         ),
     )
 
 
-def _snapshot() -> BrokerSnapshot:
+def _snapshot(
+    *,
+    owner: Owner = Owner.TRADER,
+    take_profit: float | None = 1.1741,
+    stop_loss: float | None = 1.1721,
+) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
         fetched_at_utc=now,
@@ -124,9 +197,9 @@ def _snapshot() -> BrokerSnapshot:
                 units=1000,
                 entry_price=1.1729,
                 unrealized_pl_jpy=90.0,
-                take_profit=1.1741,
-                stop_loss=1.1721,
-                owner=Owner.TRADER,
+                take_profit=take_profit,
+                stop_loss=stop_loss,
+                owner=owner,
             ),
         ),
         quotes={"EUR_USD": Quote("EUR_USD", bid=1.1738, ask=1.1739, timestamp_utc=now)},

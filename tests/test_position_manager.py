@@ -13,6 +13,7 @@ from quant_rabbit.strategy.position_manager import (
     ACTION_HOLD_PROTECTED,
     ACTION_PROFIT_PROTECT,
     ACTION_REPAIR_PROTECTION,
+    ACTION_REPAIR_TAKE_PROFIT,
     ACTION_REVIEW_EXIT,
     PositionManager,
 )
@@ -259,7 +260,42 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_DISABLE_AUTO_CLOSE"] = prior
 
-    def test_operator_manual_position_is_not_managed(self) -> None:
+    def test_operator_manual_position_gets_take_profit_without_stop_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decision = _decision(root, long_score=160, short_score=120)
+            pair_charts = _pair_charts(root, atr_pips=10.0)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=datetime.now(timezone.utc),
+                positions=(
+                    BrokerPosition(
+                        trade_id="manual-1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=25000,
+                        entry_price=1.1729,
+                        owner=Owner.UNKNOWN,
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1728, 1.1729, timestamp_utc=datetime.now(timezone.utc))},
+            )
+
+            result = PositionManager(
+                trader_decision_path=decision,
+                pair_charts_path=pair_charts,
+                output_path=root / "pm.json",
+                report_path=root / "pm.md",
+            ).run(snapshot)
+
+            self.assertEqual(result.action, ACTION_REPAIR_TAKE_PROFIT)
+            self.assertEqual(result.positions[0].trade_id, "manual-1")
+            self.assertIsNone(result.positions[0].recommended_stop_loss)
+            self.assertIsNotNone(result.positions[0].recommended_take_profit)
+            report = (root / "pm.md").read_text()
+            self.assertIn("TP-only profit management enabled", report)
+            self.assertIn("SL and loss-close management disabled", report)
+
+    def test_operator_manual_position_with_existing_tp_keeps_stop_loss_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             decision = _decision(root, long_score=160, short_score=120)
@@ -267,15 +303,17 @@ class PositionManagerTest(unittest.TestCase):
                 fetched_at_utc=datetime.now(timezone.utc),
                 positions=(
                     BrokerPosition(
-                        trade_id="manual-1",
-                        pair="USD_JPY",
+                        trade_id="manual-2",
+                        pair="EUR_USD",
                         side=Side.LONG,
                         units=25000,
-                        entry_price=155.962,
-                        owner=Owner.UNKNOWN,
+                        entry_price=1.1729,
+                        take_profit=1.1800,
+                        stop_loss=None,
+                        owner=Owner.MANUAL,
                     ),
                 ),
-                quotes={"USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=datetime.now(timezone.utc))},
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1738, 1.1739, timestamp_utc=datetime.now(timezone.utc))},
             )
 
             result = PositionManager(
@@ -285,9 +323,10 @@ class PositionManagerTest(unittest.TestCase):
                 report_path=root / "pm.md",
             ).run(snapshot)
 
-            self.assertEqual(result.action, "NO_POSITION")
-            self.assertEqual(result.positions, ())
-            self.assertIn("manual/tagless positions", (root / "pm.md").read_text())
+            self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+            self.assertIsNone(result.positions[0].recommended_stop_loss)
+            self.assertIsNone(result.positions[0].recommended_take_profit)
+            self.assertIn("stop-loss untouched", (root / "pm.md").read_text())
 
 
 def _decision(root: Path, *, long_score: float, short_score: float) -> Path:

@@ -11,7 +11,7 @@ User directive 2026-05-13:
   「エントリー時だけではなく、途中で伸び縮みできるようにしてほしい。
    市況によって。それって当たり前だよね？」
 
-This module reads each trader-owned position's current pair_charts
+This module reads each profit-managed position's current pair_charts
 context, recomputes the market-derived reward_risk (same function as
 intent_generator), derives a fresh TP distance from current ATR, and
 adjusts the broker's TP order if the change exceeds the hysteresis.
@@ -20,8 +20,11 @@ Invariants:
 - TP must remain on the correct side of entry (LONG: above; SHORT:
   below) and at least `MIN_TP_TO_MARKET_PIPS` from current price so
   the rebalance never fires the TP accidentally on the same tick.
-- Only trader-owned positions are touched. Manual / unknown-owner
-  positions are skipped — operator discretion is preserved.
+- Trader-owned plus operator-managed manual / unknown-owner positions
+  are eligible for TP-only profit capture. External positions are skipped.
+- Trader-owned positions with no existing TP are repaired by PositionManager;
+  manual / unknown-owner positions with no existing TP are repaired here so
+  the runtime TP pass can apply the user's manual-position take-profit rule.
 - SL is NEVER touched here. This module is TP-only. The SL-free
   invariant `stop_loss is None` is respected by skipping any
   attempt to read/write SL.
@@ -71,7 +74,7 @@ class TPAdjustment:
     pair: str
     side: str
     entry_price: float
-    current_tp: float
+    current_tp: Optional[float]
     new_tp: float
     distance_pips_old: float
     distance_pips_new: float
@@ -88,6 +91,10 @@ def _round_price(pair: str, price: float) -> float:
 
 def _is_disabled() -> bool:
     return os.environ.get("QR_DISABLE_TP_REBALANCE", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _profit_take_owner_allowed(owner: str) -> bool:
+    return owner.strip().lower() in {"trader", "manual", "unknown"}
 
 
 def compute_tp_adjustment(
@@ -124,14 +131,16 @@ def compute_tp_adjustment(
        reversal signal): TP can only move FURTHER from entry. The
        original "let winners run" rule.
 
-    Returns None when the position should not be adjusted (wrong
-    owner, no existing TP, change below hysteresis, safety violation).
+    Returns None when the position should not be adjusted (non-managed
+    owner, trader-owned missing TP, change below hysteresis, safety violation).
     """
     if _is_disabled():
         return None
-    if owner != "trader":
+    owner_normalized = owner.strip().lower()
+    if not _profit_take_owner_allowed(owner_normalized):
         return None
-    if current_tp is None:
+    manual_missing_tp_repair = current_tp is None and owner_normalized in {"manual", "unknown"}
+    if current_tp is None and not manual_missing_tp_repair:
         return None
     if atr_pips <= 0 or reward_risk <= 0:
         return None
@@ -142,7 +151,7 @@ def compute_tp_adjustment(
     if side_up not in ("LONG", "SHORT"):
         return None
 
-    distance_old = abs(current_tp - entry_price) * pip_factor
+    distance_old = abs(current_tp - entry_price) * pip_factor if current_tp is not None else 0.0
     desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
 
     # Adverse detection (only matters for contract_adverse mode).
@@ -155,7 +164,17 @@ def compute_tp_adjustment(
     is_significant_adverse = is_adverse and adverse_pips >= ADVERSE_ATR_MULT * atr_pips
 
     # Pick mode.
-    if is_reversal_firing:
+    if manual_missing_tp_repair:
+        mode = "manual_tp_repair"
+        if side_up == "LONG":
+            entry_anchored = entry_price + desired_distance_pips * pip_size
+            market_safe = current_price + MIN_TP_TO_MARKET_PIPS * pip_size
+            candidate_tp = max(entry_anchored, market_safe)
+        else:
+            entry_anchored = entry_price - desired_distance_pips * pip_size
+            market_safe = current_price - MIN_TP_TO_MARKET_PIPS * pip_size
+            candidate_tp = min(entry_anchored, market_safe)
+    elif is_reversal_firing:
         mode = "expand_reversal"
         if side_up == "LONG":
             candidate_tp = entry_price + desired_distance_pips * pip_size
@@ -247,8 +266,8 @@ def compute_tp_adjustment(
     new_tp = _round_price(pair, candidate_tp)
     # Round to 1 decimal place before comparison so float precision
     # noise (e.g., 9.99999 vs 10.0) doesn't block legitimate adjustments.
-    change_pips = round(abs(new_tp - current_tp) * pip_factor, 1)
-    if change_pips < HYSTERESIS_PIPS:
+    change_pips = round(abs(new_tp - current_tp) * pip_factor, 1) if current_tp is not None else round(abs(new_tp - entry_price) * pip_factor, 1)
+    if current_tp is not None and change_pips < HYSTERESIS_PIPS:
         return None
 
     distance_new = abs(new_tp - entry_price) * pip_factor
@@ -278,7 +297,7 @@ def compute_all_tp_adjustments(
     pair_charts: Dict[str, Dict[str, Any]],
     market_reward_risk_fn,
 ) -> list[TPAdjustment]:
-    """Loop trader-owned positions and compute TP adjustments.
+    """Loop profit-managed positions and compute TP adjustments.
 
     `quotes` is the per-pair bid/ask dict from broker_snapshot.
     `pair_charts` is the keyed-by-pair dict (same shape as
@@ -293,7 +312,7 @@ def compute_all_tp_adjustments(
     for position in positions:
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
-        if owner_str.lower() != "trader":
+        if not _profit_take_owner_allowed(owner_str):
             continue
         pair = getattr(position, "pair", None)
         if not pair or pair not in quotes:

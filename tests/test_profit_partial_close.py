@@ -52,6 +52,38 @@ class ComputeProfitPartialCloseTest(unittest.TestCase):
         self.assertEqual(action.remaining_units, 7500)
         self.assertIn("runner 7500", action.rationale)
 
+    def test_manual_profit_milestone_closes_part_and_keeps_runner(self) -> None:
+        action = compute_profit_partial_close(
+            trade_id="manual-t2",
+            pair="EUR_USD",
+            side="LONG",
+            units=10000,
+            entry_price=1.3000,
+            current_price=1.3030,
+            atr_pips=20,
+            owner="manual",
+            chart_context=self._ctx(),
+        )
+
+        self.assertIsNotNone(action)
+        self.assertEqual(action.close_units, 2500)
+        self.assertEqual(action.remaining_units, 7500)
+
+    def test_external_position_is_not_profit_partially_closed(self) -> None:
+        action = compute_profit_partial_close(
+            trade_id="external-t2",
+            pair="EUR_USD",
+            side="LONG",
+            units=10000,
+            entry_price=1.3000,
+            current_price=1.3030,
+            atr_pips=20,
+            owner="external",
+            chart_context=self._ctx(),
+        )
+
+        self.assertIsNone(action)
+
     def test_same_milestone_does_not_repeat(self) -> None:
         action = compute_profit_partial_close(
             trade_id="t3",

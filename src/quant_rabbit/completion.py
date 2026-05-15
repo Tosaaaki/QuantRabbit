@@ -186,7 +186,7 @@ class CompletionAuditor:
                 "## Completion Contract",
                 "",
                 "- Completion requires broker truth, live-ready coverage, execution replay, learning receipts, and dry-run certification to pass together.",
-                "- Only unprotected trader-owned, external, over-budget, or trader/external pending-entry exposure blocks fresh entries; manual/tagless operator exposure is observed only.",
+                "- Only unprotected trader-owned, external, over-budget, or trader/external pending-entry exposure blocks fresh entries; manual/tagless operator exposure is TP-managed only.",
                 "- Protected trader-owned exposure may add only through portfolio risk validation.",
                 "- The 10% daily target remains a risk-bounded product KPI, not permission to force trades.",
             ]

@@ -1535,7 +1535,7 @@ class AutoTradeCycle:
                 "",
                 "- Protected trader-owned positions and trader-owned pending entries may add only through basket portfolio risk validation.",
                 "- If basket portfolio validation has no capacity, pending entries remain monitor-only.",
-                "- Open positions are handed to PositionManager first, then the protection gateway may close, repair protection, or tighten SL when the action is risk-reducing.",
+                "- Open positions are handed to PositionManager first; trader-owned positions may close/repair/tighten when gated, while manual/tagless positions are TP-only.",
                 "- If a pending entry came from a now-vetoed lane, the cycle may cancel it before waiting for the next cycle.",
                 "- A verified GPT `CANCEL_PENDING` cancels only current trader-owned pending entry ids and sends no fresh entry in that cycle.",
                 "- If flat, risk-repair or trigger receipts may promote the strategy profile before TraderBrain compares lanes.",

@@ -2,10 +2,11 @@
 
 This is deliberately separate from ``adverse_partial_close``. The adverse
 module was disabled because it realized losses from a lagging P/L threshold.
-This module only acts on trader-owned positions that are already in profit:
-bank part of the move at ATR-derived milestones, keep the remainder running,
-and remember the last milestone per trade so the same profit band is not
-closed repeatedly.
+This module only acts on trader-owned or operator-managed manual/tagless
+positions that are already in profit: bank part of the move at ATR-derived
+milestones, keep the remainder running, and remember the last milestone per
+trade so the same profit band is not closed repeatedly. External positions
+remain out of scope.
 """
 
 from __future__ import annotations
@@ -60,6 +61,10 @@ def _is_disabled() -> bool:
     }
 
 
+def _profit_take_owner_allowed(owner: str) -> bool:
+    return owner.strip().lower() in {"trader", "manual", "unknown"}
+
+
 def compute_profit_partial_close(
     *,
     trade_id: str,
@@ -75,7 +80,7 @@ def compute_profit_partial_close(
 ) -> Optional[ProfitPartialCloseAction]:
     if _is_disabled():
         return None
-    if owner != "trader":
+    if not _profit_take_owner_allowed(owner):
         return None
     if atr_pips <= 0 or current_price <= 0 or entry_price <= 0:
         return None
@@ -168,7 +173,7 @@ def compute_all_profit_partial_closes(
     for position in positions:
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
-        if owner_str.lower() != "trader":
+        if not _profit_take_owner_allowed(owner_str):
             continue
         pair = getattr(position, "pair", None)
         if not pair or pair not in quotes:

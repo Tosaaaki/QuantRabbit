@@ -163,13 +163,24 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         )
         self.assertIsNone(adj)
 
-    def test_skips_manual_owned(self) -> None:
+    def test_manual_owned_can_adjust_take_profit(self) -> None:
         self._kill_switch_off()
         adj = compute_tp_adjustment(
             trade_id="t5", pair="EUR_USD", side="LONG",
-            entry_price=1.30, current_tp=1.31,
+            entry_price=1.30, current_tp=1.305,
             current_price=1.305, atr_pips=30, reward_risk=3.0,
             owner="manual",
+        )
+        self.assertIsNotNone(adj)
+        self.assertGreater(adj.new_tp, 1.305)
+
+    def test_external_owned_is_not_adjusted(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="t5-external", pair="EUR_USD", side="LONG",
+            entry_price=1.30, current_tp=1.31,
+            current_price=1.305, atr_pips=30, reward_risk=3.0,
+            owner="external",
         )
         self.assertIsNone(adj)
 
@@ -181,6 +192,19 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
             current_price=1.305, atr_pips=30, reward_risk=3.0,
         )
         self.assertIsNone(adj)
+
+    def test_manual_position_without_tp_gets_take_profit_repair(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="manual-no-tp", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=None,
+            current_price=1.3010, atr_pips=20, reward_risk=2.0,
+            owner="unknown",
+        )
+        self.assertIsNotNone(adj)
+        self.assertIsNone(adj.current_tp)
+        self.assertGreater(adj.new_tp, 1.3010)
+        self.assertIn("manual_tp_repair", adj.rationale)
 
     def test_long_tp_never_below_entry(self) -> None:
         """Even with extreme contraction, LONG TP must stay > entry."""
