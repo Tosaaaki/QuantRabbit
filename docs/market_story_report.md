@@ -1,8 +1,8 @@
 # Market Story Report
 
-- Generated at UTC: `2026-05-06T13:05:45.020426+00:00`
+- Generated at UTC: `2026-05-15T00:47:56.958446+00:00`
 - Archive: `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z`
-- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmp8leon1be/stories.json`
+- Market story profile JSON: `/var/folders/64/3384w89n47v0hwlmw3ytr6j80000gn/T/tmpl8pxoo0f/stories.json`
 - Story artifacts read: `17`
 - Narrative/chart lines mined: `1980`
 
@@ -84,7 +84,7 @@
 ## Method Switching Contract
 
 - `TREND_CONTINUATION`: use only when chart story names staircase, band-walk, trend walk, impulse continuation, or shallow-pullback continuation.
-- `RANGE_ROTATION`: use only at exact rail/box prices; if the story says impulse, vertical leg, band-walk, or trend extension, this method is wrong.
+- `RANGE_ROTATION`: use rail/box prices, or low-vol M5 RANGE/QUIET directional scalps when the side bias is explicit; if the story says impulse, vertical leg, band-walk, or trend extension, this method is wrong.
 - `BREAKOUT_FAILURE`: requires trapped side, failed reclaim/break, rejection price, and body-based invalidation.
 - `EVENT_RISK`: central-bank, NFP, intervention, and spread-window stories reduce size or block tight-stop participation.
 - `POSITION_MANAGEMENT`: live unprotected exposure, margin pressure, or stale protection overrides fresh-entry hunting.
