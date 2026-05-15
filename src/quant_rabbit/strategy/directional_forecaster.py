@@ -74,6 +74,17 @@ FORECAST_SCORE_MOMENTUM_PRIOR_CAP = float(os.environ.get("QR_FORECAST_SCORE_MOME
 FORECAST_MARKET_LOCATION_EXTREME = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_EXTREME", "0.15"))
 FORECAST_MARKET_LOCATION_PRIOR_BASE = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_PRIOR_BASE", "5.0"))
 FORECAST_MARKET_LOCATION_PRIOR_CAP = float(os.environ.get("QR_FORECAST_MARKET_LOCATION_PRIOR_CAP", "12.0"))
+FORECAST_TECH_FAMILY_MIN_SCORE = float(os.environ.get("QR_FORECAST_TECH_FAMILY_MIN_SCORE", "0.35"))
+FORECAST_TECH_TREND_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_TREND_PRIOR_GAIN", "14.0"))
+FORECAST_TECH_TREND_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_TREND_PRIOR_CAP", "20.0"))
+FORECAST_TECH_MEAN_REV_MIN_SCORE = float(os.environ.get("QR_FORECAST_TECH_MEAN_REV_MIN_SCORE", "0.55"))
+FORECAST_TECH_MEAN_REV_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_MEAN_REV_PRIOR_GAIN", "10.0"))
+FORECAST_TECH_MEAN_REV_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_MEAN_REV_PRIOR_CAP", "16.0"))
+FORECAST_TECH_BREAKOUT_MIN_SCORE = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_MIN_SCORE", "0.60"))
+FORECAST_TECH_BREAKOUT_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_PRIOR_GAIN", "8.0"))
+FORECAST_TECH_BREAKOUT_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_PRIOR_CAP", "12.0"))
+FORECAST_TECH_DISAGREEMENT_RANGE_MIN = float(os.environ.get("QR_FORECAST_TECH_DISAGREEMENT_RANGE_MIN", "0.75"))
+FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR = float(os.environ.get("QR_FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR", "10.0"))
 FORECAST_HTF_TREND_PRIOR_PER_TF = float(os.environ.get("QR_FORECAST_HTF_TREND_PRIOR_PER_TF", "12.0"))
 FORECAST_STRONG_ADX = float(os.environ.get("QR_FORECAST_STRONG_ADX", "25.0"))
 FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
@@ -295,6 +306,178 @@ def _regime_direction(regime: object) -> str | None:
     return None
 
 
+def _tf_weight(timeframe: str) -> float:
+    return {
+        "M1": 0.5,
+        "M5": 1.0,
+        "M15": 1.5,
+        "M30": 1.5,
+        "H1": 2.0,
+        "H4": 1.7,
+        "D": 1.0,
+    }.get(timeframe.upper(), 1.0)
+
+
+def _market_location_supports_direction(confluence: Dict[str, Any], direction: str) -> bool:
+    p24 = _to_float(confluence.get("price_percentile_24h"))
+    p7 = _to_float(confluence.get("price_percentile_7d"))
+    if direction == "UP":
+        return (
+            (p24 is not None and p24 <= FORECAST_MARKET_LOCATION_EXTREME)
+            or (p7 is not None and p7 <= FORECAST_MARKET_LOCATION_EXTREME)
+        )
+    if direction == "DOWN":
+        upper = 1.0 - FORECAST_MARKET_LOCATION_EXTREME
+        return (
+            (p24 is not None and p24 >= upper)
+            or (p7 is not None and p7 >= upper)
+        )
+    return False
+
+
+def _has_range_context(pair_chart: Dict[str, Any]) -> bool:
+    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
+    if "RANGE" in str((confluence or {}).get("dominant_regime") or "").upper():
+        return True
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        if "RANGE" in str(view.get("regime") or "").upper():
+            return True
+        reading = view.get("regime_reading") if isinstance(view.get("regime_reading"), dict) else {}
+        if str((reading or {}).get("state") or "").upper() == "RANGE":
+            return True
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        adx = _to_float((indicators or {}).get("adx_14"))
+        chop = _to_float((indicators or {}).get("choppiness_14"))
+        if adx is not None and chop is not None and adx < 20.0 and chop > 61.8:
+            return True
+    return False
+
+
+def _family_average(
+    pair_chart: Dict[str, Any],
+    key: str,
+    *,
+    allowed_tfs: set[str] | None = None,
+) -> tuple[Optional[float], tuple[str, ...], Optional[float]]:
+    numerator = 0.0
+    denominator = 0.0
+    disagreement_num = 0.0
+    evidence: list[tuple[float, str, float]] = []
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        tf = str(view.get("granularity") or "").upper()
+        if allowed_tfs is not None and tf not in allowed_tfs:
+            continue
+        families = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
+        score = _to_float((families or {}).get(key))
+        if score is None:
+            continue
+        disagreement = _to_float((families or {}).get("disagreement")) or 0.0
+        quality = max(0.45, 1.0 - min(abs(disagreement), 1.0) * 0.35)
+        weight = _tf_weight(tf) * quality
+        numerator += score * weight
+        denominator += weight
+        disagreement_num += disagreement * weight
+        evidence.append((abs(score) * weight, tf, score))
+    if denominator <= 0:
+        return None, (), None
+    evidence.sort(key=lambda item: item[0], reverse=True)
+    labels = tuple(f"{tf}={score:+.2f}" for _rank, tf, score in evidence[:3])
+    return numerator / denominator, labels, disagreement_num / denominator
+
+
+def _technical_family_priors(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]]:
+    """Use grouped technical composites without letting collinear indicators over-vote.
+
+    The chart reader already computes RSI/Stoch/MACD/EMA/ADX/Aroon/SuperTrend/
+    BB/VWAP/ATR/Donchian as family scores. Forecasts should consume those
+    families directly instead of reducing the whole chart to one current
+    long/short number.
+    """
+    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
+    priors: list[tuple[str, float, str]] = []
+
+    trend_avg, trend_labels, trend_disagreement = _family_average(pair_chart, "trend_score")
+    if trend_avg is not None and abs(trend_avg) >= FORECAST_TECH_FAMILY_MIN_SCORE:
+        direction = "UP" if trend_avg > 0 else "DOWN"
+        magnitude = min(FORECAST_TECH_TREND_PRIOR_CAP, abs(trend_avg) * FORECAST_TECH_TREND_PRIOR_GAIN)
+        priors.append(
+            (
+                direction,
+                magnitude,
+                f"technical trend family avg={trend_avg:+.2f} {' '.join(trend_labels)} → {direction} prior {magnitude:.1f}",
+            )
+        )
+
+    mean_rev_avg, mean_rev_labels, mean_rev_disagreement = _family_average(
+        pair_chart,
+        "mean_rev_score",
+        allowed_tfs={"M1", "M5", "M15", "M30", "H1"},
+    )
+    if mean_rev_avg is not None and abs(mean_rev_avg) >= FORECAST_TECH_MEAN_REV_MIN_SCORE:
+        direction = "UP" if mean_rev_avg > 0 else "DOWN"
+        location_ok = _market_location_supports_direction(confluence, direction)
+        range_ok = _has_range_context(pair_chart)
+        if location_ok or range_ok or abs(mean_rev_avg) >= 0.9:
+            magnitude = min(
+                FORECAST_TECH_MEAN_REV_PRIOR_CAP,
+                abs(mean_rev_avg) * FORECAST_TECH_MEAN_REV_PRIOR_GAIN,
+            )
+            if not location_ok and range_ok:
+                magnitude *= 0.75
+            priors.append(
+                (
+                    direction,
+                    magnitude,
+                    f"technical mean-reversion family avg={mean_rev_avg:+.2f} {' '.join(mean_rev_labels)} → {direction} prior {magnitude:.1f}",
+                )
+            )
+
+    breakout_avg, breakout_labels, breakout_disagreement = _family_average(pair_chart, "breakout_score")
+    if (
+        breakout_avg is not None
+        and trend_avg is not None
+        and abs(breakout_avg) >= FORECAST_TECH_BREAKOUT_MIN_SCORE
+        and abs(trend_avg) >= FORECAST_TECH_FAMILY_MIN_SCORE
+    ):
+        direction = "UP" if trend_avg > 0 else "DOWN"
+        magnitude = min(
+            FORECAST_TECH_BREAKOUT_PRIOR_CAP,
+            abs(breakout_avg) * FORECAST_TECH_BREAKOUT_PRIOR_GAIN,
+        )
+        priors.append(
+            (
+                direction,
+                magnitude,
+                f"technical breakout family avg={breakout_avg:+.2f} with trend_avg={trend_avg:+.2f} {' '.join(breakout_labels)} → {direction} prior {magnitude:.1f}",
+            )
+        )
+
+    disagreements = [d for d in (trend_disagreement, mean_rev_disagreement, breakout_disagreement) if d is not None]
+    avg_disagreement = sum(disagreements) / len(disagreements) if disagreements else None
+    if (
+        avg_disagreement is not None
+        and avg_disagreement >= FORECAST_TECH_DISAGREEMENT_RANGE_MIN
+        and (trend_avg is None or abs(trend_avg) < 0.65)
+    ):
+        magnitude = min(
+            FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR,
+            FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR * avg_disagreement,
+        )
+        priors.append(
+            (
+                "RANGE",
+                magnitude,
+                f"technical family disagreement={avg_disagreement:.2f} → RANGE/stand-aside prior {magnitude:.1f}",
+            )
+        )
+
+    return priors
+
+
 def _score_momentum_prior(confluence: Dict[str, Any]) -> tuple[str, float, str] | None:
     momentum = confluence.get("score_momentum")
     if not isinstance(momentum, dict):
@@ -410,6 +593,7 @@ def _pair_chart_prior(pair_chart: Dict[str, Any]) -> list[tuple[str, float, str]
         priors.append(momentum_prior)
 
     priors.extend(_market_location_priors(confluence))
+    priors.extend(_technical_family_priors(pair_chart))
 
     for tf in ("H1", "H4"):
         view = _view_by_tf(pair_chart, tf)

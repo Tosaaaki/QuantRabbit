@@ -263,6 +263,53 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertIn("market location", " ".join(forecast.drivers_for))
         self.assertIn("score momentum gap", forecast.rationale_summary)
 
+    def test_technical_family_scores_feed_forecast_before_flat_score_gap(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "TIED",
+                "score_gap": 0.0,
+                "dominant_regime": "TREND_UP",
+            },
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001},
+                    "family_scores": {
+                        "trend_score": 0.82,
+                        "mean_rev_score": 0.05,
+                        "breakout_score": 0.10,
+                        "disagreement": 0.0,
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001},
+                    "family_scores": {
+                        "trend_score": 0.74,
+                        "mean_rev_score": -0.10,
+                        "breakout_score": 0.05,
+                        "disagreement": 0.0,
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertGreater(forecast.up_score, 0.0)
+        self.assertIn("technical trend family", " ".join(forecast.drivers_for))
+
     def test_forecast_calibration_prefers_direction_specific_history(self) -> None:
         hit_rates = {
             "directional_forecast": {
