@@ -24,6 +24,7 @@ from quant_rabbit.strategy.intent_generator import (
     _market_derived_reward_risk,
     _session_bucket_for,
 )
+from quant_rabbit.strategy.entry_thesis_ledger import load_entry_thesis
 from quant_rabbit.strategy.price_action import (
     aggregate_price_action_score,
     classify_order_block_proximity,
@@ -137,10 +138,14 @@ class PositionManager:
         generated_at = datetime.now(timezone.utc).isoformat()
         scores = _load_scores(self.trader_decision_path)
         pair_charts = _load_pair_charts(self.pair_charts_path)
+        full_pair_charts = _load_full_pair_charts(self.pair_charts_path)
         manageable_positions = tuple(
             position for position in snapshot.positions if _position_management_owner(position.owner)
         )
-        managed = tuple(self._manage_position(position, snapshot, scores, pair_charts) for position in manageable_positions)
+        managed = tuple(
+            self._manage_position(position, snapshot, scores, pair_charts, full_pair_charts)
+            for position in manageable_positions
+        )
         # Global kill switch (2026-05-15): when `QR_DISABLE_AUTO_CLOSE=1`,
         # demote every REVIEW_EXIT to HOLD_PROTECTED before aggregation.
         # The 2026-05-14 24h cycle leaked -¥8,983 through deterministic
@@ -151,10 +156,28 @@ class PositionManager:
         # now flow through gpt_trader Gate A/B with operator token.
         if os.environ.get("QR_DISABLE_AUTO_CLOSE", "").strip() in {"1", "true", "TRUE", "yes", "YES"}:
             demoted: list[ManagedPosition] = []
+            data_root = self.output_path.parent
             for m in managed:
                 if m.action == ACTION_REVIEW_EXIT:
+                    if _next_generation_structural_auto_close_allowed(m, data_root):
+                        new_reasons = tuple(list(m.reasons) + [
+                            "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
+                        ])
+                        demoted.append(ManagedPosition(
+                            trade_id=m.trade_id, pair=m.pair, side=m.side,
+                            units=m.units, action=m.action,
+                            unrealized_pl_jpy=m.unrealized_pl_jpy,
+                            remaining_risk_jpy=m.remaining_risk_jpy,
+                            remaining_reward_jpy=m.remaining_reward_jpy,
+                            same_direction_score=m.same_direction_score,
+                            opposite_direction_score=m.opposite_direction_score,
+                            reasons=new_reasons,
+                            recommended_stop_loss=m.recommended_stop_loss,
+                            recommended_take_profit=m.recommended_take_profit,
+                        ))
+                        continue
                     new_reasons = tuple(list(m.reasons) + [
-                        "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; close must go through gpt_trader Gate A/B",
+                        "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; legacy/no-ledger close must go through gpt_trader Gate A/B",
                     ])
                     demoted.append(ManagedPosition(
                         trade_id=m.trade_id, pair=m.pair, side=m.side,
@@ -182,6 +205,7 @@ class PositionManager:
         snapshot: BrokerSnapshot,
         scores: dict[tuple[str, str], float],
         pair_charts: dict[str, dict[str, Any]] | None,
+        full_pair_charts: dict[str, dict[str, Any]] | None,
     ) -> ManagedPosition:
         if _manual_take_profit_owner(position.owner):
             return self._manage_manual_take_profit_position(position, snapshot, scores, pair_charts)
@@ -244,7 +268,7 @@ class PositionManager:
                     # and chart_story available, evaluate EXTEND/HARVEST/
                     # NARROW/EXIT (user 2026-05-08「ミクロとマクロの視点」).
                     adaptive_action, adaptive_tp, adaptive_reasons = _adaptive_tp_action(
-                        position, quote, pair_charts
+                        position, quote, pair_charts, full_pair_charts
                     )
                     reasons.extend(adaptive_reasons)
                     if adaptive_action != ACTION_HOLD_PROTECTED:
@@ -437,6 +461,7 @@ class PositionManager:
                 "- Missing TP/SL is a repair requirement, not a passive monitor state.",
                 "- Profit protection is required once open profit clears remaining stop risk plus current session noise.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
+                "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; only ledger-backed next-generation trader positions can execute structural loss-cut exits.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -564,6 +589,7 @@ def _adaptive_tp_action(
     position: BrokerPosition,
     quote,
     pair_charts: dict[str, dict[str, Any]] | None,
+    full_pair_charts: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[str, float | None, list[str]]:
     """Decide adaptive TP action for an SL-free, profitable, TP-set position.
 
@@ -601,7 +627,7 @@ def _adaptive_tp_action(
     # context in the rationale and gates ambiguous EXTEND decisions.
     pip_factor = 100.0 if position.pair.endswith("_JPY") else 10000.0
     cur_price = quote.bid if not target_up else quote.ask
-    full_charts = _load_full_pair_charts()
+    full_charts = full_pair_charts if full_pair_charts is not None else _load_full_pair_charts()
     pair_chart = full_charts.get(position.pair)
     pa_delta_lane, pa_reasons = aggregate_price_action_score(
         pair_chart, lane_dir, cur_price, pip_factor
@@ -825,6 +851,36 @@ def _adaptive_tp_action(
         reasons.append("HOLD (mixed signal)")
 
     return action, new_tp, reasons
+
+
+def _next_generation_structural_auto_close_allowed(m: ManagedPosition, data_root: Path) -> bool:
+    """Allow auto-close only for post-change entries with hard structural evidence.
+
+    `QR_DISABLE_AUTO_CLOSE=1` remains the legacy/default safety brake. The
+    user explicitly asked on 2026-05-15 to keep current positions and apply the
+    repair from the next position onward; the entry-thesis ledger is the
+    generation marker because it is written only when this runtime opens a new
+    trade. No ledger, no automatic loss close.
+    """
+    if m.action != ACTION_REVIEW_EXIT:
+        return False
+    if m.unrealized_pl_jpy >= 0:
+        return False
+    if not _structural_loss_cut_reason(m.reasons):
+        return False
+    return load_entry_thesis(m.trade_id, data_root) is not None
+
+
+def _structural_loss_cut_reason(reasons: tuple[str, ...]) -> bool:
+    for reason in reasons:
+        text = str(reason)
+        if not text.startswith("loss-cut:"):
+            continue
+        if "close-confirmed structural break" in text:
+            return True
+        if "structural OB broken" in text:
+            return True
+    return False
 
 
 def _load_scores(path: Path) -> dict[tuple[str, str], float]:

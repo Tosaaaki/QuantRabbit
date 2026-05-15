@@ -260,6 +260,120 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_DISABLE_AUTO_CLOSE"] = prior
 
+    def test_auto_close_kill_switch_holds_legacy_structural_exit(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _structural_reversal_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="legacy-1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=-250,
+                        take_profit=1.2020,
+                        stop_loss=None,
+                    ),
+                    bid=1.1980,
+                    ask=1.1981,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "data" / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+                report = (root / "pm.md").read_text()
+                self.assertIn("loss-cut: macro REVERSED", report)
+                self.assertIn("legacy/no-ledger", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+    def test_auto_close_kill_switch_allows_next_generation_structural_exit(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir(parents=True)
+                (data_root / "entry_thesis_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-05-15T06:00:00Z",
+                            "trade_id": "future-1",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "entry_price": 1.2000,
+                            "forecast_direction": "LONG",
+                            "forecast_confidence": 0.72,
+                            "regime": "TREND_UP",
+                            "invalidation_price": 1.1984,
+                            "target_price": 1.2020,
+                            "key_drivers": ["test"],
+                        }
+                    )
+                    + "\n"
+                )
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _structural_reversal_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="future-1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=-250,
+                        take_profit=1.2020,
+                        stop_loss=None,
+                    ),
+                    bid=1.1980,
+                    ask=1.1981,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=data_root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_REVIEW_EXIT)
+                self.assertEqual(result.positions[0].action, ACTION_REVIEW_EXIT)
+                report = (root / "pm.md").read_text()
+                self.assertIn("loss-cut: macro REVERSED", report)
+                self.assertIn("next-generation entry thesis ledger present", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
     def test_operator_manual_position_gets_take_profit_without_stop_loss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -380,6 +494,57 @@ def _pair_charts(root: Path, *, atr_pips: float) -> Path:
                                 "granularity": "M5",
                                 "indicators": {"atr_pips": atr_pips},
                             }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _structural_reversal_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_structural.json"
+    chart_story = (
+        "M1(TREND_DOWN,ADX=24,ST=-,struct=BOS_DOWN@1.1980) "
+        "M5(TREND_DOWN,ADX=27,ST=-,struct=BOS_DOWN@1.1980) "
+        "H1(TREND_DOWN,ADX=30,ST=-,struct=BOS_DOWN@1.1980) "
+        "H4(TREND_DOWN,ADX=31,ST=-,struct=BOS_DOWN@1.1980) "
+        "D(RANGE,ADX=10,ST=-)"
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": chart_story,
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "indicators": {"atr_pips": 1.0},
+                            },
+                            {
+                                "granularity": "H1",
+                                "regime": "TREND_DOWN",
+                                "indicators": {"atr_pips": 4.0},
+                                "structure": {
+                                    "structure_events": [
+                                        {"kind": "BOS_DOWN", "close_confirmed": True},
+                                    ]
+                                },
+                            },
+                            {
+                                "granularity": "H4",
+                                "regime": "TREND_DOWN",
+                                "indicators": {"atr_pips": 8.0},
+                                "structure": {
+                                    "structure_events": [
+                                        {"kind": "BOS_DOWN", "close_confirmed": True},
+                                    ]
+                                },
+                            },
                         ],
                     }
                 ]

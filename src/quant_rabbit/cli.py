@@ -135,9 +135,10 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     "QR_TRADER_POSITION_NAV_PCT": "30",
     "QR_TRADER_BASE_UNITS": "3000",
     # A losing REVIEW_EXIT must not become an automatic broker close in the
-    # SL-free runtime. Full CLOSE now requires the explicit gpt_trader Gate
-    # A/B path; this default keeps position-manager thesis review advisory
-    # unless an operator intentionally re-enables automatic closes.
+    # SL-free runtime. Full CLOSE requires the explicit gpt_trader Gate A/B
+    # path; PositionManager keeps legacy/no-ledger reviews advisory. The only
+    # default exception is a next-generation trader position with an entry
+    # thesis ledger record and hard structural loss-cut evidence.
     "QR_DISABLE_AUTO_CLOSE": "1",
     # SL-free invariant restored 2026-05-13 (feedback_broker_sl_noise_hunt.md).
     # f382dc6 F shipped `QR_NEW_ENTRY_INITIAL_SL=1` to attach a broker SL

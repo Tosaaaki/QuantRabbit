@@ -57,7 +57,9 @@ export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
 # is unset. Kept for backward compat with smoke scripts that pin units.
 export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 # Deterministic REVIEW_EXIT is advisory by default in SL-free live mode.
-# Full closes must pass the gpt_trader close discipline and operator token.
+# Legacy/no-ledger closes still need gpt_trader Gate A/B; next-generation
+# trader entries with an entry thesis ledger may execute only hard structural
+# loss-cut exits.
 export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
