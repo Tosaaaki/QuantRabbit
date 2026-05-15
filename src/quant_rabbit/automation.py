@@ -1649,6 +1649,7 @@ class AutoTradeCycle:
             market_story_profile_path=self.market_story_profile_path,
             trader_settings_path=self.trader_settings_path,
             target_state_path=self.target_state_path or DEFAULT_DAILY_TARGET_STATE,
+            pair_charts_path=self.pair_charts_path,
             output_path=self.decision_path,
             report_path=self.decision_report_path,
         )

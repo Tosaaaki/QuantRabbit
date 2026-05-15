@@ -225,7 +225,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 strategy_profile=_strategy(root),
                 output_path=output,
                 report_path=root / "intents.md",
-                max_loss_jpy=500.0,
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=1_000.0,
             ).run(snapshot_path=_snapshot(root, usd_jpy=300.0))
 
             result = json.loads(output.read_text())["results"][0]
@@ -233,7 +234,7 @@ class IntentGeneratorTest(unittest.TestCase):
             # Unit count depends on conversion rate AND the (now ATR-derived)
             # SL distance — assert risk fits cap rather than fixed unit count.
             self.assertGreater(result["intent"]["units"], 0)
-            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 500.0)
+            self.assertLessEqual(result["risk_metrics"]["risk_jpy"], 1_000.0)
 
     def test_uses_campaign_runner_reward_risk_for_tp_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -246,6 +247,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 output_path=output,
                 report_path=root / "intents.md",
                 pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
             ).run(snapshot_path=_snapshot(root))
 
             result = json.loads(output.read_text())["results"][0]

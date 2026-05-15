@@ -549,7 +549,7 @@ TF_AGREEMENT_MAJORITY_THRESHOLD = 2.0 / 3.0
 TF_AGREEMENT_DISAGREEMENT_PENALTY = 25.0
 
 
-def _load_full_pair_charts_for_brain() -> dict[str, dict[str, Any]]:
+def _load_full_pair_charts_for_brain(pair_charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]]:
     """Load pair_charts.json keyed by pair, preserving the full views array.
 
     intent_generator's `_load_pair_charts` flattens views into per-TF keys
@@ -558,10 +558,10 @@ def _load_full_pair_charts_for_brain() -> dict[str, dict[str, Any]]:
     dealing_range live there. Returns {} on missing/malformed file so
     scoring can degrade to MTF-only without crashing.
     """
-    if not DEFAULT_PAIR_CHARTS.exists():
+    if not pair_charts_path.exists():
         return {}
     try:
-        payload = json.loads(DEFAULT_PAIR_CHARTS.read_text())
+        payload = json.loads(pair_charts_path.read_text())
     except (OSError, json.JSONDecodeError):
         return {}
     out: dict[str, dict[str, Any]] = {}
@@ -726,6 +726,14 @@ def _pair_forecast(
         hit_rates=hit_rates,
         regime=regime_label,
     )
+    if (
+        forecast.direction == "UNCLEAR"
+        and forecast.confidence <= 0.0
+        and forecast.rationale_summary in {"no detector evidence", "forecaster disabled"}
+    ):
+        if forecast_cache is not None:
+            forecast_cache[pair] = None
+        return None
     if forecast_cache is not None:
         forecast_cache[pair] = forecast
     try:
@@ -886,6 +894,7 @@ class TraderBrain:
         trader_settings_path: Path = DEFAULT_TRADER_SETTINGS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         output_path: Path = DEFAULT_TRADER_DECISION,
         report_path: Path = DEFAULT_TRADER_DECISION_REPORT,
     ) -> None:
@@ -896,6 +905,7 @@ class TraderBrain:
         self.trader_settings_path = trader_settings_path
         self.target_state_path = target_state_path
         self.attack_advice_path = attack_advice_path
+        self.pair_charts_path = pair_charts_path
         self.output_path = output_path
         self.report_path = report_path
 
@@ -922,7 +932,7 @@ class TraderBrain:
         # range, order blocks, liquidity) on every candidate. Missing /
         # malformed file degrades gracefully — PA delta becomes 0 and the
         # legacy MTF confluence scoring still runs.
-        full_pair_charts = _load_full_pair_charts_for_brain()
+        full_pair_charts = _load_full_pair_charts_for_brain(self.pair_charts_path)
         trader_settings = _load_trader_settings(self.trader_settings_path)
         loss_cap_jpy, loss_cap_source = _resolve_trader_loss_cap(
             strategy_payload=strategy_payload,

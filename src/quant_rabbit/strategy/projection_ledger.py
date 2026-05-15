@@ -17,7 +17,10 @@ mean-reverted is still counted correctly:
 - "UP" direction → did window high exceed entry by ≥ ATR_pips × 0.5?
 - "DOWN" → did window low go below by ≥ same?
 - "EITHER" → did the window range expand by the same ATR-based threshold?
-- For liquidity_sweep: did price reach the predicted target?
+- For liquidity_sweep: did price reach the named sweep target? The
+  signal direction is the post-sweep fade / entry direction, so target
+  side is derived from `signal_name` (`*_high` uses window high,
+  `*_low` uses window low).
 
 Resolved entries get tagged HIT / MISS / TIMEOUT. Rolling hit-rate per
 `(signal_name, pair)` is then queryable by `confidence_calibration()`
@@ -352,9 +355,34 @@ def verify_pending(
             move_threshold_price = atr_pips * 0.5 / pip_factor
 
         if e.predicted_target_price is not None:
-            # Liquidity sweep — did price reach the target?
+            # Liquidity-sweep signals store the sweep trigger price, while
+            # `direction` is the executable fade direction. Verify target
+            # touch by signal name so sweep_high + DOWN is valid.
             target = e.predicted_target_price
-            if e.direction == "UP" and target <= entry_price:
+            signal_name = e.signal_name.lower()
+            if "liquidity_sweep_high" in signal_name:
+                if price_path["high"] >= target:
+                    e.resolution_status = "HIT"
+                    e.resolution_evidence = f"window high {price_path['high']:.5f} reached sweep-high target {target:.5f}"
+                    counts["HIT"] += 1
+                else:
+                    e.resolution_status = "MISS"
+                    e.resolution_evidence = (
+                        f"window high {price_path['high']:.5f} did not reach sweep-high target {target:.5f}"
+                    )
+                    counts["MISS"] += 1
+            elif "liquidity_sweep_low" in signal_name:
+                if price_path["low"] <= target:
+                    e.resolution_status = "HIT"
+                    e.resolution_evidence = f"window low {price_path['low']:.5f} reached sweep-low target {target:.5f}"
+                    counts["HIT"] += 1
+                else:
+                    e.resolution_status = "MISS"
+                    e.resolution_evidence = (
+                        f"window low {price_path['low']:.5f} did not reach sweep-low target {target:.5f}"
+                    )
+                    counts["MISS"] += 1
+            elif e.direction == "UP" and target <= entry_price:
                 e.resolution_status = "MISS"
                 e.resolution_evidence = f"invalid UP target geometry target {target:.5f} <= entry {entry_price:.5f}"
                 counts["MISS"] += 1

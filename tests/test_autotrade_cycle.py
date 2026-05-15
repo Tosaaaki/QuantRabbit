@@ -1769,6 +1769,7 @@ def _open_target_state(root: Path) -> Path:
                 "target_return_pct": 10.0,
                 "daily_risk_budget_jpy": 2_000,
                 "target_trades_per_day": 10,
+                "target_trades_per_day_source": "cli",
                 "status": "PURSUE_TARGET",
                 "remaining_target_jpy": 10_000,
             }

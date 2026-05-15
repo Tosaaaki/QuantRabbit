@@ -87,7 +87,8 @@ def generate_limits_from_projections(
     """Generate LIMIT orders for Grade A setups for one pair.
 
     Sources:
-    1. Liquidity sweep target (UP / DOWN direction) → FADE entry at target.
+    1. Liquidity sweep target (signal name identifies high/low sweep)
+       -> FADE entry at target.
     2. Path projection Step B (FVG fill price) → trend-aligned entry.
 
     Only emits LIMITs when Grade A criteria are met:
@@ -134,13 +135,15 @@ def generate_limits_from_projections(
         target_price = _extract_target_price(getattr(s, "rationale", ""))
         if target_price is None:
             continue
-        # Sweep direction is where price GOES TO. We FADE.
-        sweep_dir = getattr(s, "direction", "")
-        if sweep_dir == "UP":
-            # Sweep up → SHORT LIMIT at the swept high (fade)
+        # `direction` is the executable fade direction. The signal name
+        # identifies which liquidity side must be swept before entry.
+        signal_name = str(getattr(s, "name", ""))
+        if signal_name == "liquidity_sweep_high":
+            # Sweep buy-side highs -> SHORT LIMIT at the swept high.
             fade_side = "SHORT"
-            need_aligned = aligned_short  # confirming short bias
-        elif sweep_dir == "DOWN":
+            need_aligned = aligned_short
+        elif signal_name == "liquidity_sweep_low":
+            # Sweep sell-side lows -> LONG LIMIT at the swept low.
             fade_side = "LONG"
             need_aligned = aligned_long
         else:
@@ -165,7 +168,7 @@ def generate_limits_from_projections(
             limit_price=_round_price(pair, target_price),
             take_profit_price=tp_price,
             units=PREDICTIVE_LIMIT_UNITS,
-            rationale=f"liquidity sweep {sweep_dir} fade @ {target_price}; {need_aligned} aligned signals",
+            rationale=f"{signal_name} fade {fade_side} @ {target_price}; {need_aligned} aligned signals",
             source="liquidity_sweep_fade",
             grade="A",
             gtd_utc=gtd,

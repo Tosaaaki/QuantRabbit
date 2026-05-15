@@ -37,7 +37,10 @@ This module adds FORWARD-LOOKING signals:
 
 Each detector emits a `ProjectionSignal` with `lead_time_min` so the
 trader knows the EXPECTED arrival of the move (not just "it might
-happen"). All bounded magnitudes per `PROJECTION_TOTAL_CAP`.
+happen"). `ProjectionSignal.direction` is always the forecast / entry
+direction consumed by `directional_forecaster` and `trader_brain`, not
+an intermediate setup-trigger direction. All bounded magnitudes per
+`PROJECTION_TOTAL_CAP`.
 
 Kill switch: `QR_DISABLE_FORWARD_PROJECTION=1`.
 """
@@ -81,7 +84,7 @@ SESSION_EXPANSION_BONUS = float(os.environ.get("QR_SESSION_EXPANSION_BONUS", "6.
 class ProjectionSignal:
     name: str
     timeframe: Optional[str]
-    direction: str  # "UP" | "DOWN" | "EITHER" (volatility expansion without direction)
+    direction: str  # "UP" | "DOWN" | "EITHER" (forecast / entry direction)
     lead_time_min: float  # estimated minutes until the move
     confidence: float
     bonus_magnitude: float
@@ -140,10 +143,10 @@ def _detect_liquidity_sweep_target(view: Dict[str, Any], tf: str, current_price:
     swing high cluster, the next likely move is a sweep upward THEN
     reversal. Same for lows downward THEN reversal.
 
-    The signal direction is the SWEEP direction (up to highs, down to
-    lows). The trader should expect "price reaches there, then reverses"
-    — useful for both ride-the-sweep entries and fade-after-sweep
-    entries.
+    The signal direction is the fade / entry direction because the
+    forecast stack treats `direction` as executable bias. The sweep
+    target itself remains in the rationale for projection-ledger
+    verification and predictive LIMIT placement.
     """
     if current_price is None or current_price <= 0:
         return []
@@ -183,11 +186,11 @@ def _detect_liquidity_sweep_target(view: Dict[str, Any], tf: str, current_price:
             pips_to = dist * pip_factor
             out.append(ProjectionSignal(
                 name="liquidity_sweep_high",
-                timeframe=tf, direction="UP",
+                timeframe=tf, direction="DOWN",
                 lead_time_min=15,
                 confidence=min(1.0, 0.5 + (1.0 - dist / threshold_distance)),
                 bonus_magnitude=LIQUIDITY_SWEEP_BONUS,
-                rationale=f"{tf} equal-highs at {nearest:.5f} ({pips_to:.1f}pip up) — sweep target",
+                rationale=f"{tf} equal-highs at {nearest:.5f} ({pips_to:.1f}pip up) — buy-side sweep target, fade SHORT",
             ))
     prices_below = [p for p in eq_lows_prices if p < current_price]
     if prices_below:
@@ -197,11 +200,11 @@ def _detect_liquidity_sweep_target(view: Dict[str, Any], tf: str, current_price:
             pips_to = dist * pip_factor
             out.append(ProjectionSignal(
                 name="liquidity_sweep_low",
-                timeframe=tf, direction="DOWN",
+                timeframe=tf, direction="UP",
                 lead_time_min=15,
                 confidence=min(1.0, 0.5 + (1.0 - dist / threshold_distance)),
                 bonus_magnitude=LIQUIDITY_SWEEP_BONUS,
-                rationale=f"{tf} equal-lows at {nearest:.5f} ({pips_to:.1f}pip down) — sweep target",
+                rationale=f"{tf} equal-lows at {nearest:.5f} ({pips_to:.1f}pip down) — sell-side sweep target, fade LONG",
             ))
     return out
 

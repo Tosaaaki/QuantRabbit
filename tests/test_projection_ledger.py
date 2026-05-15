@@ -37,7 +37,7 @@ class RecordTest(unittest.TestCase):
             root = Path(tmp)
             sigs = [
                 _Sig("bb_squeeze", "EITHER", 75, 0.6, 8.0),
-                _Sig("liquidity_sweep_high", "UP", 15, 0.9, 12.0, "M5 equal-highs at 1.17150 (1.0pip up)"),
+                _Sig("liquidity_sweep_high", "DOWN", 15, 0.9, 12.0, "M5 equal-highs at 1.17150 (1.0pip up)"),
             ]
             n = record_projections(sigs, pair="EUR_USD", current_price=1.17140,
                                     data_root=root)
@@ -56,7 +56,7 @@ class RecordTest(unittest.TestCase):
     def test_record_dedupes_same_cycle_pair_signal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            sig = _Sig("liquidity_sweep_low", "DOWN", 15, 0.9, 12.0, "M5 equal-lows at 1.16800 (4.0pip down)")
+            sig = _Sig("liquidity_sweep_low", "UP", 15, 0.9, 12.0, "M5 equal-lows at 1.16800 (4.0pip down)")
             first = record_projections(
                 [sig],
                 pair="EUR_USD",
@@ -176,6 +176,46 @@ class VerifyTest(unittest.TestCase):
             )
             self.assertEqual(counts["HIT"], 1)
             self.assertEqual(load_ledger(root)[0].resolution_status, "HIT")
+
+    def test_liquidity_sweep_high_uses_signal_name_not_entry_direction(self) -> None:
+        tmp, root = self._setup({
+            "name": "liquidity_sweep_high",
+            "direction": "DOWN",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1700,
+            "target": 1.1720,
+        })
+        with tmp:
+            counts = verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1719, "ask": 1.1721}},
+                atr_pips_by_pair={},
+            )
+            self.assertEqual(counts["HIT"], 1)
+            entries = load_ledger(root)
+            self.assertEqual(entries[0].resolution_status, "HIT")
+            self.assertIn("sweep-high target", entries[0].resolution_evidence)
+
+    def test_liquidity_sweep_low_uses_signal_name_not_entry_direction(self) -> None:
+        tmp, root = self._setup({
+            "name": "liquidity_sweep_low",
+            "direction": "UP",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1700,
+            "target": 1.1680,
+        })
+        with tmp:
+            counts = verify_pending(
+                root,
+                quotes_by_pair={"EUR_USD": {"bid": 1.1679, "ask": 1.1681}},
+                atr_pips_by_pair={},
+            )
+            self.assertEqual(counts["HIT"], 1)
+            entries = load_ledger(root)
+            self.assertEqual(entries[0].resolution_status, "HIT")
+            self.assertIn("sweep-low target", entries[0].resolution_evidence)
 
     def test_candle_mode_times_out_when_window_truth_missing(self) -> None:
         tmp, root = self._setup({
