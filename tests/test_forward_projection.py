@@ -149,3 +149,109 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
 
         self.assertTrue(orders)
         self.assertTrue(all(o.side == "LONG" for o in orders))
+
+    def test_predictive_limit_allows_small_grade_b_early_turn_equal_low(self) -> None:
+        signals = [
+            _Sig(
+                "liquidity_sweep_low",
+                "UP",
+                "M15 equal-lows at 1.09970 (3.0pip down)",
+            )
+        ]
+
+        orders = generate_limits_from_projections(
+            pair="EUR_USD",
+            pair_chart={
+                "confluence": {"price_percentile_24h": 0.05, "price_percentile_7d": 0.02},
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "indicators": {
+                            "atr_pips": 10.0,
+                            "bb_lower": 1.0996,
+                            "bb_middle": 1.1005,
+                            "close": 1.09975,
+                            "rsi_14": 31.0,
+                            "williams_r_14": -92.0,
+                        },
+                        "structure": {"last_event": {"kind": "BOS_DOWN", "close_confirmed": False}},
+                    }
+                ],
+            },
+            current_bid=1.1000,
+            current_ask=1.1001,
+            projection_signals=signals,
+            paths=[],
+        )
+
+        self.assertEqual(len(orders), 1)
+        self.assertEqual(orders[0].side, "LONG")
+        self.assertEqual(orders[0].grade, "B")
+        self.assertLess(orders[0].units, 5000)
+
+    def test_predictive_limit_rejects_thin_grade_b_without_extreme_context(self) -> None:
+        signals = [
+            _Sig(
+                "liquidity_sweep_low",
+                "UP",
+                "M15 equal-lows at 1.09970 (3.0pip down)",
+            )
+        ]
+
+        orders = generate_limits_from_projections(
+            pair="EUR_USD",
+            pair_chart={
+                "confluence": {"price_percentile_24h": 0.45, "price_percentile_7d": 0.50},
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "indicators": {
+                            "atr_pips": 10.0,
+                            "bb_lower": 1.0990,
+                            "bb_middle": 1.1005,
+                            "close": 1.1002,
+                            "rsi_14": 49.0,
+                            "williams_r_14": -45.0,
+                        },
+                        "structure": {"last_event": {"kind": "BOS_DOWN", "close_confirmed": False}},
+                    }
+                ],
+            },
+            current_bid=1.1000,
+            current_ask=1.1001,
+            projection_signals=signals,
+            paths=[],
+        )
+
+        self.assertEqual(orders, [])
+
+    def test_predictive_limit_dedupes_same_liquidity_level(self) -> None:
+        signals = [
+            _Sig("liquidity_sweep_low", "UP", "M5 equal-lows at 1.09970 (3.0pip down)"),
+            _Sig("liquidity_sweep_low", "UP", "M15 equal-lows at 1.09970 (3.0pip down)"),
+        ]
+
+        orders = generate_limits_from_projections(
+            pair="EUR_USD",
+            pair_chart={
+                "confluence": {"price_percentile_24h": 0.03},
+                "views": [
+                    {
+                        "granularity": "M5",
+                        "indicators": {
+                            "atr_pips": 10.0,
+                            "bb_lower": 1.0996,
+                            "bb_middle": 1.1005,
+                            "close": 1.0997,
+                            "rsi_14": 35.0,
+                        },
+                    }
+                ],
+            },
+            current_bid=1.1000,
+            current_ask=1.1001,
+            projection_signals=signals,
+            paths=[],
+        )
+
+        self.assertEqual(len(orders), 1)

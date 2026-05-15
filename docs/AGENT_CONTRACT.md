@@ -238,6 +238,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Strategy profile history is at least pair/direction scoped, and may become method-scoped when a receipt proves a specific method. When method-scoped evidence exists for a pair/direction, another method must not reuse that evidence to become live-ready.
 - `RISK_REPAIR_CANDIDATE` can reopen only when the current receipt passes risk geometry.
 - `MINE_MISSED_EDGE` can reopen only from a LIMIT or STOP-ENTRY receipt.
+- **Predictive LIMIT timing repair (2026-05-15).** `generate-predictive-limits` may emit full-size Grade A liquidity-sweep/path LIMITs from high-conviction projection confluence. It may also emit smaller Grade B early-turn liquidity-sweep LIMITs when a single near sweep target occurs at an extreme percentile with M1/M5/M15 exhaustion, optionally plus a close-confirmed micro flip. Grade B is for catching the start of a turn before the full M15/H1 confirmation stack is obvious; it must remain smaller than Grade A, SL-free, TTL-bounded, and de-duplicated by pair/side/price/TP/source so overlapping timeframes cannot double the same trap.
 - `BLOCK_UNTIL_NEW_EVIDENCE` is **never auto-promoted**.
 
 ---

@@ -10,7 +10,10 @@ Reads:
 
 For each pair with a HIGH-CONVICTION setup (Grade A: ≥4 aligned
 projection signals OR an ACTIVE path projection), this module
-generates a LIMIT order at the predicted entry level:
+generates a LIMIT order at the predicted entry level. It also allows
+smaller Grade B "early-turn" liquidity-sweep limits when price is
+already at an extreme and the sweep target is near; this catches the
+start of a move without waiting for the whole M15/H1 confirmation stack.
 
 1. **Liquidity sweep fade**: sweep_high target → SHORT LIMIT at target
    (fade the sweep). sweep_low target → LONG LIMIT at target.
@@ -47,8 +50,16 @@ LIMIT_TTL_MIN = float(os.environ.get("QR_PREDICTIVE_LIMIT_TTL_MIN", "90"))
 # Minimum aligned signal count to qualify as Grade A
 GRADE_A_MIN_ALIGNED = int(os.environ.get("QR_GRADE_A_MIN_ALIGNED", "4"))
 GRADE_A_MIN_SCORE = float(os.environ.get("QR_GRADE_A_MIN_SCORE", "25.0"))
+# Grade B is intentionally smaller and stricter on context. It is for
+# early turns at extremes, not for generic weak signals.
+GRADE_B_MIN_ALIGNED = int(os.environ.get("QR_GRADE_B_MIN_ALIGNED", "1"))
 # Default unit size for predictive limits
 PREDICTIVE_LIMIT_UNITS = int(os.environ.get("QR_PREDICTIVE_LIMIT_UNITS", "5000"))
+PREDICTIVE_LIMIT_GRADE_B_UNITS = int(
+    os.environ.get("QR_PREDICTIVE_LIMIT_GRADE_B_UNITS", str(max(1000, PREDICTIVE_LIMIT_UNITS // 2)))
+)
+EARLY_TURN_EXTREME_PCTILE = float(os.environ.get("QR_EARLY_TURN_EXTREME_PCTILE", "0.25"))
+EARLY_TURN_EXTREME_7D_PCTILE = float(os.environ.get("QR_EARLY_TURN_EXTREME_7D_PCTILE", "0.10"))
 
 
 @dataclass
@@ -91,16 +102,21 @@ def generate_limits_from_projections(
        -> FADE entry at target.
     2. Path projection Step B (FVG fill price) → trend-aligned entry.
 
-    Only emits LIMITs when Grade A criteria are met:
+    Emits LIMITs when Grade A criteria are met:
     - ≥ GRADE_A_MIN_ALIGNED projection signals aligned on direction, AND
     - aggregate projection score ≥ GRADE_A_MIN_SCORE, OR
     - At least one active path projection (always Grade A).
+
+    It also emits smaller Grade B liquidity-sweep fades when the same sweep
+    signal appears at a price extreme with short-term exhaustion. This is a
+    timing repair: place the trap before the confirmed reversal is obvious.
     """
     if _is_disabled():
         return []
     now = now or datetime.now(timezone.utc)
     gtd = (now + timedelta(minutes=LIMIT_TTL_MIN)).isoformat().replace("+00:00", "Z")
     out: List[PredictiveLimitOrder] = []
+    seen_order_keys: set[tuple] = set()
 
     # Path-based limits: place at Step B of each path
     for path in paths or []:
@@ -115,7 +131,7 @@ def generate_limits_from_projections(
         tp_price = None
         if len(steps) >= 3:
             tp_price = _round_price(pair, float(steps[2].expected_price))
-        out.append(PredictiveLimitOrder(
+        _append_unique(out, seen_order_keys, PredictiveLimitOrder(
             pair=pair, side=side, limit_price=limit_price,
             take_profit_price=tp_price,
             units=PREDICTIVE_LIMIT_UNITS,
@@ -148,8 +164,16 @@ def generate_limits_from_projections(
             need_aligned = aligned_long
         else:
             continue
+        grade = "A"
+        units = PREDICTIVE_LIMIT_UNITS
+        context_note = f"{need_aligned} aligned signals"
         if need_aligned < GRADE_A_MIN_ALIGNED:
-            continue
+            early_context = _early_turn_context(pair_chart, fade_side)
+            if need_aligned < GRADE_B_MIN_ALIGNED or early_context is None:
+                continue
+            grade = "B"
+            units = PREDICTIVE_LIMIT_GRADE_B_UNITS
+            context_note = f"{need_aligned} aligned {_signal_word(need_aligned)}; early-turn {early_context}"
         # TP: counter-direction ATR distance from sweep
         ind = None
         if pair_chart:
@@ -163,18 +187,130 @@ def generate_limits_from_projections(
             tp_price = _round_price(pair, target_price - atr_pips * 2 * pip_size)
         else:
             tp_price = _round_price(pair, target_price + atr_pips * 2 * pip_size)
-        out.append(PredictiveLimitOrder(
+        _append_unique(out, seen_order_keys, PredictiveLimitOrder(
             pair=pair, side=fade_side,
             limit_price=_round_price(pair, target_price),
             take_profit_price=tp_price,
-            units=PREDICTIVE_LIMIT_UNITS,
-            rationale=f"{signal_name} fade {fade_side} @ {target_price}; {need_aligned} aligned signals",
+            units=units,
+            rationale=f"{signal_name} fade {fade_side} @ {target_price}; {context_note}",
             source="liquidity_sweep_fade",
-            grade="A",
+            grade=grade,
             gtd_utc=gtd,
         ))
 
     return out
+
+
+def _append_unique(
+    out: List[PredictiveLimitOrder],
+    seen_order_keys: set[tuple],
+    order: PredictiveLimitOrder,
+) -> None:
+    key = (
+        order.pair,
+        order.side,
+        order.limit_price,
+        order.take_profit_price,
+        order.source,
+    )
+    if key in seen_order_keys:
+        return
+    seen_order_keys.add(key)
+    out.append(order)
+
+
+def _signal_word(count: int) -> str:
+    return "signal" if count == 1 else "signals"
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _early_turn_context(pair_chart: Optional[Dict[str, Any]], fade_side: str) -> Optional[str]:
+    if not pair_chart:
+        return None
+    side = str(fade_side or "").upper()
+    if side not in {"LONG", "SHORT"}:
+        return None
+    confluence = pair_chart.get("confluence") or {}
+    pct24 = _to_float(confluence.get("price_percentile_24h"))
+    pct7 = _to_float(confluence.get("price_percentile_7d"))
+    if side == "LONG":
+        extreme = (
+            (pct24 is not None and pct24 <= EARLY_TURN_EXTREME_PCTILE)
+            or (pct7 is not None and pct7 <= EARLY_TURN_EXTREME_7D_PCTILE)
+        )
+    else:
+        extreme = (
+            (pct24 is not None and pct24 >= 1.0 - EARLY_TURN_EXTREME_PCTILE)
+            or (pct7 is not None and pct7 >= 1.0 - EARLY_TURN_EXTREME_7D_PCTILE)
+        )
+    if not extreme:
+        return None
+
+    exhaustion_hits = 0
+    reversal_hits = 0
+    for view in pair_chart.get("views", []) or []:
+        tf = str(view.get("granularity") or "").upper()
+        if tf not in {"M1", "M5", "M15"}:
+            continue
+        indicators = view.get("indicators") or {}
+        rsi = _to_float(indicators.get("rsi_14"))
+        williams = _to_float(indicators.get("williams_r_14"))
+        mfi = _to_float(indicators.get("mfi_14"))
+        close = _to_float(indicators.get("close"))
+        bb_lower = _to_float(indicators.get("bb_lower"))
+        bb_upper = _to_float(indicators.get("bb_upper"))
+        bb_middle = _to_float(indicators.get("bb_middle"))
+        if side == "LONG":
+            if (
+                (rsi is not None and rsi <= 40.0)
+                or (williams is not None and williams <= -80.0)
+                or (mfi is not None and mfi <= 35.0)
+                or _close_near_band(close, bb_lower, bb_middle, lower_side=True)
+            ):
+                exhaustion_hits += 1
+        else:
+            if (
+                (rsi is not None and rsi >= 60.0)
+                or (williams is not None and williams >= -20.0)
+                or (mfi is not None and mfi >= 65.0)
+                or _close_near_band(close, bb_upper, bb_middle, lower_side=False)
+            ):
+                exhaustion_hits += 1
+        last_event = (view.get("structure") or {}).get("last_event") or {}
+        kind = str(last_event.get("kind") or "").upper()
+        if bool(last_event.get("close_confirmed")) and (
+            (side == "LONG" and kind.endswith("_UP"))
+            or (side == "SHORT" and kind.endswith("_DOWN"))
+        ):
+            reversal_hits += 1
+    if exhaustion_hits <= 0:
+        return None
+    if reversal_hits > 0:
+        return f"extreme+exhaustion({exhaustion_hits})+micro_flip({reversal_hits})"
+    return f"extreme+exhaustion({exhaustion_hits})"
+
+
+def _close_near_band(
+    close: Optional[float],
+    band: Optional[float],
+    middle: Optional[float],
+    *,
+    lower_side: bool,
+) -> bool:
+    if close is None or band is None:
+        return False
+    if middle is None or middle == band:
+        return close <= band if lower_side else close >= band
+    quarter_band = abs(middle - band) * 0.25
+    if lower_side:
+        return close <= band + quarter_band
+    return close >= band - quarter_band
 
 
 def _extract_target_price(rationale: str) -> Optional[float]:
