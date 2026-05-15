@@ -729,7 +729,11 @@ def _pair_forecast(
     if (
         forecast.direction == "UNCLEAR"
         and forecast.confidence <= 0.0
-        and forecast.rationale_summary in {"no detector evidence", "forecaster disabled"}
+        and forecast.rationale_summary in {
+            "no detector evidence",
+            "no directional/range detector evidence",
+            "forecaster disabled",
+        }
     ):
         if forecast_cache is not None:
             forecast_cache[pair] = None

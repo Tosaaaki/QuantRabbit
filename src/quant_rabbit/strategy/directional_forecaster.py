@@ -85,11 +85,28 @@ FORECAST_TECH_BREAKOUT_PRIOR_GAIN = float(os.environ.get("QR_FORECAST_TECH_BREAK
 FORECAST_TECH_BREAKOUT_PRIOR_CAP = float(os.environ.get("QR_FORECAST_TECH_BREAKOUT_PRIOR_CAP", "12.0"))
 FORECAST_TECH_DISAGREEMENT_RANGE_MIN = float(os.environ.get("QR_FORECAST_TECH_DISAGREEMENT_RANGE_MIN", "0.75"))
 FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR = float(os.environ.get("QR_FORECAST_TECH_DISAGREEMENT_RANGE_PRIOR", "10.0"))
+# Range-phase priors are forecast-score magnitudes, not risk limits. They
+# encode market structure reality: a stable low-ADX/high-Chop box is tradeable
+# only as rail rotation; a low-volatility squeeze is a two-sided breakout risk;
+# a close on the box rail with trend/breakout family support is a directional
+# break. Fixed defaults keep behavior reproducible across pairs until the
+# projection ledger has enough samples to learn pair/session-specific priors;
+# replace these env-tunable values with calibrated hit-rate priors when that
+# sample is available.
+FORECAST_RANGE_INSIDE_PRIOR = float(os.environ.get("QR_FORECAST_RANGE_INSIDE_PRIOR", "26.0"))
+FORECAST_RANGE_FORMING_PRIOR = float(os.environ.get("QR_FORECAST_RANGE_FORMING_PRIOR", "14.0"))
+FORECAST_RANGE_BREAKOUT_PENDING_PRIOR = float(os.environ.get("QR_FORECAST_RANGE_BREAKOUT_PENDING_PRIOR", "18.0"))
+FORECAST_RANGE_BREAKOUT_DIRECTION_PRIOR = float(os.environ.get("QR_FORECAST_RANGE_BREAKOUT_DIRECTION_PRIOR", "18.0"))
+FORECAST_RANGE_PHASE_MIN_EVIDENCE = float(os.environ.get("QR_FORECAST_RANGE_PHASE_MIN_EVIDENCE", "2.0"))
+FORECAST_RANGE_FORMING_MIN_EVIDENCE = float(os.environ.get("QR_FORECAST_RANGE_FORMING_MIN_EVIDENCE", "1.5"))
+FORECAST_RANGE_BREAKOUT_MIN_EVIDENCE = float(os.environ.get("QR_FORECAST_RANGE_BREAKOUT_MIN_EVIDENCE", "1.3"))
 FORECAST_HTF_TREND_PRIOR_PER_TF = float(os.environ.get("QR_FORECAST_HTF_TREND_PRIOR_PER_TF", "12.0"))
 FORECAST_STRONG_ADX = float(os.environ.get("QR_FORECAST_STRONG_ADX", "25.0"))
 FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
     os.environ.get("QR_FORECAST_COUNTERTREND_UNCONFIRMED_MULT", "0.55")
 )
+
+RANGE_PHASE_TIMEFRAMES = {"M5", "M15", "M30", "H1"}
 
 
 @dataclass(frozen=True)
@@ -130,6 +147,15 @@ class DirectionalForecast:
             "calibration_multiplier": round(self.calibration_multiplier, 3),
             "component_scores": {k: round(v, 3) for k, v in self.component_scores.items()},
         }
+
+
+@dataclass(frozen=True)
+class _RangePhase:
+    phase: str
+    confidence: float
+    direction: str | None
+    rationale: str
+    evidence: tuple[str, ...]
 
 
 def _is_disabled() -> bool:
@@ -353,6 +379,207 @@ def _has_range_context(pair_chart: Dict[str, Any]) -> bool:
         if adx is not None and chop is not None and adx < 20.0 and chop > 61.8:
             return True
     return False
+
+
+def _percent_0_100(value: Any) -> Optional[float]:
+    pct = _to_float(value)
+    if pct is None:
+        return None
+    return pct * 100.0 if 0.0 <= pct <= 1.0 else pct
+
+
+def _truthy_flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    numeric = _to_float(value)
+    return numeric is not None and numeric > 0
+
+
+def _indicator_first(indicators: Dict[str, Any], keys: tuple[str, ...]) -> Optional[float]:
+    for key in keys:
+        value = _to_float((indicators or {}).get(key))
+        if value is not None and value > 0:
+            return value
+    return None
+
+
+def _range_position(indicators: Dict[str, Any]) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    close = _to_float((indicators or {}).get("close"))
+    low = _indicator_first(
+        indicators,
+        ("donchian_low", "bb_lower", "linreg_channel_lower", "avwap_lower_2sd", "avwap_swing_low"),
+    )
+    high = _indicator_first(
+        indicators,
+        ("donchian_high", "bb_upper", "linreg_channel_upper", "avwap_upper_2sd", "avwap_swing_high"),
+    )
+    if close is None or low is None or high is None or high <= low:
+        return close, None, None
+    position = (close - low) / (high - low)
+    return close, low, max(0.0, min(1.0, position))
+
+
+def _view_regime_state(view: Dict[str, Any]) -> str:
+    reading = view.get("regime_reading") if isinstance(view.get("regime_reading"), dict) else {}
+    state = str((reading or {}).get("state") or "").upper()
+    if state:
+        return state
+    return str(view.get("regime") or "").upper()
+
+
+def _range_phase_analysis(pair_chart: Dict[str, Any]) -> _RangePhase:
+    """Classify range context before the forecast winner is selected.
+
+    A stable range and a compressed box that is about to break are opposite
+    trading problems. The first can support RANGE_ROTATION rails; the second
+    should block fade entries until direction is confirmed.
+    """
+    stable = 0.0
+    forming = 0.0
+    pending = 0.0
+    break_up = 0.0
+    break_down = 0.0
+    evidence: list[str] = []
+
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        tf = str(view.get("granularity") or "").upper()
+        if tf not in RANGE_PHASE_TIMEFRAMES:
+            continue
+        weight = _tf_weight(tf)
+        state = _view_regime_state(view)
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        families = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
+        reading = view.get("regime_reading") if isinstance(view.get("regime_reading"), dict) else {}
+        reading_conf = max(0.35, min(1.0, _to_float((reading or {}).get("confidence")) or 0.65))
+
+        adx = _to_float((indicators or {}).get("adx_14") or (indicators or {}).get("adx"))
+        chop = _to_float((indicators or {}).get("choppiness_14"))
+        atr_pct = _percent_0_100((reading or {}).get("atr_percentile"))
+        if atr_pct is None:
+            atr_pct = _percent_0_100((indicators or {}).get("atr_percentile_100"))
+        bb_width_pct = _percent_0_100((indicators or {}).get("bb_width_percentile_100"))
+        trend_score = _to_float((families or {}).get("trend_score")) or 0.0
+        breakout_score = _to_float((families or {}).get("breakout_score")) or 0.0
+        slope = _to_float((indicators or {}).get("linreg_slope_20")) or 0.0
+        close, lower, position = _range_position(indicators)
+
+        if state == "RANGE":
+            contribution = weight * reading_conf
+            stable += contribution
+            evidence.append(f"{tf} RANGE state +{contribution:.1f}")
+        elif "RANGE" in str(view.get("regime") or "").upper():
+            contribution = weight * 0.75
+            stable += contribution
+            evidence.append(f"{tf} legacy RANGE +{contribution:.1f}")
+
+        if adx is not None and chop is not None and adx < 20.0 and chop > 61.8:
+            contribution = weight * 0.65
+            stable += contribution
+            evidence.append(f"{tf} ADX={adx:.1f}/Chop={chop:.1f} choppy +{contribution:.1f}")
+
+        if state == "BREAKOUT_PENDING":
+            contribution = weight * reading_conf * 1.2
+            pending += contribution
+            evidence.append(f"{tf} BREAKOUT_PENDING +{contribution:.1f}")
+
+        squeeze = _truthy_flag((indicators or {}).get("bb_squeeze"))
+        if squeeze and (
+            (atr_pct is not None and atr_pct <= 25.0)
+            or (bb_width_pct is not None and bb_width_pct <= 25.0)
+        ):
+            contribution = weight * 0.9
+            pending += contribution
+            evidence.append(f"{tf} squeeze atr_pct={atr_pct} bb_width_pct={bb_width_pct} +{contribution:.1f}")
+
+        if state in {"TREND_WEAK", "TRANSITION"} and (
+            (adx is not None and adx < 25.0)
+            or (chop is not None and chop >= 45.0)
+            or (bb_width_pct is not None and bb_width_pct <= 35.0)
+        ):
+            contribution = weight * 0.55
+            forming += contribution
+            evidence.append(f"{tf} {state} soft trend/chop +{contribution:.1f}")
+
+        if close is not None and lower is not None and position is not None:
+            if position >= 0.985 and (breakout_score > 0.20 or trend_score > 0.25 or slope > 0.0):
+                contribution = weight * min(1.3, 0.7 + max(breakout_score, trend_score, 0.0))
+                break_up += contribution
+                evidence.append(f"{tf} close at upper rail pos={position:.2f} trend={trend_score:+.2f} breakout={breakout_score:+.2f} +{contribution:.1f}")
+            elif position <= 0.015 and (breakout_score < -0.20 or trend_score < -0.25 or slope < 0.0):
+                contribution = weight * min(1.3, 0.7 + max(abs(breakout_score), abs(trend_score), 0.0))
+                break_down += contribution
+                evidence.append(f"{tf} close at lower rail pos={position:.2f} trend={trend_score:+.2f} breakout={breakout_score:+.2f} +{contribution:.1f}")
+
+    total_evidence = stable + forming + pending + break_up + break_down
+    if total_evidence <= 0:
+        return _RangePhase("NONE", 0.0, None, "no range-phase evidence", ())
+
+    top_break = max(break_up, break_down)
+    if top_break >= FORECAST_RANGE_BREAKOUT_MIN_EVIDENCE and top_break >= pending * 0.7:
+        direction = "UP" if break_up >= break_down else "DOWN"
+        confidence = min(1.0, top_break / max(FORECAST_RANGE_PHASE_MIN_EVIDENCE * 2.0, 1.0))
+        return _RangePhase(
+            f"BREAKOUT_{direction}",
+            confidence,
+            direction,
+            f"range breakout confirmed {direction}: up={break_up:.1f} down={break_down:.1f} pending={pending:.1f}",
+            tuple(evidence[:6]),
+        )
+
+    if pending >= FORECAST_RANGE_PHASE_MIN_EVIDENCE and pending >= stable * 0.6:
+        confidence = min(1.0, pending / max(FORECAST_RANGE_PHASE_MIN_EVIDENCE * 2.0, 1.0))
+        return _RangePhase(
+            "BREAKOUT_PENDING",
+            confidence,
+            None,
+            f"range breakout pending: pending={pending:.1f} stable={stable:.1f} forming={forming:.1f}",
+            tuple(evidence[:6]),
+        )
+
+    if stable >= FORECAST_RANGE_PHASE_MIN_EVIDENCE:
+        confidence = min(1.0, stable / max(FORECAST_RANGE_PHASE_MIN_EVIDENCE * 2.0, 1.0))
+        return _RangePhase(
+            "IN_RANGE",
+            confidence,
+            None,
+            f"inside stable range: stable={stable:.1f} forming={forming:.1f}",
+            tuple(evidence[:6]),
+        )
+
+    if forming >= FORECAST_RANGE_FORMING_MIN_EVIDENCE:
+        confidence = min(1.0, forming / max(FORECAST_RANGE_FORMING_MIN_EVIDENCE * 2.0, 1.0))
+        return _RangePhase(
+            "RANGE_FORMING",
+            confidence,
+            None,
+            f"range forming: forming={forming:.1f} stable={stable:.1f}",
+            tuple(evidence[:6]),
+        )
+
+    return _RangePhase("NONE", 0.0, None, "range-phase evidence below threshold", tuple(evidence[:6]))
+
+
+def _range_phase_priors(phase: _RangePhase) -> list[tuple[str, float, str]]:
+    if phase.phase == "IN_RANGE":
+        magnitude = FORECAST_RANGE_INSIDE_PRIOR * max(phase.confidence, 0.35)
+        return [("RANGE", magnitude, f"{phase.rationale} → RANGE rotation prior {magnitude:.1f}")]
+    if phase.phase == "RANGE_FORMING":
+        magnitude = FORECAST_RANGE_FORMING_PRIOR * max(phase.confidence, 0.35)
+        return [("RANGE", magnitude, f"{phase.rationale} → RANGE-forming prior {magnitude:.1f}")]
+    if phase.phase == "BREAKOUT_PENDING":
+        magnitude = FORECAST_RANGE_BREAKOUT_PENDING_PRIOR * max(phase.confidence, 0.35)
+        # Add symmetric directional pressure so the forecast becomes UNCLEAR,
+        # not RANGE. That blocks rail fades until an actual break chooses side.
+        return [
+            ("UP", magnitude, f"{phase.rationale} → two-sided breakout risk UP {magnitude:.1f}"),
+            ("DOWN", magnitude, f"{phase.rationale} → two-sided breakout risk DOWN {magnitude:.1f}"),
+        ]
+    if phase.phase in {"BREAKOUT_UP", "BREAKOUT_DOWN"} and phase.direction is not None:
+        magnitude = FORECAST_RANGE_BREAKOUT_DIRECTION_PRIOR * max(phase.confidence, 0.35)
+        return [(phase.direction, magnitude, f"{phase.rationale} → breakout {phase.direction} prior {magnitude:.1f}")]
+    return []
 
 
 def _family_average(
@@ -772,22 +999,27 @@ def synthesize_forecast(
     up_score = 0.0
     down_score = 0.0
     range_score = 0.0
+    either_score = 0.0
     contributions: list[tuple[str, float, str]] = []
+    range_phase = _range_phase_analysis(pair_chart)
 
     def _add(sig_direction: str, magnitude: float, rationale: str) -> None:
-        nonlocal up_score, down_score, range_score
+        nonlocal up_score, down_score, range_score, either_score
         if magnitude <= 0:
             return
         if sig_direction == "UP":
             up_score += magnitude
         elif sig_direction == "DOWN":
             down_score += magnitude
-        elif sig_direction in ("RANGE", "EITHER"):
-            # EITHER signals (volatility expansion, etc) don't pick a
-            # side but indicate uncertainty — add to range pool with
-            # half weight.
-            range_score += magnitude * 0.5
-            contributions.append(("RANGE", magnitude * 0.5, rationale))
+        elif sig_direction == "RANGE":
+            range_score += magnitude
+            contributions.append(("RANGE", magnitude, rationale))
+            return
+        elif sig_direction == "EITHER":
+            # EITHER means expansion/uncertainty, not range rotation. It can
+            # reduce confidence once a side exists, but must not select RANGE.
+            either_score += magnitude
+            contributions.append(("EITHER", magnitude, rationale))
             return
         if sig_direction in {"UP", "DOWN"}:
             contributions.append((sig_direction, magnitude, rationale))
@@ -819,6 +1051,8 @@ def synthesize_forecast(
 
     for prior_dir, prior_mag, prior_reason in _pair_chart_prior(pair_chart):
         _add(prior_dir, prior_mag, prior_reason)
+    for prior_dir, prior_mag, prior_reason in _range_phase_priors(range_phase):
+        _add(prior_dir, prior_mag, prior_reason)
 
     # Regime label can push toward RANGE explicitly.
     confluence = pair_chart.get("confluence") or {}
@@ -831,17 +1065,23 @@ def synthesize_forecast(
         range_score += 10.0  # very tight range
         contributions.append(("RANGE", 10.0, f"24h range sigma {sigma_24h:.2f}<1.0 → tight-range prior"))
 
-    total = up_score + down_score + range_score
-    if total <= 0:
+    directional_total = up_score + down_score + range_score
+    total = directional_total + either_score
+    if directional_total <= 0:
         return DirectionalForecast(
             pair=pair, direction="UNCLEAR", confidence=0.0,
             invalidation_price=None, target_price=None, horizon_min=0,
             drivers_for=(), drivers_against=(),
-            rationale_summary="no detector evidence",
+            rationale_summary=(
+                "no directional/range detector evidence"
+                if either_score > 0
+                else "no detector evidence"
+            ),
             current_price=current_price,
             up_score=up_score,
             down_score=down_score,
             range_score=range_score,
+            component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
         )
 
     # Pick winner
@@ -855,13 +1095,33 @@ def synthesize_forecast(
         elif winner == "DOWN":
             down_score = adjusted_winner_score
         contributions.append(("RANGE", max(winner_score - adjusted_winner_score, 0.0), adjustment_reason or "countertrend dampening"))
-        total = up_score + down_score + range_score
+        total = up_score + down_score + range_score + either_score
         candidates = [("UP", up_score), ("DOWN", down_score), ("RANGE", range_score)]
         candidates.sort(key=lambda x: -x[1])
         winner, winner_score = candidates[0]
     elif adjustment_reason:
         contributions.append((winner, 0.1, adjustment_reason))
     runner_up_score = candidates[1][1]
+
+    if range_phase.phase == "BREAKOUT_PENDING" and winner == "RANGE":
+        evidence = "; ".join(range_phase.evidence[:3])
+        return DirectionalForecast(
+            pair=pair, direction="UNCLEAR",
+            confidence=0.0,
+            invalidation_price=None, target_price=None, horizon_min=0,
+            drivers_for=(range_phase.rationale,) + ((evidence,) if evidence else ()),
+            drivers_against=_top_reasons(contributions, direction=candidates[1][0]),
+            rationale_summary=(
+                f"range breakout pending blocks RANGE rotation: "
+                f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} EITHER={either_score:.1f}"
+            ),
+            current_price=_round_price(pair, current_price),
+            up_score=up_score,
+            down_score=down_score,
+            range_score=range_score,
+            raw_confidence=0.0,
+            component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+        )
 
     # Decisiveness: need clear winner, not close call
     margin = winner_score - runner_up_score
@@ -879,7 +1139,7 @@ def synthesize_forecast(
             down_score=down_score,
             range_score=range_score,
             raw_confidence=margin / max(winner_score, 1.0),
-            component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score},
+            component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
         )
 
     raw_confidence = min(1.0, (margin / total) + 0.3)
@@ -915,7 +1175,7 @@ def synthesize_forecast(
     horizon_min = 60 if winner != "RANGE" else 120
 
     rationale_summary = (
-        f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} → "
+        f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} EITHER={either_score:.1f} → "
         f"{winner} conf {raw_confidence:.2f} × cal {cal_mult:.2f} = {calibrated_confidence:.2f}"
     )
     if adjustment_reason:
@@ -935,5 +1195,5 @@ def synthesize_forecast(
         range_score=range_score,
         raw_confidence=raw_confidence,
         calibration_multiplier=cal_mult,
-        component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score},
+        component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
     )

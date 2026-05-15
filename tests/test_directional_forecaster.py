@@ -310,6 +310,163 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertGreater(forecast.up_score, 0.0)
         self.assertIn("technical trend family", " ".join(forecast.drivers_for))
 
+    def test_stable_range_phase_forecasts_range(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "TIED",
+                "score_gap": 0.0,
+                "dominant_regime": "UNCLEAR",
+            },
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9, "atr_percentile": 30.0},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 14.0,
+                        "choppiness_14": 66.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9, "atr_percentile": 35.0},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 16.0,
+                        "choppiness_14": 64.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.0990,
+                        "donchian_high": 1.1110,
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1050,
+            pattern_signals=[],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "RANGE")
+        self.assertGreater(forecast.range_score, forecast.up_score)
+        self.assertIn("inside stable range", " ".join(forecast.drivers_for))
+
+    def test_breakout_pending_range_phase_blocks_range_rotation(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "TIED",
+                "score_gap": 0.0,
+                "dominant_regime": "RANGE",
+                "range_24h_sigma_multiple": 0.7,
+            },
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "BREAKOUT_PENDING", "confidence": 0.8, "atr_percentile": 12.0},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 22.0,
+                        "choppiness_14": 50.0,
+                        "bb_squeeze": 1,
+                        "bb_width_percentile_100": 0.12,
+                        "close": 1.1050,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "BREAKOUT_PENDING", "confidence": 0.8, "atr_percentile": 14.0},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 23.0,
+                        "choppiness_14": 52.0,
+                        "bb_squeeze": 1,
+                        "bb_width_percentile_100": 0.15,
+                        "close": 1.1050,
+                        "donchian_low": 1.0990,
+                        "donchian_high": 1.1110,
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1050,
+            pattern_signals=[],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertIn("breakout pending blocks RANGE rotation", forecast.rationale_summary)
+        self.assertIn("BREAKOUT_PENDING", " ".join(forecast.drivers_for))
+
+    def test_confirmed_range_breakout_can_forecast_direction(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "TIED",
+                "score_gap": 0.0,
+                "dominant_regime": "TRANSITION",
+            },
+            "views": [
+                {
+                    "granularity": "M15",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "BREAKOUT_PENDING", "confidence": 0.8, "atr_percentile": 12.0},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "close": 1.1101,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                        "linreg_slope_20": 0.4,
+                    },
+                    "family_scores": {"trend_score": 0.55, "breakout_score": 0.75, "disagreement": 0.1},
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "BREAKOUT_PENDING", "confidence": 0.8, "atr_percentile": 15.0},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "close": 1.1101,
+                        "donchian_low": 1.0990,
+                        "donchian_high": 1.1100,
+                        "linreg_slope_20": 0.3,
+                    },
+                    "family_scores": {"trend_score": 0.50, "breakout_score": 0.70, "disagreement": 0.1},
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1101,
+            pattern_signals=[],
+            projection_signals=[],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertIn("range breakout confirmed UP", " ".join(forecast.drivers_for))
+
     def test_forecast_calibration_prefers_direction_specific_history(self) -> None:
         hit_rates = {
             "directional_forecast": {

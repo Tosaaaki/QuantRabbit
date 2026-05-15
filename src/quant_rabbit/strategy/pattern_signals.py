@@ -10,7 +10,7 @@ The existing modules cover:
 - entry_timing_gate: M5 last-3-candles direction
 - chart_reader.structure_events: BOS/CHOCH with close_confirmed flag
 
-What's still missing — the discretionary trader's pattern-reading skill:
+This layer covers the discretionary trader's pattern-reading skill:
 1. **Failed breakout** (`close_confirmed=False` BOS = wick-only sweep,
    classic trap pattern → fade direction).
 2. **RSI extreme + price-band proximity** (RSI≥70 AND price near BB
@@ -26,8 +26,10 @@ matching intent direction (bonus) and subtracts mismatched signals
 (half-magnitude penalty), clamped to ±PATTERN_TOTAL_CAP.
 
 The detectors operate on the existing indicator + structure data in
-`pair_charts.json` — no raw OHLC needed (candlestick patterns like
-engulfing/pin-bar would require raw candles and are deferred).
+`pair_charts.json`. When `recent_candles` is available they also read
+OHLC candle shape directly: engulfing, pin/shooting-star, doji, inside
+bar, three-bar reversal, soldiers/crows, inside-bar break, volume spike,
+and divergence patterns.
 
 All magnitudes and thresholds are env-tunable. Kill switch:
 `QR_DISABLE_PATTERN_SIGNALS=1`.
