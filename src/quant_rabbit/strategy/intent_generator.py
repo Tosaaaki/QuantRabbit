@@ -333,6 +333,18 @@ RANGE_RESISTANCE_LEVEL_KEYS = ("bb_upper", "donchian_high", "avwap_upper_2sd", "
 # by ATR, spread, and chart-derived levels, not a fixed pip literal.
 STRUCTURAL_STOP_BUFFER_SPREAD_MULT = 1.0
 
+# Trend-continuation direction gate. The chart reader labels aggregate
+# long-vs-short vote gaps within +/-0.05 as TIED; a hard trend gate should only
+# fire when the opposite side is decisively outside that documented noise band.
+# Using 2x the tied boundary matches trader_brain's directional gate: it blocks
+# genuine trend-continuation contradictions while leaving weak/mixed tape to
+# range/failure desks so entries do not dry up.
+CHART_DIRECTION_TIED_GAP_BOUNDARY = 0.05
+TREND_CONTINUATION_STRONG_BIAS_MULT = 2.0
+TREND_CONTINUATION_STRONG_BIAS_GAP = (
+    CHART_DIRECTION_TIED_GAP_BOUNDARY * TREND_CONTINUATION_STRONG_BIAS_MULT
+)
+
 
 def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
     """Return per-trade JPY cap from the daily target ledger, or None if unavailable.
@@ -565,6 +577,10 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "atr_percentile_24h": _optional_float(conf.get("atr_percentile_24h")),
         "range_24h_sigma_multiple": _optional_float(conf.get("range_24h_sigma_multiple")),
         "tf_agreement_score": _optional_float(conf.get("tf_agreement_score")),
+        "chart_score_balance": _text_or_none(conf.get("score_balance")),
+        "chart_score_gap": _optional_float(conf.get("score_gap")),
+        "higher_tf_regime": _text_or_none(conf.get("higher_tf_regime")),
+        "higher_tf_alignment": _text_or_none(conf.get("higher_tf_alignment")),
         # F (2026-05-13) — H4 ATR pips for noise-resistant initial SL.
         # Consumed by `_generic_geometry` only when
         # QR_NEW_ENTRY_INITIAL_SL=1; raw value is published here so the
@@ -1344,6 +1360,7 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     method = intent.market_context.method if intent.market_context is not None else None
     bias = _method_direction_bias(metadata, method)
+    trend_hard_block = _trend_continuation_hard_block_reason(intent, metadata, method)
     if bias in {Side.LONG.value, Side.SHORT.value} and bias != intent.side.value:
         long_score = metadata.get("m5_long_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_long_score")
         short_score = metadata.get("m5_short_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_short_score")
@@ -1353,16 +1370,25 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
         # chart_score bias is one input, not a hard veto. The MTF + PA +
         # micro-override scoring in trader_brain decides the side; this
         # gate becomes WARN so symmetric mirror lanes reach LIVE_READY.
-        severity = "WARN" if _sl_free_active() else "BLOCK"
+        severity = "BLOCK" if trend_hard_block else ("WARN" if _sl_free_active() else "BLOCK")
+        tail = trend_hard_block or "wait for this side to dominate or choose the aligned lane."
         issues.append(
             {
                 "code": "CHART_DIRECTION_CONFLICT",
                 "message": (
                     f"{intent.pair} {intent.side.value} conflicts with current {scope} direction "
                     f"bias={bias} (long_score={long_score}, short_score={short_score}); "
-                    "wait for this side to dominate or choose the aligned lane."
+                    f"{tail}"
                 ),
                 "severity": severity,
+            }
+        )
+    elif trend_hard_block:
+        issues.append(
+            {
+                "code": "TREND_CONTINUATION_DIRECTION_CONFLICT",
+                "message": f"{intent.pair} {intent.side.value} {trend_hard_block}",
+                "severity": "BLOCK",
             }
         )
 
@@ -1429,6 +1455,59 @@ def _method_direction_bias(metadata: dict[str, Any], method: TradeMethod | None)
         if m5_bias:
             return m5_bias
     return str(metadata.get("chart_direction_bias") or "").upper()
+
+
+def _trend_continuation_hard_block_reason(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> str | None:
+    if method != TradeMethod.TREND_CONTINUATION:
+        return None
+    side = intent.side.value
+    reasons: list[str] = []
+
+    dominant = str(metadata.get("dominant_regime_state") or "").upper()
+    if _regime_points_against_side(dominant, side):
+        reasons.append(f"dominant_regime_state={dominant} points against {side}")
+
+    decisive_bias = _decisive_pair_chart_bias(metadata)
+    if decisive_bias in {Side.LONG.value, Side.SHORT.value} and decisive_bias != side:
+        gap = _optional_float(metadata.get("chart_score_gap"))
+        gap_text = f"{gap:.3f}" if gap is not None else "unknown"
+        reasons.append(
+            f"decisive pair_charts bias={decisive_bias} "
+            f"(|score_gap|={gap_text} >= {TREND_CONTINUATION_STRONG_BIAS_GAP:.3f})"
+        )
+
+    if not reasons:
+        return None
+    return (
+        "trend-continuation hard gate: "
+        + "; ".join(reasons)
+        + ". Use the aligned trend lane, or a RANGE_ROTATION/BREAKOUT_FAILURE receipt "
+        "with explicit range/failure geometry instead."
+    )
+
+
+def _regime_points_against_side(regime: str, side: str) -> bool:
+    if not regime:
+        return False
+    if side == Side.LONG.value:
+        return regime.startswith("TREND_DOWN") or regime.startswith("IMPULSE_DOWN")
+    if side == Side.SHORT.value:
+        return regime.startswith("TREND_UP") or regime.startswith("IMPULSE_UP")
+    return False
+
+
+def _decisive_pair_chart_bias(metadata: dict[str, Any]) -> str | None:
+    balance = str(metadata.get("chart_score_balance") or "").upper()
+    if balance not in {"LONG_LEAN", "SHORT_LEAN"}:
+        return None
+    gap = _optional_float(metadata.get("chart_score_gap"))
+    if gap is None or abs(gap) < TREND_CONTINUATION_STRONG_BIAS_GAP:
+        return None
+    return Side.LONG.value if balance == "LONG_LEAN" else Side.SHORT.value
 
 
 def _order_type_for(method: TradeMethod) -> OrderType:

@@ -115,6 +115,117 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
             self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
 
+    def test_sl_free_still_blocks_decisive_trend_continuation_conflict(self) -> None:
+        import os
+
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+
+                summary = IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.0484,
+                        short_score=0.9456,
+                        dominant_regime="TREND_DOWN",
+                        m5_regime="TREND_DOWN",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+                issues = [issue for item in payload["results"] for issue in item["risk_issues"]]
+                long_results = [item for item in payload["results"] if item["intent"]["side"] == "LONG"]
+                short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+
+                self.assertGreater(summary.live_ready, 0)
+                self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in long_results))
+                self.assertTrue(any(item["status"] == "LIVE_READY" for item in short_results))
+                self.assertTrue(
+                    any(
+                        issue["code"] == "CHART_DIRECTION_CONFLICT"
+                        and issue["severity"] == "BLOCK"
+                        and "trend-continuation hard gate" in issue["message"]
+                        for issue in issues
+                    ),
+                    f"expected hard trend conflict blocker, got {issues}",
+                )
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_sl_free_preserves_range_and_failure_entries_when_trend_lane_blocks(self) -> None:
+        import os
+
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+
+                range_output = root / "range_intents.json"
+                IntentGenerator(
+                    campaign_plan=_range_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=range_output,
+                    report_path=root / "range_intents.md",
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.0484,
+                        short_score=0.9456,
+                        dominant_regime="TREND_DOWN",
+                        m5_regime="RANGE",
+                        m5_long_bias=0.76,
+                        m5_short_bias=0.12,
+                        regime_quantile="QUIET",
+                        atr_pips=3.2,
+                    ),
+                    max_loss_jpy=140.0,
+                ).run(snapshot_path=_snapshot(root, eur_bid=1.17110, eur_ask=1.17118))
+
+                range_results = json.loads(range_output.read_text())["results"]
+                self.assertTrue(
+                    any(item["status"] == "LIVE_READY" for item in range_results),
+                    f"range/fade entries should remain available, got {range_results}",
+                )
+
+                failure_output = root / "failure_intents.json"
+                IntentGenerator(
+                    campaign_plan=_trigger_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=failure_output,
+                    report_path=root / "failure_intents.md",
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.0484,
+                        short_score=0.9456,
+                        dominant_regime="TREND_DOWN",
+                        m5_regime="TREND_DOWN",
+                    ),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+                failure_results = json.loads(failure_output.read_text())["results"]
+                self.assertEqual({item["intent"]["order_type"] for item in failure_results}, {"STOP-ENTRY"})
+                self.assertTrue(
+                    any(item["status"] == "LIVE_READY" for item in failure_results),
+                    f"breakout-failure trigger entries should remain available, got {failure_results}",
+                )
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_blocks_trend_market_chase_when_m5_is_not_trending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -678,6 +789,15 @@ def _pair_charts_with_direction(
                         "dominant_regime": dominant_regime,
                         "long_score": long_score,
                         "short_score": short_score,
+                        "confluence": {
+                            "score_balance": (
+                                "TIED"
+                                if abs(round(long_score - short_score, 4)) <= 0.05
+                                else ("LONG_LEAN" if long_score > short_score else "SHORT_LEAN")
+                            ),
+                            "score_gap": round(long_score - short_score, 4),
+                            "dominant_regime": dominant_regime,
+                        },
                         "session": {"current_tag": "NY_AM_KILLZONE"},
                         "views": [
                             {
