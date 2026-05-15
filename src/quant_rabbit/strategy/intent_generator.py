@@ -328,6 +328,23 @@ RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP = 1.0
 RANGE_SUPPORT_LEVEL_KEYS = ("bb_lower", "donchian_low", "avwap_lower_2sd", "swing_low", "linreg_channel_lower")
 RANGE_RESISTANCE_LEVEL_KEYS = ("bb_upper", "donchian_high", "avwap_upper_2sd", "swing_high", "linreg_channel_upper")
 
+# Current-range auto lanes prevent forecast RANGE from starving when the daily
+# campaign was mined from trend stories but the live chart is now a boxed tape.
+# Market reality: a stable range is only exploitable when executable support
+# and resistance rails exist; a squeeze / BREAKOUT_PENDING box is explicitly
+# not a range-fade setup. The 1.0 evidence floor means one explicit current
+# range read (dominant or M5/M15/H1 state) is enough only when rails are also
+# present. ADX<20 and Chop>61.8 are the same Wilder/Dreiss range defaults used
+# elsewhere in the regime layer, not pair-specific P/L decisions. Replace with
+# ledger-calibrated pair/session thresholds once enough RANGE_ROTATION outcomes
+# exist.
+RANGE_AUTOLANE_TIMEFRAMES = ("M5", "M15", "M30", "H1")
+RANGE_AUTOLANE_MIN_EVIDENCE = 1.0
+RANGE_AUTOLANE_TARGET_RR_CAP = 2.0
+RANGE_AUTOLANE_ADX_MAX = 20.0
+RANGE_AUTOLANE_CHOP_MIN = 61.8
+RANGE_AUTOLANE_SQUEEZE_PCT_MAX = 25.0
+
 # Broker-side TP attachment mode. Small-wave / range / failed-break setups
 # should bank at the nearest structural target, while strong trend setups
 # need a runner path where broker TP is omitted and the position is managed
@@ -728,6 +745,132 @@ def _range_indicators_for(
     return indicators if isinstance(indicators, dict) and indicators else None
 
 
+def _append_current_range_rotation_lanes(
+    lanes: list[dict[str, Any]],
+    charts: dict[str, dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if charts is None:
+        return lanes
+    out = list(lanes)
+    seen = {(lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) for lane in out}
+    for lane in lanes:
+        method = str(lane.get("method") or "")
+        if method == TradeMethod.RANGE_ROTATION.value:
+            continue
+        pair = str(lane.get("pair") or "")
+        direction = str(lane.get("direction") or "")
+        if direction not in {Side.LONG.value, Side.SHORT.value}:
+            continue
+        if not _pair_has_current_range_rotation_edge(pair, charts):
+            continue
+        synthetic = dict(lane)
+        base_rr = _optional_float(synthetic.get("target_reward_risk")) or RANGE_AUTOLANE_TARGET_RR_CAP
+        synthetic.update(
+            {
+                "desk": "range_trader",
+                "method": TradeMethod.RANGE_ROTATION.value,
+                "campaign_role": f"{str(lane.get('campaign_role') or 'NOW')}_CURRENT_RANGE",
+                "reason": (
+                    f"{lane.get('reason') or 'evidence-backed lane'}; "
+                    "current chart is stable range with executable rails"
+                ),
+                "required_receipt": (
+                    "Use exact range rail/box order intent; market only if quote is already at executable rail."
+                ),
+                "target_reward_risk": min(base_rr, RANGE_AUTOLANE_TARGET_RR_CAP),
+            }
+        )
+        key = (synthetic.get("desk"), synthetic.get("pair"), synthetic.get("direction"), synthetic.get("method"))
+        if key in seen:
+            continue
+        out.append(synthetic)
+        seen.add(key)
+    return out
+
+
+def _pair_has_current_range_rotation_edge(pair: str, charts: dict[str, dict[str, Any]]) -> bool:
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return False
+    indicators = _range_indicators_for(pair, charts)
+    if not indicators or not _has_range_rails(indicators):
+        return False
+
+    evidence = 0.0
+    dominant = str(per_tf.get("dominant_regime") or "").upper()
+    if "BREAKOUT" in dominant or "SQUEEZE" in dominant:
+        return False
+    if "RANGE" in dominant:
+        evidence += 1.0
+
+    for timeframe in RANGE_AUTOLANE_TIMEFRAMES:
+        state = _regime_reading_state(per_tf, timeframe)
+        if state == "BREAKOUT_PENDING":
+            return False
+        regime = str(per_tf.get(f"{timeframe}__regime") or "").upper()
+        tf_indicators = per_tf.get(timeframe) if isinstance(per_tf.get(timeframe), dict) else {}
+        if "BREAKOUT_PENDING" in regime or "SQUEEZE" in regime:
+            return False
+        if _has_squeeze_breakout_risk(tf_indicators, per_tf, timeframe):
+            return False
+        if state == "RANGE" or "RANGE" in regime:
+            evidence += 1.0
+        adx = _optional_float((tf_indicators or {}).get("adx_14") or (tf_indicators or {}).get("adx"))
+        chop = _optional_float((tf_indicators or {}).get("choppiness_14"))
+        if adx is not None and chop is not None and adx < RANGE_AUTOLANE_ADX_MAX and chop > RANGE_AUTOLANE_CHOP_MIN:
+            evidence += 0.75
+        if (
+            timeframe == GEOMETRY_ATR_TIMEFRAME
+            and "RANGE" in regime
+            and str((tf_indicators or {}).get("regime_quantile") or "").upper() == "QUIET"
+        ):
+            evidence += 0.5
+    return evidence >= RANGE_AUTOLANE_MIN_EVIDENCE
+
+
+def _has_range_rails(indicators: dict[str, Any]) -> bool:
+    support = any(_optional_float(indicators.get(key)) is not None for key in RANGE_SUPPORT_LEVEL_KEYS)
+    resistance = any(_optional_float(indicators.get(key)) is not None for key in RANGE_RESISTANCE_LEVEL_KEYS)
+    return support and resistance
+
+
+def _regime_reading_state(per_tf: dict[str, Any], timeframe: str) -> str:
+    reading = per_tf.get(f"{timeframe}__regime_reading")
+    if not isinstance(reading, dict):
+        return ""
+    return str(reading.get("state") or "").upper()
+
+
+def _has_squeeze_breakout_risk(indicators: dict[str, Any], per_tf: dict[str, Any], timeframe: str) -> bool:
+    if not _truthy_flag((indicators or {}).get("bb_squeeze") or (indicators or {}).get("squeeze")):
+        return False
+    reading = per_tf.get(f"{timeframe}__regime_reading")
+    if not isinstance(reading, dict):
+        reading = {}
+    atr_pct = _percent_0_100(reading.get("atr_percentile"))
+    if atr_pct is None:
+        atr_pct = _percent_0_100((indicators or {}).get("atr_percentile_100"))
+    bb_width_pct = _percent_0_100((indicators or {}).get("bb_width_percentile_100"))
+    return (
+        (atr_pct is not None and atr_pct <= RANGE_AUTOLANE_SQUEEZE_PCT_MAX)
+        or (bb_width_pct is not None and bb_width_pct <= RANGE_AUTOLANE_SQUEEZE_PCT_MAX)
+    )
+
+
+def _percent_0_100(value: object) -> float | None:
+    pct = _optional_float(value)
+    if pct is None:
+        return None
+    return pct * 100.0 if 0.0 <= pct <= 1.0 else pct
+
+
+def _truthy_flag(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    numeric = _optional_float(value)
+    return numeric is not None and numeric > 0.0
+
+
 def _pair_chart_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
     if charts is None:
         return None
@@ -866,6 +1009,18 @@ class IntentGenerator:
     def run(self, *, snapshot_path: Path | None = None, max_candidates: int = 12) -> IntentGenerationSummary:
         plan = json.loads(self.campaign_plan.read_text())
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
+        snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
+        # Load ATR / regime per pair from pair_charts.json before lane
+        # expansion. When the live chart is a stable box, synthesize
+        # RANGE_ROTATION coverage from the existing evidence-backed pair/side
+        # so a RANGE forecast has an executable rail candidate instead of
+        # starving behind trend-only campaign lanes.
+        pair_charts = _load_pair_charts(self.pair_charts_path)
+        if snapshot is not None:
+            range_seed_count = len(lanes)
+            lanes = _append_current_range_rotation_lanes(lanes, pair_charts)
+            if len(lanes) > range_seed_count:
+                max_candidates = max(max_candidates, len(lanes))
         # Phase 2 (user 2026-05-08「短期SHORTなら長期LONGでもSHORTいけるでしょ。
         # 逆もまた然り」): under SL-free, also synthesize mirror lanes with
         # opposite direction for each (desk, pair, method) so the scoring
@@ -886,7 +1041,6 @@ class IntentGenerator:
                 seen_keys.add(key)
             lanes = lanes + mirrors
             max_candidates = max(max_candidates, max_candidates * 2)
-        snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
         strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
         # Pull equity-derived per-trade cap from daily_target_state.json when
         # neither explicit JPY nor pct arguments were supplied. This is the
@@ -909,10 +1063,6 @@ class IntentGenerator:
         # the ledger is missing — the validator skips the portfolio gate
         # rather than synthesizing a literal.
         portfolio_loss_cap = _daily_risk_budget_from_state()
-        # Load ATR / regime per pair from pair_charts.json. None when the file
-        # is missing — _build_for_lane will surface MISSING_ATR_DATA so the
-        # operator sees that geometry was built without market context.
-        pair_charts = _load_pair_charts(self.pair_charts_path)
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)

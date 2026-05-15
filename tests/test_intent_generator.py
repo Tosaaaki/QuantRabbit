@@ -476,6 +476,104 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["status"], "DRY_RUN_BLOCKED")
             self.assertIn("RANGE_MARKET_NOT_AT_RAIL", issue_codes)
 
+    def test_stable_current_range_synthesizes_range_rotation_from_trend_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.55,
+                    short_score=0.45,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.56,
+                    m5_short_bias=0.44,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                    regime_state="RANGE",
+                ),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            range_limit = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+            )
+
+            self.assertEqual(range_limit["status"], "LIVE_READY")
+            self.assertEqual(range_limit["intent"]["order_type"], "LIMIT")
+            self.assertEqual(range_limit["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
+
+    def test_breakout_pending_range_does_not_synthesize_rotation_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.55,
+                    short_score=0.45,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.56,
+                    m5_short_bias=0.44,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                    regime_state="BREAKOUT_PENDING",
+                ),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            lane_ids = {item["lane_id"] for item in payload["results"]}
+
+            self.assertNotIn("range_trader:EUR_USD:LONG:RANGE_ROTATION", lane_ids)
+
+    def test_squeeze_range_does_not_synthesize_rotation_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.55,
+                    short_score=0.45,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.56,
+                    m5_short_bias=0.44,
+                    regime_quantile="QUIET",
+                    atr_pips=3.2,
+                    regime_state="RANGE",
+                    bb_squeeze=True,
+                    atr_percentile=0.12,
+                ),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            lane_ids = {item["lane_id"] for item in payload["results"]}
+
+            self.assertNotIn("range_trader:EUR_USD:LONG:RANGE_ROTATION", lane_ids)
+
     def test_low_vol_directional_range_market_uses_tight_risk_budgeted_units(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -880,6 +978,9 @@ def _pair_charts_with_direction(
     m5_short_bias: float | None = None,
     regime_quantile: str = "NORMAL",
     atr_pips: float = 8.0,
+    regime_state: str = "TREND_WEAK",
+    bb_squeeze: bool = False,
+    atr_percentile: float = 50.0,
 ) -> Path:
     path = root / "pair_charts_direction.json"
     path.write_text(
@@ -907,7 +1008,7 @@ def _pair_charts_with_direction(
                                 "regime": m5_regime,
                                 "long_bias": long_score if m5_long_bias is None else m5_long_bias,
                                 "short_bias": short_score if m5_short_bias is None else m5_short_bias,
-                                "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6, "atr_percentile": 50.0},
+                                "regime_reading": {"state": regime_state, "confidence": 0.6, "atr_percentile": atr_percentile},
                                 "family_scores": {
                                     "mean_rev_score": 1.1,
                                     "trend_score": 0.2,
@@ -930,6 +1031,8 @@ def _pair_charts_with_direction(
                                     "linreg_channel_upper": 1.1761,
                                     "swing_low": 1.1705,
                                     "swing_high": 1.1767,
+                                    "atr_percentile_100": atr_percentile,
+                                    "bb_squeeze": bb_squeeze,
                                 },
                             }
                         ],
