@@ -166,6 +166,9 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # was producing protected=False for SL-free positions
                     # when invoked outside the autotrade-cycle wrapper.
                     "daily-target-state",
+                    # profit-partial-close reads broker truth / pair_charts
+                    # and may send risk-reducing profit partial closes.
+                    "profit-partial-close",
                 }
             ),
         )

@@ -65,6 +65,9 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_PROFIT_PARTIAL_CLOSE,
+    DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT,
+    DEFAULT_PROFIT_PARTIAL_CLOSE_STATE,
     DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_POST_TRADE_LEARNING_REPORT,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
@@ -197,6 +200,7 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # sees, so the protected flag is computed consistently
         # across both paths.
         "daily-target-state",
+        "profit-partial-close",
     }
 )
 
@@ -554,6 +558,22 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         help="Compute actions but do not call broker.close_trade().",
+    )
+
+    p_profitpart = sub.add_parser(
+        "profit-partial-close",
+        help="Stage/send profit-side partial closes at ATR-derived milestones while leaving a runner.",
+    )
+    p_profitpart.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_profitpart.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_profitpart.add_argument("--state", type=Path, default=DEFAULT_PROFIT_PARTIAL_CLOSE_STATE)
+    p_profitpart.add_argument("--output", type=Path, default=DEFAULT_PROFIT_PARTIAL_CLOSE)
+    p_profitpart.add_argument("--report", type=Path, default=DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT)
+    p_profitpart.add_argument("--send", action="store_true", help="Send partial-close requests to OANDA.")
+    p_profitpart.add_argument(
+        "--confirm-live",
+        action="store_true",
+        help="Required with --send; prevents accidental live position reduction.",
     )
 
     p_cert = sub.add_parser("certify-dry-run", help="Certify dry-run receipts before live expansion.")
@@ -2261,6 +2281,127 @@ def main(argv: list[str] | None = None) -> int:
             ensure_ascii=False,
         ))
         return 0
+    if args.command == "profit-partial-close":
+        from quant_rabbit.strategy.profit_partial_close import (
+            apply_profit_partial_closes,
+            compute_all_profit_partial_closes,
+            load_profit_partial_state,
+            save_profit_partial_state_from_results,
+        )
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+
+        def _owner_ppc(s):
+            try:
+                return Owner(s) if s else Owner.UNKNOWN
+            except Exception:
+                return Owner.UNKNOWN
+
+        positions = []
+        for p in snapshot_payload.get("positions", []):
+            try:
+                positions.append(
+                    BrokerPosition(
+                        trade_id=p.get("trade_id"),
+                        pair=p.get("pair"),
+                        side=Side(p.get("side")),
+                        units=int(p.get("units", 0)),
+                        entry_price=float(p.get("entry_price", 0.0)),
+                        take_profit=p.get("take_profit"),
+                        stop_loss=p.get("stop_loss"),
+                        unrealized_pl_jpy=float(p.get("unrealized_pl_jpy", 0.0)),
+                        owner=_owner_ppc(p.get("owner")),
+                    )
+                )
+            except Exception:
+                continue
+        pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
+        pair_charts_keyed: dict = {}
+        for chart in pair_charts_payload.get("charts", []) or []:
+            if isinstance(chart, dict) and chart.get("pair"):
+                pair_charts_keyed[chart["pair"]] = chart
+        quotes_keyed: dict = {}
+        for pair_key, quote_data in (snapshot_payload.get("quotes") or {}).items():
+            if isinstance(quote_data, dict):
+                quotes_keyed[pair_key] = quote_data
+        state = load_profit_partial_state(args.state)
+        actions = compute_all_profit_partial_closes(
+            positions=positions,
+            quotes=quotes_keyed,
+            pair_charts=pair_charts_keyed,
+            state=state,
+        )
+        live_enabled = os.environ.get("QR_LIVE_ENABLED") == "1"
+        client = OandaExecutionClient() if args.send and actions and live_enabled and args.confirm_live else None
+        results = apply_profit_partial_closes(
+            actions,
+            client,
+            send=args.send,
+            live_enabled=live_enabled,
+            confirm_live=args.confirm_live,
+        )
+        if args.send:
+            state = save_profit_partial_state_from_results(results, path=args.state, state=state)
+        sent_count = sum(1 for r in results if r.get("sent"))
+        blocked_count = sum(1 for r in results if r.get("error"))
+        if not actions:
+            status = "NO_ACTION"
+        elif sent_count:
+            status = "SENT" if not blocked_count else "PARTIAL_SENT_WITH_BLOCKS"
+        elif blocked_count:
+            status = "BLOCKED"
+        else:
+            status = "STAGED"
+        payload = {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "send_requested": args.send,
+            "confirm_live": args.confirm_live,
+            "live_enabled": live_enabled,
+            "actions_count": len(actions),
+            "sent_count": sent_count,
+            "blocked_count": blocked_count,
+            "results": results,
+            "state": state,
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Profit Partial Close Report",
+            "",
+            f"- Generated at UTC: `{payload['generated_at_utc']}`",
+            f"- Status: `{status}`",
+            f"- Send requested: `{args.send}`",
+            f"- Sent count: `{sent_count}`",
+            "",
+            "## Actions",
+            "",
+        ]
+        if not results:
+            lines.append("- none")
+        for result in results:
+            lines.append(
+                f"- `{result['trade_id']}` `{result['pair']}` `{result['side']}` "
+                f"close=`{result['close_units']}` remain=`{result['remaining_units']}` "
+                f"milestone=`{result['milestone']}` sent=`{result['sent']}`"
+            )
+            lines.append(f"  - rationale: {result['rationale']}")
+            if result.get("error"):
+                lines.append(f"  - BLOCK: {result['error']}")
+        lines.extend(
+            [
+                "",
+                "## Contract",
+                "",
+                "- Profit partial close only reduces already-profitable trader-owned exposure.",
+                "- Same trade milestone is persisted in state after a successful send to avoid repeat closes.",
+                "- Live send requires `--send --confirm-live` and `QR_LIVE_ENABLED=1`.",
+            ]
+        )
+        args.report.write_text("\n".join(lines) + "\n")
+        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0 if status not in {"BLOCKED"} else 2
     if args.command == "certify-dry-run":
         summary = DryRunCertifier(
             coverage_path=args.coverage,

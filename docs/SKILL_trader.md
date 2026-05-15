@@ -157,6 +157,15 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
+# 4b2. Profit partial close: when trader-owned exposure is already in
+# profit and has crossed the next ATR-derived milestone, close a
+# market-derived fraction and keep the remaining units as a runner.
+# This is profit-side only; it never realizes a loss from adverse P/L.
+# Same trade/milestone is persisted in
+# data/profit_partial_close_state.json after a successful send to avoid
+# repeat partial closes on the same band.
+PYTHONPATH=src python3 -m quant_rabbit.cli profit-partial-close --send --confirm-live
+
 # 4d. Verify pending forward-projection predictions against OANDA
 # prices. Resolves PENDING → HIT/MISS/TIMEOUT in
 # data/projection_ledger.jsonl. The next trader cycle reads the

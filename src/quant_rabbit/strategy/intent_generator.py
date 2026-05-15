@@ -27,6 +27,7 @@ from quant_rabbit.risk import (
     margin_budget_jpy,
     resolve_max_loss_jpy,
 )
+from quant_rabbit.strategy.price_action import structural_tp_target
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -327,6 +328,21 @@ RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP = 1.0
 RANGE_SUPPORT_LEVEL_KEYS = ("bb_lower", "donchian_low", "avwap_lower_2sd", "swing_low", "linreg_channel_lower")
 RANGE_RESISTANCE_LEVEL_KEYS = ("bb_upper", "donchian_high", "avwap_upper_2sd", "swing_high", "linreg_channel_upper")
 
+# Broker-side TP attachment mode. Small-wave / range / failed-break setups
+# should bank at the nearest structural target, while strong trend setups
+# need a runner path where broker TP is omitted and the position is managed
+# by dynamic TP rebalance + profit partial closes.
+#
+# (a) market reality: ADX ≥ 25 is the same trend-strength boundary already
+#     used by the dynamic reward/risk layer; two of three TFs agreeing is the
+#     documented M15/M30/H1 majority threshold in AGENT_CONTRACT §3.5.
+# (b) constants rather than derived: these convert market-derived context
+#     into an execution mode. Missing context defaults to ATTACHED_TP so a data
+#     gap never silently creates an uncapped runner.
+# (c) replace via: post-trade learning on runner giveback vs capped TP fills.
+TP_MODE_TF_AGREEMENT_MAJORITY = 2.0 / 3.0
+TP_MODE_EXHAUSTION_SIGMA = DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD
+
 # Generic trend/failure stops should not sit inside the current wick shelf.
 # The buffer is one live spread beyond the adverse structural level because the
 # spread is the current broker noise floor; the actual distance remains driven
@@ -410,6 +426,7 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
         if not isinstance(pair, str):
             continue
         per_tf: dict[str, Any] = {
+            "__raw_chart": chart,
             "dominant_regime": chart.get("dominant_regime"),
             "long_score": chart.get("long_score"),
             "short_score": chart.get("short_score"),
@@ -546,6 +563,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     if long_score is not None and short_score is not None and long_score != short_score:
         bias = Side.LONG.value if long_score > short_score else Side.SHORT.value
     m5_indicators = per_tf.get("M5") if isinstance(per_tf.get("M5"), dict) else {}
+    h1_indicators = per_tf.get("H1") if isinstance(per_tf.get("H1"), dict) else {}
+    h4_indicators = per_tf.get("H4") if isinstance(per_tf.get("H4"), dict) else {}
     m5_family = per_tf.get("M5__family_scores") if isinstance(per_tf.get("M5__family_scores"), dict) else {}
     conf = per_tf.get("confluence") if isinstance(per_tf.get("confluence"), dict) else {}
     return {
@@ -562,6 +581,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "m5_trend_score": _optional_float(m5_family.get("trend_score")),
         "m5_breakout_score": _optional_float(m5_family.get("breakout_score")),
         "m5_family_disagreement": _optional_float(m5_family.get("disagreement")),
+        "h1_adx": _optional_float(h1_indicators.get("adx_14") or h1_indicators.get("adx") or h1_indicators.get("ADX")),
+        "h4_adx": _optional_float(h4_indicators.get("adx_14") or h4_indicators.get("adx") or h4_indicators.get("ADX")),
         # Inline structural multi-TF chart_story for trader_brain micro-
         # structure / momentum scoring. Distinct key from market_context's
         # narrative `chart_story` (news/quality_audit excerpts).
@@ -705,6 +726,16 @@ def _range_indicators_for(
         return None
     indicators = per_tf.get(timeframe)
     return indicators if isinstance(indicators, dict) and indicators else None
+
+
+def _pair_chart_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
+    if charts is None:
+        return None
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return None
+    raw = per_tf.get("__raw_chart")
+    return raw if isinstance(raw, dict) else None
 
 
 def _execution_regime_state(
@@ -952,6 +983,7 @@ class IntentGenerator:
             )
         atr_pips = _atr_pips_for(pair, pair_charts)
         range_indicators = _range_indicators_for(pair, pair_charts)
+        pair_chart = _pair_chart_for(pair, pair_charts)
         regime_state = _regime_state_for(pair, pair_charts)
         regime_reading = _regime_reading_for(pair, pair_charts)
         session_bucket = _session_bucket_for(pair, pair_charts)
@@ -969,6 +1001,7 @@ class IntentGenerator:
             regime_reading=regime_reading,
             session_bucket=session_bucket,
             chart_context=chart_context,
+            pair_chart=pair_chart,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -1243,6 +1276,7 @@ def _intent_from_lane(
     regime_reading: dict[str, Any] | None = None,
     session_bucket: str | None = None,
     chart_context: dict[str, Any] | None = None,
+    pair_chart: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -1275,6 +1309,21 @@ def _intent_from_lane(
         stop_widen_mult=stop_widen_mult,
         chart_context=chart_context,
     )
+    tp, tp_execution_metadata = _take_profit_execution_plan(
+        pair=pair,
+        side=side,
+        method=method,
+        order_type=order_type,
+        quote=quote,
+        entry=entry,
+        tp=tp,
+        sl=sl,
+        reward_risk=target_reward_risk,
+        execution_regime=execution_regime,
+        chart_context=chart_context,
+        pair_chart=pair_chart,
+        atr_pips=atr_pips,
+    )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
     geometry_metadata = _geometry_metadata(
         pair,
@@ -1289,6 +1338,7 @@ def _intent_from_lane(
         chart_context=chart_context,
         atr_pips=atr_pips,
     )
+    geometry_metadata.update(tp_execution_metadata)
     units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
@@ -1514,6 +1564,170 @@ def _order_type_for(method: TradeMethod) -> OrderType:
     if method == TradeMethod.RANGE_ROTATION:
         return OrderType.LIMIT
     return OrderType.STOP_ENTRY
+
+
+def _take_profit_execution_plan(
+    *,
+    pair: str,
+    side: Side,
+    method: TradeMethod,
+    order_type: OrderType,
+    quote: Quote,
+    entry: float,
+    tp: float,
+    sl: float,
+    reward_risk: float,
+    execution_regime: str | None,
+    chart_context: dict[str, Any] | None,
+    pair_chart: dict[str, Any] | None,
+    atr_pips: float | None,
+) -> tuple[float, dict[str, Any]]:
+    """Return the virtual TP and broker-attachment metadata.
+
+    The intent always carries a virtual TP so risk/reward validation and
+    reports remain comparable. `attach_take_profit_on_fill=False` means the
+    broker order omits `takeProfitOnFill`; the virtual TP becomes the first
+    management target for TP rebalance / profit partial close.
+    """
+    attach_tp, attach_reason = _should_attach_take_profit_on_fill(
+        method=method,
+        order_type=order_type,
+        execution_regime=execution_regime,
+        chart_context=chart_context,
+    )
+    target_intent = "HARVEST" if attach_tp else "EXTEND"
+    target_source = "RANGE_RAIL" if method == TradeMethod.RANGE_ROTATION else "ATR_RR"
+    target_reason = "range geometry already anchored to opposing rail" if method == TradeMethod.RANGE_ROTATION else ""
+    effective_tp = tp
+    if method != TradeMethod.RANGE_ROTATION:
+        technical_tp, technical_reason = _technical_tp_candidate(
+            pair=pair,
+            side=side,
+            entry=entry,
+            spread_pips=abs(quote.ask - quote.bid) * PIP_FACTORS[pair],
+            pair_chart=pair_chart,
+            intent=target_intent,
+        )
+        if technical_tp is not None:
+            effective_tp = technical_tp
+            target_source = f"STRUCTURAL_{target_intent}"
+            target_reason = technical_reason
+        else:
+            target_reason = technical_reason
+
+    pip_factor = PIP_FACTORS[pair]
+    stop_pips = abs(entry - sl) * pip_factor
+    target_pips = abs(effective_tp - entry) * pip_factor
+    virtual_rr = target_pips / stop_pips if stop_pips > 0 else 0.0
+    metadata = {
+        "tp_execution_mode": "ATTACHED_TECHNICAL_TP" if attach_tp else "RUNNER_NO_BROKER_TP",
+        "attach_take_profit_on_fill": attach_tp,
+        "tp_attach_reason": attach_reason,
+        "tp_target_source": target_source,
+        "tp_target_reason": target_reason,
+        "tp_target_intent": target_intent,
+        "virtual_take_profit": _round_price(pair, effective_tp),
+        "virtual_take_profit_reward_risk": round(virtual_rr, 3),
+        "tp_target_distance_pips": round(target_pips, 3),
+        "tp_requested_reward_risk": reward_risk,
+        "tp_atr_pips": atr_pips,
+    }
+    return _round_price(pair, effective_tp), metadata
+
+
+def _technical_tp_candidate(
+    *,
+    pair: str,
+    side: Side,
+    entry: float,
+    spread_pips: float,
+    pair_chart: dict[str, Any] | None,
+    intent: str,
+) -> tuple[float | None, str]:
+    if not pair_chart:
+        return None, "no pair_chart structural ladder; using ATR/RR virtual target"
+    pip_factor = PIP_FACTORS[pair]
+    target, reason = structural_tp_target(
+        pair_chart,
+        side=side.value,
+        current_price=entry,
+        pip_factor=pip_factor,
+        intent=intent,
+    )
+    if target is None:
+        return None, reason
+    target = _round_price(pair, float(target))
+    if not _target_on_reward_side(side, entry, target):
+        return None, f"structural target {target} is not on reward side; using ATR/RR virtual target"
+    distance_pips = abs(target - entry) * pip_factor
+    min_target_pips = spread_pips * RiskPolicy().min_target_spread_multiple
+    if distance_pips < min_target_pips:
+        return None, (
+            f"structural target {target} is only {distance_pips:.1f}pip away "
+            f"(< {min_target_pips:.1f}pip spread floor); using ATR/RR virtual target"
+        )
+    return target, reason
+
+
+def _target_on_reward_side(side: Side, entry: float, target: float) -> bool:
+    if side == Side.LONG:
+        return target > entry
+    return target < entry
+
+
+def _should_attach_take_profit_on_fill(
+    *,
+    method: TradeMethod,
+    order_type: OrderType,
+    execution_regime: str | None,
+    chart_context: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    regime = str(execution_regime or "").upper()
+    if method == TradeMethod.RANGE_ROTATION:
+        return True, "range rotation harvests the opposing technical rail"
+    if method == TradeMethod.BREAKOUT_FAILURE:
+        return True, "failed-break setups bank at the reclaimed structural level"
+    if order_type == OrderType.LIMIT:
+        return True, "pending limit entries use broker TP to capture the planned rotation"
+    if "RANGE" in regime or "UNCLEAR" in regime or "FAILURE" in regime:
+        return True, f"{regime or 'missing'} regime is not a clean runner trend"
+
+    ctx = chart_context or {}
+    adx = _chart_adx(ctx)
+    if adx is None:
+        return True, "ADX missing; attach TP instead of creating an uncapped runner"
+    if adx < DYNAMIC_RR_ADX_TREND_THRESHOLD:
+        return True, f"ADX {adx:.1f} below trend threshold {DYNAMIC_RR_ADX_TREND_THRESHOLD}"
+
+    tf_agree = _optional_float(ctx.get("tf_agreement_score"))
+    if tf_agree is None:
+        return True, "TF agreement missing; attach TP instead of creating an uncapped runner"
+    if tf_agree < TP_MODE_TF_AGREEMENT_MAJORITY:
+        return True, f"TF agreement {tf_agree:.2f} below majority {TP_MODE_TF_AGREEMENT_MAJORITY:.2f}"
+
+    atr_pct = _optional_float(ctx.get("atr_percentile_24h"))
+    if atr_pct is not None and atr_pct <= DYNAMIC_RR_ATR_PCTILE_LOW:
+        return True, f"ATR percentile {atr_pct:.2f} is small-wave tape"
+
+    sigma_24h = _optional_float(ctx.get("range_24h_sigma_multiple"))
+    if sigma_24h is not None and sigma_24h >= TP_MODE_EXHAUSTION_SIGMA:
+        return True, f"24h range {sigma_24h:.2f}σ is exhausted; harvest rather than run"
+
+    session = str(ctx.get("session_current_tag") or ctx.get("session_bucket") or "").upper()
+    if session in {"OFF_HOURS", "JP_HOLIDAY"}:
+        return True, f"{session} liquidity is thin; attach TP"
+
+    if "TREND" in regime or "IMPULSE" in regime:
+        return False, f"{regime} with ADX {adx:.1f} and TF agreement {tf_agree:.2f} qualifies as runner"
+    return True, f"{regime or 'missing'} regime does not qualify as runner"
+
+
+def _chart_adx(chart_context: dict[str, Any]) -> float | None:
+    for key in ("h1_adx", "h4_adx"):
+        value = _optional_float(chart_context.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _geometry(

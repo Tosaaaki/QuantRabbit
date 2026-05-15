@@ -1038,13 +1038,24 @@ def _intent_geometry_key(intent: OrderIntent) -> tuple[object, ...]:
         intent.side.value,
         intent.order_type.value,
         _price_key(intent.pair, intent.entry),
-        _price_key(intent.pair, intent.tp),
+        _price_key(intent.pair, intent.tp if _attach_take_profit_on_fill(intent) else None),
         _price_key(intent.pair, intent.sl),
     )
 
 
 def _intent_declares_hedge(intent: OrderIntent) -> bool:
     return str((intent.metadata or {}).get("position_intent") or "").upper() == "HEDGE"
+
+
+def _attach_take_profit_on_fill(intent: OrderIntent) -> bool:
+    if os.environ.get("QR_DISABLE_AUTO_TP", "").strip() in {"1", "true", "TRUE", "yes", "YES"}:
+        return False
+    raw = (intent.metadata or {}).get("attach_take_profit_on_fill")
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return True
 
 
 def _raw_dependent_price(raw: dict[str, Any], key: str) -> float | None:
@@ -1119,17 +1130,11 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         "clientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
         "tradeClientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
     }
-    # TP attachment (2026-05-15): `QR_DISABLE_AUTO_TP=1` skips the
-    # `takeProfitOnFill` block entirely so the trade runs without a
-    # broker-side cap. User directive 2026-05-15: 「TP なし・SL なし、
-    # 利を伸ばす、損切りは思想が崩れたときだけ手動」. Combined with
-    # the SL-free default (no `stopLossOnFill`), the resulting trade
-    # is fully discretionary — the operator/Claude routine closes
-    # only when forecast persistence + thesis tracker flag invalidation.
-    disable_auto_tp = os.environ.get("QR_DISABLE_AUTO_TP", "").strip() in {
-        "1", "true", "TRUE", "yes", "YES",
-    }
-    if not disable_auto_tp:
+    # TP attachment (2026-05-15): `intent.tp` remains the virtual target used
+    # by risk validation and reports. Per-intent metadata can omit the broker
+    # cap for strong-trend runners; `QR_DISABLE_AUTO_TP=1` remains the global
+    # emergency override.
+    if _attach_take_profit_on_fill(intent):
         order["takeProfitOnFill"] = {"price": _price(intent.pair, intent.tp)}
     # SL handling. Two production modes can coexist:
     #

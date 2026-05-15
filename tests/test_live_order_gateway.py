@@ -71,6 +71,33 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["timeInForce"], "FOK")
             self.assertNotIn("price", order)
 
+    def test_runner_intent_omits_broker_take_profit_on_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(
+                intents_path=_intents(
+                    root,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "RUNNER",
+                        "attach_take_profit_on_fill": False,
+                        "tp_execution_mode": "RUNNER_NO_BROKER_TP",
+                    },
+                ),
+                lane_id="lane:EUR_USD:LONG",
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            order = payload["order_request"]
+            self.assertNotIn("takeProfitOnFill", order)
+
     def test_send_requires_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -794,7 +821,7 @@ def _intents(
     root: Path,
     *,
     status: str = "LIVE_READY",
-    metadata: dict[str, str] | None = None,
+    metadata: dict[str, Any] | None = None,
     order_type: str = "STOP-ENTRY",
 ) -> Path:
     path = root / "intents.json"

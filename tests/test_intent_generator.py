@@ -365,6 +365,48 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(result["intent"]["metadata"]["target_reward_risk"], 4.0)
             self.assertAlmostEqual(result["risk_metrics"]["reward_risk"], 4.0)
 
+    def test_small_wave_attaches_structural_harvest_tp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_tp_mode(root, adx=16.0, atr_percentile=0.2),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            result = json.loads(output.read_text())["results"][0]
+            metadata = result["intent"]["metadata"]
+            self.assertTrue(metadata["attach_take_profit_on_fill"])
+            self.assertEqual(metadata["tp_execution_mode"], "ATTACHED_TECHNICAL_TP")
+            self.assertEqual(metadata["tp_target_source"], "STRUCTURAL_HARVEST")
+            self.assertIn("ADX", metadata["tp_attach_reason"])
+
+    def test_strong_trend_uses_runner_no_broker_tp_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts_tp_mode(root, adx=31.0, atr_percentile=0.8),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            result = json.loads(output.read_text())["results"][0]
+            metadata = result["intent"]["metadata"]
+            self.assertFalse(metadata["attach_take_profit_on_fill"])
+            self.assertEqual(metadata["tp_execution_mode"], "RUNNER_NO_BROKER_TP")
+            self.assertEqual(metadata["tp_target_source"], "STRUCTURAL_EXTEND")
+            self.assertIn("qualifies as runner", metadata["tp_attach_reason"])
+
     def test_range_rotation_uses_rail_limit_geometry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -758,6 +800,66 @@ def _pair_charts_with_context(root: Path) -> Path:
                                     "swing_high": 1.1767,
                                 },
                             }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _pair_charts_tp_mode(root: Path, *, adx: float, atr_percentile: float) -> Path:
+    path = root / "pair_charts_tp_mode.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "dominant_regime": "TREND_UP",
+                        "long_score": 0.78,
+                        "short_score": 0.12,
+                        "confluence": {
+                            "score_balance": "LONG_LEAN",
+                            "score_gap": 0.66,
+                            "dominant_regime": "TREND_UP",
+                            "tf_agreement_score": 1.0,
+                            "atr_percentile_24h": atr_percentile,
+                            "range_24h_sigma_multiple": 1.1,
+                        },
+                        "session": {"current_tag": "LONDON_NY_OVERLAP"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_UP",
+                                "long_bias": 0.78,
+                                "short_bias": 0.12,
+                                "regime_reading": {"state": "TREND_UP", "confidence": 0.8, "atr_percentile": 70.0},
+                                "indicators": {
+                                    "atr_pips": 8.0,
+                                    "bb_lower": 1.1710,
+                                    "bb_upper": 1.1760,
+                                    "donchian_low": 1.1707,
+                                    "donchian_high": 1.1764,
+                                    "linreg_channel_lower": 1.1709,
+                                    "linreg_channel_upper": 1.1761,
+                                    "swing_low": 1.1705,
+                                    "swing_high": 1.1767,
+                                },
+                            },
+                            {
+                                "granularity": "H1",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": 28.0, "adx_14": adx},
+                                "smc": {"dealing_range": {"swing_high": 1.2300, "swing_low": 1.1500}},
+                            },
+                            {
+                                "granularity": "H4",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": 42.0, "adx_14": adx},
+                                "smc": {"dealing_range": {"swing_high": 1.2300, "swing_low": 1.1500}},
+                            },
                         ],
                     }
                 ]
