@@ -88,6 +88,43 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(intent["market_context"]["session"], "NY")
             self.assertIn("TREND_DOWN current", intent["market_context"]["regime"])
 
+    def test_carries_tf_location_and_nearby_level_map(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                pair_charts_path=_pair_charts_location_map(root),
+                levels_path=_levels_snapshot(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            intent = payload["results"][0]["intent"]
+            metadata = intent["metadata"]
+
+            self.assertEqual(metadata["tf_regime_map"]["M5"]["classification"], "RANGE")
+            self.assertEqual(metadata["tf_regime_map"]["H1"]["classification"], "TREND_UP")
+            self.assertIn("M5", metadata["range_timeframes"])
+            self.assertIn("H1:TREND_UP", metadata["trend_timeframes"])
+            self.assertTrue(metadata["nearest_levels_below"])
+            self.assertTrue(metadata["nearest_levels_above"])
+            self.assertTrue(metadata["level_clusters_near"])
+            self.assertTrue(all(item["count"] > 1 for item in metadata["level_clusters_near"]))
+            self.assertTrue(
+                any(
+                    str(item["source"]).startswith("levels:")
+                    for item in metadata["nearest_levels_below"] + metadata["nearest_levels_above"]
+                )
+            )
+            self.assertIn("M5 RANGE", metadata["market_location_story"])
+            self.assertIn("H1 TREND_UP", metadata["market_location_story"])
+            self.assertIn(metadata["market_location_story"], intent["market_context"]["chart_story"])
+
     def test_blocks_chart_direction_conflict_before_live_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1017,6 +1054,122 @@ def _pair_charts_with_context(root: Path) -> Path:
                         ],
                     }
                 ]
+            }
+        )
+    )
+    return path
+
+
+def _pair_charts_location_map(root: Path) -> Path:
+    path = root / "pair_charts_location_map.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "dominant_regime": "TREND_UP",
+                        "long_score": 0.66,
+                        "short_score": 0.22,
+                        "session": {"current_tag": "NY_AM_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime": "RANGE",
+                                "long_bias": 0.54,
+                                "short_bias": 0.46,
+                                "regime_reading": {"state": "RANGE", "confidence": 0.72, "atr_percentile": 28.0},
+                                "indicators": {
+                                    "close": 1.17325,
+                                    "atr_pips": 6.0,
+                                    "adx_14": 16.0,
+                                    "choppiness_14": 64.0,
+                                    "linreg_slope_20": 0.01,
+                                    "bb_lower": 1.1710,
+                                    "bb_upper": 1.1760,
+                                    "bb_middle": 1.1735,
+                                    "donchian_low": 1.1707,
+                                    "donchian_high": 1.1764,
+                                    "vwap": 1.1732,
+                                    "avwap_anchor": 1.1731,
+                                    "avwap_lower_1sd": 1.1712,
+                                    "avwap_upper_1sd": 1.1758,
+                                    "linreg_channel_lower": 1.1709,
+                                    "linreg_channel_upper": 1.1761,
+                                    "swing_low": 1.1705,
+                                    "swing_high": 1.1767,
+                                },
+                            },
+                            {
+                                "granularity": "H1",
+                                "regime": "TREND_UP",
+                                "long_bias": 0.72,
+                                "short_bias": 0.18,
+                                "regime_reading": {"state": "TREND_UP", "confidence": 0.77, "atr_percentile": 68.0},
+                                "indicators": {
+                                    "close": 1.17325,
+                                    "atr_pips": 24.0,
+                                    "adx_14": 31.0,
+                                    "choppiness_14": 38.0,
+                                    "linreg_slope_20": 0.52,
+                                    "bb_lower": 1.1688,
+                                    "bb_upper": 1.1802,
+                                    "bb_middle": 1.1745,
+                                    "donchian_low": 1.1684,
+                                    "donchian_high": 1.1810,
+                                    "vwap": 1.1729,
+                                    "avwap_anchor": 1.1719,
+                                    "linreg_channel_lower": 1.1700,
+                                    "linreg_channel_upper": 1.1790,
+                                    "swing_low": 1.1678,
+                                    "swing_high": 1.1820,
+                                },
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _levels_snapshot(root: Path) -> Path:
+    path = root / "levels_snapshot.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pairs": [
+                    {
+                        "pair": "EUR_USD",
+                        "pdh": 1.1762,
+                        "pdl": 1.1691,
+                        "pdc": 1.1728,
+                        "daily_open": 1.1718,
+                        "weekly_open": 1.1700,
+                        "monthly_open": 1.1650,
+                        "last_close": 1.1732,
+                        "pivots": [
+                            {
+                                "style": "STANDARD",
+                                "pp": 1.1727,
+                                "r1": 1.1763,
+                                "r2": 1.1792,
+                                "s1": 1.1692,
+                                "s2": 1.1664,
+                            }
+                        ],
+                        "sessions": [
+                            {"name": "ASIA", "high": 1.1742, "low": 1.1711, "range_pips": 31.0},
+                            {"name": "LONDON", "high": 1.1764, "low": 1.1708, "range_pips": 56.0},
+                        ],
+                        "round_numbers": [
+                            {"price": 1.17, "distance_pips": -33.0},
+                            {"price": 1.175, "distance_pips": 17.0},
+                        ],
+                    }
+                ],
+                "issues": [],
             }
         )
     )

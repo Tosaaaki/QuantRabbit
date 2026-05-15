@@ -12,6 +12,7 @@ from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Mar
 from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
@@ -352,6 +353,38 @@ RANGE_AUTOLANE_FORMING_ADX_MAX = 25.0
 RANGE_AUTOLANE_FORMING_CHOP_MIN = 45.0
 RANGE_AUTOLANE_FORMING_BB_WIDTH_PCT_MAX = 35.0
 
+# Market-location map: the trader must know which timeframe is boxed, which
+# timeframe is trending, and which nearby levels form the actual battlefield.
+# Cluster radius is a fraction of the current M5 ATR, so it expands/contracts
+# with live volatility rather than a fixed pip literal. `0.15 × ATR` groups
+# levels that are close enough to behave as the same decision zone on the
+# operating TF; replace with ledger-calibrated pair/session fractions once
+# level-cluster outcomes have enough samples.
+MARKET_LOCATION_TIMEFRAMES = ("M1", "M5", "M15", "M30", "H1", "H4", "D")
+# Level clusters are metadata only, but the fraction must still express market
+# reality: levels separated by less than the M5 sub-noise band behave as one
+# execution zone rather than separate prices. Wider/narrower values should come
+# from post-trade level-cluster outcome samples, not from a fixed pip guess.
+LEVEL_CLUSTER_ATR_FRACTION = 0.15
+# Keep only the nearest actionable levels/zones so receipts carry context
+# without drowning GPT/the operator in stale far-away prices.
+LEVEL_CONTEXT_LIMIT = 6
+LEVEL_MIDPOINT_KEYS = (
+    "bb_middle",
+    "vwap",
+    "avwap_anchor",
+    "avwap_upper_1sd",
+    "avwap_lower_1sd",
+    "sma_20",
+    "ema_20",
+    "ema_50",
+    "ichimoku_kijun",
+)
+# Wilder's ADX 25 "trend is distinguishable from noise" boundary is already
+# documented in analysis/regime.py and directional_forecaster.py. This local
+# alias avoids importing the forecaster just to classify metadata.
+FORECAST_STRONG_ADX_PROXY = 25.0
+
 # Broker-side TP attachment mode. Small-wave / range / failed-break setups
 # should bank at the nearest structural target, while strong trend setups
 # need a runner path where broker TP is omitted and the position is managed
@@ -488,6 +521,16 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
                     per_tf[f"{granularity}__regime_reading"] = regime_reading
         indexed[pair] = per_tf
     return indexed if indexed else None
+
+
+def _load_levels_snapshot(levels_path: Path = DEFAULT_LEVELS_SNAPSHOT) -> dict[str, Any] | None:
+    if not levels_path.exists():
+        return None
+    try:
+        payload = json.loads(levels_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _atr_pips_for(pair: str, charts: dict[str, dict[str, Any]] | None, timeframe: str = GEOMETRY_ATR_TIMEFRAME) -> float | None:
@@ -646,6 +689,267 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
             (per_tf.get("session") if isinstance(per_tf.get("session"), dict) else {}).get("current_tag")
         ),
     }
+
+
+def _market_location_context_for(
+    pair: str,
+    current_price: float | None,
+    charts: dict[str, dict[str, Any]] | None,
+    levels_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if current_price is None or charts is None:
+        return {}
+    per_tf = charts.get(pair)
+    if not per_tf:
+        return {}
+    tf_map: dict[str, dict[str, Any]] = {}
+    range_tfs: list[str] = []
+    trend_tfs: list[str] = []
+    structural_levels: list[dict[str, Any]] = []
+    for timeframe in MARKET_LOCATION_TIMEFRAMES:
+        indicators = per_tf.get(timeframe) if isinstance(per_tf.get(timeframe), dict) else {}
+        if not indicators:
+            continue
+        regime = _text_or_none(per_tf.get(f"{timeframe}__regime"))
+        state = _regime_reading_state(per_tf, timeframe) or None
+        classification = _tf_regime_classification(regime, state, indicators)
+        support = _nearest_below(current_price, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))
+        resistance = _nearest_above(current_price, _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS))
+        position = None
+        if support is not None and resistance is not None and resistance > support:
+            position = max(0.0, min(1.0, (current_price - support) / (resistance - support)))
+        entry = {
+            "regime": regime,
+            "state": state,
+            "classification": classification,
+            "range_position": round(position, 3) if position is not None else None,
+            "nearest_support": _round_price(pair, support) if support is not None else None,
+            "nearest_support_distance_pips": _distance_pips(pair, support, current_price) if support is not None else None,
+            "nearest_resistance": _round_price(pair, resistance) if resistance is not None else None,
+            "nearest_resistance_distance_pips": _distance_pips(pair, resistance, current_price) if resistance is not None else None,
+            "adx": _optional_float((indicators or {}).get("adx_14") or (indicators or {}).get("adx")),
+            "choppiness": _optional_float((indicators or {}).get("choppiness_14")),
+            "linreg_slope": _optional_float((indicators or {}).get("linreg_slope_20")),
+            "atr_pips": _optional_float((indicators or {}).get("atr_pips")),
+        }
+        tf_map[timeframe] = {key: value for key, value in entry.items() if value is not None}
+        if classification == "RANGE":
+            range_tfs.append(timeframe)
+        elif classification in {"TREND_UP", "TREND_DOWN"}:
+            trend_tfs.append(f"{timeframe}:{classification}")
+        structural_levels.extend(_indicator_levels(pair, timeframe, current_price, indicators))
+
+    snapshot_levels = _levels_snapshot_levels(pair, current_price, levels_snapshot)
+    all_levels = structural_levels + snapshot_levels
+    nearest_below = _nearest_level_records(all_levels, side="below", limit=LEVEL_CONTEXT_LIMIT)
+    nearest_above = _nearest_level_records(all_levels, side="above", limit=LEVEL_CONTEXT_LIMIT)
+    cluster_radius_pips = _cluster_radius_pips(pair, charts)
+    level_clusters = _level_clusters_near(pair, current_price, all_levels, cluster_radius_pips)
+    story = _market_location_story(tf_map, nearest_below, nearest_above, level_clusters)
+    return {
+        "current_price_mid": _round_price(pair, current_price),
+        "tf_regime_map": tf_map,
+        "range_timeframes": range_tfs,
+        "trend_timeframes": trend_tfs,
+        "nearest_levels_below": nearest_below,
+        "nearest_levels_above": nearest_above,
+        "level_clusters_near": level_clusters,
+        "level_cluster_radius_pips": round(cluster_radius_pips, 2) if cluster_radius_pips is not None else None,
+        "market_location_story": story,
+    }
+
+
+def _tf_regime_classification(regime: str | None, state: str | None, indicators: dict[str, Any]) -> str:
+    regime_text = str(regime or "").upper()
+    state_text = str(state or "").upper()
+    if "BREAKOUT_PENDING" in {regime_text, state_text}:
+        return "BREAKOUT_PENDING"
+    if "RANGE" in regime_text or state_text == "RANGE":
+        return "RANGE"
+    if regime_text.startswith("TREND_UP") or state_text == "TREND_UP":
+        return "TREND_UP"
+    if regime_text.startswith("TREND_DOWN") or state_text == "TREND_DOWN":
+        return "TREND_DOWN"
+    slope = _optional_float((indicators or {}).get("linreg_slope_20"))
+    adx = _optional_float((indicators or {}).get("adx_14") or (indicators or {}).get("adx"))
+    if adx is not None and adx >= FORECAST_STRONG_ADX_PROXY:
+        if slope is not None and slope > 0:
+            return "TREND_UP"
+        if slope is not None and slope < 0:
+            return "TREND_DOWN"
+    if state_text:
+        return state_text
+    return regime_text or "UNKNOWN"
+
+
+def _indicator_levels(
+    pair: str,
+    timeframe: str,
+    current_price: float,
+    indicators: dict[str, Any],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for key in (*RANGE_SUPPORT_LEVEL_KEYS, *RANGE_RESISTANCE_LEVEL_KEYS, *LEVEL_MIDPOINT_KEYS):
+        price = _optional_float((indicators or {}).get(key))
+        if price is None or price <= 0:
+            continue
+        out.append(_level_record(pair, current_price, price, f"{timeframe}:{key}"))
+    return out
+
+
+def _levels_snapshot_levels(
+    pair: str,
+    current_price: float,
+    levels_snapshot: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    reading = _levels_snapshot_pair(pair, levels_snapshot)
+    if not reading:
+        return []
+    out: list[dict[str, Any]] = []
+    for key in ("pdh", "pdl", "pdc", "pdo", "daily_open", "weekly_open", "monthly_open", "last_close"):
+        price = _optional_float(reading.get(key))
+        if price is not None and price > 0:
+            out.append(_level_record(pair, current_price, price, f"levels:{key}"))
+    for pivot in reading.get("pivots") or []:
+        if not isinstance(pivot, dict):
+            continue
+        style = str(pivot.get("style") or "PIVOT").lower()
+        for key in ("pp", "r1", "r2", "r3", "r4", "s1", "s2", "s3", "s4"):
+            price = _optional_float(pivot.get(key))
+            if price is not None and price > 0:
+                out.append(_level_record(pair, current_price, price, f"levels:pivot:{style}:{key}"))
+    for session in reading.get("sessions") or []:
+        if not isinstance(session, dict):
+            continue
+        name = str(session.get("name") or "SESSION").lower()
+        for key in ("high", "low"):
+            price = _optional_float(session.get(key))
+            if price is not None and price > 0:
+                out.append(_level_record(pair, current_price, price, f"levels:session:{name}:{key}"))
+    for item in reading.get("round_numbers") or []:
+        if not isinstance(item, dict):
+            continue
+        price = _optional_float(item.get("price"))
+        if price is not None and price > 0:
+            out.append(_level_record(pair, current_price, price, "levels:round_number"))
+    return out
+
+
+def _levels_snapshot_pair(pair: str, levels_snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(levels_snapshot, dict):
+        return None
+    for item in levels_snapshot.get("pairs") or []:
+        if isinstance(item, dict) and item.get("pair") == pair:
+            return item
+    return None
+
+
+def _level_record(pair: str, current_price: float, price: float, source: str) -> dict[str, Any]:
+    distance = _distance_pips(pair, price, current_price)
+    side = "below" if price <= current_price else "above"
+    return {
+        "price": _round_price(pair, price),
+        "source": source,
+        "side": side,
+        "distance_pips": distance,
+    }
+
+
+def _distance_pips(pair: str, price: float | None, current_price: float) -> float | None:
+    if price is None:
+        return None
+    return round((price - current_price) * PIP_FACTORS[pair], 2)
+
+
+def _nearest_level_records(
+    levels: list[dict[str, Any]],
+    *,
+    side: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    filtered = [item for item in levels if item.get("side") == side and item.get("distance_pips") is not None]
+    filtered.sort(key=lambda item: abs(float(item["distance_pips"])))
+    return filtered[:limit]
+
+
+def _cluster_radius_pips(pair: str, charts: dict[str, dict[str, Any]] | None) -> float | None:
+    atr = _atr_pips_for(pair, charts)
+    if atr is None or atr <= 0:
+        return None
+    return atr * LEVEL_CLUSTER_ATR_FRACTION
+
+
+def _level_clusters_near(
+    pair: str,
+    current_price: float,
+    levels: list[dict[str, Any]],
+    radius_pips: float | None,
+) -> list[dict[str, Any]]:
+    if not levels:
+        return []
+    if radius_pips is None or radius_pips <= 0:
+        return []
+    radius_price = radius_pips / PIP_FACTORS[pair]
+    sorted_levels = sorted(levels, key=lambda item: float(item["price"]))
+    clusters: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for item in sorted_levels:
+        if not current:
+            current = [item]
+            continue
+        center = sum(float(member["price"]) for member in current) / len(current)
+        if abs(float(item["price"]) - center) <= radius_price:
+            current.append(item)
+        else:
+            clusters.append(current)
+            current = [item]
+    if current:
+        clusters.append(current)
+    out: list[dict[str, Any]] = []
+    for members in clusters:
+        if len(members) < 2:
+            continue
+        center = sum(float(member["price"]) for member in members) / len(members)
+        side = "below" if center <= current_price else "above"
+        out.append(
+            {
+                "price": _round_price(pair, center),
+                "side": side,
+                "distance_pips": _distance_pips(pair, center, current_price),
+                "count": len(members),
+                "sources": sorted({str(member.get("source")) for member in members})[:LEVEL_CONTEXT_LIMIT],
+            }
+        )
+    out.sort(key=lambda item: (abs(float(item.get("distance_pips") or 0.0)), -int(item.get("count") or 0)))
+    return out[:LEVEL_CONTEXT_LIMIT]
+
+
+def _market_location_story(
+    tf_map: dict[str, dict[str, Any]],
+    nearest_below: list[dict[str, Any]],
+    nearest_above: list[dict[str, Any]],
+    level_clusters: list[dict[str, Any]],
+) -> str:
+    tf_bits: list[str] = []
+    for tf in MARKET_LOCATION_TIMEFRAMES:
+        item = tf_map.get(tf)
+        if not item:
+            continue
+        bit = f"{tf} {item.get('classification')}"
+        if item.get("range_position") is not None:
+            bit += f" pos={item['range_position']}"
+        tf_bits.append(bit)
+    below = nearest_below[0] if nearest_below else None
+    above = nearest_above[0] if nearest_above else None
+    level_bits: list[str] = []
+    if below:
+        level_bits.append(f"below {below['price']} ({below['distance_pips']}p {below['source']})")
+    if above:
+        level_bits.append(f"above {above['price']} (+{above['distance_pips']}p {above['source']})")
+    if level_clusters:
+        top = level_clusters[0]
+        level_bits.append(f"cluster {top['price']} ({top['count']} levels, {top['distance_pips']}p)")
+    return "; ".join(tf_bits[:7] + level_bits[:3])
 
 
 def _session_bucket_from_tag(value: object) -> str | None:
@@ -1102,6 +1406,7 @@ class IntentGenerator:
         output_path: Path = DEFAULT_ORDER_INTENTS,
         report_path: Path = DEFAULT_ORDER_INTENT_REPORT,
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+        levels_path: Path = DEFAULT_LEVELS_SNAPSHOT,
         max_loss_jpy: float | None = None,
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
@@ -1111,6 +1416,7 @@ class IntentGenerator:
         self.output_path = output_path
         self.report_path = report_path
         self.pair_charts_path = pair_charts_path
+        self.levels_path = levels_path
         self.max_loss_jpy = max_loss_jpy
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
@@ -1126,6 +1432,7 @@ class IntentGenerator:
         # BREAKOUT_PENDING / squeeze remains a wait state so the bot does not
         # fade the box just before expansion.
         pair_charts = _load_pair_charts(self.pair_charts_path)
+        levels_snapshot = _load_levels_snapshot(self.levels_path)
         if snapshot is not None:
             range_seed_count = len(lanes)
             lanes = _append_current_range_phase_lanes(lanes, pair_charts)
@@ -1185,6 +1492,7 @@ class IntentGenerator:
                         max_loss_jpy=max_loss_jpy,
                         portfolio_loss_cap=portfolio_loss_cap,
                         pair_charts=pair_charts,
+                        levels_snapshot=levels_snapshot,
                         order_type_override=order_type,
                     )
                 )
@@ -1210,6 +1518,7 @@ class IntentGenerator:
         max_loss_jpy: float,
         portfolio_loss_cap: float | None = None,
         pair_charts: dict[str, dict[str, Any]] | None = None,
+        levels_snapshot: dict[str, Any] | None = None,
         order_type_override: OrderType | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
@@ -1248,6 +1557,7 @@ class IntentGenerator:
         regime_reading = _regime_reading_for(pair, pair_charts)
         session_bucket = _session_bucket_for(pair, pair_charts)
         chart_context = _chart_context_for(pair, pair_charts)
+        chart_context.update(_market_location_context_for(pair, quote.mid, pair_charts, levels_snapshot))
         intent = _intent_from_lane(
             lane,
             quote,
@@ -1608,10 +1918,13 @@ def _intent_from_lane(
             regime_context += f"; dominant={regime_state}"
     else:
         regime_context = f"{method.value} campaign lane"
+    location_story = str((chart_context or {}).get("market_location_story") or "")
+    lane_story = " | ".join(str(item) for item in lane.get("story_examples", [])[:2])
     context = MarketContext(
         regime=regime_context,
         narrative=str(lane.get("reason") or ""),
-        chart_story=" | ".join(str(item) for item in lane.get("story_examples", [])[:2]) or "campaign lane requires current chart read",
+        chart_story=" | ".join(item for item in (location_story, lane_story) if item)
+        or "campaign lane requires current chart read",
         method=method,
         invalidation=f"invalid if SL {sl} trades or campaign overlay vetoes the setup",
         event_risk="; ".join(str(item) for item in lane.get("blockers", [])[:2]),
