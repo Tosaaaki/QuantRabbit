@@ -67,9 +67,11 @@ SL-free the per-trade risk number is advisory; market structure is authoritative
   `feedback_independent_judgment.md`. Operator may CLOSE to cap damage.
 
 All five triggers are anchored on broker-truth / chart-reader fields, not on
-JPY/pip/multiplier literals (§3.5-compliant). Gate B (`operator_close_authorized:
-true` in the receipt, or `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell)
-is still required on top of any Gate A trigger.
+JPY/pip/multiplier literals (§3.5-compliant). Gate B still requires
+operator-controlled authorization: `QR_OPERATOR_CLOSE_OVERRIDE=1` in the
+operator shell, or a fresh `data/.operator_close_token` file. The receipt's
+`operator_close_authorized` field is advisory audit text only and is not
+accepted as authorization.
 
 ### NOT valid CLOSE triggers (do NOT propose CLOSE on these alone)
 

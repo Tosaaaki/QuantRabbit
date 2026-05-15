@@ -36,10 +36,9 @@ def _operator_close_override_active() -> bool:
 
 
 # J (2026-05-13) — Operator close token file. A token-file authorization
-# path that the GPT trader code path cannot self-set. Operator creates
-# the file by `touch` (or `qr-vnext operator-authorize-close ...`); the
-# verifier reads its mtime and rejects if older than the documented
-# freshness window.
+# path that the GPT trader receipt cannot self-set. The operator creates
+# the file explicitly with `touch data/.operator_close_token`; the verifier
+# reads its mtime and rejects if older than the documented freshness window.
 #
 # 2026-05-12T15:33 UTC mass-close incident proved that
 # `operator_close_authorized: true` JSON field is honor-system: the
@@ -321,11 +320,10 @@ class GPTTraderDecision:
     # (parsed from pair_charts.chart_story) or via an explicit
     # `invalidation_price` + `invalidation_tf` that broker truth confirms
     # has been hit; (B) explicit operator authorization via
-    # `operator_close_authorized=true` or the
-    # `QR_OPERATOR_CLOSE_OVERRIDE=1` env override. Both gates must pass
-    # so the trader cannot autonomously close a position whose thesis is
-    # still structurally valid (2026-05-11 18:17 UTC mass-close of four
-    # SHORT positions for -3,291 JPY established the regression).
+    # `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh
+    # `data/.operator_close_token`. The `operator_close_authorized` field
+    # remains audit text only and is not accepted as authorization, because
+    # the trader can set fields in its own receipt.
     invalidation_price: float | None = None
     invalidation_tf: str | None = None
     operator_close_authorized: bool = False
@@ -525,7 +523,7 @@ class GPTTraderBrain:
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` hit on broker truth) AND gate B (`operator_close_authorized=true` or `QR_OPERATOR_CLOSE_OVERRIDE=1`). See AGENT_CONTRACT §10.",
+                "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` hit on broker truth) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -831,9 +829,8 @@ class DecisionVerifier:
           1. `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR
           2. A fresh `data/.operator_close_token` file (mtime within
              OPERATOR_CLOSE_TOKEN_FRESH_SECONDS = 5 minutes), created
-             by `touch data/.operator_close_token` or the
-             `qr-vnext operator-authorize-close` CLI before each
-             CLOSE batch.
+             by `touch data/.operator_close_token` before each CLOSE
+             batch.
 
         The `operator_close_authorized` JSON field remains in the
         schema for backward compatibility and audit trail (the verifier

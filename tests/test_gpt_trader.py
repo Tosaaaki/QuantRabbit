@@ -32,6 +32,31 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_report_contract_does_not_treat_receipt_close_flag_as_gate_b(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            brain = _brain(root, files, _trade_decision())
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            report = (root / "gpt_decision.md").read_text()
+            self.assertIn("fresh `data/.operator_close_token`", report)
+            self.assertIn("`operator_close_authorized` field is advisory only", report)
+            self.assertNotIn("`operator_close_authorized=true` or", report)
+
+    def test_close_gate_b_docs_match_env_or_token_authorization(self) -> None:
+        repo = Path(__file__).resolve().parents[1]
+        prompt = (repo / "docs" / "trader_prompts" / "35_position_management.md").read_text()
+        source = (repo / "src" / "quant_rabbit" / "gpt_trader.py").read_text()
+
+        for text in (prompt, source):
+            self.assertIn("QR_OPERATOR_CLOSE_OVERRIDE=1", text)
+            self.assertIn("data/.operator_close_token", text)
+            self.assertIn("advisory", text)
+            self.assertNotIn("operator-authorize-close", text)
+            self.assertNotIn("operator_close_authorized=true` or", text)
+
     def test_accepts_batch_trade_when_selected_lanes_are_live_ready_and_cited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
