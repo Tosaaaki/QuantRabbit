@@ -374,40 +374,88 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
-    def test_operator_manual_position_gets_take_profit_without_stop_loss(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            decision = _decision(root, long_score=160, short_score=120)
-            pair_charts = _pair_charts(root, atr_pips=10.0)
-            snapshot = BrokerSnapshot(
-                fetched_at_utc=datetime.now(timezone.utc),
-                positions=(
-                    BrokerPosition(
-                        trade_id="manual-1",
-                        pair="EUR_USD",
-                        side=Side.LONG,
-                        units=25000,
-                        entry_price=1.1729,
-                        owner=Owner.UNKNOWN,
+    def test_operator_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
+        prior = os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _pair_charts(root, atr_pips=10.0)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=datetime.now(timezone.utc),
+                    positions=(
+                        BrokerPosition(
+                            trade_id="manual-1",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=25000,
+                            entry_price=1.1729,
+                            owner=Owner.UNKNOWN,
+                        ),
                     ),
-                ),
-                quotes={"EUR_USD": Quote("EUR_USD", 1.1728, 1.1729, timestamp_utc=datetime.now(timezone.utc))},
-            )
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.1728, 1.1729, timestamp_utc=datetime.now(timezone.utc))},
+                )
 
-            result = PositionManager(
-                trader_decision_path=decision,
-                pair_charts_path=pair_charts,
-                output_path=root / "pm.json",
-                report_path=root / "pm.md",
-            ).run(snapshot)
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
 
-            self.assertEqual(result.action, ACTION_REPAIR_TAKE_PROFIT)
-            self.assertEqual(result.positions[0].trade_id, "manual-1")
-            self.assertIsNone(result.positions[0].recommended_stop_loss)
-            self.assertIsNotNone(result.positions[0].recommended_take_profit)
-            report = (root / "pm.md").read_text()
-            self.assertIn("TP-only profit management enabled", report)
-            self.assertIn("SL and loss-close management disabled", report)
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].trade_id, "manual-1")
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                self.assertIsNone(result.positions[0].recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("TP-only profit management enabled", report)
+                self.assertIn("preserving no-broker-TP runner", report)
+        finally:
+            if prior is not None:
+                os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior
+
+    def test_operator_manual_position_gets_take_profit_when_missing_repair_enabled(self) -> None:
+        prior = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+        os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _pair_charts(root, atr_pips=10.0)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=datetime.now(timezone.utc),
+                    positions=(
+                        BrokerPosition(
+                            trade_id="manual-1",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=25000,
+                            entry_price=1.1729,
+                            owner=Owner.UNKNOWN,
+                        ),
+                    ),
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.1728, 1.1729, timestamp_utc=datetime.now(timezone.utc))},
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_REPAIR_TAKE_PROFIT)
+                self.assertEqual(result.positions[0].trade_id, "manual-1")
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                self.assertIsNotNone(result.positions[0].recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("TP-only profit management enabled", report)
+                self.assertIn("SL and loss-close management disabled", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+            else:
+                os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior
 
     def test_operator_manual_position_with_existing_tp_keeps_stop_loss_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

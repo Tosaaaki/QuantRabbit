@@ -151,11 +151,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --decision-response data/codex_trader_decision_response.json
 
 # 4b. Dynamic TP rebalance: expand/contract TP on open positions as
-# market regime shifts. Trader-owned and manual/tagless positions are
-# eligible for TP-only management. SL-free positions keep stop_loss=None
-# untouched; only the takeProfit order on broker-side gets reshaped
-# per current ATR × market-derived reward_risk. Hysteresis +
-# entry-side + safety-margin invariants prevent accidental fires.
+# market regime shifts. Trader-owned and manual/tagless positions with
+# an existing broker TP are eligible for TP-only management. Missing
+# broker TP is preserved as a no-broker-TP runner unless
+# QR_ENABLE_MISSING_TP_REPAIR=1 is explicitly set. SL-free positions
+# keep stop_loss=None untouched; only an existing takeProfit order on
+# broker-side gets reshaped per current ATR × market-derived reward_risk.
+# Hysteresis + entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
 # 4b2. Profit partial close: when trader-owned or manual/tagless

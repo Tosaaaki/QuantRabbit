@@ -19,6 +19,8 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
     def _kill_switch_off(self) -> None:
         if "QR_DISABLE_TP_REBALANCE" in os.environ:
             del os.environ["QR_DISABLE_TP_REBALANCE"]
+        if "QR_ENABLE_MISSING_TP_REPAIR" in os.environ:
+            del os.environ["QR_ENABLE_MISSING_TP_REPAIR"]
 
     def test_long_expanded_tp(self) -> None:
         self._kill_switch_off()
@@ -193,8 +195,19 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         )
         self.assertIsNone(adj)
 
-    def test_manual_position_without_tp_gets_take_profit_repair(self) -> None:
+    def test_manual_position_without_tp_preserves_no_broker_tp_by_default(self) -> None:
         self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="manual-no-tp", pair="EUR_USD", side="LONG",
+            entry_price=1.3000, current_tp=None,
+            current_price=1.3010, atr_pips=20, reward_risk=2.0,
+            owner="unknown",
+        )
+        self.assertIsNone(adj)
+
+    def test_manual_position_without_tp_gets_take_profit_repair_when_enabled(self) -> None:
+        self._kill_switch_off()
+        os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = "1"
         adj = compute_tp_adjustment(
             trade_id="manual-no-tp", pair="EUR_USD", side="LONG",
             entry_price=1.3000, current_tp=None,

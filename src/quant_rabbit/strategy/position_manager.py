@@ -84,6 +84,10 @@ def _manual_take_profit_owner(owner: Owner) -> bool:
     return owner in {Owner.MANUAL, Owner.UNKNOWN}
 
 
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def _position_management_owner(owner: Owner) -> bool:
     return owner == Owner.TRADER or _manual_take_profit_owner(owner)
 
@@ -383,15 +387,22 @@ class PositionManager:
         )
 
         if position.take_profit is None:
-            recommended_take_profit, tp_reason = _market_take_profit_repair_candidate(
-                position, quote, pair_charts
-            )
-            if recommended_take_profit is None:
+            if not _missing_tp_repair_enabled():
                 action = ACTION_HOLD_SL_FREE
-                reasons.append(f"manual/tagless TP repair skipped: {tp_reason}")
+                reasons.append(
+                    "manual/tagless broker TP absent; missing-TP repair disabled "
+                    "(QR_ENABLE_MISSING_TP_REPAIR!=1), preserving no-broker-TP runner"
+                )
             else:
-                action = ACTION_REPAIR_TAKE_PROFIT
-                reasons.append(f"manual/tagless TP repair candidate {recommended_take_profit:.5f}: {tp_reason}")
+                recommended_take_profit, tp_reason = _market_take_profit_repair_candidate(
+                    position, quote, pair_charts
+                )
+                if recommended_take_profit is None:
+                    action = ACTION_HOLD_SL_FREE
+                    reasons.append(f"manual/tagless TP repair skipped: {tp_reason}")
+                else:
+                    action = ACTION_REPAIR_TAKE_PROFIT
+                    reasons.append(f"manual/tagless TP repair candidate {recommended_take_profit:.5f}: {tp_reason}")
         else:
             action = ACTION_HOLD_SL_FREE
             reasons.append("manual/tagless take-profit already present; stop-loss untouched")

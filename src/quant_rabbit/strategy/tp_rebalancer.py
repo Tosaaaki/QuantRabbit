@@ -22,9 +22,9 @@ Invariants:
   the rebalance never fires the TP accidentally on the same tick.
 - Trader-owned plus operator-managed manual / unknown-owner positions
   are eligible for TP-only profit capture. External positions are skipped.
-- Trader-owned positions with no existing TP are repaired by PositionManager;
-  manual / unknown-owner positions with no existing TP are repaired here so
-  the runtime TP pass can apply the user's manual-position take-profit rule.
+- Missing broker TP is not auto-created by default. A manually deleted TP is
+  treated as an operator decision to run without a broker cap. Set
+  `QR_ENABLE_MISSING_TP_REPAIR=1` to restore the old repair behavior.
 - SL is NEVER touched here. This module is TP-only. The SL-free
   invariant `stop_loss is None` is respected by skipping any
   attempt to read/write SL.
@@ -93,6 +93,10 @@ def _is_disabled() -> bool:
     return os.environ.get("QR_DISABLE_TP_REBALANCE", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def _profit_take_owner_allowed(owner: str) -> bool:
     return owner.strip().lower() in {"trader", "manual", "unknown"}
 
@@ -139,7 +143,11 @@ def compute_tp_adjustment(
     owner_normalized = owner.strip().lower()
     if not _profit_take_owner_allowed(owner_normalized):
         return None
-    manual_missing_tp_repair = current_tp is None and owner_normalized in {"manual", "unknown"}
+    manual_missing_tp_repair = (
+        current_tp is None
+        and owner_normalized in {"manual", "unknown"}
+        and _missing_tp_repair_enabled()
+    )
     if current_tp is None and not manual_missing_tp_repair:
         return None
     if atr_pips <= 0 or reward_risk <= 0:
