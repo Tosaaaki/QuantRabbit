@@ -617,6 +617,62 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
 
+    def test_zero_units_keep_geometry_reward_risk_diagnostic(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=0,
+            tp=1.17530,
+            sl=1.17230,
+            thesis="zero_units_should_not_make_rr_zero",
+            market_context=MarketContext(
+                regime="M5 range rotation",
+                narrative="test geometry remains readable when margin sizing returns zero",
+                chart_story="M5 range rail reclaim toward box midpoint",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="lower rail loses",
+            ),
+        )
+
+        decision = RiskEngine().validate(intent, snapshot())
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("BAD_UNITS", codes)
+        self.assertNotIn("REWARD_RISK_TOO_LOW", codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertAlmostEqual(decision.metrics.reward_risk, 2.0)
+
+    def test_range_rotation_uses_range_rr_floor_inside_higher_tf_trend(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=1000,
+            tp=1.17410,
+            sl=1.17230,
+            thesis="tf_local_range_rotation_inside_higher_tf_trend",
+            market_context=MarketContext(
+                regime="H1 TREND_DOWN; M5 range rotation",
+                narrative="local lower-rail reclaim scalp inside higher-TF trend context",
+                chart_story="M5 range rail/box rotation, not a one-way impulse chase",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="M5 lower rail loses",
+            ),
+            metadata={"regime_state": "TREND_DOWN", "geometry_model": "RANGE_RAIL_MARKET"},
+        )
+
+        decision = RiskEngine().validate(intent, snapshot())
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertNotIn("REWARD_RISK_TOO_LOW", codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
+        self.assertLess(decision.metrics.reward_risk, 1.2)
+
     def test_usd_quote_risk_uses_snapshot_usd_jpy_conversion(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

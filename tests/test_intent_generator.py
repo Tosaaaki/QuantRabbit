@@ -396,6 +396,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 strategy_profile=strategy,
                 output_path=output,
                 report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
                 max_loss_jpy=500.0,
             ).run(snapshot_path=snapshot)
 
@@ -904,6 +905,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 strategy_profile=_strategy(root),
                 output_path=output,
                 report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
                 max_loss_pct=1.0,
                 risk_equity_jpy=100_000.0,
             ).run(snapshot_path=_snapshot(root))

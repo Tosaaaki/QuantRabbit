@@ -122,6 +122,27 @@ def _spread_session_multiplier(intent: OrderIntent) -> float:
     return _SPREAD_SESSION_MULTS.get(tag, 1.0)
 
 
+def _uses_range_reward_floor(intent: OrderIntent, regime_state: str) -> bool:
+    """Return true when the setup is executable as a range rotation.
+
+    Multi-timeframe entries can be local range trades inside a higher-TF trend.
+    In that case `intent.metadata['regime_state']` may carry the dominant
+    higher-TF trend label, while the method and geometry are still rail/box
+    rotation. Applying the default trend RR floor to those TF-local range
+    entries hides valid scalps; use the range RR floor whenever method or
+    geometry proves a range-rotation setup.
+    """
+    if "RANGE" in regime_state:
+        return True
+    context = intent.market_context
+    if context is not None and context.method == TradeMethod.RANGE_ROTATION:
+        return True
+    metadata = intent.metadata or {}
+    geometry_model = str(metadata.get("geometry_model") or "").upper()
+    method_name = str(metadata.get("method") or "").upper()
+    return "RANGE" in geometry_model or method_name == TradeMethod.RANGE_ROTATION.value
+
+
 @dataclass(frozen=True)
 class InstrumentSpec:
     pair: str
@@ -490,7 +511,7 @@ class RiskEngine:
                 regime_state = raw_state.upper()
         active_min_rr = (
             self.policy.range_min_reward_risk
-            if "RANGE" in regime_state
+            if _uses_range_reward_floor(intent, regime_state)
             else self.policy.min_reward_risk
         )
         if metrics.reward_risk < active_min_rr:
@@ -743,7 +764,12 @@ class RiskEngine:
         jpy_per_pip = (intent.units / spec.pip_factor) * quote_to_jpy
         risk_jpy = max(0.0, loss_pips) * jpy_per_pip
         reward_jpy = max(0.0, reward_pips) * jpy_per_pip
-        reward_risk = reward_jpy / risk_jpy if risk_jpy > 0 else 0.0
+        # Reward/risk is geometry, not size. When upstream sizing correctly
+        # resolves to 0 units because margin cannot fund the production lot,
+        # risk_jpy/reward_jpy are both zero; reporting RR as 0 then creates a
+        # misleading secondary `REWARD_RISK_TOO_LOW` blocker. Use the pip
+        # geometry so diagnostics can distinguish "cannot size" from "bad RR".
+        reward_risk = max(0.0, reward_pips) / loss_pips if loss_pips > 0 else 0.0
         estimated_margin = estimate_required_margin_jpy(
             units=intent.units,
             entry_price=entry_price,
