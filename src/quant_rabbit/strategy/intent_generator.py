@@ -385,6 +385,32 @@ LEVEL_MIDPOINT_KEYS = (
 # alias avoids importing the forecaster just to classify metadata.
 FORECAST_STRONG_ADX_PROXY = 25.0
 
+# Forecast-first lane seeding fixes the candidate-list blind spot: if the
+# campaign plan only contains stale/archived directions, the predictor must be
+# able to create the current pair/direction candidate before TraderBrain scores
+# lanes. These are method *families*, not live permission. Risk, profile,
+# spread, levels, and GPT verification still decide whether a seed can trade.
+# The set intentionally covers trend continuation, failed-break reversal, and
+# executable range rotation so the candidate generator does not decide the
+# method before geometry and market context have been checked.
+FORECAST_SEED_DIRECTIONAL_METHODS = (
+    TradeMethod.BREAKOUT_FAILURE.value,
+    TradeMethod.TREND_CONTINUATION.value,
+)
+FORECAST_SEED_RANGE_METHODS = (TradeMethod.RANGE_ROTATION.value,)
+FORECAST_SEED_DESK_BY_METHOD = {
+    TradeMethod.BREAKOUT_FAILURE.value: "failure_trader",
+    TradeMethod.TREND_CONTINUATION.value: "trend_trader",
+    TradeMethod.RANGE_ROTATION.value: "range_trader",
+}
+# Forecast-first seeds are allowed only when the chart packet contains at
+# least two independent TF readings with both regime and family-score context.
+# A single TF can be enough for a unit fixture, but it is not enough market
+# story to create a new candidate direction before the ordinary campaign lanes.
+# Production chart_reader currently emits seven such TFs; if that source shape
+# changes, replace this with an explicit chart-reader capability flag.
+FORECAST_SEED_MIN_RICH_TF_VIEWS = 2
+
 # Broker-side TP attachment mode. Small-wave / range / failed-break setups
 # should bank at the nearest structural target, while strong trend setups
 # need a runner path where broker TP is omitted and the position is managed
@@ -1139,6 +1165,314 @@ def _append_current_range_phase_lanes(
     return out
 
 
+def _append_forecast_seed_lanes(
+    lanes: list[dict[str, Any]],
+    charts: dict[str, dict[str, Any]] | None,
+    snapshot: BrokerSnapshot | None,
+) -> list[dict[str, Any]]:
+    """Prepend predictor-created candidate lanes before campaign slicing.
+
+    The old flow was candidate-first: campaign/outcome lanes were sliced, then
+    TraderBrain applied the pair forecast as a veto/bonus. If the stale
+    candidate list omitted the pair/direction the predictor currently liked,
+    the predictor never got to express that opportunity. This helper inverts
+    the first step: every pair in the fresh chart packet gets one pair-level
+    forecast, and sufficiently confident forecasts seed same-direction lanes
+    before `max_candidates` is applied. They remain ordinary intents after
+    that point; risk/profile/GPT can still block them.
+    """
+    if charts is None or snapshot is None:
+        return lanes
+    existing_by_key = {
+        (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")): lane
+        for lane in lanes
+    }
+    source_by_pair: dict[str, dict[str, Any]] = {}
+    for lane in lanes:
+        pair = str(lane.get("pair") or "")
+        if pair and pair not in source_by_pair:
+            source_by_pair[pair] = lane
+
+    seeds: list[dict[str, Any]] = []
+    seeded_keys: set[tuple[Any, Any, Any, Any]] = set()
+    for pair in sorted(charts):
+        quote = snapshot.quotes.get(pair)
+        if quote is None:
+            continue
+        forecast = _forecast_seed_for_pair(pair, charts, snapshot)
+        if forecast is None:
+            continue
+        direction = str(getattr(forecast, "direction", "") or "").upper()
+        confidence = _optional_float(getattr(forecast, "confidence", None))
+        if confidence is None or confidence < _forecast_seed_min_confidence():
+            continue
+        methods = _forecast_seed_methods(pair, forecast, charts)
+        if not methods:
+            continue
+        side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
+        for method in methods:
+            if direction == "RANGE":
+                # RANGE forecasts are executable only through rail/box geometry.
+                side = _range_seed_direction(pair, charts, quote.mid)
+                if side is None:
+                    continue
+            if side not in {Side.LONG.value, Side.SHORT.value}:
+                continue
+            desk = FORECAST_SEED_DESK_BY_METHOD[method]
+            key = (desk, pair, side, method)
+            if key in seeded_keys:
+                continue
+            source = existing_by_key.get(key) or source_by_pair.get(pair)
+            seeds.append(_forecast_seed_lane(source, pair=pair, side=side, method=method, forecast=forecast))
+            seeded_keys.add(key)
+
+    if not seeds:
+        return lanes
+    return seeds + [
+        lane
+        for lane in lanes
+        if (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) not in seeded_keys
+    ]
+
+
+def _forecast_seed_for_pair(
+    pair: str,
+    charts: dict[str, dict[str, Any]],
+    snapshot: BrokerSnapshot,
+) -> Any | None:
+    per_tf = charts.get(pair)
+    raw_chart = per_tf.get("__raw_chart") if isinstance(per_tf, dict) else None
+    quote = snapshot.quotes.get(pair) if snapshot is not None else None
+    if not isinstance(raw_chart, dict) or quote is None:
+        return None
+    if not _forecast_seed_has_rich_chart_context(raw_chart):
+        return None
+    try:
+        current_price = float(quote.mid)
+    except (TypeError, ValueError):
+        return None
+    if current_price <= 0:
+        return None
+    full_charts = {
+        chart_pair: chart_data.get("__raw_chart")
+        for chart_pair, chart_data in charts.items()
+        if isinstance(chart_data, dict) and isinstance(chart_data.get("__raw_chart"), dict)
+    }
+    try:
+        from quant_rabbit.paths import DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT, ROOT
+        from quant_rabbit.strategy.correlation_predictor import detect_correlation_lag
+        from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
+        from quant_rabbit.strategy.forward_projection import detect_forward_projections
+        from quant_rabbit.strategy.path_projection import detect_paths
+        from quant_rabbit.strategy.pattern_signals import detect_pattern_signals
+        from quant_rabbit.strategy.projection_ledger import compute_hit_rates
+        from quant_rabbit.strategy.reversal_signal import detect_reversal
+    except Exception:
+        return None
+
+    # Keep forecast seeding read-only: unlike TraderBrain's scoring pass, this
+    # must not write forecast/projection ledger rows just because it is forming
+    # the candidate set. TraderBrain records the chosen per-cycle forecasts.
+    cot_payload = _load_optional_json(ROOT / "data" / "cot_snapshot.json")
+    option_skew_payload = _load_optional_json(ROOT / "data" / "option_skew_snapshot.json")
+    try:
+        pattern_signals = detect_pattern_signals(
+            raw_chart,
+            cot_payload=cot_payload,
+            option_skew_payload=option_skew_payload,
+        )
+    except Exception:
+        pattern_signals = []
+    try:
+        projection_signals = detect_forward_projections(
+            raw_chart,
+            pair=pair,
+            current_price=current_price,
+            calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
+            cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+        )
+    except Exception:
+        projection_signals = []
+    try:
+        correlation_signals = detect_correlation_lag(pair, full_charts)
+    except Exception:
+        correlation_signals = []
+    try:
+        paths = list(detect_paths(raw_chart, Side.LONG.value, current_price))
+        paths.extend(detect_paths(raw_chart, Side.SHORT.value, current_price))
+    except Exception:
+        paths = []
+    try:
+        reversal_long = detect_reversal(raw_chart, Side.LONG.value)
+    except Exception:
+        reversal_long = None
+    try:
+        reversal_short = detect_reversal(raw_chart, Side.SHORT.value)
+    except Exception:
+        reversal_short = None
+    try:
+        hit_rates = compute_hit_rates(ROOT / "data")
+    except Exception:
+        hit_rates = None
+    try:
+        forecast = synthesize_forecast(
+            pair=pair,
+            pair_chart=raw_chart,
+            current_price=current_price,
+            pattern_signals=pattern_signals,
+            projection_signals=projection_signals,
+            correlation_signals=correlation_signals,
+            paths=paths,
+            reversal_long=reversal_long,
+            reversal_short=reversal_short,
+            hit_rates=hit_rates,
+            regime=_forecast_seed_regime_label(raw_chart),
+        )
+    except Exception:
+        return None
+    if (
+        str(getattr(forecast, "direction", "") or "").upper() == "UNCLEAR"
+        and (_optional_float(getattr(forecast, "confidence", None)) or 0.0) <= 0.0
+    ):
+        return None
+    return forecast
+
+
+def _forecast_seed_has_rich_chart_context(raw_chart: dict[str, Any]) -> bool:
+    views = raw_chart.get("views")
+    if not isinstance(views, list):
+        return False
+    rich_views = 0
+    for view in views:
+        if not isinstance(view, dict):
+            continue
+        if not isinstance(view.get("regime_reading"), dict):
+            continue
+        if not isinstance(view.get("family_scores"), dict):
+            continue
+        rich_views += 1
+    return rich_views >= FORECAST_SEED_MIN_RICH_TF_VIEWS
+
+
+def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _forecast_seed_min_confidence() -> float:
+    try:
+        from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+
+        return float(ENTRY_CONFIDENCE_MIN)
+    except Exception:
+        # ENTRY_CONFIDENCE_MIN itself is documented in the forecaster. This
+        # branch is only for import failure in stripped tests; a high threshold
+        # fails closed instead of seeding weak predictions.
+        return 1.0
+
+
+def _forecast_seed_regime_label(raw_chart: dict[str, Any]) -> str | None:
+    conf = raw_chart.get("confluence") if isinstance(raw_chart.get("confluence"), dict) else {}
+    raw = str((conf or {}).get("dominant_regime") or "").upper()
+    if "TREND" in raw:
+        return "TREND"
+    if "RANGE" in raw:
+        return "RANGE"
+    return raw[:20] if raw else None
+
+
+def _forecast_seed_methods(
+    pair: str,
+    forecast: Any,
+    charts: dict[str, dict[str, Any]],
+) -> tuple[str, ...]:
+    direction = str(getattr(forecast, "direction", "") or "").upper()
+    if direction == "RANGE":
+        return FORECAST_SEED_RANGE_METHODS if _pair_has_current_range_rotation_edge(pair, charts) else ()
+    if direction not in {"UP", "DOWN"}:
+        return ()
+    methods: list[str] = []
+    if _pair_has_current_range_rotation_edge(pair, charts):
+        methods.append(TradeMethod.RANGE_ROTATION.value)
+    methods.extend(FORECAST_SEED_DIRECTIONAL_METHODS)
+    return tuple(dict.fromkeys(methods))
+
+
+def _range_seed_direction(pair: str, charts: dict[str, dict[str, Any]], current_price: float) -> str | None:
+    indicators = _range_indicators_for(pair, charts)
+    if not indicators:
+        return None
+    support = _nearest_below(current_price, _numeric_levels(indicators, RANGE_SUPPORT_LEVEL_KEYS))
+    resistance = _nearest_above(current_price, _numeric_levels(indicators, RANGE_RESISTANCE_LEVEL_KEYS))
+    if support is None or resistance is None or resistance <= support:
+        return None
+    midpoint = support + ((resistance - support) / 2.0)
+    return Side.LONG.value if current_price <= midpoint else Side.SHORT.value
+
+
+def _forecast_seed_lane(
+    source: dict[str, Any] | None,
+    *,
+    pair: str,
+    side: str,
+    method: str,
+    forecast: Any,
+) -> dict[str, Any]:
+    lane = dict(source or {})
+    confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
+    target = getattr(forecast, "target_price", None)
+    invalidation = getattr(forecast, "invalidation_price", None)
+    rationale = str(getattr(forecast, "rationale_summary", "") or "")
+    drivers_for = [str(item) for item in list(getattr(forecast, "drivers_for", ()) or ())[:3]]
+    drivers_against = [str(item) for item in list(getattr(forecast, "drivers_against", ()) or ())[:3]]
+    base_reason = str(lane.get("reason") or "forecast-first candidate discovery")
+    trigger_only = _lane_forbids_market_chase(lane)
+    adoption = "TRIGGER_RECEIPT_REQUIRED" if trigger_only else "ORDER_INTENT_REQUIRED"
+    required_receipt = (
+        "Forecast-first lane: use only a pending trigger receipt; no market chase. "
+        "The same fresh forecast, market-location map, levels, spread, and risk geometry must still agree."
+        if trigger_only
+        else (
+            "Forecast-first lane: create an intent only if this same fresh forecast, "
+            "market-location map, levels, spread, and risk geometry still agree."
+        )
+    )
+    lane.update(
+        {
+            "desk": FORECAST_SEED_DESK_BY_METHOD[method],
+            "pair": pair,
+            "direction": side,
+            "method": method,
+            "adoption": adoption,
+            "campaign_role": "FORECAST_FIRST",
+            "reason": (
+                f"{base_reason}; forecast-first seed {getattr(forecast, 'direction', None)} "
+                f"conf={confidence:.2f}: {rationale}"
+            ),
+            "required_receipt": required_receipt,
+            "target_reward_risk": max(_optional_float(lane.get("target_reward_risk")) or 0.0, DYNAMIC_RR_BASE),
+            "blockers": list(lane.get("blockers") or []),
+            "story_examples": drivers_for or list(lane.get("story_examples") or [])[:2],
+            "forecast_seed": True,
+            "forecast_direction": str(getattr(forecast, "direction", "") or ""),
+            "forecast_confidence": round(confidence, 4),
+            "forecast_current_price": getattr(forecast, "current_price", None),
+            "forecast_target_price": target,
+            "forecast_invalidation_price": invalidation,
+            "forecast_horizon_min": getattr(forecast, "horizon_min", None),
+            "forecast_rationale": rationale,
+            "forecast_drivers_for": drivers_for,
+            "forecast_drivers_against": drivers_against,
+        }
+    )
+    return lane
+
+
 def _pair_has_current_range_rotation_edge(
     pair: str,
     charts: dict[str, dict[str, Any]],
@@ -1438,6 +1772,10 @@ class IntentGenerator:
             lanes = _append_current_range_phase_lanes(lanes, pair_charts)
             if len(lanes) > range_seed_count:
                 max_candidates = max(max_candidates, len(lanes))
+            forecast_seed_count = len(lanes)
+            lanes = _append_forecast_seed_lanes(lanes, pair_charts, snapshot)
+            if len(lanes) > forecast_seed_count:
+                max_candidates = max(max_candidates, len(lanes))
         # Phase 2 (user 2026-05-08「短期SHORTなら長期LONGでもSHORTいけるでしょ。
         # 逆もまた然り」): under SL-free, also synthesize mirror lanes with
         # opposite direction for each (desk, pair, method) so the scoring
@@ -1450,6 +1788,8 @@ class IntentGenerator:
             seen_keys = {(l.get("desk"), l.get("pair"), l.get("direction"), l.get("method")) for l in lanes}
             mirrors: list[dict[str, Any]] = []
             for lane in lanes:
+                if lane.get("forecast_seed"):
+                    continue
                 m = _mirror_lane(lane)
                 key = (m.get("desk"), m.get("pair"), m.get("direction"), m.get("method"))
                 if key in seen_keys:
@@ -1946,6 +2286,16 @@ def _intent_from_lane(
             "adoption": lane.get("adoption"),
             "campaign_role": lane.get("campaign_role"),
             "required_receipt": lane.get("required_receipt"),
+            "forecast_seed": bool(lane.get("forecast_seed")),
+            "forecast_direction": lane.get("forecast_direction"),
+            "forecast_confidence": lane.get("forecast_confidence"),
+            "forecast_current_price": lane.get("forecast_current_price"),
+            "forecast_target_price": lane.get("forecast_target_price"),
+            "forecast_invalidation_price": lane.get("forecast_invalidation_price"),
+            "forecast_horizon_min": lane.get("forecast_horizon_min"),
+            "forecast_rationale": lane.get("forecast_rationale"),
+            "forecast_drivers_for": lane.get("forecast_drivers_for"),
+            "forecast_drivers_against": lane.get("forecast_drivers_against"),
             "target_reward_risk": target_reward_risk,
             "base_target_reward_risk": base_reward_risk,
             "regime_reward_risk_mult": rr_multiplier,
