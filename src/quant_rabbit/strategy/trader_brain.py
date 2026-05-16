@@ -827,13 +827,15 @@ MEDIUM_RISK_CAP_FRACTION = 0.90
 # liquidity, while liquid tape should tolerate less. Above this many current
 # spreads, the pending price is no longer the same executable neighborhood.
 PENDING_ENTRY_REPLACE_SPREAD_MULT = 8.0
-PENDING_ENTRY_CARRY_SECONDS = 12 * 60 * 60
+PENDING_ENTRY_OPPOSITE_SCORE_MARGIN = 25.0
 PENDING_ENTRY_HARD_CANCEL_KEYWORDS = (
     "BAD_UNITS",
     "DAILY TARGET",
     "EXTERNAL",
+    "FORECAST",
     "INTERVENTION",
     "MARGIN",
+    "MICRO_STRUCTURE_OPPOSED",
     "TARGET_REACHED",
     "UNPROTECTED",
     "VISUAL STORY",
@@ -2257,12 +2259,12 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
             continue
         compatible_scores = scores_by_key.get((order.pair, direction, _normalized_entry_type(order.order_type)), [])
         if not compatible_scores:
-            if _pending_entry_still_has_live_thesis(order, snapshot, compatible_scores):
+            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores):
                 continue
             contaminated.append(order.order_id)
             continue
         if not any(_keeps_pending_order(order, score) for score in compatible_scores):
-            if _pending_entry_still_has_live_thesis(order, snapshot, compatible_scores):
+            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores):
                 continue
             contaminated.append(order.order_id)
     return tuple(contaminated)
@@ -2271,33 +2273,69 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
 def _pending_entry_still_has_live_thesis(
     order: BrokerOrder,
     snapshot: BrokerSnapshot,
+    scores: tuple[LaneScore, ...],
     compatible_scores: list[LaneScore],
 ) -> bool:
-    """Keep fresh GTC entries unless the original thesis is clearly broken.
+    """Keep GTC entries while current market evidence has not broken them.
 
-    A pending entry is a forecast/structure thesis, not a one-cycle artifact.
-    Without this carry window, session changes or temporary quote/spread
-    blockers can cancel a valid LIMIT/STOP before the intended market touch.
+    A pending entry is a forecast/structure thesis, not a one-cycle or
+    fixed-time artifact. Session changes or temporary quote/spread blockers
+    should not cancel it; market invalidation, hard risk vetoes, or a clear
+    opposite current thesis should.
     """
+    if not _pending_entry_has_broker_thesis_anchor(order):
+        return False
     if _pending_entry_invalidation_breached(order, snapshot):
         return False
     if _pending_entry_has_hard_current_veto(compatible_scores):
         return False
-    age_seconds = _pending_entry_age_seconds(order, snapshot.fetched_at_utc)
-    if age_seconds is None:
+    if _pending_entry_market_has_opposed_thesis(order, scores):
         return False
-    carry_seconds = _pending_entry_carry_seconds()
-    return carry_seconds > 0 and age_seconds <= carry_seconds
+    return True
+
+
+def _pending_entry_has_broker_thesis_anchor(order: BrokerOrder) -> bool:
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    return bool(raw.get("createTime") or raw.get("time") or raw.get("clientExtensions"))
 
 
 def _pending_entry_has_hard_current_veto(scores: list[LaneScore]) -> bool:
     if not scores:
         return False
     for score in scores:
-        blocker_text = " ".join(score.blockers).upper()
+        blocker_text = " ".join(score.blockers + score.rationale).upper()
         if any(keyword in blocker_text for keyword in PENDING_ENTRY_HARD_CANCEL_KEYWORDS):
             return True
     return False
+
+
+def _pending_entry_market_has_opposed_thesis(order: BrokerOrder, scores: tuple[LaneScore, ...]) -> bool:
+    pair = order.pair or ""
+    direction = _order_direction(order.units)
+    if not pair or direction is None:
+        return False
+    opposite = Side.SHORT.value if direction == Side.LONG.value else Side.LONG.value
+    same_scores = [score for score in scores if score.pair == pair and score.direction == direction]
+    opposite_tradeable = [
+        score for score in scores
+        if score.pair == pair
+        and score.direction == opposite
+        and (score.action == ACTION_SEND_ENTRY or _blocked_only_by_existing_pending(score))
+    ]
+    if any(_score_market_text_opposes_pending(score) for score in same_scores):
+        return True
+    if not opposite_tradeable:
+        return False
+    best_opposite = max(opposite_tradeable, key=lambda item: item.score)
+    same_best = max((score.score for score in same_scores), default=float("-inf"))
+    return best_opposite.score >= same_best + PENDING_ENTRY_OPPOSITE_SCORE_MARGIN
+
+
+def _score_market_text_opposes_pending(score: LaneScore) -> bool:
+    text = " ".join(score.blockers + score.rationale).upper()
+    if "FORECAST" in text and ("OPPOSES" in text or "→ BLOCK" in text or "-> BLOCK" in text):
+        return True
+    return "MICRO_STRUCTURE_OPPOSED" in text
 
 
 def _pending_entry_invalidation_breached(order: BrokerOrder, snapshot: BrokerSnapshot) -> bool:
@@ -2314,31 +2352,6 @@ def _pending_entry_invalidation_breached(order: BrokerOrder, snapshot: BrokerSna
     if direction == Side.SHORT.value:
         return quote.ask >= stop_loss
     return False
-
-
-def _pending_entry_age_seconds(order: BrokerOrder, reference: datetime) -> float | None:
-    raw = order.raw if isinstance(order.raw, dict) else {}
-    raw_ts = raw.get("createTime") or raw.get("time") or raw.get("created_at_utc")
-    if raw_ts is None:
-        return None
-    try:
-        created = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    ref = reference if reference.tzinfo is not None else reference.replace(tzinfo=timezone.utc)
-    return max(0.0, (ref - created).total_seconds())
-
-
-def _pending_entry_carry_seconds() -> int:
-    raw = os.environ.get("QR_PENDING_ENTRY_CARRY_SECONDS")
-    if raw is None or str(raw).strip() == "":
-        return PENDING_ENTRY_CARRY_SECONDS
-    try:
-        return max(0, int(float(raw)))
-    except ValueError:
-        return PENDING_ENTRY_CARRY_SECONDS
 
 
 def _order_direction(units: int | None) -> str | None:

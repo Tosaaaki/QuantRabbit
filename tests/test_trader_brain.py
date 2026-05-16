@@ -196,7 +196,7 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(decision.pending_cancel_order_ids, ("far-stop",))
 
-    def test_keeps_fresh_pending_entry_across_reprice_window(self) -> None:
+    def test_keeps_pending_entry_when_market_thesis_still_valid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             brain = TraderBrain(
@@ -231,7 +231,7 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(decision.pending_cancel_order_ids, ())
 
-    def test_cancels_old_pending_after_carry_window(self) -> None:
+    def test_keeps_old_pending_when_market_thesis_still_valid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             brain = TraderBrain(
@@ -264,7 +264,42 @@ class TraderBrainTest(unittest.TestCase):
 
             decision = brain.run(snapshot)
 
-            self.assertEqual(decision.pending_cancel_order_ids, ("old-stop",))
+            self.assertEqual(decision.pending_cancel_order_ids, ())
+
+    def test_cancels_pending_when_current_market_thesis_flips_opposite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_opposite_market_intents(root),
+                campaign_plan_path=_opposite_market_campaign(root),
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="long-stop-flipped",
+                        pair="EUR_USD",
+                        order_type="STOP",
+                        price=1.18000,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "createTime": datetime.now(timezone.utc).isoformat(),
+                            "stopLossOnFill": {"price": "1.16800"},
+                        },
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ("long-stop-flipped",))
 
     def test_cancels_fresh_pending_when_stop_side_invalidated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -747,6 +782,27 @@ def _market_preference_intents(root: Path) -> Path:
     return path
 
 
+def _opposite_market_intents(root: Path) -> Path:
+    path = root / "opposite_market_intents.json"
+    stale_long = _result("trend_trader:EUR_USD:LONG:TREND_CONTINUATION", "EUR_USD", "LONG", "TREND_CONTINUATION")
+    stale_long["status"] = "DRY_RUN_PASSED"
+    stale_long["risk_metrics"] = {"risk_jpy": 100.0, "reward_jpy": 180.0, "reward_risk": 1.8, "spread_pips": 0.8}
+    fresh_short = _result("trend_trader:EUR_USD:SHORT:TREND_CONTINUATION", "EUR_USD", "SHORT", "TREND_CONTINUATION")
+    fresh_short["risk_metrics"] = {"risk_jpy": 100.0, "reward_jpy": 300.0, "reward_risk": 3.0, "spread_pips": 0.8}
+    fresh_short["intent"] = {
+        **fresh_short["intent"],
+        "entry": 1.17150,
+        "tp": 1.16900,
+        "sl": 1.17240,
+        "market_context": {
+            **fresh_short["intent"]["market_context"],
+            "chart_story": "trend-bear continuation",
+        },
+    }
+    path.write_text(json.dumps({"results": [stale_long, fresh_short]}))
+    return path
+
+
 def _result(lane_id: str, pair: str, side: str, method: str) -> dict:
     return {
         "lane_id": lane_id,
@@ -813,6 +869,21 @@ def _mixed_campaign(root: Path) -> Path:
                 "lanes": [
                     _lane("trend_trader", "EUR_USD", "LONG", "TREND_CONTINUATION"),
                     _lane("range_trader", "EUR_USD", "LONG", "RANGE_ROTATION"),
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _opposite_market_campaign(root: Path) -> Path:
+    path = root / "opposite_market_campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    _lane("trend_trader", "EUR_USD", "LONG", "TREND_CONTINUATION"),
+                    _lane("trend_trader", "EUR_USD", "SHORT", "TREND_CONTINUATION"),
                 ]
             }
         )
@@ -900,6 +971,51 @@ def _eur_strategy(root: Path) -> Path:
                         "seat_orderable": 8,
                         "seat_captured": 5,
                     }
+                ],
+            }
+        )
+    )
+    return path
+
+
+def _opposite_market_strategy(root: Path) -> Path:
+    path = root / "opposite_market_strategy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "system_contract": {
+                    "loss_cap_jpy": 500.0,
+                    "loss_cap_source": "test current campaign cap",
+                },
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "status": "CANDIDATE",
+                        "pretrade_net_jpy": 0,
+                        "live_net_jpy": 0,
+                        "live_worst_jpy": -400,
+                        "positive_evidence_n": 0,
+                        "positive_tail_jpy": 0,
+                        "positive_best_jpy": 0,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 1,
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "status": "CANDIDATE",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 2500,
+                        "live_worst_jpy": -300,
+                        "positive_evidence_n": 150,
+                        "positive_tail_jpy": 1600,
+                        "positive_best_jpy": 2600,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 6,
+                    },
                 ],
             }
         )
