@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
@@ -195,6 +195,111 @@ class TraderBrainTest(unittest.TestCase):
             decision = brain.run(snapshot)
 
             self.assertEqual(decision.pending_cancel_order_ids, ("far-stop",))
+
+    def test_keeps_fresh_pending_entry_across_reprice_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_mixed_entry_type_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="fresh-stop",
+                        pair="EUR_USD",
+                        order_type="STOP",
+                        price=1.18000,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "createTime": datetime.now(timezone.utc).isoformat(),
+                            "stopLossOnFill": {"price": "1.16800"},
+                        },
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ())
+
+    def test_cancels_old_pending_after_carry_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_mixed_entry_type_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="old-stop",
+                        pair="EUR_USD",
+                        order_type="STOP",
+                        price=1.18000,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "createTime": (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat(),
+                            "stopLossOnFill": {"price": "1.16800"},
+                        },
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ("old-stop",))
+
+    def test_cancels_fresh_pending_when_stop_side_invalidated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_mixed_entry_type_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="invalidated-stop",
+                        pair="EUR_USD",
+                        order_type="STOP",
+                        price=1.18000,
+                        state="PENDING",
+                        units=1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "createTime": datetime.now(timezone.utc).isoformat(),
+                            "stopLossOnFill": {"price": "1.17300"},
+                        },
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ("invalidated-stop",))
 
     def test_cancels_pending_when_tp_or_sl_geometry_is_stale(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

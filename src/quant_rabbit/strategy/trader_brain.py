@@ -827,6 +827,17 @@ MEDIUM_RISK_CAP_FRACTION = 0.90
 # liquidity, while liquid tape should tolerate less. Above this many current
 # spreads, the pending price is no longer the same executable neighborhood.
 PENDING_ENTRY_REPLACE_SPREAD_MULT = 8.0
+PENDING_ENTRY_CARRY_SECONDS = 12 * 60 * 60
+PENDING_ENTRY_HARD_CANCEL_KEYWORDS = (
+    "BAD_UNITS",
+    "DAILY TARGET",
+    "EXTERNAL",
+    "INTERVENTION",
+    "MARGIN",
+    "TARGET_REACHED",
+    "UNPROTECTED",
+    "VISUAL STORY",
+)
 
 # Narrative penalties are score/ranking inputs, not risk gates. The JPY
 # intervention penalty must clear the size-multiple rounding step, otherwise
@@ -2246,11 +2257,88 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
             continue
         compatible_scores = scores_by_key.get((order.pair, direction, _normalized_entry_type(order.order_type)), [])
         if not compatible_scores:
+            if _pending_entry_still_has_live_thesis(order, snapshot, compatible_scores):
+                continue
             contaminated.append(order.order_id)
             continue
         if not any(_keeps_pending_order(order, score) for score in compatible_scores):
+            if _pending_entry_still_has_live_thesis(order, snapshot, compatible_scores):
+                continue
             contaminated.append(order.order_id)
     return tuple(contaminated)
+
+
+def _pending_entry_still_has_live_thesis(
+    order: BrokerOrder,
+    snapshot: BrokerSnapshot,
+    compatible_scores: list[LaneScore],
+) -> bool:
+    """Keep fresh GTC entries unless the original thesis is clearly broken.
+
+    A pending entry is a forecast/structure thesis, not a one-cycle artifact.
+    Without this carry window, session changes or temporary quote/spread
+    blockers can cancel a valid LIMIT/STOP before the intended market touch.
+    """
+    if _pending_entry_invalidation_breached(order, snapshot):
+        return False
+    if _pending_entry_has_hard_current_veto(compatible_scores):
+        return False
+    age_seconds = _pending_entry_age_seconds(order, snapshot.fetched_at_utc)
+    if age_seconds is None:
+        return False
+    carry_seconds = _pending_entry_carry_seconds()
+    return carry_seconds > 0 and age_seconds <= carry_seconds
+
+
+def _pending_entry_has_hard_current_veto(scores: list[LaneScore]) -> bool:
+    if not scores:
+        return False
+    for score in scores:
+        blocker_text = " ".join(score.blockers).upper()
+        if any(keyword in blocker_text for keyword in PENDING_ENTRY_HARD_CANCEL_KEYWORDS):
+            return True
+    return False
+
+
+def _pending_entry_invalidation_breached(order: BrokerOrder, snapshot: BrokerSnapshot) -> bool:
+    pair = order.pair or ""
+    quote = snapshot.quotes.get(pair)
+    if quote is None:
+        return False
+    stop_loss = _raw_dependent_price(order.raw, "stopLossOnFill")
+    direction = _order_direction(order.units)
+    if stop_loss is None or direction is None:
+        return False
+    if direction == Side.LONG.value:
+        return quote.bid <= stop_loss
+    if direction == Side.SHORT.value:
+        return quote.ask >= stop_loss
+    return False
+
+
+def _pending_entry_age_seconds(order: BrokerOrder, reference: datetime) -> float | None:
+    raw = order.raw if isinstance(order.raw, dict) else {}
+    raw_ts = raw.get("createTime") or raw.get("time") or raw.get("created_at_utc")
+    if raw_ts is None:
+        return None
+    try:
+        created = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    ref = reference if reference.tzinfo is not None else reference.replace(tzinfo=timezone.utc)
+    return max(0.0, (ref - created).total_seconds())
+
+
+def _pending_entry_carry_seconds() -> int:
+    raw = os.environ.get("QR_PENDING_ENTRY_CARRY_SECONDS")
+    if raw is None or str(raw).strip() == "":
+        return PENDING_ENTRY_CARRY_SECONDS
+    try:
+        return max(0, int(float(raw)))
+    except ValueError:
+        return PENDING_ENTRY_CARRY_SECONDS
 
 
 def _order_direction(units: int | None) -> str | None:
