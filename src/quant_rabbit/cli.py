@@ -186,6 +186,11 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         "gpt-trader-decision",
         "stage-live-order",
         "generate-intents",
+        # The router is the first branch point in the scheduled SKILL flow.
+        # It must see the same SL-free defaults as generate-intents and
+        # gpt-trader-decision, otherwise a TP-less runner sends the operator
+        # back to position repair before the refreshed entry packet is used.
+        "trader-prompt-route",
         # daily-target-state reads each open trader-owned position and
         # decides whether it is `protected`. Under SL-free mode the
         # absence of a stopLossOrder is intentional (per `target.py`

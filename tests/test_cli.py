@@ -161,6 +161,7 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     "gpt-trader-decision",
                     "stage-live-order",
                     "generate-intents",
+                    "trader-prompt-route",
                     # daily-target-state added 2026-05-13: protected flag
                     # computation reads `QR_TRADER_DISABLE_SL_REPAIR` and
                     # was producing protected=False for SL-free positions
