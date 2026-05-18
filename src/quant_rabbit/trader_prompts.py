@@ -236,6 +236,16 @@ def _decision_receipt_state(
                 reasons=(f"decision response predates {label}; refresh decision from broker truth: {path}",),
             )
 
+    gpt_pending = _accepted_gpt_trade_pending_gateway(
+        gpt_decision_path=gpt_decision_path,
+        decision_mtime_ns=decision_mtime_ns,
+        live_order_path=live_order_path,
+        position_execution_path=position_execution_path,
+        autotrade_report_path=autotrade_report_path,
+    )
+    if gpt_pending is not None:
+        return gpt_pending
+
     for path, label in (
         (live_order_path, "live order gateway receipt"),
         (position_execution_path, "position gateway receipt"),
@@ -254,6 +264,49 @@ def _decision_receipt_state(
     return DecisionReceiptState(
         pending=True,
         reasons=(f"unconsumed decision response exists: {decision_response_path}",),
+    )
+
+
+def _accepted_gpt_trade_pending_gateway(
+    *,
+    gpt_decision_path: Path | None,
+    decision_mtime_ns: int,
+    live_order_path: Path | None,
+    position_execution_path: Path | None,
+    autotrade_report_path: Path | None,
+) -> DecisionReceiptState | None:
+    if gpt_decision_path is None or not gpt_decision_path.exists():
+        return None
+    gpt_mtime_ns = gpt_decision_path.stat().st_mtime_ns
+    if gpt_mtime_ns <= decision_mtime_ns:
+        return None
+    try:
+        payload = _load_json(gpt_decision_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    status = str(payload.get("status") or "")
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    action = str(decision.get("action") or "")
+    if status != "ACCEPTED" or action != "TRADE":
+        return None
+
+    for path, label in (
+        (live_order_path, "live order gateway receipt"),
+        (position_execution_path, "position gateway receipt"),
+        (autotrade_report_path, "autotrade cycle report"),
+    ):
+        if path is not None and path.exists() and path.stat().st_mtime_ns > gpt_mtime_ns:
+            return DecisionReceiptState(
+                pending=False,
+                reasons=(f"accepted TRADE decision already consumed by {label}: {path}",),
+            )
+
+    return DecisionReceiptState(
+        pending=True,
+        reasons=(
+            "accepted TRADE decision has no newer gateway receipt; "
+            f"run exactly one gateway cycle now: {gpt_decision_path}",
+        ),
     )
 
 

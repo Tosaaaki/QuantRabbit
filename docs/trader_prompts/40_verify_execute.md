@@ -18,6 +18,12 @@ Verifier acceptance is required before gateway handoff.
 
 If the verifier rejects the receipt, or if the router reports that the receipt predates a refreshed broker snapshot / repriced intent packet, do not stop the trader because the old receipt exists. Return to the routed decision branch, write one current receipt, and continue through the normal verifier -> gateway path.
 
+If the verifier accepts a `TRADE`, do not run refresh, analysis, TP rebalance,
+projection, or thesis sidecar commands before the gateway. The accepted receipt
+is tied to the current broker snapshot and order-intent packet; inserting
+extra work between acceptance and gateway execution makes the receipt stale and
+can turn a tradeable cycle into a no-send cycle.
+
 ## Execute One Gateway Cycle
 
 ```bash

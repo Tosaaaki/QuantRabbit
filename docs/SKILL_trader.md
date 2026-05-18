@@ -161,7 +161,24 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 
-# 4b. Dynamic TP rebalance: expand/contract TP on open positions as
+# 5. Run one gateway cycle immediately after an ACCEPTED TRADE.
+# Do not insert refresh, analysis, TP rebalance, projection, or thesis
+# sidecar commands between verifier acceptance and this gateway handoff:
+# the decision receipt is tied to the current broker snapshot + order intents,
+# and extra work in between can make a tradeable receipt stale.
+# The gateway cycle syncs data/execution_ledger.db before and after broker work
+# and records live_order / position_execution receipts.
+./scripts/run-autotrade-live.sh \
+  --reuse-market-artifacts \
+  --use-gpt-trader \
+  --gpt-decision-response data/codex_trader_decision_response.json \
+  --send
+
+# 6. Post-gateway sidecars. Run only after the single gateway cycle above has
+# either sent, blocked, or recorded no action. These commands must not delay the
+# handoff from an ACCEPTED TRADE receipt to LiveOrderGateway.
+#
+# 6a. Dynamic TP rebalance: expand/contract TP on open positions as
 # market regime shifts. Trader-owned and manual/tagless positions with
 # an existing broker TP are eligible for TP-only management. Missing
 # broker TP is preserved as a no-broker-TP runner unless
@@ -173,7 +190,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # Hysteresis + entry-side + safety-margin invariants prevent accidental fires.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 
-# 4b2. Profit partial close: when trader-owned or manual/tagless
+# 6b. Profit partial close: when trader-owned or manual/tagless
 # exposure is already in profit and has crossed the next ATR-derived
 # milestone, close a market-derived fraction and keep the remaining
 # units as a runner. This is profit-side only; it never realizes a loss
@@ -184,21 +201,21 @@ PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 # repeat partial closes on the same band.
 PYTHONPATH=src python3 -m quant_rabbit.cli profit-partial-close --send --confirm-live
 
-# 4d. Verify pending forward-projection predictions against OANDA
+# 6c. Verify pending forward-projection predictions against OANDA
 # prices. Resolves PENDING → HIT/MISS/TIMEOUT in
 # data/projection_ledger.jsonl. The next trader cycle reads the
 # rolling hit-rate from this ledger and calibrates the projection
 # layer's confidence weights — self-improving feedback loop.
 PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 
-# 4e. Position thesis check — apply the full prediction stack to each
+# 6d. Position thesis check — apply the full prediction stack to each
 # open position. Emits data/position_thesis_report.json with per-position
 # EXTEND / HOLD / REVIEW_CLOSE verdicts and score breakdowns. The GPT
 # trader reads this as evidence for CLOSE decisions; Gate A/B still
 # required to actually close.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 
-# 4e2. Thesis evolution check (2026-05-15, user directive: 「どの視点で
+# 6e. Thesis evolution check (2026-05-15, user directive: 「どの視点で
 # エントリーしたのか、時間がたって今のポジ状況はエントリーしたときと
 # 市況が変わってないか」). Reads the entry-time thesis recorded at
 # fill time from data/entry_thesis_ledger.jsonl and compares against
@@ -210,7 +227,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 # considers manual close on BROKEN.
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 
-# 4e3. Forecast persistence check — N-cycle consistency rule. Reads
+# 6f. Forecast persistence check — N-cycle consistency rule. Reads
 # data/forecast_history.jsonl (written every cycle by trader_brain)
 # and asks: are the last N forecasts for this pair pointing AGAINST
 # the position (≥ QR_FORECAST_FLIP_PERSISTENCE=3 cycles) or have they
@@ -232,15 +249,6 @@ PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
 # for reference + future "structural-trigger only" rewrite; CLI line
 # below is commented out so no cycle invokes it.
 # PYTHONPATH=src python3 -m quant_rabbit.cli adverse-partial-close
-
-# 5. Run one gateway cycle only
-# The gateway cycle syncs data/execution_ledger.db before and after broker work
-# and records live_order / position_execution receipts.
-./scripts/run-autotrade-live.sh \
-  --reuse-market-artifacts \
-  --use-gpt-trader \
-  --gpt-decision-response data/codex_trader_decision_response.json \
-  --send
 ```
 
 ## End Report
