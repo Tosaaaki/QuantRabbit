@@ -26,8 +26,10 @@
   condition fires. Treat these runners as layerable for fresh-entry routing;
   do NOT propose PROTECT/TIGHTEN_SL just to satisfy a static TP/SL checklist.
 - Operator-managed manual/tagless positions are TP-only: TP repair/rebalance and
-  profit-side partial close are allowed when already profitable, but SL writes,
-  adverse partial closes, and market CLOSE are forbidden.
+  profit-side partial close are allowed when already profitable or when explicit
+  missing-TP repair is enabled, but underwater manual/tagless runners do not
+  force this branch and must not block fresh trader entries. SL writes, adverse
+  partial closes, and market CLOSE are forbidden.
 - Existing SL must not be widened.
 - Existing TP may be moved only by TP-management actions with current-price safety.
 - Profitable protected positions may tighten SL to break-even or better — **disabled

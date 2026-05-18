@@ -192,6 +192,7 @@ class TraderPromptRouteTest(unittest.TestCase):
                         "take_profit": None,
                         "stop_loss": None,
                         "owner": "unknown",
+                        "unrealized_pl_jpy": 120.0,
                     }
                 ],
             )
@@ -200,6 +201,28 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_POSITION)
         self.assertIn("TP-only profit management", route.reasons[0])
+
+    def test_underwater_manual_position_missing_tp_does_not_force_position_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "manual-998",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": None,
+                        "stop_loss": None,
+                        "owner": "unknown",
+                        "unrealized_pl_jpy": -2625.0,
+                    }
+                ],
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
 
     def test_manual_position_with_tp_missing_sl_does_not_force_position_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

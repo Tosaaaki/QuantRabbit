@@ -14,6 +14,13 @@ def _trader_sl_repair_disabled() -> bool:
 def _missing_tp_repair_enabled() -> bool:
     return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
 from quant_rabbit.paths import (
     ROOT,
     DEFAULT_AI_ATTACK_ADVICE,
@@ -279,7 +286,12 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
             continue
         owner = str(position.get("owner") or "")
         if owner in {"manual", "unknown"}:
-            if position.get("take_profit") is None:
+            # Manual/tagless exposure is observed but must not block fresh
+            # trader entries. Route to TP-only management only when there is
+            # profit to insure/bank, or when the operator explicitly opts into
+            # missing-TP repair. Underwater manual runners remain held.
+            upl = _optional_float(position.get("unrealized_pl_jpy"))
+            if position.get("take_profit") is None and (_missing_tp_repair_enabled() or (upl is not None and upl > 0)):
                 reasons.append(
                     "manual/tagless position needs TP-only profit management: "
                     f"{position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
