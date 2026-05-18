@@ -64,7 +64,12 @@ class SessionTag(Enum):
     maps to exactly one ``SessionTag`` after conversion to NY local time.
     """
 
+    # Coarse archive/outcome bucket alias. Live bar tagging emits the
+    # more explicit TOKYO_KILLZONE during the Asian range so downstream
+    # session-aware risk code can distinguish Tokyo liquidity from generic
+    # off-hours while legacy outcome marts can still normalize to ASIA.
     ASIA = "ASIA"
+    TOKYO_KILLZONE = "TOKYO_KILLZONE"
     LONDON_KILLZONE = "LONDON_KILLZONE"
     NY_AM_KILLZONE = "NY_AM_KILLZONE"
     SILVER_BULLET = "SILVER_BULLET"
@@ -94,10 +99,13 @@ _SILVER_BULLET = (10.0, 11.0)        # 10:00–11:00 NY
 _NY_PM_KILLZONE = (13.5, 16.0)       # 13:30–16:00 NY
 _JUDAS_WINDOW = (0.0, 5.0)           # 00:00–05:00 NY (overlaps London KZ; precedence below)
 
-# Asian range: 19:00–24:00 NY of the previous calendar day, and 00:00 NY
+# Asian/Tokyo range: 19:00–24:00 NY of the previous calendar day, and 00:00 NY
 # is the day boundary that resets the "True Day Open" reference price.
 # (a) The Asian session in NY-local terms; per ICT literature the Asian
 #     range is built between 19:00 NY (prior day) and 00:00 NY (current day).
+#     In JST this is the morning Tokyo liquidity window in US DST months,
+#     so the live tag is named TOKYO_KILLZONE while the analytics range
+#     remains the Asian range.
 # (b) Constant for the same reason as the killzones.
 # (c) If the trader ever moves the day-boundary anchor (e.g. to London open),
 #     update ``_NY_DAY_RESET_HOUR`` and ``_ASIAN_RANGE_NY_HOURS`` together.
@@ -253,7 +261,7 @@ def _classify_hour(hour: float) -> SessionTag:
       2. LONDON_KILLZONE (02:00–05:00) wins over JUDAS_WINDOW
          (which spans 00:00–05:00 — Judas explicitly only fires before
          London opens).
-      3. ASIA covers 19:00–24:00 (the Asian-range build).
+      3. TOKYO_KILLZONE covers 19:00–24:00 (the Asian-range build).
       4. Everything else is OFF_HOURS.
     """
     if _SILVER_BULLET[0] <= hour < _SILVER_BULLET[1]:
@@ -269,7 +277,7 @@ def _classify_hour(hour: float) -> SessionTag:
         # 02:00–05:00 was already claimed by LONDON_KILLZONE above.
         return SessionTag.JUDAS_WINDOW
     if _ASIAN_RANGE_NY_HOURS[0] <= hour < _ASIAN_RANGE_NY_HOURS[1]:
-        return SessionTag.ASIA
+        return SessionTag.TOKYO_KILLZONE
     return SessionTag.OFF_HOURS
 
 
@@ -429,6 +437,7 @@ def _next_killzone(now_utc: datetime) -> tuple[SessionTag | None, int | None]:
     """Return the next upcoming killzone tag and minutes-until from ``now_utc``."""
     candidates: list[tuple[datetime, SessionTag]] = []
     for bounds, tag in (
+        (_ASIAN_RANGE_NY_HOURS, SessionTag.TOKYO_KILLZONE),
         (_LONDON_KILLZONE, SessionTag.LONDON_KILLZONE),
         (_NY_AM_KILLZONE, SessionTag.NY_AM_KILLZONE),
         (_SILVER_BULLET, SessionTag.SILVER_BULLET),

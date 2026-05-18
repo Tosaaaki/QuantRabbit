@@ -669,6 +669,9 @@ class DecisionVerifier:
                     issues.append(VerificationIssue("METHOD_MISMATCH", "decision method does not match selected primary lane"))
                 if selected_lane.get("risk_blockers") or selected_lane.get("strategy_blockers") or selected_lane.get("live_blockers"):
                     issues.append(VerificationIssue("LANE_HAS_BLOCKERS", f"{selected_lane_id} still carries blockers"))
+                forecast_issue = _lane_forecast_direction_issue(selected_lane)
+                if forecast_issue is not None:
+                    issues.append(forecast_issue)
                 if str(selected_lane.get("evidence_ref") or "") not in decision.evidence_refs:
                     issues.append(
                         VerificationIssue(
@@ -1159,6 +1162,7 @@ def _lane_packet(
                 ),
                 "strategy": _small_dict(strategy_index.get((pair, direction)), ("status", "pretrade_net_jpy", "live_net_jpy", "live_worst_jpy", "required_fix")),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
+                "forecast": _lane_forecast_packet(intent.get("metadata")),
             }
         )
     if max_lanes <= 0 or len(lanes) <= max_lanes:
@@ -1377,6 +1381,22 @@ def _small_dict(payload: object, keys: tuple[str, ...]) -> dict[str, Any]:
     return {key: payload.get(key) for key in keys if key in payload}
 
 
+def _lane_forecast_packet(metadata: object) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        return {}
+    return _small_dict(
+        metadata,
+        (
+            "forecast_direction",
+            "forecast_confidence",
+            "forecast_target_price",
+            "forecast_invalidation_price",
+            "forecast_horizon_min",
+            "forecast_rationale",
+        ),
+    )
+
+
 def _has_pending_entry_order(packet: dict[str, Any]) -> bool:
     return bool(_pending_entry_order_ids(packet))
 
@@ -1466,6 +1486,38 @@ def _attack_recommended_tradeable_lane_ids(
         if lane_id and lane_id in current and lane_id not in lane_ids:
             lane_ids.append(lane_id)
     return lane_ids
+
+
+def _lane_forecast_direction_issue(lane: dict[str, Any]) -> VerificationIssue | None:
+    forecast = lane.get("forecast")
+    if not isinstance(forecast, dict):
+        return None
+    direction = str(forecast.get("forecast_direction") or "").upper()
+    if direction not in {"UP", "DOWN"}:
+        return None
+    confidence = _optional_float(forecast.get("forecast_confidence"))
+    if confidence is None or confidence < _forecast_confidence_min():
+        return None
+    forecast_side = "LONG" if direction == "UP" else "SHORT"
+    lane_side = str(lane.get("direction") or "").upper()
+    if lane_side == forecast_side:
+        return None
+    return VerificationIssue(
+        "FORECAST_DIRECTION_CONFLICT",
+        (
+            f"{lane.get('lane_id')} is {lane_side} but current pair forecast is "
+            f"{direction} conf={confidence:.2f}; verifier refuses forecast-opposite TRADE."
+        ),
+    )
+
+
+def _forecast_confidence_min() -> float:
+    try:
+        from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+
+        return float(ENTRY_CONFIDENCE_MIN)
+    except Exception:
+        return 1.0
 
 
 def _cited_live_ready_lanes(decision: GPTTraderDecision, lane_ids: list[str]) -> list[str]:

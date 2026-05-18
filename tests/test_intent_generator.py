@@ -193,6 +193,75 @@ class IntentGeneratorTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
+    def test_forecast_first_blocks_opposite_direction_candidates(self) -> None:
+        import os
+
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ):
+                    summary = IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.46,
+                            short_score=0.54,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+                long_results = [item for item in payload["results"] if item["intent"]["side"] == "LONG"]
+                short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+                long_issue_codes = {
+                    issue["code"]
+                    for item in long_results
+                    for issue in item["risk_issues"]
+                    if issue["severity"] == "BLOCK"
+                }
+
+                self.assertGreater(summary.live_ready, 0)
+                self.assertTrue(short_results)
+                self.assertTrue(any(item["status"] == "LIVE_READY" for item in short_results))
+                self.assertTrue(long_results)
+                self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in long_results))
+                self.assertIn("FORECAST_DIRECTION_CONFLICT", long_issue_codes)
+                self.assertTrue(
+                    all(
+                        item["intent"]["metadata"]["forecast_direction"] == "DOWN"
+                        and item["intent"]["metadata"]["forecast_confidence"] == 0.91
+                        for item in payload["results"]
+                    )
+                )
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_blocks_chart_direction_conflict_before_live_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -10,13 +10,34 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.automation import AutoTradeCycle, _snapshot_to_json
+from quant_rabbit.automation import AutoTradeCycle, _passes_gpt_prefilter, _snapshot_to_json
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_forecast_blocker_is_not_gpt_prefilter_eligible(self) -> None:
+        score = LaneScore(
+            lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+            pair="EUR_USD",
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            order_type="STOP-ENTRY",
+            entry=1.16522,
+            tp=1.16878,
+            sl=1.16401,
+            status="LIVE_READY",
+            score=42.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast DOWN opposes LONG; rationale: pair chart shifted lower",),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=7_400.0,
+        )
+
+        self.assertFalse(_passes_gpt_prefilter(score))
+
     def test_expanded_gpt_basket_recovers_from_stale_selected_lane(self) -> None:
         current_lane = LaneScore(
             lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",

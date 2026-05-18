@@ -60,9 +60,9 @@ class TagBarTest(unittest.TestCase):
         ts = _ny_to_utc(2026, 6, 10, 0, 30)
         self.assertEqual(tag_bar(ts).tag, SessionTag.JUDAS_WINDOW)
 
-    def test_asia_at_2200_ny(self) -> None:
+    def test_tokyo_killzone_at_2200_ny(self) -> None:
         ts = _ny_to_utc(2026, 6, 10, 22, 0)
-        self.assertEqual(tag_bar(ts).tag, SessionTag.ASIA)
+        self.assertEqual(tag_bar(ts).tag, SessionTag.TOKYO_KILLZONE)
 
     def test_off_hours_at_1700_ny(self) -> None:
         ts = _ny_to_utc(2026, 6, 10, 17, 0)
@@ -217,6 +217,13 @@ class SessionContextTest(unittest.TestCase):
         candles = [_make_candle(_ny_to_utc(2026, 6, 10, 6, 0))]
         ctx = build_session_context(candles, now_utc=_ny_to_utc(2026, 6, 10, 6, 0))
         self.assertEqual(ctx.next_killzone, SessionTag.NY_AM_KILLZONE)
+        self.assertEqual(ctx.minutes_to_next_killzone, 60)
+
+    def test_next_killzone_includes_tokyo(self) -> None:
+        # At 18:00 NY, Tokyo/Asian range starts at 19:00 NY.
+        candles = [_make_candle(_ny_to_utc(2026, 6, 10, 18, 0))]
+        ctx = build_session_context(candles, now_utc=_ny_to_utc(2026, 6, 10, 18, 0))
+        self.assertEqual(ctx.next_killzone, SessionTag.TOKYO_KILLZONE)
         self.assertEqual(ctx.minutes_to_next_killzone, 60)
 
 

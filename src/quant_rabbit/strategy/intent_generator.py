@@ -1195,6 +1195,7 @@ def _append_forecast_seed_lanes(
 
     seeds: list[dict[str, Any]] = []
     seeded_keys: set[tuple[Any, Any, Any, Any]] = set()
+    forecasts_by_pair: dict[str, Any] = {}
     for pair in sorted(charts):
         quote = snapshot.quotes.get(pair)
         if quote is None:
@@ -1206,6 +1207,7 @@ def _append_forecast_seed_lanes(
         confidence = _optional_float(getattr(forecast, "confidence", None))
         if confidence is None or confidence < _forecast_seed_min_confidence():
             continue
+        forecasts_by_pair[pair] = forecast
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
             continue
@@ -1226,6 +1228,7 @@ def _append_forecast_seed_lanes(
             seeds.append(_forecast_seed_lane(source, pair=pair, side=side, method=method, forecast=forecast))
             seeded_keys.add(key)
 
+    lanes = [_lane_with_forecast_context(lane, forecasts_by_pair.get(str(lane.get("pair") or ""))) for lane in lanes]
     if not seeds:
         return lanes
     return seeds + [
@@ -1459,18 +1462,33 @@ def _forecast_seed_lane(
             "blockers": list(lane.get("blockers") or []),
             "story_examples": drivers_for or list(lane.get("story_examples") or [])[:2],
             "forecast_seed": True,
-            "forecast_direction": str(getattr(forecast, "direction", "") or ""),
-            "forecast_confidence": round(confidence, 4),
-            "forecast_current_price": getattr(forecast, "current_price", None),
-            "forecast_target_price": target,
-            "forecast_invalidation_price": invalidation,
-            "forecast_horizon_min": getattr(forecast, "horizon_min", None),
-            "forecast_rationale": rationale,
-            "forecast_drivers_for": drivers_for,
-            "forecast_drivers_against": drivers_against,
+            **_forecast_context_payload(forecast),
         }
     )
     return lane
+
+
+def _lane_with_forecast_context(lane: dict[str, Any], forecast: Any | None) -> dict[str, Any]:
+    if forecast is None:
+        return lane
+    out = dict(lane)
+    out.update(_forecast_context_payload(forecast))
+    return out
+
+
+def _forecast_context_payload(forecast: Any) -> dict[str, Any]:
+    confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
+    return {
+        "forecast_direction": str(getattr(forecast, "direction", "") or ""),
+        "forecast_confidence": round(confidence, 4),
+        "forecast_current_price": getattr(forecast, "current_price", None),
+        "forecast_target_price": getattr(forecast, "target_price", None),
+        "forecast_invalidation_price": getattr(forecast, "invalidation_price", None),
+        "forecast_horizon_min": getattr(forecast, "horizon_min", None),
+        "forecast_rationale": str(getattr(forecast, "rationale_summary", "") or ""),
+        "forecast_drivers_for": [str(item) for item in list(getattr(forecast, "drivers_for", ()) or ())[:3]],
+        "forecast_drivers_against": [str(item) for item in list(getattr(forecast, "drivers_against", ()) or ())[:3]],
+    }
 
 
 def _pair_has_current_range_rotation_edge(
@@ -2333,6 +2351,9 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     method = intent.market_context.method if intent.market_context is not None else None
     bias = _method_direction_bias(metadata, method)
+    forecast_issue = _forecast_direction_conflict_issue(intent, metadata)
+    if forecast_issue is not None:
+        issues.append(forecast_issue)
     trend_hard_block = _trend_continuation_hard_block_reason(intent, metadata, method)
     if bias in {Side.LONG.value, Side.SHORT.value} and bias != intent.side.value:
         long_score = metadata.get("m5_long_bias") if method == TradeMethod.RANGE_ROTATION else metadata.get("chart_long_score")
@@ -2423,6 +2444,35 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 }
             )
     return issues
+
+
+def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    if direction not in {"UP", "DOWN"}:
+        return None
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if confidence is None or confidence < _forecast_seed_min_confidence():
+        return None
+    forecast_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
+    if forecast_side == intent.side.value:
+        return None
+    target = metadata.get("forecast_target_price")
+    invalidation = metadata.get("forecast_invalidation_price")
+    extra = []
+    if target is not None:
+        extra.append(f"target={target}")
+    if invalidation is not None:
+        extra.append(f"invalidation={invalidation}")
+    tail = f" ({', '.join(extra)})" if extra else ""
+    return {
+        "code": "FORECAST_DIRECTION_CONFLICT",
+        "message": (
+            f"{intent.pair} {intent.side.value} conflicts with current pair forecast "
+            f"{direction} conf={confidence:.2f}; only {forecast_side} lanes may become LIVE_READY"
+            f" while this forecast is fresh{tail}."
+        ),
+        "severity": "BLOCK",
+    }
 
 
 # C — 2σ-equivalent extension boundary. (high_24h - low_24h) divided
@@ -2745,7 +2795,7 @@ def _session_widening_mult(session_bucket: str | None) -> float:
     tag = str(session_bucket).upper().strip()
     if tag in {"OFF_HOURS", "OFF-HOURS", "OFFHOURS", "JP_HOLIDAY"}:
         return NEW_ENTRY_SL_OFF_HOURS_MULT
-    if tag in {"TOKYO_KILLZONE", "ASIA_OPEN", "TOKYO"}:
+    if tag in {"TOKYO_KILLZONE", "ASIA_OPEN", "TOKYO", "ASIA"}:
         return NEW_ENTRY_SL_THIN_SESSION_MULT
     # London / NY (and the LONDON_NY overlap) are the deep-liquidity
     # band — no extra widening.

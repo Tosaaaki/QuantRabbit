@@ -87,6 +87,31 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
 
+    def test_rejects_trade_when_selected_lane_contradicts_forecast_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            result = _result()
+            result["intent"]["metadata"] = {
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.91,
+                "forecast_target_price": 1.1712,
+                "forecast_invalidation_price": 1.1742,
+            }
+            files["intents"].write_text(json.dumps({"results": [result]}))
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("FORECAST_DIRECTION_CONFLICT", codes)
+            self.assertEqual(
+                payload["input_packet"]["lanes"][0]["forecast"]["forecast_direction"],
+                "DOWN",
+            )
+
     def test_rejects_batch_trade_when_selected_lane_is_not_cited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1891,6 +1916,13 @@ class NoiseResistantSLGeometryTest(unittest.TestCase):
         from quant_rabbit.strategy.intent_generator import _session_widening_mult
         # London/NY overlap is deep — no widening.
         self.assertAlmostEqual(_session_widening_mult("LONDON_NY_OVERLAP"), 1.0)
+
+    def test_session_widening_mult_asia_alias_is_thin(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            _session_widening_mult,
+            NEW_ENTRY_SL_THIN_SESSION_MULT,
+        )
+        self.assertAlmostEqual(_session_widening_mult("ASIA"), NEW_ENTRY_SL_THIN_SESSION_MULT)
 
     def test_session_widening_mult_unknown_tag_no_widen(self) -> None:
         from quant_rabbit.strategy.intent_generator import _session_widening_mult
