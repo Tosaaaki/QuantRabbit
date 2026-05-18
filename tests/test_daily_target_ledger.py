@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -124,6 +125,61 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.unprotected_positions, 1)
             payload = json.loads((root / "target.json").read_text())
             self.assertIn("TP", payload["positions"][0]["missing"])
+
+    def test_sl_free_no_broker_tp_runner_does_not_zero_risk_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="471232",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=7000,
+                        entry_price=1.16768,
+                        unrealized_pl_jpy=-2149.5,
+                        take_profit=None,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.16575, 1.16589, timestamp_utc=now)},
+                account=AccountSummary(
+                    nav_jpy=187_569.4,
+                    balance_jpy=192_275.8,
+                    unrealized_pl_jpy=-4_706.4,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_tp = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+            try:
+                summary = DailyTargetLedger(
+                    state_path=root / "target.json",
+                    report_path=root / "target.md",
+                ).run(start_balance_jpy=192_578.9, daily_risk_budget_jpy=19_257.89, snapshot=snapshot)
+            finally:
+                if prior_sl is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+                if prior_tp is None:
+                    os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+                else:
+                    os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
+
+            self.assertEqual(summary.status, "PURSUE_TARGET")
+            self.assertEqual(summary.unprotected_positions, 0)
+            self.assertEqual(summary.remaining_risk_budget_jpy, 19257.89)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertTrue(payload["positions"][0]["protected"])
+            self.assertIn("TP", payload["positions"][0]["missing"])
+            self.assertNotIn("SL", payload["positions"][0]["missing"])
 
     def test_operator_manual_position_does_not_block_trader_risk_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

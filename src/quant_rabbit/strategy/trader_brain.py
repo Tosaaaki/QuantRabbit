@@ -2233,11 +2233,20 @@ def _portfolio_add_allowed(snapshot: BrokerSnapshot) -> bool:
     if not trader_positions:
         return False
     sl_free_active = _trader_sl_repair_disabled()
-    # SL-free regime: trader-owned SL=None is intentional; TP must still
-    # be present for layering (TP is the harvest plan in SL-free mode).
+    missing_tp_repair_enabled = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
+    # SL-free regime: trader-owned SL=None is intentional. Missing broker TP
+    # is a no-broker-TP runner unless repair is explicitly enabled, so it must
+    # not permanently force MONITOR_ONLY while margin/gateway gates can accept
+    # a separate fresh lane.
     return all(
         position.owner == Owner.TRADER
-        and position.take_profit is not None
+        and (position.take_profit is not None or (sl_free_active and not missing_tp_repair_enabled))
         and (position.stop_loss is not None or sl_free_active)
         for position in trader_positions
     )

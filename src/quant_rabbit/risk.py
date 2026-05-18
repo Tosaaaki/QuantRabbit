@@ -8,6 +8,35 @@ from datetime import datetime, timezone
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
+
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _trader_no_broker_tp_runner(position) -> bool:
+    """Return true when a trader-owned TP-less position is an intentional
+    SL-free runner rather than a protection blocker.
+
+    In the SL-free runtime, missing broker TP is preserved unless explicit TP
+    repair is enabled. Risk still uses margin and portfolio checks for new
+    entries; this helper only prevents the TP-less runner from freezing every
+    future lane.
+    """
+    return (
+        position.owner == Owner.TRADER
+        and position.take_profit is None
+        and _trader_sl_repair_disabled()
+        and not _missing_tp_repair_enabled()
+    )
+
+
+def _layerable_trader_position(position) -> bool:
+    if position.owner != Owner.TRADER:
+        return False
+    sl_ok = position.stop_loss is not None or _trader_sl_repair_disabled()
+    tp_ok = position.take_profit is not None or _trader_no_broker_tp_runner(position)
+    return sl_ok and tp_ok
+
 from .models import (
     AccountSummary,
     BrokerOrder,
@@ -358,16 +387,12 @@ class RiskEngine:
                         f"{self.policy.max_portfolio_positions}",
                     )
                 )
-            sl_free_active_for_layer = _trader_sl_repair_disabled()
             for position in entry_relevant_positions:
-                # SL-free regime: trader-owned positions with TP but no SL are
-                # treated as protected for layering. The 「SLいらない」 directive
-                # makes SL=None deliberate; TP remains as the harvest protection.
-                pos_eligible = (
-                    position.owner == Owner.TRADER
-                    and position.take_profit is not None
-                    and (position.stop_loss is not None or sl_free_active_for_layer)
-                )
+                # SL-free regime: trader-owned SL=None is intentional, and
+                # TP-less positions are allowed as no-broker-TP runners unless
+                # explicit missing-TP repair is enabled. Margin, hedging, and
+                # portfolio caps remain the executable add gates.
+                pos_eligible = _layerable_trader_position(position)
                 if not pos_eligible:
                     issues.append(
                         RiskIssue(
@@ -405,7 +430,17 @@ class RiskEngine:
             for position in entry_relevant_positions:
                 missing = []
                 if position.take_profit is None:
-                    missing.append("TP")
+                    if _trader_no_broker_tp_runner(position):
+                        issues.append(
+                            RiskIssue(
+                                "TP_LESS_RUNNER_OPEN",
+                                f"open trader SL-free runner has no broker TP: {position.pair} "
+                                f"{position.side.value} id={position.trade_id} {position.units}u",
+                                severity="WARN",
+                            )
+                        )
+                    else:
+                        missing.append("TP")
                 if position.stop_loss is None:
                     if sl_free_active and position.owner == Owner.TRADER:
                         # User directive 「SLいらない」 — trader-owned SL=None is

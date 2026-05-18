@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -175,6 +176,40 @@ class GPTTraderBrainTest(unittest.TestCase):
             brain = _brain(root, files, _trade_decision())
 
             summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
+
+    def test_accepts_trade_when_existing_position_is_sl_free_tp_less_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        **_position(stop_loss=None),
+                        "take_profit": None,
+                        "trade_id": "471232",
+                    }
+                ],
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_tp = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+            try:
+                summary = brain.run(snapshot_path=files["snapshot"])
+            finally:
+                if prior_sl is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+                if prior_tp is None:
+                    os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+                else:
+                    os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
 
             self.assertEqual(summary.status, "ACCEPTED")
             self.assertTrue(summary.allowed)

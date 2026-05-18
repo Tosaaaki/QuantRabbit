@@ -320,16 +320,30 @@ def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _trader_no_broker_tp_runner(position: dict[str, Any]) -> bool:
+    return (
+        str(position.get("owner") or "") == "trader"
+        and position.get("take_profit") is None
+        and _trader_sl_repair_disabled()
+        and not _missing_tp_repair_enabled()
+    )
+
+
 def _is_layerable_position(position: dict[str, Any]) -> bool:
     # SL-free regime (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
-    # 「SLいらない」): trader-owned SL=None is intentional and TP-only
-    # exposure remains layerable. Without this branch, every SL-free
+    # 「SLいらない」): trader-owned SL=None is intentional, and a missing
+    # broker TP is preserved as a no-broker-TP runner unless repair is
+    # explicitly enabled. Without this branch, every SL-free
     # trader position gets flagged as BROKER_EXPOSURE_OPEN in completion
     # blockers, freezing fresh entries while the operator-anchored
     # basket is alive (5/7 unblock fix missed this leak).
     if str(position.get("owner") or "") != "trader":
         return False
-    if position.get("take_profit") is None:
+    if position.get("take_profit") is None and not _trader_no_broker_tp_runner(position):
         return False
     if position.get("stop_loss") is None:
         return _trader_sl_repair_disabled()

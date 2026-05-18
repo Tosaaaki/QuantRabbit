@@ -10,6 +10,10 @@ from typing import Any
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
+
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
 from quant_rabbit.paths import (
     ROOT,
     DEFAULT_AI_ATTACK_ADVICE,
@@ -285,11 +289,14 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
         sl_missing = position.get("stop_loss") is None
         # SL-free regime (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
         # 「SLいらない」 / 「損失を出さないで稼ぎまくる」 2026-05-07): trader-owned
-        # SL=None is intentional and should NOT route the operator into
-        # BRANCH_POSITION repair mode every cycle. TP-only is the SL-free
-        # design — only flag a real protection gap (missing TP, or any
-        # missing protection on owner=trader when SL-repair is enabled).
-        if sl_free_active and owner == "trader" and not tp_missing:
+        # SL=None is intentional. Missing broker TP is also preserved as a
+        # no-broker-TP runner unless explicit repair is enabled, so it should
+        # not trap the operator in BRANCH_POSITION and starve fresh entries.
+        if (
+            sl_free_active
+            and owner == "trader"
+            and (not tp_missing or not _missing_tp_repair_enabled())
+        ):
             continue
         if tp_missing or sl_missing:
             reasons.append(

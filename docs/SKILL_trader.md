@@ -125,6 +125,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 # explicit send path and gateway validation.
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 
+# Re-route after refresh. The refresh branch is not an end state: it must
+# produce one current receipt and then proceed through verification + gateway.
+# Ending the cycle after `generate-predictive-limits` leaves fresh evidence
+# unused and is treated as incomplete.
+PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
+
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
 # If current trader-owned pending entries consume portfolio capacity, either keep

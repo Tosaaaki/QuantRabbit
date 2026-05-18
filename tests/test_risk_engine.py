@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -267,6 +268,56 @@ class RiskEngineTest(unittest.TestCase):
         decision = RiskEngine().validate(intent, snapshot(positions=(unprotected,)))
         self.assertFalse(decision.allowed)
         self.assertIn("UNPROTECTED_POSITION", {issue.code for issue in decision.issues})
+
+    def test_sl_free_no_broker_tp_runner_does_not_freeze_portfolio_adds(self) -> None:
+        runner = BrokerPosition(
+            trade_id="471232",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=7000,
+            entry_price=1.16768,
+            owner=Owner.TRADER,
+            take_profit=None,
+            stop_loss=None,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="sl_free_runner_must_not_starve_next_entry",
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_tp = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+        try:
+            decision = RiskEngine(
+                policy=RiskPolicy(
+                    allow_protected_trader_position_adds=True,
+                    max_portfolio_loss_jpy=10_000.0,
+                )
+            ).validate(intent, snapshot(positions=(runner,)))
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_tp is None:
+                os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+            else:
+                os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
+
+        codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("OPEN_POSITION_EXISTS", codes)
+        self.assertNotIn("UNPROTECTED_POSITION", codes)
+        self.assertIn("TP_LESS_RUNNER_OPEN", codes)
 
     def test_protected_trader_position_still_blocks_fresh_entries(self) -> None:
         protected = BrokerPosition(

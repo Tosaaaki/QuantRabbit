@@ -2192,12 +2192,20 @@ def _portfolio_add_allowed(snapshot) -> bool:
     if not trader_positions:
         return False
     sl_free_active = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+    missing_tp_repair_enabled = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
     # Under SL-free mode (user directive 「SLいらない」 / 「損失を出さないで稼ぎまくる」),
-    # trader-owned SL=None is intentional. Layering stays allowed as long as
-    # every trader position has TP — TP is the harvest plan in SL-free mode.
+    # trader-owned SL=None is intentional. TP-less positions are no-broker-TP
+    # runners unless repair is explicitly enabled; margin and gateway risk
+    # validation remain the executable add gates.
     return all(
         position.owner.value == "trader"
-        and position.take_profit is not None
+        and (position.take_profit is not None or (sl_free_active and not missing_tp_repair_enabled))
         and (position.stop_loss is not None or sl_free_active)
         for position in trader_positions
     )

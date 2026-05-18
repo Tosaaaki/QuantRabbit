@@ -13,6 +13,10 @@ def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
 
 
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -1487,14 +1491,15 @@ def _trade_exposure_blockers(packet: dict[str, Any]) -> list[str]:
         owner = str(position.get("owner") or "")
         if owner in {"manual", "unknown"}:
             continue
-        # SL-free regime: trader-owned TP-only positions are layerable
-        # (user directive 「SLいらない」 / 「損失を出さないで稼ぎまくる」).
+        # SL-free regime: trader-owned SL=None is intentional, and missing
+        # broker TP is a no-broker-TP runner unless repair is explicitly
+        # enabled. Exposure still reaches LiveOrderGateway for margin,
+        # hedging, and portfolio validation.
         sl_ok = position.get("stop_loss") is not None or sl_free_active
-        if (
-            owner == "trader"
-            and position.get("take_profit") is not None
-            and sl_ok
-        ):
+        tp_ok = position.get("take_profit") is not None or (
+            owner == "trader" and sl_free_active and not _missing_tp_repair_enabled()
+        )
+        if owner == "trader" and tp_ok and sl_ok:
             continue
         blockers.append(
             f"non-layerable position {position.get('pair')} {position.get('side')} id={position.get('trade_id')}"

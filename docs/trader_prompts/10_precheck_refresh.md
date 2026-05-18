@@ -62,7 +62,14 @@ PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/br
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
+PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
+PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 ```
+
+Do not stop after evidence refresh. Re-run the router with the refreshed
+snapshot/intents, read the returned branch, write one current decision receipt,
+then continue to `gpt-trader-decision` and exactly one gateway cycle. A refresh
+that ends at `generate-predictive-limits` is an incomplete cycle.
 
 ## Refresh Strategy Evidence
 

@@ -20,8 +20,11 @@
 ## Protection Rules
 
 - Missing TP / SL on trader-owned exposure is a repair requirement, **except** under
-  SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`): trader-owned SL=None with TP set
-  is intentional, treat as protected, do NOT propose PROTECT/TIGHTEN_SL.
+  SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`): trader-owned SL=None is
+  intentional, and a missing broker TP is a no-broker-TP runner unless
+  `QR_ENABLE_MISSING_TP_REPAIR=1` is explicitly set or a profitable insurance-TP
+  condition fires. Treat these runners as layerable for fresh-entry routing;
+  do NOT propose PROTECT/TIGHTEN_SL just to satisfy a static TP/SL checklist.
 - Operator-managed manual/tagless positions are TP-only: TP repair/rebalance and
   profit-side partial close are allowed when already profitable, but SL writes,
   adverse partial closes, and market CLOSE are forbidden.

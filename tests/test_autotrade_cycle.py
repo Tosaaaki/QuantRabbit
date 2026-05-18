@@ -109,6 +109,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 BrokerSnapshot(
                     fetched_at_utc=now,
                     quotes={"EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now)},
+                    account=AccountSummary(
+                        nav_jpy=110_000,
+                        balance_jpy=110_000,
+                        unrealized_pl_jpy=0.0,
+                        fetched_at_utc=now,
+                    ),
                 )
             )
             try:
@@ -913,9 +919,12 @@ class AutoTradeCycleTest(unittest.TestCase):
             )
             target_state = _open_target_state(root)
             target_payload = json.loads(target_state.read_text())
-            target_payload["campaign_day_jst"] = datetime.now(timezone.utc).astimezone(
-                timezone(timedelta(hours=9))
+            target_payload["campaign_day_jst"] = (
+                now.astimezone(timezone(timedelta(hours=9))) - timedelta(hours=9)
             ).date().isoformat()
+            target_payload["target_jpy"] = 10_000
+            target_payload["realized_pl_jpy"] = 10_000
+            target_payload["remaining_target_jpy"] = 0
             target_state.write_text(json.dumps(target_payload))
             live_order_path = root / "live_order.json"
             live_order_report = root / "live_order.md"

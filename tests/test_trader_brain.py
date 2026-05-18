@@ -404,6 +404,53 @@ class TraderBrainTest(unittest.TestCase):
             self.assertEqual(decision.action, ACTION_SEND_ENTRY)
             self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
 
+    def test_sl_free_tp_less_runner_can_still_select_portfolio_add(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            brain = TraderBrain(
+                intents_path=_intents(root),
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                positions=(
+                    BrokerPosition(
+                        trade_id="471232",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=7000,
+                        entry_price=1.16768,
+                        take_profit=None,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                    ),
+                )
+            )
+
+            prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_tp = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+            try:
+                decision = brain.run(snapshot)
+            finally:
+                if prior_sl is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+                if prior_tp is None:
+                    os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+                else:
+                    os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
+
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+
     def test_refuses_live_ready_lane_without_trader_thesis_and_market_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

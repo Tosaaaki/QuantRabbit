@@ -106,10 +106,10 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
 
-    def test_sl_free_trader_position_missing_tp_still_routes_to_position_branch(self) -> None:
-        # SL-free skip applies to SL=None only. A trader-owned position with
-        # TP also missing is a real protection gap and must still route to
-        # BRANCH_POSITION even when SL-repair is disabled.
+    def test_sl_free_trader_no_broker_tp_runner_does_not_force_position_branch(self) -> None:
+        # Missing broker TP is preserved as a no-broker-TP runner under the
+        # SL-free runtime unless explicit TP repair is enabled. It must not
+        # trap the trader in BRANCH_POSITION and starve fresh entries.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -127,7 +127,9 @@ class TraderPromptRouteTest(unittest.TestCase):
             )
 
             prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_tp = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
             os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
             try:
                 route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
             finally:
@@ -135,6 +137,45 @@ class TraderPromptRouteTest(unittest.TestCase):
                     os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
                 else:
                     os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+                if prior_tp is None:
+                    os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+                else:
+                    os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+
+    def test_sl_free_missing_tp_repair_opt_in_routes_to_position_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "999",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": None,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+
+            prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            prior_tp = os.environ.get("QR_ENABLE_MISSING_TP_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior_sl is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+                if prior_tp is None:
+                    os.environ.pop("QR_ENABLE_MISSING_TP_REPAIR", None)
+                else:
+                    os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
 
         self.assertEqual(route.branch, BRANCH_POSITION)
 

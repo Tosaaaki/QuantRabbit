@@ -13,6 +13,19 @@ from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, Bro
 
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _missing_tp_repair_enabled() -> bool:
+    return os.environ.get("QR_ENABLE_MISSING_TP_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _trader_no_broker_tp_runner(position: BrokerPosition) -> bool:
+    return (
+        position.owner == Owner.TRADER
+        and position.take_profit is None
+        and _trader_sl_repair_disabled()
+        and not _missing_tp_repair_enabled()
+    )
 from quant_rabbit.paths import DEFAULT_DAILY_TARGET_REPORT, DEFAULT_DAILY_TARGET_STATE
 from quant_rabbit.risk import RiskPolicy
 
@@ -480,8 +493,11 @@ def _position_risk(
     home_conversions: dict[str, float] | None = None,
 ) -> TargetPositionRisk:
     missing = []
+    blocking_missing = []
     if position.take_profit is None:
         missing.append("TP")
+        if not _trader_no_broker_tp_runner(position):
+            blocking_missing.append("TP")
     if position.stop_loss is None:
         # SL-free regime (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
         # 「SLいらない」 / 「損失を出さないで稼ぎまくる」): trader-owned SL=None is
@@ -490,9 +506,11 @@ def _position_risk(
         # REPAIR_REQUIRED.
         if not (_trader_sl_repair_disabled() and position.owner == Owner.TRADER):
             missing.append("SL")
+            blocking_missing.append("SL")
     remaining_risk = _remaining_risk_jpy(position, quotes, home_conversions or {})
     if position.stop_loss is not None and remaining_risk is None:
         missing.append("JPY_CONVERSION")
+        blocking_missing.append("JPY_CONVERSION")
     return TargetPositionRisk(
         trade_id=position.trade_id,
         pair=position.pair,
@@ -500,7 +518,7 @@ def _position_risk(
         owner=position.owner.value,
         units=position.units,
         unrealized_pl_jpy=round(position.unrealized_pl_jpy, 4),
-        protected=not missing,
+        protected=not blocking_missing,
         remaining_risk_jpy=remaining_risk,
         missing=tuple(missing),
     )
