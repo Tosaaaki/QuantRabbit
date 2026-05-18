@@ -113,6 +113,7 @@ class ManagedPosition:
     recommended_stop_loss: float | None
     recommended_take_profit: float | None
     reasons: tuple[str, ...]
+    owner: str = Owner.TRADER.value
 
 
 @dataclass(frozen=True)
@@ -178,6 +179,7 @@ class PositionManager:
                             reasons=new_reasons,
                             recommended_stop_loss=m.recommended_stop_loss,
                             recommended_take_profit=m.recommended_take_profit,
+                            owner=m.owner,
                         ))
                         continue
                     new_reasons = tuple(list(m.reasons) + [
@@ -194,6 +196,7 @@ class PositionManager:
                         reasons=new_reasons,
                         recommended_stop_loss=m.recommended_stop_loss,
                         recommended_take_profit=m.recommended_take_profit,
+                        owner=m.owner,
                     ))
                 else:
                     demoted.append(m)
@@ -365,6 +368,7 @@ class PositionManager:
             if recommended_take_profit is not None
             else None,
             reasons=tuple(reasons),
+            owner=position.owner.value,
         )
 
     def _manage_manual_take_profit_position(
@@ -432,6 +436,7 @@ class PositionManager:
             if recommended_take_profit is not None
             else None,
             reasons=tuple(reasons),
+            owner=position.owner.value,
         )
 
     def _write(self, decision: PositionManagementDecision) -> None:
@@ -452,7 +457,7 @@ class PositionManager:
             lines.append("- none")
         for item in decision.positions:
             lines.append(
-                f"- `{item.trade_id}` `{item.pair} {item.side}` units=`{item.units}` "
+                f"- `{item.trade_id}` `{item.pair} {item.side}` owner=`{item.owner}` units=`{item.units}` "
                 f"action=`{item.action}` upl=`{item.unrealized_pl_jpy:.1f}`"
             )
             lines.append(f"  - scores: same=`{item.same_direction_score}` opposite=`{item.opposite_direction_score}`")

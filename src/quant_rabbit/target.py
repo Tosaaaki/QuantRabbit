@@ -40,6 +40,9 @@ class DailyTargetSnapshot:
     minimum_target_jpy: float
     realized_pl_jpy: float
     unrealized_pl_jpy: float
+    account_unrealized_pl_jpy: float
+    account_progress_jpy: float
+    account_progress_pct: float
     progress_jpy: float
     progress_pct: float
     minimum_progress_pct: float
@@ -311,6 +314,7 @@ class DailyTargetLedger:
             if snapshot
             else float(previous.get("unrealized_pl_jpy") or 0.0)
         )
+        account_unrealized = _account_unrealized_pl(snapshot, previous)
         open_risk = round(
             sum((position.remaining_risk_jpy or 0.0) for position in positions if _counts_against_trader_budget(position)),
             4,
@@ -329,8 +333,17 @@ class DailyTargetLedger:
         remaining_target = round(max(0.0, target_jpy - progress), 4)
         remaining_minimum = round(max(0.0, minimum_target_jpy - progress), 4)
         remaining_risk_budget = 0.0 if unprotected else round(max(0.0, risk_budget - open_risk), 4)
-        current_equity = round(start_balance + progress, 4)
+        current_equity = _current_equity_jpy(
+            snapshot=snapshot,
+            start_balance_jpy=start_balance,
+            realized_pl_jpy=realized,
+            account_unrealized_pl_jpy=account_unrealized,
+            fallback_progress_jpy=progress,
+            previous=previous,
+        )
         progress_pct = round((progress / target_jpy) * 100.0, 4) if target_jpy else 0.0
+        account_progress = round(current_equity - start_balance, 4)
+        account_progress_pct = round((account_progress / target_jpy) * 100.0, 4) if target_jpy else 0.0
         minimum_progress_pct = (
             round((progress / minimum_target_jpy) * 100.0, 4)
             if minimum_target_jpy
@@ -353,6 +366,9 @@ class DailyTargetLedger:
             minimum_target_jpy=minimum_target_jpy,
             realized_pl_jpy=round(realized, 4),
             unrealized_pl_jpy=unrealized,
+            account_unrealized_pl_jpy=account_unrealized,
+            account_progress_jpy=account_progress,
+            account_progress_pct=account_progress_pct,
             progress_jpy=progress,
             progress_pct=progress_pct,
             minimum_progress_pct=minimum_progress_pct,
@@ -416,6 +432,8 @@ class DailyTargetLedger:
             f"- Realized PnL: `{state.realized_pl_jpy:.0f} JPY`",
             f"- Trader unrealized PnL: `{state.unrealized_pl_jpy:.0f} JPY`",
             f"- Progress: `{state.progress_jpy:.0f} JPY` (`{state.progress_pct:.1f}%` of target)",
+            f"- Account unrealized PnL: `{state.account_unrealized_pl_jpy:.0f} JPY` (includes manual/tagless exposure)",
+            f"- Account progress: `{state.account_progress_jpy:.0f} JPY` (`{state.account_progress_pct:.1f}%` of target, broker NAV view)",
             f"- Minimum-floor progress: `{state.minimum_progress_pct:.1f}%`; remaining floor `{state.remaining_minimum_jpy:.0f} JPY`",
             f"- Remaining target: `{state.remaining_target_jpy:.0f} JPY`",
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",
@@ -449,6 +467,7 @@ class DailyTargetLedger:
                 "- The 10% daily target is tracked as a product KPI and execution objective, not a guaranteed return.",
                 "- The 5% daily floor is tracked as the minimum same-day progress line; reaching it does not stop the 10% campaign by itself.",
                 "- Unprotected trader-owned or external exposure makes remaining risk budget unavailable; operator-managed manual/tagless exposure is TP-managed only and does not block fresh entries.",
+                "- Trader progress excludes operator-managed manual/tagless P/L for risk gating, while account progress shows broker NAV including that exposure.",
                 "- Reaching the target switches the system toward protection-first behavior before any new risk is added.",
             ]
         )
@@ -548,6 +567,33 @@ def _blockers(
 
 def _counts_against_trader_budget(position: TargetPositionRisk) -> bool:
     return position.owner not in {Owner.MANUAL.value, Owner.UNKNOWN.value}
+
+
+def _account_unrealized_pl(snapshot: BrokerSnapshot | None, previous: dict[str, Any]) -> float:
+    if snapshot is None:
+        return float(previous.get("account_unrealized_pl_jpy") or previous.get("unrealized_pl_jpy") or 0.0)
+    if snapshot.account is not None:
+        return round(float(snapshot.account.unrealized_pl_jpy), 4)
+    return round(sum(position.unrealized_pl_jpy for position in snapshot.positions), 4)
+
+
+def _current_equity_jpy(
+    *,
+    snapshot: BrokerSnapshot | None,
+    start_balance_jpy: float,
+    realized_pl_jpy: float,
+    account_unrealized_pl_jpy: float,
+    fallback_progress_jpy: float,
+    previous: dict[str, Any],
+) -> float:
+    if snapshot is not None and snapshot.account is not None:
+        return round(float(snapshot.account.nav_jpy), 4)
+    if snapshot is not None:
+        return round(start_balance_jpy + realized_pl_jpy + account_unrealized_pl_jpy, 4)
+    previous_equity = _coalesce_float(previous.get("current_equity_jpy"))
+    if previous_equity is not None:
+        return previous_equity
+    return round(start_balance_jpy + fallback_progress_jpy, 4)
 
 
 def _status(

@@ -901,6 +901,48 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertFalse(summary.sent)
             self.assertFalse((root / "pm.json").exists())
 
+    def test_monitor_cycle_clears_stale_live_order_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now)},
+                )
+            )
+            target_state = _open_target_state(root)
+            target_payload = json.loads(target_state.read_text())
+            target_payload["campaign_day_jst"] = datetime.now(timezone.utc).astimezone(
+                timezone(timedelta(hours=9))
+            ).date().isoformat()
+            target_state.write_text(json.dumps(target_payload))
+            live_order_path = root / "live_order.json"
+            live_order_report = root / "live_order.md"
+            live_order_path.write_text(json.dumps({"status": "SENT", "sent": True, "send_requested": True}))
+            live_order_report.write_text("# Live Order Stage Report\n\n- Status: `SENT`\n")
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                live_order_output_path=live_order_path,
+                live_order_report_path=live_order_report,
+                report_path=root / "report.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=True)
+
+            self.assertEqual(summary.status, "TARGET_REACHED_PROTECT")
+            result = json.loads(live_order_path.read_text())
+            self.assertEqual(result["status"], "NO_ACTION")
+            self.assertFalse(result["sent"])
+            self.assertFalse(result["send_requested"])
+            self.assertIn("NO_ACTION", live_order_report.read_text())
+
     def test_operator_manual_position_does_not_stop_fresh_entry_loop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

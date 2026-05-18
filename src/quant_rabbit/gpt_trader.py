@@ -239,6 +239,7 @@ from quant_rabbit.paths import (
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
+    DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_STRATEGY_PROFILE,
 )
 
@@ -389,6 +390,7 @@ class GPTTraderBrain:
         cot_path: Path = DEFAULT_COT_SNAPSHOT,
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         max_lanes: int = DEFAULT_GPT_MAX_LANES,
@@ -408,6 +410,7 @@ class GPTTraderBrain:
         self.cot_path = cot_path
         self.option_skew_path = option_skew_path
         self.attack_advice_path = attack_advice_path
+        self.predictive_limits_path = predictive_limits_path
         self.output_path = output_path
         self.report_path = report_path
         self.max_lanes = max_lanes
@@ -452,7 +455,14 @@ class GPTTraderBrain:
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
-        refs = _allowed_refs(snapshot=snapshot, target=target, lanes=lanes, attack_advice=attack_advice)
+        predictive_limits = _load_optional_json(self.predictive_limits_path)
+        refs = _allowed_refs(
+            snapshot=snapshot,
+            target=target,
+            lanes=lanes,
+            attack_advice=attack_advice,
+            predictive_limits=predictive_limits,
+        )
         pairs = _pairs_from_lanes(lanes)
         currencies = _currencies_from_pairs(pairs)
         return {
@@ -464,11 +474,13 @@ class GPTTraderBrain:
                 "protected_trader_position_adds_require_portfolio_validation": True,
                 "model_output_is_advisory_until_verified": True,
                 "strategy_reviews_must_use_lane_id_not_desk_alias": True,
+                "predictive_limits_are_advisory_timing_evidence": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
             "ai_attack_advice": _attack_advice_packet(attack_advice),
+            "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
             "market_context": _market_context_packet(
                 pairs=pairs,
                 currencies=currencies,
@@ -1277,6 +1289,10 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
         "status": target.get("status"),
         "target_jpy": target.get("target_jpy"),
         "progress_jpy": target.get("progress_jpy"),
+        "account_progress_jpy": target.get("account_progress_jpy"),
+        "account_progress_pct": target.get("account_progress_pct"),
+        "account_unrealized_pl_jpy": target.get("account_unrealized_pl_jpy"),
+        "current_equity_jpy": target.get("current_equity_jpy"),
         "remaining_target_jpy": target.get("remaining_target_jpy"),
         "remaining_risk_budget_jpy": target.get("remaining_risk_budget_jpy"),
     }
@@ -1288,6 +1304,7 @@ def _allowed_refs(
     target: dict[str, Any],
     lanes: list[dict[str, Any]],
     attack_advice: dict[str, Any] | None,
+    predictive_limits: dict[str, Any] | None,
 ) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
     # refs than the base broker/target/lane triple — the trader is required to
@@ -1347,6 +1364,15 @@ def _allowed_refs(
             refs.append(f"attack:lane:{lane_id}")
         for lane_id in attack_advice.get("watchlist_lane_ids", []) or []:
             refs.append(f"attack:lane:{lane_id}")
+    if predictive_limits:
+        refs.append("predictive:limits")
+        for item in predictive_limits.get("orders", []) or []:
+            if not isinstance(item, dict):
+                continue
+            pair = str(item.get("pair") or "")
+            side = str(item.get("side") or "")
+            if pair and side:
+                refs.append(f"predictive:limit:{pair}:{side}")
     return sorted(set(refs))
 
 
@@ -1364,6 +1390,42 @@ def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
         "recommended_now_risk_jpy": payload.get("recommended_now_risk_jpy"),
         "required_additional_reward_jpy": payload.get("required_additional_reward_jpy"),
         "settings_advice": payload.get("settings_advice") if isinstance(payload.get("settings_advice"), dict) else {},
+    }
+
+
+def _predictive_limits_packet(payload: dict[str, Any] | None, *, pairs: set[str]) -> dict[str, Any]:
+    if not payload:
+        return {"evidence_ref": "predictive:limits", "status": "missing", "orders_count": 0}
+    orders_in = [item for item in payload.get("orders", []) or [] if isinstance(item, dict)]
+    relevant_pairs = set(pairs)
+
+    def priority(item: dict[str, Any]) -> tuple[int, int]:
+        grade = str(item.get("grade") or "").upper()
+        pair = str(item.get("pair") or "")
+        return (0 if grade == "A" else 1, 0 if pair in relevant_pairs else 1)
+
+    selected = sorted(orders_in, key=priority)[:12]
+    return {
+        "evidence_ref": "predictive:limits",
+        "status": "DRY_RUN" if payload.get("dry_run", True) else "SENT_OR_ATTEMPTED",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "dry_run": payload.get("dry_run"),
+        "orders_count": len(orders_in),
+        "orders": [
+            {
+                "evidence_ref": f"predictive:limit:{item.get('pair')}:{item.get('side')}",
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "grade": item.get("grade"),
+                "limit_price": item.get("limit_price"),
+                "take_profit_price": item.get("take_profit_price"),
+                "units": item.get("units"),
+                "source": item.get("source"),
+                "gtd_utc": item.get("gtd_utc"),
+                "rationale": item.get("rationale"),
+            }
+            for item in selected
+        ],
     }
 
 

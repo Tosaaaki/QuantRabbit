@@ -37,6 +37,7 @@ DEFAULT_POSITION_EXECUTION_REPORT = ROOT / "docs" / "position_execution_report.m
 DEFAULT_PROFIT_PARTIAL_CLOSE = ROOT / "data" / "profit_partial_close.json"
 DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT = ROOT / "docs" / "profit_partial_close_report.md"
 DEFAULT_PROFIT_PARTIAL_CLOSE_STATE = ROOT / "data" / "profit_partial_close_state.json"
+DEFAULT_PREDICTIVE_LIMIT_ORDERS = ROOT / "data" / "predictive_limit_orders.json"
 DEFAULT_BROKER_SNAPSHOT = ROOT / "data" / "broker_snapshot.json"
 DEFAULT_DAILY_TARGET_STATE = ROOT / "data" / "daily_target_state.json"
 DEFAULT_DAILY_TARGET_REPORT = ROOT / "docs" / "daily_target_report.md"

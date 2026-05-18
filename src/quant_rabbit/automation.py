@@ -417,6 +417,63 @@ class AutoTradeCycle:
     def _execution_ledger_available(self) -> bool:
         return hasattr(self.client, "account_summary") and hasattr(self.client, "transactions_since_id")
 
+    def _clear_stale_live_order_artifact(self, *, generated_at: str, cycle_send_requested: bool) -> None:
+        """Overwrite previous SENT latest-state files before this cycle decides."""
+        if not (self.live_order_output_path.exists() or self.live_order_report_path.exists()):
+            return
+        result = {
+            "generated_at_utc": generated_at,
+            "status": "NO_ACTION",
+            "lane_id": None,
+            "lane_ids": [],
+            "requested_units": None,
+            "size_multiple": None,
+            "scaled_units": None,
+            "send_requested": False,
+            "cycle_send_requested": cycle_send_requested,
+            "sent": False,
+            "sent_count": 0,
+            "portfolio_position_cap": None,
+            "order_request": None,
+            "risk_issues": [],
+            "strategy_issues": [],
+            "reason": "cleared stale latest-state live order artifact before current cycle decision",
+        }
+        self.live_order_output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.live_order_output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        self.live_order_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.live_order_report_path.write_text(
+            "\n".join(
+                [
+                    "# Live Order Stage Report",
+                    "",
+                    f"- Generated at UTC: `{generated_at}`",
+                    "- Status: `NO_ACTION`",
+                    "- Lane: `None`",
+                    "- Lanes: `none`",
+                    "- Requested units: `None` size multiple: `None` scaled units:`None`",
+                    "- Send requested: `False`",
+                    f"- Cycle send requested: `{cycle_send_requested}`",
+                    "- Sent: `False`",
+                    "- Sent count: `0`",
+                    "",
+                    "## Order Request",
+                    "",
+                    "- none",
+                    "",
+                    "## Issues",
+                    "",
+                    "- none",
+                    "",
+                    "## Send Contract",
+                    "",
+                    "- This report is overwritten by `LiveOrderGateway` when the current cycle actually stages or sends a fresh entry.",
+                    "- A stale prior SENT report must not be read as today's live send.",
+                ]
+            )
+            + "\n"
+        )
+
     def _append_trader_journal_entry(self, summary: AutoTradeCycleSummary) -> None:
         """Append one JSONL line to logs/trader_journal.jsonl per cycle.
 
@@ -537,6 +594,7 @@ class AutoTradeCycle:
 
     def _run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
+        self._clear_stale_live_order_artifact(generated_at=generated_at, cycle_send_requested=send)
         pairs = DEFAULT_TRADER_PAIRS
         if self.reuse_market_artifacts:
             snapshot = self._load_snapshot_artifact()
@@ -591,7 +649,7 @@ class AutoTradeCycle:
         position_execution = None
         if trader_positions:
             decision = self._brain().run(snapshot)
-            managed_snapshot = _trader_only_snapshot(snapshot)
+            managed_snapshot = _position_management_snapshot(snapshot)
             position_decision = self._position_manager().run(managed_snapshot)
             position_execution = self._position_gateway().run(
                 decision=position_decision,
@@ -672,7 +730,7 @@ class AutoTradeCycle:
                 return summary
         if pending_entries:
             decision = self._brain().run(snapshot)
-            managed_snapshot = _trader_only_snapshot(snapshot)
+            managed_snapshot = _position_management_snapshot(snapshot)
             position_decision = self._position_manager().run(managed_snapshot)
             position_execution = self._position_gateway().run(
                 decision=position_decision,
@@ -2153,4 +2211,15 @@ def _trader_only_snapshot(snapshot):
     return replace(
         snapshot,
         positions=tuple(position for position in snapshot.positions if position.owner.value == "trader"),
+    )
+
+
+def _position_management_snapshot(snapshot):
+    return replace(
+        snapshot,
+        positions=tuple(
+            position
+            for position in snapshot.positions
+            if position.owner.value in {"trader", "manual", "unknown"}
+        ),
     )

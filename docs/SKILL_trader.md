@@ -119,6 +119,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
+# Predictive LIMIT timing evidence is generated before the decision receipt so
+# the trader can compare market/pending participation against liquidity-sweep
+# traps. Default is dry-run evidence; live placement still requires a separate
+# explicit send path and gateway validation.
+PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
@@ -210,12 +215,6 @@ PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 # thesis-evolution-check verdict; the trader/operator decides whether
 # to close manually + Gate A/B. INFORMATION ONLY.
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
-
-# 4f. Generate predictive LIMIT orders for Grade A setups (path Step
-# B + liquidity sweep fades). Default dry-run writes
-# data/predictive_limit_orders.json for inspection; add --send to
-# actually place via OANDA. Operator decides whether to wire --send.
-PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based

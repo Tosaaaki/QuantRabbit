@@ -32,6 +32,43 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_input_packet_includes_predictive_limit_timing_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["predictive_limits"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-18T13:10:20+00:00",
+                        "dry_run": True,
+                        "orders": [
+                            {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "grade": "B",
+                                "limit_price": 1.16495,
+                                "take_profit_price": 1.16363,
+                                "units": 2500,
+                                "source": "liquidity_sweep_fade",
+                                "gtd_utc": "2026-05-18T14:40:20Z",
+                                "rationale": "liquidity sweep fade",
+                            }
+                        ],
+                    }
+                )
+            )
+            brain = _brain(root, files, _trade_decision())
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["input_packet"]["predictive_limits"]["orders_count"], 1)
+            self.assertEqual(
+                payload["input_packet"]["predictive_limits"]["orders"][0]["evidence_ref"],
+                "predictive:limit:EUR_USD:SHORT",
+            )
+            self.assertIn("predictive:limits", payload["input_packet"]["allowed_evidence_refs"])
+
     def test_report_contract_does_not_treat_receipt_close_flag_as_gate_b(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1012,6 +1049,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         cot_path=files["cot"],
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
+        predictive_limits_path=files["predictive_limits"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
 
@@ -1033,6 +1071,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "cot": root / "cot.json",
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
+        "predictive_limits": root / "predictive_limits.json",
     }
     now = datetime.now(timezone.utc).isoformat()
     files["snapshot"].write_text(
@@ -1228,6 +1267,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         )
     )
     files["attack_advice"].write_text(json.dumps({}))
+    files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     return files
 
 

@@ -145,6 +145,12 @@ class DailyTargetLedgerTest(unittest.TestCase):
                     ),
                 ),
                 quotes={"USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now)},
+                account=AccountSummary(
+                    nav_jpy=104_650.0,
+                    balance_jpy=100_000.0,
+                    unrealized_pl_jpy=4_650.0,
+                    fetched_at_utc=now,
+                ),
             )
 
             summary = DailyTargetLedger(
@@ -159,6 +165,9 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.unprotected_positions, 0)
             payload = json.loads((root / "target.json").read_text())
             self.assertEqual(payload["unrealized_pl_jpy"], 0.0)
+            self.assertEqual(payload["account_unrealized_pl_jpy"], 4650.0)
+            self.assertEqual(payload["account_progress_jpy"], 4650.0)
+            self.assertEqual(payload["current_equity_jpy"], 104650.0)
             self.assertEqual(payload["positions"][0]["owner"], "unknown")
             self.assertIn("TP", payload["positions"][0]["missing"])
             self.assertIn("SL", payload["positions"][0]["missing"])

@@ -126,6 +126,7 @@ class PositionProtectionGateway:
         action: dict[str, Any] = {
             "trade_id": managed.trade_id,
             "pair": managed.pair,
+            "owner": managed.owner,
             "management_action": managed.action,
             "request": None,
             "issues": [],
@@ -245,7 +246,7 @@ class PositionProtectionGateway:
         for action in actions:
             request = action.get("request")
             lines.append(
-                f"- `{action['trade_id']}` `{action['pair']}` management=`{action['management_action']}` "
+                f"- `{action['trade_id']}` `{action['pair']}` owner=`{action.get('owner')}` management=`{action['management_action']}` "
                 f"request=`{request['type'] if request else 'none'}` sent=`{action.get('sent')}`"
             )
             if request and request["type"] == "DEPENDENT_ORDER_REPLACE":
