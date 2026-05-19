@@ -24,7 +24,9 @@ from quant_rabbit.risk import (
     RiskEngine,
     RiskPolicy,
     _min_lot_test_override_active,
+    estimate_incremental_margin_jpy,
     estimate_required_margin_jpy,
+    hedge_margin_free_units,
     margin_budget_jpy,
     resolve_max_loss_jpy,
 )
@@ -2271,8 +2273,17 @@ def _intent_from_lane(
         atr_pips=atr_pips,
     )
     geometry_metadata.update(tp_execution_metadata)
-    units = _risk_budgeted_units(pair, entry, sl, max_loss_jpy=max_loss_jpy, snapshot=snapshot)
-    margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot)
+    position_intent = str(position_metadata.get("position_intent") or "")
+    units = _risk_budgeted_units(
+        pair,
+        entry,
+        sl,
+        max_loss_jpy=max_loss_jpy,
+        snapshot=snapshot,
+        side=side,
+        position_intent=position_intent,
+    )
+    margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot, side=side, position_intent=position_intent)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
     if execution_regime:
         regime_context = f"{execution_regime} current; {method.value} campaign lane"
@@ -3198,7 +3209,16 @@ def _round_price(pair: str, value: float) -> float:
     return round(value, 3 if pair.endswith("_JPY") else 5)
 
 
-def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: float, snapshot: BrokerSnapshot) -> int:
+def _risk_budgeted_units(
+    pair: str,
+    entry: float,
+    sl: float,
+    *,
+    max_loss_jpy: float,
+    snapshot: BrokerSnapshot,
+    side: Side | None = None,
+    position_intent: str | None = None,
+) -> int:
     pip_factor = PIP_FACTORS[pair]
     stop_pips = abs(entry - sl) * pip_factor
     if stop_pips <= 0:
@@ -3206,7 +3226,7 @@ def _risk_budgeted_units(pair: str, entry: float, sl: float, *, max_loss_jpy: fl
     quote_to_jpy = _quote_to_jpy(pair, snapshot)
     if quote_to_jpy is None:
         return 1
-    margin_budget_units = _margin_budgeted_units(pair, entry, snapshot)
+    margin_budget_units = _margin_budgeted_units(pair, entry, snapshot, side=side, position_intent=position_intent)
     # SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive 「損失を出さない
     # で稼ぎまくる」, 2026-05-07): sizing is operator-anchored, not loss-anchored.
     # Sizing precedence (highest first):
@@ -3302,7 +3322,14 @@ def _nav_pct_position_units(pair: str, entry: float, snapshot: BrokerSnapshot) -
     return target_margin_jpy / margin_per_unit
 
 
-def _margin_budgeted_units(pair: str, entry: float, snapshot: BrokerSnapshot) -> float | None:
+def _margin_budgeted_units(
+    pair: str,
+    entry: float,
+    snapshot: BrokerSnapshot,
+    *,
+    side: Side | None = None,
+    position_intent: str | None = None,
+) -> float | None:
     account = snapshot.account
     if account is None:
         return None
@@ -3314,16 +3341,29 @@ def _margin_budgeted_units(pair: str, entry: float, snapshot: BrokerSnapshot) ->
     spec = DEFAULT_SPECS.get(pair)
     if quote_to_jpy is None or spec is None or spec.margin_rate <= 0:
         return None
+    margin_free_hedge_units = (
+        hedge_margin_free_units(pair=pair, side=side, snapshot=snapshot, position_intent=position_intent)
+        if side is not None
+        else 0
+    )
     budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
     if budget <= 0:
-        return 0.0
+        return float(margin_free_hedge_units)
     margin_per_unit = estimate_required_margin_jpy(units=1, entry_price=entry, quote_to_jpy=quote_to_jpy, spec=spec)
     if margin_per_unit <= 0:
-        return 0.0
-    return budget / margin_per_unit
+        return float(margin_free_hedge_units)
+    return float(margin_free_hedge_units) + (budget / margin_per_unit)
 
 
-def _margin_sizing_metadata(pair: str, entry: float, units: int, snapshot: BrokerSnapshot) -> dict[str, Any]:
+def _margin_sizing_metadata(
+    pair: str,
+    entry: float,
+    units: int,
+    snapshot: BrokerSnapshot,
+    *,
+    side: Side | None = None,
+    position_intent: str | None = None,
+) -> dict[str, Any]:
     policy = RiskPolicy()
     max_margin_pct = policy.max_margin_utilization_pct
     metadata: dict[str, Any] = {"max_margin_utilization_pct": max_margin_pct}
@@ -3332,10 +3372,35 @@ def _margin_sizing_metadata(pair: str, entry: float, units: int, snapshot: Broke
     spec = DEFAULT_SPECS.get(pair)
     if account is None or quote_to_jpy is None or spec is None or max_margin_pct is None:
         return metadata
-    estimated_margin = estimate_required_margin_jpy(units=units, entry_price=entry, quote_to_jpy=quote_to_jpy, spec=spec)
+    if side is None:
+        estimated_margin = estimate_required_margin_jpy(
+            units=units,
+            entry_price=entry,
+            quote_to_jpy=quote_to_jpy,
+            spec=spec,
+        )
+        margin_free_hedge_units = 0
+    else:
+        estimated_margin = estimate_incremental_margin_jpy(
+            pair=pair,
+            side=side,
+            units=units,
+            entry_price=entry,
+            quote_to_jpy=quote_to_jpy,
+            spec=spec,
+            snapshot=snapshot,
+            position_intent=position_intent,
+        )
+        margin_free_hedge_units = hedge_margin_free_units(
+            pair=pair,
+            side=side,
+            snapshot=snapshot,
+            position_intent=position_intent,
+        )
     metadata.update(
         {
             "estimated_margin_jpy": round(estimated_margin, 3),
+            "hedge_margin_free_units": margin_free_hedge_units,
             "margin_budget_jpy": round(margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct), 3),
             "margin_used_jpy": round(account.margin_used_jpy, 3),
             "margin_available_jpy": round(account.margin_available_jpy, 3),

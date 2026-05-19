@@ -1889,12 +1889,12 @@ class MinLotFloorIntentTest(unittest.TestCase):
     cost exceeded any realistic pip target — guaranteed-loss trades.
     """
 
-    def _stub_snapshot(self, margin_used: float = 0.0, margin_available: float = 200000.0):
+    def _stub_snapshot(self, margin_used: float = 0.0, margin_available: float = 200000.0, positions=()):
         from quant_rabbit.models import AccountSummary, BrokerSnapshot, Quote
         now = datetime.now(timezone.utc)
         return BrokerSnapshot(
             fetched_at_utc=now,
-            positions=(),
+            positions=tuple(positions),
             orders=(),
             quotes={
                 "EUR_USD": Quote(pair="EUR_USD", bid=1.17280, ask=1.17290, timestamp_utc=now),
@@ -1938,6 +1938,35 @@ class MinLotFloorIntentTest(unittest.TestCase):
             snapshot=self._stub_snapshot(),
         )
         self.assertEqual(units, 0)
+
+    def test_risk_budgeted_units_allows_same_pair_hedge_inside_longest_leg_when_margin_cap_full(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+
+        open_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=22_000,
+            entry_price=1.16688,
+            owner=Owner.TRADER,
+        )
+        units = _risk_budgeted_units(
+            "EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=2_000.0,
+            snapshot=self._stub_snapshot(
+                margin_used=209_000.0,
+                margin_available=18_000.0,
+                positions=(open_long,),
+            ),
+            side=Side.SHORT,
+            position_intent="HEDGE",
+        )
+
+        self.assertGreaterEqual(units, 1000)
+        self.assertEqual(units % 1000, 0)
 
     def test_risk_budgeted_units_returns_1000_when_just_at_floor(self) -> None:
         # max_loss_jpy ~315 JPY → loss_budget ≈ 1003 units → rounds to 1000.
