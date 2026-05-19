@@ -10,7 +10,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from quant_rabbit.automation import AutoTradeCycle, _passes_gpt_prefilter, _snapshot_to_json
+from quant_rabbit.automation import (
+    AutoTradeCycle,
+    _gpt_lanes_pass_prefilter_or_recovery,
+    _passes_gpt_prefilter,
+    _snapshot_to_json,
+)
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
@@ -37,6 +42,42 @@ class AutoTradeCycleTest(unittest.TestCase):
         )
 
         self.assertFalse(_passes_gpt_prefilter(score))
+
+    def test_recovery_hedge_gpt_selection_can_bypass_empty_prefilter(self) -> None:
+        lane_id = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+        payload = {
+            "results": [
+                {
+                    "lane_id": lane_id,
+                    "status": "LIVE_READY",
+                    "intent": {
+                        "metadata": {
+                            "position_intent": "HEDGE",
+                            "hedge_recovery": True,
+                        }
+                    },
+                }
+            ]
+        }
+
+        allowed, recovery_bypass = _gpt_lanes_pass_prefilter_or_recovery(
+            intents_payload=payload,
+            gpt_lane_ids=(lane_id,),
+            prefiltered_lane_ids=set(),
+        )
+
+        self.assertTrue(allowed)
+        self.assertTrue(recovery_bypass)
+
+        payload["results"][0]["intent"]["metadata"]["hedge_recovery"] = False
+        allowed, recovery_bypass = _gpt_lanes_pass_prefilter_or_recovery(
+            intents_payload=payload,
+            gpt_lane_ids=(lane_id,),
+            prefiltered_lane_ids=set(),
+        )
+
+        self.assertFalse(allowed)
+        self.assertFalse(recovery_bypass)
 
     def test_expanded_gpt_basket_recovers_from_stale_selected_lane(self) -> None:
         current_lane = LaneScore(
@@ -1656,6 +1697,104 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertTrue((root / "live_order.json").exists())
 
+    def test_gpt_recovery_hedge_can_bypass_open_position_prefilter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="trapped-long",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=22_000,
+                        entry_price=1.16688,
+                        take_profit=None,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                        unrealized_pl_jpy=-22_000.0,
+                    ),
+                ),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.16072, 1.16080, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 159.30, 159.31, timestamp_utc=now),
+                },
+                account=AccountSummary(
+                    nav_jpy=170_000.0,
+                    balance_jpy=192_000.0,
+                    unrealized_pl_jpy=-22_000.0,
+                    margin_used_jpy=162_000.0,
+                    margin_available_jpy=8_000.0,
+                    hedging_enabled=True,
+                    fetched_at_utc=now,
+                ),
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            hedge_lane = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+            _write_recovery_hedge_intents(intents_path, hedge_lane)
+            target_state = _open_target_state(root)
+            target_payload = json.loads(target_state.read_text())
+            target_payload["daily_risk_budget_jpy"] = 50_000
+            target_state.write_text(json.dumps(target_payload) + "\n")
+            client = FakeCycleClient(snapshot)
+            old_env = {name: os.environ.get(name) for name in ("QR_TRADER_DISABLE_SL_REPAIR", "QR_DISABLE_AUTO_CLOSE")}
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+            try:
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_short_hedge_campaign(root),
+                    strategy_profile_path=_short_candidate_profile(root),
+                    market_story_profile_path=_short_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(
+                        _gpt_trade_decision(
+                            lane_id=hedge_lane,
+                            pair="EUR_USD",
+                            method="TREND_CONTINUATION",
+                            direction="SHORT",
+                        )
+                    ),
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=10_000,
+                ).run(send=False)
+            finally:
+                for name, value in old_env.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.selected_lane_id, hedge_lane)
+            self.assertEqual(client.orders_sent, [])
+            payload = json.loads((root / "live_order.json").read_text())
+            self.assertEqual(payload["order_request"]["units"], "-22000")
+
     def test_reuse_market_artifacts_pins_gpt_packet_and_skips_repricing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1976,6 +2115,34 @@ def _campaign(root: Path) -> Path:
     return path
 
 
+def _short_hedge_campaign(root: Path) -> Path:
+    _pair_charts(root)
+    path = root / "campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "desk": "trend_trader",
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "method": "TREND_CONTINUATION",
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                        "campaign_role": "NOW_OR_BACKUP",
+                        "reason": "recovery hedge for trapped EUR_USD long exposure",
+                        "required_receipt": "live-ready recovery hedge receipt",
+                        "blockers": [],
+                        "story_examples": [
+                            "quality_audit: EUR_USD downside hedge recovery",
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
 def _two_lane_campaign(root: Path) -> Path:
     _pair_charts(root, ("AUD_JPY", "EUR_USD"))
     path = root / "campaign.json"
@@ -2059,6 +2226,34 @@ def _candidate_profile(root: Path) -> Path:
                         "direction": "LONG",
                         "status": "CANDIDATE",
                         "required_fix": "eligible after receipt promotion",
+                        "pretrade_net_jpy": 5000,
+                        "live_net_jpy": 800,
+                        "live_worst_jpy": -350,
+                        "positive_evidence_n": 120,
+                        "positive_tail_jpy": 1200,
+                        "positive_best_jpy": 2200,
+                        "seat_discovered": 10,
+                        "seat_orderable": 8,
+                        "seat_captured": 5,
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _short_candidate_profile(root: Path) -> Path:
+    path = root / "profile.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "SHORT",
+                        "status": "CANDIDATE",
+                        "required_fix": "eligible recovery hedge",
                         "pretrade_net_jpy": 5000,
                         "live_net_jpy": 800,
                         "live_worst_jpy": -350,
@@ -2178,6 +2373,27 @@ def _stories(root: Path) -> Path:
     return path
 
 
+def _short_stories(root: Path) -> Path:
+    path = root / "stories.json"
+    path.write_text(
+        json.dumps(
+            {
+                "pair_profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "methods": {"TREND_CONTINUATION": 20},
+                        "themes": {"recovery_hedge": 6},
+                        "examples": [
+                            "quality_audit: EUR_USD downside hedge recovery",
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
 def _two_lane_stories(root: Path) -> Path:
     path = root / "stories.json"
     path.write_text(
@@ -2278,11 +2494,70 @@ def _write_two_live_ready_intents(path: Path) -> None:
     path.write_text(json.dumps(payload) + "\n")
 
 
+def _write_recovery_hedge_intents(path: Path, lane_id: str) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "results": [
+                    {
+                        "lane_id": lane_id,
+                        "status": "LIVE_READY",
+                        "risk_allowed": True,
+                        "intent": {
+                            "pair": "EUR_USD",
+                            "side": "SHORT",
+                            "order_type": "STOP-ENTRY",
+                            "units": 22_000,
+                            "entry": 1.16056,
+                            "tp": 1.15813,
+                            "sl": 1.16118,
+                            "thesis": "Recovery hedge for trapped EUR_USD long exposure.",
+                            "reason": "same-pair opposite hedge is live-ready",
+                            "owner": "trader",
+                            "market_context": {
+                                "regime": "TREND_CONTINUATION recovery hedge",
+                                "narrative": "EUR_USD downside continuation monetizes trapped long exposure.",
+                                "chart_story": "M5 trend continuation below support.",
+                                "method": "TREND_CONTINUATION",
+                                "invalidation": "stop level trades",
+                                "event_risk": "none",
+                                "session": "test",
+                            },
+                            "metadata": {
+                                "desk": "trend_trader",
+                                "campaign_role": "NOW_OR_BACKUP",
+                                "position_intent": "HEDGE",
+                                "hedge_recovery": True,
+                                "hedge_recovery_reason": "opposing_same_pair_underwater",
+                                "hedge_recovery_units": 22_000,
+                                "estimated_margin_jpy": 0.0,
+                                "max_loss_jpy": 10_000,
+                            },
+                        },
+                        "risk_metrics": {
+                            "risk_jpy": 2_174,
+                            "reward_jpy": 8_520,
+                            "reward_risk": 3.92,
+                            "spread_pips": 0.8,
+                            "estimated_margin_jpy": 0.0,
+                        },
+                        "risk_issues": [],
+                        "strategy_issues": [],
+                        "live_blockers": [],
+                    }
+                ]
+            }
+        )
+        + "\n"
+    )
+
+
 def _gpt_trade_decision(
     *,
     lane_id: str = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
     pair: str = "EUR_USD",
     method: str = "TREND_CONTINUATION",
+    direction: str = "LONG",
 ) -> dict:
     return {
         "action": "TRADE",
@@ -2300,7 +2575,7 @@ def _gpt_trade_decision(
             "target:daily",
             f"intent:{lane_id}",
             f"campaign:{lane_id}",
-            f"strategy:{pair}:LONG",
+            f"strategy:{pair}:{direction}",
             f"story:{pair}",
         ],
         "operator_summary": "Accept the verified EUR_USD continuation lane.",

@@ -180,6 +180,37 @@ def _basket_parent_lane_set(lane_ids: tuple[str, ...]) -> set[str]:
     }
 
 
+def _recovery_hedge_parent_lane_set(intents_payload: dict) -> set[str]:
+    parents: set[str] = set()
+    for item in intents_payload.get("results", []) or []:
+        if not isinstance(item, dict) or item.get("status") != "LIVE_READY":
+            continue
+        intent = item.get("intent")
+        if not isinstance(intent, dict):
+            continue
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        if metadata.get("position_intent") != "HEDGE" or metadata.get("hedge_recovery") is not True:
+            continue
+        parent = _basket_parent_lane_id(str(item.get("lane_id") or ""))
+        if parent:
+            parents.add(parent)
+    return parents
+
+
+def _gpt_lanes_pass_prefilter_or_recovery(
+    *,
+    intents_payload: dict,
+    gpt_lane_ids: tuple[str, ...],
+    prefiltered_lane_ids: set[str],
+) -> tuple[bool, bool]:
+    gpt_parent_lanes = _basket_parent_lane_set(gpt_lane_ids)
+    if gpt_parent_lanes.issubset(_basket_parent_lane_set(tuple(prefiltered_lane_ids))):
+        return True, False
+    if gpt_parent_lanes and gpt_parent_lanes.issubset(_recovery_hedge_parent_lane_set(intents_payload)):
+        return True, True
+    return False, False
+
+
 def _default_pair_charts_path(campaign_plan_path: Path) -> Path:
     sibling = campaign_plan_path.with_name("pair_charts.json")
     if campaign_plan_path != DEFAULT_CAMPAIGN_PLAN and sibling.exists():
@@ -921,7 +952,12 @@ class AutoTradeCycle:
                             )
                             self._write_report(summary, generated_at)
                             return summary
-                        if not _basket_parent_lane_set(gpt_lane_ids).issubset(_basket_parent_lane_set(basket_lane_ids)):
+                        gpt_lanes_allowed, gpt_recovery_bypass = _gpt_lanes_pass_prefilter_or_recovery(
+                            intents_payload=json.loads(self.intents_path.read_text()),
+                            gpt_lane_ids=gpt_lane_ids,
+                            prefiltered_lane_ids=set(basket_lane_ids),
+                        )
+                        if not gpt_lanes_allowed:
                             summary = AutoTradeCycleSummary(
                                 status="GPT_DECISION_NOT_PREFILTERED",
                                 report_path=self.report_path,
@@ -951,6 +987,8 @@ class AutoTradeCycle:
                             )
                             self._write_report(summary, generated_at)
                             return summary
+                        if gpt_recovery_bypass:
+                            gpt_recovery_source = "RECOVERY_HEDGE_GPT_NOT_PREFILTERED"
                         canceled_orders.extend(
                             self._cancel_gpt_pending_orders(
                                 gpt_summary,
@@ -1352,47 +1390,53 @@ class AutoTradeCycle:
                         )
                         self._write_report(summary, generated_at)
                         return summary
-                elif not _basket_parent_lane_set(gpt_selected_lane_ids).issubset(
-                    _basket_parent_lane_set(tuple(prefiltered_lane_ids))
-                ):
-                    if campaign_exposure_required:
-                        gpt_recovery_source = "CAMPAIGN_EXPOSURE_RECOVERY_GPT_NOT_PREFILTERED"
-                    else:
-                        summary = AutoTradeCycleSummary(
-                            status="GPT_DECISION_NOT_PREFILTERED",
-                            report_path=self.report_path,
-                            snapshot_path=self.snapshot_path,
-                            intents_path=self.intents_path,
-                            selected_lane_id=None,
-                            deterministic_lane_id=deterministic_lane_id,
-                            sent=False,
-                            positions=positions,
-                            orders=orders,
-                            live_ready=intent_summary.live_ready,
-                            decision_source="gpt_trader",
-                            receipt_promotions=promotion_summary.promoted,
-                            position_management_action=position_decision.action if position_decision else None,
-                            position_execution_status=position_execution.status if position_execution else None,
-                            position_execution_sent=position_execution.sent if position_execution else False,
-                            target_status=target_summary.status if target_summary else None,
-                            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                            target_progress_pct=target_summary.progress_pct if target_summary else None,
-                            gpt_status=gpt_summary.status,
-                            gpt_action=gpt_summary.action,
-                            gpt_allowed=gpt_summary.allowed,
-                            gpt_issues=gpt_summary.issues,
-                            gpt_error=gpt_summary.error,
-                            gpt_wait_retries=gpt_wait_retries,
-                            gpt_recovery_source=gpt_recovery_source,
-                            campaign_exposure_required=campaign_exposure_required,
-                        )
-                        self._write_report(summary, generated_at)
-                        return summary
-                else:
-                    selected_lane_id = gpt_selected_lane_ids[0]
-                    selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
-                        decision=decision, lane_id=selected_lane_id
+                if gpt_trade_accepted:
+                    gpt_lanes_allowed, gpt_recovery_bypass = _gpt_lanes_pass_prefilter_or_recovery(
+                        intents_payload=json.loads(self.intents_path.read_text()),
+                        gpt_lane_ids=gpt_selected_lane_ids,
+                        prefiltered_lane_ids=prefiltered_lane_ids,
                     )
+                    if gpt_recovery_bypass:
+                        gpt_recovery_source = "RECOVERY_HEDGE_GPT_NOT_PREFILTERED"
+                    if not gpt_lanes_allowed:
+                        if campaign_exposure_required:
+                            gpt_recovery_source = "CAMPAIGN_EXPOSURE_RECOVERY_GPT_NOT_PREFILTERED"
+                        else:
+                            summary = AutoTradeCycleSummary(
+                                status="GPT_DECISION_NOT_PREFILTERED",
+                                report_path=self.report_path,
+                                snapshot_path=self.snapshot_path,
+                                intents_path=self.intents_path,
+                                selected_lane_id=None,
+                                deterministic_lane_id=deterministic_lane_id,
+                                sent=False,
+                                positions=positions,
+                                orders=orders,
+                                live_ready=intent_summary.live_ready,
+                                decision_source="gpt_trader",
+                                receipt_promotions=promotion_summary.promoted,
+                                position_management_action=position_decision.action if position_decision else None,
+                                position_execution_status=position_execution.status if position_execution else None,
+                                position_execution_sent=position_execution.sent if position_execution else False,
+                                target_status=target_summary.status if target_summary else None,
+                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                                gpt_status=gpt_summary.status,
+                                gpt_action=gpt_summary.action,
+                                gpt_allowed=gpt_summary.allowed,
+                                gpt_issues=gpt_summary.issues,
+                                gpt_error=gpt_summary.error,
+                                gpt_wait_retries=gpt_wait_retries,
+                                gpt_recovery_source=gpt_recovery_source,
+                                campaign_exposure_required=campaign_exposure_required,
+                            )
+                            self._write_report(summary, generated_at)
+                            return summary
+                    else:
+                        selected_lane_id = gpt_selected_lane_ids[0]
+                        selected_lane_score, selected_lane_size_multiple = self._selected_lane_meta(
+                            decision=decision, lane_id=selected_lane_id
+                        )
 
         target_open = (
             target_summary is not None
