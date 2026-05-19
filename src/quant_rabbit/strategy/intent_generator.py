@@ -2366,6 +2366,7 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     metadata = intent.metadata or {}
     issues: list[dict[str, str]] = []
     method = intent.market_context.method if intent.market_context is not None else None
+    hedge_recovery = _is_hedge_recovery_metadata(metadata)
     bias = _method_direction_bias(metadata, method)
     forecast_issue = _forecast_direction_conflict_issue(intent, metadata)
     if forecast_issue is not None:
@@ -2380,8 +2381,12 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
         # chart_score bias is one input, not a hard veto. The MTF + PA +
         # micro-override scoring in trader_brain decides the side; this
         # gate becomes WARN so symmetric mirror lanes reach LIVE_READY.
-        severity = "BLOCK" if trend_hard_block else ("WARN" if _sl_free_active() else "BLOCK")
-        tail = trend_hard_block or "wait for this side to dominate or choose the aligned lane."
+        severity = "BLOCK" if trend_hard_block else ("WARN" if (_sl_free_active() or hedge_recovery) else "BLOCK")
+        tail = (
+            "recovery hedge may run against the stale score while it monetizes trapped exposure."
+            if hedge_recovery
+            else (trend_hard_block or "wait for this side to dominate or choose the aligned lane.")
+        )
         issues.append(
             {
                 "code": "CHART_DIRECTION_CONFLICT",
@@ -2447,16 +2452,24 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
         if intent.side == Side.SHORT and ppct_24h is not None and ppct_24h <= 0.5:
             chasing = True
         if chasing:
+            severity = "WARN" if hedge_recovery else "BLOCK"
             issues.append(
                 {
                     "code": "EXHAUSTION_RANGE_CHASE",
                     "message": (
                         f"{intent.pair} {intent.side.value} chases a move already "
                         f"{sigma_mult:.2f}× typical hourly range over 24h "
-                        f"(p24h={ppct_24h:.2f}); refuse same-direction entry after the "
-                        f"{EXHAUSTION_RANGE_SIGMA_MULTIPLE:.1f}σ-equivalent extension."
+                        f"(p24h={ppct_24h:.2f}); "
+                        + (
+                            "allowing as recovery hedge against trapped opposite exposure."
+                            if hedge_recovery
+                            else (
+                                "refuse same-direction entry after the "
+                                f"{EXHAUSTION_RANGE_SIGMA_MULTIPLE:.1f}σ-equivalent extension."
+                            )
+                        )
                     ),
-                    "severity": "BLOCK",
+                    "severity": severity,
                 }
             )
     return issues
@@ -3108,8 +3121,30 @@ def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -
     if not same_pair:
         return {}
     if any(position.side != side for position in same_pair):
-        return {"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"}
+        metadata: dict[str, Any] = {"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"}
+        opposing_positions = [position for position in snapshot.positions if position.pair == pair and position.side != side]
+        underwater_positions = [position for position in opposing_positions if position.unrealized_pl_jpy < 0]
+        if underwater_positions:
+            metadata.update(
+                {
+                    "hedge_recovery": True,
+                    "hedge_recovery_reason": "opposing_same_pair_underwater",
+                    "hedge_recovery_units": sum(abs(int(position.units)) for position in opposing_positions),
+                    "hedge_recovery_unrealized_pl_jpy": round(
+                        sum(position.unrealized_pl_jpy for position in underwater_positions),
+                        4,
+                    ),
+                }
+            )
+        return metadata
     return {"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"}
+
+
+def _is_hedge_recovery_metadata(metadata: dict[str, Any]) -> bool:
+    return (
+        str(metadata.get("position_intent") or "").upper() == "HEDGE"
+        and bool(metadata.get("hedge_recovery"))
+    )
 
 
 def _geometry_metadata(

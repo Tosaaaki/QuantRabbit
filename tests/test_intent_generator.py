@@ -1977,6 +1977,36 @@ class MinLotFloorIntentTest(unittest.TestCase):
 
         self.assertEqual(units, 22_000)
 
+    def test_position_intent_metadata_marks_underwater_opposite_side_as_recovery_hedge(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _position_intent_metadata
+
+        trader_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=7000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-500.0,
+            owner=Owner.TRADER,
+        )
+        manual_long = BrokerPosition(
+            trade_id="102",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=15_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1000.0,
+            owner=Owner.UNKNOWN,
+        )
+
+        metadata = _position_intent_metadata("EUR_USD", Side.SHORT, self._stub_snapshot(positions=(trader_long, manual_long)))
+
+        self.assertEqual(metadata["position_intent"], "HEDGE")
+        self.assertTrue(metadata["hedge_recovery"])
+        self.assertEqual(metadata["hedge_recovery_units"], 22_000)
+        self.assertEqual(metadata["hedge_recovery_unrealized_pl_jpy"], -1500.0)
+
     def test_risk_budgeted_units_returns_1000_when_just_at_floor(self) -> None:
         # max_loss_jpy ~315 JPY → loss_budget ≈ 1003 units → rounds to 1000.
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
@@ -2053,8 +2083,14 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
     fires at intent-generation time without touching open positions.
     """
 
-    def _intent(self, *, side, sigma_mult, price_pct_24h, pair: str = "EUR_USD"):
+    def _intent(self, *, side, sigma_mult, price_pct_24h, pair: str = "EUR_USD", metadata_extra: dict | None = None):
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
+        metadata = {
+            "range_24h_sigma_multiple": sigma_mult,
+            "price_percentile_24h": price_pct_24h,
+        }
+        if metadata_extra:
+            metadata.update(metadata_extra)
         return OrderIntent(
             pair=pair,
             side=Side.LONG if side == "LONG" else Side.SHORT,
@@ -2071,10 +2107,7 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
                 method=TradeMethod.TREND_CONTINUATION,
                 invalidation="sl trades",
             ),
-            metadata={
-                "range_24h_sigma_multiple": sigma_mult,
-                "price_percentile_24h": price_pct_24h,
-            },
+            metadata=metadata,
         )
 
     def test_long_at_top_after_2sigma_range_blocks(self) -> None:
@@ -2088,6 +2121,19 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         intent = self._intent(side="SHORT", sigma_mult=2.5, price_pct_24h=0.08)
         codes = {issue["code"] for issue in _method_context_issues(intent)}
         self.assertIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_recovery_hedge_at_extended_side_warns_instead_of_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=2.5,
+            price_pct_24h=0.08,
+            metadata_extra={"position_intent": "HEDGE", "hedge_recovery": True},
+        )
+        issue = next(
+            issue for issue in _method_context_issues(intent) if issue["code"] == "EXHAUSTION_RANGE_CHASE"
+        )
+        self.assertEqual(issue["severity"], "WARN")
 
     def test_long_at_bottom_after_2sigma_range_passes(self) -> None:
         # LONG mean-reversion entry at low — not a chase.

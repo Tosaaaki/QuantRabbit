@@ -613,6 +613,55 @@ class RiskEngineTest(unittest.TestCase):
         self.assertNotIn("MARGIN_UTILIZATION_CAP_REACHED", issue_codes)
         self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
 
+    def test_recovery_hedge_uses_range_reward_floor_instead_of_fresh_entry_floor(self) -> None:
+        protected_long = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=22_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1500.0,
+            take_profit=1.17100,
+            stop_loss=1.16600,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.17220,
+            tp=1.17140,
+            sl=1.17320,
+            thesis="recovery hedge monetizes move against trapped long",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE recovery hedge",
+                narrative="short hedge against trapped long exposure",
+                chart_story="failed reclaim and rejection below trigger",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY", "hedge_recovery": True},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_loss_jpy=5_000.0,
+                max_portfolio_loss_jpy=50_000.0,
+                max_margin_utilization_pct=92.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_long,), hedging_enabled=True))
+
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
+        self.assertLess(decision.metrics.reward_risk, 1.2)
+        self.assertNotIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
+
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(
             trade_id="2",

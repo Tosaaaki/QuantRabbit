@@ -615,9 +615,10 @@ class RiskEngine:
                     f"planned worst-case loss {metrics.risk_jpy:.0f} JPY exceeds cap {loss_cap:.0f} JPY",
                 )
             )
-        # Regime-derived reward/risk floor. RANGE regimes are allowed below the
-        # default min_reward_risk because rotation geometry caps TP at the
-        # opposing rail and high hit-rate range scalps remain +EV at sub-1R.
+        # Regime-derived reward/risk floor. RANGE regimes and explicit recovery
+        # hedges are allowed below the default min_reward_risk because rotation
+        # geometry caps TP at the opposing rail, and recovery hedges monetize a
+        # trapped opposite leg instead of opening a fresh one-way thesis.
         # Falls back to default min when regime is missing/unclear so silent
         # data gaps cannot relax the floor (per AGENT_CONTRACT §3.5).
         regime_state = ""
@@ -625,11 +626,10 @@ class RiskEngine:
             raw_state = intent.metadata.get("regime_state")
             if isinstance(raw_state, str):
                 regime_state = raw_state.upper()
-        active_min_rr = (
-            self.policy.range_min_reward_risk
-            if _uses_range_reward_floor(intent, regime_state)
-            else self.policy.min_reward_risk
-        )
+        if _intent_declares_recovery_hedge(intent) or _uses_range_reward_floor(intent, regime_state):
+            active_min_rr = self.policy.range_min_reward_risk
+        else:
+            active_min_rr = self.policy.min_reward_risk
         if metrics.reward_risk < active_min_rr:
             issues.append(
                 RiskIssue(
@@ -1110,6 +1110,10 @@ def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:
 
 def _intent_declares_hedge(intent: OrderIntent) -> bool:
     return str((intent.metadata or {}).get("position_intent") or "").upper() == "HEDGE"
+
+
+def _intent_declares_recovery_hedge(intent: OrderIntent) -> bool:
+    return _intent_declares_hedge(intent) and bool((intent.metadata or {}).get("hedge_recovery"))
 
 
 def _is_operator_managed_manual(position: BrokerPosition) -> bool:
