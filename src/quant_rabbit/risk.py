@@ -201,6 +201,78 @@ def margin_budget_jpy(account: AccountSummary, *, max_margin_utilization_pct: fl
     return min(account.margin_available_jpy, utilization_budget)
 
 
+def hedge_margin_free_units(
+    *,
+    pair: str,
+    side: Side,
+    snapshot: BrokerSnapshot,
+    position_intent: str | None = None,
+) -> int:
+    """Return same-pair units that can be added before OANDA v20 margin grows.
+
+    Hedging accounts margin same-instrument opposite exposure on the longer
+    side. A SHORT against 22k LONG EUR/USD therefore has 22k units of margin-free
+    hedge capacity before incremental margin starts.
+    """
+    if not _account_hedging_enabled(snapshot) or str(position_intent or "").upper() != "HEDGE":
+        return 0
+    long_units, short_units = _same_pair_position_units(snapshot, pair)
+    if side == Side.LONG:
+        return max(0, short_units - long_units)
+    return max(0, long_units - short_units)
+
+
+def incremental_margin_units(
+    *,
+    pair: str,
+    side: Side,
+    units: int,
+    snapshot: BrokerSnapshot,
+    position_intent: str | None = None,
+) -> int:
+    """Return units that increase broker-required margin for a candidate order."""
+    requested_units = max(0, abs(int(units)))
+    if requested_units <= 0:
+        return 0
+    if not _account_hedging_enabled(snapshot) or str(position_intent or "").upper() != "HEDGE":
+        return requested_units
+
+    long_units, short_units = _same_pair_position_units(snapshot, pair)
+    before_larger_side = max(long_units, short_units)
+    if side == Side.LONG:
+        long_units += requested_units
+    else:
+        short_units += requested_units
+    return max(0, max(long_units, short_units) - before_larger_side)
+
+
+def estimate_incremental_margin_jpy(
+    *,
+    pair: str,
+    side: Side,
+    units: int,
+    entry_price: float,
+    quote_to_jpy: float,
+    spec: InstrumentSpec,
+    snapshot: BrokerSnapshot,
+    position_intent: str | None = None,
+) -> float:
+    """Estimate account-JPY margin increase after same-pair hedging offsets."""
+    margin_units = incremental_margin_units(
+        pair=pair,
+        side=side,
+        units=units,
+        snapshot=snapshot,
+        position_intent=position_intent,
+    )
+    return estimate_required_margin_jpy(
+        units=margin_units,
+        entry_price=entry_price,
+        quote_to_jpy=quote_to_jpy,
+        spec=spec,
+    )
+
+
 @dataclass(frozen=True)
 class RiskPolicy:
     # Library default for tests and ad-hoc construction. Production code MUST
@@ -814,11 +886,15 @@ class RiskEngine:
         # misleading secondary `REWARD_RISK_TOO_LOW` blocker. Use the pip
         # geometry so diagnostics can distinguish "cannot size" from "bad RR".
         reward_risk = max(0.0, reward_pips) / loss_pips if loss_pips > 0 else 0.0
-        estimated_margin = estimate_required_margin_jpy(
+        estimated_margin = estimate_incremental_margin_jpy(
+            pair=intent.pair,
+            side=intent.side,
             units=intent.units,
             entry_price=entry_price,
             quote_to_jpy=quote_to_jpy,
             spec=spec,
+            snapshot=snapshot,
+            position_intent=str((intent.metadata or {}).get("position_intent") or ""),
         )
         account = snapshot.account
         max_margin_pct = self.policy.max_margin_utilization_pct
@@ -897,6 +973,8 @@ class RiskEngine:
 
         budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
         cap_jpy = account.nav_jpy * (max_margin_pct / 100.0)
+        if metrics.estimated_margin_jpy <= 0:
+            return issues
         if metrics.estimated_margin_jpy > account.margin_available_jpy:
             issues.append(
                 RiskIssue(
@@ -1010,6 +1088,20 @@ class RiskEngine:
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _same_pair_position_units(snapshot: BrokerSnapshot, pair: str) -> tuple[int, int]:
+    long_units = 0
+    short_units = 0
+    for position in snapshot.positions:
+        if position.pair != pair:
+            continue
+        units = max(0, abs(int(position.units)))
+        if position.side == Side.LONG:
+            long_units += units
+        elif position.side == Side.SHORT:
+            short_units += units
+    return long_units, short_units
 
 
 def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:

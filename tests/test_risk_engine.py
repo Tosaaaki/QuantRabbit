@@ -8,7 +8,16 @@ from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, Bro
 from quant_rabbit.risk import RiskEngine
 
 
-def snapshot(*, positions=(), orders=(), hedging_enabled: bool = False) -> BrokerSnapshot:
+def snapshot(
+    *,
+    positions=(),
+    orders=(),
+    hedging_enabled: bool = False,
+    nav_jpy: float = 200_000.0,
+    balance_jpy: float = 200_000.0,
+    margin_used_jpy: float = 0.0,
+    margin_available_jpy: float = 200_000.0,
+) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
         fetched_at_utc=now,
@@ -19,10 +28,10 @@ def snapshot(*, positions=(), orders=(), hedging_enabled: bool = False) -> Broke
             "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=now),
         },
         account=AccountSummary(
-            nav_jpy=200_000.0,
-            balance_jpy=200_000.0,
-            margin_used_jpy=0.0,
-            margin_available_jpy=200_000.0,
+            nav_jpy=nav_jpy,
+            balance_jpy=balance_jpy,
+            margin_used_jpy=margin_used_jpy,
+            margin_available_jpy=margin_available_jpy,
             hedging_enabled=hedging_enabled,
             fetched_at_utc=now,
         ),
@@ -544,6 +553,65 @@ class RiskEngineTest(unittest.TestCase):
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("OPPOSING_POSITION_NEEDS_HEDGING", {issue.code for issue in decision.issues})
+
+    def test_same_pair_hedge_uses_longest_leg_margin_when_account_is_over_policy_cap(self) -> None:
+        protected_long = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=22_000,
+            entry_price=1.16688,
+            take_profit=1.17100,
+            stop_loss=1.16600,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.16561,
+            tp=1.16383,
+            sl=1.16641,
+            thesis="same_pair_short_hedge_inside_existing_long_leg",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE reject/retest current",
+                narrative="short hedge against trapped long exposure",
+                chart_story="failed reclaim and rejection below trigger",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_loss_jpy=5_000.0,
+                max_portfolio_loss_jpy=50_000.0,
+                max_margin_utilization_pct=92.0,
+            )
+        ).validate(
+            intent,
+            snapshot(
+                positions=(protected_long,),
+                hedging_enabled=True,
+                nav_jpy=175_988.7367,
+                balance_jpy=192_275.8359,
+                margin_used_jpy=162_740.16,
+                margin_available_jpy=13_436.9823,
+            ),
+        )
+
+        issue_codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertEqual(decision.metrics.estimated_margin_jpy, 0.0)
+        self.assertNotIn("MARGIN_UTILIZATION_CAP_REACHED", issue_codes)
+        self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
 
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(

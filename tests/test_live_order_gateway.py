@@ -448,6 +448,81 @@ class LiveOrderGatewayTest(unittest.TestCase):
             result = json.loads((root / "request.json").read_text())
             self.assertIn("MARGIN_UTILIZATION_CAP_EXCEEDED", {issue["code"] for issue in result["risk_issues"]})
 
+    def test_send_allows_same_pair_hedge_when_margin_cap_is_full(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            now = client.snapshot_value.fetched_at_utc
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="101",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=22_000,
+                        entry_price=1.16688,
+                        take_profit=1.17100,
+                        stop_loss=1.16600,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=(),
+                quotes=client.snapshot_value.quotes,
+                account=AccountSummary(
+                    nav_jpy=175_988.7367,
+                    balance_jpy=192_275.8359,
+                    margin_used_jpy=162_740.16,
+                    margin_available_jpy=13_436.9823,
+                    hedging_enabled=True,
+                    fetched_at_utc=now,
+                ),
+            )
+            intents = _intents(
+                root,
+                metadata={
+                    "desk": "failure_trader",
+                    "campaign_role": "NOW",
+                    "position_intent": "HEDGE",
+                    "position_fill": "OPEN_ONLY",
+                },
+            )
+            payload = json.loads(intents.read_text())
+            result = payload["results"][0]
+            result["lane_id"] = "lane:EUR_USD:SHORT"
+            intent = result["intent"]
+            intent["side"] = "SHORT"
+            intent["entry"] = 1.17270
+            intent["tp"] = 1.17120
+            intent["sl"] = 1.17350
+            intent["thesis"] = "same-pair hedge against existing long"
+            intent["market_context"] = {
+                "regime": "BREAKOUT_FAILURE reject/retest current",
+                "narrative": "short hedge against trapped long exposure",
+                "chart_story": "failed reclaim and rejection below trigger",
+                "method": "BREAKOUT_FAILURE",
+                "invalidation": "SL trades",
+            }
+            intents.write_text(json.dumps(payload))
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root, direction="SHORT"),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+                max_loss_jpy=2_000.0,
+            ).run(intents_path=intents, lane_id="lane:EUR_USD:SHORT", send=True, confirm_live=True)
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertTrue(summary.sent)
+            self.assertEqual(len(client.orders), 1)
+            self.assertEqual(client.orders[0]["units"], "-1000")
+            self.assertEqual(client.orders[0]["positionFill"], "OPEN_ONLY")
+            request = json.loads((root / "request.json").read_text())
+            self.assertEqual(request["risk_metrics"]["estimated_margin_jpy"], 0.0)
+            self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", {issue["code"] for issue in request["risk_issues"]})
+
     def test_hedge_intent_uses_open_only_position_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -798,7 +873,7 @@ class MutatingExecutionClient(FakeExecutionClient):
         return response
 
 
-def _profile(root: Path) -> Path:
+def _profile(root: Path, *, direction: str = "LONG") -> Path:
     path = root / "profile.json"
     path.write_text(
         json.dumps(
@@ -806,7 +881,7 @@ def _profile(root: Path) -> Path:
                 "profiles": [
                     {
                         "pair": "EUR_USD",
-                        "direction": "LONG",
+                        "direction": direction,
                         "status": "CANDIDATE",
                         "required_fix": "eligible",
                     }

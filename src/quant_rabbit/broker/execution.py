@@ -844,17 +844,19 @@ def _basket_size_multiple(
     account = snapshot.account
     max_margin_pct = RiskPolicy().max_margin_utilization_pct
     if account is not None and max_margin_pct is not None:
-        margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
-        remaining_margin = margin_room - pending_margin - cumulative_margin_jpy
-        if remaining_margin <= 0:
-            return 0.0, RiskIssue(
-                "BASKET_MARGIN_CAP_REACHED",
-                f"basket margin capacity is exhausted: pending {pending_margin:.0f} + batch {cumulative_margin_jpy:.0f} "
-                f">= room {margin_room:.0f} JPY",
-            )
-        if metrics.estimated_margin_jpy > remaining_margin > 0:
-            scale = min(scale, _capacity_scale(requested_units, metrics.estimated_margin_jpy, remaining_margin))
-            reasons.append(f"margin room {remaining_margin:.0f} JPY")
+        candidate_margin = max(0.0, float(metrics.estimated_margin_jpy or 0.0))
+        if candidate_margin > 0:
+            margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+            remaining_margin = margin_room - pending_margin - cumulative_margin_jpy
+            if remaining_margin <= 0:
+                return 0.0, RiskIssue(
+                    "BASKET_MARGIN_CAP_REACHED",
+                    f"basket margin capacity is exhausted: pending {pending_margin:.0f} + batch {cumulative_margin_jpy:.0f} "
+                    f">= room {margin_room:.0f} JPY",
+                )
+            if candidate_margin > remaining_margin > 0:
+                scale = min(scale, _capacity_scale(requested_units, candidate_margin, remaining_margin))
+                reasons.append(f"margin room {remaining_margin:.0f} JPY")
 
     if scale < 1.0:
         return scale, RiskIssue(
@@ -923,16 +925,18 @@ def _basket_issues(
     account = snapshot.account
     max_margin_pct = RiskPolicy().max_margin_utilization_pct
     if account is not None and max_margin_pct is not None:
-        margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
-        total_margin = pending_margin + cumulative_margin_jpy + metrics.estimated_margin_jpy
-        if total_margin > margin_room:
-            issues.append(
-                RiskIssue(
-                    "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
-                    f"basket candidate margin {total_margin:.0f} JPY exceeds remaining {max_margin_pct:.1f}% "
-                    f"margin room {margin_room:.0f} JPY",
+        candidate_margin = max(0.0, float(metrics.estimated_margin_jpy or 0.0))
+        if candidate_margin > 0:
+            margin_room = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
+            total_margin = pending_margin + cumulative_margin_jpy + candidate_margin
+            if total_margin > margin_room:
+                issues.append(
+                    RiskIssue(
+                        "BASKET_MARGIN_UTILIZATION_CAP_EXCEEDED",
+                        f"basket candidate margin {total_margin:.0f} JPY exceeds remaining {max_margin_pct:.1f}% "
+                        f"margin room {margin_room:.0f} JPY",
+                    )
                 )
-            )
     return issues
 
 
