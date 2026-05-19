@@ -170,6 +170,50 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
         self.assertEqual(issues[0].severity, "BLOCK")
 
+    def test_watch_only_forecast_seed_pending_trigger_is_advisory_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="WATCH_ONLY"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.STOP_ENTRY,
+                        metadata={"forecast_seed": True},
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "WARN")
+
+    def test_watch_only_forecast_seed_market_still_blocks_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = StrategyProfile.load(_profile(Path(tmp), status="WATCH_ONLY"))
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.MARKET,
+                        metadata={"forecast_seed": True},
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_NOT_ELIGIBLE")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_missing_profile_blocks_live_send_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))
@@ -217,6 +261,7 @@ def _intent(
     *,
     method: TradeMethod = TradeMethod.TREND_CONTINUATION,
     order_type: OrderType = OrderType.MARKET,
+    metadata: dict | None = None,
 ) -> OrderIntent:
     return OrderIntent(
         pair=pair,
@@ -235,6 +280,7 @@ def _intent(
             method=method,
             invalidation="test",
         ),
+        metadata=metadata or {},
     )
 
 

@@ -135,6 +135,15 @@ class StrategyProfile:
                     severity="BLOCK",
                 ),
             )
+        if entry.status == "WATCH_ONLY":
+            severity = _watch_only_severity(intent, sl_free=sl_free, for_live_send=for_live_send)
+            return (
+                RiskIssue(
+                    "STRATEGY_NOT_ELIGIBLE",
+                    f"{entry.pair} {entry.direction}{_method_suffix(entry)} is {entry.status}: {entry.required_fix}",
+                    severity=severity,
+                ),
+            )
         return (
             RiskIssue(
                 "STRATEGY_NOT_ELIGIBLE",
@@ -189,6 +198,27 @@ def _synthetic_missing_profile_severity(
     if source.status in {"CANDIDATE", "RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE"}:
         return "WARN"
     return None
+
+
+def _watch_only_severity(intent: OrderIntent, *, sl_free: bool, for_live_send: bool) -> str:
+    """Return profile severity for a WATCH_ONLY mined lane.
+
+    WATCH_ONLY remains a hard live blocker for ordinary campaign/mirror lanes:
+    observation-only history is not executable permission. The narrow exception
+    is a fresh forecast-seed pending trigger under SL-free runtime. That path is
+    not reusing WATCH_ONLY history; it is current prediction + structure
+    evidence asking the gateway to place a non-market trigger. MARKET entries
+    still require stronger mined evidence, because otherwise WATCH_ONLY would
+    again become "buy/sell now" permission.
+    """
+    if not for_live_send:
+        return "WARN" if sl_free else "BLOCK"
+    if not sl_free:
+        return "BLOCK"
+    metadata = intent.metadata or {}
+    if metadata.get("forecast_seed") and intent.order_type != OrderType.MARKET:
+        return "WARN"
+    return "BLOCK"
 
 
 def _method_suffix(entry: StrategyProfileEntry) -> str:
