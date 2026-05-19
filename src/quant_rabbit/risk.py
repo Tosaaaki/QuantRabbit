@@ -326,10 +326,19 @@ class RiskEngine:
         policy: RiskPolicy | None = None,
         specs: dict[str, InstrumentSpec] | None = None,
         live_enabled: bool = False,
+        validation_time_utc: datetime | None = None,
     ) -> None:
         self.policy = policy or RiskPolicy()
         self.specs = specs or DEFAULT_SPECS
         self.live_enabled = live_enabled
+        self.validation_time_utc = (
+            validation_time_utc.astimezone(timezone.utc)
+            if validation_time_utc is not None
+            else None
+        )
+
+    def _now(self) -> datetime:
+        return self.validation_time_utc or datetime.now(timezone.utc)
 
     def validate(self, intent: OrderIntent, snapshot: BrokerSnapshot, *, for_live_send: bool = False) -> RiskDecision:
         issues: list[RiskIssue] = []
@@ -472,7 +481,7 @@ class RiskEngine:
             issues.append(RiskIssue("MISSING_QUOTE", f"missing live quote for {intent.pair}"))
             return RiskDecision(False, None, tuple(issues))
 
-        quote_age = max(0.0, (datetime.now(timezone.utc) - quote.timestamp_utc).total_seconds())
+        quote_age = max(0.0, (self._now() - quote.timestamp_utc).total_seconds())
         if quote_age > self.policy.max_quote_age_seconds:
             issues.append(
                 RiskIssue(
@@ -932,7 +941,7 @@ class RiskEngine:
                 )
             ]
         issues: list[RiskIssue] = []
-        quote_age = max(0.0, (datetime.now(timezone.utc) - conversion_quote.timestamp_utc).total_seconds())
+        quote_age = max(0.0, (self._now() - conversion_quote.timestamp_utc).total_seconds())
         if quote_age > self.policy.max_quote_age_seconds:
             issues.append(
                 RiskIssue(

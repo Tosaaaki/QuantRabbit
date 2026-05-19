@@ -48,6 +48,42 @@ class RiskEngineTest(unittest.TestCase):
         self.assertGreaterEqual(decision.metrics.reward_risk, 1.2)
         self.assertIn("MISSING_MARKET_CONTEXT", {issue.code for issue in decision.issues})
 
+    def test_validation_time_freezes_quote_freshness_for_batch_generation(self) -> None:
+        quote_time = datetime(2026, 5, 19, 0, 0, tzinfo=timezone.utc)
+        snap = BrokerSnapshot(
+            fetched_at_utc=quote_time,
+            positions=(),
+            orders=(),
+            quotes={
+                "EUR_USD": Quote("EUR_USD", bid=1.17322, ask=1.17330, timestamp_utc=quote_time),
+                "USD_JPY": Quote("USD_JPY", bid=156.640, ask=156.648, timestamp_utc=quote_time),
+            },
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=200_000.0,
+                margin_used_jpy=0.0,
+                margin_available_jpy=200_000.0,
+                fetched_at_utc=quote_time,
+            ),
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=3000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="batch_generation_must_not_self_expire_quotes",
+        )
+
+        frozen = RiskEngine(validation_time_utc=quote_time + timedelta(seconds=5)).validate(intent, snap)
+        realtime = RiskEngine().validate(intent, snap)
+
+        self.assertTrue(frozen.allowed, frozen.block_reasons)
+        self.assertNotIn("STALE_QUOTE", {issue.code for issue in frozen.issues})
+        self.assertFalse(realtime.allowed)
+        self.assertIn("STALE_QUOTE", {issue.code for issue in realtime.issues})
+
     def test_live_send_requires_live_enabled(self) -> None:
         intent = OrderIntent(
             pair="EUR_USD",

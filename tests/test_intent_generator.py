@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -68,6 +69,36 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
+
+    def test_watch_only_strategy_profile_cannot_become_live_ready_under_sl_free(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="WATCH_ONLY"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        statuses = {item["status"] for item in payload["results"]}
+        blockers = [blocker for item in payload["results"] for blocker in item["live_blockers"]]
+        self.assertNotIn("LIVE_READY", statuses)
+        self.assertIn("DRY_RUN_PASSED", statuses)
+        self.assertTrue(any("WATCH_ONLY" in blocker for blocker in blockers))
 
     def test_carries_current_regime_and_session_bucket_from_pair_charts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

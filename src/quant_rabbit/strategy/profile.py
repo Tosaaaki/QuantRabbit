@@ -13,14 +13,11 @@ def _sl_free_active() -> bool:
     """SL-free runtime gate (`QR_TRADER_DISABLE_SL_REPAIR=1`).
 
     User 2026-05-08「短期SHORTでも長期LONGでも両方取れる」+
-    `feedback_no_direction_bias_rules.md`: under SL-free the AI trader
-    reads market direction in real time, so historical strategy_profile
-    direction filters that BLOCK the opposite side become advisory only.
-    The mirror lane synthesised by `intent_generator._mirror_lane` would
-    otherwise be killed by STRATEGY_PROFILE_MISSING / NOT_ELIGIBLE before
-    scoring ever sees it. Under SL-free we downgrade those to WARN so
-    the lane reaches LIVE_READY and `trader_brain` can compare LONG vs
-    SHORT on its own merits.
+    `feedback_no_direction_bias_rules.md`: under SL-free the AI trader can
+    compare current LONG/SHORT receipts, but a WATCH_ONLY or missing mined
+    profile is still not live permission. Pending trigger / risk-repair
+    receipts may downgrade to advisory when they carry fresh executable
+    geometry; observation-only lanes must stay out of LIVE_READY.
     """
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {
         "1",
@@ -67,12 +64,13 @@ class StrategyProfile:
 
     def validate(self, intent: OrderIntent, *, for_live_send: bool = False) -> tuple[RiskIssue, ...]:
         # Under SL-free the AI trader is the discretionary direction picker;
-        # missing profile entries remain advisory for candidate discovery, but
-        # strategy statuses that explicitly require fresh evidence must still
-        # block live sends. Otherwise MARKET lanes marked MINE_MISSED_EDGE
-        # are sent even though the mined fix says "trigger/pending only".
+        # fresh trigger / risk-repair receipts can be compared by the trader,
+        # but missing or WATCH_ONLY mined evidence is still not executable.
+        # Otherwise an observation lane can become LIVE_READY just because the
+        # current risk geometry happens to pass.
         sl_free = _sl_free_active()
-        live_block_severity = "WARN" if sl_free else ("BLOCK" if for_live_send else "WARN")
+        evidence_repair_severity = "WARN" if sl_free else ("BLOCK" if for_live_send else "WARN")
+        strict_live_severity = "BLOCK" if for_live_send else "WARN"
 
         method = _intent_method(intent)
         entry = self.entries.get((intent.pair, intent.side.value, method))
@@ -88,17 +86,24 @@ class StrategyProfile:
                         f"{intent.pair} {intent.side.value} {method} has no method-specific mined profile; "
                         "do not reuse another strategy method's evidence for this lane"
                     ),
-                    severity=live_block_severity,
+                    severity=strict_live_severity,
                 ),
             )
         if entry is None:
             entry = self.entries.get((intent.pair, intent.side.value, None))
         if entry is None:
+            synthetic_severity = _synthetic_missing_profile_severity(
+                intent,
+                entries=self.entries,
+                method=method,
+                sl_free=sl_free,
+                for_live_send=for_live_send,
+            )
             return (
                 RiskIssue(
                     "STRATEGY_PROFILE_MISSING",
                     f"{intent.pair} {intent.side.value} is absent from the mined strategy profile",
-                    severity=live_block_severity,
+                    severity=synthetic_severity or strict_live_severity,
                 ),
             )
         if entry.status == "CANDIDATE":
@@ -108,11 +113,11 @@ class StrategyProfile:
                 RiskIssue(
                     "STRATEGY_RISK_REPAIR_REQUIRED",
                     f"{entry.pair} {entry.direction} needs risk-repair evidence before live use: {entry.required_fix}",
-                    severity=live_block_severity,
+                    severity=evidence_repair_severity,
                 ),
             )
         if entry.status == "MINE_MISSED_EDGE":
-            severity = live_block_severity
+            severity = evidence_repair_severity
             if for_live_send and intent.order_type == OrderType.MARKET:
                 severity = "BLOCK"
             return (
@@ -134,7 +139,7 @@ class StrategyProfile:
             RiskIssue(
                 "STRATEGY_NOT_ELIGIBLE",
                 f"{entry.pair} {entry.direction}{_method_suffix(entry)} is {entry.status}: {entry.required_fix}",
-                severity="WARN" if sl_free else "BLOCK",
+                severity=strict_live_severity if for_live_send else ("WARN" if sl_free else "BLOCK"),
             ),
         )
 
@@ -158,6 +163,32 @@ def _has_method_specific_entry(
         entry_pair == pair and entry_direction == direction and method is not None
         for entry_pair, entry_direction, method in entries
     )
+
+
+def _synthetic_missing_profile_severity(
+    intent: OrderIntent,
+    *,
+    entries: dict[tuple[str, str, str | None], StrategyProfileEntry],
+    method: str | None,
+    sl_free: bool,
+    for_live_send: bool,
+) -> str | None:
+    if not (sl_free and for_live_send):
+        return None
+    metadata = intent.metadata or {}
+    if metadata.get("forecast_seed"):
+        return "WARN"
+    mirror_of = str(metadata.get("mirror_of") or "").strip().upper()
+    if mirror_of not in {"LONG", "SHORT"}:
+        return None
+    source = entries.get((intent.pair, mirror_of, method))
+    if source is None:
+        source = entries.get((intent.pair, mirror_of, None))
+    if source is None:
+        return None
+    if source.status in {"CANDIDATE", "RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE"}:
+        return "WARN"
+    return None
 
 
 def _method_suffix(entry: StrategyProfileEntry) -> str:

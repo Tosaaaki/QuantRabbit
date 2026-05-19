@@ -1774,6 +1774,7 @@ class IntentGenerator:
         self.risk_equity_jpy = risk_equity_jpy
 
     def run(self, *, snapshot_path: Path | None = None, max_candidates: int = 12) -> IntentGenerationSummary:
+        validation_time_utc = datetime.now(timezone.utc)
         plan = json.loads(self.campaign_plan.read_text())
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
@@ -1852,6 +1853,7 @@ class IntentGenerator:
                         pair_charts=pair_charts,
                         levels_snapshot=levels_snapshot,
                         order_type_override=order_type,
+                        validation_time_utc=validation_time_utc,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -1878,6 +1880,7 @@ class IntentGenerator:
         pair_charts: dict[str, dict[str, Any]] | None = None,
         levels_snapshot: dict[str, Any] | None = None,
         order_type_override: OrderType | None = None,
+        validation_time_utc: datetime | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         lane_id = _variant_lane_id(parent_lane_id, order_type_override)
@@ -1936,7 +1939,8 @@ class IntentGenerator:
                 block_new_entries_with_pending_entry_orders=False,
                 allow_protected_trader_position_adds=True,
                 max_portfolio_loss_jpy=portfolio_loss_cap,
-            )
+            ),
+            validation_time_utc=validation_time_utc,
         ).validate(
             intent,
             snapshot,
@@ -2314,6 +2318,7 @@ def _intent_from_lane(
             "forecast_rationale": lane.get("forecast_rationale"),
             "forecast_drivers_for": lane.get("forecast_drivers_for"),
             "forecast_drivers_against": lane.get("forecast_drivers_against"),
+            "mirror_of": lane.get("mirror_of"),
             "target_reward_risk": target_reward_risk,
             "base_target_reward_risk": base_reward_risk,
             "regime_reward_risk_mult": rr_multiplier,
