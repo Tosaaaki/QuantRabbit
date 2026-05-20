@@ -99,10 +99,11 @@ def _position_management_owner(owner: Owner) -> bool:
 PROFIT_PROTECTION_NOISE_ATR_MULT = 1.0
 PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
 # SL-free break-even/profit-lock is not initial SL repair. It is a profit-only
-# escape hatch after executable MFE clears current micro-noise. M5 is the live
-# management timeframe already exposed by pair_charts. The spread multiplier is
-# the identity value: profit locking only needs to clear the observed spread
-# itself, not the much wider new-entry SL geometry floor.
+# escape hatch after executable MFE clears the current spread. Positive-lock
+# stops additionally need to clear M5 micro-noise, the live management timeframe
+# already exposed by pair_charts. The spread multiplier is the identity value:
+# profit locking only needs to clear the observed spread itself, not the much
+# wider new-entry SL geometry floor.
 PROFIT_BREAK_EVEN_ATR_TIMEFRAME = GEOMETRY_ATR_TIMEFRAME
 PROFIT_BREAK_EVEN_NOISE_ATR_MULT = PROFIT_PROTECTION_NOISE_ATR_MULT
 PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
@@ -511,7 +512,7 @@ class PositionManager:
                 "- Manual/tagless positions must never receive SL repair, SL tightening, or loss-close actions.",
                 "- Missing TP/SL is a repair requirement, not a passive monitor state.",
                 "- Profit protection is required once open profit clears remaining stop risk plus current session noise.",
-                "- SL-free break-even/profit-lock is allowed only after executable profit clears M5 ATR/spread micro-noise.",
+                "- SL-free break-even is allowed after executable profit clears current spread; positive-lock uses M5 ATR/spread micro-noise.",
                 "- Profit-only TAKE_PROFIT_MARKET is separate from loss-side REVIEW_EXIT Gate A/B discipline.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
                 "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; only ledger-backed next-generation trader positions can execute structural loss-cut exits.",
@@ -1193,7 +1194,7 @@ def _sl_free_profit_lock_stop_candidate(
     quote,
     pair_charts: dict[str, dict[str, Any]] | None,
 ) -> tuple[float | None, tuple[str, ...]]:
-    """Return a BE-or-better stop only after SL-free profit clears live micro-noise."""
+    """Return a BE-or-better stop after SL-free profit clears spread/ATR gates."""
     if position.owner != Owner.TRADER or position.stop_loss is not None or not _trader_sl_repair_disabled():
         return None, ()
     if position.unrealized_pl_jpy <= 0:
@@ -1204,14 +1205,33 @@ def _sl_free_profit_lock_stop_candidate(
     profit_pips = _executable_profit_pips(position, quote)
     if profit_pips is None or profit_pips <= 0:
         return None, ("SL-free profit-lock deferred: executable profit pips cannot be measured from broker quote",)
-    noise_pips, noise_basis = _profit_break_even_noise_pips(position.pair, quote, pair_charts)
-    if noise_pips is None:
-        return None, ("SL-free profit-lock deferred until current M5 ATR or spread noise can be measured",)
-    if profit_pips < noise_pips:
+    spread_pips = _spread_pips(position.pair, quote)
+    if spread_pips is None:
+        return None, ("SL-free profit-lock deferred until current spread can be measured",)
+    be_floor = spread_pips * PROFIT_BREAK_EVEN_SPREAD_MULT
+    if profit_pips < be_floor:
         return (
             None,
             (
-                f"SL-free profit-lock deferred: executable profit {profit_pips:.1f}pip < "
+                f"SL-free break-even deferred: executable profit {profit_pips:.1f}pip < "
+                f"spread floor {be_floor:.1f}pip",
+            ),
+        )
+    noise_pips, noise_basis = _profit_break_even_noise_pips(position.pair, quote, pair_charts)
+    if noise_pips is None:
+        return (
+            break_even,
+            (
+                f"SL-free break-even trigger: executable profit {profit_pips:.1f}pip >= "
+                f"spread floor {be_floor:.1f}pip; M5 ATR unavailable for positive-lock",
+            ),
+        )
+    if profit_pips < noise_pips:
+        return (
+            break_even,
+            (
+                f"SL-free break-even trigger: executable profit {profit_pips:.1f}pip >= "
+                f"spread floor {be_floor:.1f}pip; positive-lock deferred below "
                 f"micro-noise {noise_pips:.1f}pip ({noise_basis})",
             ),
         )

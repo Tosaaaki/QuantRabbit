@@ -182,7 +182,7 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
-    def test_sl_free_break_even_waits_until_executable_profit_clears_micro_noise(self) -> None:
+    def test_sl_free_break_even_waits_until_executable_profit_clears_spread_floor(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         try:
@@ -193,6 +193,46 @@ class PositionManagerTest(unittest.TestCase):
                 snapshot = _snapshot(
                     BrokerPosition(
                         trade_id="short-wait",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=500,
+                        take_profit=1.15946,
+                        stop_loss=None,
+                    ),
+                    bid=1.16066,
+                    ask=1.16074,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                self.assertIn("spread floor", (root / "pm.md").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_sl_free_profitable_short_gets_break_even_inside_atr_after_spread_clears(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                pair_charts = _pair_charts(root, atr_pips=5.0)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-be",
                         pair="EUR_USD",
                         side=Side.SHORT,
                         units=22000,
@@ -212,10 +252,12 @@ class PositionManagerTest(unittest.TestCase):
                     report_path=root / "pm.md",
                 ).run(snapshot)
 
-                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
-                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
-                self.assertIsNone(result.positions[0].recommended_stop_loss)
-                self.assertIn("SL-free profit-lock deferred", (root / "pm.md").read_text())
+                self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.16077)
+                report = (root / "pm.md").read_text()
+                self.assertIn("SL-free break-even trigger", report)
+                self.assertIn("positive-lock deferred", report)
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
