@@ -2217,6 +2217,67 @@ class MinLotFloorIntentTest(unittest.TestCase):
         self.assertEqual(metadata["hedge_recovery_units"], 22_000)
         self.assertEqual(metadata["hedge_recovery_unrealized_pl_jpy"], -1500.0)
 
+    def test_position_intent_metadata_caps_recovery_hedge_to_uncovered_opposite_units(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _position_intent_metadata
+
+        trader_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=22_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1500.0,
+            owner=Owner.TRADER,
+        )
+        existing_short = BrokerPosition(
+            trade_id="102",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=5_000,
+            entry_price=1.17000,
+            unrealized_pl_jpy=400.0,
+            owner=Owner.TRADER,
+        )
+
+        metadata = _position_intent_metadata("EUR_USD", Side.SHORT, self._stub_snapshot(positions=(trader_long, existing_short)))
+
+        self.assertEqual(metadata["position_intent"], "HEDGE")
+        self.assertTrue(metadata["hedge_recovery"])
+        self.assertEqual(metadata["hedge_gross_opposing_units"], 22_000)
+        self.assertEqual(metadata["hedge_existing_same_side_units"], 5_000)
+        self.assertEqual(metadata["hedge_recovery_units"], 17_000)
+
+    def test_position_intent_metadata_suppresses_covered_recovery_hedge(self) -> None:
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _position_intent_metadata
+
+        trader_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=22_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1500.0,
+            owner=Owner.TRADER,
+        )
+        existing_short = BrokerPosition(
+            trade_id="102",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=22_000,
+            entry_price=1.17000,
+            unrealized_pl_jpy=900.0,
+            owner=Owner.TRADER,
+        )
+
+        metadata = _position_intent_metadata("EUR_USD", Side.SHORT, self._stub_snapshot(positions=(trader_long, existing_short)))
+
+        self.assertEqual(metadata["position_intent"], "PYRAMID")
+        self.assertEqual(metadata["hedge_reference_units"], 0)
+        self.assertEqual(metadata["hedge_existing_same_side_units"], 22_000)
+        self.assertEqual(metadata["hedge_suppressed_reason"], "opposite_exposure_already_covered")
+
     def test_risk_budgeted_units_returns_1000_when_just_at_floor(self) -> None:
         # max_loss_jpy ~315 JPY → loss_budget ≈ 1003 units → rounds to 1000.
         from quant_rabbit.strategy.intent_generator import _risk_budgeted_units

@@ -464,6 +464,7 @@ class RiskEngine:
         if not intent.thesis.strip():
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
         issues.extend(_hedge_metadata_issues(intent))
+        issues.extend(_hedge_balance_issues(intent, snapshot))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
@@ -1176,6 +1177,34 @@ def _hedge_metadata_issues(intent: OrderIntent) -> list[RiskIssue]:
                 )
             )
     return issues
+
+
+def _hedge_balance_issues(intent: OrderIntent, snapshot: BrokerSnapshot) -> list[RiskIssue]:
+    if not _intent_declares_hedge(intent):
+        return []
+    margin_free_units = hedge_margin_free_units(
+        pair=intent.pair,
+        side=intent.side,
+        snapshot=snapshot,
+        position_intent="HEDGE",
+    )
+    if margin_free_units <= 0:
+        return [
+            RiskIssue(
+                "HEDGE_REFERENCE_ALREADY_COVERED",
+                f"{intent.pair} {intent.side.value} HEDGE has no uncovered opposite-side units; "
+                "additional units would become a net directional add, not a hedge",
+            )
+        ]
+    if abs(int(intent.units)) > margin_free_units:
+        return [
+            RiskIssue(
+                "HEDGE_UNITS_EXCEED_OPPOSITE_EXPOSURE",
+                f"{intent.pair} {intent.side.value} HEDGE requests {abs(int(intent.units))}u but "
+                f"only {margin_free_units}u can be added before the opposite exposure is fully covered",
+            )
+        ]
+    return []
 
 
 def _is_operator_managed_manual(position: BrokerPosition) -> bool:

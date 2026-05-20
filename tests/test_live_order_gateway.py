@@ -530,6 +530,32 @@ class LiveOrderGatewayTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             client = FakeExecutionClient()
+            now = client.snapshot_value.fetched_at_utc
+            client.snapshot_value = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="101",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22_000,
+                        entry_price=1.17000,
+                        take_profit=1.16400,
+                        stop_loss=1.17300,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=(),
+                quotes=client.snapshot_value.quotes,
+                account=AccountSummary(
+                    nav_jpy=200_000.0,
+                    balance_jpy=200_000.0,
+                    margin_used_jpy=50_000.0,
+                    margin_available_jpy=150_000.0,
+                    hedging_enabled=True,
+                    fetched_at_utc=now,
+                ),
+            )
             summary = LiveOrderGateway(
                 client=client,
                 strategy_profile=_profile(root),

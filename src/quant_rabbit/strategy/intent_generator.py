@@ -3229,13 +3229,30 @@ def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -
     if not same_pair:
         return {}
     if any(position.side != side for position in same_pair):
+        all_same_pair = [position for position in snapshot.positions if position.pair == pair]
+        same_side_positions = [position for position in all_same_pair if position.side == side]
         metadata: dict[str, Any] = {"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"}
-        opposing_positions = [position for position in snapshot.positions if position.pair == pair and position.side != side]
-        reference_units = sum(abs(int(position.units)) for position in opposing_positions)
+        opposing_positions = [position for position in all_same_pair if position.side != side]
+        gross_reference_units = sum(abs(int(position.units)) for position in opposing_positions)
+        same_side_units = sum(abs(int(position.units)) for position in same_side_positions)
+        reference_units = max(0, gross_reference_units - same_side_units)
         existing_pl = sum(float(position.unrealized_pl_jpy or 0.0) for position in opposing_positions)
+        if reference_units <= 0:
+            return {
+                "position_intent": "PYRAMID",
+                "position_fill": "OPEN_ONLY",
+                "hedge_reference_units": 0,
+                "hedge_gross_opposing_units": gross_reference_units,
+                "hedge_existing_same_side_units": same_side_units,
+                "hedge_covered_reference_units": gross_reference_units,
+                "hedge_suppressed_reason": "opposite_exposure_already_covered",
+            }
         metadata.update(
             {
                 "hedge_reference_units": reference_units,
+                "hedge_gross_opposing_units": gross_reference_units,
+                "hedge_existing_same_side_units": same_side_units,
+                "hedge_covered_reference_units": min(gross_reference_units, same_side_units),
                 "hedge_existing_unrealized_pl_jpy": round(existing_pl, 4),
             }
         )
