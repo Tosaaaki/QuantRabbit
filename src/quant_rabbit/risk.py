@@ -83,6 +83,23 @@ OANDA_JP_RETAIL_FX_MARGIN_RATE = 0.04
 # this floor — do not bypass it in the moment.
 MIN_PRODUCTION_LOT_UNITS = 1000
 
+# Hedge timing metadata is an execution contract, not prompt-only prose.
+#
+# What this represents: every same-pair HEDGE intent must declare why the
+# opposite-side leg exists and when it gets reviewed/unwound, otherwise a
+# replayed or hand-written receipt can bypass the time-boxing discipline and
+# become passive loss-freezing.
+#
+# Why it is constant rather than derived: these are receipt contract labels.
+# The market-derived part is the generator's choice of class and size.
+# Replace only when docs/AGENT_CONTRACT.md changes the class taxonomy.
+HEDGE_TIMING_CLASSES = {"LOCK_GAIN", "REVERSAL", "CONTINUATION", "OPPOSITE_EXPOSURE"}
+
+# Mirrors intent_generator.RECOVERY_HEDGE_CONTINUATION_MAX_SCALE. Duplicated
+# here intentionally so RiskEngine can defend manual stage-live-order and
+# replayed receipts without importing strategy code.
+HEDGE_CONTINUATION_MAX_SCALE = 0.35
+
 
 def _min_lot_test_override_active() -> bool:
     """Whether the production minimum-lot gate is disabled for the current
@@ -446,6 +463,7 @@ class RiskEngine:
             )
         if not intent.thesis.strip():
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
+        issues.extend(_hedge_metadata_issues(intent))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
@@ -1114,6 +1132,50 @@ def _intent_declares_hedge(intent: OrderIntent) -> bool:
 
 def _intent_declares_recovery_hedge(intent: OrderIntent) -> bool:
     return _intent_declares_hedge(intent) and bool((intent.metadata or {}).get("hedge_recovery"))
+
+
+def _hedge_metadata_issues(intent: OrderIntent) -> list[RiskIssue]:
+    if not _intent_declares_hedge(intent):
+        return []
+    metadata = intent.metadata or {}
+    issues: list[RiskIssue] = []
+    timing_class = str(metadata.get("hedge_timing_class") or "").upper()
+    if timing_class not in HEDGE_TIMING_CLASSES:
+        issues.append(
+            RiskIssue(
+                "HEDGE_TIMING_METADATA_MISSING",
+                "HEDGE intents must carry metadata.hedge_timing_class "
+                f"in {sorted(HEDGE_TIMING_CLASSES)}",
+            )
+        )
+    if metadata.get("hedge_unwind_plan_required") is not True:
+        issues.append(
+            RiskIssue(
+                "HEDGE_UNWIND_PLAN_MISSING",
+                "HEDGE intents must set metadata.hedge_unwind_plan_required=true",
+            )
+        )
+    if not str(metadata.get("hedge_review_trigger") or "").strip():
+        issues.append(
+            RiskIssue(
+                "HEDGE_REVIEW_TRIGGER_MISSING",
+                "HEDGE intents must carry metadata.hedge_review_trigger so the leg is time-boxed",
+            )
+        )
+    if _intent_declares_recovery_hedge(intent) and timing_class == "CONTINUATION":
+        try:
+            scale = float(metadata.get("hedge_recovery_size_scale"))
+        except (TypeError, ValueError):
+            scale = None
+        if scale is None or scale > HEDGE_CONTINUATION_MAX_SCALE:
+            issues.append(
+                RiskIssue(
+                    "HEDGE_CONTINUATION_SIZE_TOO_LARGE",
+                    "CONTINUATION recovery hedges must publish "
+                    f"hedge_recovery_size_scale <= {HEDGE_CONTINUATION_MAX_SCALE:.2f}",
+                )
+            )
+    return issues
 
 
 def _is_operator_managed_manual(position: BrokerPosition) -> bool:

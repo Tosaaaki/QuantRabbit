@@ -539,7 +539,13 @@ class RiskEngineTest(unittest.TestCase):
                 method=TradeMethod.RANGE_ROTATION,
                 invalidation="SL trades",
             ),
-            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"},
+            metadata={
+                "position_intent": "HEDGE",
+                "position_fill": "OPEN_ONLY",
+                "hedge_timing_class": "OPPOSITE_EXPOSURE",
+                "hedge_unwind_plan_required": True,
+                "hedge_review_trigger": "next_m15_close_or_structure_change",
+            },
         )
 
         from quant_rabbit.risk import RiskPolicy
@@ -553,6 +559,51 @@ class RiskEngineTest(unittest.TestCase):
 
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("OPPOSING_POSITION_NEEDS_HEDGING", {issue.code for issue in decision.issues})
+
+    def test_same_pair_hedge_requires_timing_metadata(self) -> None:
+        protected_short = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1640,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1710,
+            tp=1.1730,
+            sl=1.1702,
+            thesis="intraday_range_hedge_against_swing_short",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION campaign lane",
+                narrative="M5 lower-rail rotation while existing short remains protected on slower thesis",
+                chart_story="box rail reclaim into midpoint",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=500.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_short,), hedging_enabled=True))
+
+        issue_codes = {issue.code for issue in decision.issues}
+        self.assertFalse(decision.allowed)
+        self.assertIn("HEDGE_TIMING_METADATA_MISSING", issue_codes)
+        self.assertIn("HEDGE_UNWIND_PLAN_MISSING", issue_codes)
+        self.assertIn("HEDGE_REVIEW_TRIGGER_MISSING", issue_codes)
 
     def test_same_pair_hedge_uses_longest_leg_margin_when_account_is_over_policy_cap(self) -> None:
         protected_long = BrokerPosition(
@@ -581,7 +632,13 @@ class RiskEngineTest(unittest.TestCase):
                 method=TradeMethod.BREAKOUT_FAILURE,
                 invalidation="SL trades",
             ),
-            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"},
+            metadata={
+                "position_intent": "HEDGE",
+                "position_fill": "OPEN_ONLY",
+                "hedge_timing_class": "OPPOSITE_EXPOSURE",
+                "hedge_unwind_plan_required": True,
+                "hedge_review_trigger": "next_m15_close_or_structure_change",
+            },
         )
 
         from quant_rabbit.risk import RiskPolicy
@@ -641,7 +698,14 @@ class RiskEngineTest(unittest.TestCase):
                 method=TradeMethod.BREAKOUT_FAILURE,
                 invalidation="SL trades",
             ),
-            metadata={"position_intent": "HEDGE", "position_fill": "OPEN_ONLY", "hedge_recovery": True},
+            metadata={
+                "position_intent": "HEDGE",
+                "position_fill": "OPEN_ONLY",
+                "hedge_recovery": True,
+                "hedge_timing_class": "REVERSAL",
+                "hedge_unwind_plan_required": True,
+                "hedge_review_trigger": "h1_close_or_reversal_structure_failure",
+            },
         )
 
         from quant_rabbit.risk import RiskPolicy
@@ -661,6 +725,59 @@ class RiskEngineTest(unittest.TestCase):
         self.assertGreaterEqual(decision.metrics.reward_risk, 0.6)
         self.assertLess(decision.metrics.reward_risk, 1.2)
         self.assertNotIn("REWARD_RISK_TOO_LOW", {issue.code for issue in decision.issues})
+
+    def test_continuation_recovery_hedge_requires_capped_scale(self) -> None:
+        protected_long = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=22_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1500.0,
+            take_profit=1.17100,
+            stop_loss=1.16600,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.17220,
+            tp=1.17140,
+            sl=1.17320,
+            thesis="oversized continuation hedge",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE recovery hedge",
+                narrative="short hedge against trapped long exposure",
+                chart_story="failed reclaim and rejection below trigger",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "HEDGE",
+                "position_fill": "OPEN_ONLY",
+                "hedge_recovery": True,
+                "hedge_timing_class": "CONTINUATION",
+                "hedge_unwind_plan_required": True,
+                "hedge_review_trigger": "next_m15_close_or_failed_break_trigger",
+                "hedge_recovery_size_scale": 0.50,
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_loss_jpy=5_000.0,
+                max_portfolio_loss_jpy=50_000.0,
+                max_margin_utilization_pct=92.0,
+            )
+        ).validate(intent, snapshot(positions=(protected_long,), hedging_enabled=True))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("HEDGE_CONTINUATION_SIZE_TOO_LARGE", {issue.code for issue in decision.issues})
 
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(

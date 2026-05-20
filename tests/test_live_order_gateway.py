@@ -485,6 +485,9 @@ class LiveOrderGatewayTest(unittest.TestCase):
                     "campaign_role": "NOW",
                     "position_intent": "HEDGE",
                     "position_fill": "OPEN_ONLY",
+                    "hedge_timing_class": "OPPOSITE_EXPOSURE",
+                    "hedge_unwind_plan_required": True,
+                    "hedge_review_trigger": "next_m15_close_or_structure_change",
                 },
             )
             payload = json.loads(intents.read_text())
@@ -539,6 +542,9 @@ class LiveOrderGatewayTest(unittest.TestCase):
                         "desk": "range_trader",
                         "campaign_role": "BACKUP_OR_RELOAD",
                         "position_intent": "HEDGE",
+                        "hedge_timing_class": "OPPOSITE_EXPOSURE",
+                        "hedge_unwind_plan_required": True,
+                        "hedge_review_trigger": "next_m15_close_or_structure_change",
                     },
                 )
             )
