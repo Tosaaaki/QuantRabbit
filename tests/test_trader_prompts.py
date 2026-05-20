@@ -106,6 +106,98 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
 
+    def test_sl_free_profitable_position_with_tp_rebalance_routes_to_position_management(self) -> None:
+        """A WAIT-eligible SL-free position still routes to protection when
+        the deterministic TP rebalancer has a live adjustment."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471292",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": -22000,
+                        "entry_price": 1.16077,
+                        "take_profit": 1.15640,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": 3000.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["EUR_USD"] = {
+                "bid": 1.15937,
+                "ask": 1.15947,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["pair_charts"].write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "confluence": {
+                                    "h4_atr_pips": 19.2,
+                                    "price_percentile_7d": 0.0,
+                                    "tf_agreement_score": 0.33,
+                                    "range_24h_sigma_multiple": 6.7,
+                                },
+                                "views": [
+                                    {
+                                        "granularity": "M15",
+                                        "indicators": {
+                                            "atr_pips": 19.2,
+                                            "stoch_rsi": 0.13,
+                                            "williams_r_14": -85.0,
+                                            "close": 1.15970,
+                                            "bb_lower": 1.15972,
+                                        },
+                                        "structure": {
+                                            "liquidity": [
+                                                {
+                                                    "side": "EQ_LOW",
+                                                    "price": 1.15875,
+                                                    "indices": [1, 2, 3, 4],
+                                                }
+                                            ]
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "UNCLEAR",
+                        "confidence": 0.24,
+                        "horizon_min": 0,
+                    }
+                )
+                + "\n"
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("TP rebalance required" in reason for reason in route.reasons))
+        self.assertTrue(any("forecast_harvest" in reason for reason in route.reasons))
+
     def test_sl_free_trader_no_broker_tp_runner_does_not_force_position_branch(self) -> None:
         # Missing broker TP is preserved as a no-broker-TP runner under the
         # SL-free runtime unless explicit TP repair is enabled. It must not

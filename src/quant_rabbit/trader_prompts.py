@@ -83,6 +83,19 @@ class PromptRoute:
         }
 
 
+@dataclass(frozen=True)
+class _TPProbePosition:
+    trade_id: str
+    pair: str
+    side: str
+    units: int
+    entry_price: float
+    take_profit: float | None
+    stop_loss: float | None
+    unrealized_pl_jpy: float
+    owner: str
+
+
 PROMPT_FILES: dict[str, Path] = {
     "contract": ROOT / "docs" / "AGENT_CONTRACT.md",
     "entry": ROOT / "docs" / "SKILL_trader.md",
@@ -151,10 +164,20 @@ def route_trader_prompts(
     snapshot = _load_json(snapshot_path)
     target_state = _load_json(target_state_path)
     intents = _load_json(intents_path)
+    pair_charts = _load_json(pair_charts_path)
 
     position_reasons = _position_management_reasons(snapshot)
-    if position_reasons:
-        return _build_route(BRANCH_POSITION, position_reasons, include_content=include_content)
+    tp_rebalance_reasons = _tp_rebalance_reasons(
+        snapshot,
+        pair_charts,
+        snapshot_path=snapshot_path,
+    )
+    if position_reasons or tp_rebalance_reasons:
+        return _build_route(
+            BRANCH_POSITION,
+            (*position_reasons, *tp_rebalance_reasons),
+            include_content=include_content,
+        )
 
     decision_state = _decision_receipt_state(
         decision_response_path=decision_response_path,
@@ -369,6 +392,111 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
                 f"{position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
             )
     return tuple(reasons)
+
+
+def _tp_rebalance_reasons(
+    snapshot: dict[str, Any],
+    pair_charts_payload: dict[str, Any],
+    *,
+    snapshot_path: Path,
+) -> tuple[str, ...]:
+    """Return position-management reasons for executable TP adjustments.
+
+    The router only probes in dry-run memory: it never writes broker state.
+    This keeps prompt routing deterministic while forcing cycles with stale
+    profitable TP geometry back into the protection branch instead of letting
+    an accepted WAIT stop the sidecar work.
+    """
+    positions = tuple(_tp_probe_positions(snapshot))
+    if not positions:
+        return ()
+
+    pair_charts_keyed = _pair_charts_by_pair(pair_charts_payload)
+    if not pair_charts_keyed:
+        return ()
+
+    quotes_keyed = _quotes_by_pair(snapshot)
+    if not quotes_keyed:
+        return ()
+
+    from quant_rabbit.strategy.entry_thesis_ledger import load_latest_forecast
+    from quant_rabbit.strategy.intent_generator import _market_derived_reward_risk
+    from quant_rabbit.strategy.tp_rebalancer import compute_all_tp_adjustments
+
+    data_root = snapshot_path.parent
+    latest_forecasts_by_pair: dict[str, dict[str, Any]] = {}
+    for pair in sorted({position.pair for position in positions if position.pair}):
+        latest = load_latest_forecast(pair, data_root)
+        if isinstance(latest, dict):
+            latest_forecasts_by_pair[pair] = latest
+
+    adjustments = compute_all_tp_adjustments(
+        positions=positions,
+        quotes=quotes_keyed,
+        pair_charts=pair_charts_keyed,
+        market_reward_risk_fn=_market_derived_reward_risk,
+        latest_forecasts_by_pair=latest_forecasts_by_pair,
+    )
+    reasons: list[str] = []
+    for adjustment in adjustments:
+        reasons.append(
+            "TP rebalance required before WAIT/entry routing: "
+            f"{adjustment.pair} {adjustment.side} id={adjustment.trade_id} "
+            f"{adjustment.current_tp}->{adjustment.new_tp}; {adjustment.rationale}"
+        )
+    return tuple(reasons)
+
+
+def _tp_probe_positions(snapshot: dict[str, Any]) -> tuple[_TPProbePosition, ...]:
+    positions: list[_TPProbePosition] = []
+    for raw in snapshot.get("positions", []) or []:
+        if not isinstance(raw, dict):
+            continue
+        trade_id = str(raw.get("trade_id") or "")
+        pair = str(raw.get("pair") or "")
+        side = str(raw.get("side") or "").upper()
+        entry_price = _optional_float(raw.get("entry_price"))
+        if not trade_id or not pair or side not in {"LONG", "SHORT"} or entry_price is None:
+            continue
+        try:
+            units = int(raw.get("units") or 0)
+        except (TypeError, ValueError):
+            units = 0
+        positions.append(
+            _TPProbePosition(
+                trade_id=trade_id,
+                pair=pair,
+                side=side,
+                units=units,
+                entry_price=entry_price,
+                take_profit=_optional_float(raw.get("take_profit")),
+                stop_loss=_optional_float(raw.get("stop_loss")),
+                unrealized_pl_jpy=_optional_float(raw.get("unrealized_pl_jpy")) or 0.0,
+                owner=str(raw.get("owner") or ""),
+            )
+        )
+    return tuple(positions)
+
+
+def _pair_charts_by_pair(payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    keyed: dict[str, dict[str, Any]] = {}
+    charts = payload.get("charts") if isinstance(payload, dict) else None
+    for chart in charts or []:
+        if not isinstance(chart, dict):
+            continue
+        pair = str(chart.get("pair") or "")
+        if pair:
+            keyed[pair] = chart
+    return keyed
+
+
+def _quotes_by_pair(snapshot: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    keyed: dict[str, dict[str, Any]] = {}
+    quotes = snapshot.get("quotes") if isinstance(snapshot, dict) else None
+    for pair, quote in (quotes or {}).items():
+        if isinstance(quote, dict):
+            keyed[str(pair)] = quote
+    return keyed
 
 
 def _live_ready_lane_ids(intents: dict[str, Any]) -> tuple[str, ...]:

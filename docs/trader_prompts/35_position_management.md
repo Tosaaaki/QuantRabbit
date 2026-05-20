@@ -32,6 +32,9 @@
   partial closes, and market CLOSE are forbidden.
 - Existing SL must not be widened.
 - Existing TP may be moved only by TP-management actions with current-price safety.
+- When the router reason says `TP rebalance required`, run the `tp-rebalance`
+  sidecar before treating WAIT as complete. Do not replace this with prose:
+  the command is the executable TP decision for that branch.
 - Profitable protected positions may tighten SL to break-even or better — **disabled
   under SL-free**: do NOT auto-tighten on profit, the operator harvests via TP only.
 - Contradicted trader-owned positions may close, **but only on market-structure
@@ -116,6 +119,10 @@ the noise loss AND forfeits the TP that's still reachable.
 ## Commands
 
 ```bash
+PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance \
+  --snapshot data/broker_snapshot.json \
+  --pair-charts data/pair_charts.json
+
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json

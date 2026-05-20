@@ -17,6 +17,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 |---|---|
 | Required broker / market / intent artifact is missing | `refresh_market_context` |
 | Trader-owned position is missing TP or SL | `position_management` |
+| Existing open position has a deterministic `tp-rebalance` adjustment | `position_management` |
 | Current unconsumed decision receipt exists and still matches current broker / intent artifacts | `verify_execute` |
 | Daily target is open and current `LIVE_READY` lanes exist | `entry_decision` |
 | Daily target is open but no `LIVE_READY` lane exists | `learning_gap` |
@@ -42,6 +43,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 - Refresh branch may write latest reports and runtime artifacts.
 - Decision branches write exactly one receipt: `data/codex_trader_decision_response.json`.
 - Verify branch runs `gpt-trader-decision` and then at most one gateway cycle.
+- A non-executable accepted WAIT is not final while `trader-prompt-route` reports
+  `TP rebalance required`; return to `position_management` and run the TP sidecar.
 - Rejected, non-executable, already-consumed, or broker-stale receipts are not stop conditions. Route back to the active decision branch and write one current receipt from refreshed broker truth.
 - Learning branch is read-only unless it writes learning / gap artifacts through the CLI.
 - No branch may stage or send an order directly.
