@@ -194,6 +194,12 @@ DYNAMIC_RR_SESSION_THIN_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_SESSION_TH
 DYNAMIC_RR_FLOOR = float(os.environ.get("QR_DYNAMIC_RR_FLOOR", "1.5"))
 DYNAMIC_RR_CEILING = float(os.environ.get("QR_DYNAMIC_RR_CEILING", "5.0"))
 
+# Recovery hedges are exposure management, not permission to auto-flatten the
+# whole trapped leg. Use current directional conviction to choose a tranche size;
+# full same-pair margin-free capacity remains a cap, not the default target.
+RECOVERY_HEDGE_MIN_CONVICTION_SCALE = 0.25
+RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE = 0.50
+
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
     """Compute reward_risk from current market state.
@@ -2259,6 +2265,11 @@ def _intent_from_lane(
         atr_pips=atr_pips,
     )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
+    recovery_target_units: int | None = None
+    if _is_hedge_recovery_metadata(position_metadata):
+        recovery_metadata = _recovery_hedge_sizing_metadata(side, position_metadata, chart_context, lane)
+        position_metadata.update(recovery_metadata)
+        recovery_target_units = int(position_metadata.get("hedge_recovery_units") or 0) or None
     geometry_metadata = _geometry_metadata(
         pair,
         side,
@@ -2282,6 +2293,7 @@ def _intent_from_lane(
         snapshot=snapshot,
         side=side,
         position_intent=position_intent,
+        target_units_override=recovery_target_units,
     )
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot, side=side, position_intent=position_intent)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
@@ -3147,6 +3159,80 @@ def _is_hedge_recovery_metadata(metadata: dict[str, Any]) -> bool:
     )
 
 
+def _recovery_hedge_sizing_metadata(
+    side: Side,
+    position_metadata: dict[str, Any],
+    chart_context: dict[str, Any] | None,
+    lane: dict[str, Any],
+) -> dict[str, Any]:
+    reference_units = int(position_metadata.get("hedge_recovery_units") or 0)
+    if reference_units <= 0:
+        return {
+            "hedge_recovery_reference_units": reference_units,
+            "hedge_recovery_size_scale": RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE,
+        }
+    scale = _recovery_hedge_conviction_scale(side, chart_context, lane)
+    scaled_units = int((reference_units * scale) // MIN_PRODUCTION_LOT_UNITS) * MIN_PRODUCTION_LOT_UNITS
+    if scaled_units <= 0 and reference_units >= MIN_PRODUCTION_LOT_UNITS:
+        scaled_units = MIN_PRODUCTION_LOT_UNITS
+    return {
+        "hedge_recovery_reference_units": reference_units,
+        "hedge_recovery_size_scale": scale,
+        "hedge_recovery_units": min(reference_units, scaled_units),
+    }
+
+
+def _recovery_hedge_conviction_scale(
+    side: Side,
+    chart_context: dict[str, Any] | None,
+    lane: dict[str, Any],
+) -> float:
+    context = chart_context or {}
+    side_key = "short" if side == Side.SHORT else "long"
+    aligned_score = _bounded_unit(_optional_float(context.get(f"chart_{side_key}_score")))
+    gap_score = _directional_chart_gap(side, context)
+    tf_score = _bounded_unit(_optional_float(context.get("tf_agreement_score")))
+    weighted: list[tuple[float, float]] = []
+    if aligned_score is not None:
+        weighted.append((aligned_score, 0.55))
+    if gap_score is not None:
+        weighted.append((gap_score, 0.30))
+    if tf_score is not None:
+        weighted.append((tf_score, 0.15))
+    conviction = (
+        sum(value * weight for value, weight in weighted) / sum(weight for _, weight in weighted)
+        if weighted
+        else RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE
+    )
+    forecast_confidence = _bounded_unit(_optional_float(lane.get("forecast_confidence")))
+    forecast_direction = str(lane.get("forecast_direction") or "").upper()
+    forecast_side = Side.LONG if forecast_direction == "UP" else Side.SHORT if forecast_direction == "DOWN" else None
+    if forecast_confidence is not None and forecast_side is not None:
+        if forecast_side == side:
+            conviction = (conviction * 0.7) + (forecast_confidence * 0.3)
+        else:
+            conviction *= max(0.35, 1.0 - forecast_confidence)
+    return round(
+        max(RECOVERY_HEDGE_MIN_CONVICTION_SCALE, min(1.0, conviction)),
+        2,
+    )
+
+
+def _directional_chart_gap(side: Side, chart_context: dict[str, Any]) -> float | None:
+    gap = _optional_float(chart_context.get("chart_score_gap"))
+    if gap is None:
+        return None
+    if side == Side.LONG:
+        return _bounded_unit(max(0.0, gap))
+    return _bounded_unit(max(0.0, -gap))
+
+
+def _bounded_unit(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return max(0.0, min(1.0, value))
+
+
 def _geometry_metadata(
     pair: str,
     side: Side,
@@ -3253,6 +3339,7 @@ def _risk_budgeted_units(
     snapshot: BrokerSnapshot,
     side: Side | None = None,
     position_intent: str | None = None,
+    target_units_override: int | None = None,
 ) -> int:
     pip_factor = PIP_FACTORS[pair]
     stop_pips = abs(entry - sl) * pip_factor
@@ -3282,7 +3369,9 @@ def _risk_budgeted_units(
     # exposure without becoming a new speculative position size.
     sl_free_active = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
     if sl_free_active:
-        if margin_free_hedge_units >= MIN_PRODUCTION_LOT_UNITS:
+        if target_units_override is not None and target_units_override > 0:
+            target_units = float(target_units_override)
+        elif margin_free_hedge_units >= MIN_PRODUCTION_LOT_UNITS:
             target_units = float(margin_free_hedge_units)
         else:
             nav_pct_units = _nav_pct_position_units(pair, entry, snapshot)

@@ -1109,6 +1109,52 @@ class IntentGeneratorTest(unittest.TestCase):
                 self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
                 self.assertNotIn("MARGIN_AVAILABLE_EXCEEDED", issue_codes)
 
+    def test_recovery_hedge_uses_conviction_scaled_tranche_under_sl_free(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+
+                IntentGenerator(
+                    campaign_plan=_campaign(root, direction="SHORT"),
+                    strategy_profile=_strategy(root, status="MINE_MISSED_EDGE", direction="SHORT"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.25,
+                        short_score=0.75,
+                        dominant_regime="TREND_DOWN",
+                        m5_regime="TREND_DOWN",
+                    ),
+                    max_loss_jpy=2_000.0,
+                ).run(snapshot_path=_snapshot_with_underwater_long(root))
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        result = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+        )
+        intent = result["intent"]
+        metadata = intent["metadata"]
+
+        self.assertEqual(metadata["position_intent"], "HEDGE")
+        self.assertTrue(metadata["hedge_recovery"])
+        self.assertEqual(metadata["hedge_recovery_reference_units"], 22_000)
+        self.assertLess(intent["units"], 22_000)
+        self.assertEqual(intent["units"], metadata["hedge_recovery_units"])
+        self.assertGreaterEqual(intent["units"], 1_000)
+        self.assertLess(metadata["hedge_recovery_size_scale"], 1.0)
+
 
 def _campaign(root: Path, *, target_reward_risk: float | None = None, direction: str = "LONG") -> Path:
     path = root / "campaign.json"
@@ -1623,6 +1669,47 @@ def _snapshot_with_position(root: Path) -> Path:
                     "margin_available_jpy": 200_000.0,
                     "fetched_at_utc": now,
                 },
+            }
+        )
+    )
+    return path
+
+
+def _snapshot_with_underwater_long(root: Path) -> Path:
+    path = root / "snapshot.json"
+    now = datetime.now(timezone.utc).isoformat()
+    path.write_text(
+        json.dumps(
+            {
+                "fetched_at_utc": now,
+                "positions": [
+                    {
+                        "trade_id": "101",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 22_000,
+                        "entry_price": 1.16688,
+                        "unrealized_pl_jpy": -23_000.0,
+                        "take_profit": None,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {"bid": 1.16042, "ask": 1.16050, "timestamp_utc": now},
+                    "USD_JPY": {"bid": 156.64, "ask": 156.648, "timestamp_utc": now},
+                },
+                "account": {
+                    "nav_jpy": 170_000.0,
+                    "balance_jpy": 192_000.0,
+                    "margin_used_jpy": 162_000.0,
+                    "margin_available_jpy": 7_000.0,
+                    "unrealized_pl_jpy": -23_000.0,
+                    "hedging_enabled": True,
+                    "fetched_at_utc": now,
+                },
+                "home_conversions": {"USD": 156.64, "JPY": 1.0},
             }
         )
     )
