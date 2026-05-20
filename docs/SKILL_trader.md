@@ -171,29 +171,28 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 
-# 5. Run one gateway cycle immediately after an ACCEPTED TRADE.
+# 5. Run one gateway cycle immediately after every ACCEPTED receipt.
 # Do not insert refresh, analysis, TP rebalance, projection, or thesis
 # sidecar commands between verifier acceptance and this gateway handoff:
 # the decision receipt is tied to the current broker snapshot + order intents,
 # and extra work in between can make a tradeable receipt stale.
 # The gateway cycle syncs data/execution_ledger.db before and after broker work
 # and records live_order / position_execution receipts.
+# This is mandatory even when the accepted action is WAIT /
+# REQUEST_EVIDENCE / PROTECT: `autotrade-cycle` hands open positions to
+# PositionManager and PositionProtectionGateway before considering fresh
+# entry risk. Skipping the wrapper on WAIT leaves profitable hedge TPs,
+# profit-lock stops, and other dependent-order protection stale.
 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
   --use-gpt-trader \
   --gpt-decision-response data/codex_trader_decision_response.json \
   --send
 
-# If the accepted receipt is WAIT with no gateway action, skip step 5 and
-# continue to the protection sidecars below. WAIT is not permission to skip
-# TP/profit management on already-open positions.
-
 # 6. Protection sidecars. Run after the single gateway cycle above has either
-# sent, blocked, or recorded no action; if no gateway cycle was required
-# because the accepted receipt was WAIT, run them immediately after verifier
-# acceptance. These commands must not delay the handoff from an ACCEPTED TRADE
-# receipt to LiveOrderGateway, but they are part of every completed cycle with
-# open positions.
+# sent, blocked, or recorded no action. These commands must not delay the
+# handoff from verifier acceptance to LiveOrderGateway / PositionProtectionGateway,
+# but they are part of every completed cycle with open positions.
 #
 # 6a. Dynamic TP rebalance: expand/contract TP on open positions as
 # market regime shifts. Trader-owned and manual/tagless positions with
