@@ -98,6 +98,10 @@ not new participation. Classify and justify in `thesis`:
   invalidates the existing side and why catching that move is worth
   blocking the bounce-back recovery.
 
+For any selected hedge, cite `intent.metadata.hedge_timing_class`,
+`hedge_review_trigger`, and the planned unwind condition. A hedge without an
+unwind plan is not a time-efficient trade; it is passive loss-freezing.
+
 - Selected lane id and basket lane ids.
 - Thesis, method, narrative, chart story, invalidation, TP, SL, units, expected reward, worst-case loss.
 - Rejected alternatives.

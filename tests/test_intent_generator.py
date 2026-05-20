@@ -1154,6 +1154,66 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(intent["units"], metadata["hedge_recovery_units"])
         self.assertGreaterEqual(intent["units"], 1_000)
         self.assertLess(metadata["hedge_recovery_size_scale"], 1.0)
+        self.assertEqual(metadata["hedge_timing_class"], "CONTINUATION")
+        self.assertTrue(metadata["hedge_unwind_plan_required"])
+
+    def test_recovery_hedge_reversal_confirmation_allows_larger_time_efficient_tranche(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import (
+            RECOVERY_HEDGE_CONTINUATION_MAX_SCALE,
+            _hedge_timing_metadata,
+            _recovery_hedge_sizing_metadata,
+        )
+
+        metadata = {
+            "position_intent": "HEDGE",
+            "hedge_recovery": True,
+            "hedge_recovery_units": 22_000,
+            "hedge_existing_unrealized_pl_jpy": -23_000.0,
+        }
+        chart_context = {
+            "chart_short_score": 0.75,
+            "chart_long_score": 0.25,
+            "chart_score_gap": -0.50,
+            "tf_agreement_score": 0.80,
+            "chart_story_structural": "M15 BOS_DOWN close_confirmed after failed reclaim",
+        }
+
+        metadata.update(_hedge_timing_metadata(Side.SHORT, metadata, chart_context, {}))
+        sizing = _recovery_hedge_sizing_metadata(Side.SHORT, metadata, chart_context, {})
+
+        self.assertEqual(metadata["hedge_timing_class"], "REVERSAL")
+        self.assertGreater(sizing["hedge_recovery_size_scale"], RECOVERY_HEDGE_CONTINUATION_MAX_SCALE)
+        self.assertGreater(sizing["hedge_recovery_units"], 7_000)
+
+    def test_recovery_hedge_without_reversal_confirmation_caps_continuation_chase(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import (
+            RECOVERY_HEDGE_CONTINUATION_MAX_SCALE,
+            _hedge_timing_metadata,
+            _recovery_hedge_sizing_metadata,
+        )
+
+        metadata = {
+            "position_intent": "HEDGE",
+            "hedge_recovery": True,
+            "hedge_recovery_units": 22_000,
+            "hedge_existing_unrealized_pl_jpy": -23_000.0,
+        }
+        chart_context = {
+            "chart_short_score": 0.52,
+            "chart_long_score": 0.48,
+            "chart_score_gap": -0.04,
+            "tf_agreement_score": 0.34,
+            "chart_story_structural": "M15 range churn without close-confirmed BOS",
+        }
+
+        metadata.update(_hedge_timing_metadata(Side.SHORT, metadata, chart_context, {}))
+        sizing = _recovery_hedge_sizing_metadata(Side.SHORT, metadata, chart_context, {})
+
+        self.assertEqual(metadata["hedge_timing_class"], "CONTINUATION")
+        self.assertLessEqual(sizing["hedge_recovery_size_scale"], RECOVERY_HEDGE_CONTINUATION_MAX_SCALE)
+        self.assertLess(sizing["hedge_recovery_units"], 11_000)
 
 
 def _campaign(root: Path, *, target_reward_risk: float | None = None, direction: str = "LONG") -> Path:

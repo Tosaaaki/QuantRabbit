@@ -199,6 +199,13 @@ DYNAMIC_RR_CEILING = float(os.environ.get("QR_DYNAMIC_RR_CEILING", "5.0"))
 # full same-pair margin-free capacity remains a cap, not the default target.
 RECOVERY_HEDGE_MIN_CONVICTION_SCALE = 0.25
 RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE = 0.50
+# Continuation recovery hedges are the lowest-quality hedge class: the original
+# side is underwater and the hedge is chasing the same adverse move without a
+# machine-readable reversal confirmation. Cap below the neutral 50% tranche so
+# it can monetize urgent momentum without freezing the whole trapped leg at a
+# likely exhaustion point. Replace this execution-policy cap with post-trade
+# expectancy by hedge_timing_class once enough receipts exist.
+RECOVERY_HEDGE_CONTINUATION_MAX_SCALE = 0.35
 
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
@@ -2265,6 +2272,8 @@ def _intent_from_lane(
         atr_pips=atr_pips,
     )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
+    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
+        position_metadata.update(_hedge_timing_metadata(side, position_metadata, chart_context, lane))
     recovery_target_units: int | None = None
     if _is_hedge_recovery_metadata(position_metadata):
         recovery_metadata = _recovery_hedge_sizing_metadata(side, position_metadata, chart_context, lane)
@@ -3135,17 +3144,32 @@ def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -
     if any(position.side != side for position in same_pair):
         metadata: dict[str, Any] = {"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"}
         opposing_positions = [position for position in snapshot.positions if position.pair == pair and position.side != side]
+        reference_units = sum(abs(int(position.units)) for position in opposing_positions)
+        existing_pl = sum(float(position.unrealized_pl_jpy or 0.0) for position in opposing_positions)
+        metadata.update(
+            {
+                "hedge_reference_units": reference_units,
+                "hedge_existing_unrealized_pl_jpy": round(existing_pl, 4),
+            }
+        )
         underwater_positions = [position for position in opposing_positions if position.unrealized_pl_jpy < 0]
         if underwater_positions:
             metadata.update(
                 {
                     "hedge_recovery": True,
                     "hedge_recovery_reason": "opposing_same_pair_underwater",
-                    "hedge_recovery_units": sum(abs(int(position.units)) for position in opposing_positions),
+                    "hedge_recovery_units": reference_units,
                     "hedge_recovery_unrealized_pl_jpy": round(
                         sum(position.unrealized_pl_jpy for position in underwater_positions),
                         4,
                     ),
+                }
+            )
+        elif existing_pl > 0:
+            metadata.update(
+                {
+                    "hedge_lock_gain": True,
+                    "hedge_lock_gain_unrealized_pl_jpy": round(existing_pl, 4),
                 }
             )
         return metadata
@@ -3157,6 +3181,79 @@ def _is_hedge_recovery_metadata(metadata: dict[str, Any]) -> bool:
         str(metadata.get("position_intent") or "").upper() == "HEDGE"
         and bool(metadata.get("hedge_recovery"))
     )
+
+
+def _hedge_timing_metadata(
+    side: Side,
+    position_metadata: dict[str, Any],
+    chart_context: dict[str, Any] | None,
+    lane: dict[str, Any],
+) -> dict[str, Any]:
+    if str(position_metadata.get("position_intent") or "").upper() != "HEDGE":
+        return {}
+    if bool(position_metadata.get("hedge_lock_gain")):
+        return {
+            "hedge_timing_class": "LOCK_GAIN",
+            "hedge_time_efficiency_role": "protect_existing_mfe_while_retesting_next_structure",
+            "hedge_review_trigger": "next_m15_close_or_nearest_structure_hit",
+            "hedge_unwind_plan_required": True,
+        }
+    if _is_hedge_recovery_metadata(position_metadata):
+        if _hedge_reversal_confirmed(side, chart_context, lane):
+            return {
+                "hedge_timing_class": "REVERSAL",
+                "hedge_time_efficiency_role": "monetize_confirmed_reversal_against_trapped_leg",
+                "hedge_review_trigger": "h1_close_or_reversal_structure_failure",
+                "hedge_unwind_plan_required": True,
+            }
+        return {
+            "hedge_timing_class": "CONTINUATION",
+            "hedge_time_efficiency_role": "small_tranche_only_until_reversal_or_exhaustion_confirms",
+            "hedge_review_trigger": "next_m15_close_or_failed_break_trigger",
+            "hedge_unwind_plan_required": True,
+        }
+    return {
+        "hedge_timing_class": "OPPOSITE_EXPOSURE",
+        "hedge_time_efficiency_role": "opposite_same_pair_exposure_requires_explicit_unwind",
+        "hedge_review_trigger": "next_m15_close_or_structure_change",
+        "hedge_unwind_plan_required": True,
+    }
+
+
+def _hedge_reversal_confirmed(
+    side: Side,
+    chart_context: dict[str, Any] | None,
+    lane: dict[str, Any],
+) -> bool:
+    context = chart_context or {}
+    if _structure_story_confirms_side(side, str(context.get("chart_story_structural") or "")):
+        return True
+    tf_agree = _bounded_unit(_optional_float(context.get("tf_agreement_score")))
+    gap_score = _directional_chart_gap(side, context)
+    if tf_agree is not None and gap_score is not None:
+        if tf_agree >= TP_MODE_TF_AGREEMENT_MAJORITY and gap_score >= CHART_DIRECTION_TIED_GAP_BOUNDARY:
+            return True
+    forecast_confidence = _bounded_unit(_optional_float(lane.get("forecast_confidence")))
+    forecast_direction = str(lane.get("forecast_direction") or "").upper()
+    forecast_side = Side.LONG if forecast_direction == "UP" else Side.SHORT if forecast_direction == "DOWN" else None
+    return (
+        forecast_side == side
+        and forecast_confidence is not None
+        and forecast_confidence >= RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE
+    )
+
+
+def _structure_story_confirms_side(side: Side, chart_story: str) -> bool:
+    text = chart_story.upper()
+    tokens = ("BOS_UP", "CHOCH_UP") if side == Side.LONG else ("BOS_DOWN", "CHOCH_DOWN")
+    for token in tokens:
+        start = text.find(token)
+        if start < 0:
+            continue
+        local = text[start : start + 48]
+        if ":WICK" not in local:
+            return True
+    return False
 
 
 def _recovery_hedge_sizing_metadata(
@@ -3172,6 +3269,8 @@ def _recovery_hedge_sizing_metadata(
             "hedge_recovery_size_scale": RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE,
         }
     scale = _recovery_hedge_conviction_scale(side, chart_context, lane)
+    if str(position_metadata.get("hedge_timing_class") or "").upper() == "CONTINUATION":
+        scale = min(scale, RECOVERY_HEDGE_CONTINUATION_MAX_SCALE)
     scaled_units = int((reference_units * scale) // MIN_PRODUCTION_LOT_UNITS) * MIN_PRODUCTION_LOT_UNITS
     if scaled_units <= 0 and reference_units >= MIN_PRODUCTION_LOT_UNITS:
         scaled_units = MIN_PRODUCTION_LOT_UNITS
