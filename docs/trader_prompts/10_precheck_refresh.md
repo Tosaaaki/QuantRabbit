@@ -59,6 +59,9 @@ Context fetches can outlive the quote freshness window. Refresh broker truth aga
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
+PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
@@ -70,6 +73,12 @@ Do not stop after evidence refresh. Re-run the router with the refreshed
 snapshot/intents, read the returned branch, write one current decision receipt,
 then continue to `gpt-trader-decision` and exactly one gateway cycle. A refresh
 that ends at `generate-predictive-limits` is an incomplete cycle.
+
+`tp-rebalance` is part of the refresh/reprice path, not only a TRADE aftercare
+step. Run it even if the later receipt becomes WAIT, because existing broker
+TPs are position protection and stale profitable TPs must not wait for a fresh
+entry to be managed. Refresh broker truth after the TP pass so the decision
+packet and order intents cite the actual dependent-order price.
 
 ## Refresh Strategy Evidence
 

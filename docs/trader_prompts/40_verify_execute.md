@@ -26,6 +26,11 @@ can turn a tradeable cycle into a no-send cycle.
 
 ## Execute One Gateway Cycle
 
+Run the gateway only for an accepted receipt that actually has broker work
+(`TRADE`, verified `CANCEL_PENDING`, or an accepted position-management action).
+If the verifier accepts `WAIT`, do not run a no-op gateway just to create a
+cycle boundary; continue to the protection sidecars in `docs/SKILL_trader.md`.
+
 ```bash
 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
@@ -42,6 +47,9 @@ can turn a tradeable cycle into a no-send cycle.
 - Real send also requires `QR_LIVE_ENABLED=1`, `--send`, and all live gates.
 - Without live gates, the cycle stays dry-run.
 - Do not rerun after a rejected / blocked / no-trade result to force a fill. A later scheduled cycle may refresh broker truth and make a new decision; that is normal continuation, not a workaround send.
+- Dynamic TP rebalance is mandatory after verifier acceptance even when the
+  accepted action is WAIT. For TRADE receipts, run it only after the gateway
+  handoff and after refreshing broker truth so newly filled trades are visible.
 
 ## Report
 

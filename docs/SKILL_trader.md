@@ -116,6 +116,15 @@ PYTHONPATH=src python3 -m quant_rabbit.cli daily-review
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
+# TP rebalance is protection, not an entry decision. Run it once the
+# current broker truth + pair_charts packet is fresh, before intent pricing
+# and before a WAIT receipt can end the cycle. If it writes a dependent TP
+# order, refresh broker truth immediately so generate-intents / GPT evidence
+# sees the new broker order price. This is mandatory even when the final
+# decision becomes WAIT; otherwise profitable existing TPs can sit stale.
+PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
+PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
@@ -174,9 +183,16 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --gpt-decision-response data/codex_trader_decision_response.json \
   --send
 
-# 6. Post-gateway sidecars. Run only after the single gateway cycle above has
-# either sent, blocked, or recorded no action. These commands must not delay the
-# handoff from an ACCEPTED TRADE receipt to LiveOrderGateway.
+# If the accepted receipt is WAIT with no gateway action, skip step 5 and
+# continue to the protection sidecars below. WAIT is not permission to skip
+# TP/profit management on already-open positions.
+
+# 6. Protection sidecars. Run after the single gateway cycle above has either
+# sent, blocked, or recorded no action; if no gateway cycle was required
+# because the accepted receipt was WAIT, run them immediately after verifier
+# acceptance. These commands must not delay the handoff from an ACCEPTED TRADE
+# receipt to LiveOrderGateway, but they are part of every completed cycle with
+# open positions.
 #
 # 6a. Dynamic TP rebalance: expand/contract TP on open positions as
 # market regime shifts. Trader-owned and manual/tagless positions with
@@ -188,7 +204,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # readings say MFE capture is at risk. SL-free positions keep
 # stop_loss=None untouched; only takeProfit orders are written.
 # Hysteresis + entry-side + safety-margin invariants prevent accidental fires.
+# Refresh broker truth first so newly filled gateway trades are visible to the
+# TP pass; refresh again after the TP pass so later sidecars see the updated
+# dependent order state.
+PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
+PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 
 # 6b. Profit partial close: when trader-owned or manual/tagless
 # exposure is already in profit and has crossed the next ATR-derived
