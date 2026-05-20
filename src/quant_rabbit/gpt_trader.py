@@ -479,12 +479,18 @@ class GPTTraderBrain:
                 "model_output_is_advisory_until_verified": True,
                 "strategy_reviews_must_use_lane_id_not_desk_alias": True,
                 "predictive_limits_are_advisory_timing_evidence": True,
+                "tp_rebalance_sidecar_blocks_wait": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
             "ai_attack_advice": _attack_advice_packet(attack_advice),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
+            "protection_sidecars": _protection_sidecars_packet(
+                snapshot=snapshot,
+                snapshot_path=snapshot_path,
+                pair_charts_path=self.pair_charts_path,
+            ),
             "market_context": _market_context_packet(
                 pairs=pairs,
                 currencies=currencies,
@@ -538,6 +544,7 @@ class GPTTraderBrain:
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
+                "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` hit on broker truth) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -707,6 +714,15 @@ class DecisionVerifier:
         elif decision.action in {"WAIT", "REQUEST_EVIDENCE"}:
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("WAIT_SELECTED_LANE", f"{decision.action} must not select a lane"))
+            tp_rebalance_reasons = _tp_rebalance_sidecar_reasons(self.packet)
+            if tp_rebalance_reasons:
+                issues.append(
+                    VerificationIssue(
+                        "TP_REBALANCE_REQUIRED",
+                        "WAIT / REQUEST_EVIDENCE cannot complete while deterministic tp-rebalance has "
+                        f"executable adjustment(s): {tp_rebalance_reasons[0]}",
+                    )
+                )
             if _target_requires_entry(self.packet) and not exposure_blockers and attack_lane_ids:
                 issues.append(
                     VerificationIssue(
@@ -1302,6 +1318,36 @@ def _target_packet(target: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _protection_sidecars_packet(
+    *,
+    snapshot: dict[str, Any],
+    snapshot_path: Path,
+    pair_charts_path: Path,
+) -> dict[str, Any]:
+    if not pair_charts_path.exists():
+        return {
+            "tp_rebalance": {
+                "required": False,
+                "reasons": [],
+                "issue": f"missing pair_charts: {pair_charts_path}",
+            }
+        }
+    pair_charts = _load_json(pair_charts_path)
+    from quant_rabbit.trader_prompts import _tp_rebalance_reasons
+
+    reasons = _tp_rebalance_reasons(
+        snapshot,
+        pair_charts,
+        snapshot_path=snapshot_path,
+    )
+    return {
+        "tp_rebalance": {
+            "required": bool(reasons),
+            "reasons": list(reasons),
+        }
+    }
+
+
 def _allowed_refs(
     *,
     snapshot: dict[str, Any],
@@ -1522,6 +1568,20 @@ def _target_requires_entry(packet: dict[str, Any]) -> bool:
         return float(remaining or 0.0) > 0.0 and target.get("status") != "TARGET_REACHED_PROTECT"
     except (TypeError, ValueError):
         return False
+
+
+def _tp_rebalance_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return []
+    tp_rebalance = sidecars.get("tp_rebalance")
+    if not isinstance(tp_rebalance, dict) or not tp_rebalance.get("required"):
+        return []
+    return [
+        str(reason)
+        for reason in (tp_rebalance.get("reasons") or [])
+        if str(reason).strip()
+    ]
 
 
 def _tradeable_live_ready_lanes(packet: dict[str, Any]) -> list[str]:

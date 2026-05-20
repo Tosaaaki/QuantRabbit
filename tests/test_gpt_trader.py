@@ -460,7 +460,7 @@ class GPTTraderBrainTest(unittest.TestCase):
     def test_accepts_wait_when_trader_exposure_is_already_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _fixtures(root, positions=[_position()])
+            files = _fixtures(root, positions=[{**_position(), "take_profit": 1.185}])
             brain = _brain(root, files, _wait_decision())
 
             summary = brain.run(snapshot_path=files["snapshot"])
@@ -469,6 +469,62 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertTrue(summary.allowed)
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
+
+    def test_rejects_wait_when_tp_rebalance_sidecar_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471292",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "units": -22000,
+                        "entry_price": 1.16077,
+                        "take_profit": 1.15640,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": 3000.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["quotes"]["EUR_USD"] = {
+                "bid": 1.15937,
+                "ask": 1.15947,
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["pair_charts"].write_text(json.dumps(_tp_rebalance_pair_charts()))
+            (root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "UNCLEAR",
+                        "confidence": 0.24,
+                        "horizon_min": 0,
+                    }
+                )
+                + "\n"
+            )
+            brain = _brain(root, files, _wait_decision())
+
+            prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                summary = brain.run(snapshot_path=files["snapshot"])
+            finally:
+                if prior_sl is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("TP_REBALANCE_REQUIRED", codes)
+            self.assertTrue(payload["input_packet"]["protection_sidecars"]["tp_rebalance"]["required"])
 
     def test_rejects_cancel_pending_without_order_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1304,6 +1360,43 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["attack_advice"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     return files
+
+
+def _tp_rebalance_pair_charts() -> dict:
+    return {
+        "charts": [
+            {
+                "pair": "EUR_USD",
+                "confluence": {
+                    "h4_atr_pips": 19.2,
+                    "price_percentile_7d": 0.0,
+                    "tf_agreement_score": 0.33,
+                    "range_24h_sigma_multiple": 6.7,
+                },
+                "views": [
+                    {
+                        "granularity": "M15",
+                        "indicators": {
+                            "atr_pips": 19.2,
+                            "stoch_rsi": 0.13,
+                            "williams_r_14": -85.0,
+                            "close": 1.15970,
+                            "bb_lower": 1.15972,
+                        },
+                        "structure": {
+                            "liquidity": [
+                                {
+                                    "side": "EQ_LOW",
+                                    "price": 1.15875,
+                                    "indices": [1, 2, 3, 4],
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ]
+    }
 
 
 def _chart_views() -> list[dict]:

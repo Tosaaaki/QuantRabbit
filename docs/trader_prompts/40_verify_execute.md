@@ -16,6 +16,10 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 
 Verifier acceptance is required before gateway handoff.
 
+If the verifier returns `TP_REBALANCE_REQUIRED`, the receipt is not an accepted
+WAIT. Go to `position_management` and run `tp-rebalance` before writing another
+WAIT/REQUEST_EVIDENCE receipt.
+
 If the verifier rejects the receipt, or if the router reports that the receipt predates a refreshed broker snapshot / repriced intent packet, do not stop the trader because the old receipt exists. Return to the routed decision branch, write one current receipt, and continue through the normal verifier -> gateway path.
 
 If the verifier accepts a `TRADE`, do not run refresh, analysis, TP rebalance,
