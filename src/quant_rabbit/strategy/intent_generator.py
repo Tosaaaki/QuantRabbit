@@ -525,6 +525,7 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
             continue
         per_tf: dict[str, Any] = {
             "__raw_chart": chart,
+            "generated_at_utc": payload.get("generated_at_utc"),
             "dominant_regime": chart.get("dominant_regime"),
             "long_score": chart.get("long_score"),
             "short_score": chart.get("short_score"),
@@ -560,6 +561,9 @@ def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict
                 regime_reading = view.get("regime_reading")
                 if isinstance(regime_reading, dict):
                     per_tf[f"{granularity}__regime_reading"] = regime_reading
+                recent_candles = view.get("recent_candles")
+                if isinstance(recent_candles, list):
+                    per_tf[f"{granularity}__recent_candles"] = recent_candles
         indexed[pair] = per_tf
     return indexed if indexed else None
 

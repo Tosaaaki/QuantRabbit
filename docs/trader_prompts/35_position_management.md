@@ -41,10 +41,13 @@
 - Under SL-free, missing SL is still intentional and must not be repaired while
   underwater or inside ordinary execution noise. A trader-owned position that is
   already profitable may use `BREAK_EVEN_STOP` at entry or better only after
-  executable profit pips clear the market-derived micro-noise envelope: current
-  M5 ATR and current spread itself. When profit exceeds that envelope, place the
-  stop behind the current executable price by the same M5 ATR/spread envelope
-  and clamp it so it can never be worse than entry. This is a profit-to-flat or
+  executable profit pips clear a fresh market-derived micro-noise envelope:
+  current spread plus fresh M5 ATR and quick M1/M5 realized range from recent
+  candles inside the current M5 management window. Stale pair-chart volatility
+  must not be used; if fresh quick volatility is unavailable, defer the stop
+  rather than falling back to spread alone. When profit exceeds that envelope,
+  place the stop behind the current executable price by the same envelope and
+  clamp it so it can never be worse than entry. This is a profit-to-flat or
   profit-lock escape hatch, not initial SL repair or trailing. Manual/tagless
   positions remain TP-only.
 - If an already-profitable trader-owned runner has macro reversal against it,

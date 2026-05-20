@@ -106,6 +106,14 @@ PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
 PROFIT_BREAK_EVEN_ATR_TIMEFRAME = GEOMETRY_ATR_TIMEFRAME
 PROFIT_BREAK_EVEN_NOISE_ATR_MULT = PROFIT_PROTECTION_NOISE_ATR_MULT
 PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
+# Quick volatility for broker-side BE/profit-lock must be recent enough that
+# it describes the noise around the current quote, not a stale previous cycle.
+# Granularity seconds are broker timeframe definitions; the quick window is the
+# current management timeframe (M5) so M1/M5 realized range reacts before a
+# slower ATR has fully adjusted.
+QUICK_VOL_TIMEFRAMES = ("M1", "M5")
+QUICK_VOL_GRANULARITY_SECONDS = {"M1": 60, "M5": 300}
+QUICK_VOL_WINDOW_TIMEFRAME = PROFIT_BREAK_EVEN_ATR_TIMEFRAME
 # Bollinger %B rail checks use the same edge convention as pattern_signals:
 # the outer 15% of the band is "at rail". These are indicator-convention
 # boundaries, not pair-specific tuning. Oscillator confirmations use standard
@@ -1206,7 +1214,7 @@ def _sl_free_profit_lock_stop_candidate(
         return None, ("SL-free profit-lock deferred: executable profit pips cannot be measured from broker quote",)
     noise_pips, noise_basis = _profit_break_even_noise_pips(position.pair, quote, pair_charts)
     if noise_pips is None:
-        return None, ("SL-free profit-lock deferred until current M5 ATR or spread noise can be measured",)
+        return None, (f"SL-free profit-lock deferred until fresh volatility can be measured ({noise_basis})",)
     if profit_pips < noise_pips:
         return (
             None,
@@ -1254,18 +1262,142 @@ def _profit_break_even_noise_pips(
     quote,
     pair_charts: dict[str, dict[str, Any]] | None,
 ) -> tuple[float | None, str]:
-    candidates: list[tuple[float, str]] = []
+    vol_candidates: list[tuple[float, str]] = []
     atr_pips = _atr_pips_for(pair, pair_charts, PROFIT_BREAK_EVEN_ATR_TIMEFRAME)
-    if atr_pips is not None and atr_pips > 0:
+    atr_fresh, atr_fresh_reason = _volatility_source_fresh(pair, quote, pair_charts, PROFIT_BREAK_EVEN_ATR_TIMEFRAME)
+    if atr_pips is not None and atr_pips > 0 and atr_fresh:
         value = atr_pips * PROFIT_BREAK_EVEN_NOISE_ATR_MULT
-        candidates.append((value, f"{PROFIT_BREAK_EVEN_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip"))
+        vol_candidates.append((value, f"fresh {PROFIT_BREAK_EVEN_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip ({atr_fresh_reason})"))
+    quick_pips, quick_basis = _quick_realized_volatility_pips(pair, quote, pair_charts)
+    if quick_pips is not None and quick_pips > 0:
+        vol_candidates.append((quick_pips, quick_basis))
+    if not vol_candidates:
+        return None, "missing fresh M1/M5 quick volatility and fresh M5 ATR"
+
+    candidates = list(vol_candidates)
     spread_pips = _spread_pips(pair, quote)
     if spread_pips is not None and spread_pips > 0:
         value = spread_pips * PROFIT_BREAK_EVEN_SPREAD_MULT
         candidates.append((value, f"spread {spread_pips:.1f}pip x {PROFIT_BREAK_EVEN_SPREAD_MULT:.1f}"))
-    if not candidates:
-        return None, "missing M5 ATR and spread"
     return max(candidates, key=lambda item: item[0])
+
+
+def _volatility_source_fresh(
+    pair: str,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+    timeframe: str,
+) -> tuple[bool, str]:
+    quote_ts = _quote_timestamp_utc(quote)
+    if quote_ts is None or pair_charts is None:
+        return False, "quote or pair-charts timestamp unavailable"
+    per_tf = pair_charts.get(pair)
+    if not per_tf:
+        return False, "pair chart missing"
+    latest_candle = _latest_recent_candle_time(per_tf.get(f"{timeframe}__recent_candles"))
+    window = _quick_vol_window_seconds()
+    if latest_candle is not None:
+        age_seconds = (quote_ts - latest_candle).total_seconds()
+        if 0 <= age_seconds <= window:
+            return True, f"latest {timeframe} candle age {age_seconds:.0f}s <= quick window {window:.0f}s"
+        return False, f"latest {timeframe} candle stale age {age_seconds:.0f}s > quick window {window:.0f}s"
+    generated_at = _parse_utc_datetime(per_tf.get("generated_at_utc"))
+    if generated_at is None:
+        return False, "pair chart generated_at missing"
+    age_seconds = (quote_ts - generated_at).total_seconds()
+    if 0 <= age_seconds <= window:
+        return True, f"pair-charts generated age {age_seconds:.0f}s <= quick window {window:.0f}s"
+    return False, f"pair-charts generated stale age {age_seconds:.0f}s > quick window {window:.0f}s"
+
+
+def _quick_realized_volatility_pips(
+    pair: str,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[float | None, str]:
+    quote_ts = _quote_timestamp_utc(quote)
+    if quote_ts is None or pair_charts is None:
+        return None, "quote or pair-charts timestamp unavailable for quick volatility"
+    per_tf = pair_charts.get(pair)
+    if not per_tf:
+        return None, "pair chart missing for quick volatility"
+    window = _quick_vol_window_seconds()
+    candidates: list[tuple[float, str]] = []
+    for timeframe in QUICK_VOL_TIMEFRAMES:
+        candles = _fresh_recent_candles(per_tf.get(f"{timeframe}__recent_candles"), quote_ts, window)
+        if not candles:
+            continue
+        highs = [float(item["h"]) for item in candles]
+        lows = [float(item["l"]) for item in candles]
+        range_pips = (max(highs) - min(lows)) * _pip_factor(pair)
+        if range_pips > 0:
+            latest_age = (quote_ts - candles[-1]["t"]).total_seconds()
+            candidates.append((range_pips, f"quick {timeframe} range {range_pips:.1f}pip/{len(candles)} bars age {latest_age:.0f}s"))
+    if not candidates:
+        return None, "no fresh recent M1/M5 candles inside quick volatility window"
+    return max(candidates, key=lambda item: item[0])
+
+
+def _fresh_recent_candles(raw_candles: object, quote_ts: datetime, window_seconds: float) -> list[dict[str, Any]]:
+    if not isinstance(raw_candles, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in raw_candles:
+        if not isinstance(raw, dict):
+            continue
+        ts = _parse_utc_datetime(raw.get("t") or raw.get("timestamp_utc") or raw.get("time"))
+        high = _float_or_none(raw.get("h") or raw.get("high"))
+        low = _float_or_none(raw.get("l") or raw.get("low"))
+        if ts is None or high is None or low is None or high <= low:
+            continue
+        age_seconds = (quote_ts - ts).total_seconds()
+        if 0 <= age_seconds <= window_seconds:
+            out.append({"t": ts, "h": high, "l": low})
+    out.sort(key=lambda item: item["t"])
+    return out
+
+
+def _latest_recent_candle_time(raw_candles: object) -> datetime | None:
+    if not isinstance(raw_candles, list):
+        return None
+    times: list[datetime] = []
+    for raw in raw_candles:
+        if isinstance(raw, dict):
+            parsed = _parse_utc_datetime(raw.get("t") or raw.get("timestamp_utc") or raw.get("time"))
+            if parsed is not None:
+                times.append(parsed)
+    return max(times) if times else None
+
+
+def _quick_vol_window_seconds() -> float:
+    return float(QUICK_VOL_GRANULARITY_SECONDS[QUICK_VOL_WINDOW_TIMEFRAME])
+
+
+def _quote_timestamp_utc(quote) -> datetime | None:
+    if quote is None:
+        return None
+    return _parse_utc_datetime(getattr(quote, "timestamp_utc", None))
+
+
+def _parse_utc_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc)
+    text = str(value or "")
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(text).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _float_or_none(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _session_protection_notes(

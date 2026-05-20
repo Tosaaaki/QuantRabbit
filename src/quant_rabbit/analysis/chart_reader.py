@@ -126,6 +126,7 @@ class ChartView:
                 {
                     "t": c.timestamp_utc.isoformat() if hasattr(c.timestamp_utc, "isoformat") else str(c.timestamp_utc),
                     "o": c.open, "h": c.high, "l": c.low, "c": c.close, "v": c.volume,
+                    "complete": c.complete,
                 }
                 for c in self.recent_candles
             ],

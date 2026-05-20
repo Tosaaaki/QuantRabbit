@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
@@ -216,6 +216,106 @@ class PositionManagerTest(unittest.TestCase):
                 self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
                 self.assertIsNone(result.positions[0].recommended_stop_loss)
                 self.assertIn("SL-free profit-lock deferred", (root / "pm.md").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_sl_free_profit_lock_requires_fresh_volatility_source(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                stale_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+                pair_charts = _pair_charts(root, atr_pips=1.0, generated_at=stale_at)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-stale-vol",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=1900,
+                        take_profit=1.15946,
+                        stop_loss=None,
+                    ),
+                    bid=1.16012,
+                    ask=1.16020,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                self.assertIn("fresh volatility", (root / "pm.md").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_sl_free_profit_lock_uses_quick_m1_range_over_slower_atr(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                recent_m1 = [
+                    {
+                        "t": (now - timedelta(seconds=120)).isoformat(),
+                        "o": 1.16020,
+                        "h": 1.16060,
+                        "l": 1.16010,
+                        "c": 1.16045,
+                        "v": 10,
+                    },
+                    {
+                        "t": (now - timedelta(seconds=60)).isoformat(),
+                        "o": 1.16045,
+                        "h": 1.16055,
+                        "l": 1.16018,
+                        "c": 1.16040,
+                        "v": 10,
+                    },
+                ]
+                decision = _decision(root, long_score=120, short_score=160)
+                pair_charts = _pair_charts(root, atr_pips=1.0, generated_at=now, recent_m1_candles=recent_m1)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-quick-vol",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=1900,
+                        take_profit=1.15946,
+                        stop_loss=None,
+                    ),
+                    bid=1.16032,
+                    ask=1.16040,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                self.assertIn("quick M1 range", (root / "pm.md").read_text())
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -704,21 +804,39 @@ def _snapshot(
     )
 
 
-def _pair_charts(root: Path, *, atr_pips: float) -> Path:
+def _pair_charts(
+    root: Path,
+    *,
+    atr_pips: float,
+    generated_at: datetime | None = None,
+    recent_m1_candles: list[dict[str, object]] | None = None,
+) -> Path:
     path = root / "pair_charts.json"
+    now = generated_at or datetime.now(timezone.utc)
+    views = []
+    if recent_m1_candles is not None:
+        views.append(
+            {
+                "granularity": "M1",
+                "indicators": {"atr_pips": atr_pips},
+                "recent_candles": recent_m1_candles,
+            }
+        )
+    views.append(
+        {
+            "granularity": "M5",
+            "indicators": {"atr_pips": atr_pips},
+        }
+    )
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": now.isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
                         "session": {"current_tag": "LONDON_KILLZONE"},
-                        "views": [
-                            {
-                                "granularity": "M5",
-                                "indicators": {"atr_pips": atr_pips},
-                            }
-                        ],
+                        "views": views,
                     }
                 ]
             }
@@ -729,6 +847,7 @@ def _pair_charts(root: Path, *, atr_pips: float) -> Path:
 
 def _bb_rail_pair_charts(root: Path) -> Path:
     path = root / "pair_charts_bb_rail.json"
+    now = datetime.now(timezone.utc)
     chart_story = (
         "M1(UNCLEAR,ADX=14,ST=+,struct=CHOCH_DOWN@1.1597) "
         "M5(RANGE,ADX=14,ST=+,struct=BOS_DOWN@1.1603) "
@@ -739,6 +858,7 @@ def _bb_rail_pair_charts(root: Path) -> Path:
     path.write_text(
         json.dumps(
             {
+                "generated_at_utc": now.isoformat(),
                 "charts": [
                     {
                         "pair": "EUR_USD",
