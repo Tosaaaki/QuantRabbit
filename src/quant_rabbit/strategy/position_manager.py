@@ -106,6 +106,21 @@ PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
 PROFIT_BREAK_EVEN_ATR_TIMEFRAME = GEOMETRY_ATR_TIMEFRAME
 PROFIT_BREAK_EVEN_NOISE_ATR_MULT = PROFIT_PROTECTION_NOISE_ATR_MULT
 PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
+# Bollinger %B rail checks use the same edge convention as pattern_signals:
+# the outer 15% of the band is "at rail". These are indicator-convention
+# boundaries, not pair-specific tuning. Oscillator confirmations use standard
+# market thresholds: Williams %R overbought/oversold (-20/-80), MFI (80/20),
+# and StochRSI rail values (0.8/0.2 or 80/20 depending on source scale).
+BB_RAIL_EDGE_FRACTION = 0.85
+BB_RAIL_TIMEFRAMES = ("M1", "M5", "M15")
+STOCH_RSI_HIGH = 0.8
+STOCH_RSI_LOW = 0.2
+STOCH_RSI_PERCENT_SCALE_HIGH = 80.0
+STOCH_RSI_PERCENT_SCALE_LOW = 20.0
+WILLIAMS_OVERBOUGHT = -20.0
+WILLIAMS_OVERSOLD = -80.0
+MFI_OVERBOUGHT = 80.0
+MFI_OVERSOLD = 20.0
 
 
 @dataclass(frozen=True)
@@ -672,6 +687,9 @@ def _adaptive_tp_action(
     )
     if pa_reasons:
         reasons.append(f"price-action ({pa_delta_lane:+.1f}): " + " ; ".join(pa_reasons[:2]))
+    bb_delta_lane, bb_reasons = _bb_rail_pressure(position.pair, lane_dir, pair_charts)
+    if bb_reasons:
+        reasons.append(f"BB rail ({bb_delta_lane:+.1f}): " + " ; ".join(bb_reasons[:2]))
 
     # Losing positions: EXIT only on a market-derived structural break,
     # never on a hardcoded NAV-percent threshold (AGENT_CONTRACT §3.5
@@ -842,6 +860,14 @@ def _adaptive_tp_action(
             action = ACTION_HOLD_PROTECTED
             reasons.append(f"extend skipped: anchor {anchor_reason} not farther than current TP")
     elif action == ACTION_HARVEST_TP:
+        if bb_delta_lane > 0 and macro == "ALIGNED":
+            tp_on_rail, tp_rail_reason = _existing_tp_at_opposite_bb_rail(position, pair_charts)
+            if tp_on_rail:
+                action = ACTION_HOLD_PROTECTED
+                reasons.append(
+                    f"BB rail supports {lane_dir}; keep existing TP ({tp_rail_reason}) and use BE sidecar"
+                )
+                return action, new_tp, reasons
         # Market-derived TP target (no hardcoded buffer, no fallback).
         # AGENT_CONTRACT §3.5 + user 2026-05-08「TPの設定は市況をみてる？
         # テクニカル等」「ハードコードとフォールバックはなし」.
@@ -965,6 +991,118 @@ def _aggregate_action(positions: tuple[ManagedPosition, ...]) -> str:
     if positions:
         return ACTION_HOLD_PROTECTED
     return "NO_POSITION"
+
+
+def _to_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _bb_rail_pressure(
+    pair: str,
+    lane_dir: str,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[float, list[str]]:
+    per_tf = (pair_charts or {}).get(pair) if pair_charts else None
+    if not isinstance(per_tf, dict):
+        return 0.0, []
+    target_up = lane_dir == "LONG"
+    score = 0.0
+    reasons: list[str] = []
+    for tf in BB_RAIL_TIMEFRAMES:
+        ind = per_tf.get(tf)
+        if not isinstance(ind, dict):
+            continue
+        bb_pos = _bb_position(ind)
+        if bb_pos is None:
+            continue
+        overbought = _oscillator_overbought(ind)
+        oversold = _oscillator_oversold(ind)
+        if bb_pos >= BB_RAIL_EDGE_FRACTION and overbought:
+            supports_up = False
+            if supports_up == target_up:
+                score += 1.0
+                reasons.append(f"{tf} upper BB rail/overbought supports {lane_dir}: %B={bb_pos:.2f}, {overbought}")
+            else:
+                score -= 1.0
+                reasons.append(f"{tf} upper BB rail/overbought opposes {lane_dir}: %B={bb_pos:.2f}, {overbought}")
+        elif bb_pos <= 1.0 - BB_RAIL_EDGE_FRACTION and oversold:
+            supports_up = True
+            if supports_up == target_up:
+                score += 1.0
+                reasons.append(f"{tf} lower BB rail/oversold supports {lane_dir}: %B={bb_pos:.2f}, {oversold}")
+            else:
+                score -= 1.0
+                reasons.append(f"{tf} lower BB rail/oversold opposes {lane_dir}: %B={bb_pos:.2f}, {oversold}")
+    return score, reasons
+
+
+def _existing_tp_at_opposite_bb_rail(
+    position: BrokerPosition,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[bool, str]:
+    if position.take_profit is None:
+        return False, "no existing TP"
+    per_tf = (pair_charts or {}).get(position.pair) if pair_charts else None
+    if not isinstance(per_tf, dict):
+        return False, "BB unavailable"
+    # M5 is the position-management rail: M1 is too noisy for TP placement,
+    # M15 is often too slow for a short-lived MFE capture.
+    ind = per_tf.get("M5")
+    if not isinstance(ind, dict):
+        return False, "M5 BB unavailable"
+    tp_pos = _bb_position(ind, price=position.take_profit)
+    if tp_pos is None:
+        return False, "M5 BB invalid"
+    if position.side == Side.SHORT and tp_pos <= 1.0 - BB_RAIL_EDGE_FRACTION:
+        return True, f"M5 TP %B={tp_pos:.2f} at lower rail"
+    if position.side == Side.LONG and tp_pos >= BB_RAIL_EDGE_FRACTION:
+        return True, f"M5 TP %B={tp_pos:.2f} at upper rail"
+    return False, f"M5 TP %B={tp_pos:.2f} not at opposite rail"
+
+
+def _bb_position(indicators: dict[str, Any], *, price: float | None = None) -> float | None:
+    close = _to_float(price if price is not None else indicators.get("close"))
+    upper = _to_float(indicators.get("bb_upper"))
+    lower = _to_float(indicators.get("bb_lower"))
+    if close is None or upper is None or lower is None or upper <= lower:
+        return None
+    return (close - lower) / (upper - lower)
+
+
+def _oscillator_overbought(indicators: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    stoch = _to_float(indicators.get("stoch_rsi"))
+    if stoch is not None and (
+        (stoch <= 1.5 and stoch >= STOCH_RSI_HIGH)
+        or (stoch > 1.5 and stoch >= STOCH_RSI_PERCENT_SCALE_HIGH)
+    ):
+        parts.append(f"StochRSI={stoch:.2f}")
+    williams = _to_float(indicators.get("williams_r_14"))
+    if williams is not None and williams >= WILLIAMS_OVERBOUGHT:
+        parts.append(f"%R={williams:.1f}")
+    mfi = _to_float(indicators.get("mfi_14"))
+    if mfi is not None and mfi >= MFI_OVERBOUGHT:
+        parts.append(f"MFI={mfi:.1f}")
+    return "/".join(parts) if parts else None
+
+
+def _oscillator_oversold(indicators: dict[str, Any]) -> str | None:
+    parts: list[str] = []
+    stoch = _to_float(indicators.get("stoch_rsi"))
+    if stoch is not None and (
+        stoch <= STOCH_RSI_LOW or (stoch > 1.0 and stoch <= STOCH_RSI_PERCENT_SCALE_LOW)
+    ):
+        parts.append(f"StochRSI={stoch:.2f}")
+    williams = _to_float(indicators.get("williams_r_14"))
+    if williams is not None and williams <= WILLIAMS_OVERSOLD:
+        parts.append(f"%R={williams:.1f}")
+    mfi = _to_float(indicators.get("mfi_14"))
+    if mfi is not None and mfi <= MFI_OVERSOLD:
+        parts.append(f"MFI={mfi:.1f}")
+    return "/".join(parts) if parts else None
 
 
 def _remaining_risk_jpy(position: BrokerPosition, quotes, home_conversions=None) -> float | None:

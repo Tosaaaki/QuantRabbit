@@ -48,6 +48,11 @@
   `TAKE_PROFIT_MARKET` may close it immediately. This is profit harvest, not
   loss-side thesis invalidation; it must be blocked if the latest broker snapshot
   is not profitable or the position is manual/tagless/external.
+- BB rail context matters for runners: if a profitable SHORT is bouncing into
+  the M1/M5 upper Bollinger rail with overbought StochRSI/Williams/MFI, treat it
+  as short-continuation evidence. If the existing TP is already at the opposite
+  M5 lower rail, keep that TP and use BE; do not shrink the target just because
+  the micro matrix says HARVEST. Mirror this for LONG at the lower rail.
 - Contradicted trader-owned positions may close, **but only on market-structure
   evidence** (see CLOSE rules below).
 - Fresh entries are blocked only by non-layerable trader-owned or external exposure;

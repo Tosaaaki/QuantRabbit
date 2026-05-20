@@ -220,6 +220,49 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
+    def test_bb_upper_rejection_keeps_short_tp_at_lower_rail_and_adds_be(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                pair_charts = _bb_rail_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-bb",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=1900,
+                        take_profit=1.15950,
+                        stop_loss=None,
+                    ),
+                    bid=1.16012,
+                    ask=1.16020,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.16077)
+                self.assertIsNone(result.positions[0].recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("BB rail", report)
+                self.assertIn("keep existing TP", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_usd_quote_position_risk_uses_snapshot_conversion_not_static_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -672,6 +715,70 @@ def _pair_charts(root: Path, *, atr_pips: float) -> Path:
                                 "granularity": "M5",
                                 "indicators": {"atr_pips": atr_pips},
                             }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _bb_rail_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_bb_rail.json"
+    chart_story = (
+        "M1(UNCLEAR,ADX=14,ST=+,struct=CHOCH_DOWN@1.1597) "
+        "M5(RANGE,ADX=14,ST=+,struct=BOS_DOWN@1.1603) "
+        "H1(TREND_DOWN,ADX=38,ST=-,struct=CHOCH_DOWN@1.1629) "
+        "H4(TREND_DOWN,ADX=42,ST=-,struct=BOS_DOWN@1.1608) "
+        "D(UNCLEAR,ADX=19,ST=+)"
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": chart_story,
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M1",
+                                "indicators": {
+                                    "atr_pips": 1.0,
+                                    "close": 1.16025,
+                                    "bb_lower": 1.15990,
+                                    "bb_upper": 1.16030,
+                                    "stoch_rsi": 0.95,
+                                    "williams_r_14": -6.0,
+                                    "mfi_14": 84.0,
+                                },
+                            },
+                            {
+                                "granularity": "M5",
+                                "indicators": {
+                                    "atr_pips": 1.0,
+                                    "close": 1.16025,
+                                    "bb_lower": 1.15950,
+                                    "bb_upper": 1.16030,
+                                    "stoch_rsi": 0.94,
+                                    "williams_r_14": -12.0,
+                                },
+                            },
+                            {
+                                "granularity": "M15",
+                                "indicators": {"atr_pips": 4.0},
+                            },
+                            {
+                                "granularity": "H1",
+                                "regime": "TREND_DOWN",
+                                "indicators": {"atr_pips": 8.0},
+                            },
+                            {
+                                "granularity": "H4",
+                                "regime": "TREND_DOWN",
+                                "indicators": {"atr_pips": 19.0},
+                            },
                         ],
                     }
                 ]
