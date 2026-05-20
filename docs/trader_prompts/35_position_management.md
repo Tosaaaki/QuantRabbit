@@ -40,10 +40,13 @@
 - Profitable protected positions may tighten SL to break-even or better.
 - Under SL-free, missing SL is still intentional and must not be repaired while
   underwater or inside ordinary execution noise. A trader-owned position that is
-  already profitable may use `BREAK_EVEN_STOP` only after executable profit pips
-  clear the market-derived micro-noise envelope: current M5 ATR and current
-  spread itself. This is a profit-to-flat escape hatch, not initial SL repair
-  or trailing. Manual/tagless positions remain TP-only.
+  already profitable may use `BREAK_EVEN_STOP` at entry or better only after
+  executable profit pips clear the market-derived micro-noise envelope: current
+  M5 ATR and current spread itself. When profit exceeds that envelope, place the
+  stop behind the current executable price by the same M5 ATR/spread envelope
+  and clamp it so it can never be worse than entry. This is a profit-to-flat or
+  profit-lock escape hatch, not initial SL repair or trailing. Manual/tagless
+  positions remain TP-only.
 - If an already-profitable trader-owned runner has macro reversal against it,
   `TAKE_PROFIT_MARKET` may close it immediately. This is profit harvest, not
   loss-side thesis invalidation; it must be blocked if the latest broker snapshot
@@ -51,8 +54,9 @@
 - BB rail context matters for runners: if a profitable SHORT is bouncing into
   the M1/M5 upper Bollinger rail with overbought StochRSI/Williams/MFI, treat it
   as short-continuation evidence. If the existing TP is already at the opposite
-  M5 lower rail, keep that TP and use BE; do not shrink the target just because
-  the micro matrix says HARVEST. Mirror this for LONG at the lower rail.
+  M5 lower rail, keep that TP and use BE/profit-lock; do not shrink the target
+  just because the micro matrix says HARVEST. Mirror this for LONG at the lower
+  rail.
 - Contradicted trader-owned positions may close, **but only on market-structure
   evidence** (see CLOSE rules below).
 - Fresh entries are blocked only by non-layerable trader-owned or external exposure;

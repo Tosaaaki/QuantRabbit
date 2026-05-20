@@ -140,7 +140,7 @@ class PositionManagerTest(unittest.TestCase):
             self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
             self.assertIn("session noise", (root / "pm.md").read_text())
 
-    def test_sl_free_profitable_short_gets_break_even_after_micro_noise_clears(self) -> None:
+    def test_sl_free_profitable_short_gets_profit_lock_after_micro_noise_clears(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         try:
@@ -172,8 +172,10 @@ class PositionManagerTest(unittest.TestCase):
 
                 self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
                 self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
-                self.assertEqual(result.positions[0].recommended_stop_loss, 1.16077)
-                self.assertIn("SL-free profit BE trigger", (root / "pm.md").read_text())
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.1603)
+                report = (root / "pm.md").read_text()
+                self.assertIn("SL-free profit-lock trigger", report)
+                self.assertIn("+4.7pip", report)
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -213,7 +215,7 @@ class PositionManagerTest(unittest.TestCase):
                 self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
                 self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
                 self.assertIsNone(result.positions[0].recommended_stop_loss)
-                self.assertIn("SL-free BE deferred", (root / "pm.md").read_text())
+                self.assertIn("SL-free profit-lock deferred", (root / "pm.md").read_text())
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -252,11 +254,12 @@ class PositionManagerTest(unittest.TestCase):
 
                 self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
                 self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
-                self.assertEqual(result.positions[0].recommended_stop_loss, 1.16077)
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.1603)
                 self.assertIsNone(result.positions[0].recommended_take_profit)
                 report = (root / "pm.md").read_text()
                 self.assertIn("BB rail", report)
                 self.assertIn("keep existing TP", report)
+                self.assertIn("SL-free profit-lock trigger", report)
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)

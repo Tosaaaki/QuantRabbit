@@ -285,7 +285,7 @@ class PositionProtectionGateway:
                 "",
                 "## Execution Contract",
                 "",
-                "- Trader-owned position writes are risk-reducing only: close the trade, create missing protection, place profit-only break-even, tighten an existing SL, or update TP.",
+                "- Trader-owned position writes are risk-reducing only: close the trade, create missing protection, place profit-only break-even/profit-lock, tighten an existing SL, or update TP.",
                 "- Manual/tagless position writes are TP-only profit management; SL writes and market closes are forbidden.",
                 "- Existing SL cannot be widened. Existing TP may be moved only by TP-management actions.",
                 "- Live execution requires the autotrade send path and `QR_LIVE_ENABLED=1`.",

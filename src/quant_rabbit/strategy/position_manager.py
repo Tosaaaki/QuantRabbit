@@ -98,11 +98,11 @@ def _position_management_owner(owner: Owner) -> bool:
 # plus one current M5 ATR: this is market-derived noise room, not a profit gate.
 PROFIT_PROTECTION_NOISE_ATR_MULT = 1.0
 PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
-# SL-free break-even is not initial SL repair. It is a profit-only escape hatch
-# after executable MFE clears current micro-noise. M5 is the live management
-# timeframe already exposed by pair_charts. The spread multiplier is the
-# identity value: BE only needs to clear the observed spread itself, not the
-# much wider new-entry SL geometry floor.
+# SL-free break-even/profit-lock is not initial SL repair. It is a profit-only
+# escape hatch after executable MFE clears current micro-noise. M5 is the live
+# management timeframe already exposed by pair_charts. The spread multiplier is
+# the identity value: profit locking only needs to clear the observed spread
+# itself, not the much wider new-entry SL geometry floor.
 PROFIT_BREAK_EVEN_ATR_TIMEFRAME = GEOMETRY_ATR_TIMEFRAME
 PROFIT_BREAK_EVEN_NOISE_ATR_MULT = PROFIT_PROTECTION_NOISE_ATR_MULT
 PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
@@ -311,7 +311,7 @@ class PositionManager:
                         elif adaptive_tp is not None:
                             recommended_take_profit = adaptive_tp
                             action = adaptive_action
-                    break_even_stop, break_even_reasons = _sl_free_break_even_stop_candidate(
+                    break_even_stop, break_even_reasons = _sl_free_profit_lock_stop_candidate(
                         position, quote, pair_charts
                     )
                     reasons.extend(break_even_reasons)
@@ -511,7 +511,7 @@ class PositionManager:
                 "- Manual/tagless positions must never receive SL repair, SL tightening, or loss-close actions.",
                 "- Missing TP/SL is a repair requirement, not a passive monitor state.",
                 "- Profit protection is required once open profit clears remaining stop risk plus current session noise.",
-                "- SL-free break-even is allowed only after executable profit clears M5 ATR/spread micro-noise.",
+                "- SL-free break-even/profit-lock is allowed only after executable profit clears M5 ATR/spread micro-noise.",
                 "- Profit-only TAKE_PROFIT_MARKET is separate from loss-side REVIEW_EXIT Gate A/B discipline.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
                 "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; only ledger-backed next-generation trader positions can execute structural loss-cut exits.",
@@ -865,7 +865,7 @@ def _adaptive_tp_action(
             if tp_on_rail:
                 action = ACTION_HOLD_PROTECTED
                 reasons.append(
-                    f"BB rail supports {lane_dir}; keep existing TP ({tp_rail_reason}) and use BE sidecar"
+                    f"BB rail supports {lane_dir}; keep existing TP ({tp_rail_reason}) and use BE/profit-lock sidecar"
                 )
                 return action, new_tp, reasons
         # Market-derived TP target (no hardcoded buffer, no fallback).
@@ -1188,40 +1188,65 @@ def _profit_protection_noise_jpy(
     return max(noise_pips) * jpy_per_pip
 
 
-def _sl_free_break_even_stop_candidate(
+def _sl_free_profit_lock_stop_candidate(
     position: BrokerPosition,
     quote,
     pair_charts: dict[str, dict[str, Any]] | None,
 ) -> tuple[float | None, tuple[str, ...]]:
-    """Return a BE stop only after SL-free profit clears live micro-noise."""
+    """Return a BE-or-better stop only after SL-free profit clears live micro-noise."""
     if position.owner != Owner.TRADER or position.stop_loss is not None or not _trader_sl_repair_disabled():
         return None, ()
     if position.unrealized_pl_jpy <= 0:
-        return None, ("SL-free BE deferred: position is not profitable",)
+        return None, ("SL-free profit-lock deferred: position is not profitable",)
     break_even = _break_even_stop(position, quote)
     if break_even is None:
-        return None, ("SL-free BE deferred: entry is not reward-side of the current executable price",)
+        return None, ("SL-free profit-lock deferred: entry is not reward-side of the current executable price",)
     profit_pips = _executable_profit_pips(position, quote)
     if profit_pips is None or profit_pips <= 0:
-        return None, ("SL-free BE deferred: executable profit pips cannot be measured from broker quote",)
+        return None, ("SL-free profit-lock deferred: executable profit pips cannot be measured from broker quote",)
     noise_pips, noise_basis = _profit_break_even_noise_pips(position.pair, quote, pair_charts)
     if noise_pips is None:
-        return None, ("SL-free BE deferred until current M5 ATR or spread noise can be measured",)
+        return None, ("SL-free profit-lock deferred until current M5 ATR or spread noise can be measured",)
     if profit_pips < noise_pips:
         return (
             None,
             (
-                f"SL-free BE deferred: executable profit {profit_pips:.1f}pip < "
+                f"SL-free profit-lock deferred: executable profit {profit_pips:.1f}pip < "
                 f"micro-noise {noise_pips:.1f}pip ({noise_basis})",
             ),
         )
+    lock_stop = _profit_lock_stop(position, quote, noise_pips)
+    if lock_stop is None:
+        return None, ("SL-free profit-lock deferred: market-valid stop cannot be computed",)
+    locked_pips = _locked_profit_pips(position, lock_stop)
+    lock_label = "break-even" if locked_pips <= 0 else f"+{locked_pips:.1f}pip"
     return (
-        break_even,
+        lock_stop,
         (
-            f"SL-free profit BE trigger: executable profit {profit_pips:.1f}pip >= "
-            f"micro-noise {noise_pips:.1f}pip ({noise_basis})",
+            f"SL-free profit-lock trigger: executable profit {profit_pips:.1f}pip >= "
+            f"micro-noise {noise_pips:.1f}pip ({noise_basis}); stop {lock_stop:.5f} ({lock_label})",
         ),
     )
+
+
+def _profit_lock_stop(position: BrokerPosition, quote, noise_pips: float) -> float | None:
+    if quote is None or noise_pips <= 0:
+        return None
+    pip_size = 1.0 / _pip_factor(position.pair)
+    distance = noise_pips * pip_size
+    if position.side == Side.LONG:
+        candidate = max(position.entry_price, quote.bid - distance)
+    else:
+        candidate = min(position.entry_price, quote.ask + distance)
+    if not _market_valid_stop(position, candidate, quote):
+        return None
+    return candidate
+
+
+def _locked_profit_pips(position: BrokerPosition, stop_loss: float) -> float:
+    if position.side == Side.LONG:
+        return max(0.0, (stop_loss - position.entry_price) * _pip_factor(position.pair))
+    return max(0.0, (position.entry_price - stop_loss) * _pip_factor(position.pair))
 
 
 def _profit_break_even_noise_pips(
