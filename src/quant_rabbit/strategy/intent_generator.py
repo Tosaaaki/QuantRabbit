@@ -2270,6 +2270,9 @@ def _intent_from_lane(
         chart_context=chart_context,
         pair_chart=pair_chart,
         atr_pips=atr_pips,
+        forecast_direction=lane.get("forecast_direction"),
+        forecast_confidence=_optional_float(lane.get("forecast_confidence")),
+        forecast_target_price=_optional_float(lane.get("forecast_target_price")),
     )
     position_metadata = _position_intent_metadata(pair, side, snapshot)
     if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
@@ -2617,6 +2620,9 @@ def _take_profit_execution_plan(
     chart_context: dict[str, Any] | None,
     pair_chart: dict[str, Any] | None,
     atr_pips: float | None,
+    forecast_direction: object | None = None,
+    forecast_confidence: float | None = None,
+    forecast_target_price: float | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """Return the virtual TP and broker-attachment metadata.
 
@@ -2653,6 +2659,34 @@ def _take_profit_execution_plan(
 
     pip_factor = PIP_FACTORS[pair]
     stop_pips = abs(entry - sl) * pip_factor
+    spread_pips = abs(quote.ask - quote.bid) * pip_factor
+    forecast_tp, forecast_reason = _forecast_tp_candidate(
+        pair=pair,
+        side=side,
+        entry=entry,
+        forecast_direction=forecast_direction,
+        forecast_confidence=forecast_confidence,
+        forecast_target_price=forecast_target_price,
+    )
+    if forecast_tp is not None:
+        forecast_ok, forecast_gate_reason = _forecast_tp_respects_execution_floor(
+            method=method,
+            execution_regime=execution_regime,
+            entry=entry,
+            target=forecast_tp,
+            stop_pips=stop_pips,
+            spread_pips=spread_pips,
+            pip_factor=pip_factor,
+        )
+        if forecast_ok and _tp_closer_to_entry(entry, forecast_tp, effective_tp):
+            effective_tp = forecast_tp
+            target_source = f"FORECAST_CAPPED_{target_source}"
+            target_reason = f"{forecast_reason}; capped {target_reason or target_source}"
+        elif not forecast_ok:
+            target_reason = f"{target_reason}; forecast target skipped: {forecast_gate_reason}"
+        else:
+            target_reason = f"{target_reason}; forecast target farther: {forecast_reason}"
+
     target_pips = abs(effective_tp - entry) * pip_factor
     virtual_rr = target_pips / stop_pips if stop_pips > 0 else 0.0
     metadata = {
@@ -2669,6 +2703,59 @@ def _take_profit_execution_plan(
         "tp_atr_pips": atr_pips,
     }
     return _round_price(pair, effective_tp), metadata
+
+
+def _forecast_tp_candidate(
+    *,
+    pair: str,
+    side: Side,
+    entry: float,
+    forecast_direction: object | None,
+    forecast_confidence: float | None,
+    forecast_target_price: float | None,
+) -> tuple[float | None, str]:
+    if forecast_target_price is None or forecast_confidence is None:
+        return None, "forecast target missing"
+    if forecast_confidence < _forecast_seed_min_confidence():
+        return None, f"forecast confidence {forecast_confidence:.2f} below TP threshold"
+    direction = str(forecast_direction or "").upper()
+    forecast_side = Side.LONG if direction == "UP" else Side.SHORT if direction == "DOWN" else None
+    if forecast_side != side:
+        return None, f"forecast direction {direction or 'missing'} does not match {side.value}"
+    target = _round_price(pair, float(forecast_target_price))
+    if not _target_on_reward_side(side, entry, target):
+        return None, f"forecast target {target} is not on reward side"
+    return target, f"forecast {direction} conf={forecast_confidence:.2f} target@{target}"
+
+
+def _forecast_tp_respects_execution_floor(
+    *,
+    method: TradeMethod,
+    execution_regime: str | None,
+    entry: float,
+    target: float,
+    stop_pips: float,
+    spread_pips: float,
+    pip_factor: int,
+) -> tuple[bool, str]:
+    target_pips = abs(target - entry) * pip_factor
+    policy = RiskPolicy()
+    regime = str(execution_regime or "").upper()
+    active_min_rr = (
+        policy.range_min_reward_risk
+        if method == TradeMethod.RANGE_ROTATION or "RANGE" in regime
+        else policy.min_reward_risk
+    )
+    if stop_pips > 0 and (target_pips / stop_pips) < active_min_rr:
+        return False, f"forecast TP RR {(target_pips / stop_pips):.2f} < floor {active_min_rr:.2f}"
+    min_target_pips = spread_pips * policy.min_target_spread_multiple
+    if target_pips < min_target_pips:
+        return False, f"forecast TP {target_pips:.1f}pip < spread floor {min_target_pips:.1f}pip"
+    return True, "forecast TP respects execution floor"
+
+
+def _tp_closer_to_entry(entry: float, candidate: float, current: float) -> bool:
+    return abs(candidate - entry) < abs(current - entry)
 
 
 def _technical_tp_candidate(

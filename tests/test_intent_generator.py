@@ -232,7 +232,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     direction="DOWN",
                     confidence=0.91,
                     current_price=1.17326,
-                    target_price=1.1712,
+                    target_price=1.1688,
                     invalidation_price=1.1742,
                     horizon_min=60,
                     rationale_summary="DOWN forecast from current tape",
@@ -270,6 +270,8 @@ class IntentGeneratorTest(unittest.TestCase):
                 self.assertTrue(seed["intent"]["metadata"]["forecast_seed"])
                 self.assertEqual(seed["intent"]["metadata"]["forecast_direction"], "DOWN")
                 self.assertEqual(seed["intent"]["metadata"]["forecast_confidence"], 0.91)
+                self.assertEqual(seed["intent"]["tp"], 1.1688)
+                self.assertEqual(seed["intent"]["metadata"]["tp_target_source"], "FORECAST_CAPPED_ATR_RR")
                 self.assertIn("forecast-first", seed["intent"]["market_context"]["narrative"])
                 self.assertEqual(
                     sum(
@@ -347,6 +349,67 @@ class IntentGeneratorTest(unittest.TestCase):
                         and item["intent"]["metadata"]["forecast_confidence"] == 0.91
                         for item in payload["results"]
                     )
+                )
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_forecast_tp_does_not_cap_when_target_fails_execution_floor(self) -> None:
+        import os
+
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1708,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="SHORT"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.18,
+                            short_score=0.82,
+                            dominant_regime="TREND_DOWN",
+                            m5_regime="TREND_DOWN",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+                seed = next(
+                    item
+                    for item in payload["results"]
+                    if item["lane_id"] == "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+                )
+
+                self.assertTrue(seed["intent"]["metadata"]["forecast_seed"])
+                self.assertEqual(seed["intent"]["metadata"]["forecast_target_price"], 1.1708)
+                self.assertNotEqual(seed["intent"]["tp"], 1.1708)
+                self.assertEqual(seed["intent"]["metadata"]["tp_target_source"], "ATR_RR")
+                self.assertIn(
+                    "forecast target skipped: forecast TP RR",
+                    seed["intent"]["metadata"]["tp_target_reason"],
                 )
         finally:
             if prior is None:
