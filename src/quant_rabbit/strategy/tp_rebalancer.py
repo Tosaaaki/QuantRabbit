@@ -362,6 +362,20 @@ def _structural_existing_tp_harvest_candidate(
     return None, "; ".join(skipped[:4]) or "no usable structural anchor"
 
 
+def _operating_atr_pips(chart_context: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not chart_context:
+        return None
+    indicators_by_tf = chart_context.get("indicators_by_tf")
+    if not isinstance(indicators_by_tf, dict):
+        return None
+    for timeframe in ("M5", "M15"):
+        indicators = indicators_by_tf.get(timeframe) or {}
+        value = _optional_float(indicators.get("atr_pips"))
+        if value is not None and value > 0:
+            return value
+    return None
+
+
 def compute_tp_adjustment(
     *,
     trade_id: str,
@@ -455,6 +469,55 @@ def compute_tp_adjustment(
 
     distance_old = abs(current_tp - entry_price) * pip_factor if current_tp is not None else 0.0
     desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
+    operating_atr = _operating_atr_pips(chart_context)
+    stale_distance_reasons: list[str] = []
+    stale_distance_technical_reasons: list[str] = []
+    stale_distance_too_far = (
+        current_tp is not None
+        and not is_reversal_firing
+        and operating_atr is not None
+        and distance_old > MAX_TP_DISTANCE_ATR_MULT * operating_atr
+    )
+    if stale_distance_too_far:
+        stale_distance_technical_reasons = _technical_harvest_pressure(
+            side=side_up,
+            chart_context=chart_context,
+        )
+    if (
+        stale_distance_too_far
+        and (
+            profit_pips <= 0
+            or profit_pips < float(operating_atr or 0.0)
+            or len(stale_distance_technical_reasons) >= 2
+        )
+    ):
+        stale_distance_reasons.append(
+            f"existing TP {distance_old:.1f}pip is > {MAX_TP_DISTANCE_ATR_MULT:.1f}× operating ATR {operating_atr:.1f}pip"
+        )
+        if profit_pips > 0:
+            stale_distance_reasons.append(
+                f"profit {profit_pips:.1f}pip is not yet ≥ operating ATR {operating_atr:.1f}pip"
+            )
+        stale_distance_reasons.extend(stale_distance_technical_reasons[:3])
+    reachable_harvest_tp_reasons: list[str] = []
+    if (
+        current_tp is not None
+        and profit_pips > 0
+        and not is_reversal_firing
+        and operating_atr is not None
+        and distance_old <= MAX_TP_DISTANCE_ATR_MULT * operating_atr
+        and (
+            profit_pips < operating_atr
+            or len(stale_distance_technical_reasons) >= 2
+        )
+    ):
+        reachable_harvest_tp_reasons.append(
+            f"existing TP {distance_old:.1f}pip is already within {MAX_TP_DISTANCE_ATR_MULT:.1f}× operating ATR {operating_atr:.1f}pip"
+        )
+        if profit_pips < operating_atr:
+            reachable_harvest_tp_reasons.append(
+                f"profit {profit_pips:.1f}pip is not yet ≥ operating ATR {operating_atr:.1f}pip"
+            )
 
     # Adverse detection (only matters for contract_adverse mode).
     if side_up == "LONG":
@@ -513,6 +576,23 @@ def compute_tp_adjustment(
         )
         if candidate_tp is None:
             return None
+    elif stale_distance_reasons:
+        if profit_pips > 0:
+            mode = "contract_profitable_stale_harvest"
+            near_market_pips = MIN_TP_TO_MARKET_PIPS + 0.1
+            if side_up == "LONG":
+                candidate_tp = current_price + near_market_pips * pip_size
+            else:
+                candidate_tp = current_price - near_market_pips * pip_size
+        else:
+            mode = "contract_stale_harvest"
+            lock_in_pips = max(MIN_LOCK_IN_PIPS, (operating_atr or atr_pips) * LOCK_IN_ATR_MULT)
+            if side_up == "LONG":
+                candidate_tp = entry_price + lock_in_pips * pip_size
+            else:
+                candidate_tp = entry_price - lock_in_pips * pip_size
+    elif reachable_harvest_tp_reasons:
+        return None
     elif is_significant_adverse:
         mode = "contract_adverse"
         lock_in_pips = max(MIN_LOCK_IN_PIPS, atr_pips * LOCK_IN_ATR_MULT)
@@ -612,6 +692,8 @@ def compute_tp_adjustment(
         rationale += "; harvest: " + "; ".join(existing_tp_harvest_reasons[:4])
         if harvest_anchor_reason:
             rationale += f"; anchor: {harvest_anchor_reason}"
+    if mode in {"contract_stale_harvest", "contract_profitable_stale_harvest"}:
+        rationale += "; stale harvest: " + "; ".join(stale_distance_reasons[:4])
     return TPAdjustment(
         trade_id=trade_id,
         pair=pair,

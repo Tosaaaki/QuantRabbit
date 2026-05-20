@@ -622,12 +622,7 @@ class RiskEngine:
                     "intent.metadata['max_loss_jpy'] (equity-derived); refusing to validate without one.",
                 )
             )
-        elif metrics.risk_jpy > loss_cap and not _trader_sl_repair_disabled():
-            # Under SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive
-            # 「損失を出さないで稼ぎまくる」 2026-05-07), per-trade loss cap is
-            # advisory only: sizing is operator-set + margin headroom-bound.
-            # The cap stays active when SL-free is off so the conservative
-            # SL-anchored regime keeps its 30-trade-divisor protection.
+        elif metrics.risk_jpy > loss_cap:
             issues.append(
                 RiskIssue(
                     "LOSS_CAP_EXCEEDED",

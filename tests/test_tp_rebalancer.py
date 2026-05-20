@@ -247,6 +247,83 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
         self.assertLess(adj.new_tp, 160.0)  # below entry, SHORT TP
 
+    def test_contracts_stale_short_harvest_tp_when_operating_atr_makes_target_unreachable(self) -> None:
+        """A failed-break/recovery SHORT should not keep a 26×M5-ATR TP
+        just because the position is only slightly underwater."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471306", pair="EUR_USD", side="SHORT",
+            entry_price=1.15960, current_tp=1.15181,
+            current_price=1.15974,
+            atr_pips=19.7, reward_risk=3.0,
+            is_reversal_firing=False,
+            chart_context={
+                "confluence": {
+                    "price_percentile_7d": 0.03,
+                    "range_24h_sigma_multiple": 3.57,
+                },
+                "indicators_by_tf": {
+                    "M5": {"atr_pips": 3.0},
+                    "M15": {"atr_pips": 5.1},
+                },
+            },
+        )
+
+        self.assertIsNotNone(adj)
+        self.assertEqual(adj.new_tp, 1.1588)
+        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+        self.assertIn("contract_stale_harvest", adj.rationale)
+        self.assertIn("operating ATR", adj.rationale)
+
+    def test_contracts_profitable_stale_short_harvest_tp_to_near_market(self) -> None:
+        """A profitable SHORT with a stale full-distance TP should be harvested
+        near market while the profit is still smaller than operating ATR."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471328", pair="EUR_USD", side="SHORT",
+            entry_price=1.16272, current_tp=1.14355,
+            current_price=1.16209,
+            atr_pips=22.7, reward_risk=3.0,
+            is_reversal_firing=False,
+            chart_context={
+                "confluence": {
+                    "range_24h_sigma_multiple": 6.43,
+                    "score_balance": "TIED",
+                },
+                "indicators_by_tf": {
+                    "M5": {"atr_pips": 6.6},
+                    "M15": {"atr_pips": 9.4},
+                },
+            },
+        )
+
+        self.assertIsNotNone(adj)
+        self.assertEqual(adj.new_tp, 1.16158)
+        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+        self.assertIn("contract_profitable_stale_harvest", adj.rationale)
+        self.assertIn("profit 6.3pip", adj.rationale)
+
+    def test_keeps_reachable_profitable_harvest_tp_instead_of_expanding_again(self) -> None:
+        """A near structural harvest TP must not be expanded back into a runner
+        while the position has not yet cleared operating ATR."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471328", pair="EUR_USD", side="SHORT",
+            entry_price=1.16272, current_tp=1.16163,
+            current_price=1.16218,
+            atr_pips=22.7, reward_risk=4.2,
+            is_reversal_firing=False,
+            chart_context={
+                "confluence": {"range_24h_sigma_multiple": 6.50},
+                "indicators_by_tf": {
+                    "M5": {"atr_pips": 6.8},
+                    "M15": {"atr_pips": 9.3},
+                },
+            },
+        )
+
+        self.assertIsNone(adj)
+
     def test_trailing_mode_pushes_tp_ahead_of_price(self) -> None:
         """LONG in profit ≥ TRAILING_TRIGGER_ATR_MULT × ATR triggers
         trailing branch: new TP anchored on current_price + lock-behind."""

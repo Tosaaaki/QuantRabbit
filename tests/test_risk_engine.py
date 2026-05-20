@@ -166,6 +166,30 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("LOSS_CAP_EXCEEDED", {issue.code for issue in decision.issues})
 
+    def test_risk_cap_still_blocks_oversized_trade_under_sl_free(self) -> None:
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=8000,
+            tp=1.17554,
+            sl=1.17234,
+            thesis="sl_free_loss_cap_regression",
+        )
+
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            decision = RiskEngine().validate(intent, snapshot())
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("LOSS_CAP_EXCEEDED", {issue.code for issue in decision.issues})
+
     def test_margin_cap_blocks_trade_before_broker_rejects_it(self) -> None:
         now = datetime.now(timezone.utc)
         snap = BrokerSnapshot(

@@ -440,6 +440,10 @@ FORECAST_SEED_MIN_RICH_TF_VIEWS = 2
 # (c) replace via: post-trade learning on runner giveback vs capped TP fills.
 TP_MODE_TF_AGREEMENT_MAJORITY = 2.0 / 3.0
 TP_MODE_EXHAUSTION_SIGMA = DYNAMIC_RR_SIGMA_EXHAUSTED_THRESHOLD
+# Attached HARVEST TPs are expected to be reachable in the operating tape.
+# This mirrors tp_rebalancer's `MAX_TP_DISTANCE_ATR_MULT`: a target beyond
+# 10× current operating ATR is a runner, not a failed-break harvest.
+HARVEST_TP_MAX_OPERATING_ATR_MULT = _env_float("QR_HARVEST_TP_MAX_OPERATING_ATR_MULT", 10.0, minimum=1.0)
 
 # Generic trend/failure stops should not sit inside the current wick shelf.
 # The buffer is one live spread beyond the adverse structural level because the
@@ -689,6 +693,8 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "h1_regime": _text_or_none(per_tf.get("H1__regime")),
         "m5_long_bias": _optional_float(per_tf.get("M5__long_bias")),
         "m5_short_bias": _optional_float(per_tf.get("M5__short_bias")),
+        "m15_long_bias": _optional_float(per_tf.get("M15__long_bias")),
+        "m15_short_bias": _optional_float(per_tf.get("M15__short_bias")),
         "m5_regime_quantile": _text_or_none(m5_indicators.get("regime_quantile")),
         "m5_mean_rev_score": _optional_float(m5_family.get("mean_rev_score")),
         "m5_trend_score": _optional_float(m5_family.get("trend_score")),
@@ -706,6 +712,7 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         # same-side entry after a 2+σ move), trader_brain
         # _apply_directional_gating for B and D scoring, and
         # attack_advisor confidence ranking.
+        "confluence": conf,
         "price_percentile_24h": _optional_float(conf.get("price_percentile_24h")),
         "price_percentile_7d": _optional_float(conf.get("price_percentile_7d")),
         "atr_percentile_24h": _optional_float(conf.get("atr_percentile_24h")),
@@ -1741,6 +1748,66 @@ def _direction_bias_from_m5(chart_context: dict[str, Any] | None) -> str | None:
     return Side.LONG.value if long_bias > short_bias else Side.SHORT.value
 
 
+def _operating_tf_opposes_side(side: Side, chart_context: dict[str, Any] | None) -> bool:
+    """Return true when M5/M15 structure says the hedge side is a chase.
+
+    Recovery hedges can monetize trapped exposure, but a higher-timeframe
+    BOS in the hedge direction is not enough when the operating tape has just
+    printed the opposite CHoCH/BOS with a clear M5/M15 bias. In that case the
+    hedge is continuation/chase until price proves through a trigger.
+    """
+    if not chart_context:
+        return False
+    story = str(chart_context.get("chart_story_structural") or "")
+    for timeframe in ("M5", "M15"):
+        struct_dir = _tf_structure_direction(story, timeframe)
+        if struct_dir is None or _direction_to_side(struct_dir) == side:
+            continue
+        long_bias = _optional_float(chart_context.get(f"{timeframe.lower()}_long_bias"))
+        short_bias = _optional_float(chart_context.get(f"{timeframe.lower()}_short_bias"))
+        if long_bias is None or short_bias is None:
+            continue
+        if side == Side.SHORT and long_bias - short_bias > CHART_DIRECTION_TIED_GAP_BOUNDARY:
+            return True
+        if side == Side.LONG and short_bias - long_bias > CHART_DIRECTION_TIED_GAP_BOUNDARY:
+            return True
+    return False
+
+
+def _tf_structure_direction(chart_story: str, timeframe: str) -> str | None:
+    text = chart_story.upper()
+    marker = f"{timeframe.upper()}("
+    start = text.find(marker)
+    if start < 0:
+        return None
+    end = text.find(");", start)
+    if end < 0:
+        end = text.find(")", start)
+    segment = text[start : end if end >= 0 else len(text)]
+    for token, direction in (
+        ("BOS_UP", "UP"),
+        ("CHOCH_UP", "UP"),
+        ("BOS_DOWN", "DOWN"),
+        ("CHOCH_DOWN", "DOWN"),
+    ):
+        token_at = segment.find(token)
+        if token_at < 0:
+            continue
+        if ":WICK" in segment[token_at : token_at + 48]:
+            continue
+        return direction
+    return None
+
+
+def _direction_to_side(direction: str) -> Side | None:
+    upper = direction.upper()
+    if upper == "UP":
+        return Side.LONG
+    if upper == "DOWN":
+        return Side.SHORT
+    return None
+
+
 PIP_FACTORS = {pair: instrument_pip_factor(pair) for pair in DEFAULT_TRADER_PAIRS}
 
 
@@ -2463,6 +2530,51 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 }
             )
 
+    if hedge_recovery and _operating_tf_opposes_side(intent.side, metadata):
+        market = intent.order_type == OrderType.MARKET
+        issues.append(
+            {
+                "code": "RECOVERY_HEDGE_MARKET_OPPOSED_BY_M5"
+                if market
+                else "RECOVERY_HEDGE_CONTINUATION_MICRO_OPPOSED",
+                "message": (
+                    f"{intent.pair} {intent.side.value} recovery hedge is opposed by current M5/M15 "
+                    "structure and bias; use a pending trigger and keep continuation size capped until "
+                    "the operating timeframe confirms."
+                ),
+                "severity": "BLOCK" if market else "WARN",
+            }
+        )
+
+    tp_mode = str(metadata.get("tp_execution_mode") or "").upper()
+    tp_intent = str(metadata.get("tp_target_intent") or "").upper()
+    tp_source = str(metadata.get("tp_target_source") or "").upper()
+    tp_distance = _optional_float(metadata.get("tp_target_distance_pips"))
+    tp_atr = _optional_float(metadata.get("tp_atr_pips"))
+    harvest_tp_too_far = (
+        tp_distance is not None
+        and tp_atr is not None
+        and tp_atr > 0
+        and tp_distance > HARVEST_TP_MAX_OPERATING_ATR_MULT * tp_atr
+    )
+    if (
+        tp_mode == "ATTACHED_TECHNICAL_TP"
+        and tp_intent == "HARVEST"
+        and "ATR_RR" in tp_source
+        and (hedge_recovery or (method == TradeMethod.BREAKOUT_FAILURE and harvest_tp_too_far))
+    ):
+        issues.append(
+            {
+                "code": "HARVEST_TP_STRUCTURE_MISSING",
+                "message": (
+                    f"{intent.pair} {intent.side.value} {method.value if method else 'UNKNOWN'} needs a usable "
+                    "nearby structural HARVEST TP; refusing to fall back to a distant ATR/RR target for a "
+                    "failed-break or recovery-hedge trade."
+                ),
+                "severity": "BLOCK",
+            }
+        )
+
     # C — 2026-05-13 "no chasing exhausted moves" filter. When the pair
     # has already covered >= EXHAUSTION_RANGE_SIGMA_MULTIPLE (= 2.0,
     # standard 2σ boundary) of its typical H1 range in the last 24
@@ -2645,6 +2757,7 @@ def _take_profit_execution_plan(
     target_source = "RANGE_RAIL" if method == TradeMethod.RANGE_ROTATION else "ATR_RR"
     target_reason = "range geometry already anchored to opposing rail" if method == TradeMethod.RANGE_ROTATION else ""
     effective_tp = tp
+    structural_target_found = False
     if method != TradeMethod.RANGE_ROTATION:
         technical_tp, technical_reason = _technical_tp_candidate(
             pair=pair,
@@ -2656,6 +2769,7 @@ def _take_profit_execution_plan(
         )
         if technical_tp is not None:
             effective_tp = technical_tp
+            structural_target_found = True
             target_source = f"STRUCTURAL_{target_intent}"
             target_reason = technical_reason
         else:
@@ -2664,6 +2778,30 @@ def _take_profit_execution_plan(
     pip_factor = PIP_FACTORS[pair]
     stop_pips = abs(entry - sl) * pip_factor
     spread_pips = abs(quote.ask - quote.bid) * pip_factor
+    harvest_target_too_far = (
+        atr_pips is not None
+        and atr_pips > 0
+        and abs(effective_tp - entry) * pip_factor > HARVEST_TP_MAX_OPERATING_ATR_MULT * atr_pips
+    )
+    if (
+        attach_tp
+        and target_intent == "HARVEST"
+        and method == TradeMethod.BREAKOUT_FAILURE
+        and not structural_target_found
+        and harvest_target_too_far
+    ):
+        fallback_tp, fallback_reason = _attached_harvest_floor_tp_candidate(
+            pair=pair,
+            side=side,
+            entry=entry,
+            stop_pips=stop_pips,
+            spread_pips=spread_pips,
+            atr_pips=atr_pips,
+        )
+        if fallback_tp is not None:
+            effective_tp = fallback_tp
+            target_source = "OPERATING_HARVEST_FLOOR"
+            target_reason = f"{target_reason}; {fallback_reason}" if target_reason else fallback_reason
     forecast_tp, forecast_reason = _forecast_tp_candidate(
         pair=pair,
         side=side,
@@ -2707,6 +2845,62 @@ def _take_profit_execution_plan(
         "tp_atr_pips": atr_pips,
     }
     return _round_price(pair, effective_tp), metadata
+
+
+def _attached_harvest_floor_tp_candidate(
+    *,
+    pair: str,
+    side: Side,
+    entry: float,
+    stop_pips: float,
+    spread_pips: float,
+    atr_pips: float | None,
+) -> tuple[float | None, str]:
+    """Fallback for attached HARVEST TP when no structural anchor is usable.
+
+    Failed-break / recovery entries are not runners. If structural_tp_target
+    cannot provide a nearby market level, use the smallest reward-side target
+    that still clears the active range/hedge reward floor and the live spread
+    floor, bounded by the operating ATR cap. This keeps initial broker TP from
+    inheriting a distant SL-free virtual risk distance.
+    """
+    if atr_pips is None or atr_pips <= 0 or stop_pips <= 0:
+        return None, "attached HARVEST fallback skipped: missing operating ATR or stop distance"
+    policy = RiskPolicy()
+    floor_distance_pips = max(
+        policy.range_min_reward_risk * stop_pips,
+        policy.min_target_spread_multiple * spread_pips,
+    )
+    max_distance_pips = HARVEST_TP_MAX_OPERATING_ATR_MULT * atr_pips
+    if floor_distance_pips > max_distance_pips:
+        return None, (
+            f"attached HARVEST fallback skipped: minimum acceptable target "
+            f"{floor_distance_pips:.1f}pip exceeds {HARVEST_TP_MAX_OPERATING_ATR_MULT:.1f}× "
+            f"operating ATR {atr_pips:.1f}pip"
+        )
+
+    pip_factor = PIP_FACTORS[pair]
+    pip = 1.0 / pip_factor
+    if side == Side.LONG:
+        candidate = entry + floor_distance_pips * pip
+    else:
+        candidate = entry - floor_distance_pips * pip
+    candidate = _round_price(pair, candidate)
+
+    # Rounding to broker precision can shave a fraction of a pip; nudge one
+    # price tick outward only if needed to keep the range/hedge RR floor true.
+    rounded_distance = abs(candidate - entry) * pip_factor
+    if rounded_distance < floor_distance_pips:
+        tick = 10 ** (-(3 if pair.endswith("_JPY") else 5))
+        candidate = _round_price(pair, candidate + tick if side == Side.LONG else candidate - tick)
+        rounded_distance = abs(candidate - entry) * pip_factor
+
+    return candidate, (
+        f"attached HARVEST structural anchor missing; using minimum acceptable "
+        f"operating target {rounded_distance:.1f}pip "
+        f"(range_rr_floor={policy.range_min_reward_risk:.2f}, "
+        f"max={max_distance_pips:.1f}pip/{HARVEST_TP_MAX_OPERATING_ATR_MULT:.1f}×ATR)"
+    )
 
 
 def _forecast_tp_candidate(
@@ -3229,14 +3423,31 @@ def _minimum_range_target_pips(stop_pips: float, spread_pips: float) -> float:
 
 
 def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -> dict[str, Any]:
-    same_pair = [position for position in snapshot.positions if position.pair == pair and position.owner == Owner.TRADER]
+    pair_positions = [position for position in snapshot.positions if position.pair == pair]
+    same_pair = [position for position in pair_positions if position.owner == Owner.TRADER]
     if not same_pair:
         return {}
     if any(position.side != side for position in same_pair):
-        all_same_pair = [position for position in snapshot.positions if position.pair == pair]
-        same_side_positions = [position for position in all_same_pair if position.side == side]
-        metadata: dict[str, Any] = {"position_intent": "HEDGE", "position_fill": "OPEN_ONLY"}
-        opposing_positions = [position for position in all_same_pair if position.side != side]
+        same_side_positions = [position for position in same_pair if position.side == side]
+        opposing_positions = [position for position in same_pair if position.side != side]
+        non_trader_positions = [position for position in pair_positions if position.owner != Owner.TRADER]
+        ignored_same_side_units = sum(
+            abs(int(position.units)) for position in non_trader_positions if position.side == side
+        )
+        ignored_opposing_units = sum(
+            abs(int(position.units)) for position in non_trader_positions if position.side != side
+        )
+        ignored_opposing_pl = sum(
+            float(position.unrealized_pl_jpy or 0.0) for position in non_trader_positions if position.side != side
+        )
+        metadata: dict[str, Any] = {
+            "position_intent": "HEDGE",
+            "position_fill": "OPEN_ONLY",
+            "hedge_reference_scope": "trader_owned_only",
+            "hedge_non_trader_same_side_units_ignored": ignored_same_side_units,
+            "hedge_non_trader_opposing_units_ignored": ignored_opposing_units,
+            "hedge_non_trader_opposing_unrealized_pl_jpy_ignored": round(ignored_opposing_pl, 4),
+        }
         gross_reference_units = sum(abs(int(position.units)) for position in opposing_positions)
         same_side_units = sum(abs(int(position.units)) for position in same_side_positions)
         reference_units = max(0, gross_reference_units - same_side_units)
@@ -3250,6 +3461,10 @@ def _position_intent_metadata(pair: str, side: Side, snapshot: BrokerSnapshot) -
                 "hedge_existing_same_side_units": same_side_units,
                 "hedge_covered_reference_units": gross_reference_units,
                 "hedge_suppressed_reason": "opposite_exposure_already_covered",
+                "hedge_reference_scope": "trader_owned_only",
+                "hedge_non_trader_same_side_units_ignored": ignored_same_side_units,
+                "hedge_non_trader_opposing_units_ignored": ignored_opposing_units,
+                "hedge_non_trader_opposing_unrealized_pl_jpy_ignored": round(ignored_opposing_pl, 4),
             }
         metadata.update(
             {
@@ -3334,6 +3549,8 @@ def _hedge_reversal_confirmed(
     lane: dict[str, Any],
 ) -> bool:
     context = chart_context or {}
+    if _operating_tf_opposes_side(side, context):
+        return False
     if _structure_story_confirms_side(side, str(context.get("chart_story_structural") or "")):
         return True
     tf_agree = _bounded_unit(_optional_float(context.get("tf_agreement_score")))
@@ -3555,14 +3772,17 @@ def _risk_budgeted_units(
     quote_to_jpy = _quote_to_jpy(pair, snapshot)
     if quote_to_jpy is None:
         return 1
+    loss_budget_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
     margin_budget_units = _margin_budgeted_units(pair, entry, snapshot, side=side, position_intent=position_intent)
     margin_free_hedge_units = (
         hedge_margin_free_units(pair=pair, side=side, snapshot=snapshot, position_intent=position_intent)
         if side is not None
         else 0
     )
-    # SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`, user directive 「損失を出さない
-    # で稼ぎまくる」, 2026-05-07): sizing is operator-anchored, not loss-anchored.
+    # SL-free mode (`QR_TRADER_DISABLE_SL_REPAIR=1`) is still loss-cap bounded:
+    # the operator/NAV/hedge target picks the desired size, but the executable
+    # result must fit the equity-derived per-trade loss cap before it can be
+    # LIVE_READY.
     # Sizing precedence (highest first):
     #   1. QR_TRADER_POSITION_NAV_PCT — % of NAV used as margin per position.
     #      Auto-scales with equity (user 2026-05-08「BaseUnitを決めると、
@@ -3589,12 +3809,11 @@ def _risk_budgeted_units(
                     target_units = float(os.environ.get("QR_TRADER_BASE_UNITS", "3000") or "3000")
                 except ValueError:
                     target_units = 3000.0
-        candidates = [target_units]
+        candidates = [target_units, loss_budget_units]
         if margin_budget_units is not None:
             candidates.append(margin_budget_units)
         max_units = max(1.0, min(candidates))
     else:
-        loss_budget_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
         max_units = min(loss_budget_units, margin_budget_units) if margin_budget_units is not None else loss_budget_units
     if max_units >= 1000:
         return max(1000, int(max_units // 1000) * 1000)

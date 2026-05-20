@@ -716,6 +716,32 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["tp_target_source"], "STRUCTURAL_HARVEST")
             self.assertIn("ADX", metadata["tp_attach_reason"])
 
+    def test_attached_harvest_missing_structure_uses_operating_floor_tp(self) -> None:
+        from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _take_profit_execution_plan
+
+        tp, metadata = _take_profit_execution_plan(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            method=TradeMethod.BREAKOUT_FAILURE,
+            order_type=OrderType.MARKET,
+            quote=Quote(pair="EUR_USD", bid=1.16264, ask=1.16272),
+            entry=1.16272,
+            tp=1.14355,
+            sl=1.16728,
+            reward_risk=4.2,
+            execution_regime="UNCLEAR",
+            chart_context={"range_24h_sigma_multiple": 6.5},
+            pair_chart={"pair": "EUR_USD", "views": [{"granularity": "M5", "indicators": {"atr_pips": 6.8}}]},
+            atr_pips=6.8,
+        )
+
+        self.assertEqual(tp, 1.15998)
+        self.assertEqual(metadata["tp_target_source"], "OPERATING_HARVEST_FLOOR")
+        self.assertEqual(metadata["tp_target_distance_pips"], 27.4)
+        self.assertEqual(metadata["virtual_take_profit_reward_risk"], 0.601)
+        self.assertIn("structural anchor missing", metadata["tp_target_reason"])
+
     def test_strong_trend_uses_runner_no_broker_tp_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1192,7 +1218,7 @@ class IntentGeneratorTest(unittest.TestCase):
                         dominant_regime="TREND_DOWN",
                         m5_regime="TREND_DOWN",
                     ),
-                    max_loss_jpy=2_000.0,
+                    max_loss_jpy=20_000.0,
                 ).run(snapshot_path=_snapshot_with_underwater_long(root))
 
                 payload = json.loads(output.read_text())
@@ -1248,6 +1274,108 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["hedge_timing_class"], "REVERSAL")
         self.assertGreater(sizing["hedge_recovery_size_scale"], RECOVERY_HEDGE_CONTINUATION_MAX_SCALE)
         self.assertGreater(sizing["hedge_recovery_units"], 7_000)
+
+    def test_recovery_hedge_m5_opposition_prevents_reversal_classification(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import _hedge_timing_metadata
+
+        metadata = {
+            "position_intent": "HEDGE",
+            "hedge_recovery": True,
+            "hedge_recovery_units": 22_000,
+            "hedge_existing_unrealized_pl_jpy": -23_000.0,
+        }
+        chart_context = {
+            "chart_short_score": 0.75,
+            "chart_long_score": 0.25,
+            "chart_score_gap": -0.50,
+            "tf_agreement_score": 0.80,
+            "m5_long_bias": 0.625,
+            "m5_short_bias": 0.25,
+            "chart_story_structural": (
+                "M5(FAILURE_RISK struct=CHOCH_UP@1.1593); "
+                "H1(TREND_DOWN struct=BOS_DOWN@1.1594)"
+            ),
+        }
+
+        metadata.update(_hedge_timing_metadata(Side.SHORT, metadata, chart_context, {}))
+
+        self.assertEqual(metadata["hedge_timing_class"], "CONTINUATION")
+
+    def test_recovery_hedge_market_blocks_when_m5_opposes_side(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=6000,
+            tp=1.15181,
+            sl=1.16131,
+            thesis="market recovery hedge while M5 opposes",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata={
+                "position_intent": "HEDGE",
+                "hedge_recovery": True,
+                "chart_direction_bias": Side.SHORT.value,
+                "chart_score_gap": -0.42,
+                "m5_long_bias": 0.625,
+                "m5_short_bias": 0.25,
+                "chart_story_structural": (
+                    "M5(FAILURE_RISK struct=CHOCH_UP@1.1593); "
+                    "H1(TREND_DOWN struct=BOS_DOWN@1.1594)"
+                ),
+            },
+        )
+
+        issues = _method_context_issues(intent)
+        issue_by_code = {issue["code"]: issue for issue in issues}
+
+        self.assertEqual(issue_by_code["RECOVERY_HEDGE_MARKET_OPPOSED_BY_M5"]["severity"], "BLOCK")
+
+    def test_breakout_failure_blocks_distant_atr_rr_when_harvest_tp_missing(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=3000,
+            entry=1.15964,
+            tp=1.15017,
+            sl=1.16172,
+            thesis="failed break must not use far ATR/RR fallback",
+            market_context=MarketContext(
+                regime="TREND_DOWN current; BREAKOUT_FAILURE campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata={
+                "tp_execution_mode": "ATTACHED_TECHNICAL_TP",
+                "tp_target_intent": "HARVEST",
+                "tp_target_source": "ATR_RR",
+                "tp_target_reason": "structural target too close; using ATR/RR virtual target",
+                "tp_target_distance_pips": 94.7,
+                "tp_atr_pips": 3.0,
+                "position_intent": "HEDGE",
+                "hedge_recovery": True,
+            },
+        )
+
+        issues = _method_context_issues(intent)
+        issue_by_code = {issue["code"]: issue for issue in issues}
+
+        self.assertEqual(issue_by_code["HARVEST_TP_STRUCTURE_MISSING"]["severity"], "BLOCK")
 
     def test_recovery_hedge_without_reversal_confirmation_caps_continuation_chase(self) -> None:
         from quant_rabbit.models import Side
@@ -2149,7 +2277,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
         )
         self.assertEqual(units, 0)
 
-    def test_risk_budgeted_units_allows_same_pair_hedge_inside_longest_leg_when_margin_cap_full(self) -> None:
+    def test_risk_budgeted_units_caps_same_pair_hedge_by_loss_budget(self) -> None:
         import os
 
         from quant_rabbit.models import BrokerPosition, Owner, Side
@@ -2185,7 +2313,7 @@ class MinLotFloorIntentTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
 
-        self.assertEqual(units, 22_000)
+        self.assertEqual(units, 6_000)
 
     def test_position_intent_metadata_marks_underwater_opposite_side_as_recovery_hedge(self) -> None:
         from quant_rabbit.models import BrokerPosition, Owner, Side
@@ -2214,8 +2342,11 @@ class MinLotFloorIntentTest(unittest.TestCase):
 
         self.assertEqual(metadata["position_intent"], "HEDGE")
         self.assertTrue(metadata["hedge_recovery"])
-        self.assertEqual(metadata["hedge_recovery_units"], 22_000)
-        self.assertEqual(metadata["hedge_recovery_unrealized_pl_jpy"], -1500.0)
+        self.assertEqual(metadata["hedge_reference_scope"], "trader_owned_only")
+        self.assertEqual(metadata["hedge_recovery_units"], 7_000)
+        self.assertEqual(metadata["hedge_recovery_unrealized_pl_jpy"], -500.0)
+        self.assertEqual(metadata["hedge_non_trader_opposing_units_ignored"], 15_000)
+        self.assertEqual(metadata["hedge_non_trader_opposing_unrealized_pl_jpy_ignored"], -1000.0)
 
     def test_position_intent_metadata_caps_recovery_hedge_to_uncovered_opposite_units(self) -> None:
         from quant_rabbit.models import BrokerPosition, Owner, Side
