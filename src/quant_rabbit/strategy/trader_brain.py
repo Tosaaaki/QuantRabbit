@@ -880,6 +880,7 @@ class LaneScore:
     # lets the basket converge on a sendable subset instead of
     # whack-a-mole rejecting all 12 lanes.
     estimated_margin_jpy: float | None = None
+    hedge_recovery: bool = False
 
 
 @dataclass(frozen=True)
@@ -1132,7 +1133,8 @@ class TraderBrain:
         spread_pips = _optional_float(risk_metrics.get("spread_pips"))
         strategy = strategies.get((pair, direction), {})
         story = stories.get(pair, {})
-        parent_lane_id = str((intent.get("metadata") or {}).get("parent_lane_id") or "")
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        parent_lane_id = str(metadata.get("parent_lane_id") or "")
         lane = campaign.get(lane_id) or campaign.get(parent_lane_id) or campaign.get(_parent_lane_id(lane_id)) or {}
         blockers: list[str] = list(exposure_blockers)
         rationale: list[str] = []
@@ -1698,6 +1700,7 @@ class TraderBrain:
             judgment=tuple(judgment[:8]),
             spread_pips=spread_pips,
             estimated_margin_jpy=estimated_margin_jpy,
+            hedge_recovery=metadata.get("hedge_recovery") is True,
         )
 
     def _write(self, decision: TraderDecision) -> None:
@@ -2296,11 +2299,34 @@ def _pending_entry_still_has_live_thesis(
         return False
     if _pending_entry_invalidation_breached(order, snapshot):
         return False
+    if _pending_recovery_hedge_still_has_live_thesis(order, snapshot, compatible_scores):
+        return True
     if _pending_entry_has_hard_current_veto(compatible_scores):
         return False
     if _pending_entry_market_has_opposed_thesis(order, scores):
         return False
     return True
+
+
+def _pending_recovery_hedge_still_has_live_thesis(
+    order: BrokerOrder,
+    snapshot: BrokerSnapshot,
+    compatible_scores: list[LaneScore],
+) -> bool:
+    pair = order.pair or ""
+    direction = _order_direction(order.units)
+    if not pair or direction is None:
+        return False
+    if not any(score.hedge_recovery and score.status == "LIVE_READY" for score in compatible_scores):
+        return False
+    opposite = Side.SHORT if direction == Side.LONG.value else Side.LONG
+    return any(
+        position.pair == pair
+        and position.side == opposite
+        and position.units > 0
+        and position.unrealized_pl_jpy < 0
+        for position in snapshot.positions
+    )
 
 
 def _pending_entry_has_broker_thesis_anchor(order: BrokerOrder) -> bool:

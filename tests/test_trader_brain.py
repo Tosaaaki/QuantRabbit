@@ -18,7 +18,9 @@ from quant_rabbit.strategy.trader_brain import (
     MTF_CONFLUENCE_FLOOR,
     SHORT_TERM_MOMENTUM_HIGH_ADX,
     SHORT_TERM_MOMENTUM_LOW_ADX,
+    LaneScore,
     TraderBrain,
+    _contaminated_pending_order_ids,
     _micro_structure_alignment_score,
     _micro_structure_direction,
     _mtf_confluence_score,
@@ -195,6 +197,64 @@ class TraderBrainTest(unittest.TestCase):
             decision = brain.run(snapshot)
 
             self.assertEqual(decision.pending_cancel_order_ids, ("far-stop",))
+
+    def test_keeps_recovery_hedge_pending_despite_short_term_opposition(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="recovery-short-stop",
+            pair="EUR_USD",
+            order_type="STOP",
+            price=1.16049,
+            state="PENDING",
+            units=-22_000,
+            owner=Owner.TRADER,
+            raw={
+                "clientExtensions": {
+                    "tag": "trader",
+                    "comment": "qr-vnext failure_trader NOW_OR_BACKUP",
+                },
+                "takeProfitOnFill": {"price": "1.15675"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="trapped-long",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=22_000,
+                    entry_price=1.16688,
+                    owner=Owner.TRADER,
+                    unrealized_pl_jpy=-23_000.0,
+                ),
+            ),
+            orders=(pending,),
+            quotes={"EUR_USD": Quote("EUR_USD", 1.16046, 1.16054, timestamp_utc=now)},
+        )
+        score = LaneScore(
+            lane_id="failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+            pair="EUR_USD",
+            direction="SHORT",
+            method="BREAKOUT_FAILURE",
+            order_type="STOP-ENTRY",
+            entry=1.16030,
+            tp=1.15669,
+            sl=1.16133,
+            status="LIVE_READY",
+            score=116.78,
+            action=ACTION_NO_TRADE,
+            blockers=(
+                "micro_structure_opposed: M1+M5 both struct opposite to SHORT",
+                "forecast confidence 0.22 < 0.55 threshold",
+            ),
+            rationale=("recovery hedge may run against the stale score while it monetizes trapped exposure",),
+            spread_pips=0.8,
+            estimated_margin_jpy=0.0,
+            hedge_recovery=True,
+        )
+
+        self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,)), ())
 
     def test_keeps_pending_entry_when_market_thesis_still_valid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
