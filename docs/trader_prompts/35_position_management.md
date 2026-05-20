@@ -11,8 +11,10 @@
 ## Valid Actions
 
 - `PROTECT`
+- `BREAK_EVEN_STOP`
 - `TIGHTEN_SL`
 - `TAKE_PROFIT`
+- `TAKE_PROFIT_MARKET`
 - `CLOSE`
 - `CANCEL_PENDING`
 - `WAIT`
@@ -35,8 +37,17 @@
 - When the router reason says `TP rebalance required`, run the `tp-rebalance`
   sidecar before treating WAIT as complete. Do not replace this with prose:
   the command is the executable TP decision for that branch.
-- Profitable protected positions may tighten SL to break-even or better — **disabled
-  under SL-free**: do NOT auto-tighten on profit, the operator harvests via TP only.
+- Profitable protected positions may tighten SL to break-even or better.
+- Under SL-free, missing SL is still intentional and must not be repaired while
+  underwater or inside ordinary execution noise. A trader-owned position that is
+  already profitable may use `BREAK_EVEN_STOP` only after executable profit pips
+  clear the market-derived micro-noise envelope: current M5 ATR and current
+  spread itself. This is a profit-to-flat escape hatch, not initial SL repair
+  or trailing. Manual/tagless positions remain TP-only.
+- If an already-profitable trader-owned runner has macro reversal against it,
+  `TAKE_PROFIT_MARKET` may close it immediately. This is profit harvest, not
+  loss-side thesis invalidation; it must be blocked if the latest broker snapshot
+  is not profitable or the position is manual/tagless/external.
 - Contradicted trader-owned positions may close, **but only on market-structure
   evidence** (see CLOSE rules below).
 - Fresh entries are blocked only by non-layerable trader-owned or external exposure;
@@ -46,6 +57,12 @@
 
 CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
 SL-free the per-trade risk number is advisory; market structure is authoritative.
+
+`TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
+currently profitable trader-owned positions when the adaptive TP / macro-micro
+flow says the runner has reversed and waiting for TP risks giving back MFE.
+Do not use it for underwater positions, manual/tagless positions, or external
+positions.
 
 ### Valid CLOSE triggers (machine-checkable Gate A)
 

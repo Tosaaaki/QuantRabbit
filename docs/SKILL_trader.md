@@ -64,8 +64,9 @@ export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
 # is unset. Do NOT remove — backstops smoke scripts that pin units. The
 # NAV-pct path above takes precedence whenever set.
 export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
-# Deterministic REVIEW_EXIT is advisory by default in SL-free live mode.
-# Full closes must pass the gpt_trader close discipline and operator token.
+# Deterministic loss-side REVIEW_EXIT is advisory by default in SL-free live
+# mode. Loss closes must pass the gpt_trader close discipline and operator
+# token; profit-only TAKE_PROFIT_MARKET remains a separate harvest path.
 export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 # Broker-side SL/trailing are opt-in only. The live default keeps NEW
 # entries SL-free because widened broker SLs were still harvested by

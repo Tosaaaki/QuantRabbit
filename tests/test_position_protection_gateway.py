@@ -9,9 +9,11 @@ from typing import Any
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.position_manager import (
+    ACTION_BREAK_EVEN_STOP,
     ACTION_PROFIT_PROTECT,
     ACTION_REPAIR_TAKE_PROFIT,
     ACTION_REVIEW_EXIT,
+    ACTION_TAKE_PROFIT_MARKET,
     ManagedPosition,
     PositionManagementDecision,
 )
@@ -49,6 +51,25 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertTrue(summary.sent)
             self.assertEqual(client.dependent_orders[0][1]["stopLoss"]["price"], "1.17290")
 
+    def test_sends_sl_free_break_even_stop_when_live_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_BREAK_EVEN_STOP, stop=1.1729),
+                snapshot=_snapshot(stop_loss=None),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertTrue(summary.sent)
+            self.assertEqual(client.dependent_orders[0][1]["stopLoss"]["price"], "1.17290")
+
     def test_blocks_stop_widening(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -78,6 +99,39 @@ class PositionProtectionGatewayTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
+
+    def test_closes_profitable_position_with_take_profit_market_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(decision=_decision(ACTION_TAKE_PROFIT_MARKET, stop=None), snapshot=_snapshot(), send=True)
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.closed, [("1", "ALL")])
+
+    def test_blocks_take_profit_market_when_position_is_not_profitable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(ACTION_TAKE_PROFIT_MARKET, stop=None),
+                snapshot=_snapshot(unrealized_pl_jpy=-1.0),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(client.closed, [])
+            self.assertIn("PROFIT_MARKET_CLOSE_NOT_PROFITABLE", (root / "exec.md").read_text())
 
     def test_manual_position_allows_take_profit_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -185,6 +239,7 @@ def _snapshot(
     owner: Owner = Owner.TRADER,
     take_profit: float | None = 1.1741,
     stop_loss: float | None = 1.1721,
+    unrealized_pl_jpy: float = 90.0,
 ) -> BrokerSnapshot:
     now = datetime.now(timezone.utc)
     return BrokerSnapshot(
@@ -196,7 +251,7 @@ def _snapshot(
                 side=Side.LONG,
                 units=1000,
                 entry_price=1.1729,
-                unrealized_pl_jpy=90.0,
+                unrealized_pl_jpy=unrealized_pl_jpy,
                 take_profit=take_profit,
                 stop_loss=stop_loss,
                 owner=owner,

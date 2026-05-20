@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.paths import DEFAULT_POSITION_EXECUTION, DEFAULT_POSITION_EXECUTION_REPORT
 from quant_rabbit.strategy.position_manager import (
+    ACTION_BREAK_EVEN_STOP,
     ACTION_EXTEND_TP,
     ACTION_HARVEST_TP,
     ACTION_HOLD_PROTECTED,
@@ -17,6 +18,7 @@ from quant_rabbit.strategy.position_manager import (
     ACTION_REPAIR_PROTECTION,
     ACTION_REPAIR_TAKE_PROFIT,
     ACTION_REVIEW_EXIT,
+    ACTION_TAKE_PROFIT_MARKET,
     ManagedPosition,
     PositionManagementDecision,
 )
@@ -154,6 +156,30 @@ class PositionProtectionGateway:
             return action
         if managed.action == ACTION_HOLD_PROTECTED:
             return action
+        if managed.action == ACTION_TAKE_PROFIT_MARKET:
+            if manual_tp_owner:
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "MANUAL_POSITION_CLOSE_FORBIDDEN",
+                        "message": "manual/tagless positions are TP-managed only; market close is forbidden",
+                    }
+                )
+                return action
+            if position.unrealized_pl_jpy <= 0:
+                action["issues"].append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "PROFIT_MARKET_CLOSE_NOT_PROFITABLE",
+                        "message": (
+                            "TAKE_PROFIT_MARKET requires current broker unrealized P/L to be positive; "
+                            f"upl={position.unrealized_pl_jpy}"
+                        ),
+                    }
+                )
+                return action
+            action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
+            return action
         if managed.action == ACTION_REVIEW_EXIT:
             if manual_tp_owner:
                 action["issues"].append(
@@ -171,6 +197,7 @@ class PositionProtectionGateway:
         #視点」「確実に利益を取って」).
         if managed.action not in {
             ACTION_REPAIR_PROTECTION,
+            ACTION_BREAK_EVEN_STOP,
             ACTION_PROFIT_PROTECT,
             ACTION_REPAIR_TAKE_PROFIT,
             ACTION_HARVEST_TP,
@@ -258,7 +285,7 @@ class PositionProtectionGateway:
                 "",
                 "## Execution Contract",
                 "",
-                "- Trader-owned position writes are risk-reducing only: close the trade, create missing protection, tighten an existing SL, or update TP.",
+                "- Trader-owned position writes are risk-reducing only: close the trade, create missing protection, place profit-only break-even, tighten an existing SL, or update TP.",
                 "- Manual/tagless position writes are TP-only profit management; SL writes and market closes are forbidden.",
                 "- Existing SL cannot be widened. Existing TP may be moved only by TP-management actions.",
                 "- Live execution requires the autotrade send path and `QR_LIVE_ENABLED=1`.",

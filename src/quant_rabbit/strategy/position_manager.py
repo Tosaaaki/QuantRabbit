@@ -58,8 +58,10 @@ def _load_full_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str,
 
 ACTION_HOLD_PROTECTED = "HOLD_PROTECTED"
 ACTION_HOLD_SL_FREE = "HOLD_SL_FREE"
+ACTION_BREAK_EVEN_STOP = "BREAK_EVEN_STOP"
 ACTION_PROFIT_PROTECT = "PROFIT_PROTECT_REQUIRED"
 ACTION_REVIEW_EXIT = "REVIEW_EXIT"
+ACTION_TAKE_PROFIT_MARKET = "TAKE_PROFIT_MARKET"
 ACTION_REPAIR_PROTECTION = "REPAIR_PROTECTION_REQUIRED"
 ACTION_REPAIR_TAKE_PROFIT = "REPAIR_TAKE_PROFIT_REQUIRED"
 # Adaptive TP management actions (user 2026-05-08「ミクロとマクロの視点が
@@ -96,6 +98,14 @@ def _position_management_owner(owner: Owner) -> bool:
 # plus one current M5 ATR: this is market-derived noise room, not a profit gate.
 PROFIT_PROTECTION_NOISE_ATR_MULT = 1.0
 PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
+# SL-free break-even is not initial SL repair. It is a profit-only escape hatch
+# after executable MFE clears current micro-noise. M5 is the live management
+# timeframe already exposed by pair_charts. The spread multiplier is the
+# identity value: BE only needs to clear the observed spread itself, not the
+# much wider new-entry SL geometry floor.
+PROFIT_BREAK_EVEN_ATR_TIMEFRAME = GEOMETRY_ATR_TIMEFRAME
+PROFIT_BREAK_EVEN_NOISE_ATR_MULT = PROFIT_PROTECTION_NOISE_ATR_MULT
+PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
 
 
 @dataclass(frozen=True)
@@ -281,9 +291,19 @@ class PositionManager:
                     if adaptive_action != ACTION_HOLD_PROTECTED:
                         if adaptive_action == ACTION_REVIEW_EXIT:
                             action = ACTION_REVIEW_EXIT
+                        elif adaptive_action == ACTION_TAKE_PROFIT_MARKET:
+                            action = ACTION_TAKE_PROFIT_MARKET
                         elif adaptive_tp is not None:
                             recommended_take_profit = adaptive_tp
                             action = adaptive_action
+                    break_even_stop, break_even_reasons = _sl_free_break_even_stop_candidate(
+                        position, quote, pair_charts
+                    )
+                    reasons.extend(break_even_reasons)
+                    if break_even_stop is not None:
+                        recommended_stop_loss = break_even_stop
+                        if action == ACTION_HOLD_SL_FREE:
+                            action = ACTION_BREAK_EVEN_STOP
                 else:
                     recommended_stop_loss = _repair_stop_loss(position, quote, snapshot.quotes, snapshot.home_conversions)
                     if recommended_stop_loss is None:
@@ -476,6 +496,8 @@ class PositionManager:
                 "- Manual/tagless positions must never receive SL repair, SL tightening, or loss-close actions.",
                 "- Missing TP/SL is a repair requirement, not a passive monitor state.",
                 "- Profit protection is required once open profit clears remaining stop risk plus current session noise.",
+                "- SL-free break-even is allowed only after executable profit clears M5 ATR/spread micro-noise.",
+                "- Profit-only TAKE_PROFIT_MARKET is separate from loss-side REVIEW_EXIT Gate A/B discipline.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
                 "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; only ledger-backed next-generation trader positions can execute structural loss-cut exits.",
             ]
@@ -763,8 +785,8 @@ def _adaptive_tp_action(
     # Decision matrix (rows = macro, cols = micro). Profitable positions only.
     # WEAKENING+DEAD demoted from REVIEW_EXIT to HARVEST_TP: MARKET close pays
     # full spread, but a narrow TP fills at the broker's TP price (no spread).
-    # Same outcome (lock profit) cheaper. REVERSED still triggers MARKET close
-    # because we want OUT immediately, not to wait for a TP to fill.
+    # Same outcome (lock profit) cheaper. REVERSED uses a profit-only market
+    # take action because we want OUT immediately, not to wait for a TP fill.
     matrix = {
         ("ALIGNED", "ALIVE"): ACTION_EXTEND_TP,
         ("ALIGNED", "DYING"): ACTION_HARVEST_TP,
@@ -772,9 +794,9 @@ def _adaptive_tp_action(
         ("WEAKENING", "ALIVE"): ACTION_HARVEST_TP,
         ("WEAKENING", "DYING"): ACTION_NARROW_TP,
         ("WEAKENING", "DEAD"): ACTION_HARVEST_TP,
-        ("REVERSED", "ALIVE"): ACTION_REVIEW_EXIT,
-        ("REVERSED", "DYING"): ACTION_REVIEW_EXIT,
-        ("REVERSED", "DEAD"): ACTION_REVIEW_EXIT,
+        ("REVERSED", "ALIVE"): ACTION_TAKE_PROFIT_MARKET,
+        ("REVERSED", "DYING"): ACTION_TAKE_PROFIT_MARKET,
+        ("REVERSED", "DEAD"): ACTION_TAKE_PROFIT_MARKET,
     }
     action = matrix.get((macro, micro), ACTION_HOLD_PROTECTED)
 
@@ -859,10 +881,12 @@ def _adaptive_tp_action(
         else:
             action = ACTION_HOLD_PROTECTED
             reasons.append(f"narrow skipped: anchor {anchor_reason} not closer")
-    elif action == ACTION_REVIEW_EXIT:
-        # MARKET close handled by position_execution.py path on REVIEW_EXIT;
-        # no recommended_tp needed.
-        reasons.append("EXIT (macro reversed or weak+dead micro)")
+    elif action == ACTION_TAKE_PROFIT_MARKET:
+        # MARKET close handled by position_execution.py; this is deliberately
+        # separate from loss-side REVIEW_EXIT / Gate A/B close discipline.
+        reasons.append(
+            f"profit-harvest market close: macro={macro} micro={micro} while position is profitable"
+        )
     else:
         reasons.append("HOLD (mixed signal)")
 
@@ -924,10 +948,20 @@ def _aggregate_action(positions: tuple[ManagedPosition, ...]) -> str:
         return ACTION_REPAIR_PROTECTION
     if ACTION_REPAIR_TAKE_PROFIT in actions:
         return ACTION_REPAIR_TAKE_PROFIT
+    if ACTION_TAKE_PROFIT_MARKET in actions:
+        return ACTION_TAKE_PROFIT_MARKET
     if ACTION_REVIEW_EXIT in actions:
         return ACTION_REVIEW_EXIT
+    if ACTION_BREAK_EVEN_STOP in actions:
+        return ACTION_BREAK_EVEN_STOP
     if ACTION_PROFIT_PROTECT in actions:
         return ACTION_PROFIT_PROTECT
+    if ACTION_HARVEST_TP in actions:
+        return ACTION_HARVEST_TP
+    if ACTION_NARROW_TP in actions:
+        return ACTION_NARROW_TP
+    if ACTION_EXTEND_TP in actions:
+        return ACTION_EXTEND_TP
     if positions:
         return ACTION_HOLD_PROTECTED
     return "NO_POSITION"
@@ -1016,6 +1050,61 @@ def _profit_protection_noise_jpy(
     return max(noise_pips) * jpy_per_pip
 
 
+def _sl_free_break_even_stop_candidate(
+    position: BrokerPosition,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[float | None, tuple[str, ...]]:
+    """Return a BE stop only after SL-free profit clears live micro-noise."""
+    if position.owner != Owner.TRADER or position.stop_loss is not None or not _trader_sl_repair_disabled():
+        return None, ()
+    if position.unrealized_pl_jpy <= 0:
+        return None, ("SL-free BE deferred: position is not profitable",)
+    break_even = _break_even_stop(position, quote)
+    if break_even is None:
+        return None, ("SL-free BE deferred: entry is not reward-side of the current executable price",)
+    profit_pips = _executable_profit_pips(position, quote)
+    if profit_pips is None or profit_pips <= 0:
+        return None, ("SL-free BE deferred: executable profit pips cannot be measured from broker quote",)
+    noise_pips, noise_basis = _profit_break_even_noise_pips(position.pair, quote, pair_charts)
+    if noise_pips is None:
+        return None, ("SL-free BE deferred until current M5 ATR or spread noise can be measured",)
+    if profit_pips < noise_pips:
+        return (
+            None,
+            (
+                f"SL-free BE deferred: executable profit {profit_pips:.1f}pip < "
+                f"micro-noise {noise_pips:.1f}pip ({noise_basis})",
+            ),
+        )
+    return (
+        break_even,
+        (
+            f"SL-free profit BE trigger: executable profit {profit_pips:.1f}pip >= "
+            f"micro-noise {noise_pips:.1f}pip ({noise_basis})",
+        ),
+    )
+
+
+def _profit_break_even_noise_pips(
+    pair: str,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+) -> tuple[float | None, str]:
+    candidates: list[tuple[float, str]] = []
+    atr_pips = _atr_pips_for(pair, pair_charts, PROFIT_BREAK_EVEN_ATR_TIMEFRAME)
+    if atr_pips is not None and atr_pips > 0:
+        value = atr_pips * PROFIT_BREAK_EVEN_NOISE_ATR_MULT
+        candidates.append((value, f"{PROFIT_BREAK_EVEN_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip"))
+    spread_pips = _spread_pips(pair, quote)
+    if spread_pips is not None and spread_pips > 0:
+        value = spread_pips * PROFIT_BREAK_EVEN_SPREAD_MULT
+        candidates.append((value, f"spread {spread_pips:.1f}pip x {PROFIT_BREAK_EVEN_SPREAD_MULT:.1f}"))
+    if not candidates:
+        return None, "missing M5 ATR and spread"
+    return max(candidates, key=lambda item: item[0])
+
+
 def _session_protection_notes(
     position: BrokerPosition,
     quote,
@@ -1077,6 +1166,14 @@ def _spread_pips(pair: str, quote) -> float | None:
         return None
     spread = (quote.ask - quote.bid) * _pip_factor(pair)
     return spread if spread > 0 else None
+
+
+def _executable_profit_pips(position: BrokerPosition, quote) -> float | None:
+    if quote is None:
+        return None
+    if position.side == Side.LONG:
+        return (quote.bid - position.entry_price) * _pip_factor(position.pair)
+    return (position.entry_price - quote.ask) * _pip_factor(position.pair)
 
 
 def _break_even_stop(position: BrokerPosition, quote) -> float | None:

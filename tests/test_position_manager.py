@@ -10,11 +10,14 @@ from pathlib import Path
 
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.position_manager import (
+    ACTION_BREAK_EVEN_STOP,
     ACTION_HOLD_PROTECTED,
+    ACTION_HOLD_SL_FREE,
     ACTION_PROFIT_PROTECT,
     ACTION_REPAIR_PROTECTION,
     ACTION_REPAIR_TAKE_PROFIT,
     ACTION_REVIEW_EXIT,
+    ACTION_TAKE_PROFIT_MARKET,
     PositionManager,
 )
 
@@ -136,6 +139,86 @@ class PositionManagerTest(unittest.TestCase):
 
             self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
             self.assertIn("session noise", (root / "pm.md").read_text())
+
+    def test_sl_free_profitable_short_gets_break_even_after_micro_noise_clears(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                pair_charts = _pair_charts(root, atr_pips=1.0)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-be",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=1900,
+                        take_profit=1.15946,
+                        stop_loss=None,
+                    ),
+                    bid=1.16012,
+                    ask=1.16020,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.16077)
+                self.assertIn("SL-free profit BE trigger", (root / "pm.md").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_sl_free_break_even_waits_until_executable_profit_clears_micro_noise(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                pair_charts = _pair_charts(root, atr_pips=5.0)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-wait",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=500,
+                        take_profit=1.15946,
+                        stop_loss=None,
+                    ),
+                    bid=1.16042,
+                    ask=1.16050,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                self.assertIn("SL-free BE deferred", (root / "pm.md").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
     def test_usd_quote_position_risk_uses_snapshot_conversion_not_static_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -364,6 +447,53 @@ class PositionManagerTest(unittest.TestCase):
                 report = (root / "pm.md").read_text()
                 self.assertIn("loss-cut: macro REVERSED", report)
                 self.assertIn("next-generation entry thesis ledger present", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+    def test_sl_free_profitable_macro_reversal_uses_profit_market_take_under_auto_close_kill_switch(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _structural_reversal_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="profit-reversal",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=250,
+                        take_profit=1.2020,
+                        stop_loss=None,
+                    ),
+                    bid=1.2010,
+                    ask=1.2011,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "data" / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_TAKE_PROFIT_MARKET)
+                self.assertEqual(result.positions[0].action, ACTION_TAKE_PROFIT_MARKET)
+                report = (root / "pm.md").read_text()
+                self.assertIn("profit-harvest market close", report)
+                self.assertNotIn("legacy/no-ledger close", report)
         finally:
             if prior_close is None:
                 os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
