@@ -74,6 +74,146 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         )
         self.assertIsNone(adj)
 
+    def test_profitable_short_existing_tp_harvests_when_forecast_and_technicals_fade(self) -> None:
+        """Profitable existing TP may contract only when forecast drag and
+        technical MFE-risk agree, and the new TP is structurally anchored."""
+        self._kill_switch_off()
+        pair_chart = {
+            "pair": "EUR_USD",
+            "views": [
+                {
+                    "granularity": "M15",
+                    "structure": {
+                        "liquidity": [
+                            {
+                                "side": "EQ_LOW",
+                                "price": 1.15875,
+                                "indices": [1, 2, 3, 4],
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        adj = compute_tp_adjustment(
+            trade_id="471292", pair="EUR_USD", side="SHORT",
+            entry_price=1.16077, current_tp=1.15640,
+            current_price=1.15947,
+            atr_pips=19.2, reward_risk=2.2,
+            latest_forecast={"direction": "UNCLEAR", "confidence": 0.24, "horizon_min": 0},
+            chart_context={
+                "confluence": {
+                    "price_percentile_7d": 0.0,
+                    "tf_agreement_score": 0.33,
+                    "range_24h_sigma_multiple": 6.7,
+                },
+                "indicators_by_tf": {
+                    "M15": {
+                        "stoch_rsi": 0.13,
+                        "williams_r_14": -85.0,
+                        "close": 1.15970,
+                        "bb_lower": 1.15972,
+                    }
+                },
+            },
+            pair_chart=pair_chart,
+        )
+        self.assertIsNotNone(adj)
+        self.assertLess(adj.new_tp, 1.15947)
+        self.assertGreater(adj.new_tp, 1.15640)
+        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+        self.assertIn("forecast_harvest", adj.rationale)
+        self.assertIn("forecast UNCLEAR", adj.rationale)
+        self.assertIn("HARVEST", adj.rationale)
+
+    def test_profitable_short_existing_tp_keeps_running_without_forecast_drag(self) -> None:
+        self._kill_switch_off()
+        pair_chart = {
+            "pair": "EUR_USD",
+            "views": [
+                {
+                    "granularity": "M15",
+                    "structure": {
+                        "liquidity": [
+                            {
+                                "side": "EQ_LOW",
+                                "price": 1.15875,
+                                "indices": [1, 2, 3, 4],
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        adj = compute_tp_adjustment(
+            trade_id="runner-short", pair="EUR_USD", side="SHORT",
+            entry_price=1.16077, current_tp=1.15640,
+            current_price=1.15947,
+            atr_pips=19.2, reward_risk=2.2,
+            latest_forecast={"direction": "DOWN", "confidence": 0.8, "horizon_min": 180},
+            chart_context={
+                "confluence": {
+                    "price_percentile_7d": 0.0,
+                    "tf_agreement_score": 0.33,
+                    "range_24h_sigma_multiple": 6.7,
+                },
+                "indicators_by_tf": {"M15": {"stoch_rsi": 0.13}},
+            },
+            pair_chart=pair_chart,
+        )
+        self.assertIsNone(adj)
+
+    def test_profitable_short_existing_tp_skips_nearest_anchor_inside_market_safety(self) -> None:
+        self._kill_switch_off()
+        pair_chart = {
+            "pair": "EUR_USD",
+            "views": [
+                {
+                    "granularity": "M15",
+                    "structure": {
+                        "liquidity": [
+                            {
+                                "side": "EQ_LOW",
+                                "price": 1.15922,
+                                "indices": [1, 2, 3, 4],
+                            }
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "structure": {
+                        "liquidity": [
+                            {
+                                "side": "EQ_LOW",
+                                "price": 1.15789,
+                                "indices": [1, 2, 3, 4],
+                            }
+                        ]
+                    },
+                },
+            ],
+        }
+        adj = compute_tp_adjustment(
+            trade_id="471292", pair="EUR_USD", side="SHORT",
+            entry_price=1.16077, current_tp=1.15640,
+            current_price=1.15947,
+            atr_pips=19.2, reward_risk=2.2,
+            latest_forecast={"direction": "UNCLEAR", "confidence": 0.24, "horizon_min": 0},
+            chart_context={
+                "confluence": {
+                    "price_percentile_7d": 0.0,
+                    "tf_agreement_score": 0.33,
+                    "range_24h_sigma_multiple": 6.7,
+                },
+                "indicators_by_tf": {"M15": {"stoch_rsi": 0.13}},
+            },
+            pair_chart=pair_chart,
+        )
+        self.assertIsNotNone(adj)
+        self.assertEqual(adj.new_tp, 1.15789)
+        self.assertIn("next HARVEST anchor", adj.rationale)
+
     def test_contract_adverse_mode_long_underwater(self) -> None:
         """LONG significantly underwater (≥ 1 ATR) without reversal:
         contract TP to a small lock-in profit on the bounce."""

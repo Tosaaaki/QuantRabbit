@@ -122,6 +122,32 @@ def _forecast_direction_for_side(side: str) -> str:
     return "UP" if side.upper() == "LONG" else "DOWN"
 
 
+def _forecast_runner_drag_reasons(
+    *,
+    side: str,
+    latest_forecast: Optional[Dict[str, Any]],
+) -> list[str]:
+    """Return forecast reasons that weaken carrying a runner further."""
+    if not latest_forecast:
+        return []
+    aligned_direction = _forecast_direction_for_side(side)
+    direction = str(latest_forecast.get("direction") or "UNCLEAR").upper()
+    confidence = _optional_float(latest_forecast.get("confidence")) or 0.0
+    if direction in {"RANGE", "UNCLEAR"}:
+        return [f"forecast {direction} has no directional runner edge"]
+    if direction != aligned_direction:
+        return [f"forecast {direction} opposes {side.upper()} runner"]
+    try:
+        from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+    except Exception:
+        ENTRY_CONFIDENCE_MIN = 0.55
+    if confidence < ENTRY_CONFIDENCE_MIN:
+        return [
+            f"forecast {direction} confidence {confidence:.2f} below runner threshold {ENTRY_CONFIDENCE_MIN:.2f}"
+        ]
+    return []
+
+
 def _insurance_tp_reasons(
     *,
     side: str,
@@ -154,26 +180,13 @@ def _insurance_tp_reasons(
             reason += " (" + "; ".join(trigger_reasons[:2]) + ")"
         milestone_reasons.append(reason)
 
-    aligned_direction = _forecast_direction_for_side(side)
+    forecast_reasons.extend(
+        _forecast_runner_drag_reasons(side=side, latest_forecast=latest_forecast)
+    )
     if latest_forecast:
-        direction = str(latest_forecast.get("direction") or "UNCLEAR").upper()
-        confidence = _optional_float(latest_forecast.get("confidence")) or 0.0
         horizon_min = _optional_float(latest_forecast.get("horizon_min")) or 0.0
         session = (chart_context or {}).get("session") if isinstance(chart_context, dict) else {}
         next_minutes = _optional_float((session or {}).get("minutes_to_next_killzone"))
-        if direction in {"RANGE", "UNCLEAR"}:
-            forecast_reasons.append(f"forecast {direction} has no directional runner edge")
-        elif direction != aligned_direction:
-            forecast_reasons.append(f"forecast {direction} opposes {side.upper()} runner")
-        else:
-            try:
-                from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
-            except Exception:
-                ENTRY_CONFIDENCE_MIN = 0.55
-            if confidence < ENTRY_CONFIDENCE_MIN:
-                forecast_reasons.append(
-                    f"forecast {direction} confidence {confidence:.2f} below runner threshold {ENTRY_CONFIDENCE_MIN:.2f}"
-                )
         if next_minutes is not None and (horizon_min <= 0 or horizon_min < next_minutes):
             session_reasons.append(
                 f"forecast horizon {horizon_min:.0f}m does not cover next session in {next_minutes:.0f}m"
@@ -184,6 +197,40 @@ def _insurance_tp_reasons(
     if not technical_stack_reasons and not (forecast_reasons and (milestone_reasons or session_reasons)):
         return []
     return (milestone_reasons + forecast_reasons + session_reasons + technical_stack_reasons)[:8]
+
+
+def _existing_tp_harvest_reasons(
+    *,
+    side: str,
+    profit_pips: float,
+    latest_forecast: Optional[Dict[str, Any]],
+    chart_context: Optional[Dict[str, Any]],
+) -> list[str]:
+    """Return reasons to contract an existing profitable TP for MFE capture.
+
+    Existing broker TPs are normally runners. Contracting them requires both:
+    the forecast no longer supports directional carry, and the technical stack
+    says current MFE is at risk. That keeps the 2026-05-13 expand-only invariant
+    for ordinary winners while still allowing the 2026-05-20 "do not sit on a
+    stale full-distance hedge TP" repair.
+    """
+    if _insurance_tp_disabled() or profit_pips <= 0:
+        return []
+    forecast_reasons = _forecast_runner_drag_reasons(
+        side=side,
+        latest_forecast=latest_forecast,
+    )
+    if not forecast_reasons:
+        return []
+    technical_reasons = _technical_harvest_pressure(
+        side=side,
+        chart_context=chart_context,
+    )
+    # Two independent technical warnings are the same stack boundary used by
+    # TP-less runner insurance; one isolated overbought/oversold print is noise.
+    if len(technical_reasons) < 2:
+        return []
+    return (forecast_reasons + technical_reasons)[:8]
 
 
 def _technical_harvest_pressure(*, side: str, chart_context: Optional[Dict[str, Any]]) -> list[str]:
@@ -254,6 +301,67 @@ def _technical_harvest_pressure(*, side: str, chart_context: Optional[Dict[str, 
     return reasons[:6]
 
 
+def _structural_existing_tp_harvest_candidate(
+    *,
+    pair: str,
+    side: str,
+    entry_price: float,
+    current_price: float,
+    current_tp: float,
+    pair_chart: Optional[Dict[str, Any]],
+    pip_factor: int,
+) -> tuple[Optional[float], str]:
+    """Pick a closer market-derived TP from the structural HARVEST ladder."""
+    if not pair_chart:
+        return None, "no pair_chart structural ladder"
+    from quant_rabbit.strategy.price_action import structural_tp_target
+
+    side_up = side.upper()
+    safety_margin = MIN_TP_TO_MARKET_PIPS / pip_factor
+    skipped: list[str] = []
+    for intent in ("HARVEST", "EXTEND"):
+        candidate, anchor_reason = structural_tp_target(
+            pair_chart,
+            side=side,
+            current_price=current_price,
+            pip_factor=float(pip_factor),
+            intent=intent,
+        )
+        if candidate is None:
+            skipped.append(f"{intent}: {anchor_reason}")
+            continue
+        candidate_tp = _round_price(pair, float(candidate))
+        if side_up == "LONG":
+            if candidate_tp >= current_tp:
+                skipped.append(f"{intent}: {anchor_reason} not closer than current TP")
+                continue
+            if candidate_tp < current_price + safety_margin:
+                skipped.append(f"{intent}: {anchor_reason} inside market safety margin")
+                continue
+            if candidate_tp <= entry_price:
+                skipped.append(f"{intent}: {anchor_reason} not on reward side")
+                continue
+        else:
+            if candidate_tp <= current_tp:
+                skipped.append(f"{intent}: {anchor_reason} not closer than current TP")
+                continue
+            if candidate_tp > current_price - safety_margin:
+                skipped.append(f"{intent}: {anchor_reason} inside market safety margin")
+                continue
+            if candidate_tp >= entry_price:
+                skipped.append(f"{intent}: {anchor_reason} not on reward side")
+                continue
+        change_pips = round(abs(candidate_tp - current_tp) * pip_factor, 1)
+        if change_pips < HYSTERESIS_PIPS:
+            skipped.append(f"{intent}: {anchor_reason} change {change_pips:.1f}pip below hysteresis")
+            continue
+        if intent == "EXTEND":
+            anchor_label = anchor_reason.removeprefix("EXTEND→").replace(" (skip first)", "")
+            anchor_reason = f"next HARVEST anchor after unsafe nearest ({anchor_label})"
+        return candidate_tp, anchor_reason
+    return None, "; ".join(skipped[:4]) or "no usable structural anchor"
+
+
 def compute_tp_adjustment(
     *,
     trade_id: str,
@@ -268,10 +376,11 @@ def compute_tp_adjustment(
     owner: str = "trader",
     chart_context: Optional[Dict[str, Any]] = None,
     latest_forecast: Optional[Dict[str, Any]] = None,
+    pair_chart: Optional[Dict[str, Any]] = None,
 ) -> Optional[TPAdjustment]:
     """Compute a new TP for one position.
 
-    Three modes (2026-05-13 iteration after the 471029 regression):
+    Core modes (2026-05-13 iteration after the 471029 regression):
 
     1. **expand_reversal** — reversal signal fires for this side:
        use the full `reward_risk × ATR` distance from entry, letting
@@ -288,6 +397,10 @@ def compute_tp_adjustment(
     3. **expand_only** — otherwise (in profit, or barely adverse, no
        reversal signal): TP can only move FURTHER from entry. The
        original "let winners run" rule.
+
+    4. **forecast_harvest** — profitable existing TP with forecast drag and
+       a technical exhaustion stack: move TP closer only to a structural
+       HARVEST anchor from pair_charts. No structural anchor = HOLD.
 
     Returns None when the position should not be adjusted (non-managed
     owner, trader-owned missing TP, change below hysteresis, safety violation).
@@ -326,6 +439,16 @@ def compute_tp_adjustment(
         if current_tp is None
         else []
     )
+    existing_tp_harvest_reasons = (
+        _existing_tp_harvest_reasons(
+            side=side_up,
+            profit_pips=profit_pips,
+            latest_forecast=latest_forecast,
+            chart_context=chart_context,
+        )
+        if current_tp is not None
+        else []
+    )
     insurance_missing_tp = current_tp is None and bool(insurance_reasons)
     if current_tp is None and not (manual_missing_tp_repair or insurance_missing_tp):
         return None
@@ -343,6 +466,7 @@ def compute_tp_adjustment(
     is_significant_adverse = is_adverse and adverse_pips >= ADVERSE_ATR_MULT * atr_pips
 
     # Pick mode.
+    harvest_anchor_reason: Optional[str] = None
     if insurance_missing_tp:
         mode = "insurance_tp"
         lock_in_pips = max(MIN_LOCK_IN_PIPS, atr_pips * LOCK_IN_ATR_MULT)
@@ -375,6 +499,19 @@ def compute_tp_adjustment(
         # In reversal mode we never want to contract; if the desired
         # distance is shorter than the old TP, leave it alone.
         if desired_distance_pips <= distance_old:
+            return None
+    elif existing_tp_harvest_reasons:
+        mode = "forecast_harvest"
+        candidate_tp, harvest_anchor_reason = _structural_existing_tp_harvest_candidate(
+            pair=pair,
+            side=side_up,
+            entry_price=entry_price,
+            current_price=current_price,
+            current_tp=float(current_tp),
+            pair_chart=pair_chart,
+            pip_factor=pip_factor,
+        )
+        if candidate_tp is None:
             return None
     elif is_significant_adverse:
         mode = "contract_adverse"
@@ -471,6 +608,10 @@ def compute_tp_adjustment(
     )
     if insurance_missing_tp:
         rationale += "; insurance: " + "; ".join(insurance_reasons[:4])
+    if mode == "forecast_harvest":
+        rationale += "; harvest: " + "; ".join(existing_tp_harvest_reasons[:4])
+        if harvest_anchor_reason:
+            rationale += f"; anchor: {harvest_anchor_reason}"
     return TPAdjustment(
         trade_id=trade_id,
         pair=pair,
@@ -561,6 +702,7 @@ def compute_all_tp_adjustments(
             owner=owner_str.lower(),
             chart_context=_chart_context_from_chart(chart),
             latest_forecast=(latest_forecasts_by_pair or {}).get(pair),
+            pair_chart=chart,
         )
         if adj is not None:
             adjustments.append(adj)
