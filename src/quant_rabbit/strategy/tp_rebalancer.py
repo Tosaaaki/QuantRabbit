@@ -502,7 +502,6 @@ def compute_tp_adjustment(
     reachable_harvest_tp_reasons: list[str] = []
     if (
         current_tp is not None
-        and profit_pips > 0
         and not is_reversal_firing
         and operating_atr is not None
         and distance_old <= MAX_TP_DISTANCE_ATR_MULT * operating_atr
@@ -514,10 +513,9 @@ def compute_tp_adjustment(
         reachable_harvest_tp_reasons.append(
             f"existing TP {distance_old:.1f}pip is already within {MAX_TP_DISTANCE_ATR_MULT:.1f}× operating ATR {operating_atr:.1f}pip"
         )
-        if profit_pips < operating_atr:
-            reachable_harvest_tp_reasons.append(
-                f"profit {profit_pips:.1f}pip is not yet ≥ operating ATR {operating_atr:.1f}pip"
-            )
+        reachable_harvest_tp_reasons.append(
+            f"position progress {profit_pips:.1f}pip has not cleared operating ATR {operating_atr:.1f}pip"
+        )
 
     # Adverse detection (only matters for contract_adverse mode).
     if side_up == "LONG":

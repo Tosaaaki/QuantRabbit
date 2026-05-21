@@ -934,8 +934,17 @@ class TraderBrain:
         self.market_story_profile_path = market_story_profile_path
         self.trader_settings_path = trader_settings_path
         self.target_state_path = target_state_path
-        self.attack_advice_path = attack_advice_path
-        self.pair_charts_path = pair_charts_path
+        data_root = trader_settings_path.parent
+        self.attack_advice_path = (
+            data_root / DEFAULT_AI_ATTACK_ADVICE.name
+            if attack_advice_path == DEFAULT_AI_ATTACK_ADVICE
+            else attack_advice_path
+        )
+        self.pair_charts_path = (
+            data_root / DEFAULT_PAIR_CHARTS.name
+            if pair_charts_path == DEFAULT_PAIR_CHARTS
+            else pair_charts_path
+        )
         self.output_path = output_path
         self.report_path = report_path
 
@@ -975,20 +984,21 @@ class TraderBrain:
         # once per cycle and passed to _score_lane to avoid recomputing
         # on every candidate. They degrade gracefully — missing
         # execution_ledger.db or pair_charts → empty dicts → 0 modifier.
-        from quant_rabbit.paths import ROOT as _QR_ROOT
-        lane_history = compute_lane_history(_QR_ROOT / "data" / "execution_ledger.db")
+        data_root = self.trader_settings_path.parent
+        lane_history = compute_lane_history(data_root / "execution_ledger.db")
         # full_pair_charts is keyed-by-pair dict; rebuild minimal payload
         # for regime_classifier which expects {"charts": [...]}.
         regime_snapshots = regime_classify_all({"charts": list(full_pair_charts.values())}) if full_pair_charts else {}
         # Module C: daily-review feedback. Empty when file is absent or
         # expired — no behavior change in that case.
-        trader_overrides = load_trader_overrides(_QR_ROOT / "data")
+        trader_overrides = load_trader_overrides(data_root)
         # Module A-extension: news theme parser. Reads the curated
         # `logs/news_digest.md` (produced by qr-news-digest routine) and
         # converts macro themes (USD strong, risk-off, pair-specific
         # bearish/bullish notes) into bounded per-(pair, direction)
         # score biases. Empty when digest is missing or unparseable.
-        news_themes = parse_news_themes(_QR_ROOT / "logs" / "news_digest.md")
+        logs_root = data_root.parent / "logs" if data_root.name == "data" else data_root / "logs"
+        news_themes = parse_news_themes(logs_root / "news_digest.md")
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)

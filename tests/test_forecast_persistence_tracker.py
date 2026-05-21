@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -63,6 +64,29 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
 
             self.assertEqual(verdict.verdict, "RECOMMEND_CLOSE")
             self.assertIn("flipped to DOWN", verdict.reason)
+
+    def test_stale_forecast_history_cannot_recommend_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = datetime(2026, 5, 21, 0, 0, tzinfo=timezone.utc)
+            for idx in range(5):
+                record_forecast(
+                    _forecast("EUR_USD", "UNCLEAR", confidence=0.2),
+                    data_root=root,
+                    now=base + timedelta(minutes=idx),
+                    cycle_id=f"cycle-{idx}",
+                )
+
+            verdict = assess_position(
+                trade_id="t1",
+                pair="EUR_USD",
+                side="LONG",
+                data_root=root,
+                fresh_after_utc=base + timedelta(hours=1),
+            )
+
+            self.assertEqual(verdict.verdict, "HOLD")
+            self.assertIn("stale forecast history", verdict.reason)
 
     def test_record_forecast_persists_audit_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1187,13 +1187,21 @@ def main(argv: list[str] | None = None) -> int:
             for s in snap.spreads:
                 lines.append(f"| `{s.instrument}` | {s.current_pips} | {s.median_pips} | {s.p90_pips} | {s.max_pips} | {s.sample_size} | `{s.stress_flag}` |")
             lines.extend(["", "## Position Book Top Clusters", ""])
-            for pb in snap.position_books:
-                if pb.issue:
-                    lines.append(f"- `{pb.instrument}` issue: {pb.issue}")
-                    continue
-                top_long = ", ".join(f"{b.price}@{b.long_pct:.1f}%" for b in pb.top_long_clusters[:3])
-                top_short = ", ".join(f"{b.price}@{b.short_pct:.1f}%" for b in pb.top_short_clusters[:3])
-                lines.append(f"- `{pb.instrument}` price={pb.price} long_total={pb.long_total_pct:.1f}% short_total={pb.short_total_pct:.1f}% top_long=[{top_long}] top_short=[{top_short}]")
+            position_book_issues = [pb.issue for pb in snap.position_books if pb.issue]
+            unique_position_book_issues = sorted({i for i in position_book_issues if i})
+            if (
+                len(unique_position_book_issues) == 1
+                and len(position_book_issues) == len(snap.position_books)
+            ):
+                lines.append(f"- all pairs issue: {unique_position_book_issues[0]}")
+            else:
+                for pb in snap.position_books:
+                    if pb.issue:
+                        lines.append(f"- `{pb.instrument}` issue: {pb.issue}")
+                        continue
+                    top_long = ", ".join(f"{b.price}@{b.long_pct:.1f}%" for b in pb.top_long_clusters[:3])
+                    top_short = ", ".join(f"{b.price}@{b.short_pct:.1f}%" for b in pb.top_short_clusters[:3])
+                    lines.append(f"- `{pb.instrument}` price={pb.price} long_total={pb.long_total_pct:.1f}% short_total={pb.short_total_pct:.1f}% top_long=[{top_long}] top_short=[{top_short}]")
             if snap.issues:
                 lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
             args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -2067,6 +2075,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         from quant_rabbit.models import BrokerPosition, Owner, Side
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        fresh_after = None
+        try:
+            raw_fetched = snapshot_payload.get("fetched_at_utc") or (snapshot_payload.get("account") or {}).get("fetched_at_utc")
+            if raw_fetched:
+                raw_text = str(raw_fetched)
+                if raw_text.endswith("Z"):
+                    raw_text = raw_text[:-1] + "+00:00"
+                fresh_after = datetime.fromisoformat(raw_text)
+                if fresh_after.tzinfo is None:
+                    fresh_after = fresh_after.replace(tzinfo=timezone.utc)
+                else:
+                    fresh_after = fresh_after.astimezone(timezone.utc)
+        except Exception:
+            fresh_after = None
         positions = []
         for p in snapshot_payload.get("positions", []) or []:
             try:
@@ -2083,7 +2105,11 @@ def main(argv: list[str] | None = None) -> int:
                 ))
             except Exception:
                 continue
-        verdicts = _persistence_assess_all(positions, data_root=Path("data"))
+        verdicts = _persistence_assess_all(
+            positions,
+            data_root=Path("data"),
+            fresh_after_utc=fresh_after,
+        )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps({
             "generated_at_utc": __import__("datetime").datetime.now(

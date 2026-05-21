@@ -137,12 +137,30 @@ def _load_recent(data_root: Path, pair: str, count: int) -> List[Dict[str, Any]]
     return [by_cycle[key] for key in cycle_order][-count:]
 
 
+def _parse_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def assess_position(
     *,
     trade_id: str,
     pair: str,
     side: str,
     data_root: Path,
+    fresh_after_utc: datetime | None = None,
 ) -> PersistenceVerdict:
     """Check forecast persistence for one position.
 
@@ -172,6 +190,24 @@ def assess_position(
 
     directions = tuple(str(r.get("direction", "")) for r in recent)
     confidences = tuple(float(r.get("confidence", 0)) for r in recent)
+    latest_ts = _parse_timestamp(recent[-1].get("timestamp_utc"))
+    if fresh_after_utc is not None:
+        if fresh_after_utc.tzinfo is None:
+            fresh_after = fresh_after_utc.replace(tzinfo=timezone.utc)
+        else:
+            fresh_after = fresh_after_utc.astimezone(timezone.utc)
+        if latest_ts is None or latest_ts < fresh_after:
+            latest_text = latest_ts.isoformat() if latest_ts is not None else "unknown"
+            return PersistenceVerdict(
+                trade_id=trade_id, pair=pair, side=side_up,
+                last_n_directions=directions, last_n_confidences=confidences,
+                verdict="HOLD",
+                reason=(
+                    "stale forecast history: latest forecast "
+                    f"{latest_text} predates broker snapshot {fresh_after.isoformat()}; "
+                    "refresh trader-brain forecast before persistence close advice"
+                ),
+            )
 
     # Persistent flip check
     flip_run = 0
@@ -230,6 +266,7 @@ def assess_all_positions(
     positions: List[Any],
     *,
     data_root: Path,
+    fresh_after_utc: datetime | None = None,
 ) -> List[PersistenceVerdict]:
     out: List[PersistenceVerdict] = []
     for p in positions:
@@ -244,5 +281,6 @@ def assess_all_positions(
             pair=str(getattr(p, "pair", "")),
             side=side_val,
             data_root=data_root,
+            fresh_after_utc=fresh_after_utc,
         ))
     return out

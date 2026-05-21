@@ -62,6 +62,7 @@ class PositionThesisAssessment:
     aggregate_score: float
     verdict: str  # "EXTEND" | "HOLD" | "REVIEW_CLOSE"
     rationale_lines: tuple[str, ...]
+    context_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -76,7 +77,24 @@ class PositionThesisAssessment:
             "aggregate_score": self.aggregate_score,
             "verdict": self.verdict,
             "rationale_lines": list(self.rationale_lines),
+            "context_notes": list(self.context_notes),
         }
+
+    def with_verdict(self, verdict: str, *notes: str) -> "PositionThesisAssessment":
+        return PositionThesisAssessment(
+            trade_id=self.trade_id,
+            pair=self.pair,
+            side=self.side,
+            pattern_score=self.pattern_score,
+            projection_score=self.projection_score,
+            correlation_score=self.correlation_score,
+            path_score=self.path_score,
+            reversal_against=self.reversal_against,
+            aggregate_score=self.aggregate_score,
+            verdict=verdict,
+            rationale_lines=self.rationale_lines,
+            context_notes=self.context_notes + tuple(n for n in notes if n),
+        )
 
 
 def _is_disabled() -> bool:
@@ -276,4 +294,71 @@ def assess_all_positions(
             out.append(assessment)
         except Exception:
             continue
-    return out
+    return _reconcile_same_pair_hedges(out, positions)
+
+
+def _reconcile_same_pair_hedges(
+    assessments: List[PositionThesisAssessment],
+    positions: List[Any],
+) -> List[PositionThesisAssessment]:
+    """Suppress contradictory EXTEND verdicts on same-pair opposite legs.
+
+    This module scores each position in isolation. A same-pair LONG and SHORT
+    can both receive positive detector scores when the market is ranging or
+    compressing, but that is not a portfolio-level instruction to extend both
+    legs. Hedge intent and unwind discipline live in the entry/gateway path; a
+    position-thesis sidecar that lacks entry-thesis metadata must surface the
+    conflict and defer to hedge/unwind review.
+    """
+
+    trader_units: dict[str, dict[str, int]] = {}
+    for position in positions:
+        owner = getattr(position, "owner", None)
+        owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
+        if owner_str.lower() != "trader":
+            continue
+        pair = str(getattr(position, "pair", ""))
+        side = getattr(position, "side", None)
+        side_up = (side.value if hasattr(side, "value") else str(side or "")).upper()
+        if not pair or side_up not in {"LONG", "SHORT"}:
+            continue
+        try:
+            units = abs(int(getattr(position, "units", 0) or 0))
+        except (TypeError, ValueError):
+            units = 0
+        trader_units.setdefault(pair, {"LONG": 0, "SHORT": 0})[side_up] += units
+
+    by_pair: dict[str, list[PositionThesisAssessment]] = {}
+    for assessment in assessments:
+        by_pair.setdefault(assessment.pair, []).append(assessment)
+
+    reconciled: list[PositionThesisAssessment] = []
+    for assessment in assessments:
+        units = trader_units.get(assessment.pair) or {}
+        long_units = int(units.get("LONG") or 0)
+        short_units = int(units.get("SHORT") or 0)
+        if long_units <= 0 or short_units <= 0:
+            reconciled.append(assessment)
+            continue
+
+        pair_assessments = by_pair.get(assessment.pair, [])
+        opposite_side = "SHORT" if assessment.side == "LONG" else "LONG"
+        opposite_extends = any(
+            other.side == opposite_side and other.verdict == "EXTEND"
+            for other in pair_assessments
+        )
+        context = (
+            "same-pair trader hedge context: "
+            f"long_units={long_units}, short_units={short_units}, "
+            f"net_units={long_units - short_units}; "
+            "position-thesis scores are independent and do not authorize both legs to extend"
+        )
+        if assessment.verdict == "EXTEND" and opposite_extends:
+            reconciled.append(assessment.with_verdict(
+                "HOLD",
+                context,
+                "EXTEND suppressed until the hedge/unwind plan identifies the active leg",
+            ))
+        else:
+            reconciled.append(assessment.with_verdict(assessment.verdict, context))
+    return reconciled

@@ -324,6 +324,29 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
 
         self.assertIsNone(adj)
 
+    def test_keeps_reachable_harvest_tp_after_micro_adverse_flip(self) -> None:
+        """Regression for 471345: PositionManager set a near HARVEST TP, then
+        post-gateway tp-rebalance widened it when the next quote tick put the
+        short slightly underwater. A reachable harvest TP must survive that
+        micro flip; otherwise one cycle can tighten and immediately stretch."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471345", pair="EUR_USD", side="SHORT",
+            entry_price=1.16244, current_tp=1.16174,
+            current_price=1.16260,
+            atr_pips=21.3, reward_risk=2.7,
+            is_reversal_firing=False,
+            chart_context={
+                "confluence": {"range_24h_sigma_multiple": 6.43},
+                "indicators_by_tf": {
+                    "M5": {"atr_pips": 1.1},
+                    "M15": {"atr_pips": 3.8},
+                },
+            },
+        )
+
+        self.assertIsNone(adj)
+
     def test_trailing_mode_pushes_tp_ahead_of_price(self) -> None:
         """LONG in profit ≥ TRAILING_TRIGGER_ATR_MULT × ATR triggers
         trailing branch: new TP anchored on current_price + lock-behind."""

@@ -123,33 +123,45 @@ def build_flow_snapshot(
     order_books: list[BookSnapshot] = []
     position_books: list[BookSnapshot] = []
     spreads: list[SpreadStat] = []
+    order_book_unavailable: str | None = None
+    position_book_unavailable: str | None = None
 
     for pair in pairs:
         # Order book
-        try:
-            payload = client.get_json(f"/v3/instruments/{pair}/orderBook")
-            order_books.append(_book_from_payload(pair, payload, kind="ORDER", top_n=top_n))
-        except Exception as exc:
-            issues.append(f"MISSING_ORDERBOOK_{pair}: {exc}")
-            order_books.append(BookSnapshot(
-                instrument=pair, kind="ORDER", timestamp_utc=None, price=None,
-                bucket_width=None, long_total_pct=0.0, short_total_pct=0.0,
-                top_long_clusters=tuple(), top_short_clusters=tuple(),
-                issue=f"{exc}",
-            ))
+        if order_book_unavailable is not None:
+            order_books.append(_missing_book_snapshot(pair, "ORDER", order_book_unavailable))
+        else:
+            try:
+                payload = client.get_json(f"/v3/instruments/{pair}/orderBook")
+                order_books.append(_book_from_payload(pair, payload, kind="ORDER", top_n=top_n))
+            except Exception as exc:
+                auth_issue = _book_authorization_issue("ORDERBOOK", exc)
+                if auth_issue is not None:
+                    order_book_unavailable = auth_issue
+                    issues.append(auth_issue)
+                    order_books.append(_missing_book_snapshot(pair, "ORDER", auth_issue))
+                else:
+                    issue = f"MISSING_ORDERBOOK_{pair}: {exc}"
+                    issues.append(issue)
+                    order_books.append(_missing_book_snapshot(pair, "ORDER", issue))
 
         # Position book
-        try:
-            payload = client.get_json(f"/v3/instruments/{pair}/positionBook")
-            position_books.append(_book_from_payload(pair, payload, kind="POSITION", top_n=top_n))
-        except Exception as exc:
-            issues.append(f"MISSING_POSITIONBOOK_{pair}: {exc}")
-            position_books.append(BookSnapshot(
-                instrument=pair, kind="POSITION", timestamp_utc=None, price=None,
-                bucket_width=None, long_total_pct=0.0, short_total_pct=0.0,
-                top_long_clusters=tuple(), top_short_clusters=tuple(),
-                issue=f"{exc}",
-            ))
+        if position_book_unavailable is not None:
+            position_books.append(_missing_book_snapshot(pair, "POSITION", position_book_unavailable))
+        else:
+            try:
+                payload = client.get_json(f"/v3/instruments/{pair}/positionBook")
+                position_books.append(_book_from_payload(pair, payload, kind="POSITION", top_n=top_n))
+            except Exception as exc:
+                auth_issue = _book_authorization_issue("POSITIONBOOK", exc)
+                if auth_issue is not None:
+                    position_book_unavailable = auth_issue
+                    issues.append(auth_issue)
+                    position_books.append(_missing_book_snapshot(pair, "POSITION", auth_issue))
+                else:
+                    issue = f"MISSING_POSITIONBOOK_{pair}: {exc}"
+                    issues.append(issue)
+                    position_books.append(_missing_book_snapshot(pair, "POSITION", issue))
 
         # Spread time-series proxy: pull current quote + M1 candles
         try:
@@ -170,6 +182,32 @@ def build_flow_snapshot(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _book_authorization_issue(feed: str, exc: Exception) -> str | None:
+    text = str(exc)
+    lowered = text.lower()
+    if "401" not in lowered and "unauthorized" not in lowered and "invalid authentication" not in lowered:
+        return None
+    return (
+        f"{feed}_FEED_UNAUTHORIZED: OANDA book endpoint returned authorization error; "
+        "spread stats remain usable, but order/position-book clusters are unavailable"
+    )
+
+
+def _missing_book_snapshot(pair: str, kind: str, issue: str) -> BookSnapshot:
+    return BookSnapshot(
+        instrument=pair,
+        kind=kind,
+        timestamp_utc=None,
+        price=None,
+        bucket_width=None,
+        long_total_pct=0.0,
+        short_total_pct=0.0,
+        top_long_clusters=tuple(),
+        top_short_clusters=tuple(),
+        issue=issue,
+    )
 
 
 def _book_from_payload(pair: str, payload: dict, *, kind: str, top_n: int) -> BookSnapshot:

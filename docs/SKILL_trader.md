@@ -121,9 +121,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 # current broker truth + pair_charts packet is fresh, before intent pricing
 # and before a WAIT receipt can end the cycle. If it writes a dependent TP
 # order, refresh broker truth immediately so generate-intents / GPT evidence
-# sees the new broker order price. This is mandatory even when the final
-# decision becomes WAIT; otherwise profitable existing TPs can sit stale.
+# sees the new broker order price, and sync the execution ledger so direct
+# TP sidecar writes do not disappear from local audit reports. This is
+# mandatory even when the final decision becomes WAIT; otherwise profitable
+# existing TPs can sit stale.
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
+PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
@@ -209,6 +212,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
 # dependent order state.
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
+PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 
 # 6b. Profit partial close: when trader-owned or manual/tagless
