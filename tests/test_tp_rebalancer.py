@@ -347,6 +347,28 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
 
         self.assertIsNone(adj)
 
+    def test_keeps_reachable_harvest_tp_after_profit_progress(self) -> None:
+        """Regression for 471353→471355: a later TP pass tightened the short to
+        a reachable harvest target, then expanded it again after the position
+        had made some progress. HARVEST TP means bank, not reclassify as runner."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471345", pair="EUR_USD", side="SHORT",
+            entry_price=1.16244, current_tp=1.16164,
+            current_price=1.16208,
+            atr_pips=21.3, reward_risk=2.7,
+            is_reversal_firing=False,
+            chart_context={
+                "confluence": {"range_24h_sigma_multiple": 6.50},
+                "indicators_by_tf": {
+                    "M5": {"atr_pips": 1.4},
+                    "M15": {"atr_pips": 3.8},
+                },
+            },
+        )
+
+        self.assertIsNone(adj)
+
     def test_trailing_mode_pushes_tp_ahead_of_price(self) -> None:
         """LONG in profit ≥ TRAILING_TRIGGER_ATR_MULT × ATR triggers
         trailing branch: new TP anchored on current_price + lock-behind."""

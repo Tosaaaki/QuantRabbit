@@ -505,16 +505,12 @@ def compute_tp_adjustment(
         and not is_reversal_firing
         and operating_atr is not None
         and distance_old <= MAX_TP_DISTANCE_ATR_MULT * operating_atr
-        and (
-            profit_pips < operating_atr
-            or len(stale_distance_technical_reasons) >= 2
-        )
     ):
         reachable_harvest_tp_reasons.append(
             f"existing TP {distance_old:.1f}pip is already within {MAX_TP_DISTANCE_ATR_MULT:.1f}× operating ATR {operating_atr:.1f}pip"
         )
         reachable_harvest_tp_reasons.append(
-            f"position progress {profit_pips:.1f}pip has not cleared operating ATR {operating_atr:.1f}pip"
+            f"preserving reachable harvest target while position progress is {profit_pips:.1f}pip"
         )
 
     # Adverse detection (only matters for contract_adverse mode).
