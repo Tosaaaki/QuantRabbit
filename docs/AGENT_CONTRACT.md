@@ -372,7 +372,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
 
 # LIVE (gated)
 scripts/sync-live-runtime.sh
-./scripts/run-autotrade-live.sh \
+QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
     --reuse-market-artifacts \
     --use-gpt-trader \
     --gpt-decision-response data/codex_trader_decision_response.json \

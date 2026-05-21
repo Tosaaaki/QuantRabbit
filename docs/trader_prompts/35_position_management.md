@@ -156,7 +156,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 
-./scripts/run-autotrade-live.sh \
+QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
   --use-gpt-trader \
   --gpt-decision-response data/codex_trader_decision_response.json \

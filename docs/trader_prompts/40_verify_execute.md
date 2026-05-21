@@ -36,7 +36,7 @@ If the verifier accepts `WAIT`, do not run a no-op gateway just to create a
 cycle boundary; continue to the protection sidecars in `docs/SKILL_trader.md`.
 
 ```bash
-./scripts/run-autotrade-live.sh \
+QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   --reuse-market-artifacts \
   --use-gpt-trader \
   --gpt-decision-response data/codex_trader_decision_response.json \

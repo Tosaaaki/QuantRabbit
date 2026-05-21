@@ -416,8 +416,12 @@ def _trader_sl_repair_disabled() -> bool:
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_CAMPAIGN_PLAN,
+    DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_COT_SNAPSHOT,
+    DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_TRADER_SETTINGS,
@@ -626,6 +630,7 @@ def _pair_forecast(
     snapshot: BrokerSnapshot | None,
     forecast_cache: dict[str, DirectionalForecast | None] | None,
     forecast_cycle_id: str | None,
+    data_root: Path | None,
 ) -> DirectionalForecast | None:
     """Build one pair-level forecast and cache it for the whole cycle.
 
@@ -648,13 +653,12 @@ def _pair_forecast(
 
     cot_payload = None
     option_skew_payload = None
+    effective_data_root = data_root or DEFAULT_TRADER_SETTINGS.parent
     try:
-        from quant_rabbit.paths import ROOT as _QR_ROOT
-
-        cot_path = _QR_ROOT / "data" / "cot_snapshot.json"
+        cot_path = _data_artifact_path(effective_data_root, DEFAULT_COT_SNAPSHOT)
         if cot_path.exists():
             cot_payload = json.loads(cot_path.read_text())
-        option_path = _QR_ROOT / "data" / "option_skew_snapshot.json"
+        option_path = _data_artifact_path(effective_data_root, DEFAULT_OPTION_SKEW)
         if option_path.exists():
             option_skew_payload = json.loads(option_path.read_text())
     except Exception:
@@ -675,20 +679,15 @@ def _pair_forecast(
     except Exception:
         pattern_signals = []
     try:
-        from quant_rabbit.paths import (
-            DEFAULT_CALENDAR_SNAPSHOT,
-            DEFAULT_CROSS_ASSET_SNAPSHOT,
-            ROOT as _QR_ROOT,
-        )
         from quant_rabbit.strategy.projection_ledger import compute_hit_rates as _compute_hit_rates
 
-        hit_rates = _compute_hit_rates(_QR_ROOT / "data")
+        hit_rates = _compute_hit_rates(effective_data_root)
         projection_signals = detect_forward_projections(
             pair_chart,
             pair=pair,
             current_price=current_price,
-            calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
-            cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+            calendar_path=_data_artifact_path(effective_data_root, DEFAULT_CALENDAR_SNAPSHOT),
+            cross_asset_path=_data_artifact_path(effective_data_root, DEFAULT_CROSS_ASSET_SNAPSHOT),
         )
     except Exception:
         projection_signals = []
@@ -741,27 +740,51 @@ def _pair_forecast(
     if forecast_cache is not None:
         forecast_cache[pair] = forecast
     try:
-        from quant_rabbit.paths import ROOT as _QR_ROOT
         from quant_rabbit.strategy.projection_ledger import (
             record_directional_forecast as _record_directional_forecast,
         )
 
         record_forecast(
             forecast,
-            data_root=_QR_ROOT / "data",
+            data_root=effective_data_root,
             cycle_id=forecast_cycle_id,
         )
         _record_directional_forecast(
             forecast,
             pair=pair,
             current_price=current_price,
-            data_root=_QR_ROOT / "data",
+            data_root=effective_data_root,
             regime_at_emission=regime_label,
             cycle_id=forecast_cycle_id,
         )
     except Exception:
         pass
     return forecast
+
+
+def _data_artifact_path(data_root: Path | None, default_path: Path) -> Path:
+    return (data_root / default_path.name) if data_root is not None else default_path
+
+
+def _trader_data_root(
+    *,
+    intents_path: Path,
+    campaign_plan_path: Path,
+    strategy_profile_path: Path,
+    market_story_profile_path: Path,
+    trader_settings_path: Path,
+) -> Path:
+    if trader_settings_path != DEFAULT_TRADER_SETTINGS:
+        return trader_settings_path.parent
+    for path, default_path in (
+        (intents_path, DEFAULT_ORDER_INTENTS),
+        (campaign_plan_path, DEFAULT_CAMPAIGN_PLAN),
+        (strategy_profile_path, DEFAULT_STRATEGY_PROFILE),
+        (market_story_profile_path, DEFAULT_MARKET_STORY_PROFILE),
+    ):
+        if path != default_path:
+            return path.parent
+    return DEFAULT_TRADER_SETTINGS.parent
 
 
 def _range_rotation_forecast_ready(intent: dict[str, Any]) -> bool:
@@ -932,9 +955,16 @@ class TraderBrain:
         self.campaign_plan_path = campaign_plan_path
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
+        data_root = _trader_data_root(
+            intents_path=intents_path,
+            campaign_plan_path=campaign_plan_path,
+            strategy_profile_path=strategy_profile_path,
+            market_story_profile_path=market_story_profile_path,
+            trader_settings_path=trader_settings_path,
+        )
+        self.data_root = data_root
         self.trader_settings_path = trader_settings_path
         self.target_state_path = target_state_path
-        data_root = trader_settings_path.parent
         self.attack_advice_path = (
             data_root / DEFAULT_AI_ATTACK_ADVICE.name
             if attack_advice_path == DEFAULT_AI_ATTACK_ADVICE
@@ -984,7 +1014,7 @@ class TraderBrain:
         # once per cycle and passed to _score_lane to avoid recomputing
         # on every candidate. They degrade gracefully — missing
         # execution_ledger.db or pair_charts → empty dicts → 0 modifier.
-        data_root = self.trader_settings_path.parent
+        data_root = self.data_root
         lane_history = compute_lane_history(data_root / "execution_ledger.db")
         # full_pair_charts is keyed-by-pair dict; rebuild minimal payload
         # for regime_classifier which expects {"charts": [...]}.
@@ -1025,6 +1055,7 @@ class TraderBrain:
                         news_themes=news_themes,
                         forecast_cache=forecast_cache,
                         forecast_cycle_id=generated_at,
+                        data_root=data_root,
                     )
                     for result in intents_payload.get("results", [])
                     if isinstance(result, dict) and isinstance(result.get("intent"), dict)
@@ -1128,6 +1159,7 @@ class TraderBrain:
         news_themes: NewsThemes | None = None,
         forecast_cache: dict[str, DirectionalForecast | None] | None = None,
         forecast_cycle_id: str | None = None,
+        data_root: Path | None = None,
     ) -> LaneScore:
         intent = result["intent"]
         lane_id = str(result.get("lane_id") or "")
@@ -1485,12 +1517,12 @@ class TraderBrain:
             # → COT shift detector silently skipped.
             _cot_payload = None
             _option_skew_payload = None
+            effective_data_root = data_root or DEFAULT_TRADER_SETTINGS.parent
             try:
-                from quant_rabbit.paths import ROOT as __QR_ROOT
-                _cot_path = __QR_ROOT / "data" / "cot_snapshot.json"
+                _cot_path = _data_artifact_path(effective_data_root, DEFAULT_COT_SNAPSHOT)
                 if _cot_path.exists():
                     _cot_payload = json.loads(_cot_path.read_text())
-                _opt_path = __QR_ROOT / "data" / "option_skew_snapshot.json"
+                _opt_path = _data_artifact_path(effective_data_root, DEFAULT_OPTION_SKEW)
                 if _opt_path.exists():
                     _option_skew_payload = json.loads(_opt_path.read_text())
             except Exception:
@@ -1521,25 +1553,25 @@ class TraderBrain:
         # are CALIBRATED from the rolling hit-rate of past predictions.
         # Detectors that don't pan out get dampened; strong ones get
         # boosted. User directive:「予測の精度を最大限高める」.
-        from quant_rabbit.paths import ROOT as _QR_ROOT, DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT
         from quant_rabbit.strategy.projection_ledger import (
             compute_hit_rates as _compute_hit_rates,
             record_projections as _record_projections,
         )
+        effective_data_root = data_root or DEFAULT_TRADER_SETTINGS.parent
         if pair_chart_for_reversal is not None and snapshot is not None:
             cur_price_for_proj = _current_price_for(pair, snapshot, direction) if snapshot else None
             _projection_signals = detect_forward_projections(
                 pair_chart_for_reversal,
                 pair=pair,
                 current_price=cur_price_for_proj,
-                calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
-                cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+                calendar_path=_data_artifact_path(effective_data_root, DEFAULT_CALENDAR_SNAPSHOT),
+                cross_asset_path=_data_artifact_path(effective_data_root, DEFAULT_CROSS_ASSET_SNAPSHOT),
             )
             if _projection_signals:
                 # Load rolling hit rates for calibration. Empty when
                 # ledger hasn't accumulated samples yet — calibration
                 # multiplier defaults to 1.0 in that case.
-                _hit_rates = _compute_hit_rates(_QR_ROOT / "data")
+                _hit_rates = _compute_hit_rates(effective_data_root)
                 # Regime label (for hit_rate bucketing)
                 _proj_regime = None
                 if pair_chart_for_reversal:
@@ -1574,7 +1606,7 @@ class TraderBrain:
                         _projection_signals,
                         pair=pair,
                         current_price=cur_price_for_proj,
-                        data_root=_QR_ROOT / "data",
+                        data_root=effective_data_root,
                         regime_at_emission=_regime_label,
                         cycle_id=forecast_cycle_id,
                     )
@@ -1648,6 +1680,7 @@ class TraderBrain:
                     snapshot=snapshot,
                     forecast_cache=forecast_cache,
                     forecast_cycle_id=forecast_cycle_id,
+                    data_root=data_root,
                 )
             if _forecast is not None:
                 gate_ok, gate_reason = _forecast_lane_gate(

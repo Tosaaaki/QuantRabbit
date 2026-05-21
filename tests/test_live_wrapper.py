@@ -90,6 +90,35 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertTrue(capture.exists())
             self.assertIn("live sync failed with status=37", result.stderr)
 
+    def test_empty_verdict_marker_is_removed_before_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            _init_git(root)
+            (root / "EXTEND").write_text("")
+            _run(["git", "add", "."], cwd=root)
+            _run(["git", "commit", "-m", "initial"], cwd=root)
+            _run(["git", "branch", "-m", "main"], cwd=root)
+            _run(["git", "rm", "--cached", "EXTEND"], cwd=root)
+            _run(["git", "commit", "-m", "untrack marker"], cwd=root)
+            (root / "EXTEND").write_text("")
+            env["QR_SYNC_DEV_ROOT"] = str(root)
+            env["QR_SYNC_MAIN_BRANCH"] = "main"
+
+            result = subprocess.run(
+                ["bash", str(WRAPPER), "--send"],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / "EXTEND").exists())
+            self.assertIn("removed empty verdict marker: EXTEND", result.stderr)
+
     def test_existing_live_lock_blocks_overlapping_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

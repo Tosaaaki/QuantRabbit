@@ -99,6 +99,19 @@ status_path() {
   printf '%s' "${line:3}"
 }
 
+clear_runtime_verdict_markers() {
+  local root="$1"
+  local label="$2"
+  local path file
+  for path in EXTEND HOLD REVIEW_CLOSE RECOMMEND_CLOSE STILL_VALID WEAKENED BROKEN; do
+    file="$root/$path"
+    if [[ -f "$file" && ! -s "$file" ]]; then
+      rm -f "$file"
+      echo "[sync-live-runtime] removed empty $label verdict marker: $path" >&2
+    fi
+  done
+}
+
 assert_only_report_drift() {
   local root="$1"
   local label="$2"
@@ -262,6 +275,7 @@ copy_local_runtime_files() {
 
 require_branch "$MAIN_BRANCH"
 require_branch "$LIVE_BRANCH"
+clear_runtime_verdict_markers "$LIVE_ROOT" "live"
 assert_only_report_drift "$LIVE_ROOT" "live"
 if [[ "$LIVE_ONLY" -eq 0 ]]; then
   require_branch "$SOURCE_BRANCH"

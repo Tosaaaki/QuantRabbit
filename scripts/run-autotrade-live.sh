@@ -102,6 +102,17 @@ is_report_path() {
   [[ "$path" == docs/*_report.md ]]
 }
 
+clear_runtime_verdict_markers() {
+  local path file
+  for path in EXTEND HOLD REVIEW_CLOSE RECOMMEND_CLOSE STILL_VALID WEAKENED BROKEN; do
+    file="${ROOT_DIR}/${path}"
+    if [[ -f "$file" && ! -s "$file" ]]; then
+      rm -f "$file"
+      echo "[run-autotrade-live] removed empty verdict marker: ${path}" >&2
+    fi
+  done
+}
+
 can_continue_after_sync_failure() {
   if [[ "${QR_LIVE_SYNC_CONTINUE_IF_CURRENT:-1}" != "1" ]]; then
     return 1
@@ -132,6 +143,7 @@ can_continue_after_sync_failure() {
 }
 
 acquire_lock
+clear_runtime_verdict_markers
 
 if [[ "$QR_LIVE_SYNC_ENABLED" == "1" && -x "${ROOT_DIR}/scripts/sync-live-runtime.sh" ]]; then
   set +e

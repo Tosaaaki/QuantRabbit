@@ -103,6 +103,38 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual((live / "docs" / "cycle_report.md").read_text(), "new runtime drift\n")
             self.assertEqual(_git(live, "status", "--short"), "M docs/cycle_report.md")
 
+    def test_live_only_removes_empty_verdict_marker_before_clean_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (live / "EXTEND").write_text("")
+
+            result = _sync(repo, live, live_only=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((live / "EXTEND").exists())
+            self.assertIn("removed empty live verdict marker: EXTEND", result.stderr)
+
+    def test_live_only_blocks_nonempty_verdict_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            (live / "EXTEND").write_text("operator note\n")
+
+            result = _sync(repo, live, live_only=True)
+
+            self.assertEqual(result.returncode, 3)
+            self.assertTrue((live / "EXTEND").exists())
+            self.assertIn("blocking dirty live path: ?? EXTEND", result.stderr)
+
 
 def _sync(repo: Path, live: Path, *, source_branch: str = "feature", live_only: bool = False) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
