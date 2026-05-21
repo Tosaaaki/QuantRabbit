@@ -106,6 +106,72 @@ class CliHelpTest(unittest.TestCase):
             self.assertTrue(digest.exists())
             self.assertTrue(flow.exists())
 
+    def test_generate_intents_refreshes_market_story_when_news_is_newer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            news_dir = root / "logs"
+            news_dir.mkdir()
+            digest = news_dir / "news_digest.md"
+            digest.write_text("EUR_USD risk-on breakout failure pressure\n", encoding="utf-8")
+            profile = root / "data" / "market_story_profile.json"
+            profile.parent.mkdir()
+            profile.write_text("{}", encoding="utf-8")
+            report = root / "data" / "market_story_report.md"
+            os.utime(profile, (100, 100))
+            os.utime(digest, (200, 200))
+
+            summary = type(
+                "Summary",
+                (),
+                {
+                    "output_path": root / "data" / "order_intents.json",
+                    "report_path": root / "docs" / "order_intents_report.md",
+                    "candidates_seen": 0,
+                    "generated": 0,
+                    "needs_snapshot": False,
+                    "dry_run_passed": 0,
+                    "live_ready": 0,
+                },
+            )()
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.MarketStoryMiner") as miner_cls, mock.patch(
+                "quant_rabbit.cli.IntentGenerator"
+            ) as generator_cls, redirect_stdout(stdout):
+                miner_cls.return_value.run.return_value = object()
+                generator_cls.return_value.run.return_value = summary
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(root / "data" / "broker_snapshot.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--max-loss-jpy",
+                        "100",
+                        "--market-story-profile",
+                        str(profile),
+                        "--market-story-report",
+                        str(report),
+                        "--market-news-dir",
+                        str(news_dir),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        miner_cls.assert_called_once_with(report_path=report, profile_path=profile, news_root=news_dir)
+        miner_cls.return_value.run.assert_called_once_with()
+        generator_cls.return_value.run.assert_called_once_with(
+            snapshot_path=root / "data" / "broker_snapshot.json",
+            max_candidates=56,
+        )
+
 
 class LiveRuntimeBootstrapTest(unittest.TestCase):
     """Coverage for 2026-05-11 cli bootstrap-gate fix.

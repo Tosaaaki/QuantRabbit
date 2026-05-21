@@ -111,6 +111,8 @@ from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter
 from quant_rabbit.target import DailyTargetLedger
 from quant_rabbit.trader_prompts import route_trader_prompts
 
+DEFAULT_RUNTIME_MARKET_STORY_REPORT = DEFAULT_MARKET_STORY_PROFILE.with_name("market_story_report.md")
+
 
 # SL-free production defaults. `scripts/run-autotrade-live.sh` exports the same
 # values, but a direct `python3 -m quant_rabbit.cli autotrade-cycle --send`
@@ -235,6 +237,41 @@ def _running_under_test_harness() -> bool:
         return True
     argv0 = (sys.argv[0] or "").lower()
     return "unittest" in argv0 or "pytest" in argv0
+
+
+def _refresh_market_story_if_news_is_newer(
+    *,
+    profile_path: Path,
+    report_path: Path,
+    news_dir: Path,
+) -> bool:
+    """Keep the runtime story profile aligned with the out-of-band news digest.
+
+    The hourly news task writes curated headlines into ``logs/``; the trader
+    reads ``data/market_story_profile.json``.  A symlinked digest alone is not
+    enough if this derived profile is older than the digest.  Refresh before
+    intent generation so every decision packet is built from current news.
+    """
+    news_paths = [news_dir / DEFAULT_NEWS_DIGEST.name, news_dir / DEFAULT_NEWS_FLOW_LOG.name]
+    existing_news = [path for path in news_paths if path.exists()]
+    profile_missing = not profile_path.exists()
+    if not profile_missing and not existing_news:
+        return False
+    if not profile_missing and existing_news:
+        latest_news_mtime = max(path.stat().st_mtime for path in existing_news)
+        if latest_news_mtime <= profile_path.stat().st_mtime:
+            return False
+
+    MarketStoryMiner(
+        report_path=report_path,
+        profile_path=profile_path,
+        news_root=news_dir,
+    ).run()
+    sys.stderr.write(
+        "[qr-vnext] refreshed market_story_profile from news artifacts "
+        f"(profile={profile_path}, news_dir={news_dir})\n"
+    )
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -629,6 +666,14 @@ def main(argv: list[str] | None = None) -> int:
     p_intents.add_argument("--max-loss-pct", type=float, default=None)
     p_intents.add_argument("--risk-equity-jpy", type=float, default=None)
     p_intents.add_argument("--max-candidates", type=int, default=56)
+    p_intents.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+    p_intents.add_argument("--market-story-report", type=Path, default=DEFAULT_RUNTIME_MARKET_STORY_REPORT)
+    p_intents.add_argument("--market-news-dir", type=Path, default=ROOT / "logs")
+    p_intents.add_argument(
+        "--no-refresh-market-story",
+        action="store_true",
+        help="Skip automatic market-story refresh from logs/news_digest.md before intent generation.",
+    )
 
     p_promote = sub.add_parser("promote-receipts", help="Promote strategy profiles from dry-run order receipts.")
     p_promote.add_argument("--profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
@@ -742,6 +787,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "generate-intents":
+        if not args.no_refresh_market_story:
+            _refresh_market_story_if_news_is_newer(
+                profile_path=args.market_story_profile,
+                report_path=args.market_story_report,
+                news_dir=args.market_news_dir,
+            )
         summary = IntentGenerator(
             campaign_plan=args.campaign_plan,
             strategy_profile=args.strategy_profile,

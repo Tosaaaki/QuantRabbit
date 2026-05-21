@@ -41,6 +41,19 @@ was a standalone file, 7 days stale (last refresh 2026-05-06), while
 the dev routine was writing fresh hourly to its own file the trader
 never read. Symlink resolves the bridge.
 
+Refresh the derived live market-story profile from that curated digest before
+intent pricing. `logs/news_digest.md` being fresh is not sufficient by itself:
+`trader_brain` and `gpt_trader` read `data/market_story_profile.json`.
+Write the side report under `data/` so the precheck path does not create new
+tracked `docs/*_report.md` diffs.
+
+```bash
+PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
+  --news-dir logs \
+  --profile data/market_story_profile.json \
+  --report data/market_story_report.md
+```
+
 **daily-review** runs every cycle (idempotent, no network) to refresh
 `data/trader_overrides.json` from execution_ledger.db. trader_brain's
 Module C reads that file for direction-bias overrides + blocked-lane

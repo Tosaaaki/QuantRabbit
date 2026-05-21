@@ -108,6 +108,16 @@ PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 # routine fails or is paused), `strategy/market_story.py` will surface
 # missing-evidence rationale on lanes but will not crash.
 #
+# Reflect the curated news into the live decision artifact before any intent
+# pricing. The digest symlink alone is not enough: trader_brain and
+# gpt_trader read `data/market_story_profile.json`, so that derived profile
+# must be newer than the news files. Write the side report under `data/` to
+# avoid tracked `docs/*_report.md` drift during precheck refresh.
+PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
+  --news-dir logs \
+  --profile data/market_story_profile.json \
+  --report data/market_story_report.md
+#
 # daily-review: refresh `data/trader_overrides.json` from the last 24h
 # of realized P&L so trader_brain's Module C reads a current snapshot.
 # Idempotent and fast (single SQLite read, no network), so safe to run
