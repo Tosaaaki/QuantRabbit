@@ -1340,6 +1340,92 @@ class IntentGeneratorTest(unittest.TestCase):
 
         self.assertEqual(issue_by_code["RECOVERY_HEDGE_MARKET_OPPOSED_BY_M5"]["severity"], "BLOCK")
 
+    def test_breakout_failure_market_blocks_short_before_upper_retest(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.16136,
+            tp=1.15971,
+            sl=1.16198,
+            thesis="short failed-break market chase near support",
+            market_context=MarketContext(
+                regime="UNCLEAR current; BREAKOUT_FAILURE campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata={
+                "tf_regime_map": {
+                    "M5": {
+                        "classification": "TREND_WEAK",
+                        "range_position": 0.226,
+                        "nearest_support_distance_pips": -0.74,
+                        "nearest_resistance_distance_pips": 2.54,
+                    },
+                    "M15": {
+                        "classification": "RANGE",
+                        "range_position": 0.041,
+                        "nearest_support_distance_pips": -0.25,
+                        "nearest_resistance_distance_pips": 5.75,
+                    },
+                }
+            },
+        )
+
+        issues = _method_context_issues(intent)
+        issue_by_code = {issue["code"]: issue for issue in issues}
+
+        self.assertEqual(issue_by_code["BREAKOUT_FAILURE_MARKET_NOT_RETESTED"]["severity"], "BLOCK")
+
+    def test_breakout_failure_market_allows_short_after_upper_retest(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=1000,
+            entry=1.16176,
+            tp=1.15971,
+            sl=1.16224,
+            thesis="short failed-break after resistance retest",
+            market_context=MarketContext(
+                regime="RANGE current; BREAKOUT_FAILURE campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata={
+                "tf_regime_map": {
+                    "M5": {
+                        "classification": "RANGE",
+                        "range_position": 0.82,
+                        "nearest_support_distance_pips": -4.2,
+                        "nearest_resistance_distance_pips": 0.6,
+                    },
+                    "M15": {
+                        "classification": "RANGE",
+                        "range_position": 0.71,
+                        "nearest_support_distance_pips": -6.4,
+                        "nearest_resistance_distance_pips": 1.8,
+                    },
+                }
+            },
+        )
+
+        issues = _method_context_issues(intent)
+        issue_codes = {issue["code"] for issue in issues}
+
+        self.assertNotIn("BREAKOUT_FAILURE_MARKET_NOT_RETESTED", issue_codes)
+
     def test_breakout_failure_blocks_distant_atr_rr_when_harvest_tp_missing(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _method_context_issues

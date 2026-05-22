@@ -2530,6 +2530,10 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 }
             )
 
+    breakout_market_issue = _breakout_failure_market_retest_issue(intent, metadata, method)
+    if breakout_market_issue is not None:
+        issues.append(breakout_market_issue)
+
     if hedge_recovery and _operating_tf_opposes_side(intent.side, metadata):
         market = intent.order_type == OrderType.MARKET
         issues.append(
@@ -2613,6 +2617,62 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 }
             )
     return issues
+
+
+# A support/resistance box midpoint is the geometry boundary between "at the
+# lower half" and "at the upper half"; it is not a tuned strategy threshold.
+BREAKOUT_FAILURE_RETEST_MIDPOINT = 0.5
+
+
+def _breakout_failure_market_retest_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, str] | None:
+    if method != TradeMethod.BREAKOUT_FAILURE or intent.order_type != OrderType.MARKET:
+        return None
+    tf_map = metadata.get("tf_regime_map")
+    if not isinstance(tf_map, dict):
+        return None
+
+    wrong_side: list[str] = []
+    for timeframe in ("M5", "M15"):
+        tf_data = tf_map.get(timeframe)
+        if not isinstance(tf_data, dict):
+            continue
+        position = _optional_float(tf_data.get("range_position"))
+        if position is None:
+            continue
+        if intent.side == Side.SHORT and position <= BREAKOUT_FAILURE_RETEST_MIDPOINT:
+            wrong_side.append(_breakout_retest_location_text(timeframe, position, tf_data))
+        elif intent.side == Side.LONG and position >= BREAKOUT_FAILURE_RETEST_MIDPOINT:
+            wrong_side.append(_breakout_retest_location_text(timeframe, position, tf_data))
+
+    if not wrong_side:
+        return None
+
+    expected_side = "upper-half resistance retest" if intent.side == Side.SHORT else "lower-half support retest"
+    current_side = "lower-half chase" if intent.side == Side.SHORT else "upper-half chase"
+    return {
+        "code": "BREAKOUT_FAILURE_MARKET_NOT_RETESTED",
+        "message": (
+            f"{intent.pair} {intent.side.value} BREAKOUT_FAILURE MARKET is a {current_side} "
+            f"({'; '.join(wrong_side)}). If the break has not continued, wait for the "
+            f"{expected_side} or use the pending trigger instead of entering at market."
+        ),
+        "severity": "BLOCK",
+    }
+
+
+def _breakout_retest_location_text(timeframe: str, position: float, tf_data: dict[str, Any]) -> str:
+    bits = [f"{timeframe} pos={position:.2f}"]
+    support_distance = _optional_float(tf_data.get("nearest_support_distance_pips"))
+    resistance_distance = _optional_float(tf_data.get("nearest_resistance_distance_pips"))
+    if support_distance is not None:
+        bits.append(f"support {support_distance:+.1f}p")
+    if resistance_distance is not None:
+        bits.append(f"resistance {resistance_distance:+.1f}p")
+    return " ".join(bits)
 
 
 def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
