@@ -105,6 +105,18 @@ FORECAST_STRONG_ADX = float(os.environ.get("QR_FORECAST_STRONG_ADX", "25.0"))
 FORECAST_COUNTERTREND_UNCONFIRMED_MULT = float(
     os.environ.get("QR_FORECAST_COUNTERTREND_UNCONFIRMED_MULT", "0.55")
 )
+# Forecast geometry must prove a move beyond the current operating noise, not
+# the next tick. One M1/M5 ATR is the observed single-window noise envelope, so
+# target/invalidation levels inside that distance are treated as non-structural
+# unless a future calibrated pair/session model replaces this floor.
+FORECAST_GEOMETRY_NOISE_ATR_MULT = float(os.environ.get("QR_FORECAST_GEOMETRY_NOISE_ATR_MULT", "1.0"))
+# Missing robust target or invalidation makes a directional forecast less
+# actionable, but not useless for advisory bias. This confidence haircut is an
+# evidence-quality penalty, not a trade gate; ENTRY_CONFIDENCE_MIN remains the
+# execution gate.
+FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT = float(
+    os.environ.get("QR_FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT", "0.75")
+)
 
 RANGE_PHASE_TIMEFRAMES = {"M5", "M15", "M30", "H1"}
 
@@ -243,12 +255,82 @@ def _collect_structural_levels(pair_chart: Dict[str, Any], *, side: str) -> list
     return prices
 
 
-def _nearest_level(prices: list[float], *, above: Optional[float] = None, below: Optional[float] = None) -> Optional[float]:
+def _forecast_noise_floor_pips(pair_chart: Dict[str, Any]) -> Optional[float]:
+    floors: list[float] = []
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        tf = str(view.get("granularity") or "").upper()
+        if tf not in {"M1", "M5"}:
+            continue
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        atr_pips = _to_float((indicators or {}).get("atr_pips"))
+        if atr_pips is None:
+            atr = _to_float((indicators or {}).get("atr_14") or (indicators or {}).get("atr"))
+            pip_size = _to_float((indicators or {}).get("pip_size"))
+            if atr is not None and pip_size is not None and pip_size > 0:
+                atr_pips = atr / pip_size
+        if atr_pips is not None and atr_pips > 0:
+            floors.append(atr_pips * FORECAST_GEOMETRY_NOISE_ATR_MULT)
+        spread_pips = _to_float((indicators or {}).get("spread_pips"))
+        if spread_pips is not None and spread_pips > 0:
+            floors.append(spread_pips)
+    return max(floors) if floors else None
+
+
+def _clears_noise(
+    price: Optional[float],
+    *,
+    current_price: float,
+    pip_factor: float,
+    noise_floor_pips: Optional[float],
+) -> bool:
+    if price is None:
+        return False
+    if noise_floor_pips is None:
+        return True
+    return abs(price - current_price) * pip_factor >= noise_floor_pips
+
+
+def _nearest_level(
+    prices: list[float],
+    *,
+    above: Optional[float] = None,
+    below: Optional[float] = None,
+    pip_factor: Optional[float] = None,
+    noise_floor_pips: Optional[float] = None,
+) -> Optional[float]:
     if above is not None:
-        candidates = [p for p in prices if p > above]
+        candidates = [
+            p
+            for p in prices
+            if p > above
+            and (
+                pip_factor is None
+                or _clears_noise(
+                    p,
+                    current_price=above,
+                    pip_factor=pip_factor,
+                    noise_floor_pips=noise_floor_pips,
+                )
+            )
+        ]
         return min(candidates) if candidates else None
     if below is not None:
-        candidates = [p for p in prices if p < below]
+        candidates = [
+            p
+            for p in prices
+            if p < below
+            and (
+                pip_factor is None
+                or _clears_noise(
+                    p,
+                    current_price=below,
+                    pip_factor=pip_factor,
+                    noise_floor_pips=noise_floor_pips,
+                )
+            )
+        ]
         return max(candidates) if candidates else None
     return None
 
@@ -290,15 +372,43 @@ def _forecast_geometry(
         pip_factor=pip_factor,
         intent="HARVEST",
     )
+    noise_floor_pips = _forecast_noise_floor_pips(pair_chart)
+    if not _clears_noise(
+        structural_target,
+        current_price=current_price,
+        pip_factor=pip_factor,
+        noise_floor_pips=noise_floor_pips,
+    ):
+        structural_target = None
 
     high_levels = _collect_structural_levels(pair_chart, side="HIGH")
     low_levels = _collect_structural_levels(pair_chart, side="LOW")
     if direction == "UP":
-        target_price = structural_target or _nearest_level(high_levels, above=current_price)
-        invalidation_price = _nearest_level(low_levels, below=current_price)
+        target_price = structural_target or _nearest_level(
+            high_levels,
+            above=current_price,
+            pip_factor=pip_factor,
+            noise_floor_pips=noise_floor_pips,
+        )
+        invalidation_price = _nearest_level(
+            low_levels,
+            below=current_price,
+            pip_factor=pip_factor,
+            noise_floor_pips=noise_floor_pips,
+        )
     else:
-        target_price = structural_target or _nearest_level(low_levels, below=current_price)
-        invalidation_price = _nearest_level(high_levels, above=current_price)
+        target_price = structural_target or _nearest_level(
+            low_levels,
+            below=current_price,
+            pip_factor=pip_factor,
+            noise_floor_pips=noise_floor_pips,
+        )
+        invalidation_price = _nearest_level(
+            high_levels,
+            above=current_price,
+            pip_factor=pip_factor,
+            noise_floor_pips=noise_floor_pips,
+        )
 
     target_price, invalidation_price = _geometry_valid(
         direction,
@@ -580,6 +690,60 @@ def _range_phase_priors(phase: _RangePhase) -> list[tuple[str, float, str]]:
         magnitude = FORECAST_RANGE_BREAKOUT_DIRECTION_PRIOR * max(phase.confidence, 0.35)
         return [(phase.direction, magnitude, f"{phase.rationale} → breakout {phase.direction} prior {magnitude:.1f}")]
     return []
+
+
+def _range_rail_reversion_priors(pair_chart: Dict[str, Any], phase: _RangePhase) -> list[tuple[str, float, str]]:
+    """Add path-first pressure inside a range box.
+
+    When an active box holds, the midpoint is the geometric separator between
+    support-side and resistance-side path risk. Price in the lower half has
+    bounce/retest risk before a fresh downside forecast is proved; price in the
+    upper half has fade risk before a fresh upside forecast is proved. This is
+    not an entry gate and not a tuned threshold: it is the same support/resistance
+    box geometry used by range entries and failed-break timing.
+    """
+    if phase.phase not in {"IN_RANGE", "RANGE_FORMING"}:
+        return []
+    up_strength = 0.0
+    down_strength = 0.0
+    evidence: list[str] = []
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        tf = str(view.get("granularity") or "").upper()
+        if tf not in {"M5", "M15", "M30", "H1"}:
+            continue
+        state = _view_regime_state(view)
+        if state not in {"RANGE", "TREND_WEAK", "TRANSITION"} and "RANGE" not in str(view.get("regime") or "").upper():
+            continue
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        _close, _lower, position = _range_position(indicators)
+        if position is None:
+            continue
+        if abs(position - 0.5) <= 1e-9:
+            continue
+        weight = _tf_weight(tf)
+        if position < 0.5:
+            strength = (0.5 - position) * 2.0 * weight
+            up_strength += strength
+            evidence.append(f"{tf} lower-half pos={position:.2f}")
+        elif position > 0.5:
+            strength = (position - 0.5) * 2.0 * weight
+            down_strength += strength
+            evidence.append(f"{tf} upper-half pos={position:.2f}")
+    total = up_strength + down_strength
+    if total <= 0:
+        return []
+    direction = "UP" if up_strength >= down_strength else "DOWN"
+    dominant = max(up_strength, down_strength) / total
+    magnitude = FORECAST_RANGE_INSIDE_PRIOR * max(phase.confidence, 0.35) * dominant
+    return [
+        (
+            direction,
+            magnitude,
+            f"{phase.phase} rail-location {'; '.join(evidence[:4])} → {direction} range-reversion path prior {magnitude:.1f}",
+        )
+    ]
 
 
 def _family_average(
@@ -1053,6 +1217,8 @@ def synthesize_forecast(
         _add(prior_dir, prior_mag, prior_reason)
     for prior_dir, prior_mag, prior_reason in _range_phase_priors(range_phase):
         _add(prior_dir, prior_mag, prior_reason)
+    for prior_dir, prior_mag, prior_reason in _range_rail_reversion_priors(pair_chart, range_phase):
+        _add(prior_dir, prior_mag, prior_reason)
 
     # Regime label can push toward RANGE explicitly.
     confluence = pair_chart.get("confluence") or {}
@@ -1171,6 +1337,18 @@ def synthesize_forecast(
         direction=winner,
         current_price=current_price,
     )
+    geometry_reason = ""
+    if winner in {"UP", "DOWN"} and (target_price is None or invalidation_price is None):
+        calibrated_confidence *= FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT
+        missing = []
+        if target_price is None:
+            missing.append("target")
+        if invalidation_price is None:
+            missing.append("invalidation")
+        geometry_reason = (
+            f"; robust forecast geometry missing {'/'.join(missing)} "
+            f"→ confidence ×{FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT:.2f}"
+        )
 
     horizon_min = 60 if winner != "RANGE" else 120
 
@@ -1180,6 +1358,8 @@ def synthesize_forecast(
     )
     if adjustment_reason:
         rationale_summary = f"{rationale_summary}; {adjustment_reason}"
+    if geometry_reason:
+        rationale_summary = f"{rationale_summary}{geometry_reason}"
     opposite = "DOWN" if winner == "UP" else "UP" if winner == "DOWN" else candidates[1][0]
 
     return DirectionalForecast(

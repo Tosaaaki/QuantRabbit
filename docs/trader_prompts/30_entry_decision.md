@@ -9,7 +9,7 @@
 ## Decision Order
 
 1. Read `docs/trader_prompts/20_market_packet.md`.
-2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`.
+2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`. Treat forecast target/invalidation levels inside current M1/M5 ATR/spread noise as non-structural. In an active range, lower-half price carries bounce/retest risk and upper-half price carries fade risk before a breakout is proved.
 3. List every current `LIVE_READY` lane.
 4. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
 5. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.

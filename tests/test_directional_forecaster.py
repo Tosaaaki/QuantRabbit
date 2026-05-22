@@ -68,6 +68,79 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.current_price, 1.1)
         self.assertGreater(forecast.down_score, 0.0)
 
+    def test_forecast_invalidation_ignores_levels_inside_operating_noise(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "atr_pips": 2.0,
+                        "donchian_high": 1.10004,
+                        "donchian_low": 1.09965,
+                    },
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.10004},
+                            {"side": "HIGH", "price": 1.10040},
+                            {"side": "LOW", "price": 1.09965},
+                        ],
+                    },
+                }
+            ]
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 60.0, 1.0, "breakdown")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertEqual(forecast.invalidation_price, 1.1004)
+        self.assertLess(forecast.target_price, 1.1000)
+
+    def test_incomplete_noise_cleared_geometry_reduces_forecast_confidence(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "atr_pips": 2.0,
+                        "donchian_high": 1.10040,
+                        "donchian_low": 1.09992,
+                    },
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.10040},
+                            {"side": "LOW", "price": 1.09992},
+                        ],
+                    },
+                }
+            ]
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 60.0, 1.0, "breakdown")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertIsNone(forecast.target_price)
+        self.assertEqual(forecast.invalidation_price, 1.1004)
+        self.assertLess(forecast.confidence, forecast.raw_confidence)
+        self.assertIn("robust forecast geometry missing target", forecast.rationale_summary)
+
     def test_strong_htf_downtrend_prevents_micro_up_signal_from_owning_forecast(self) -> None:
         pair_chart = {
             "confluence": {
@@ -360,6 +433,70 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "RANGE")
         self.assertGreater(forecast.range_score, forecast.up_score)
         self.assertIn("inside stable range", " ".join(forecast.drivers_for))
+
+    def test_lower_half_range_location_contests_downside_chase_forecast(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "SHORT_LEAN",
+                "score_gap": -0.4,
+                "dominant_regime": "RANGE",
+            },
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 14.0,
+                        "choppiness_14": 66.0,
+                        "close": 1.1008,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                },
+                {
+                    "granularity": "M15",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 16.0,
+                        "choppiness_14": 64.0,
+                        "close": 1.1010,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1120,
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "RANGE",
+                    "regime_reading": {"state": "RANGE", "confidence": 0.9},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 17.0,
+                        "choppiness_14": 63.0,
+                        "close": 1.1010,
+                        "donchian_low": 1.0990,
+                        "donchian_high": 1.1130,
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1010,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 35.0, 1.0, "downside pressure")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertNotEqual(forecast.direction, "DOWN")
+        self.assertGreater(forecast.up_score, 0.0)
+        self.assertIn("contested", forecast.rationale_summary)
 
     def test_breakout_pending_range_phase_blocks_range_rotation(self) -> None:
         pair_chart = {
