@@ -129,17 +129,17 @@ class MarketStoryMiner:
         )
 
     def _story_artifacts(self) -> Iterable[tuple[Path, StoryArtifact]]:
-        if self.archive.exists():
-            for rel in STORY_FILES:
-                path = self.archive / rel
-                if path.exists():
-                    yield path, StoryArtifact(rel_path=rel, kind=_kind_from_path(rel), lines=_line_count(path))
         if self.news_root is not None and self.news_root.exists():
             for name in NEWS_FILES:
                 path = self.news_root / name
                 if path.exists():
                     rel_path = f"news/{path.name}"
                     yield path, StoryArtifact(rel_path=rel_path, kind=_kind_from_path(rel_path), lines=_line_count(path))
+        if self.archive.exists():
+            for rel in STORY_FILES:
+                path = self.archive / rel
+                if path.exists():
+                    yield path, StoryArtifact(rel_path=rel, kind=_kind_from_path(rel), lines=_line_count(path))
         daily_root = self.archive / "collab_trade" / "daily"
         if self.archive.exists() and daily_root.exists():
             for path in sorted(daily_root.glob("*/state.md")):

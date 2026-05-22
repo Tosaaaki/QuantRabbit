@@ -54,6 +54,34 @@ class MarketStoryMinerTest(unittest.TestCase):
             self.assertIn("RANGE_ROTATION", pairs["NZD_USD"]["methods"])
             self.assertIn("Method Switching Contract", report.read_text())
 
+    def test_news_root_examples_precede_legacy_archive_examples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "legacy"
+            archive_logs = archive / "logs"
+            live_logs = root / "logs"
+            archive_logs.mkdir(parents=True)
+            live_logs.mkdir(parents=True)
+
+            (archive_logs / "news_digest.md").write_text(
+                "EUR_USD old archive breakout failure narrative.\n",
+                encoding="utf-8",
+            )
+            (live_logs / "news_digest.md").write_text(
+                "EUR_USD current live risk-on range retest narrative.\n",
+                encoding="utf-8",
+            )
+
+            profile = root / "market_story.json"
+            report = root / "market_story.md"
+            MarketStoryMiner(archive=archive, report_path=report, profile_path=profile, news_root=live_logs).run()
+
+            payload = json.loads(profile.read_text())
+            pairs = {item["pair"]: item for item in payload["pair_profiles"]}
+            self.assertTrue(pairs["EUR_USD"]["examples"][0].startswith("news_digest: EUR_USD current live"))
+            artifact_lines = [line for line in report.read_text().splitlines() if line.startswith("- `")]
+            self.assertTrue(artifact_lines[0].startswith("- `news/news_digest.md`"))
+
 
 if __name__ == "__main__":
     unittest.main()
