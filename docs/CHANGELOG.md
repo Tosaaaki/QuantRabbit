@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-05-25 — disk_cleanup.sh: lower threshold + Codex 500 error prevention
+
+- `tools/disk_cleanup.sh`: lowered normal cleanup threshold 85% → 75% to prevent ENOSPC before Codex hits 500 errors
+- Added CRITICAL threshold at 90%: triggers Codex/OpenAI app cache cleanup + Slack alert to #qr-daily
+- Added Codex/OpenAI specific cleanup targets: `com.todesktop.*`, `com.openai.*`, app support logs
+- Added QuantRabbit generated file cleanup: technicals JSON older than 6h, chart PNGs older than 3h
+- Added log rotation: live_trade_log.txt (keep 5MB), news_digest.md (keep 1MB), news_flow_log.md (keep 2MB)
+- Added stale lock cleanup: removes `logs/locks/*.d` dirs older than 30 min with dead owner PIDs
+- disk_cleanup.log now self-rotates every run (keep 2MB)
+
 ## 2026-04-24 — runtime routing audit fixes and sync guardrails
 
 - Updated `tools/check_task_sync.py`

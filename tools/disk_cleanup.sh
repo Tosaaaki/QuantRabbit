@@ -1,23 +1,23 @@
 #!/bin/bash
-# disk_cleanup.sh — ディスク容量監視+キャッシュ自動クリーンアップ
-# launchdで1時間ごとに実行。閾値以下なら自動でキャッシュ削除
+# disk_cleanup.sh — disk monitoring + auto cache cleanup
+# Runs every hour via launchd. Triggers cleanup when usage exceeds threshold.
 #
-# 手動実行: bash tools/disk_cleanup.sh
-# ドライラン: DRY_RUN=1 bash tools/disk_cleanup.sh
+# Manual: bash tools/disk_cleanup.sh
+# Dry run: DRY_RUN=1 bash tools/disk_cleanup.sh
 
 set -euo pipefail
 
 LOG_DIR="/Users/tossaki/App/QuantRabbit/logs"
 LOG_FILE="$LOG_DIR/disk_cleanup.log"
 ALERT_FILE="$LOG_DIR/disk_alert.json"
-THRESHOLD_PCT=85  # この使用率を超えたらクリーンアップ実行
+THRESHOLD_PCT=75    # normal cleanup trigger (was 85 — lowered to prevent ENOSPC before Codex hits 500)
+CRITICAL_PCT=90     # aggressive cleanup + Slack alert
 DRY_RUN="${DRY_RUN:-0}"
 
 log() {
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $1" >> "$LOG_FILE"
 }
 
-# 現在の使用率を取得（macOS: dfの出力からCapacity列）
 get_usage_pct() {
     df -h / | awk 'NR==2 {gsub(/%/,"",$5); print $5}'
 }
@@ -26,7 +26,7 @@ get_avail() {
     df -h / | awk 'NR==2 {print $4}'
 }
 
-# クリーンアップ対象（安全なキャッシュのみ）
+# Normal cleanup targets (safe caches only)
 cleanup_targets=(
     "$HOME/Library/Caches/Google"
     "$HOME/Library/Caches/CocoaPods"
@@ -37,19 +37,148 @@ cleanup_targets=(
     "/private/tmp/claude-501"
 )
 
+# Critical-only targets: Codex/OpenAI app caches + heavier items
+critical_targets=(
+    "$HOME/Library/Caches/com.todesktop.2010061512mhwzoh"
+    "$HOME/Library/Caches/com.openai.chat"
+    "$HOME/Library/Caches/com.openai.codex"
+    "$HOME/Library/Application Support/OpenAI/logs"
+    "$HOME/Library/Application Support/Codex/logs"
+    "$HOME/Library/Application Support/com.todesktop.2010061512mhwzoh/logs"
+    "$HOME/.npm/_cacache"
+    "$HOME/.yarn/cache"
+    "/private/tmp"
+)
+
+clean_dir() {
+    local target="$1"
+    local label="${2:-$target}"
+    if [ -d "$target" ]; then
+        SIZE=$(du -sm "$target" 2>/dev/null | awk '{print $1}' || echo "0")
+        if [ "$SIZE" -gt 10 ]; then
+            if [ "$DRY_RUN" = "1" ]; then
+                log "DRY_RUN: would delete $label (${SIZE}MB)"
+            else
+                rm -rf "$target" 2>/dev/null || true
+                log "CLEANED: $label (${SIZE}MB)"
+                echo "$SIZE"
+                return
+            fi
+        fi
+    fi
+    echo "0"
+}
+
+# Rotate a log file: keep last N bytes
+rotate_log() {
+    local file="$1"
+    local max_bytes="${2:-2097152}"  # default 2MB
+    if [ -f "$file" ]; then
+        SIZE=$(stat -f%z "$file" 2>/dev/null || echo "0")
+        if [ "$SIZE" -gt "$max_bytes" ]; then
+            if [ "$DRY_RUN" = "1" ]; then
+                log "DRY_RUN: would rotate $file (${SIZE}B)"
+            else
+                tail -c "$max_bytes" "$file" > "${file}.tmp" && mv "${file}.tmp" "$file" 2>/dev/null || true
+                log "ROTATED: $file (was ${SIZE}B)"
+            fi
+        fi
+    fi
+}
+
+# Clean stale QuantRabbit lock dirs (older than 30 min, owner PID dead)
+clean_stale_locks() {
+    local lock_dir="$LOG_DIR/locks"
+    if [ ! -d "$lock_dir" ]; then return; fi
+    local freed=0
+    for ld in "$lock_dir"/*.d; do
+        [ -d "$ld" ] || continue
+        local meta="$ld/meta.json"
+        if [ ! -f "$meta" ]; then
+            # No metadata — stale
+            if [ "$DRY_RUN" = "0" ]; then
+                rm -rf "$ld" 2>/dev/null || true
+                log "LOCK_CLEANED: $ld (no metadata)"
+            fi
+            continue
+        fi
+        # Check age: mtime of meta.json
+        local age
+        age=$(( $(date +%s) - $(stat -f%m "$meta" 2>/dev/null || echo "$(date +%s)") ))
+        if [ "$age" -lt 1800 ]; then continue; fi  # younger than 30 min — skip
+        # Old lock: check if PID is alive
+        local pid
+        pid=$(python3 -c "import json,sys; d=json.load(open('$meta')); print(d.get('pid',0))" 2>/dev/null || echo "0")
+        if [ "$pid" -gt 0 ] && kill -0 "$pid" 2>/dev/null; then
+            log "LOCK_ALIVE: $ld (pid=$pid, age=${age}s) — skipping"
+            continue
+        fi
+        if [ "$DRY_RUN" = "0" ]; then
+            rm -rf "$ld" 2>/dev/null || true
+            log "LOCK_CLEANED: $ld (pid=$pid dead, age=${age}s)"
+        else
+            log "DRY_RUN: would remove stale lock $ld (pid=$pid, age=${age}s)"
+        fi
+    done
+}
+
+# Clean old QuantRabbit generated files (safe to regenerate)
+clean_qr_generated_files() {
+    local freed=0
+    # technicals JSON: refreshed every session. Delete files older than 6h
+    for f in "$LOG_DIR"/technicals_*.json; do
+        [ -f "$f" ] || continue
+        local age=$(( $(date +%s) - $(stat -f%m "$f" 2>/dev/null || echo "$(date +%s)") ))
+        if [ "$age" -gt 21600 ]; then
+            local sz=$(stat -f%z "$f" 2>/dev/null | awk '{printf "%d", $1/1048576}' || echo "0")
+            if [ "$DRY_RUN" = "0" ]; then
+                rm -f "$f" 2>/dev/null || true
+                log "QR_CLEAN: $f (age=${age}s)"
+            else
+                log "DRY_RUN: would remove $f (age=${age}s)"
+            fi
+        fi
+    done
+    # Chart PNGs: regenerated by chart_snapshot.py. Delete files older than 3h
+    local chart_dir="$LOG_DIR/charts"
+    if [ -d "$chart_dir" ]; then
+        find "$chart_dir" -name "*.png" -mmin +180 -print0 2>/dev/null | while IFS= read -r -d '' png; do
+            if [ "$DRY_RUN" = "0" ]; then
+                rm -f "$png" 2>/dev/null || true
+                log "QR_CLEAN: $png (old chart)"
+            else
+                log "DRY_RUN: would remove old chart $png"
+            fi
+        done
+    fi
+}
+
 USAGE=$(get_usage_pct)
 AVAIL=$(get_avail)
 
-# アラートJSON更新（secretaryが読める）
-cat > "$ALERT_FILE" << EOJSON
+# Update alert JSON
+write_alert() {
+    local usage="$1" avail="$2" extra="${3:-}"
+    local status="OK"
+    [ "$usage" -ge "$CRITICAL_PCT" ] && status="CRITICAL"
+    [ "$usage" -ge "$THRESHOLD_PCT" ] && [ "$status" = "OK" ] && status="WARNING"
+    cat > "$ALERT_FILE" << EOJSON
 {
     "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "disk_usage_pct": $USAGE,
-    "disk_avail": "$AVAIL",
+    "disk_usage_pct": $usage,
+    "disk_avail": "$avail",
     "threshold_pct": $THRESHOLD_PCT,
-    "status": "$([ "$USAGE" -ge "$THRESHOLD_PCT" ] && echo "WARNING" || echo "OK")"
+    "critical_pct": $CRITICAL_PCT,
+    "status": "$status"${extra}
 }
 EOJSON
+}
+
+write_alert "$USAGE" "$AVAIL"
+
+# Always: rotate own log and clean stale locks (cheap, safe every run)
+rotate_log "$LOG_FILE" 2097152
+clean_stale_locks
 
 if [ "$USAGE" -lt "$THRESHOLD_PCT" ]; then
     log "OK: disk ${USAGE}% used, ${AVAIL} avail — no cleanup needed"
@@ -59,34 +188,46 @@ fi
 log "WARNING: disk ${USAGE}% used (threshold ${THRESHOLD_PCT}%). Starting cleanup..."
 
 FREED_TOTAL=0
+
+# Normal cleanup
 for target in "${cleanup_targets[@]}"; do
-    if [ -d "$target" ]; then
-        SIZE=$(du -sm "$target" 2>/dev/null | awk '{print $1}' || echo "0")
-        if [ "$SIZE" -gt 10 ]; then  # 10MB以上のみ対象
-            if [ "$DRY_RUN" = "1" ]; then
-                log "DRY_RUN: would delete $target (${SIZE}MB)"
-            else
-                rm -rf "$target" 2>/dev/null || true
-                log "CLEANED: $target (${SIZE}MB)"
-                FREED_TOTAL=$((FREED_TOTAL + SIZE))
-            fi
-        fi
-    fi
+    freed=$(clean_dir "$target")
+    FREED_TOTAL=$((FREED_TOTAL + freed))
 done
+
+# QuantRabbit generated file cleanup (always safe)
+clean_qr_generated_files
+
+# Log rotation for large QuantRabbit logs
+rotate_log "$LOG_DIR/live_trade_log.txt" 5242880   # keep 5MB
+rotate_log "$LOG_DIR/news_digest.md" 1048576       # keep 1MB
+rotate_log "$LOG_DIR/news_flow_log.md" 2097152     # keep 2MB
+
+# Critical cleanup: Codex/OpenAI caches + node modules
+if [ "$USAGE" -ge "$CRITICAL_PCT" ]; then
+    log "CRITICAL: disk ${USAGE}% — running extended Codex/OpenAI cache cleanup"
+    for target in "${critical_targets[@]}"; do
+        freed=$(clean_dir "$target")
+        FREED_TOTAL=$((FREED_TOTAL + freed))
+    done
+    # Also nuke /private/tmp/* older than 1h (non-essential temp files)
+    if [ "$DRY_RUN" = "0" ]; then
+        find /private/tmp -maxdepth 1 -mmin +60 -not -name "." 2>/dev/null | while read -r f; do
+            rm -rf "$f" 2>/dev/null || true
+            log "TMP_CLEAN: $f"
+        done
+    fi
+    # Post Slack alert
+    SLACK_SCRIPT="/Users/tossaki/App/QuantRabbit/tools/slack_post.py"
+    if [ -f "$SLACK_SCRIPT" ] && [ "$DRY_RUN" = "0" ]; then
+        python3 "$SLACK_SCRIPT" "#qr-daily" "⚠️ DISK CRITICAL: ${USAGE}% used on Mac. Codex 500エラーのリスク。手動でクリーンアップを検討してください。" 2>/dev/null || true
+    fi
+fi
 
 USAGE_AFTER=$(get_usage_pct)
 AVAIL_AFTER=$(get_avail)
 log "DONE: freed ~${FREED_TOTAL}MB. Before: ${USAGE}%, After: ${USAGE_AFTER}% (${AVAIL_AFTER} avail)"
 
-# アラート更新
-cat > "$ALERT_FILE" << EOJSON
-{
-    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "disk_usage_pct": $USAGE_AFTER,
-    "disk_avail": "$AVAIL_AFTER",
-    "threshold_pct": $THRESHOLD_PCT,
-    "status": "$([ "$USAGE_AFTER" -ge "$THRESHOLD_PCT" ] && echo "WARNING" || echo "OK")",
-    "last_cleanup": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "freed_mb": $FREED_TOTAL
-}
-EOJSON
+write_alert "$USAGE_AFTER" "$AVAIL_AFTER" ",
+    \"last_cleanup\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+    \"freed_mb\": $FREED_TOTAL"
