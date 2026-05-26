@@ -2762,5 +2762,151 @@ class BreakoutFailureStopChaseTest(unittest.TestCase):
         self.assertNotIn("BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE", codes)
 
 
+class PatternReversalChaseTest(unittest.TestCase):
+    def _intent(
+        self,
+        *,
+        side: str = "SHORT",
+        order_type: str = "STOP-ENTRY",
+        method: str = "TREND_CONTINUATION",
+        metadata_extra: dict | None = None,
+    ):
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
+
+        entry = 1.16080
+        metadata = {
+            "pattern_reversal_dominant_side": "LONG",
+            "pattern_reversal_weight_long": 22.5,
+            "pattern_reversal_weight_short": 6.0,
+            "pattern_signals": [
+                {
+                    "name": "failed_breakout",
+                    "timeframe": "M15",
+                    "direction": "UP",
+                    "side": "LONG",
+                    "weight": 11.25,
+                    "chase_block_evidence": True,
+                    "rationale": "M15 BOS_DOWN wick-only (close_confirmed=False) -> trap fade UP",
+                },
+                {
+                    "name": "hammer",
+                    "timeframe": "M5",
+                    "direction": "UP",
+                    "side": "LONG",
+                    "weight": 11.25,
+                    "chase_block_evidence": True,
+                    "rationale": "M5 hammer at lower rail -> UP",
+                },
+                {
+                    "name": "aroon_strong_down",
+                    "timeframe": "M15",
+                    "direction": "DOWN",
+                    "side": "SHORT",
+                    "weight": 6.0,
+                    "chase_block_evidence": False,
+                    "rationale": "M15 aroon momentum DOWN",
+                },
+            ],
+        }
+        if metadata_extra:
+            metadata.update(metadata_extra)
+        return OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG if side == "LONG" else Side.SHORT,
+            order_type=OrderType.parse(order_type),
+            units=3000,
+            entry=entry,
+            tp=entry + 0.0018 if side == "LONG" else entry - 0.0018,
+            sl=entry - 0.0012 if side == "LONG" else entry + 0.0012,
+            thesis="pattern reversal chase test",
+            owner=Owner.TRADER,
+            market_context=MarketContext(
+                regime="TREND_DOWN",
+                narrative="trend lane",
+                chart_story="failed break / candle-shape evidence",
+                method=TradeMethod.parse(method),
+                invalidation="sl trades",
+            ),
+            metadata=metadata,
+        )
+
+    def test_short_stop_entry_against_failed_break_reversal_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent()
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("PATTERN_REVERSAL_CHASE", codes)
+
+    def test_breakout_failure_market_against_reversal_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(order_type="MARKET", method="BREAKOUT_FAILURE")
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("PATTERN_REVERSAL_CHASE", codes)
+
+    def test_retest_limit_does_not_get_pattern_chase_block(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(order_type="LIMIT", method="BREAKOUT_FAILURE")
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("PATTERN_REVERSAL_CHASE", codes)
+
+    def test_close_confirmed_operating_break_allows_continuation(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            metadata_extra={
+                "chart_story_structural": (
+                    "EUR_USD TREND_DOWN; "
+                    "M5(TREND_DOWN struct=BOS_DOWN@1.1580); "
+                    "M15(TREND_DOWN struct=CHOCH_DOWN@1.1575)"
+                ),
+                "m5_long_bias": 0.30,
+                "m5_short_bias": 0.70,
+                "m15_long_bias": 0.35,
+                "m15_short_bias": 0.65,
+            }
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("PATTERN_REVERSAL_CHASE", codes)
+
+    def test_recovery_hedge_against_reversal_warns(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(metadata_extra={"position_intent": "HEDGE", "hedge_recovery": True})
+        issue = next(issue for issue in _method_context_issues(intent) if issue["code"] == "PATTERN_REVERSAL_CHASE")
+
+        self.assertEqual(issue["severity"], "WARN")
+
+    def test_aligned_pattern_dominance_passes(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            metadata_extra={
+                "pattern_reversal_dominant_side": "SHORT",
+                "pattern_reversal_weight_long": 6.0,
+                "pattern_reversal_weight_short": 22.5,
+                "pattern_signals": [
+                    {
+                        "name": "shooting_star",
+                        "timeframe": "M15",
+                        "direction": "DOWN",
+                        "side": "SHORT",
+                        "weight": 11.25,
+                        "chase_block_evidence": True,
+                        "rationale": "M15 shooting star -> DOWN",
+                    }
+                ],
+            }
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("PATTERN_REVERSAL_CHASE", codes)
+
+
 if __name__ == "__main__":
     unittest.main()

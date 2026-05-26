@@ -463,6 +463,32 @@ TREND_CONTINUATION_STRONG_BIAS_GAP = (
     CHART_DIRECTION_TIED_GAP_BOUNDARY * TREND_CONTINUATION_STRONG_BIAS_MULT
 )
 
+# Pattern-chase blocker names are the reversal / failed-break shapes emitted by
+# pattern_signals.py. This is intentionally categorical rather than numeric:
+# momentum-only patterns (Aroon, HVN magnets, inside-bar continuation) can still
+# support a lane score, but only failed-break / exhaustion / reversal candle
+# evidence is allowed to veto a MARKET/STOP chase.
+PATTERN_CHASE_BLOCK_NAMES = frozenset(
+    {
+        "failed_breakout",
+        "rsi_extreme_top",
+        "rsi_extreme_bottom",
+        "dealing_range_top",
+        "dealing_range_bottom",
+        "bullish_engulfing",
+        "bearish_engulfing",
+        "hammer",
+        "shooting_star",
+        "doji_after_bull",
+        "doji_after_bear",
+        "volume_spike_climax_up",
+        "volume_spike_climax_down",
+        "time_exhaustion",
+        "morning_star",
+        "evening_star",
+    }
+)
+
 
 def _per_trade_risk_from_state(state_path: Path = DEFAULT_DAILY_TARGET_STATE) -> float | None:
     """Return per-trade JPY cap from the daily target ledger, or None if unavailable.
@@ -684,7 +710,7 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     h4_indicators = per_tf.get("H4") if isinstance(per_tf.get("H4"), dict) else {}
     m5_family = per_tf.get("M5__family_scores") if isinstance(per_tf.get("M5__family_scores"), dict) else {}
     conf = per_tf.get("confluence") if isinstance(per_tf.get("confluence"), dict) else {}
-    return {
+    context = {
         "chart_long_score": long_score,
         "chart_short_score": short_score,
         "chart_direction_bias": bias,
@@ -741,6 +767,87 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
             (per_tf.get("session") if isinstance(per_tf.get("session"), dict) else {}).get("current_tag")
         ),
     }
+    context.update(_pattern_context_for(per_tf.get("__raw_chart")))
+    return context
+
+
+def _pattern_context_for(raw_chart: Any) -> dict[str, Any]:
+    """Summarize current failed-break / candle-shape evidence for gates.
+
+    The pattern detector already converts candle/structure events into
+    direction-tagged signals. Intent generation keeps both all-pattern weights
+    and the reversal-only subset so executable gates can distinguish "momentum
+    agrees" from "price just failed to break and printed an exhaustion shape".
+    Missing chart data returns no fields instead of inventing a neutral value.
+    """
+    if not isinstance(raw_chart, dict):
+        return {}
+    try:
+        from quant_rabbit.strategy.pattern_signals import detect_pattern_signals
+    except Exception:
+        return {}
+    try:
+        signals = detect_pattern_signals(raw_chart)
+    except Exception:
+        return {}
+    if not signals:
+        return {"pattern_signal_count": 0}
+
+    weights = {Side.LONG.value: 0.0, Side.SHORT.value: 0.0}
+    reversal_weights = {Side.LONG.value: 0.0, Side.SHORT.value: 0.0}
+    records: list[dict[str, Any]] = []
+    for signal in signals:
+        direction = str(getattr(signal, "direction", "") or "").upper()
+        if direction == "UP":
+            side = Side.LONG.value
+        elif direction == "DOWN":
+            side = Side.SHORT.value
+        else:
+            continue
+        confidence = _optional_float(getattr(signal, "confidence", None)) or 0.0
+        magnitude = _optional_float(getattr(signal, "bonus_magnitude", None)) or 0.0
+        weight = max(0.0, confidence) * max(0.0, magnitude)
+        name = str(getattr(signal, "name", "") or "")
+        is_reversal = name in PATTERN_CHASE_BLOCK_NAMES
+        weights[side] += weight
+        if is_reversal:
+            reversal_weights[side] += weight
+        records.append(
+            {
+                "name": name,
+                "timeframe": str(getattr(signal, "timeframe", "") or ""),
+                "direction": direction,
+                "side": side,
+                "confidence": round(confidence, 3),
+                "weight": round(weight, 2),
+                "chase_block_evidence": is_reversal,
+                "rationale": str(getattr(signal, "rationale", "") or ""),
+            }
+        )
+
+    records.sort(key=lambda item: _optional_float(item.get("weight")) or 0.0, reverse=True)
+    long_weight = round(weights[Side.LONG.value], 2)
+    short_weight = round(weights[Side.SHORT.value], 2)
+    reversal_long = round(reversal_weights[Side.LONG.value], 2)
+    reversal_short = round(reversal_weights[Side.SHORT.value], 2)
+    return {
+        "pattern_signal_count": len(records),
+        "pattern_weight_long": long_weight,
+        "pattern_weight_short": short_weight,
+        "pattern_dominant_side": _dominant_weight_side(long_weight, short_weight),
+        "pattern_reversal_weight_long": reversal_long,
+        "pattern_reversal_weight_short": reversal_short,
+        "pattern_reversal_dominant_side": _dominant_weight_side(reversal_long, reversal_short),
+        "pattern_signals": records[:12],
+    }
+
+
+def _dominant_weight_side(long_weight: float, short_weight: float) -> str | None:
+    if long_weight > short_weight:
+        return Side.LONG.value
+    if short_weight > long_weight:
+        return Side.SHORT.value
+    return None
 
 
 def _market_location_context_for(
@@ -1774,6 +1881,31 @@ def _operating_tf_opposes_side(side: Side, chart_context: dict[str, Any] | None)
     return False
 
 
+def _operating_tf_confirms_side(side: Side, chart_context: dict[str, Any] | None) -> bool:
+    """Return true only when M5/M15 has a close-confirmed side break.
+
+    Wick-only sweeps are excluded by `_tf_structure_direction`; this is the
+    executable "抜けた" proof that lets a MARKET/STOP continuation override
+    opposed reversal candle evidence.
+    """
+    if not chart_context:
+        return False
+    story = str(chart_context.get("chart_story_structural") or "")
+    for timeframe in ("M5", "M15"):
+        struct_dir = _tf_structure_direction(story, timeframe)
+        if struct_dir is None or _direction_to_side(struct_dir) != side:
+            continue
+        long_bias = _optional_float(chart_context.get(f"{timeframe.lower()}_long_bias"))
+        short_bias = _optional_float(chart_context.get(f"{timeframe.lower()}_short_bias"))
+        if long_bias is None or short_bias is None:
+            return True
+        if side == Side.LONG and long_bias >= short_bias:
+            return True
+        if side == Side.SHORT and short_bias >= long_bias:
+            return True
+    return False
+
+
 def _tf_structure_direction(chart_story: str, timeframe: str) -> str | None:
     text = chart_story.upper()
     marker = f"{timeframe.upper()}("
@@ -2536,6 +2668,9 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     breakout_stop_issue = _breakout_failure_stop_chase_issue(intent, metadata, method)
     if breakout_stop_issue is not None:
         issues.append(breakout_stop_issue)
+    pattern_chase_issue = _pattern_reversal_chase_issue(intent, metadata, method)
+    if pattern_chase_issue is not None:
+        issues.append(pattern_chase_issue)
 
     if hedge_recovery and _operating_tf_opposes_side(intent.side, metadata):
         market = intent.order_type == OrderType.MARKET
@@ -2718,6 +2853,71 @@ def _breakout_failure_stop_chase_issue(
         ),
         "severity": "BLOCK",
     }
+
+
+def _pattern_reversal_chase_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, str] | None:
+    if method not in {TradeMethod.TREND_CONTINUATION, TradeMethod.BREAKOUT_FAILURE}:
+        return None
+    if intent.order_type not in {OrderType.MARKET, OrderType.STOP_ENTRY}:
+        return None
+    opposing_side = str(metadata.get("pattern_reversal_dominant_side") or "").upper()
+    if opposing_side not in {Side.LONG.value, Side.SHORT.value}:
+        return None
+    if opposing_side == intent.side.value:
+        return None
+    evidence = _opposing_pattern_chase_evidence(metadata, opposing_side)
+    if not evidence:
+        return None
+    if _operating_tf_confirms_side(intent.side, metadata):
+        return None
+
+    hedge_recovery = _is_hedge_recovery_metadata(metadata)
+    long_weight = _optional_float(metadata.get("pattern_reversal_weight_long"))
+    short_weight = _optional_float(metadata.get("pattern_reversal_weight_short"))
+    weight_text = []
+    if long_weight is not None:
+        weight_text.append(f"LONG={long_weight:.1f}")
+    if short_weight is not None:
+        weight_text.append(f"SHORT={short_weight:.1f}")
+    weights = f" ({', '.join(weight_text)})" if weight_text else ""
+    return {
+        "code": "PATTERN_REVERSAL_CHASE",
+        "message": (
+            f"{intent.pair} {intent.side.value} {intent.order_type.value} {method.value} "
+            f"chases into {opposing_side} failed-break/reversal candle evidence{weights}: "
+            f"{'; '.join(evidence)}. Wait for M5/M15 close-confirmed {intent.side.value} "
+            "BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side."
+        ),
+        "severity": "WARN" if hedge_recovery else "BLOCK",
+    }
+
+
+def _opposing_pattern_chase_evidence(metadata: dict[str, Any], opposing_side: str) -> list[str]:
+    raw_signals = metadata.get("pattern_signals")
+    if not isinstance(raw_signals, list):
+        return []
+    evidence: list[str] = []
+    for raw in raw_signals:
+        if not isinstance(raw, dict):
+            continue
+        if str(raw.get("side") or "").upper() != opposing_side:
+            continue
+        if not bool(raw.get("chase_block_evidence")):
+            continue
+        name = str(raw.get("name") or "pattern")
+        timeframe = str(raw.get("timeframe") or "?")
+        rationale = str(raw.get("rationale") or "").strip()
+        if rationale:
+            evidence.append(f"{timeframe} {name}: {rationale}")
+        else:
+            evidence.append(f"{timeframe} {name}")
+        if len(evidence) >= 3:
+            break
+    return evidence
 
 
 def _entry_range_position(entry: float, tf_data: dict[str, Any]) -> float | None:
