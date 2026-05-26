@@ -369,6 +369,22 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
 
         self.assertIsNone(adj)
 
+    def test_keeps_entry_lock_harvest_tp_after_small_profit_flip(self) -> None:
+        """Regression for 471492/471495: a failed-break SHORT was contracted
+        to the 8pip lock-in TP while adverse, then a small profit flip expanded
+        it back into a distant runner. Entry-lock harvest means bank."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471492", pair="EUR_USD", side="SHORT",
+            entry_price=1.16013, current_tp=1.15933,
+            current_price=1.15990,
+            atr_pips=18.5, reward_risk=2.7,
+            is_reversal_firing=False,
+            chart_context=None,
+        )
+
+        self.assertIsNone(adj)
+
     def test_trailing_mode_pushes_tp_ahead_of_price(self) -> None:
         """LONG in profit ≥ TRAILING_TRIGGER_ATR_MULT × ATR triggers
         trailing branch: new TP anchored on current_price + lock-behind."""

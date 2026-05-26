@@ -469,6 +469,21 @@ def compute_tp_adjustment(
 
     distance_old = abs(current_tp - entry_price) * pip_factor if current_tp is not None else 0.0
     desired_distance_pips = min(reward_risk * atr_pips, MAX_TP_DISTANCE_ATR_MULT * atr_pips)
+    lock_in_pips = max(MIN_LOCK_IN_PIPS, atr_pips * LOCK_IN_ATR_MULT)
+    entry_lock_harvest_reasons: list[str] = []
+    if (
+        current_tp is not None
+        and not is_reversal_firing
+        and distance_old <= lock_in_pips + HYSTERESIS_PIPS
+        and desired_distance_pips > distance_old
+    ):
+        entry_lock_harvest_reasons.append(
+            f"existing TP {distance_old:.1f}pip is an entry-lock harvest inside "
+            f"lock-in envelope {lock_in_pips:.1f}pip + hysteresis {HYSTERESIS_PIPS:.1f}pip"
+        )
+        entry_lock_harvest_reasons.append(
+            f"preserving harvest TP instead of expanding to desired {desired_distance_pips:.1f}pip"
+        )
     operating_atr = _operating_atr_pips(chart_context)
     stale_distance_reasons: list[str] = []
     stale_distance_technical_reasons: list[str] = []
@@ -557,6 +572,8 @@ def compute_tp_adjustment(
         # distance is shorter than the old TP, leave it alone.
         if desired_distance_pips <= distance_old:
             return None
+    elif entry_lock_harvest_reasons:
+        return None
     elif existing_tp_harvest_reasons:
         mode = "forecast_harvest"
         candidate_tp, harvest_anchor_reason = _structural_existing_tp_harvest_candidate(
