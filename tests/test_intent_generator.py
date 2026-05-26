@@ -2455,6 +2455,63 @@ class MinLotFloorIntentTest(unittest.TestCase):
 
         self.assertEqual(units, 1_000)
 
+    def test_risk_budgeted_units_uses_manual_exposure_for_broker_margin_offset(self) -> None:
+        import os
+
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_nav_pct = os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        trader_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=7_000,
+            entry_price=1.16688,
+            owner=Owner.TRADER,
+        )
+        manual_long = BrokerPosition(
+            trade_id="manual",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=15_000,
+            entry_price=1.16688,
+            owner=Owner.UNKNOWN,
+        )
+        existing_short = BrokerPosition(
+            trade_id="102",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=8_400,
+            entry_price=1.16013,
+            owner=Owner.TRADER,
+        )
+        try:
+            units = _risk_budgeted_units(
+                "EUR_USD",
+                entry=1.16013,
+                sl=1.16317,
+                max_loss_jpy=10_000.0,
+                snapshot=self._stub_snapshot(
+                    margin_used=209_000.0,
+                    margin_available=18_000.0,
+                    positions=(trader_long, manual_long, existing_short),
+                ),
+                side=Side.SHORT,
+                position_intent="PYRAMID",
+            )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_nav_pct is not None:
+                os.environ["QR_TRADER_POSITION_NAV_PCT"] = prior_nav_pct
+
+        self.assertEqual(units, 3_000)
+
     def test_position_intent_metadata_marks_underwater_opposite_side_as_recovery_hedge(self) -> None:
         from quant_rabbit.models import BrokerPosition, Owner, Side
         from quant_rabbit.strategy.intent_generator import _position_intent_metadata

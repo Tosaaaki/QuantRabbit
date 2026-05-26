@@ -241,6 +241,23 @@ def hedge_margin_free_units(
     return max(0, long_units - short_units)
 
 
+def broker_margin_free_units(*, pair: str, side: Side, snapshot: BrokerSnapshot) -> int:
+    """Return same-pair units that add no broker margin on a hedging account.
+
+    OANDA v20 hedging margin is based on the larger side of all same-pair
+    open trades in the account, including operator-managed manual/tagless
+    trades. This broker-truth number is separate from
+    `hedge_margin_free_units`, which is the strategy-owned hedge cap and
+    intentionally ignores manual exposure.
+    """
+    if not _account_hedging_enabled(snapshot):
+        return 0
+    long_units, short_units = _same_pair_position_units(snapshot, pair)
+    if side == Side.LONG:
+        return max(0, short_units - long_units)
+    return max(0, long_units - short_units)
+
+
 def incremental_margin_units(
     *,
     pair: str,
@@ -253,7 +270,7 @@ def incremental_margin_units(
     requested_units = max(0, abs(int(units)))
     if requested_units <= 0:
         return 0
-    if not _account_hedging_enabled(snapshot) or str(position_intent or "").upper() != "HEDGE":
+    if not _account_hedging_enabled(snapshot):
         return requested_units
 
     long_units, short_units = _same_pair_position_units(snapshot, pair)
@@ -506,6 +523,8 @@ class RiskEngine:
                 elif position.pair == intent.pair and position.side != intent.side and (
                     not _account_hedging_enabled(snapshot) or not _intent_declares_hedge(intent)
                 ):
+                    if _account_hedging_enabled(snapshot) and _candidate_adds_to_trader_net_side(intent, snapshot):
+                        continue
                     issues.append(
                         RiskIssue(
                             "OPPOSING_POSITION_NEEDS_HEDGING",
@@ -1124,6 +1143,20 @@ def _same_pair_position_units(snapshot: BrokerSnapshot, pair: str, *, owner: Own
 
 def _account_hedging_enabled(snapshot: BrokerSnapshot) -> bool:
     return bool(snapshot.account and snapshot.account.hedging_enabled)
+
+
+def _candidate_adds_to_trader_net_side(intent: OrderIntent, snapshot: BrokerSnapshot) -> bool:
+    """True when a same-pair add extends the trader-owned dominant side.
+
+    The per-position opposite-side guard prevents accidental hedges. Once
+    trader-owned exposure is already net LONG or net SHORT, adding to that
+    same net side is a pyramid, not a new hedge, even if an older opposite
+    trade still exists in the account.
+    """
+    long_units, short_units = _same_pair_position_units(snapshot, intent.pair, owner=Owner.TRADER)
+    if intent.side == Side.LONG:
+        return long_units >= short_units
+    return short_units >= long_units
 
 
 def _intent_declares_hedge(intent: OrderIntent) -> bool:

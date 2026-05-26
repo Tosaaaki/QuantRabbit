@@ -1012,6 +1012,95 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("HEDGE_UNITS_EXCEED_OPPOSITE_EXPOSURE", {issue.code for issue in decision.issues})
 
+    def test_net_short_pyramid_uses_manual_long_for_broker_margin_offset(self) -> None:
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        trader_long = BrokerPosition(
+            trade_id="long",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=7_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1500.0,
+            take_profit=None,
+            stop_loss=None,
+            owner=Owner.TRADER,
+        )
+        manual_long = BrokerPosition(
+            trade_id="manual",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=15_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1000.0,
+            take_profit=None,
+            stop_loss=None,
+            owner=Owner.UNKNOWN,
+        )
+        existing_short = BrokerPosition(
+            trade_id="short",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=8_400,
+            entry_price=1.16013,
+            unrealized_pl_jpy=-200.0,
+            take_profit=1.15830,
+            stop_loss=None,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.MARKET,
+            units=3_000,
+            entry=1.17322,
+            tp=1.17170,
+            sl=1.17410,
+            thesis="net short pyramid uses broker margin offset from account-wide long leg",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE reject/retest current",
+                narrative="short entry aligned with current failure-risk setup",
+                chart_story="upper retest rejection",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"},
+        )
+
+        try:
+            from quant_rabbit.risk import RiskPolicy
+
+            decision = RiskEngine(
+                policy=RiskPolicy(
+                    allow_protected_trader_position_adds=True,
+                    max_loss_jpy=5_000.0,
+                    max_portfolio_loss_jpy=50_000.0,
+                    max_margin_utilization_pct=92.0,
+                )
+            ).validate(
+                intent,
+                snapshot(
+                    positions=(trader_long, manual_long, existing_short),
+                    hedging_enabled=True,
+                    nav_jpy=181_000.0,
+                    margin_used_jpy=166_000.0,
+                    margin_available_jpy=18_000.0,
+                ),
+            )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+
+        issue_codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("OPPOSING_POSITION_NEEDS_HEDGING", issue_codes)
+        self.assertNotIn("MARGIN_UTILIZATION_CAP_EXCEEDED", issue_codes)
+        self.assertIsNotNone(decision.metrics)
+        assert decision.metrics is not None
+        self.assertEqual(decision.metrics.estimated_margin_jpy, 0.0)
+
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(
             trade_id="2",

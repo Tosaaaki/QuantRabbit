@@ -24,6 +24,7 @@ from quant_rabbit.risk import (
     RiskEngine,
     RiskPolicy,
     _min_lot_test_override_active,
+    broker_margin_free_units,
     estimate_incremental_margin_jpy,
     estimate_required_margin_jpy,
     hedge_margin_free_units,
@@ -4257,18 +4258,18 @@ def _margin_budgeted_units(
     spec = DEFAULT_SPECS.get(pair)
     if quote_to_jpy is None or spec is None or spec.margin_rate <= 0:
         return None
-    margin_free_hedge_units = (
-        hedge_margin_free_units(pair=pair, side=side, snapshot=snapshot, position_intent=position_intent)
+    broker_margin_free = (
+        broker_margin_free_units(pair=pair, side=side, snapshot=snapshot)
         if side is not None
         else 0
     )
     budget = margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct)
     if budget <= 0:
-        return float(margin_free_hedge_units)
+        return float(broker_margin_free)
     margin_per_unit = estimate_required_margin_jpy(units=1, entry_price=entry, quote_to_jpy=quote_to_jpy, spec=spec)
     if margin_per_unit <= 0:
-        return float(margin_free_hedge_units)
-    return float(margin_free_hedge_units) + (budget / margin_per_unit)
+        return float(broker_margin_free)
+    return float(broker_margin_free) + (budget / margin_per_unit)
 
 
 def _margin_sizing_metadata(
@@ -4296,6 +4297,7 @@ def _margin_sizing_metadata(
             spec=spec,
         )
         margin_free_hedge_units = 0
+        broker_margin_free = 0
     else:
         estimated_margin = estimate_incremental_margin_jpy(
             pair=pair,
@@ -4313,10 +4315,12 @@ def _margin_sizing_metadata(
             snapshot=snapshot,
             position_intent=position_intent,
         )
+        broker_margin_free = broker_margin_free_units(pair=pair, side=side, snapshot=snapshot)
     metadata.update(
         {
             "estimated_margin_jpy": round(estimated_margin, 3),
             "hedge_margin_free_units": margin_free_hedge_units,
+            "broker_margin_free_units": broker_margin_free,
             "margin_budget_jpy": round(margin_budget_jpy(account, max_margin_utilization_pct=max_margin_pct), 3),
             "margin_used_jpy": round(account.margin_used_jpy, 3),
             "margin_available_jpy": round(account.margin_available_jpy, 3),
