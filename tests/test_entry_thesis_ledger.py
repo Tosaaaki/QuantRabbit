@@ -14,7 +14,9 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
     evaluate_thesis_evolution,
     load_entry_thesis,
     load_latest_forecast,
+    load_pending_entry_thesis,
     record_entry_thesis,
+    record_entry_thesis_from_order_fill,
     record_entry_thesis_from_response,
     write_thesis_evolution_report,
 )
@@ -142,6 +144,73 @@ class EntryThesisLedgerTest(unittest.TestCase):
                 response=response, intent=FakeIntent(), data_root=root,
             )
             self.assertIsNone(written)
+
+    def test_pending_stop_response_promotes_to_entry_thesis_on_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "EUR_USD", "direction": "DOWN", "confidence": 0.63,
+                "invalidation_price": 1.1641, "target_price": 1.1583,
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("SHORT")
+                thesis = "EUR_USD SHORT failed-break stop trigger"
+                entry = 1.16013
+                tp = 1.1583
+                sl = 1.1641
+                metadata = {
+                    "desk": "failure_trader",
+                    "campaign_role": "FORECAST_FIRST",
+                    "regime_state": "FAILURE_RISK",
+                    "parent_lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                }
+
+            response = {
+                "orderCreateTransaction": {
+                    "id": "471491",
+                    "type": "STOP_ORDER",
+                    "instrument": "EUR_USD",
+                }
+            }
+            written = record_entry_thesis_from_response(
+                response=response, intent=FakeIntent(), data_root=root,
+                now=datetime(2026, 5, 22, 15, 30, tzinfo=timezone.utc),
+            )
+
+            self.assertIsNone(written)
+            pending = load_pending_entry_thesis("471491", root)
+            self.assertIsNotNone(pending)
+            assert pending is not None
+            self.assertEqual(pending.forecast_direction, "DOWN")
+
+            promoted = record_entry_thesis_from_order_fill(
+                transaction={
+                    "id": "471492",
+                    "type": "ORDER_FILL",
+                    "time": "2026-05-22T15:30:43.566015322Z",
+                    "orderID": "471491",
+                    "instrument": "EUR_USD",
+                    "units": "-2700",
+                    "price": "1.16013",
+                    "tradeOpened": {
+                        "tradeID": "471492",
+                        "units": "-2700",
+                        "price": "1.16013",
+                    },
+                },
+                data_root=root,
+            )
+
+            self.assertIsNotNone(promoted)
+            assert promoted is not None
+            self.assertEqual(promoted.trade_id, "471492")
+            self.assertEqual(promoted.side, "SHORT")
+            self.assertEqual(promoted.forecast_direction, "DOWN")
+            self.assertAlmostEqual(promoted.entry_price, 1.16013)
+            loaded = load_entry_thesis("471492", root)
+            self.assertIsNotNone(loaded)
 
     def _seed_thesis(self, root: Path) -> None:
         record_entry_thesis(

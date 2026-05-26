@@ -9,6 +9,11 @@ from pathlib import Path
 
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.models import AccountSummary
+from quant_rabbit.strategy.entry_thesis_ledger import (
+    PendingEntryThesis,
+    load_entry_thesis,
+    record_pending_entry_thesis,
+)
 
 
 class ExecutionLedgerTest(unittest.TestCase):
@@ -155,6 +160,41 @@ class ExecutionLedgerTest(unittest.TestCase):
                     1000,
                 ),
             )
+
+    def test_sync_promotes_pending_entry_thesis_on_order_fill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc="2026-05-06T00:00:01Z",
+                    order_id="101",
+                    pair="EUR_USD",
+                    side="LONG",
+                    entry_price=1.175,
+                    forecast_direction="UP",
+                    forecast_confidence=0.71,
+                    regime="TREND_CONTINUATION",
+                    invalidation_price=1.1725,
+                    target_price=1.179,
+                    key_drivers=["forecast=UP@conf=0.71", "desk=trend_trader"],
+                    lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                ),
+                root,
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(FakeTransactionClient(), since_transaction_id="100")
+            duplicate = ledger.sync_oanda_transactions(FakeTransactionClient(), since_transaction_id="100")
+
+            self.assertEqual(summary.status, "SYNCED")
+            self.assertEqual(duplicate.transactions_inserted, 0)
+            thesis = load_entry_thesis("200", root)
+            self.assertIsNotNone(thesis)
+            assert thesis is not None
+            self.assertEqual(thesis.pair, "EUR_USD")
+            self.assertEqual(thesis.side, "LONG")
+            self.assertEqual(thesis.forecast_direction, "UP")
+            self.assertAlmostEqual(thesis.entry_price, 1.1751)
 
 
 class FakeTransactionClient:

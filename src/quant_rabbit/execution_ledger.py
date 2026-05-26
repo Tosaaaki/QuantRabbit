@@ -85,6 +85,7 @@ class ExecutionLedger:
                 for event in _events_from_transaction(transaction, now):
                     if _insert_event(conn, event):
                         inserted_events += 1
+                _record_entry_thesis_for_fill(transaction, data_root=self.db_path.parent)
             last_transaction_id = str(payload.get("lastTransactionID") or start_id)
             _set_state(conn, "last_oanda_transaction_id", last_transaction_id, now)
 
@@ -316,6 +317,19 @@ def _events_from_gateway_receipt(kind: str, payload: dict[str, Any], now: str) -
             if isinstance(action, dict)
         ]
     return []
+
+
+def _record_entry_thesis_for_fill(transaction: dict[str, Any], *, data_root: Path) -> None:
+    if str(transaction.get("type") or "") != "ORDER_FILL":
+        return
+    if not isinstance(transaction.get("tradeOpened"), dict):
+        return
+    try:
+        from quant_rabbit.strategy.entry_thesis_ledger import record_entry_thesis_from_order_fill
+
+        record_entry_thesis_from_order_fill(transaction=transaction, data_root=data_root)
+    except Exception:
+        return
 
 
 def _gateway_live_order_event(payload: dict[str, Any], *, now: str, index: int) -> dict[str, Any]:

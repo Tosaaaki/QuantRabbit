@@ -56,7 +56,9 @@ from typing import Any, Dict, List, Optional
 
 
 LEDGER_FILENAME = "entry_thesis_ledger.jsonl"
+PENDING_LEDGER_FILENAME = "pending_entry_thesis_ledger.jsonl"
 FORECAST_HISTORY_FILENAME = "forecast_history.jsonl"
+PENDING_ORDER_TYPES = {"LIMIT_ORDER", "STOP_ORDER", "MARKET_IF_TOUCHED_ORDER"}
 
 
 @dataclass
@@ -102,6 +104,55 @@ class EntryThesis:
             invalidation_price=d.get("invalidation_price"),
             target_price=d.get("target_price"),
             key_drivers=list(d.get("key_drivers", [])),
+        )
+
+
+@dataclass
+class PendingEntryThesis:
+    timestamp_utc: str
+    order_id: str
+    pair: str
+    side: str
+    entry_price: float
+    forecast_direction: str
+    forecast_confidence: float
+    regime: Optional[str]
+    invalidation_price: Optional[float]
+    target_price: Optional[float]
+    key_drivers: List[str] = field(default_factory=list)
+    lane_id: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "timestamp_utc": self.timestamp_utc,
+            "order_id": self.order_id,
+            "pair": self.pair,
+            "side": self.side,
+            "entry_price": self.entry_price,
+            "forecast_direction": self.forecast_direction,
+            "forecast_confidence": self.forecast_confidence,
+            "regime": self.regime,
+            "invalidation_price": self.invalidation_price,
+            "target_price": self.target_price,
+            "key_drivers": self.key_drivers,
+            "lane_id": self.lane_id,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PendingEntryThesis":
+        return cls(
+            timestamp_utc=str(d.get("timestamp_utc", "")),
+            order_id=str(d.get("order_id", "")),
+            pair=str(d.get("pair", "")),
+            side=str(d.get("side", "")),
+            entry_price=float(d.get("entry_price", 0)),
+            forecast_direction=str(d.get("forecast_direction", "UNCLEAR")),
+            forecast_confidence=float(d.get("forecast_confidence", 0)),
+            regime=d.get("regime"),
+            invalidation_price=d.get("invalidation_price"),
+            target_price=d.get("target_price"),
+            key_drivers=list(d.get("key_drivers", [])),
+            lane_id=d.get("lane_id"),
         )
 
 
@@ -155,6 +206,23 @@ def record_entry_thesis(thesis: EntryThesis, data_root: Path) -> None:
         f.write(json.dumps(thesis.to_dict(), ensure_ascii=False) + "\n")
 
 
+def record_pending_entry_thesis(thesis: PendingEntryThesis, data_root: Path) -> None:
+    """Append pending-order thesis keyed by OANDA order id.
+
+    STOP/LIMIT orders receive a trade id only when OANDA later emits an
+    ORDER_FILL transaction. This sidecar preserves the original entry reason so
+    the fill sync can promote it to `entry_thesis_ledger.jsonl`.
+    """
+    if _is_disabled():
+        return
+    if load_pending_entry_thesis(thesis.order_id, data_root) is not None:
+        return
+    path = data_root / PENDING_LEDGER_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(thesis.to_dict(), ensure_ascii=False) + "\n")
+
+
 def load_entry_thesis(trade_id: str, data_root: Path) -> Optional[EntryThesis]:
     """Load thesis for a trade_id. Returns None when not found."""
     path = data_root / LEDGER_FILENAME
@@ -174,6 +242,28 @@ def load_entry_thesis(trade_id: str, data_root: Path) -> Optional[EntryThesis]:
     except OSError:
         return None
     return None
+
+
+def load_pending_entry_thesis(order_id: str, data_root: Path) -> Optional[PendingEntryThesis]:
+    """Load pending thesis for an OANDA order id."""
+    path = data_root / PENDING_LEDGER_FILENAME
+    if not path.exists():
+        return None
+    latest: Optional[PendingEntryThesis] = None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if str(d.get("order_id", "")) == str(order_id):
+                latest = PendingEntryThesis.from_dict(d)
+    except OSError:
+        return None
+    return latest
 
 
 def load_latest_forecast(pair: str, data_root: Path) -> Optional[Dict[str, Any]]:
@@ -204,6 +294,13 @@ def load_latest_forecast(pair: str, data_root: Path) -> Optional[Dict[str, Any]]
     return latest
 
 
+def _response_order_create(response: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not response or not isinstance(response, dict):
+        return None
+    create = response.get("orderCreateTransaction")
+    return create if isinstance(create, dict) else None
+
+
 def _response_trade_id(response: Optional[Dict[str, Any]]) -> Optional[str]:
     """Extract tradeID from OANDA order response (mirrors
     execution_ledger._response_trade_id without importing it)."""
@@ -215,6 +312,16 @@ def _response_trade_id(response: Optional[Dict[str, Any]]) -> Optional[str]:
         if isinstance(opened, dict) and opened.get("tradeID") is not None:
             return str(opened["tradeID"])
     return None
+
+
+def _response_pending_order_id(response: Optional[Dict[str, Any]]) -> Optional[str]:
+    create = _response_order_create(response)
+    if not create:
+        return None
+    if str(create.get("type") or "").upper() not in PENDING_ORDER_TYPES:
+        return None
+    order_id = create.get("id") or create.get("orderID")
+    return str(order_id) if order_id is not None else None
 
 
 def _response_fill_price(response: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -240,6 +347,53 @@ def _response_fill_price(response: Optional[Dict[str, Any]]) -> Optional[float]:
     return None
 
 
+def _intent_side(intent: Any) -> str:
+    side_attr = getattr(intent, "side", None)
+    return (getattr(side_attr, "value", None) or str(side_attr or "")).upper()
+
+
+def _build_key_drivers(*, forecast: Dict[str, Any], metadata: Dict[str, Any], thesis_text: str) -> List[str]:
+    key_drivers: List[str] = []
+    if forecast.get("direction"):
+        key_drivers.append(
+            f"forecast={forecast.get('direction')}@conf={float(forecast.get('confidence', 0)):.2f}"
+        )
+    for k in ("desk", "campaign_role", "regime_state", "target_reward_risk"):
+        v = metadata.get(k)
+        if v not in (None, ""):
+            key_drivers.append(f"{k}={v}")
+    lane_id = metadata.get("parent_lane_id") or metadata.get("lane_id")
+    if lane_id:
+        key_drivers.append(f"lane_id={lane_id}")
+    if thesis_text:
+        key_drivers.append(thesis_text[:120])
+    return key_drivers[:6]
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _side_from_units(units: Optional[int]) -> Optional[str]:
+    if units is None or units == 0:
+        return None
+    return "LONG" if units > 0 else "SHORT"
+
+
 def record_entry_thesis_from_response(
     *,
     response: Optional[Dict[str, Any]],
@@ -262,34 +416,52 @@ def record_entry_thesis_from_response(
     try:
         trade_id = _response_trade_id(response)
         if not trade_id:
+            pending_order_id = _response_pending_order_id(response)
+            if not pending_order_id:
+                return None
+            pair = str(getattr(intent, "pair", ""))
+            side_up = _intent_side(intent)
+            if not pair or side_up not in ("LONG", "SHORT"):
+                return None
+            forecast = load_latest_forecast(pair, data_root) or {}
+            metadata = dict(getattr(intent, "metadata", {}) or {})
+            now = now or datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=now.isoformat().replace("+00:00", "Z"),
+                    order_id=pending_order_id,
+                    pair=pair,
+                    side=side_up,
+                    entry_price=float(getattr(intent, "entry", 0) or 0),
+                    forecast_direction=str(forecast.get("direction") or "UNCLEAR"),
+                    forecast_confidence=float(forecast.get("confidence") or 0.0),
+                    regime=str(forecast.get("regime") or metadata.get("regime_state") or "") or None,
+                    invalidation_price=forecast.get("invalidation_price") or getattr(intent, "sl", None),
+                    target_price=forecast.get("target_price") or getattr(intent, "tp", None),
+                    key_drivers=_build_key_drivers(
+                        forecast=forecast,
+                        metadata=metadata,
+                        thesis_text=str(getattr(intent, "thesis", "") or ""),
+                    ),
+                    lane_id=str(metadata.get("parent_lane_id") or metadata.get("lane_id") or ""),
+                ),
+                data_root,
+            )
             return None
         pair = str(getattr(intent, "pair", ""))
-        side_attr = getattr(intent, "side", None)
-        side_val = getattr(side_attr, "value", None) or str(side_attr or "")
-        side_up = side_val.upper()
+        side_up = _intent_side(intent)
         if not pair or side_up not in ("LONG", "SHORT"):
             return None
         fill_price = _response_fill_price(response) or float(getattr(intent, "entry", 0) or 0)
 
         forecast = load_latest_forecast(pair, data_root) or {}
         metadata = dict(getattr(intent, "metadata", {}) or {})
-        # Extract top-3 drivers from intent metadata + forecast
-        key_drivers: List[str] = []
-        if forecast.get("direction"):
-            key_drivers.append(
-                f"forecast={forecast.get('direction')}@conf={float(forecast.get('confidence', 0)):.2f}"
-            )
-        for k in ("desk", "campaign_role", "regime_state", "target_reward_risk"):
-            v = metadata.get(k)
-            if v not in (None, ""):
-                key_drivers.append(f"{k}={v}")
-        thesis_text = str(getattr(intent, "thesis", "") or "")
-        if thesis_text:
-            key_drivers.append(thesis_text[:120])
 
         regime = forecast.get("regime") or metadata.get("regime_state") or None
 
         now = now or datetime.now(timezone.utc)
+        if load_entry_thesis(trade_id, data_root) is not None:
+            return load_entry_thesis(trade_id, data_root)
         entry_thesis = EntryThesis(
             timestamp_utc=now.isoformat().replace("+00:00", "Z"),
             trade_id=trade_id,
@@ -301,13 +473,70 @@ def record_entry_thesis_from_response(
             regime=str(regime) if regime else None,
             invalidation_price=forecast.get("invalidation_price"),
             target_price=forecast.get("target_price"),
-            key_drivers=key_drivers[:6],
+            key_drivers=_build_key_drivers(
+                forecast=forecast,
+                metadata=metadata,
+                thesis_text=str(getattr(intent, "thesis", "") or ""),
+            ),
         )
         record_entry_thesis(entry_thesis, data_root)
         return entry_thesis
     except Exception:
         # Never break the live order path — thesis recording is purely
         # informational/auxiliary.
+        return None
+
+
+def record_entry_thesis_from_order_fill(
+    *,
+    transaction: Dict[str, Any],
+    data_root: Path,
+) -> Optional[EntryThesis]:
+    """Promote a pending-order thesis when OANDA later emits ORDER_FILL.
+
+    Pending entry orders are accepted before they have a trade id. The live
+    gateway stores the motivating thesis under the OANDA order id; this function
+    is called by execution-ledger sync when broker truth reports the fill.
+    """
+    if _is_disabled():
+        return None
+    try:
+        opened = transaction.get("tradeOpened")
+        if not isinstance(opened, dict):
+            return None
+        trade_id = opened.get("tradeID")
+        order_id = transaction.get("orderID")
+        if trade_id is None or order_id is None:
+            return None
+        existing = load_entry_thesis(str(trade_id), data_root)
+        if existing is not None:
+            return existing
+        pending = load_pending_entry_thesis(str(order_id), data_root)
+        if pending is None:
+            return None
+        units = _safe_int(opened.get("units")) or _safe_int(transaction.get("units"))
+        side = _side_from_units(units) or pending.side
+        if side not in ("LONG", "SHORT"):
+            return None
+        price = _safe_float(opened.get("price")) or _safe_float(transaction.get("price")) or pending.entry_price
+        if price is None:
+            return None
+        entry_thesis = EntryThesis(
+            timestamp_utc=str(transaction.get("time") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")),
+            trade_id=str(trade_id),
+            pair=str(transaction.get("instrument") or pending.pair),
+            side=side,
+            entry_price=float(price),
+            forecast_direction=pending.forecast_direction,
+            forecast_confidence=pending.forecast_confidence,
+            regime=pending.regime,
+            invalidation_price=pending.invalidation_price,
+            target_price=pending.target_price,
+            key_drivers=list(pending.key_drivers),
+        )
+        record_entry_thesis(entry_thesis, data_root)
+        return entry_thesis
+    except Exception:
         return None
 
 
