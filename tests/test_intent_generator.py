@@ -2401,6 +2401,60 @@ class MinLotFloorIntentTest(unittest.TestCase):
 
         self.assertEqual(units, 6_000)
 
+    def test_risk_budgeted_units_ignores_manual_opposing_units_for_hedge_target(self) -> None:
+        import os
+
+        from quant_rabbit.models import BrokerPosition, Owner, Side
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        trader_long = BrokerPosition(
+            trade_id="101",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=7_000,
+            entry_price=1.16688,
+            owner=Owner.TRADER,
+        )
+        manual_long = BrokerPosition(
+            trade_id="manual",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=15_000,
+            entry_price=1.16688,
+            owner=Owner.UNKNOWN,
+        )
+        existing_short = BrokerPosition(
+            trade_id="102",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=5_700,
+            entry_price=1.16013,
+            owner=Owner.TRADER,
+        )
+        try:
+            units = _risk_budgeted_units(
+                "EUR_USD",
+                entry=1.16013,
+                sl=1.16317,
+                max_loss_jpy=10_000.0,
+                snapshot=self._stub_snapshot(
+                    margin_used=209_000.0,
+                    margin_available=18_000.0,
+                    positions=(trader_long, manual_long, existing_short),
+                ),
+                side=Side.SHORT,
+                position_intent="HEDGE",
+            )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+
+        self.assertEqual(units, 1_000)
+
     def test_position_intent_metadata_marks_underwater_opposite_side_as_recovery_hedge(self) -> None:
         from quant_rabbit.models import BrokerPosition, Owner, Side
         from quant_rabbit.strategy.intent_generator import _position_intent_metadata
@@ -2642,6 +2696,70 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         intent = self._intent(side="LONG", sigma_mult=None, price_pct_24h=0.97)
         codes = {issue["code"] for issue in _method_context_issues(intent)}
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+
+class BreakoutFailureStopChaseTest(unittest.TestCase):
+    def _intent(self, *, side: str, order_type: str, entry: float):
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
+
+        return OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG if side == "LONG" else Side.SHORT,
+            order_type=OrderType.parse(order_type),
+            units=3000,
+            entry=entry,
+            tp=entry + 0.0018 if side == "LONG" else entry - 0.0018,
+            sl=entry - 0.0012 if side == "LONG" else entry + 0.0012,
+            thesis="failed-break retest timing test",
+            owner=Owner.TRADER,
+            market_context=MarketContext(
+                regime="FAILURE_RISK",
+                narrative="breakout failure lane",
+                chart_story="failed break and retest map",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="sl trades",
+            ),
+            metadata={
+                "tf_regime_map": {
+                    "M5": {
+                        "nearest_support": 1.16000,
+                        "nearest_resistance": 1.16400,
+                        "nearest_support_distance_pips": -20.0,
+                        "nearest_resistance_distance_pips": 20.0,
+                    },
+                    "M15": {
+                        "nearest_support": 1.15900,
+                        "nearest_resistance": 1.16500,
+                        "nearest_support_distance_pips": -30.0,
+                        "nearest_resistance_distance_pips": 30.0,
+                    },
+                },
+            },
+        )
+
+    def test_short_stop_entry_on_lower_half_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(side="SHORT", order_type="STOP-ENTRY", entry=1.16080)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE", codes)
+
+    def test_long_stop_entry_on_upper_half_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(side="LONG", order_type="STOP-ENTRY", entry=1.16320)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE", codes)
+
+    def test_short_limit_at_resistance_does_not_get_stop_chase_block(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(side="SHORT", order_type="LIMIT", entry=1.16360)
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("BREAKOUT_FAILURE_STOP_CHASES_FAILED_SIDE", codes)
 
 
 if __name__ == "__main__":

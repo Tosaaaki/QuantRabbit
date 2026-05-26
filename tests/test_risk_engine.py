@@ -929,6 +929,89 @@ class RiskEngineTest(unittest.TestCase):
         self.assertFalse(decision.allowed)
         self.assertIn("HEDGE_UNITS_EXCEED_OPPOSITE_EXPOSURE", {issue.code for issue in decision.issues})
 
+    def test_same_pair_hedge_ignores_manual_long_when_capping_bot_short(self) -> None:
+        protected_long = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=7_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1500.0,
+            take_profit=None,
+            stop_loss=None,
+            owner=Owner.TRADER,
+        )
+        manual_long = BrokerPosition(
+            trade_id="manual",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=15_000,
+            entry_price=1.16688,
+            unrealized_pl_jpy=-1000.0,
+            take_profit=None,
+            stop_loss=None,
+            owner=Owner.UNKNOWN,
+        )
+        existing_short = BrokerPosition(
+            trade_id="3",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=5_700,
+            entry_price=1.16013,
+            unrealized_pl_jpy=-200.0,
+            take_profit=1.15830,
+            stop_loss=None,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=2_700,
+            entry=1.16013,
+            tp=1.15830,
+            sl=1.16317,
+            thesis="manual exposure must not authorize over-hedged bot short",
+            market_context=MarketContext(
+                regime="BREAKOUT_FAILURE recovery hedge",
+                narrative="short hedge against trapped trader long only",
+                chart_story="failed reclaim and rejection below trigger",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "HEDGE",
+                "position_fill": "OPEN_ONLY",
+                "hedge_recovery": True,
+                "hedge_timing_class": "REVERSAL",
+                "hedge_unwind_plan_required": True,
+                "hedge_review_trigger": "h1_close_or_reversal_structure_failure",
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_loss_jpy=5_000.0,
+                max_portfolio_loss_jpy=50_000.0,
+                max_margin_utilization_pct=92.0,
+            )
+        ).validate(
+            intent,
+            snapshot(
+                positions=(protected_long, manual_long, existing_short),
+                hedging_enabled=True,
+                nav_jpy=181_000.0,
+                margin_used_jpy=162_500.0,
+                margin_available_jpy=18_000.0,
+            ),
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("HEDGE_UNITS_EXCEED_OPPOSITE_EXPOSURE", {issue.code for issue in decision.issues})
+
     def test_portfolio_policy_blocks_add_when_total_loss_budget_exceeded(self) -> None:
         protected_at_risk = BrokerPosition(
             trade_id="2",

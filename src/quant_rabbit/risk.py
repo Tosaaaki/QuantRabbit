@@ -225,15 +225,17 @@ def hedge_margin_free_units(
     snapshot: BrokerSnapshot,
     position_intent: str | None = None,
 ) -> int:
-    """Return same-pair units that can be added before OANDA v20 margin grows.
+    """Return trader-owned units that can be hedged before the bot nets out.
 
-    Hedging accounts margin same-instrument opposite exposure on the longer
-    side. A SHORT against 22k LONG EUR/USD therefore has 22k units of margin-free
-    hedge capacity before incremental margin starts.
+    OANDA's broker margin calculation sees every same-pair position, but the
+    trader is not allowed to use manual/tagless exposure as a hedge reference.
+    A bot HEDGE may only cover trader-owned opposite exposure; otherwise a
+    manual LONG could silently authorize a fresh bot SHORT and turn operator
+    risk into strategy-owned exposure.
     """
     if not _account_hedging_enabled(snapshot) or str(position_intent or "").upper() != "HEDGE":
         return 0
-    long_units, short_units = _same_pair_position_units(snapshot, pair)
+    long_units, short_units = _same_pair_position_units(snapshot, pair, owner=Owner.TRADER)
     if side == Side.LONG:
         return max(0, short_units - long_units)
     return max(0, long_units - short_units)
@@ -1104,11 +1106,13 @@ def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
 
 
-def _same_pair_position_units(snapshot: BrokerSnapshot, pair: str) -> tuple[int, int]:
+def _same_pair_position_units(snapshot: BrokerSnapshot, pair: str, *, owner: Owner | None = None) -> tuple[int, int]:
     long_units = 0
     short_units = 0
     for position in snapshot.positions:
         if position.pair != pair:
+            continue
+        if owner is not None and position.owner != owner:
             continue
         units = max(0, abs(int(position.units)))
         if position.side == Side.LONG:
