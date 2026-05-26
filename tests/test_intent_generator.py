@@ -2625,7 +2625,18 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
     fires at intent-generation time without touching open positions.
     """
 
-    def _intent(self, *, side, sigma_mult, price_pct_24h, pair: str = "EUR_USD", metadata_extra: dict | None = None):
+    def _intent(
+        self,
+        *,
+        side,
+        sigma_mult,
+        price_pct_24h,
+        pair: str = "EUR_USD",
+        metadata_extra: dict | None = None,
+        order_type: str = "MARKET",
+        method: str = "TREND_CONTINUATION",
+        entry: float | None = None,
+    ):
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Owner, Side, TradeMethod
         metadata = {
             "range_24h_sigma_multiple": sigma_mult,
@@ -2636,8 +2647,9 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         return OrderIntent(
             pair=pair,
             side=Side.LONG if side == "LONG" else Side.SHORT,
-            order_type=OrderType.MARKET,
+            order_type=OrderType.parse(order_type),
             units=5000,
+            entry=entry,
             tp=1.18 if side == "LONG" else 1.17,
             sl=1.17 if side == "LONG" else 1.18,
             thesis="test thesis",
@@ -2646,7 +2658,7 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
                 regime="TREND_UP",
                 narrative="test",
                 chart_story="test",
-                method=TradeMethod.TREND_CONTINUATION,
+                method=TradeMethod.parse(method),
                 invalidation="sl trades",
             ),
             metadata=metadata,
@@ -2695,6 +2707,67 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         from quant_rabbit.strategy.intent_generator import _method_context_issues
         intent = self._intent(side="LONG", sigma_mult=None, price_pct_24h=0.97)
         codes = {issue["code"] for issue in _method_context_issues(intent)}
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_failed_break_short_market_at_upper_retest_not_chase(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=3.0,
+            price_pct_24h=0.25,
+            method="BREAKOUT_FAILURE",
+            metadata_extra={
+                "tf_regime_map": {
+                    "M5": {"range_position": 0.80},
+                    "M15": {"range_position": 0.78},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_failed_break_short_stop_near_lower_side_still_chase(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=3.0,
+            price_pct_24h=0.25,
+            method="BREAKOUT_FAILURE",
+            order_type="STOP-ENTRY",
+            entry=1.16080,
+            metadata_extra={
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.16000, "nearest_resistance": 1.16400},
+                    "M15": {"nearest_support": 1.15900, "nearest_resistance": 1.16500},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_failed_break_short_limit_at_upper_retest_not_chase(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=3.0,
+            price_pct_24h=0.25,
+            method="BREAKOUT_FAILURE",
+            order_type="LIMIT",
+            entry=1.16360,
+            metadata_extra={
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.16000, "nearest_resistance": 1.16400},
+                    "M15": {"nearest_support": 1.15900, "nearest_resistance": 1.16500},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
 
 

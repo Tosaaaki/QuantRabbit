@@ -2733,6 +2733,8 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
             chasing = True
         if intent.side == Side.SHORT and ppct_24h is not None and ppct_24h <= 0.5:
             chasing = True
+        if chasing and _is_structural_retest_entry(intent, metadata, method):
+            chasing = False
         if chasing:
             severity = "WARN" if hedge_recovery else "BLOCK"
             issues.append(
@@ -2853,6 +2855,46 @@ def _breakout_failure_stop_chase_issue(
         ),
         "severity": "BLOCK",
     }
+
+
+def _is_structural_retest_entry(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> bool:
+    """True when a range/failure receipt waits on the retest side.
+
+    This is the carve-out for the 24h exhaustion filter: selling after a large
+    down move is a chase when it sells the low, but not when the receipt is a
+    structural upper-half retest/rejection. The midpoint is the existing box
+    geometry boundary used by breakout-failure timing, not a new threshold.
+    """
+    if method not in {TradeMethod.BREAKOUT_FAILURE, TradeMethod.RANGE_ROTATION}:
+        return False
+    if intent.order_type == OrderType.STOP_ENTRY:
+        return False
+    tf_map = metadata.get("tf_regime_map")
+    if not isinstance(tf_map, dict):
+        return False
+
+    positions: list[float] = []
+    for timeframe in ("M5", "M15"):
+        tf_data = tf_map.get(timeframe)
+        if not isinstance(tf_data, dict):
+            continue
+        position = None
+        if intent.order_type == OrderType.LIMIT and intent.entry is not None:
+            position = _entry_range_position(intent.entry, tf_data)
+        if position is None:
+            position = _optional_float(tf_data.get("range_position"))
+        if position is not None:
+            positions.append(position)
+
+    if not positions:
+        return False
+    if intent.side == Side.SHORT:
+        return all(position >= BREAKOUT_FAILURE_RETEST_MIDPOINT for position in positions)
+    return all(position <= BREAKOUT_FAILURE_RETEST_MIDPOINT for position in positions)
 
 
 def _pattern_reversal_chase_issue(
