@@ -272,6 +272,7 @@ def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -
                 event_type="TRADE_REDUCED",
                 uid_tail=f"reduced:{reduced.get('tradeID') or transaction.get('orderID') or ''}",
                 trade_id=str(reduced.get("tradeID") or ""),
+                side=_closed_trade_side(transaction),
                 units=_abs_int(reduced.get("units")) or _abs_int(transaction.get("units")),
                 price=_float(reduced.get("price")) or _float(transaction.get("price")),
                 realized_pl_jpy=_float(reduced.get("realizedPL")) or _float(transaction.get("pl")),
@@ -289,6 +290,7 @@ def _events_from_order_fill(transaction: dict[str, Any], inserted_at_utc: str) -
                     event_type="TRADE_CLOSED",
                     uid_tail=f"closed:{closed.get('tradeID') or index}",
                     trade_id=str(closed.get("tradeID") or ""),
+                    side=_closed_trade_side(transaction),
                     units=_abs_int(closed.get("units")) or _abs_int(transaction.get("units")),
                     price=_float(closed.get("price")) or _float(transaction.get("price")),
                     realized_pl_jpy=_float(closed.get("realizedPL")) or _float(transaction.get("pl")),
@@ -422,6 +424,7 @@ def _event(
     event_type: str,
     uid_tail: str,
     trade_id: str | None = None,
+    side: str | None = None,
     units: int | None = None,
     price: float | None = None,
     realized_pl_jpy: float | None = None,
@@ -444,11 +447,11 @@ def _event(
         "trade_id": _text(raw_trade_id),
         "client_order_id": _text(transaction.get("clientOrderID") or client_extensions.get("id")),
         "pair": _text(transaction.get("instrument")),
-        "side": _side_from_units(signed_units),
+        "side": side if side is not None else _side_from_units(signed_units),
         "units": units if units is not None else (_abs_int(transaction.get("units"))),
         "price": price if price is not None else _float(transaction.get("price")),
-        "tp": _nested_price(transaction, "takeProfitOnFill"),
-        "sl": _nested_price(transaction, "stopLossOnFill"),
+        "tp": _transaction_tp_price(transaction),
+        "sl": _transaction_sl_price(transaction),
         "realized_pl_jpy": realized_pl_jpy if realized_pl_jpy is not None else _float(transaction.get("pl")),
         "financing_jpy": _float(transaction.get("financing")),
         "exit_reason": exit_reason if exit_reason is not None else _text(transaction.get("reason")),
@@ -615,6 +618,36 @@ def _side_from_units(units: int | None) -> str | None:
     if units is None or units == 0:
         return None
     return "LONG" if units > 0 else "SHORT"
+
+
+def _closed_trade_side(transaction: dict[str, Any]) -> str | None:
+    signed_units = _int(transaction.get("units"))
+    if signed_units is None or signed_units == 0:
+        return None
+    closing_side = _side_from_units(signed_units)
+    if closing_side == "LONG":
+        return "SHORT"
+    if closing_side == "SHORT":
+        return "LONG"
+    return None
+
+
+def _transaction_tp_price(transaction: dict[str, Any]) -> float | None:
+    nested = _nested_price(transaction, "takeProfitOnFill")
+    if nested is not None:
+        return nested
+    if str(transaction.get("type") or "") == "TAKE_PROFIT_ORDER":
+        return _float(transaction.get("price"))
+    return None
+
+
+def _transaction_sl_price(transaction: dict[str, Any]) -> float | None:
+    nested = _nested_price(transaction, "stopLossOnFill")
+    if nested is not None:
+        return nested
+    if str(transaction.get("type") or "") == "STOP_LOSS_ORDER":
+        return _float(transaction.get("price"))
+    return None
 
 
 def _abs_int(value: Any) -> int | None:

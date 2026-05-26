@@ -34,7 +34,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             with sqlite3.connect(root / "ledger.db") as conn:
                 tx_count = conn.execute("SELECT COUNT(*) FROM oanda_transactions").fetchone()[0]
                 event_rows = conn.execute(
-                    "SELECT event_type, trade_id, realized_pl_jpy, exit_reason FROM execution_events ORDER BY event_uid"
+                    "SELECT event_type, trade_id, realized_pl_jpy, exit_reason, side FROM execution_events ORDER BY event_uid"
                 ).fetchall()
                 last_id = conn.execute(
                     "SELECT value FROM sync_state WHERE key='last_oanda_transaction_id'"
@@ -50,6 +50,7 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(close_rows[0][1], "200")
             self.assertEqual(close_rows[0][2], 350.0)
             self.assertEqual(close_rows[0][3], "TAKE_PROFIT_ORDER")
+            self.assertEqual(close_rows[0][4], "LONG")
             self.assertEqual(last_id, "104")
 
     def test_records_gateway_receipt_as_append_only_event(self) -> None:
@@ -196,6 +197,49 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(thesis.forecast_direction, "UP")
             self.assertAlmostEqual(thesis.entry_price, 1.1751)
 
+    def test_closed_short_trade_records_original_trade_side(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(FakeShortCloseClient(), since_transaction_id="100")
+
+            self.assertEqual(summary.status, "SYNCED")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    """
+                    SELECT event_type, trade_id, side, units, realized_pl_jpy
+                    FROM execution_events
+                    WHERE event_type='TRADE_CLOSED'
+                    """
+                ).fetchone()
+            self.assertEqual(row, ("TRADE_CLOSED", "300", "SHORT", 1000, 125.0))
+
+    def test_protection_order_events_record_tp_and_sl_prices(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(FakeProtectionClient(), since_transaction_id="100")
+
+            self.assertEqual(summary.status, "SYNCED")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                rows = conn.execute(
+                    """
+                    SELECT event_type, trade_id, tp, sl, exit_reason
+                    FROM execution_events
+                    WHERE event_type='PROTECTION_CREATED'
+                    ORDER BY oanda_transaction_id
+                    """
+                ).fetchall()
+            self.assertEqual(
+                rows,
+                [
+                    ("PROTECTION_CREATED", "300", 1.1592, None, "ON_FILL"),
+                    ("PROTECTION_CREATED", "300", None, 1.161, "ON_FILL"),
+                ],
+            )
+
 
 class FakeTransactionClient:
     def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
@@ -254,6 +298,95 @@ class FakeTransactionClient:
                     "time": "2026-05-06T23:00:00.000000000Z",
                     "type": "DAILY_FINANCING",
                     "financing": "-1.2",
+                },
+            ],
+        }
+
+
+class FakeShortCloseClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="100",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "104",
+            "transactions": [
+                {
+                    "id": "101",
+                    "time": "2026-05-06T00:00:01.000000000Z",
+                    "type": "STOP_ORDER",
+                    "instrument": "EUR_USD",
+                    "units": "-1000",
+                    "price": "1.16000",
+                    "clientExtensions": {"tag": "trader"},
+                },
+                {
+                    "id": "102",
+                    "time": "2026-05-06T00:00:02.000000000Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "101",
+                    "instrument": "EUR_USD",
+                    "units": "-1000",
+                    "price": "1.16000",
+                    "reason": "STOP_ORDER",
+                    "tradeOpened": {"tradeID": "300", "units": "-1000", "price": "1.16000"},
+                },
+                {
+                    "id": "103",
+                    "time": "2026-05-06T00:10:00.000000000Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "150",
+                    "instrument": "EUR_USD",
+                    "units": "1000",
+                    "price": "1.15920",
+                    "reason": "TAKE_PROFIT_ORDER",
+                    "pl": "125.0",
+                    "tradesClosed": [
+                        {
+                            "tradeID": "300",
+                            "units": "1000",
+                            "price": "1.15920",
+                            "realizedPL": "125.0",
+                        }
+                    ],
+                },
+            ],
+        }
+
+
+class FakeProtectionClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="100",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "102",
+            "transactions": [
+                {
+                    "id": "101",
+                    "time": "2026-05-06T00:00:02.000000000Z",
+                    "type": "TAKE_PROFIT_ORDER",
+                    "tradeID": "300",
+                    "price": "1.15920",
+                    "reason": "ON_FILL",
+                },
+                {
+                    "id": "102",
+                    "time": "2026-05-06T00:00:03.000000000Z",
+                    "type": "STOP_LOSS_ORDER",
+                    "tradeID": "300",
+                    "price": "1.16100",
+                    "reason": "ON_FILL",
                 },
             ],
         }
