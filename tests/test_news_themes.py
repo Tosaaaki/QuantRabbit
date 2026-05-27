@@ -54,6 +54,17 @@ class NewsThemesTest(unittest.TestCase):
             self.assertGreater(themes.biases[("USD_JPY", "LONG")], 0)
             self.assertGreater(themes.biases[("EUR_JPY", "LONG")], 0)
 
+    def test_jpy_intervention_biases_against_jpy_shorts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            content = "JPY intervention and rate-check risk: avoid being short JPY through USD_JPY longs.\n"
+            path = _write_digest(Path(tmp), content)
+            themes = parse_news_themes(path)
+            # JPY intervention risk is a yen-strength shock risk, not a
+            # momentum reason to buy JPY crosses.
+            self.assertLess(themes.biases[("USD_JPY", "LONG")], 0)
+            self.assertGreater(themes.biases[("USD_JPY", "SHORT")], 0)
+            self.assertLess(themes.biases[("EUR_JPY", "LONG")], 0)
+
     def test_explicit_pair_note_bearish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             content = "**EUR_USD**: Bearish below 1.18, breakdown confirmed\n"

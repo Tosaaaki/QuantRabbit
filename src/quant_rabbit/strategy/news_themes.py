@@ -86,6 +86,7 @@ _CCY_STRENGTH_NEGATIVE = re.compile(
 )
 _RISK_OFF_RE = re.compile(r"\brisk[\s-]*off\b", re.IGNORECASE)
 _RISK_ON_RE = re.compile(r"\brisk[\s-]*on\b", re.IGNORECASE)
+_JPY_INTERVENTION_RE = re.compile(r"\b(intervention|intervene|rate[\s-]*check)\b", re.IGNORECASE)
 # "Short XXX/YYY" or "Long XXX/YYY" with underscore or slash separator.
 _EXPLICIT_SHORT_RE = re.compile(
     r"\bshort\s+([A-Z]{3})[_/]([A-Z]{3})\b", re.IGNORECASE
@@ -172,9 +173,12 @@ def _currency_strength_signals(text: str) -> Dict[str, int]:
             )
             if other_ccy_count > this_count:
                 continue
+            jpy_intervention = ccy == "JPY" and bool(_JPY_INTERVENTION_RE.search(window))
+            if jpy_intervention:
+                out[ccy] += 1
             if _CCY_STRENGTH_POSITIVE.search(window):
                 out[ccy] += 1
-            if _CCY_STRENGTH_NEGATIVE.search(window):
+            if _CCY_STRENGTH_NEGATIVE.search(window) and not jpy_intervention:
                 out[ccy] -= 1
     return out
 
