@@ -797,6 +797,15 @@ def _range_rotation_forecast_ready(intent: dict[str, Any]) -> bool:
     return bool(metadata.get("range_tp_is_inside_box")) and bool(metadata.get("range_sl_outside_box"))
 
 
+def _range_rail_limit_can_wait_through_micro(intent: dict[str, Any], method: str, order_type: str) -> bool:
+    if method != TradeMethod.RANGE_ROTATION.value:
+        return False
+    if str(order_type or "").upper() not in {"LIMIT", "LIMIT_ORDER"}:
+        return False
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    return str(metadata.get("geometry_model") or "") == "RANGE_RAIL_LIMIT" and _range_rotation_forecast_ready(intent)
+
+
 def _forecast_lane_gate(
     forecast: DirectionalForecast,
     *,
@@ -822,6 +831,11 @@ def _forecast_lane_gate(
         return (
             False,
             "forecast RANGE requires executable RANGE_ROTATION rail geometry, not trend/breakout chase",
+        )
+    if method == TradeMethod.RANGE_ROTATION.value and _range_rotation_forecast_ready(intent):
+        return (
+            True,
+            f"forecast {forecast.direction} has no directional edge, but executable range rail geometry can trade the box",
         )
     return False, f"forecast {forecast.direction} has no executable edge"
 
@@ -1289,12 +1303,19 @@ class TraderBrain:
         m1_opp = bool(m1_struct and ((m1_struct.group(2) == "DOWN") == target_up))
         m5_opp = bool(m5_struct and ((m5_struct.group(2) == "DOWN") == target_up))
         if m1_opp and m5_opp:
-            score -= 30.0
-            blockers.append(f"micro_structure_opposed: M1+M5 both struct opposite to {intent_side}")
-            rationale.insert(
-                0,
-                f"micro override: M1+M5 both struct opposite to {intent_side} — entry blocked"
-            )
+            if _range_rail_limit_can_wait_through_micro(intent, method, order_type):
+                score -= 8.0
+                rationale.insert(
+                    0,
+                    f"micro caution: M1+M5 currently opposite to {intent_side}; pending range-rail limit waits for retest"
+                )
+            else:
+                score -= 30.0
+                blockers.append(f"micro_structure_opposed: M1+M5 both struct opposite to {intent_side}")
+                rationale.insert(
+                    0,
+                    f"micro override: M1+M5 both struct opposite to {intent_side} — entry blocked"
+                )
         elif m1_opp or m5_opp:
             score -= 10.0
             which = "M1" if m1_opp else "M5"
@@ -1690,14 +1711,21 @@ class TraderBrain:
                     intent=intent,
                 )
                 if _forecast.confidence < ENTRY_CONFIDENCE_MIN:
-                    blockers.append(
-                        f"forecast confidence {_forecast.confidence:.2f} < {ENTRY_CONFIDENCE_MIN} threshold"
-                    )
-                    score -= 30.0
-                    rationale.insert(
-                        0,
-                        f"forecast {_forecast.direction} conf {_forecast.confidence:.2f} too low",
-                    )
+                    if method == TradeMethod.RANGE_ROTATION.value and _range_rotation_forecast_ready(intent):
+                        score -= 6.0
+                        rationale.insert(
+                            0,
+                            f"forecast {_forecast.direction} conf {_forecast.confidence:.2f} low; executable range rail geometry remains tradable",
+                        )
+                    else:
+                        blockers.append(
+                            f"forecast confidence {_forecast.confidence:.2f} < {ENTRY_CONFIDENCE_MIN} threshold"
+                        )
+                        score -= 30.0
+                        rationale.insert(
+                            0,
+                            f"forecast {_forecast.direction} conf {_forecast.confidence:.2f} too low",
+                        )
                 elif not gate_ok:
                     blockers.append(f"{gate_reason}; rationale: {_forecast.rationale_summary}")
                     score -= 80.0 if _forecast.direction in {"UP", "DOWN"} else 60.0

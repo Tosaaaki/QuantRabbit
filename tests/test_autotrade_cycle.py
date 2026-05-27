@@ -43,6 +43,27 @@ class AutoTradeCycleTest(unittest.TestCase):
 
         self.assertFalse(_passes_gpt_prefilter(score))
 
+    def test_low_confidence_forecast_blocker_remains_gpt_prefilter_eligible(self) -> None:
+        score = LaneScore(
+            lane_id="range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+            pair="EUR_USD",
+            direction="SHORT",
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16522,
+            tp=1.16378,
+            sl=1.16601,
+            status="LIVE_READY",
+            score=42.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast confidence 0.23 < 0.55 threshold",),
+            rationale=(),
+            size_multiple=1.0,
+            estimated_margin_jpy=0.0,
+        )
+
+        self.assertTrue(_passes_gpt_prefilter(score))
+
     def test_recovery_hedge_gpt_selection_can_bypass_empty_prefilter(self) -> None:
         lane_id = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
         payload = {

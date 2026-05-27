@@ -130,16 +130,32 @@ _PREFILTER_HARD_BLOCKER_PATTERNS = (
     # before a fresh entry, regardless of GPT discretion.
     "open position exists",
     "pending entry exists",
-    # Pair-level forecast is the Stage-1 direction gate. If TraderBrain says
-    # the forecast is too weak or opposes the lane, GPT/recovery must not keep
-    # that lane alive as discretionary coverage.
-    "forecast ",
 )
+
+
+_PREFILTER_HARD_FORECAST_PATTERNS = (
+    "forecast up opposes",
+    "forecast down opposes",
+    "forecast range requires executable",
+)
+
+
+def _is_hard_forecast_prefilter_blocker(text: str) -> bool:
+    # Directional contradiction remains a hard Stage-1 veto. Low-confidence
+    # forecast text is only an evidence-quality penalty and must not erase an
+    # otherwise LIVE_READY lane from GPT discretionary coverage.
+    if "forecast confidence" in text:
+        return False
+    if any(pattern in text for pattern in _PREFILTER_HARD_FORECAST_PATTERNS):
+        return True
+    return text.startswith("forecast ") and "has no executable edge" in text
 
 
 def _is_hard_prefilter_blocker(blocker: str) -> bool:
     text = str(blocker).lower()
-    return any(pattern in text for pattern in _PREFILTER_HARD_BLOCKER_PATTERNS)
+    if any(pattern in text for pattern in _PREFILTER_HARD_BLOCKER_PATTERNS):
+        return True
+    return _is_hard_forecast_prefilter_blocker(text)
 
 
 def _passes_gpt_prefilter(score: LaneScore) -> bool:
