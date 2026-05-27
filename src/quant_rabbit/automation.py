@@ -139,23 +139,34 @@ _PREFILTER_HARD_FORECAST_PATTERNS = (
     "forecast range requires executable",
 )
 
+_LOW_CONFIDENCE_FORECAST_RANGE_ORDER_TYPES = {"LIMIT", "LIMIT_ORDER"}
 
-def _is_hard_forecast_prefilter_blocker(text: str) -> bool:
-    # Directional contradiction remains a hard Stage-1 veto. Low-confidence
-    # forecast text is only an evidence-quality penalty and must not erase an
-    # otherwise LIVE_READY lane from GPT discretionary coverage.
-    if "forecast confidence" in text:
+
+def _is_low_confidence_range_rotation_legacy_blocker(score: LaneScore | None) -> bool:
+    if score is None:
         return False
+    if score.method != "RANGE_ROTATION":
+        return False
+    return str(score.order_type or "").upper() in _LOW_CONFIDENCE_FORECAST_RANGE_ORDER_TYPES
+
+
+def _is_hard_forecast_prefilter_blocker(text: str, *, score: LaneScore | None = None) -> bool:
+    # Directional contradiction remains a hard Stage-1 veto. Low-confidence
+    # forecast text is softened only for legacy RANGE_ROTATION LIMIT receipts:
+    # new TraderBrain code no longer emits that blocker for executable rail
+    # geometry, but stale artifacts may still carry it until the next refresh.
+    if "forecast confidence" in text:
+        return not _is_low_confidence_range_rotation_legacy_blocker(score)
     if any(pattern in text for pattern in _PREFILTER_HARD_FORECAST_PATTERNS):
         return True
     return text.startswith("forecast ") and "has no executable edge" in text
 
 
-def _is_hard_prefilter_blocker(blocker: str) -> bool:
+def _is_hard_prefilter_blocker(blocker: str, *, score: LaneScore | None = None) -> bool:
     text = str(blocker).lower()
     if any(pattern in text for pattern in _PREFILTER_HARD_BLOCKER_PATTERNS):
         return True
-    return _is_hard_forecast_prefilter_blocker(text)
+    return _is_hard_forecast_prefilter_blocker(text, score=score)
 
 
 def _passes_gpt_prefilter(score: LaneScore) -> bool:
@@ -173,7 +184,7 @@ def _passes_gpt_prefilter(score: LaneScore) -> bool:
         return True
     if score.action != ACTION_NO_TRADE:
         return False
-    return not any(_is_hard_prefilter_blocker(b) for b in score.blockers)
+    return not any(_is_hard_prefilter_blocker(b, score=score) for b in score.blockers)
 
 
 def _is_existing_pending_blocker(blocker: str) -> bool:
@@ -242,7 +253,7 @@ def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool =
     if score.status != "LIVE_READY" or score.action != ACTION_NO_TRADE:
         return False
     blockers = [blocker for blocker in score.blockers if not _is_existing_pending_blocker(blocker)]
-    return not any(_is_hard_prefilter_blocker(blocker) for blocker in blockers)
+    return not any(_is_hard_prefilter_blocker(blocker, score=score) for blocker in blockers)
 
 
 def _acquire_autotrade_lock(*, send: bool) -> Path | None:
