@@ -73,6 +73,9 @@ QUIET_STATUSES = {
     "GPT_WAIT",
     "CLOSED_GPT_TRADES",
     "CANCELED_GPT_PENDING",
+    # Stale/self-contradicting trader pending cleanup is a successful
+    # maintenance action. Reposting it every cycle to #qr-commands is noise.
+    "CANCELED_CONTAMINATED_PENDING",
     "POSITION_ACTION_SENT",
     "OK",
     # GPT picked outside the prefiltered basket — next cycle re-prefilters
