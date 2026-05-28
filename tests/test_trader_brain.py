@@ -631,6 +631,86 @@ class TraderBrainTest(unittest.TestCase):
             self.assertFalse(any("micro_structure_opposed" in blocker for blocker in score.blockers))
             self.assertTrue(any("pending range-rail limit waits for retest" in item for item in score.rationale))
 
+    def test_market_entry_blocks_when_chart_reader_m5_timing_opposes_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            lane_id = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION:MARKET"
+            lane = _result(lane_id, "EUR_USD", "SHORT", "TREND_CONTINUATION")
+            lane["intent"] = {
+                **lane["intent"],
+                "order_type": "MARKET",
+                "entry": 1.1720,
+                "tp": 1.1690,
+                "sl": 1.1730,
+            }
+            path.write_text(json.dumps({"results": [lane]}))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=_opposite_market_campaign(root),
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=_entry_timing_pair_charts(root, +1, +1, +1),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.lane_id == lane_id)
+            self.assertEqual(score.action, ACTION_NO_TRADE)
+            self.assertTrue(any("entry_timing_against_market" in blocker for blocker in score.blockers))
+            self.assertTrue(any("entry timing hard block" in item for item in score.rationale))
+
+    def test_pending_limit_is_not_hard_blocked_by_against_m5_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            campaign_path = root / "range_short_campaign.json"
+            campaign_path.write_text(
+                json.dumps({"lanes": [_lane("range_trader", "EUR_USD", "SHORT", "RANGE_ROTATION")]})
+            )
+            lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            lane = _result(lane_id, "EUR_USD", "SHORT", "RANGE_ROTATION")
+            lane["intent"] = {
+                **lane["intent"],
+                "order_type": "LIMIT",
+                "entry": 1.1750,
+                "tp": 1.1725,
+                "sl": 1.1762,
+                "metadata": {
+                    "geometry_model": "RANGE_RAIL_LIMIT",
+                    "range_support": 1.1710,
+                    "range_resistance": 1.1760,
+                    "range_tp_is_inside_box": True,
+                    "range_sl_outside_box": True,
+                    "max_loss_jpy": 100.0,
+                },
+            }
+            path.write_text(json.dumps({"results": [lane]}))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=campaign_path,
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=_entry_timing_pair_charts(root, +1, +1, +1),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.lane_id == lane_id)
+            self.assertEqual(score.action, ACTION_SEND_ENTRY)
+            self.assertFalse(any("entry_timing_against_market" in blocker for blocker in score.blockers))
+            self.assertTrue(any("entry timing AGAINST" in item for item in score.rationale))
+
     def test_historical_worst_loss_is_scaled_by_current_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -965,6 +1045,33 @@ def _market_preference_intents(root: Path) -> Path:
     market["intent"] = {**market["intent"], "order_type": "MARKET", "entry": 1.17306}
     market["risk_metrics"] = {"risk_jpy": 100.0, "reward_jpy": 220.0, "reward_risk": 2.2, "spread_pips": 0.8}
     path.write_text(json.dumps({"results": [pending, market]}))
+    return path
+
+
+def _entry_timing_pair_charts(root: Path, *close_dirs: int) -> Path:
+    path = root / "pair_charts.json"
+    candles = []
+    for i, direction in enumerate(close_dirs):
+        open_price = 1.1700 + i * 0.0001
+        close_price = open_price + (0.0002 if direction > 0 else -0.0002)
+        candles.append({"o": open_price, "c": close_price})
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "recent_candles": candles,
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
     return path
 
 

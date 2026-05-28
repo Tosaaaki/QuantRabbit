@@ -29,8 +29,8 @@ score tells the trader:
 Importantly this module does NOT auto-close. It produces a SCORE +
 RATIONALE that gets written to `data/position_thesis_report.json` for
 the trader to consume. CLOSE decisions still require Gate A/B (J
-hardening) — gpt_trader can use this score as evidence but the gates
-must still pass.
+hardening) — gpt_trader can use a fresh REVIEW_CLOSE as Gate A
+evidence, but Gate B operator authorization must still pass.
 
 The module respects the SL-free invariant by never modifying SL,
 never modifying TP directly (tp_rebalancer handles that), and never

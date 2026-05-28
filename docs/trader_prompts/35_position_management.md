@@ -97,11 +97,19 @@ positions.
 - **Invalidation-price hit (§10 Gate A — receipt-driven)**: receipt populates
   `invalidation_price` + `invalidation_tf` AND broker bid/ask trades through
   the level (LONG: bid ≤ level, SHORT: ask ≥ level). Cite the level + TF.
+- **Fresh prediction/thesis sidecar invalidation (§10 Gate A — recovery edge
+  lost)**: a sidecar generated after the current
+  `broker_snapshot.fetched_at_utc` marks the same trade `REVIEW_CLOSE` /
+  `RECOMMEND_CLOSE`: `position_thesis_report.json`,
+  `thesis_evolution_report.json`, or `forecast_persistence_report.json`.
+  This is the machine-checkable "no longer likely to recover to plus" path.
+  Cite `position:thesis:<trade_id>`, `position:evolution:<trade_id>`, or
+  `position:persistence:<trade_id>` and the sidecar reason. Stale sidecars
+  are ignored.
 
 Macro shock, large unrealized loss, or margin pressure can strengthen the
 reason to review a thesis, but none of them is a standalone Gate A. Convert the
-concern into one of the two machine-checkable triggers above, or WAIT. Gate B
-still requires
+concern into one of the machine-checkable triggers above, or WAIT. Gate B still requires
 operator-controlled authorization: `QR_OPERATOR_CLOSE_OVERRIDE=1` in the
 operator shell, or a fresh `data/.operator_close_token` file. The receipt's
 `operator_close_authorized` field is advisory audit text only and is not

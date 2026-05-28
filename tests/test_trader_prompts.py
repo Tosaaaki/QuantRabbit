@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.cli import main
@@ -235,6 +235,159 @@ class TraderPromptRouteTest(unittest.TestCase):
                     os.environ["QR_ENABLE_MISSING_TP_REPAIR"] = prior_tp
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
+
+    def test_fresh_forecast_persistence_recommend_close_routes_to_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1200.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "last 3 forecasts flipped to DOWN",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("loss-cut review required" in reason for reason in route.reasons))
+        self.assertTrue(any("forecast_persistence RECOMMEND_CLOSE" in reason for reason in route.reasons))
+
+    def test_stale_forecast_persistence_recommend_close_does_not_route_to_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1200.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(seconds=1)
+            ).isoformat()
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "old forecast flip from a prior snapshot",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertFalse(any("loss-cut review required" in reason for reason in route.reasons))
+
+    def test_fresh_close_recommendation_for_closed_trade_does_not_route_to_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "closed-444",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "report belongs to a trade no longer open",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertFalse(any("closed-444" in reason for reason in route.reasons))
 
     def test_sl_free_missing_tp_repair_opt_in_routes_to_position_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

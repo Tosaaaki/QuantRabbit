@@ -37,10 +37,10 @@ This module:
 The trader/operator reads thesis_evolution_report.json and:
 - STILL_VALID + EXTEND → hold, let winners run
 - WEAKENED → caution, smaller TP if any
-- BROKEN → close (manual or via Gate A/B)
+- BROKEN → fresh Gate A evidence for close; Gate B still required
 
-No auto-close from this module — INFORMATION only. The kill switch
-(QR_DISABLE_AUTO_CLOSE) stays on; close decisions go through gpt_trader.
+No auto-close from this module. The kill switch (QR_DISABLE_AUTO_CLOSE)
+stays on; close decisions go through gpt_trader and still need Gate B.
 
 Kill switch: `QR_DISABLE_ENTRY_THESIS_LEDGER=1`.
 """

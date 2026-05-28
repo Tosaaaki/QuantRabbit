@@ -1470,15 +1470,25 @@ class TraderBrain:
 
         # Module D: entry timing gate — last 3 M5 candles vs intent
         # direction. ALIGNED rewards, MIXED small penalty, AGAINST big
-        # penalty. Catches "entering at the top" timing errors that the
-        # existing micro-override hard veto misses when M1 disagrees but
-        # the 3-candle slope is still hostile.
+        # penalty; AGAINST also hard-blocks immediate MARKET entries.
+        # Catches "entering at the top/bottom" timing errors that the
+        # existing micro-override misses when M1 structure is not enough
+        # to veto but the 3-candle slope is still hostile.
         pa_chart_for_timing = (full_pair_charts or {}).get(pair) if full_pair_charts else None
         timing = check_entry_timing(pa_chart_for_timing, direction)
         if timing.score_delta != 0.0:
             score += timing.score_delta
             if timing.rationale:
                 rationale.insert(0, timing.rationale)
+        if timing.state == "AGAINST" and order_type.upper() == "MARKET":
+            blockers.append(
+                "entry_timing_against_market: last 3 M5 candles oppose MARKET entry; wait for rejection or use pending rail geometry"
+            )
+            score -= 80.0
+            rationale.insert(
+                0,
+                "entry timing hard block: MARKET would execute into the active M5 pullback before rejection confirmation",
+            )
 
         # Module C: daily-review overrides (lane_id blocks + (pair, direction)
         # score bias). Empty overrides → no-op. Expired overrides already

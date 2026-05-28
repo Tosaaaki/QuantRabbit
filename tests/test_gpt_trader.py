@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from quant_rabbit.cli import main
@@ -1847,6 +1847,87 @@ class CloseDisciplineTest(unittest.TestCase):
             summary = brain.run(snapshot_path=files["snapshot"])
 
             self.assertEqual(summary.status, "ACCEPTED")
+
+    def test_close_accepted_when_fresh_forecast_persistence_recommends_close_and_operator_authorized(self) -> None:
+        # Sidecar recommendations are Gate A only: they can prove the
+        # position thesis no longer has recovery edge, but Gate B remains
+        # operator-controlled.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "last 3 forecasts flipped to UP",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertEqual(sidecar["source"], "forecast_persistence")
+            self.assertIn("position:persistence:555", payload["input_packet"]["allowed_evidence_refs"])
+
+    def test_stale_forecast_persistence_close_recommendation_does_not_pass_gate_a(self) -> None:
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(seconds=1)
+            ).isoformat()
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "old forecast flip from a prior snapshot",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
+            self.assertEqual(
+                payload["input_packet"]["protection_sidecars"]["position_close_recommendations"],
+                [],
+            )
 
     def test_18_17_mass_close_regression(self) -> None:
         # Reproduce the 2026-05-11 18:17 UTC GPT close: SHORT positions

@@ -26,6 +26,19 @@ def _m5_view(*close_dirs: int) -> dict:
     }
 
 
+def _m5_chart_reader_view(*close_dirs: int) -> dict:
+    """Build the shape emitted by chart_reader.PairChart.to_dict()."""
+    candles = []
+    for i, d in enumerate(close_dirs):
+        o = 1.1000 + i * 0.0001
+        c = o + (0.0002 if d > 0 else -0.0002)
+        candles.append({"o": o, "c": c})
+    return {
+        "pair": "EUR_USD",
+        "views": [{"granularity": "M5", "recent_candles": candles}],
+    }
+
+
 class EntryTimingGateTest(unittest.TestCase):
     def test_no_chart_returns_unknown(self) -> None:
         r = check_entry_timing(None, "LONG")
@@ -80,6 +93,12 @@ class EntryTimingGateTest(unittest.TestCase):
         chart = _m5_view(-1, -1, +1, +1, +1)
         r = check_entry_timing(chart, "LONG")
         self.assertEqual(r.state, "ALIGNED")
+
+    def test_reads_chart_reader_granularity_recent_candles_shape(self) -> None:
+        chart = _m5_chart_reader_view(+1, +1, +1)
+        r = check_entry_timing(chart, "SHORT")
+        self.assertEqual(r.state, "AGAINST")
+        self.assertAlmostEqual(r.score_delta, -ENTRY_TIMING_AGAINST_PENALTY)
 
 
 if __name__ == "__main__":

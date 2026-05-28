@@ -164,6 +164,7 @@ def _close_thesis_invalidated(
     pair: str,
     side: str,
     *,
+    trade_id: str | None = None,
     decision: "GPTTraderDecision | None" = None,
 ) -> tuple[bool, str]:
     """Check whether the position's thesis has been invalidated.
@@ -180,6 +181,13 @@ def _close_thesis_invalidated(
           has traded through. LONG invalidates downward, SHORT upward.
           Pure prose `invalidation` text alone is not enough — the gate
           requires a machine-checkable price hit.
+
+      (c) A fresh position sidecar generated after the current broker
+          snapshot marks this trade `REVIEW_CLOSE` / `RECOMMEND_CLOSE`
+          from the prediction stack, thesis evolution, or N-cycle
+          forecast persistence. This is the machine-checkable
+          "no longer likely to recover to plus" path; Gate B still
+          requires operator authorization before any broker close.
     """
     side_upper = str(side or "").upper()
     if side_upper not in {"LONG", "SHORT"}:
@@ -224,6 +232,45 @@ def _close_thesis_invalidated(
                     f"on {tf} per receipt"
                 )
 
+    sidecar_ok, sidecar_reason = _position_sidecar_close_recommended(
+        packet,
+        trade_id=trade_id,
+        pair=pair,
+        side=side_upper,
+    )
+    if sidecar_ok:
+        return True, sidecar_reason
+
+    return False, ""
+
+
+def _position_sidecar_close_recommended(
+    packet: dict[str, Any],
+    *,
+    trade_id: str | None,
+    pair: str,
+    side: str,
+) -> tuple[bool, str]:
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return False, ""
+    recs = sidecars.get("position_close_recommendations")
+    if not isinstance(recs, list):
+        return False, ""
+    for rec in recs:
+        if not isinstance(rec, dict):
+            continue
+        rec_trade = str(rec.get("trade_id") or "")
+        if trade_id is not None and rec_trade != str(trade_id):
+            continue
+        if pair and str(rec.get("pair") or "") not in {"", pair}:
+            continue
+        if side and str(rec.get("side") or "").upper() not in {"", side}:
+            continue
+        source = str(rec.get("source") or "position_sidecar")
+        verdict = str(rec.get("verdict") or "RECOMMEND_CLOSE")
+        reason = str(rec.get("reason") or "prediction no longer supports recovery")
+        return True, f"{source} {verdict} for trade {rec_trade}: {reason}"
     return False, ""
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
@@ -893,6 +940,7 @@ class DecisionVerifier:
                 self.packet,
                 pair,
                 side,
+                trade_id=str(tid),
                 decision=decision,
             )
             if not invalidated:
@@ -905,7 +953,8 @@ class DecisionVerifier:
                 VerificationIssue(
                     "CLOSE_THESIS_STILL_VALID",
                     "CLOSE rejected: thesis still valid (no BOS/CHOCH against "
-                    "side on M15/H4 and no invalidation_price hit) for: "
+                    "side on M15/H4, no invalidation_price hit, and no fresh "
+                    "position sidecar REVIEW_CLOSE/RECOMMEND_CLOSE) for: "
                     + ", ".join(still_valid),
                 )
             )
@@ -1324,16 +1373,21 @@ def _protection_sidecars_packet(
     snapshot_path: Path,
     pair_charts_path: Path,
 ) -> dict[str, Any]:
+    from quant_rabbit.trader_prompts import _fresh_close_recommendations, _tp_rebalance_reasons
+
+    position_close_recommendations = list(
+        _fresh_close_recommendations(snapshot, data_root=snapshot_path.parent)
+    )
     if not pair_charts_path.exists():
         return {
             "tp_rebalance": {
                 "required": False,
                 "reasons": [],
                 "issue": f"missing pair_charts: {pair_charts_path}",
-            }
+            },
+            "position_close_recommendations": position_close_recommendations,
         }
     pair_charts = _load_json(pair_charts_path)
-    from quant_rabbit.trader_prompts import _tp_rebalance_reasons
 
     reasons = _tp_rebalance_reasons(
         snapshot,
@@ -1344,7 +1398,8 @@ def _protection_sidecars_packet(
         "tp_rebalance": {
             "required": bool(reasons),
             "reasons": list(reasons),
-        }
+        },
+        "position_close_recommendations": position_close_recommendations,
     }
 
 
@@ -1368,6 +1423,19 @@ def _allowed_refs(
     refs = ["broker:snapshot", "target:daily"]
     pairs: set[str] = set()
     currencies: set[str] = set()
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict) or str(position.get("owner") or "") != "trader":
+            continue
+        trade_id = str(position.get("trade_id") or "")
+        if not trade_id:
+            continue
+        refs.extend(
+            [
+                f"position:thesis:{trade_id}",
+                f"position:evolution:{trade_id}",
+                f"position:persistence:{trade_id}",
+            ]
+        )
     for lane in lanes:
         lane_id = lane["lane_id"]
         pair = str(lane.get("pair") or "")

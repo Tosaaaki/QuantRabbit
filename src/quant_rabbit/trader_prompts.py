@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -172,10 +173,14 @@ def route_trader_prompts(
         pair_charts,
         snapshot_path=snapshot_path,
     )
-    if position_reasons or tp_rebalance_reasons:
+    close_review_reasons = _position_close_recommendation_reasons(
+        snapshot,
+        snapshot_path=snapshot_path,
+    )
+    if position_reasons or tp_rebalance_reasons or close_review_reasons:
         return _build_route(
             BRANCH_POSITION,
-            (*position_reasons, *tp_rebalance_reasons),
+            (*position_reasons, *tp_rebalance_reasons, *close_review_reasons),
             include_content=include_content,
         )
 
@@ -392,6 +397,171 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
                 f"{position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
             )
     return tuple(reasons)
+
+
+def _position_close_recommendation_reasons(
+    snapshot: dict[str, Any],
+    *,
+    snapshot_path: Path,
+) -> tuple[str, ...]:
+    """Route fresh loss-cut evidence to the position-management prompt branch.
+
+    These sidecars are generated from the current broker snapshot and market
+    packet. A stale close recommendation is worse than no recommendation, so
+    reports older than the current snapshot are ignored.
+    """
+    data_root = snapshot_path.parent
+    reasons: list[str] = []
+    for rec in _fresh_close_recommendations(snapshot, data_root=data_root):
+        reasons.append(
+            "loss-cut review required: "
+            f"{rec['source']} {rec['verdict']} for "
+            f"{rec.get('pair') or '?'} {rec.get('side') or '?'} id={rec.get('trade_id')}: "
+            f"{rec.get('reason') or 'prediction no longer supports recovery'}"
+        )
+    return tuple(reasons)
+
+
+def _fresh_close_recommendations(snapshot: dict[str, Any], *, data_root: Path) -> tuple[dict[str, Any], ...]:
+    fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
+    if fetched_at is None:
+        return ()
+    active_positions = _active_trader_positions_by_trade_id(snapshot)
+    recs: list[dict[str, Any]] = []
+    recs.extend(_position_thesis_recommendations(data_root / "position_thesis_report.json", fetched_at))
+    recs.extend(_thesis_evolution_recommendations(data_root / "thesis_evolution_report.json", fetched_at))
+    recs.extend(_forecast_persistence_recommendations(data_root / "forecast_persistence_report.json", fetched_at))
+    out: list[dict[str, Any]] = []
+    for rec in recs:
+        trade_id = str(rec.get("trade_id") or "")
+        active = active_positions.get(trade_id)
+        if not active:
+            continue
+        rec_pair = str(rec.get("pair") or active["pair"])
+        rec_side = str(rec.get("side") or active["side"]).upper()
+        if active["pair"] and rec_pair and rec_pair != active["pair"]:
+            continue
+        if active["side"] and rec_side and rec_side != active["side"]:
+            continue
+        out.append({**rec, "pair": rec_pair or active["pair"], "side": rec_side or active["side"]})
+    return tuple(out)
+
+
+def _active_trader_positions_by_trade_id(snapshot: dict[str, Any]) -> dict[str, dict[str, str]]:
+    active: dict[str, dict[str, str]] = {}
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict) or str(position.get("owner") or "") != "trader":
+            continue
+        trade_id = str(position.get("trade_id") or "")
+        if not trade_id:
+            continue
+        active[trade_id] = {
+            "pair": str(position.get("pair") or ""),
+            "side": str(position.get("side") or "").upper(),
+        }
+    return active
+
+
+def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _fresh_report_payload(path, fetched_at)
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("assessments", []) or []:
+        if not isinstance(item, dict) or str(item.get("verdict") or "") != "REVIEW_CLOSE":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        out.append(
+            {
+                "source": "position_thesis",
+                "evidence_ref": f"position:thesis:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": "REVIEW_CLOSE",
+                "reason": "; ".join(str(x) for x in (item.get("rationale_lines") or [])[:2])
+                or f"aggregate_score={item.get('aggregate_score')}",
+            }
+        )
+    return out
+
+
+def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _fresh_report_payload(path, fetched_at)
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("evolutions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        verdict = str(item.get("verdict") or "")
+        status = str(item.get("status") or "")
+        if verdict != "RECOMMEND_CLOSE" and status != "BROKEN":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        out.append(
+            {
+                "source": "thesis_evolution",
+                "evidence_ref": f"position:evolution:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": verdict or status,
+                "reason": item.get("rationale") or f"status={status}",
+            }
+        )
+    return out
+
+
+def _forecast_persistence_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _fresh_report_payload(path, fetched_at)
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("verdicts", []) or []:
+        if not isinstance(item, dict) or str(item.get("verdict") or "") != "RECOMMEND_CLOSE":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        out.append(
+            {
+                "source": "forecast_persistence",
+                "evidence_ref": f"position:persistence:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": "RECOMMEND_CLOSE",
+                "reason": item.get("reason") or "persistent forecast no longer supports the position",
+            }
+        )
+    return out
+
+
+def _fresh_report_payload(path: Path, fetched_at: datetime) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None or generated_at < fetched_at:
+        return None
+    return payload
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _tp_rebalance_reasons(

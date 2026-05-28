@@ -16,11 +16,11 @@ Gate result is one of:
 - "MIXED" — at least 1 candle disagrees → small penalty
 - "AGAINST" — all 3 candles disagree → big penalty (likely top/bottom)
 
-The gate is **additive to score**, not a hard veto. The user's existing
-`micro override` block (line ~920 in trader_brain) already does a hard
-veto when M1+M5 struct both flip against the lane. This module sits
-between that hard veto and pure scoring: it discriminates "fine timing"
-vs "blatant top-buying".
+The module returns an additive score signal and state. `trader_brain`
+uses the state to hard-block live `MARKET` entries only when the last
+three M5 candles are fully against the lane; pending rail geometry can
+still wait for its trigger. This keeps "fine timing" separate from
+"blatant top-buying / bottom-selling".
 """
 
 from __future__ import annotations
@@ -48,9 +48,9 @@ def _m5_recent_closes(pair_chart: Dict[str, Any], count: int = 3) -> list[tuple[
     for v in views:
         if not isinstance(v, dict):
             continue
-        if str(v.get("timeframe") or v.get("tf") or "").upper() != "M5":
+        if str(v.get("timeframe") or v.get("tf") or v.get("granularity") or "").upper() != "M5":
             continue
-        candles = v.get("candles") or v.get("bars") or []
+        candles = v.get("candles") or v.get("bars") or v.get("recent_candles") or []
         # Take the last `count` candles, preserving chronological order.
         recent = candles[-count:] if isinstance(candles, list) else []
         out: list[tuple[float, float]] = []

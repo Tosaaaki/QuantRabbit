@@ -20,10 +20,10 @@ will NOT trigger close because persistence requires ≥3 cycles
 straight. This is the discretionary trader's mental model:
 「3サイクル同じ反対方向 = 本当に間違えたっぽい、損切り」.
 
-Output is INFORMATIONAL (written to `data/forecast_persistence_report.json`).
-The trader / GPT trader uses it as evidence. Auto-close still goes
-through gpt_trader Gate A/B; this module provides the structural
-evidence the Gate A requires.
+Output is read-only (written to `data/forecast_persistence_report.json`).
+The trader / GPT trader uses a fresh `RECOMMEND_CLOSE` as Gate A
+evidence. Auto-close still goes through gpt_trader Gate A/B, and this
+module never provides Gate B operator authorization.
 
 Kill switch: `QR_DISABLE_FORECAST_PERSISTENCE=1`.
 """
