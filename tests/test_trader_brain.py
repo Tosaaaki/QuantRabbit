@@ -711,6 +711,121 @@ class TraderBrainTest(unittest.TestCase):
             self.assertFalse(any("entry_timing_against_market" in blocker for blocker in score.blockers))
             self.assertTrue(any("entry timing AGAINST" in item for item in score.rationale))
 
+    def test_pending_range_limit_blocks_when_operating_tfs_strongly_oppose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            campaign_path = root / "range_short_campaign.json"
+            campaign_path.write_text(
+                json.dumps({"lanes": [_lane("range_trader", "EUR_USD", "SHORT", "RANGE_ROTATION")]})
+            )
+            lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            lane = _result(lane_id, "EUR_USD", "SHORT", "RANGE_ROTATION")
+            lane["intent"] = {
+                **lane["intent"],
+                "order_type": "LIMIT",
+                "entry": 1.16170,
+                "tp": 1.16039,
+                "sl": 1.16280,
+                "metadata": {
+                    "geometry_model": "RANGE_RAIL_LIMIT",
+                    "range_support": 1.15860,
+                    "range_resistance": 1.16180,
+                    "range_tp_is_inside_box": True,
+                    "range_sl_outside_box": True,
+                    "max_loss_jpy": 100.0,
+                },
+                "market_context": {
+                    **lane["intent"]["market_context"],
+                    "chart_story": "EUR_USD RANGE upper rail retest",
+                },
+            }
+            path.write_text(json.dumps({"results": [lane]}))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=campaign_path,
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=_operating_tf_momentum_pair_charts(root),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.lane_id == lane_id)
+            self.assertEqual(score.action, ACTION_NO_TRADE)
+            self.assertTrue(any("operating_tf_momentum_opposed" in blocker for blocker in score.blockers))
+            self.assertTrue(any("range-rail LIMIT" in item for item in score.rationale))
+
+    def test_cancels_pending_range_limit_when_operating_tfs_strongly_oppose(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            campaign_path = root / "range_short_campaign.json"
+            campaign_path.write_text(
+                json.dumps({"lanes": [_lane("range_trader", "EUR_USD", "SHORT", "RANGE_ROTATION")]})
+            )
+            lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION"
+            lane = _result(lane_id, "EUR_USD", "SHORT", "RANGE_ROTATION")
+            lane["intent"] = {
+                **lane["intent"],
+                "order_type": "LIMIT",
+                "entry": 1.16170,
+                "tp": 1.16039,
+                "sl": 1.16280,
+                "metadata": {
+                    "geometry_model": "RANGE_RAIL_LIMIT",
+                    "range_support": 1.15860,
+                    "range_resistance": 1.16180,
+                    "range_tp_is_inside_box": True,
+                    "range_sl_outside_box": True,
+                    "max_loss_jpy": 100.0,
+                },
+                "market_context": {
+                    **lane["intent"]["market_context"],
+                    "chart_story": "EUR_USD RANGE upper rail retest",
+                },
+            }
+            path.write_text(json.dumps({"results": [lane]}))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=campaign_path,
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=_operating_tf_momentum_pair_charts(root),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+            snapshot = _snapshot(
+                orders=(
+                    BrokerOrder(
+                        order_id="range-short-limit",
+                        pair="EUR_USD",
+                        order_type="LIMIT",
+                        price=1.16170,
+                        state="PENDING",
+                        units=-1000,
+                        owner=Owner.TRADER,
+                        raw={
+                            "clientExtensions": {"tag": "trader"},
+                            "takeProfitOnFill": {"price": "1.16039"},
+                            "stopLossOnFill": {"price": "1.16280"},
+                        },
+                    ),
+                )
+            )
+
+            decision = brain.run(snapshot)
+
+            self.assertEqual(decision.pending_cancel_order_ids, ("range-short-limit",))
+
     def test_historical_worst_loss_is_scaled_by_current_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1066,6 +1181,44 @@ def _entry_timing_pair_charts(root: Path, *close_dirs: int) -> Path:
                                 "granularity": "M5",
                                 "recent_candles": candles,
                             }
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _operating_tf_momentum_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_UP",
+                                "indicators": {"adx_14": 44.0},
+                                "recent_candles": [
+                                    {"o": 1.1609, "c": 1.1611},
+                                    {"o": 1.1611, "c": 1.1615},
+                                    {"o": 1.1615, "c": 1.1617},
+                                ],
+                            },
+                            {
+                                "granularity": "M15",
+                                "regime": "TREND_UP",
+                                "indicators": {"adx_14": 32.0},
+                            },
+                            {
+                                "granularity": "M30",
+                                "regime": "IMPULSE_UP",
+                                "indicators": {"adx_14": 21.0},
+                            },
                         ],
                     }
                 ]

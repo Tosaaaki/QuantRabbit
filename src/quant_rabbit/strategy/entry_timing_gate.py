@@ -16,11 +16,14 @@ Gate result is one of:
 - "MIXED" — at least 1 candle disagrees → small penalty
 - "AGAINST" — all 3 candles disagree → big penalty (likely top/bottom)
 
-The module returns an additive score signal and state. `trader_brain`
-uses the state to hard-block live `MARKET` entries only when the last
-three M5 candles are fully against the lane; pending rail geometry can
-still wait for its trigger. This keeps "fine timing" separate from
-"blatant top-buying / bottom-selling".
+The module returns additive score signals and states. `trader_brain`
+uses `check_entry_timing` to hard-block live `MARKET` entries only when
+the last three M5 candles are fully against the lane; pending rail
+geometry can still wait through that micro noise. `check_operating_tf_momentum`
+is stricter: if M5/M15/M30 are already walking the opposite way, even a
+resting rail LIMIT must wait for a later close-confirmed rejection instead
+of being pre-armed into the impulse. This keeps "fine timing" separate
+from "blatant top-buying / bottom-selling".
 """
 
 from __future__ import annotations
@@ -33,6 +36,12 @@ from typing import Any, Dict, Optional
 ENTRY_TIMING_AGAINST_PENALTY = float(os.environ.get("QR_ENTRY_TIMING_AGAINST_PENALTY", "20.0"))
 ENTRY_TIMING_MIXED_PENALTY = float(os.environ.get("QR_ENTRY_TIMING_MIXED_PENALTY", "8.0"))
 ENTRY_TIMING_ALIGNED_BONUS = float(os.environ.get("QR_ENTRY_TIMING_ALIGNED_BONUS", "5.0"))
+OPERATING_TF_MOMENTUM_AGAINST_PENALTY = float(
+    os.environ.get("QR_OPERATING_TF_MOMENTUM_AGAINST_PENALTY", "35.0")
+)
+OPERATING_TF_MOMENTUM_MIN_ADX = float(os.environ.get("QR_OPERATING_TF_MOMENTUM_MIN_ADX", "20.0"))
+OPERATING_TF_MOMENTUM_STRONG_ADX = float(os.environ.get("QR_OPERATING_TF_MOMENTUM_STRONG_ADX", "25.0"))
+OPERATING_TF_MOMENTUM_TFS = ("M5", "M15", "M30")
 
 
 @dataclass(frozen=True)
@@ -112,3 +121,99 @@ def check_entry_timing(
             f"(-{ENTRY_TIMING_MIXED_PENALTY:.1f})"
         ),
     )
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _view_timeframe(view: Dict[str, Any]) -> str:
+    return str(view.get("timeframe") or view.get("tf") or view.get("granularity") or "").upper()
+
+
+def _regime_direction(regime: Any) -> str | None:
+    text = str(regime or "").upper()
+    if "TREND_UP" in text or "IMPULSE_UP" in text or text in {"BULL", "BULLISH"}:
+        return "UP"
+    if "TREND_DOWN" in text or "IMPULSE_DOWN" in text or text in {"BEAR", "BEARISH"}:
+        return "DOWN"
+    return None
+
+
+def check_operating_tf_momentum(
+    pair_chart: Optional[Dict[str, Any]],
+    intent_direction: str,
+) -> EntryTimingResult:
+    """Check whether the M5/M15/M30 operating stack is strongly against entry.
+
+    Unlike `check_entry_timing`, this is not a three-candle fine-timing
+    read. It asks whether the actual setup stack is already walking the
+    opposite way. A resting range LIMIT can wait through noisy M5 candles,
+    but it should not be armed into a multi-timeframe impulse without a
+    later rejection confirmation.
+    """
+    if not pair_chart:
+        return EntryTimingResult(state="UNKNOWN", score_delta=0.0, rationale=None)
+    intent_side = intent_direction.upper()
+    if intent_side not in {"LONG", "SHORT"}:
+        return EntryTimingResult(state="UNKNOWN", score_delta=0.0, rationale=None)
+    intent_move = "UP" if intent_side == "LONG" else "DOWN"
+
+    views = pair_chart.get("views") or []
+    if not isinstance(views, list):
+        return EntryTimingResult(state="UNKNOWN", score_delta=0.0, rationale=None)
+
+    observed = 0
+    opposed: list[tuple[str, str, str, float | None, bool]] = []
+    aligned: list[tuple[str, str, str, float | None, bool]] = []
+    for view in views:
+        if not isinstance(view, dict):
+            continue
+        tf = _view_timeframe(view)
+        if tf not in OPERATING_TF_MOMENTUM_TFS:
+            continue
+        observed += 1
+        regime = str(view.get("regime") or "")
+        move = _regime_direction(regime)
+        if move is None:
+            continue
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else {}
+        adx = _float_or_none((indicators or {}).get("adx_14") or (indicators or {}).get("adx"))
+        if adx is None or adx < OPERATING_TF_MOMENTUM_MIN_ADX:
+            continue
+        strong = adx >= OPERATING_TF_MOMENTUM_STRONG_ADX or (
+            "IMPULSE" in regime.upper() and adx >= OPERATING_TF_MOMENTUM_MIN_ADX
+        )
+        item = (tf, regime, move, adx, strong)
+        if move == intent_move:
+            aligned.append(item)
+        else:
+            opposed.append(item)
+
+    if observed == 0:
+        return EntryTimingResult(state="UNKNOWN", score_delta=0.0, rationale=None)
+
+    strong_opposed = sum(1 for *_unused, strong in opposed if strong)
+    any_strong_opposed = strong_opposed > 0
+    if len(opposed) >= 2 and (strong_opposed >= 2 or any_strong_opposed):
+        details = ", ".join(f"{tf} {regime} ADX={adx:.1f}" for tf, regime, _move, adx, _strong in opposed)
+        return EntryTimingResult(
+            state="AGAINST",
+            score_delta=-OPERATING_TF_MOMENTUM_AGAINST_PENALTY,
+            rationale=(
+                f"operating TF momentum AGAINST: {details} oppose {intent_side} "
+                f"(-{OPERATING_TF_MOMENTUM_AGAINST_PENALTY:.1f})"
+            ),
+        )
+
+    strong_aligned = sum(1 for *_unused, strong in aligned if strong)
+    if len(aligned) >= 2 and strong_aligned >= 1:
+        return EntryTimingResult(
+            state="ALIGNED",
+            score_delta=0.0,
+            rationale=None,
+        )
+    return EntryTimingResult(state="MIXED", score_delta=0.0, rationale=None)

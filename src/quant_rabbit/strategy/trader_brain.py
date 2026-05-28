@@ -440,7 +440,7 @@ from quant_rabbit.strategy.regime_classifier import (
     classify_all as regime_classify_all,
     regime_score_modifier,
 )
-from quant_rabbit.strategy.entry_timing_gate import check_entry_timing
+from quant_rabbit.strategy.entry_timing_gate import check_entry_timing, check_operating_tf_momentum
 from quant_rabbit.strategy.trader_overrides import (
     TraderOverrides,
     load_trader_overrides,
@@ -873,6 +873,8 @@ PENDING_ENTRY_HARD_CANCEL_KEYWORDS = (
     "INTERVENTION",
     "MARGIN",
     "MICRO_STRUCTURE_OPPOSED",
+    "OPERATING_TF_MOMENTUM_OPPOSED",
+    "OPERATING TF MOMENTUM AGAINST",
     "TARGET_REACHED",
     "UNPROTECTED",
     "VISUAL STORY",
@@ -1489,6 +1491,27 @@ class TraderBrain:
                 0,
                 "entry timing hard block: MARKET would execute into the active M5 pullback before rejection confirmation",
             )
+
+        operating_tf_momentum = check_operating_tf_momentum(pa_chart_for_timing, direction)
+        if operating_tf_momentum.score_delta != 0.0:
+            score += operating_tf_momentum.score_delta
+            if operating_tf_momentum.rationale:
+                rationale.insert(0, operating_tf_momentum.rationale)
+        if operating_tf_momentum.state == "AGAINST" and status == "LIVE_READY":
+            blockers.append(
+                "operating_tf_momentum_opposed: M5/M15/M30 trend stack opposes entry; wait for close-confirmed rejection before arming"
+            )
+            score -= 80.0
+            if _range_rail_limit_can_wait_through_micro(intent, method, order_type):
+                rationale.insert(
+                    0,
+                    "operating TF hard block: range-rail LIMIT would be armed into a live operating-TF impulse before rejection confirmation",
+                )
+            else:
+                rationale.insert(
+                    0,
+                    "operating TF hard block: current M5/M15/M30 momentum contradicts entry direction",
+                )
 
         # Module C: daily-review overrides (lane_id blocks + (pair, direction)
         # score bias). Empty overrides → no-op. Expired overrides already

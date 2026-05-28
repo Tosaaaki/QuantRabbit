@@ -8,7 +8,9 @@ from quant_rabbit.strategy.entry_timing_gate import (
     ENTRY_TIMING_AGAINST_PENALTY,
     ENTRY_TIMING_ALIGNED_BONUS,
     ENTRY_TIMING_MIXED_PENALTY,
+    OPERATING_TF_MOMENTUM_AGAINST_PENALTY,
     check_entry_timing,
+    check_operating_tf_momentum,
 )
 
 
@@ -36,6 +38,17 @@ def _m5_chart_reader_view(*close_dirs: int) -> dict:
     return {
         "pair": "EUR_USD",
         "views": [{"granularity": "M5", "recent_candles": candles}],
+    }
+
+
+def _operating_tf_chart(*, m5: tuple[str, float], m15: tuple[str, float], m30: tuple[str, float]) -> dict:
+    return {
+        "pair": "EUR_USD",
+        "views": [
+            {"granularity": "M5", "regime": m5[0], "indicators": {"adx_14": m5[1]}},
+            {"granularity": "M15", "regime": m15[0], "indicators": {"adx_14": m15[1]}},
+            {"granularity": "M30", "regime": m30[0], "indicators": {"adx_14": m30[1]}},
+        ],
     }
 
 
@@ -99,6 +112,32 @@ class EntryTimingGateTest(unittest.TestCase):
         r = check_entry_timing(chart, "SHORT")
         self.assertEqual(r.state, "AGAINST")
         self.assertAlmostEqual(r.score_delta, -ENTRY_TIMING_AGAINST_PENALTY)
+
+    def test_operating_tf_momentum_blocks_short_against_up_stack(self) -> None:
+        chart = _operating_tf_chart(
+            m5=("TREND_UP", 44.0),
+            m15=("TREND_UP", 32.0),
+            m30=("IMPULSE_UP", 21.0),
+        )
+
+        r = check_operating_tf_momentum(chart, "SHORT")
+
+        self.assertEqual(r.state, "AGAINST")
+        self.assertAlmostEqual(r.score_delta, -OPERATING_TF_MOMENTUM_AGAINST_PENALTY)
+        self.assertIn("M5 TREND_UP", r.rationale or "")
+        self.assertIn("M30 IMPULSE_UP", r.rationale or "")
+
+    def test_operating_tf_momentum_needs_multi_tf_counter_pressure(self) -> None:
+        chart = _operating_tf_chart(
+            m5=("TREND_UP", 28.0),
+            m15=("RANGE", 14.0),
+            m30=("RANGE", 18.0),
+        )
+
+        r = check_operating_tf_momentum(chart, "SHORT")
+
+        self.assertEqual(r.state, "MIXED")
+        self.assertEqual(r.score_delta, 0.0)
 
 
 if __name__ == "__main__":

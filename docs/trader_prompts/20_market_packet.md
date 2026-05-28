@@ -24,6 +24,9 @@
 - M5/M15 are the operating setup.
 - M30/H1 are intraday structure.
 - H4/D are higher-timeframe contradiction checks.
+- Do not pre-arm a range/failure retest LIMIT against a live M5/M15/M30
+  impulse. Wait for a close-confirmed rejection first; a resting order
+  fills before that confirmation exists.
 - `pair_charts[pair].confluence` summarises the higher-TF anchor and
   score balance the trader chronically under-weights — read it before
   picking direction. Fields: `score_balance` (LONG_LEAN / SHORT_LEAN /
