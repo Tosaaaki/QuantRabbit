@@ -71,6 +71,10 @@ QUIET_STATUSES = {
     "GPT_CLOSE",
     "GPT_CANCEL_PENDING",
     "GPT_WAIT",
+    # The verifier can reject WAIT / request-evidence receipts as normal
+    # audit feedback; autotrade exits 0 and reroutes on the next cycle.
+    "GPT_REQUEST_EVIDENCE",
+    "GPT_REJECTED",
     "CLOSED_GPT_TRADES",
     "CANCELED_GPT_PENDING",
     # Stale/self-contradicting trader pending cleanup is a successful
