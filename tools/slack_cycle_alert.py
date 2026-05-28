@@ -66,8 +66,11 @@ QUIET_STATUSES = {
     "REQUEST_EVIDENCE",
     "HOLD_PROTECTED",
     "NO_ACTION",
+    "NO_LIVE_READY_INTENT",
+    "NO_TRADE",
     "TARGET_REACHED",
     "TARGET_HIT",
+    "TARGET_REACHED_PROTECT",
     "GPT_CLOSE",
     "GPT_CANCEL_PENDING",
     "GPT_WAIT",
@@ -80,7 +83,10 @@ QUIET_STATUSES = {
     # Stale/self-contradicting trader pending cleanup is a successful
     # maintenance action. Reposting it every cycle to #qr-commands is noise.
     "CANCELED_CONTAMINATED_PENDING",
+    "CANCELED_TARGET_REACHED_PENDING",
+    "MONITOR_ONLY_EXPOSURE_OPEN",
     "POSITION_ACTION_SENT",
+    "POSITION_ACTION_STAGED",
     "OK",
     # GPT picked outside the prefiltered basket — next cycle re-prefilters
     # and naturally recovers. cli.py treats it as exit 0. No human action.
