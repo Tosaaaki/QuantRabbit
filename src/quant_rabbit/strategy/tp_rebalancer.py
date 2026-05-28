@@ -519,8 +519,8 @@ def compute_tp_adjustment(
         profit_pips = (current_price - entry_price) * pip_factor
     else:
         profit_pips = (entry_price - current_price) * pip_factor
-    if close_review_active and profit_pips <= 0:
-        return None
+    close_review_underwater = close_review_active and profit_pips <= 0
+    tp_reversal_firing = is_reversal_firing and not close_review_underwater
     insurance_reasons = (
         _insurance_tp_reasons(
             side=side_up,
@@ -552,7 +552,7 @@ def compute_tp_adjustment(
     entry_lock_harvest_reasons: list[str] = []
     if (
         current_tp is not None
-        and not is_reversal_firing
+        and not tp_reversal_firing
         and distance_old <= lock_in_pips + HYSTERESIS_PIPS
         and desired_distance_pips > distance_old
     ):
@@ -568,7 +568,7 @@ def compute_tp_adjustment(
     stale_distance_technical_reasons: list[str] = []
     stale_distance_too_far = (
         current_tp is not None
-        and not is_reversal_firing
+        and not tp_reversal_firing
         and operating_atr is not None
         and distance_old > MAX_TP_DISTANCE_ATR_MULT * operating_atr
     )
@@ -596,7 +596,7 @@ def compute_tp_adjustment(
     reachable_harvest_tp_reasons: list[str] = []
     if (
         current_tp is not None
-        and not is_reversal_firing
+        and not tp_reversal_firing
         and operating_atr is not None
         and distance_old <= MAX_TP_DISTANCE_ATR_MULT * operating_atr
     ):
@@ -641,7 +641,7 @@ def compute_tp_adjustment(
             entry_anchored = entry_price - desired_distance_pips * pip_size
             market_safe = current_price - MIN_TP_TO_MARKET_PIPS * pip_size
             candidate_tp = min(entry_anchored, market_safe)
-    elif is_reversal_firing:
+    elif tp_reversal_firing:
         mode = "expand_reversal"
         if side_up == "LONG":
             candidate_tp = entry_price + desired_distance_pips * pip_size
@@ -763,6 +763,10 @@ def compute_tp_adjustment(
             return None
 
     new_tp = _round_price(pair, candidate_tp)
+    if close_review_underwater and current_tp is not None:
+        candidate_distance = abs(new_tp - entry_price) * pip_factor
+        if candidate_distance > distance_old:
+            return None
     # Round to 1 decimal place before comparison so float precision
     # noise (e.g., 9.99999 vs 10.0) doesn't block legitimate adjustments.
     change_pips = round(abs(new_tp - current_tp) * pip_factor, 1) if current_tp is not None else round(abs(new_tp - entry_price) * pip_factor, 1)

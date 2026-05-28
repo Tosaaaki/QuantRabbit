@@ -72,6 +72,27 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
 
         self.assertIsNone(adj)
 
+    def test_close_review_allows_underwater_short_tp_contraction(self) -> None:
+        """Close review should freeze runner expansion, not freeze escape TPs.
+
+        A stale underwater SHORT with a far TP must be allowed to move its TP
+        back toward entry so a same-side recovery move can release inventory.
+        """
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471720", pair="EUR_USD", side="SHORT",
+            entry_price=1.16090, current_tp=1.15515,
+            current_price=1.16480,
+            atr_pips=20.9, reward_risk=2.7,
+            is_reversal_firing=True,
+            close_review_active=True,
+        )
+
+        self.assertIsNotNone(adj)
+        self.assertGreater(adj.new_tp, adj.current_tp)
+        self.assertLess(adj.new_tp, 1.16090)
+        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+
     def test_expand_only_mode_blocks_contraction_when_in_profit(self) -> None:
         """LONG in profit (current > entry), small desired distance
         from contracted regime. Must NOT contract — expand-only rule."""
