@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import os
+import json
+import tempfile
 import unittest
+from datetime import datetime, timezone
+from pathlib import Path
 
 from quant_rabbit.strategy.tp_rebalancer import (
     HYSTERESIS_PIPS,
@@ -12,6 +16,7 @@ from quant_rabbit.strategy.tp_rebalancer import (
     _extract_atr_pips,
     apply_tp_adjustments,
     compute_tp_adjustment,
+    load_close_review_trade_ids,
 )
 
 
@@ -48,6 +53,24 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertIsNotNone(adj)
         self.assertLess(adj.new_tp, adj.current_tp)  # TP moves DOWN for SHORT = wider
         self.assertGreater(adj.distance_pips_new, adj.distance_pips_old)
+
+    def test_close_review_blocks_underwater_short_tp_expansion(self) -> None:
+        """A close-reviewed loser must not be reclassified as a runner.
+
+        Regression for 2026-05-28: EUR/USD SHORTs had fresh
+        REVIEW_CLOSE/RECOMMEND_CLOSE sidecars, then the post-gateway TP pass
+        widened their take-profits while Gate B close authorization was absent.
+        """
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471720", pair="EUR_USD", side="SHORT",
+            entry_price=1.16090, current_tp=1.16004,
+            current_price=1.16528,
+            atr_pips=21.3, reward_risk=2.7,
+            close_review_active=True,
+        )
+
+        self.assertIsNone(adj)
 
     def test_expand_only_mode_blocks_contraction_when_in_profit(self) -> None:
         """LONG in profit (current > entry), small desired distance
@@ -656,6 +679,54 @@ class ChartContextExtractionTest(unittest.TestCase):
         ctx = _chart_context_from_chart(chart)
         self.assertEqual(ctx["h1_adx"], 28)
         self.assertEqual(ctx["confluence"]["atr_percentile_24h"], 0.6)
+
+
+class CloseReviewSidecarTest(unittest.TestCase):
+    def test_loads_recent_review_close_trade_ids(self) -> None:
+        now = datetime.now(timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "assessments": [
+                            {"trade_id": "471720", "verdict": "REVIEW_CLOSE"},
+                            {"trade_id": "471232", "verdict": "HOLD"},
+                        ],
+                    }
+                )
+            )
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "evolutions": [
+                            {"trade_id": "471717", "status": "BROKEN", "verdict": "RECOMMEND_CLOSE"}
+                        ],
+                    }
+                )
+            )
+
+            self.assertEqual(
+                load_close_review_trade_ids(root, now=now),
+                {"471720", "471717"},
+            )
+
+    def test_ignores_stale_review_close_sidecars(self) -> None:
+        now = datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-28T12:00:00+00:00",
+                        "assessments": [{"trade_id": "471720", "verdict": "REVIEW_CLOSE"}],
+                    }
+                )
+            )
+
+            self.assertEqual(load_close_review_trade_ids(root, now=now), set())
 
 
 class ApplyTPAdjustmentsTest(unittest.TestCase):

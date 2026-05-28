@@ -40,8 +40,11 @@ Invariants:
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 
@@ -70,6 +73,15 @@ LOCK_IN_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_LOCK_IN_ATR_MULT", "0.5
 # 利鞘を稼げてない」.
 TRAILING_TRIGGER_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_TRAILING_TRIGGER_ATR_MULT", "1.0"))
 TRAILING_LOCK_BEHIND_ATR_MULT = float(os.environ.get("QR_TP_REBALANCE_TRAILING_LOCK_BEHIND_ATR_MULT", "1.5"))
+
+# Position-thesis / thesis-evolution / forecast-persistence sidecars are
+# refreshed once per trader cycle. This engineering TTL keeps a stale previous
+# day review from freezing TP management, while allowing the post-gateway TP
+# pass in the same cycle to respect a just-issued close review after broker
+# truth is refreshed. It is not a market threshold.
+CLOSE_REVIEW_SIDECAR_MAX_AGE_SECONDS = float(
+    os.environ.get("QR_TP_REBALANCE_CLOSE_REVIEW_MAX_AGE_SECONDS", "3600")
+)
 
 
 @dataclass(frozen=True)
@@ -116,6 +128,70 @@ def _optional_float(value: Any) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _sidecar_is_recent(payload: Dict[str, Any], *, now: Optional[datetime] = None) -> bool:
+    max_age = CLOSE_REVIEW_SIDECAR_MAX_AGE_SECONDS
+    if max_age <= 0:
+        return False
+    generated_at = _parse_timestamp(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return False
+    clock = now or datetime.now(timezone.utc)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=timezone.utc)
+    age = (clock.astimezone(timezone.utc) - generated_at).total_seconds()
+    return 0 <= age <= max_age
+
+
+def load_close_review_trade_ids(data_root: Path = Path("data"), *, now: Optional[datetime] = None) -> set[str]:
+    """Return trade ids with recent close-review sidecar evidence.
+
+    A close-review sidecar is Gate A evidence, not authorization to close.
+    `tp-rebalance` uses it only as a conflict guard: do not move a losing
+    reviewed position's TP farther away while the close path awaits Gate B.
+    """
+    reviewed: set[str] = set()
+    sources = (
+        ("position_thesis_report.json", "assessments", {"REVIEW_CLOSE"}),
+        ("thesis_evolution_report.json", "evolutions", {"RECOMMEND_CLOSE"}),
+        ("forecast_persistence_report.json", "verdicts", {"RECOMMEND_CLOSE"}),
+    )
+    for filename, item_key, verdicts in sources:
+        path = data_root / filename
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or not _sidecar_is_recent(payload, now=now):
+            continue
+        for item in payload.get(item_key, []) or []:
+            if not isinstance(item, dict):
+                continue
+            verdict = str(item.get("verdict") or "").upper()
+            status = str(item.get("status") or "").upper()
+            if verdict in verdicts or (filename == "thesis_evolution_report.json" and status == "BROKEN"):
+                trade_id = str(item.get("trade_id") or "").strip()
+                if trade_id:
+                    reviewed.add(trade_id)
+    return reviewed
 
 
 def _forecast_direction_for_side(side: str) -> str:
@@ -391,6 +467,7 @@ def compute_tp_adjustment(
     chart_context: Optional[Dict[str, Any]] = None,
     latest_forecast: Optional[Dict[str, Any]] = None,
     pair_chart: Optional[Dict[str, Any]] = None,
+    close_review_active: bool = False,
 ) -> Optional[TPAdjustment]:
     """Compute a new TP for one position.
 
@@ -442,6 +519,8 @@ def compute_tp_adjustment(
         profit_pips = (current_price - entry_price) * pip_factor
     else:
         profit_pips = (entry_price - current_price) * pip_factor
+    if close_review_active and profit_pips <= 0:
+        return None
     insurance_reasons = (
         _insurance_tp_reasons(
             side=side_up,
@@ -725,6 +804,7 @@ def compute_all_tp_adjustments(
     pair_charts: Dict[str, Dict[str, Any]],
     market_reward_risk_fn,
     latest_forecasts_by_pair: Optional[Dict[str, Dict[str, Any]]] = None,
+    close_review_trade_ids: Optional[set[str]] = None,
 ) -> list[TPAdjustment]:
     """Loop profit-managed positions and compute TP adjustments.
 
@@ -738,6 +818,7 @@ def compute_all_tp_adjustments(
     if _is_disabled():
         return []
     adjustments: list[TPAdjustment] = []
+    close_review_ids = close_review_trade_ids or set()
     for position in positions:
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
@@ -782,8 +863,9 @@ def compute_all_tp_adjustments(
         except Exception:
             reversal = None
 
+        trade_id = str(getattr(position, "trade_id", ""))
         adj = compute_tp_adjustment(
-            trade_id=str(getattr(position, "trade_id", "")),
+            trade_id=trade_id,
             pair=pair,
             side=side_up,
             entry_price=float(getattr(position, "entry_price", 0.0)),
@@ -796,6 +878,7 @@ def compute_all_tp_adjustments(
             chart_context=_chart_context_from_chart(chart),
             latest_forecast=(latest_forecasts_by_pair or {}).get(pair),
             pair_chart=chart,
+            close_review_active=trade_id in close_review_ids,
         )
         if adj is not None:
             adjustments.append(adj)
