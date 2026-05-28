@@ -73,6 +73,8 @@ QUIET_STATUSES = {
     "TARGET_REACHED_PROTECT",
     "GPT_CLOSE",
     "GPT_CANCEL_PENDING",
+    "GPT_PROTECT",
+    "GPT_TIGHTEN_SL",
     "GPT_WAIT",
     # The verifier can reject WAIT / request-evidence receipts as normal
     # audit feedback; autotrade exits 0 and reroutes on the next cycle.

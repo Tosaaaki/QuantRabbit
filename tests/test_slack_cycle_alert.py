@@ -10,6 +10,8 @@ class SlackCycleAlertTest(unittest.TestCase):
     def test_gpt_non_trade_outcomes_stay_quiet(self) -> None:
         self.assertFalse(slack_cycle_alert._is_alert_status("GPT_REJECTED"))
         self.assertFalse(slack_cycle_alert._is_alert_status("GPT_REQUEST_EVIDENCE"))
+        self.assertFalse(slack_cycle_alert._is_alert_status("GPT_PROTECT"))
+        self.assertFalse(slack_cycle_alert._is_alert_status("GPT_TIGHTEN_SL"))
 
     def test_routine_exit_zero_cycle_statuses_stay_quiet(self) -> None:
         for status in (

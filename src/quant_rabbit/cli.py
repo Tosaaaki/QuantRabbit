@@ -214,6 +214,28 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
 )
 
 
+_AUTOTRADE_EXIT_ZERO_STATUSES: frozenset[str] = frozenset(
+    {
+        "SENT",
+        "STAGED",
+        "MONITOR_ONLY_EXPOSURE_OPEN",
+        "CANCELED_CONTAMINATED_PENDING",
+        "POSITION_ACTION_SENT",
+        "POSITION_ACTION_STAGED",
+        "POSITION_ACTION_BLOCKED",
+        "NO_LIVE_READY_INTENT",
+        "NO_TRADE",
+        "GPT_WAIT",
+        "GPT_REQUEST_EVIDENCE",
+        "GPT_REJECTED",
+        "GPT_DECISION_NOT_PREFILTERED",
+        "GPT_PROTECT",
+        "GPT_TIGHTEN_SL",
+        "TARGET_REACHED_PROTECT",
+    }
+)
+
+
 def _running_under_test_harness() -> bool:
     """True when the cli is invoked from pytest / unittest discovery.
 
@@ -953,22 +975,7 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
-        return 0 if summary.status in {
-            "SENT",
-            "STAGED",
-            "MONITOR_ONLY_EXPOSURE_OPEN",
-            "CANCELED_CONTAMINATED_PENDING",
-            "POSITION_ACTION_SENT",
-            "POSITION_ACTION_STAGED",
-            "POSITION_ACTION_BLOCKED",
-            "NO_LIVE_READY_INTENT",
-            "NO_TRADE",
-            "GPT_WAIT",
-            "GPT_REQUEST_EVIDENCE",
-            "GPT_REJECTED",
-            "GPT_DECISION_NOT_PREFILTERED",
-            "TARGET_REACHED_PROTECT",
-        } else 2
+        return 0 if summary.status in _AUTOTRADE_EXIT_ZERO_STATUSES else 2
     if args.command == "plan-campaign":
         summary = CampaignPlanner(
             strategy_profile=args.strategy_profile,

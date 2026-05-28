@@ -172,6 +172,51 @@ class CliHelpTest(unittest.TestCase):
             max_candidates=56,
         )
 
+    def test_autotrade_gpt_protect_status_exits_zero(self) -> None:
+        summary = type(
+            "Summary",
+            (),
+            {
+                "status": "GPT_PROTECT",
+                "report_path": Path("docs/autotrade_cycle_report.md"),
+                "snapshot_path": Path("data/broker_snapshot.json"),
+                "intents_path": Path("data/order_intents.json"),
+                "selected_lane_id": None,
+                "selected_lane_ids": (),
+                "deterministic_lane_id": None,
+                "decision_source": "gpt_trader",
+                "sent": False,
+                "sent_count": 0,
+                "positions": 8,
+                "orders": 6,
+                "live_ready": 0,
+                "receipt_promotions": 0,
+                "canceled_orders": (),
+                "position_management_action": "HOLD_PROTECTED",
+                "position_execution_status": "NO_ACTION",
+                "position_execution_sent": False,
+                "target_status": "PURSUE_TARGET",
+                "target_remaining_jpy": 38087.0,
+                "target_progress_pct": -90.9,
+                "selected_lane_score": None,
+                "selected_lane_size_multiple": None,
+                "gpt_status": "ACCEPTED",
+                "gpt_action": "PROTECT",
+                "gpt_allowed": True,
+                "gpt_issues": 0,
+                "gpt_error": None,
+            },
+        )()
+        stdout = io.StringIO()
+
+        with mock.patch("quant_rabbit.cli.AutoTradeCycle") as cycle_cls, redirect_stdout(stdout):
+            cycle_cls.return_value.run.return_value = summary
+            code = main(["autotrade-cycle"])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "GPT_PROTECT")
+
 
 class LiveRuntimeBootstrapTest(unittest.TestCase):
     """Coverage for 2026-05-11 cli bootstrap-gate fix.
