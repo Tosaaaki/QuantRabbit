@@ -65,10 +65,12 @@
 - Fresh entries are blocked only by non-layerable trader-owned or external exposure;
   protected trader-owned exposure may add only through portfolio validation.
 
-## CLOSE Decision Rules (SL-free, user 2026-05-08「市況>リスク」)
+## CLOSE Decision Rules (SL-free; user 2026-05-08「市況>リスク」, 2026-05-28「妥当な損切りならやっていい」)
 
 CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
 SL-free the per-trade risk number is advisory; market structure is authoritative.
+A justified loss-cut is allowed when Gate A proves the thesis is broken and
+Gate B is freshly authorized; holding a broken thesis is not the objective.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
 currently profitable trader-owned positions when the adaptive TP / macro-micro
@@ -109,9 +111,9 @@ positions.
 
 Macro shock, large unrealized loss, or margin pressure can strengthen the
 reason to review a thesis, but none of them is a standalone Gate A. Convert the
-concern into one of the machine-checkable triggers above, or WAIT. Gate B still requires
-operator-controlled authorization: `QR_OPERATOR_CLOSE_OVERRIDE=1` in the
-operator shell, or a fresh `data/.operator_close_token` file. The receipt's
+concern into one of the machine-checkable triggers above, or WAIT. Gate B still
+requires operator-controlled authorization: `QR_OPERATOR_CLOSE_OVERRIDE=1` in
+the operator shell, or a fresh `data/.operator_close_token` file. The receipt's
 `operator_close_authorized` field is advisory audit text only and is not
 accepted as authorization.
 

@@ -522,7 +522,7 @@ class PositionManager:
                 "- SL-free break-even/profit-lock is allowed only after executable profit clears M5 ATR/spread micro-noise.",
                 "- Profit-only TAKE_PROFIT_MARKET is separate from loss-side REVIEW_EXIT Gate A/B discipline.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
-                "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; only ledger-backed next-generation trader positions can execute structural loss-cut exits.",
+                "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; ledger-backed trader positions can execute structural loss-cut exits, and legacy/no-ledger trader positions may still close through GPT Gate A+B.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -930,11 +930,12 @@ def _adaptive_tp_action(
 def _next_generation_structural_auto_close_allowed(m: ManagedPosition, data_root: Path) -> bool:
     """Allow auto-close only for post-change entries with hard structural evidence.
 
-    `QR_DISABLE_AUTO_CLOSE=1` remains the legacy/default safety brake. The
-    user explicitly asked on 2026-05-15 to keep current positions and apply the
-    repair from the next position onward; the entry-thesis ledger is the
-    generation marker because it is written only when this runtime opens a new
-    trade. No ledger, no automatic loss close.
+    `QR_DISABLE_AUTO_CLOSE=1` remains the default safety brake. The
+    2026-05-28 operator clarification allows justified loss-cuts, but does
+    not allow deterministic auto-close on legacy/no-ledger positions. The
+    entry-thesis ledger is the generation marker because it is written only
+    when this runtime opens a new trade. No ledger, no automatic loss close;
+    legacy/no-ledger trader positions still require GPT CLOSE Gate A+B.
     """
     if m.action != ACTION_REVIEW_EXIT:
         return False
