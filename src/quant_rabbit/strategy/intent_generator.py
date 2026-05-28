@@ -2874,6 +2874,8 @@ def _is_structural_retest_entry(
         return False
     if intent.order_type == OrderType.STOP_ENTRY:
         return False
+    if method == TradeMethod.RANGE_ROTATION and _range_rotation_chases_broader_location(intent, metadata):
+        return False
     tf_map = metadata.get("tf_regime_map")
     if not isinstance(tf_map, dict):
         return False
@@ -2896,6 +2898,29 @@ def _is_structural_retest_entry(
     if intent.side == Side.SHORT:
         return all(position >= BREAKOUT_FAILURE_RETEST_MIDPOINT for position in positions)
     return all(position <= BREAKOUT_FAILURE_RETEST_MIDPOINT for position in positions)
+
+
+def _range_rotation_chases_broader_location(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    """True when a rail fade is on the wrong side of broader location.
+
+    M5/M15 can mark a tiny local rail after a large move. That does not make a
+    SHORT at the 24h/7d discount a resistance fade, nor a LONG at the premium a
+    support fade. Use the existing midpoint boundary: below half is discount,
+    above half is premium.
+    """
+    percentiles = [
+        value
+        for value in (
+            _optional_float(metadata.get("price_percentile_24h")),
+            _optional_float(metadata.get("price_percentile_7d")),
+        )
+        if value is not None
+    ]
+    if not percentiles:
+        return False
+    if intent.side == Side.SHORT:
+        return any(value <= BREAKOUT_FAILURE_RETEST_MIDPOINT for value in percentiles)
+    return any(value >= BREAKOUT_FAILURE_RETEST_MIDPOINT for value in percentiles)
 
 
 def _pattern_reversal_chase_issue(

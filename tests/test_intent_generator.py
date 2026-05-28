@@ -2827,6 +2827,51 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
 
+    def test_range_rotation_short_at_tiny_upper_rail_but_broader_discount_still_chases(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=8.5,
+            price_pct_24h=0.09,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16089,
+            metadata_extra={
+                "price_percentile_7d": 0.04,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.15900, "nearest_resistance": 1.16100},
+                    "M15": {"nearest_support": 1.15880, "nearest_resistance": 1.16120},
+                },
+            },
+        )
+        issues = _method_context_issues(intent)
+        issue = next(issue for issue in issues if issue["code"] == "EXHAUSTION_RANGE_CHASE")
+
+        self.assertEqual(issue["severity"], "BLOCK")
+
+    def test_range_rotation_short_at_broader_premium_keeps_retest_carveout(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=7.0,
+            price_pct_24h=0.86,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16500,
+            metadata_extra={
+                "price_percentile_7d": 0.83,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.16380, "nearest_resistance": 1.16520},
+                    "M15": {"nearest_support": 1.16270, "nearest_resistance": 1.16580},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
 
 class BreakoutFailureStopChaseTest(unittest.TestCase):
     def _intent(self, *, side: str, order_type: str, entry: float):
