@@ -106,10 +106,13 @@ positions.
   `broker_snapshot.fetched_at_utc` marks the same trade `REVIEW_CLOSE` /
   `RECOMMEND_CLOSE`: `position_thesis_report.json`,
   `thesis_evolution_report.json`, or `forecast_persistence_report.json`.
-  This is the machine-checkable "no longer likely to recover to plus" path.
-  Cite `position:thesis:<trade_id>`, `position:evolution:<trade_id>`, or
-  `position:persistence:<trade_id>` and the sidecar reason. Stale sidecars
-  are ignored.
+  `position_thesis` can also flag an underwater trader-owned position whose
+  entry thesis has no usable invalidation price when broker truth has moved
+  beyond the entry-price anti-wick buffer and M5/M15/M30/H1 technicals confirm
+  the move against the side. This is the machine-checkable "no longer likely
+  to recover to plus" path. Cite `position:thesis:<trade_id>`,
+  `position:evolution:<trade_id>`, or `position:persistence:<trade_id>` and
+  the sidecar reason. Stale sidecars are ignored.
 
 Macro shock, large unrealized loss, or margin pressure can strengthen the
 reason to review a thesis, but none of them is a standalone Gate A. Convert the

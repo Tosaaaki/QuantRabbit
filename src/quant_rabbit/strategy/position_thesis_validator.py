@@ -332,9 +332,6 @@ def _apply_entry_invalidation_overrides(
             out.append(assessment)
             continue
         thesis = load_entry_thesis(assessment.trade_id, data_root)
-        if thesis is None:
-            out.append(assessment)
-            continue
 
         q = quotes_by_pair.get(assessment.pair) or {}
         price = None
@@ -343,12 +340,14 @@ def _apply_entry_invalidation_overrides(
             price = float(q.get(label))
         except (TypeError, ValueError):
             price = None
-        reason = thesis_invalidation_hit_reason(
-            thesis,
-            side=assessment.side,
-            current_price=price,
-            price_label=label,
-        )
+        reason = None
+        if thesis is not None:
+            reason = thesis_invalidation_hit_reason(
+                thesis,
+                side=assessment.side,
+                current_price=price,
+                price_label=label,
+            )
         if reason:
             technical_reason = technical_invalidation_confirmation_reason(
                 pair_charts_full.get(assessment.pair),
@@ -362,8 +361,86 @@ def _apply_entry_invalidation_overrides(
                     f"{reason}; waiting for chart/technical confirmation",
                 ))
         else:
-            out.append(assessment)
+            adverse_reason = _entry_buffer_adverse_loss_reason(
+                position=position,
+                assessment=assessment,
+                current_price=price,
+                price_label=label,
+                thesis=thesis,
+            )
+            if adverse_reason:
+                technical_reason = technical_invalidation_confirmation_reason(
+                    pair_charts_full.get(assessment.pair),
+                    side=assessment.side,
+                )
+                if technical_reason:
+                    out.append(assessment.with_verdict("REVIEW_CLOSE", adverse_reason, technical_reason))
+                else:
+                    out.append(assessment.with_verdict(
+                        assessment.verdict,
+                        f"{adverse_reason}; waiting for chart/technical confirmation",
+                    ))
+            else:
+                out.append(assessment)
     return out
+
+
+def _entry_buffer_adverse_loss_reason(
+    *,
+    position: Any,
+    assessment: PositionThesisAssessment,
+    current_price: Optional[float],
+    price_label: str,
+    thesis: Any,
+) -> Optional[str]:
+    """Fallback Gate-A evidence when the entry thesis lacks invalidation geometry.
+
+    A missing ledger or missing `invalidation_price` must not make an underwater
+    position harder to review than a well-recorded one. This fallback still
+    requires both adverse P/L and an entry-distance buffer; the caller adds the
+    multi-timeframe technical confirmation so a wick alone cannot trigger it.
+    """
+
+    if thesis is not None and getattr(thesis, "invalidation_price", None) is not None:
+        return None
+    try:
+        upl = float(getattr(position, "unrealized_pl_jpy", 0.0) or 0.0)
+        entry_price = float(getattr(position, "entry_price", 0.0) or 0.0)
+        price = float(current_price) if current_price is not None else 0.0
+    except (TypeError, ValueError):
+        return None
+    if upl >= 0.0 or entry_price <= 0.0 or price <= 0.0:
+        return None
+
+    try:
+        from quant_rabbit.strategy.entry_thesis_ledger import (
+            invalidation_buffer_price,
+            thesis_invalidation_buffer_pips,
+        )
+    except Exception:
+        return None
+
+    side_up = assessment.side.upper()
+    buffer_pips = thesis_invalidation_buffer_pips()
+    buffer_price = invalidation_buffer_price(assessment.pair, buffer_pips)
+    source = "no entry thesis" if thesis is None else "entry thesis lacks invalidation_price"
+    if side_up == "LONG":
+        trigger = entry_price - buffer_price
+        if price <= trigger:
+            return (
+                f"adverse technical loss: {source}; current {price_label} {price:.5f} <= "
+                f"entry-buffer {trigger:.5f} (entry {entry_price:.5f}, "
+                f"buffer {buffer_pips:.1f}p, upl {upl:.1f} JPY)"
+            )
+    elif side_up == "SHORT":
+        trigger = entry_price + buffer_price
+        if price >= trigger:
+            return (
+                f"adverse technical loss: {source}; current {price_label} {price:.5f} >= "
+                f"entry-buffer {trigger:.5f} (entry {entry_price:.5f}, "
+                f"buffer {buffer_pips:.1f}p, upl {upl:.1f} JPY)"
+            )
+    return None
 
 
 def _reconcile_same_pair_hedges(

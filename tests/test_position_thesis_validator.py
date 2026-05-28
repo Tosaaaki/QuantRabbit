@@ -110,6 +110,58 @@ class PositionThesisValidatorTest(unittest.TestCase):
             self.assertEqual(overridden[0].verdict, "REVIEW_CLOSE")
             self.assertIn("invalidation hit", " ".join(overridden[0].context_notes))
 
+    def test_missing_invalidation_underwater_uses_entry_buffer_plus_technicals(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            positions = [
+                BrokerPosition(
+                    "short-1",
+                    "EUR_USD",
+                    Side.SHORT,
+                    1000,
+                    1.16356,
+                    unrealized_pl_jpy=-57.5,
+                    owner=Owner.TRADER,
+                ),
+            ]
+
+            overridden = _apply_entry_invalidation_overrides(
+                [_assessment("short-1", "SHORT", verdict="HOLD")],
+                positions,
+                quotes_by_pair={"EUR_USD": {"ask": 1.16392, "bid": 1.16384}},
+                pair_charts_full={"EUR_USD": _up_tech_chart()},
+                data_root=Path(td),
+            )
+
+        self.assertEqual(overridden[0].verdict, "REVIEW_CLOSE")
+        notes = " ".join(overridden[0].context_notes)
+        self.assertIn("adverse technical loss", notes)
+        self.assertIn("technical invalidation confirmed against SHORT", notes)
+
+    def test_missing_invalidation_buffer_does_not_cut_profitable_position(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            positions = [
+                BrokerPosition(
+                    "short-1",
+                    "EUR_USD",
+                    Side.SHORT,
+                    1000,
+                    1.16356,
+                    unrealized_pl_jpy=12.0,
+                    owner=Owner.TRADER,
+                ),
+            ]
+
+            overridden = _apply_entry_invalidation_overrides(
+                [_assessment("short-1", "SHORT", verdict="HOLD")],
+                positions,
+                quotes_by_pair={"EUR_USD": {"ask": 1.16392, "bid": 1.16384}},
+                pair_charts_full={"EUR_USD": _up_tech_chart()},
+                data_root=Path(td),
+            )
+
+        self.assertEqual(overridden[0].verdict, "HOLD")
+        self.assertEqual(overridden[0].context_notes, ())
+
 
 if __name__ == "__main__":
     unittest.main()

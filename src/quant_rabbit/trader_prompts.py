@@ -471,6 +471,11 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
         if not isinstance(item, dict) or str(item.get("verdict") or "") != "REVIEW_CLOSE":
             continue
         trade_id = str(item.get("trade_id") or "")
+        reason_parts = [
+            str(x)
+            for x in (list(item.get("rationale_lines") or []) + list(item.get("context_notes") or []))
+            if str(x)
+        ]
         out.append(
             {
                 "source": "position_thesis",
@@ -479,7 +484,7 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "verdict": "REVIEW_CLOSE",
-                "reason": "; ".join(str(x) for x in (item.get("rationale_lines") or [])[:2])
+                "reason": "; ".join(reason_parts[:3])
                 or f"aggregate_score={item.get('aggregate_score')}",
             }
         )

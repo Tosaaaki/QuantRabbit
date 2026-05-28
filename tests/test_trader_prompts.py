@@ -288,6 +288,63 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("loss-cut review required" in reason for reason in route.reasons))
         self.assertTrue(any("forecast_persistence RECOMMEND_CLOSE" in reason for reason in route.reasons))
 
+    def test_position_thesis_recommend_close_routes_with_context_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471739",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "take_profit": 1.16056,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -57.5,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "471739",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "REVIEW_CLOSE",
+                                "aggregate_score": 21.32,
+                                "rationale_lines": ["synthetic detector support"],
+                                "context_notes": [
+                                    "adverse technical loss: entry thesis lacks invalidation_price",
+                                    "technical invalidation confirmed against SHORT",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("position_thesis REVIEW_CLOSE" in reason for reason in route.reasons))
+        self.assertTrue(any("adverse technical loss" in reason for reason in route.reasons))
+
     def test_stale_forecast_persistence_recommend_close_does_not_route_to_position_management(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
