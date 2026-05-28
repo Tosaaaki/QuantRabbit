@@ -59,6 +59,221 @@ LEDGER_FILENAME = "entry_thesis_ledger.jsonl"
 PENDING_LEDGER_FILENAME = "pending_entry_thesis_ledger.jsonl"
 FORECAST_HISTORY_FILENAME = "forecast_history.jsonl"
 PENDING_ORDER_TYPES = {"LIMIT_ORDER", "STOP_ORDER", "MARKET_IF_TOUCHED_ORDER"}
+DEFAULT_THESIS_INVALIDATION_BUFFER_PIPS = 2.0
+TECHNICAL_INVALIDATION_TFS = ("M5", "M15", "M30", "H1")
+
+
+def thesis_invalidation_buffer_pips(buffer_pips: Optional[float] = None) -> float:
+    if buffer_pips is not None:
+        return max(0.0, float(buffer_pips))
+    try:
+        return max(0.0, float(os.environ.get(
+            "QR_THESIS_INVALIDATION_BUFFER_PIPS",
+            str(DEFAULT_THESIS_INVALIDATION_BUFFER_PIPS),
+        )))
+    except ValueError:
+        return DEFAULT_THESIS_INVALIDATION_BUFFER_PIPS
+
+
+def invalidation_pip_size(pair: str) -> float:
+    return 0.01 if str(pair or "").upper().endswith("_JPY") else 0.0001
+
+
+def invalidation_buffer_price(pair: str, buffer_pips: Optional[float] = None) -> float:
+    return thesis_invalidation_buffer_pips(buffer_pips) * invalidation_pip_size(pair)
+
+
+def invalidation_price_hit_reason(
+    *,
+    pair: str,
+    side: str,
+    current_price: Optional[float],
+    invalidation_price: Optional[float],
+    price_label: Optional[str] = None,
+    buffer_pips: Optional[float] = None,
+) -> Optional[str]:
+    """Return a reason only after price clears the anti-wick buffer."""
+
+    if current_price is None:
+        return None
+    try:
+        price = float(current_price)
+        invalidation = float(invalidation_price)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if price <= 0.0 or invalidation <= 0.0:
+        return None
+
+    side_up = str(side or "").upper()
+    label = (price_label or ("bid" if side_up == "LONG" else "ask")).strip()
+    buffer_pips_value = thesis_invalidation_buffer_pips(buffer_pips)
+    buffer_price = invalidation_buffer_price(pair, buffer_pips_value)
+    if side_up == "LONG":
+        trigger = invalidation - buffer_price
+        if price <= trigger:
+            return (
+                f"invalidation hit: current {label} {price:.5f} <= buffered invalidation "
+                f"{trigger:.5f} (raw {invalidation:.5f}, buffer {buffer_pips_value:.1f}p)"
+            )
+    if side_up == "SHORT":
+        trigger = invalidation + buffer_price
+        if price >= trigger:
+            return (
+                f"invalidation hit: current {label} {price:.5f} >= buffered invalidation "
+                f"{trigger:.5f} (raw {invalidation:.5f}, buffer {buffer_pips_value:.1f}p)"
+            )
+    return None
+
+
+def _technical_invalidation_min_tfs() -> int:
+    try:
+        return max(1, int(os.environ.get("QR_THESIS_INVALIDATION_MIN_TECH_TFS", "2")))
+    except ValueError:
+        return 2
+
+
+def _technical_invalidation_min_signals() -> int:
+    try:
+        return max(1, int(os.environ.get("QR_THESIS_INVALIDATION_MIN_TECH_SIGNALS", "4")))
+    except ValueError:
+        return 4
+
+
+def _view_tf(view: Dict[str, Any]) -> str:
+    return str(view.get("timeframe") or view.get("tf") or view.get("granularity") or "").upper()
+
+
+def _float_signal(value: Any) -> Optional[float]:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _event_move(event: Dict[str, Any]) -> Optional[str]:
+    kind = str(event.get("kind") or "").upper()
+    if kind.endswith("_UP"):
+        return "UP"
+    if kind.endswith("_DOWN"):
+        return "DOWN"
+    return None
+
+
+def technical_invalidation_confirmation_reason(
+    pair_chart: Optional[Dict[str, Any]],
+    *,
+    side: str,
+) -> Optional[str]:
+    """Confirm invalidation with chart shape and technicals, not price alone."""
+
+    if not pair_chart:
+        return None
+    side_up = str(side or "").upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return None
+    adverse_move = "DOWN" if side_up == "LONG" else "UP"
+    raw_views = pair_chart.get("views") or []
+    if isinstance(raw_views, dict):
+        views = [
+            {"granularity": key, **value}
+            for key, value in raw_views.items()
+            if isinstance(value, dict)
+        ]
+    elif isinstance(raw_views, list):
+        views = raw_views
+    else:
+        return None
+
+    tf_hits: dict[str, list[str]] = {}
+    for view in views:
+        if not isinstance(view, dict):
+            continue
+        tf = _view_tf(view)
+        if tf not in TECHNICAL_INVALIDATION_TFS:
+            continue
+        indicators = view.get("indicators") if isinstance(view.get("indicators"), dict) else view
+        signals: list[str] = []
+
+        regime = str(view.get("regime") or view.get("regime_state") or "").upper()
+        if adverse_move == "UP" and ("TREND_UP" in regime or "IMPULSE_UP" in regime):
+            signals.append(f"{tf} regime={regime}")
+        elif adverse_move == "DOWN" and ("TREND_DOWN" in regime or "IMPULSE_DOWN" in regime):
+            signals.append(f"{tf} regime={regime}")
+
+        rsi = _float_signal((indicators or {}).get("rsi_14") or (indicators or {}).get("rsi"))
+        if rsi is not None:
+            if adverse_move == "UP" and rsi >= 55.0:
+                signals.append(f"{tf} RSI={rsi:.1f}")
+            elif adverse_move == "DOWN" and rsi <= 45.0:
+                signals.append(f"{tf} RSI={rsi:.1f}")
+
+        macd_hist = _float_signal((indicators or {}).get("macd_hist"))
+        if macd_hist is not None:
+            if adverse_move == "UP" and macd_hist > 0:
+                signals.append(f"{tf} MACD+")
+            elif adverse_move == "DOWN" and macd_hist < 0:
+                signals.append(f"{tf} MACD-")
+
+        st = _float_signal((indicators or {}).get("supertrend_dir"))
+        if st is not None:
+            if adverse_move == "UP" and st > 0:
+                signals.append(f"{tf} ST+")
+            elif adverse_move == "DOWN" and st < 0:
+                signals.append(f"{tf} ST-")
+
+        cloud = _float_signal((indicators or {}).get("ichimoku_cloud_pos"))
+        if cloud is not None:
+            if adverse_move == "UP" and cloud > 0:
+                signals.append(f"{tf} cloud+")
+            elif adverse_move == "DOWN" and cloud < 0:
+                signals.append(f"{tf} cloud-")
+
+        plus_di = _float_signal((indicators or {}).get("plus_di_14") or (indicators or {}).get("plus_di"))
+        minus_di = _float_signal((indicators or {}).get("minus_di_14") or (indicators or {}).get("minus_di"))
+        if plus_di is not None and minus_di is not None:
+            if adverse_move == "UP" and plus_di > minus_di:
+                signals.append(f"{tf} +DI>{minus_di:.1f}")
+            elif adverse_move == "DOWN" and minus_di > plus_di:
+                signals.append(f"{tf} -DI>{plus_di:.1f}")
+
+        structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+        last_event = structure.get("last_event") if isinstance(structure.get("last_event"), dict) else {}
+        if last_event and bool(last_event.get("close_confirmed")):
+            move = _event_move(last_event)
+            if move == adverse_move:
+                signals.append(f"{tf} {last_event.get('kind')}")
+
+        if signals:
+            tf_hits[tf] = signals
+
+    signal_count = sum(len(items) for items in tf_hits.values())
+    if len(tf_hits) < _technical_invalidation_min_tfs() or signal_count < _technical_invalidation_min_signals():
+        return None
+
+    details = "; ".join(
+        f"{tf}: {', '.join(items[:3])}" for tf, items in sorted(tf_hits.items())
+    )
+    return f"technical invalidation confirmed against {side_up}: {details}"
+
+
+def thesis_invalidation_hit_reason(
+    thesis: "EntryThesis",
+    *,
+    side: str,
+    current_price: Optional[float],
+    price_label: Optional[str] = None,
+    buffer_pips: Optional[float] = None,
+) -> Optional[str]:
+    """Return a reproducible reason when broker truth crosses invalidation."""
+
+    return invalidation_price_hit_reason(
+        pair=thesis.pair,
+        side=side or thesis.side,
+        current_price=current_price,
+        invalidation_price=thesis.invalidation_price,
+        price_label=price_label,
+        buffer_pips=buffer_pips,
+    )
 
 
 @dataclass
@@ -549,6 +764,10 @@ def evaluate_thesis_evolution(
     current_forecast: Any,
     current_regime: Optional[str],
     data_root: Path,
+    current_price: Optional[float] = None,
+    current_price_label: Optional[str] = None,
+    invalidation_buffer_pips: Optional[float] = None,
+    pair_chart: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> Optional[ThesisEvolution]:
     """Compare current forecast/regime vs entry-time thesis.
@@ -585,7 +804,37 @@ def evaluate_thesis_evolution(
     aligned_dir = "UP" if side_up == "LONG" else "DOWN"
 
     reasons: List[str] = []
+    invalidation_reason = thesis_invalidation_hit_reason(
+        thesis,
+        side=side_up,
+        current_price=current_price,
+        price_label=current_price_label,
+        buffer_pips=invalidation_buffer_pips,
+    )
+    if invalidation_reason:
+        technical_reason = technical_invalidation_confirmation_reason(pair_chart, side=side_up)
+        if not technical_reason:
+            reasons.append(
+                f"{invalidation_reason}; waiting for chart/technical confirmation"
+            )
+        else:
+            return ThesisEvolution(
+                trade_id=trade_id, pair=pair, side=side_up,
+                age_hours=age_hours,
+                entry_forecast=entry_dir,
+                current_forecast=current_dir,
+                entry_confidence=thesis.forecast_confidence,
+                current_confidence=current_conf,
+                entry_regime=thesis.regime,
+                current_regime=current_regime,
+                status="BROKEN",
+                verdict="RECOMMEND_CLOSE",
+                rationale=f"{invalidation_reason}; {technical_reason}",
+            )
+
     if current_dir == entry_dir and current_dir == aligned_dir:
+        if invalidation_reason:
+            reasons.append("price invalidation is buffered, but chart confirmation is not complete")
         # Both entry and current align with position
         if current_conf >= thesis.forecast_confidence * 0.8:
             status = "STILL_VALID"
@@ -608,11 +857,21 @@ def evaluate_thesis_evolution(
             f"entry was {entry_dir} but current forecast is {current_dir} — directional edge lost"
         )
     elif current_dir != aligned_dir and current_dir != "UNCLEAR":
-        # Current forecast is OPPOSITE the position direction
-        status = "BROKEN"
-        verdict = "RECOMMEND_CLOSE"
-        reasons.append(
-            f"FORECAST FLIPPED: entry {entry_dir} → current {current_dir} (position {side_up})"
+        return ThesisEvolution(
+            trade_id=trade_id, pair=pair, side=side_up,
+            age_hours=age_hours,
+            entry_forecast=entry_dir,
+            current_forecast=current_dir,
+            entry_confidence=thesis.forecast_confidence,
+            current_confidence=current_conf,
+            entry_regime=thesis.regime,
+            current_regime=current_regime,
+            status="BROKEN",
+            verdict="RECOMMEND_CLOSE",
+            rationale=(
+                f"FORECAST FLIPPED: entry {entry_dir} → current {current_dir} "
+                f"(position {side_up})"
+            ),
         )
     else:
         status = "WEAKENED"
@@ -647,6 +906,8 @@ def evaluate_all_open_positions(
     current_forecasts_by_pair: Dict[str, Any],
     current_regimes_by_pair: Dict[str, Optional[str]],
     data_root: Path,
+    quotes_by_pair: Optional[Dict[str, Dict[str, Any]]] = None,
+    pair_charts_by_pair: Optional[Dict[str, Dict[str, Any]]] = None,
     now: Optional[datetime] = None,
 ) -> List[ThesisEvolution]:
     """For every trader-owned open position, compute ThesisEvolution.
@@ -677,6 +938,19 @@ def evaluate_all_open_positions(
             continue
         regime = current_regimes_by_pair.get(pair)
         open_time = getattr(p, "opened_at_utc", None) or getattr(p, "open_time_utc", None)
+        quote = (quotes_by_pair or {}).get(pair) or {}
+        current_price = None
+        current_price_label = None
+        try:
+            if side_up == "LONG":
+                current_price = float(quote.get("bid"))
+                current_price_label = "bid"
+            elif side_up == "SHORT":
+                current_price = float(quote.get("ask"))
+                current_price_label = "ask"
+        except (TypeError, ValueError):
+            current_price = None
+            current_price_label = None
         ev = evaluate_thesis_evolution(
             trade_id=trade_id,
             pair=pair,
@@ -685,6 +959,9 @@ def evaluate_all_open_positions(
             current_forecast=forecast,
             current_regime=regime,
             data_root=data_root,
+            current_price=current_price,
+            current_price_label=current_price_label,
+            pair_chart=(pair_charts_by_pair or {}).get(pair),
             now=now,
         )
         if ev is not None:
@@ -697,9 +974,10 @@ def write_thesis_evolution_report(
     *,
     data_root: Path,
     now: Optional[datetime] = None,
+    output_path: Optional[Path] = None,
 ) -> Path:
     """Write the per-cycle `thesis_evolution_report.json`."""
-    report_path = data_root / "thesis_evolution_report.json"
+    report_path = output_path or data_root / "thesis_evolution_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     now = now or datetime.now(timezone.utc)
     payload = {

@@ -243,6 +243,7 @@ def assess_all_positions(
     calendar_path: Optional[Path] = None,
     cross_asset_path: Optional[Path] = None,
     hit_rates: Optional[Dict[str, Dict[str, Any]]] = None,
+    data_root: Path = Path("data"),
 ) -> List[PositionThesisAssessment]:
     """Loop trader-owned positions and assess each."""
     out: List[PositionThesisAssessment] = []
@@ -294,7 +295,75 @@ def assess_all_positions(
             out.append(assessment)
         except Exception:
             continue
+    out = _apply_entry_invalidation_overrides(
+        out,
+        positions,
+        quotes_by_pair=quotes_by_pair,
+        pair_charts_full=pair_charts_full,
+        data_root=data_root,
+    )
     return _reconcile_same_pair_hedges(out, positions)
+
+
+def _apply_entry_invalidation_overrides(
+    assessments: List[PositionThesisAssessment],
+    positions: List[Any],
+    *,
+    quotes_by_pair: Dict[str, Dict[str, Any]],
+    pair_charts_full: Dict[str, Dict[str, Any]],
+    data_root: Path,
+) -> List[PositionThesisAssessment]:
+    """Promote trader positions whose recorded thesis invalidation is hit."""
+
+    try:
+        from quant_rabbit.strategy.entry_thesis_ledger import (
+            load_entry_thesis,
+            technical_invalidation_confirmation_reason,
+            thesis_invalidation_hit_reason,
+        )
+    except Exception:
+        return assessments
+
+    by_trade_id = {str(getattr(p, "trade_id", "")): p for p in positions}
+    out: list[PositionThesisAssessment] = []
+    for assessment in assessments:
+        position = by_trade_id.get(assessment.trade_id)
+        if position is None:
+            out.append(assessment)
+            continue
+        thesis = load_entry_thesis(assessment.trade_id, data_root)
+        if thesis is None:
+            out.append(assessment)
+            continue
+
+        q = quotes_by_pair.get(assessment.pair) or {}
+        price = None
+        label = "bid" if assessment.side == "LONG" else "ask"
+        try:
+            price = float(q.get(label))
+        except (TypeError, ValueError):
+            price = None
+        reason = thesis_invalidation_hit_reason(
+            thesis,
+            side=assessment.side,
+            current_price=price,
+            price_label=label,
+        )
+        if reason:
+            technical_reason = technical_invalidation_confirmation_reason(
+                pair_charts_full.get(assessment.pair),
+                side=assessment.side,
+            )
+            if technical_reason:
+                out.append(assessment.with_verdict("REVIEW_CLOSE", reason, technical_reason))
+            else:
+                out.append(assessment.with_verdict(
+                    assessment.verdict,
+                    f"{reason}; waiting for chart/technical confirmation",
+                ))
+        else:
+            out.append(assessment)
+    return out
 
 
 def _reconcile_same_pair_hedges(

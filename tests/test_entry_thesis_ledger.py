@@ -52,6 +52,46 @@ class _Position:
         self.open_time_utc = open_time_utc
 
 
+def _tech_chart(move: str) -> dict:
+    direction = move.upper()
+    if direction == "UP":
+        regime = "TREND_UP"
+        rsi = 70.0
+        macd_hist = 0.0002
+        supertrend = 1
+        cloud = 1
+        plus_di = 35.0
+        minus_di = 10.0
+        event = "CHOCH_UP"
+    else:
+        regime = "TREND_DOWN"
+        rsi = 30.0
+        macd_hist = -0.0002
+        supertrend = -1
+        cloud = -1
+        plus_di = 10.0
+        minus_di = 35.0
+        event = "CHOCH_DOWN"
+    return {
+        "views": [
+            {
+                "granularity": tf,
+                "regime": regime,
+                "indicators": {
+                    "rsi_14": rsi,
+                    "macd_hist": macd_hist,
+                    "supertrend_dir": supertrend,
+                    "ichimoku_cloud_pos": cloud,
+                    "plus_di_14": plus_di,
+                    "minus_di_14": minus_di,
+                },
+                "structure": {"last_event": {"kind": event, "close_confirmed": True}},
+            }
+            for tf in ("M5", "M15")
+        ]
+    }
+
+
 class EntryThesisLedgerTest(unittest.TestCase):
     def test_record_and_load_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -248,6 +288,133 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("FORECAST FLIPPED", ev.rationale)
 
+    def test_evolution_broken_when_long_invalidation_price_is_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("UNCLEAR", 0.1),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=161.97,
+                current_price_label="bid",
+                invalidation_buffer_pips=2.0,
+                pair_chart=_tech_chart("DOWN"),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("invalidation hit", ev.rationale)
+
+    def test_evolution_broken_when_short_invalidation_price_is_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-05-28T06:55:31Z",
+                    trade_id="S1",
+                    pair="EUR_USD",
+                    side="SHORT",
+                    entry_price=1.1609,
+                    forecast_direction="DOWN",
+                    forecast_confidence=0.69,
+                    regime="RANGE",
+                    invalidation_price=1.16097,
+                    target_price=1.16019,
+                    key_drivers=[],
+                ),
+                root,
+            )
+            ev = evaluate_thesis_evolution(
+                trade_id="S1", pair="EUR_USD", side="SHORT",
+                open_time_utc="2026-05-28T06:55:31Z",
+                current_forecast=_Forecast("UNCLEAR", 0.1),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=1.16325,
+                current_price_label="ask",
+                invalidation_buffer_pips=2.0,
+                pair_chart=_tech_chart("UP"),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "BROKEN")
+            self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
+            self.assertIn("current ask 1.16325 >= buffered invalidation 1.16117", ev.rationale)
+
+    def test_evolution_not_broken_on_small_invalidation_wick_inside_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-05-28T06:55:31Z",
+                    trade_id="S1",
+                    pair="EUR_USD",
+                    side="SHORT",
+                    entry_price=1.1609,
+                    forecast_direction="DOWN",
+                    forecast_confidence=0.69,
+                    regime="RANGE",
+                    invalidation_price=1.16097,
+                    target_price=1.16019,
+                    key_drivers=[],
+                ),
+                root,
+            )
+            ev = evaluate_thesis_evolution(
+                trade_id="S1", pair="EUR_USD", side="SHORT",
+                open_time_utc="2026-05-28T06:55:31Z",
+                current_forecast=_Forecast("UNCLEAR", 0.1),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=1.16108,
+                current_price_label="ask",
+                invalidation_buffer_pips=2.0,
+                pair_chart=_tech_chart("UP"),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+
+    def test_evolution_not_broken_without_chart_technical_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-05-28T06:55:31Z",
+                    trade_id="S1",
+                    pair="EUR_USD",
+                    side="SHORT",
+                    entry_price=1.1609,
+                    forecast_direction="DOWN",
+                    forecast_confidence=0.69,
+                    regime="RANGE",
+                    invalidation_price=1.16097,
+                    target_price=1.16019,
+                    key_drivers=[],
+                ),
+                root,
+            )
+            ev = evaluate_thesis_evolution(
+                trade_id="S1", pair="EUR_USD", side="SHORT",
+                open_time_utc="2026-05-28T06:55:31Z",
+                current_forecast=_Forecast("UNCLEAR", 0.1),
+                current_regime="RANGE",
+                data_root=root,
+                current_price=1.16325,
+                current_price_label="ask",
+                invalidation_buffer_pips=2.0,
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+            self.assertIn("waiting for chart/technical confirmation", ev.rationale)
+
     def test_evolution_still_valid_when_aligned(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -334,6 +501,37 @@ class EntryThesisLedgerTest(unittest.TestCase):
             # Only T1 (trader-owned + has thesis) returned
             self.assertEqual(len(evs), 1)
             self.assertEqual(evs[0].trade_id, "T1")
+
+    def test_evaluate_all_positions_uses_quotes_for_short_invalidation(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-05-28T06:55:31Z",
+                    trade_id="S1",
+                    pair="EUR_USD",
+                    side="SHORT",
+                    entry_price=1.1609,
+                    forecast_direction="DOWN",
+                    forecast_confidence=0.69,
+                    regime="RANGE",
+                    invalidation_price=1.16097,
+                    target_price=1.16019,
+                    key_drivers=[],
+                ),
+                root,
+            )
+            evs = evaluate_all_open_positions(
+                [_Position(trade_id="S1", pair="EUR_USD", side="SHORT", owner="trader")],
+                current_forecasts_by_pair={"EUR_USD": _Forecast("UNCLEAR", 0.1)},
+                current_regimes_by_pair={"EUR_USD": "RANGE"},
+                quotes_by_pair={"EUR_USD": {"bid": 1.16317, "ask": 1.16325}},
+                pair_charts_by_pair={"EUR_USD": _tech_chart("UP")},
+                data_root=root,
+            )
+            self.assertEqual(len(evs), 1)
+            self.assertEqual(evs[0].status, "BROKEN")
+            self.assertEqual(evs[0].verdict, "RECOMMEND_CLOSE")
 
     def test_write_report_summarizes_status_counts(self) -> None:
         with tempfile.TemporaryDirectory() as td:

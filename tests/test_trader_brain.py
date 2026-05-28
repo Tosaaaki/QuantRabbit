@@ -826,6 +826,45 @@ class TraderBrainTest(unittest.TestCase):
 
             self.assertEqual(decision.pending_cancel_order_ids, ("range-short-limit",))
 
+    def test_blocks_short_when_technicals_oppose_even_without_trend_regime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "intents.json"
+            campaign_path = root / "range_short_campaign.json"
+            campaign_path.write_text(
+                json.dumps({"lanes": [_lane("range_trader", "EUR_USD", "SHORT", "RANGE_ROTATION")]})
+            )
+            lane_id = "range_trader:EUR_USD:SHORT:RANGE_ROTATION:MARKET"
+            lane = _result(lane_id, "EUR_USD", "SHORT", "RANGE_ROTATION")
+            lane["intent"] = {
+                **lane["intent"],
+                "order_type": "MARKET",
+                "metadata": {
+                    **lane["intent"].get("metadata", {}),
+                    "max_loss_jpy": 100.0,
+                },
+            }
+            path.write_text(json.dumps({"results": [lane]}))
+            brain = TraderBrain(
+                intents_path=path,
+                campaign_plan_path=campaign_path,
+                strategy_profile_path=_opposite_market_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=_technical_opposition_pair_charts(root),
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            score = next(item for item in decision.scores if item.lane_id == lane_id)
+            self.assertEqual(score.action, ACTION_NO_TRADE)
+            self.assertTrue(any("technical_entry_opposed" in blocker for blocker in score.blockers))
+            self.assertTrue(any("technical hard block" in item for item in score.rationale))
+
     def test_historical_worst_loss_is_scaled_by_current_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1219,6 +1258,38 @@ def _operating_tf_momentum_pair_charts(root: Path) -> Path:
                                 "regime": "IMPULSE_UP",
                                 "indicators": {"adx_14": 21.0},
                             },
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _technical_opposition_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts.json"
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "views": [
+                            {
+                                "granularity": tf,
+                                "regime": "UNCLEAR",
+                                "indicators": {
+                                    "rsi_14": 72.0,
+                                    "macd_hist": 0.0002,
+                                    "supertrend_dir": 1,
+                                    "ichimoku_cloud_pos": 1,
+                                    "plus_di_14": 35.0,
+                                    "minus_di_14": 10.0,
+                                },
+                                "structure": {"last_event": {"kind": "CHOCH_UP", "close_confirmed": True}},
+                            }
+                            for tf in ("M5", "M15")
                         ],
                     }
                 ]

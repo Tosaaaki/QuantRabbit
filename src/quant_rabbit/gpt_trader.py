@@ -133,16 +133,21 @@ def _parse_struct_events(
     return out
 
 
-def _pair_chart_story(packet: dict[str, Any], pair: str) -> str:
-    """Pull the per-pair chart_story string from the verifier packet."""
+def _pair_chart(packet: dict[str, Any], pair: str) -> dict[str, Any]:
+    """Pull the full per-pair chart payload from the verifier packet."""
     pairs_block = (
         ((packet.get("market_context") or {}).get("pairs") or {})
         .get(pair) or {}
     )
     chart = pairs_block.get("chart") if isinstance(pairs_block, dict) else None
     if isinstance(chart, dict):
-        return str(chart.get("chart_story") or "")
-    return ""
+        return chart
+    return {}
+
+
+def _pair_chart_story(packet: dict[str, Any], pair: str) -> str:
+    """Pull the per-pair chart_story string from the verifier packet."""
+    return str(_pair_chart(packet, pair).get("chart_story") or "")
 
 
 def _trader_position_lookup(packet: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -177,10 +182,11 @@ def _close_thesis_invalidated(
           the same signal keeps prefilter and CLOSE-gate aligned.
 
       (b) The decision receipt's `invalidation_price` + `invalidation_tf`
-          fields are populated AND broker-truth quote shows the level
-          has traded through. LONG invalidates downward, SHORT upward.
-          Pure prose `invalidation` text alone is not enough — the gate
-          requires a machine-checkable price hit.
+          fields are populated AND broker-truth quote has cleared the
+          level by the configured anti-wick buffer. LONG invalidates
+          downward, SHORT upward. Pure prose `invalidation` text alone
+          is not enough — the gate requires a machine-checkable price
+          hit beyond the buffer plus chart/technical confirmation.
 
       (c) A fresh position sidecar generated after the current broker
           snapshot marks this trade `REVIEW_CLOSE` / `RECOMMEND_CLOSE`
@@ -221,16 +227,22 @@ def _close_thesis_invalidated(
             ask = _optional_float(quote.get("ask"))
             level = decision.invalidation_price
             tf = decision.invalidation_tf or "unspecified-TF"
-            if side_upper == "LONG" and bid is not None and bid <= level:
-                return True, (
-                    f"bid {bid:g} reached LONG invalidation {level:g} "
-                    f"on {tf} per receipt"
+            price = bid if side_upper == "LONG" else ask
+            label = "bid" if side_upper == "LONG" else "ask"
+            reason = invalidation_price_hit_reason(
+                pair=pair,
+                side=side_upper,
+                current_price=price,
+                invalidation_price=level,
+                price_label=label,
+            )
+            if reason:
+                technical_reason = technical_invalidation_confirmation_reason(
+                    _pair_chart(packet, pair),
+                    side=side_upper,
                 )
-            if side_upper == "SHORT" and ask is not None and ask >= level:
-                return True, (
-                    f"ask {ask:g} reached SHORT invalidation {level:g} "
-                    f"on {tf} per receipt"
-                )
+                if technical_reason:
+                    return True, f"{reason}; {technical_reason} on {tf} per receipt"
 
     sidecar_ok, sidecar_reason = _position_sidecar_close_recommended(
         packet,
@@ -292,6 +304,10 @@ from quant_rabbit.paths import (
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_STRATEGY_PROFILE,
+)
+from quant_rabbit.strategy.entry_thesis_ledger import (
+    invalidation_price_hit_reason,
+    technical_invalidation_confirmation_reason,
 )
 
 
@@ -593,7 +609,7 @@ class GPTTraderBrain:
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` hit on broker truth) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` cleared by broker truth beyond the anti-wick buffer with chart/technical confirmation) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -953,7 +969,7 @@ class DecisionVerifier:
                 VerificationIssue(
                     "CLOSE_THESIS_STILL_VALID",
                     "CLOSE rejected: thesis still valid (no BOS/CHOCH against "
-                    "side on M15/H4, no invalidation_price hit, and no fresh "
+                    "side on M15/H4, no buffered invalidation_price hit with chart/technical confirmation, and no fresh "
                     "position sidecar REVIEW_CLOSE/RECOMMEND_CLOSE) for: "
                     + ", ".join(still_valid),
                 )
@@ -1810,6 +1826,8 @@ def _chart_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
         regime = view.get("regime_reading") if isinstance(view.get("regime_reading"), dict) else {}
         family = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
         stat = view.get("stat_filters") if isinstance(view.get("stat_filters"), dict) else {}
+        structure = view.get("structure") if isinstance(view.get("structure"), dict) else {}
+        last_event = structure.get("last_event") if isinstance(structure.get("last_event"), dict) else {}
         views[granularity] = {
             **_small_dict(
                 indicators,
@@ -1825,8 +1843,14 @@ def _chart_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
                     "bb_width_percentile_100",
                     "hurst_100",
                     "close",
+                    "macd_hist",
+                    "supertrend_dir",
+                    "ichimoku_cloud_pos",
+                    "plus_di_14",
+                    "minus_di_14",
                 ),
             ),
+            "regime": view.get("regime"),
             "regime_state": regime.get("state"),
             "regime_confidence": regime.get("confidence"),
             "trend_score": family.get("trend_score"),
@@ -1835,6 +1859,9 @@ def _chart_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
             "disagreement": family.get("disagreement"),
             "last_jump_bars_ago": stat.get("last_jump_bars_ago"),
             "lag1_autocorr": stat.get("lag1_autocorr"),
+            "structure": {
+                "last_event": _small_dict(last_event, ("kind", "close_confirmed", "broken_pivot_price")),
+            },
         }
     return {
         "dominant_regime": chart.get("dominant_regime"),

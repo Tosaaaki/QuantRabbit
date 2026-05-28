@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from quant_rabbit.strategy.forward_projection import (
     ProjectionSignal,
@@ -11,6 +12,9 @@ from quant_rabbit.strategy.forward_projection import (
     detect_forward_projections,
 )
 from quant_rabbit.strategy.predictive_limit_orders import generate_limits_from_projections
+
+
+_QUIET_SESSION_NOW = datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc)
 
 
 @dataclass
@@ -43,6 +47,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
             _chart_with_liquidity(side="EQ_HIGH", price=1.1003),
             pair="EUR_USD",
             current_price=1.1000,
+            now=_QUIET_SESSION_NOW,
         )
 
         sweep = next(s for s in signals if s.name == "liquidity_sweep_high")
@@ -59,6 +64,7 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
             _chart_with_liquidity(side="EQ_LOW", price=1.0997),
             pair="EUR_USD",
             current_price=1.1000,
+            now=_QUIET_SESSION_NOW,
         )
 
         sweep = next(s for s in signals if s.name == "liquidity_sweep_low")

@@ -1676,6 +1676,43 @@ def _close_decision(
     return decision
 
 
+def _close_tech_views(move: str = "UP") -> list[dict]:
+    direction = move.upper()
+    if direction == "UP":
+        return [
+            {
+                "granularity": tf,
+                "regime": "TREND_UP",
+                "indicators": {
+                    "rsi_14": 70.0,
+                    "macd_hist": 0.0002,
+                    "supertrend_dir": 1,
+                    "ichimoku_cloud_pos": 1,
+                    "plus_di_14": 35.0,
+                    "minus_di_14": 10.0,
+                },
+                "structure": {"last_event": {"kind": "CHOCH_UP", "close_confirmed": True}},
+            }
+            for tf in ("M5", "M15")
+        ]
+    return [
+        {
+            "granularity": tf,
+            "regime": "TREND_DOWN",
+            "indicators": {
+                "rsi_14": 30.0,
+                "macd_hist": -0.0002,
+                "supertrend_dir": -1,
+                "ichimoku_cloud_pos": -1,
+                "plus_di_14": 10.0,
+                "minus_di_14": 35.0,
+            },
+            "structure": {"last_event": {"kind": "CHOCH_DOWN", "close_confirmed": True}},
+        }
+        for tf in ("M5", "M15")
+    ]
+
+
 def _close_fixtures(
     root: Path,
     *,
@@ -1713,6 +1750,7 @@ def _close_fixtures(
     # M15/H4 structural events we want.
     pc = json.loads(files["pair_charts"].read_text())
     pc["charts"][0]["chart_story"] = _chart_story_with_struct("EUR_USD", m15_dir=m15_dir, h4_dir=h4_dir)
+    pc["charts"][0]["views"] = _close_tech_views("UP" if position_side == "SHORT" else "DOWN")
     files["pair_charts"].write_text(json.dumps(pc))
     return files
 
@@ -1789,7 +1827,7 @@ class CloseDisciplineTest(unittest.TestCase):
     def test_close_accepted_when_invalidation_price_hit_on_broker_truth(self) -> None:
         # SHORT @ 1.17708, TP 1.17060, no structural counter-event.
         # Receipt cites invalidation_price=1.1750 + tf=H1; broker ask
-        # 1.1761 > 1.1750 → level traded through → gate A passes.
+        # 1.1761 clears the anti-wick buffer above 1.1750 → gate A passes.
         # Gate B via env override (J hardening 2026-05-13).
         _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
@@ -1812,6 +1850,35 @@ class CloseDisciplineTest(unittest.TestCase):
             summary = brain.run(snapshot_path=files["snapshot"])
 
             self.assertEqual(summary.status, "ACCEPTED")
+
+    def test_close_rejected_when_invalidation_only_wicks_inside_buffer(self) -> None:
+        # A shallow touch of the invalidation level is not enough. The close
+        # gate requires price to clear the anti-wick buffer so tiny stop hunts
+        # do not authorize loss cuts.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="SHORT",
+                m15_dir="DOWN",
+                h4_dir="DOWN",
+                quote_bid=1.1750,
+                quote_ask=1.1751,
+            )
+            decision = _close_decision(
+                trade_ids=["555"],
+                invalidation_price=1.1750,
+                invalidation_tf="H1",
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
 
     def test_close_rejected_without_operator_authorization_even_when_thesis_invalidated(self) -> None:
         # Structural invalidation passes (M15 BOS_UP vs SHORT) but no

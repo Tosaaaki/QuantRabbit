@@ -97,8 +97,10 @@ positions.
   close held inside the prior range (added 2026-05-13 after the AUD_JPY M15
   BOS_UP@114.146 0.4-pip wick incident).
 - **Invalidation-price hit (§10 Gate A — receipt-driven)**: receipt populates
-  `invalidation_price` + `invalidation_tf` AND broker bid/ask trades through
-  the level (LONG: bid ≤ level, SHORT: ask ≥ level). Cite the level + TF.
+  `invalidation_price` + `invalidation_tf` AND broker bid/ask clears the level
+  beyond the anti-wick buffer (default `QR_THESIS_INVALIDATION_BUFFER_PIPS=2.0`)
+  with chart/technical confirmation across operating timeframes. Cite the
+  level + TF + chart/technical evidence. Do not cut on a naked one-tick wick.
 - **Fresh prediction/thesis sidecar invalidation (§10 Gate A — recovery edge
   lost)**: a sidecar generated after the current
   `broker_snapshot.fetched_at_utc` marks the same trade `REVIEW_CLOSE` /

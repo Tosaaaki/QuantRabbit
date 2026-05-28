@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from quant_rabbit.models import BrokerPosition, Owner, Side
+from quant_rabbit.strategy.entry_thesis_ledger import EntryThesis, record_entry_thesis
 from quant_rabbit.strategy.position_thesis_validator import (
     PositionThesisAssessment,
+    _apply_entry_invalidation_overrides,
     _reconcile_same_pair_hedges,
 )
 
@@ -23,6 +27,27 @@ def _assessment(trade_id: str, side: str, verdict: str = "EXTEND") -> PositionTh
         verdict=verdict,
         rationale_lines=("synthetic detector support",),
     )
+
+
+def _up_tech_chart() -> dict:
+    return {
+        "views": [
+            {
+                "granularity": tf,
+                "regime": "TREND_UP",
+                "indicators": {
+                    "rsi_14": 70.0,
+                    "macd_hist": 0.0002,
+                    "supertrend_dir": 1,
+                    "ichimoku_cloud_pos": 1,
+                    "plus_di_14": 35.0,
+                    "minus_di_14": 10.0,
+                },
+                "structure": {"last_event": {"kind": "CHOCH_UP", "close_confirmed": True}},
+            }
+            for tf in ("M5", "M15")
+        ]
+    }
 
 
 class PositionThesisValidatorTest(unittest.TestCase):
@@ -50,6 +75,40 @@ class PositionThesisValidatorTest(unittest.TestCase):
 
         self.assertEqual(reconciled[0].verdict, "EXTEND")
         self.assertEqual(reconciled[0].context_notes, ())
+
+    def test_entry_invalidation_overrides_hold_to_review_close(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-05-28T06:55:31Z",
+                    trade_id="short-1",
+                    pair="EUR_USD",
+                    side="SHORT",
+                    entry_price=1.1609,
+                    forecast_direction="DOWN",
+                    forecast_confidence=0.69,
+                    regime="RANGE",
+                    invalidation_price=1.16097,
+                    target_price=1.16019,
+                    key_drivers=[],
+                ),
+                root,
+            )
+            positions = [
+                BrokerPosition("short-1", "EUR_USD", Side.SHORT, 7000, 1.1609, owner=Owner.TRADER),
+            ]
+
+            overridden = _apply_entry_invalidation_overrides(
+                [_assessment("short-1", "SHORT", verdict="HOLD")],
+                positions,
+                quotes_by_pair={"EUR_USD": {"ask": 1.16325, "bid": 1.16317}},
+                pair_charts_full={"EUR_USD": _up_tech_chart()},
+                data_root=root,
+            )
+
+            self.assertEqual(overridden[0].verdict, "REVIEW_CLOSE")
+            self.assertIn("invalidation hit", " ".join(overridden[0].context_notes))
 
 
 if __name__ == "__main__":

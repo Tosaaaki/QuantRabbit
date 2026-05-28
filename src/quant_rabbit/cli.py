@@ -1952,6 +1952,7 @@ def main(argv: list[str] | None = None) -> int:
             calendar_path=Path("data/economic_calendar.json"),
             cross_asset_path=Path("data/cross_asset_snapshot.json"),
             hit_rates=hit_rates,
+            data_root=Path("data"),
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps({
@@ -2037,6 +2038,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         from quant_rabbit.models import BrokerPosition, Owner, Side
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        quotes_by_pair = snapshot_payload.get("quotes") or {}
         pair_charts_payload = json.loads(args.pair_charts.read_text()) if args.pair_charts.exists() else {}
         charts_by_pair: dict = {}
         for c in pair_charts_payload.get("charts", []) or []:
@@ -2093,12 +2095,14 @@ def main(argv: list[str] | None = None) -> int:
             current_forecasts_by_pair=forecasts_by_pair,
             current_regimes_by_pair=regimes_by_pair,
             data_root=data_root,
+            quotes_by_pair=quotes_by_pair,
+            pair_charts_by_pair=charts_by_pair,
         )
-        report_path = write_thesis_evolution_report(evolutions, data_root=data_root)
-        # If the operator passed a non-default --output, ALSO copy there.
-        if args.output != report_path:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(report_path.read_text(encoding="utf-8"), encoding="utf-8")
+        report_path = write_thesis_evolution_report(
+            evolutions,
+            data_root=data_root,
+            output_path=args.output,
+        )
         print(json.dumps({
             "status": "OK",
             "evolution_count": len(evolutions),

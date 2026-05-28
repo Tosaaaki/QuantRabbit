@@ -474,6 +474,7 @@ from quant_rabbit.strategy.directional_forecaster import (
 from quant_rabbit.strategy.forecast_persistence_tracker import (
     record_forecast,
 )
+from quant_rabbit.strategy.entry_thesis_ledger import technical_invalidation_confirmation_reason
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1512,6 +1513,14 @@ class TraderBrain:
                     0,
                     "operating TF hard block: current M5/M15/M30 momentum contradicts entry direction",
                 )
+
+        technical_opposition = technical_invalidation_confirmation_reason(pa_chart_for_timing, side=direction)
+        if technical_opposition and status == "LIVE_READY":
+            blockers.append(
+                "technical_entry_opposed: operating-timeframe chart/technicals oppose entry; wait for confirmed rejection before sending"
+            )
+            score -= 90.0
+            rationale.insert(0, f"technical hard block: {technical_opposition}")
 
         # Module C: daily-review overrides (lane_id blocks + (pair, direction)
         # score bias). Empty overrides → no-op. Expired overrides already
