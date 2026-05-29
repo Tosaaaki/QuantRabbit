@@ -835,8 +835,8 @@ def _forecast_lane_gate(
         )
     if method == TradeMethod.RANGE_ROTATION.value and _range_rotation_forecast_ready(intent):
         return (
-            True,
-            f"forecast {forecast.direction} has no directional edge, but executable range rail geometry can trade the box",
+            False,
+            f"forecast {forecast.direction} has no executable directional or RANGE edge for a fresh range rotation",
         )
     return False, f"forecast {forecast.direction} has no executable edge"
 
@@ -1753,7 +1753,11 @@ class TraderBrain:
                     intent=intent,
                 )
                 if _forecast.confidence < ENTRY_CONFIDENCE_MIN:
-                    if method == TradeMethod.RANGE_ROTATION.value and _range_rotation_forecast_ready(intent):
+                    if (
+                        _forecast.direction == "RANGE"
+                        and method == TradeMethod.RANGE_ROTATION.value
+                        and _range_rotation_forecast_ready(intent)
+                    ):
                         score -= 6.0
                         rationale.insert(
                             0,

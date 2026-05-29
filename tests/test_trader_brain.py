@@ -1055,7 +1055,7 @@ class ForecastLaneGateTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("requires executable RANGE_ROTATION", reason)
 
-    def test_unclear_forecast_allows_executable_range_rotation(self) -> None:
+    def test_unclear_forecast_blocks_fresh_range_rotation(self) -> None:
         intent = {
             "metadata": {
                 "geometry_model": "RANGE_RAIL_LIMIT",
@@ -1073,8 +1073,8 @@ class ForecastLaneGateTest(unittest.TestCase):
             intent=intent,
         )
 
-        self.assertTrue(ok)
-        self.assertIn("range rail geometry", reason)
+        self.assertFalse(ok)
+        self.assertIn("no executable directional or RANGE edge", reason)
 
     def test_directional_forecast_blocks_opposite_side(self) -> None:
         ok, reason = _forecast_lane_gate(

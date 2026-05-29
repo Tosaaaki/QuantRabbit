@@ -2850,6 +2850,29 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertEqual(issue["severity"], "BLOCK")
 
+    def test_range_rotation_long_at_broader_premium_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="LONG",
+            sigma_mult=None,
+            price_pct_24h=None,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16670,
+            metadata_extra={
+                "price_percentile_7d": 0.92,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.16650, "nearest_resistance": 1.16740},
+                    "M15": {"nearest_support": 1.16580, "nearest_resistance": 1.16820},
+                },
+            },
+        )
+        issues = _method_context_issues(intent)
+        issue = next(issue for issue in issues if issue["code"] == "RANGE_ROTATION_BROADER_LOCATION_CHASE")
+
+        self.assertEqual(issue["severity"], "BLOCK")
+
     def test_range_rotation_short_at_broader_premium_keeps_retest_carveout(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues
 

@@ -2647,6 +2647,26 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                 "severity": "BLOCK",
             }
         )
+    if method == TradeMethod.RANGE_ROTATION and _range_rotation_chases_broader_location(intent, metadata):
+        pct_24h = _optional_float(metadata.get("price_percentile_24h"))
+        pct_7d = _optional_float(metadata.get("price_percentile_7d"))
+        location_bits = []
+        if pct_24h is not None:
+            location_bits.append(f"p24h={pct_24h:.2f}")
+        if pct_7d is not None:
+            location_bits.append(f"p7d={pct_7d:.2f}")
+        issues.append(
+            {
+                "code": "RANGE_ROTATION_BROADER_LOCATION_CHASE",
+                "message": (
+                    f"{intent.pair} {intent.side.value} RANGE_ROTATION is on the wrong side of broader "
+                    f"market location ({', '.join(location_bits) or 'percentile unavailable'}). "
+                    "Range rotation must buy discount/lower-half rails and sell premium/upper-half rails; "
+                    "do not turn a tiny local rail into a late chase."
+                ),
+                "severity": "BLOCK",
+            }
+        )
 
     if method == TradeMethod.TREND_CONTINUATION and intent.order_type == OrderType.MARKET:
         m5_regime = str(metadata.get("m5_regime") or "").upper()

@@ -65,6 +65,26 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
             self.assertEqual(verdict.verdict, "RECOMMEND_CLOSE")
             self.assertIn("flipped to DOWN", verdict.reason)
 
+    def test_low_confidence_flips_do_not_recommend_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for idx in range(3):
+                record_forecast(
+                    _forecast("EUR_USD", "DOWN", confidence=0.21),
+                    data_root=root,
+                    cycle_id=f"cycle-{idx}",
+                )
+
+            verdict = assess_position(
+                trade_id="t1",
+                pair="EUR_USD",
+                side="LONG",
+                data_root=root,
+            )
+
+            self.assertEqual(verdict.verdict, "HOLD")
+            self.assertIn("mixed forecast history", verdict.reason)
+
     def test_stale_forecast_history_cannot_recommend_close(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

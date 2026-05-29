@@ -12,6 +12,7 @@ from typing import Any
 
 from quant_rabbit.automation import (
     AutoTradeCycle,
+    GptHandoffSummary,
     _gpt_lanes_pass_prefilter_or_recovery,
     _passes_gpt_prefilter,
     _snapshot_to_json,
@@ -22,6 +23,31 @@ from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTR
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_rejected_gpt_close_ids_do_not_call_broker(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.closed: list[tuple[str, str]] = []
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+                self.closed.append((trade_id, units))
+                return {"ok": True}
+
+        client = Client()
+        cycle = AutoTradeCycle(client=client, live_enabled=True)
+        summary = GptHandoffSummary(
+            status="REJECTED",
+            action="CLOSE",
+            selected_lane_id=None,
+            allowed=False,
+            issues=1,
+            close_trade_ids=("471232",),
+        )
+
+        closed = cycle._close_gpt_trades(summary, send=True)
+
+        self.assertEqual(closed, ())
+        self.assertEqual(client.closed, [])
+
     def test_forecast_blocker_is_not_gpt_prefilter_eligible(self) -> None:
         score = LaneScore(
             lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
@@ -1901,6 +1927,82 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(len(client.snapshot_calls), 1)
             self.assertIn("reuse_existing", (root / "report.md").read_text())
+
+    def test_gpt_trade_at_position_capacity_stays_monitor_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            positions = tuple(
+                BrokerPosition(
+                    trade_id=f"protected-{idx}",
+                    pair="EUR_USD",
+                    side=Side.LONG,
+                    units=1000,
+                    entry_price=1.1740 + idx * 0.0001,
+                    take_profit=1.1800 + idx * 0.0001,
+                    stop_loss=1.1600,
+                    owner=Owner.TRADER,
+                )
+                for idx in range(4)
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=positions,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.000, 157.004, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+            old_cap = os.environ.get("QR_MAX_PORTFOLIO_POSITIONS")
+            os.environ["QR_MAX_PORTFOLIO_POSITIONS"] = "4"
+            try:
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                    reuse_market_artifacts=True,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=True)
+            finally:
+                if old_cap is None:
+                    os.environ.pop("QR_MAX_PORTFOLIO_POSITIONS", None)
+                else:
+                    os.environ["QR_MAX_PORTFOLIO_POSITIONS"] = old_cap
+
+            self.assertEqual(summary.status, "MONITOR_ONLY_EXPOSURE_OPEN")
+            self.assertEqual(summary.gpt_action, "TRADE")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+            self.assertFalse((root / "live_order.json").exists())
 
     def test_reuse_market_artifacts_does_not_promote_then_reprice_stale_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

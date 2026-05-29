@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import shutil
@@ -8,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quant_rabbit.broker.execution import LiveOrderGateway
+from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.execution_ledger import ExecutionLedger
@@ -1515,6 +1516,46 @@ class AutoTradeCycle:
                 position_execution=position_execution,
             )
 
+        if (
+            basket_lane_ids
+            and trader_positions > 0
+            and not _portfolio_entry_capacity_open(snapshot, target_summary)
+        ):
+            summary = AutoTradeCycleSummary(
+                status="MONITOR_ONLY_EXPOSURE_OPEN",
+                report_path=self.report_path,
+                snapshot_path=self.snapshot_path,
+                intents_path=self.intents_path,
+                selected_lane_id=selected_lane_id,
+                selected_lane_ids=basket_lane_ids,
+                selected_lane_score=selected_lane_score,
+                selected_lane_size_multiple=selected_lane_size_multiple,
+                deterministic_lane_id=deterministic_lane_id,
+                sent=False,
+                sent_count=0,
+                positions=positions,
+                orders=orders,
+                live_ready=intent_summary.live_ready,
+                decision_source="gpt_trader" if self.use_gpt_trader else "deterministic",
+                receipt_promotions=promotion_summary.promoted,
+                position_management_action=position_decision.action if position_decision else None,
+                position_execution_status=position_execution.status if position_execution else None,
+                position_execution_sent=position_execution.sent if position_execution else False,
+                target_status=target_summary.status if target_summary else None,
+                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                target_progress_pct=target_summary.progress_pct if target_summary else None,
+                gpt_status=gpt_summary.status if gpt_summary else None,
+                gpt_action=gpt_summary.action if gpt_summary else None,
+                gpt_allowed=gpt_summary.allowed if gpt_summary else None,
+                gpt_issues=gpt_summary.issues if gpt_summary else None,
+                gpt_error=gpt_summary.error if gpt_summary else None,
+                gpt_wait_retries=gpt_wait_retries,
+                gpt_recovery_source=gpt_recovery_source,
+                campaign_exposure_required=campaign_exposure_required,
+            )
+            self._write_report(summary, generated_at)
+            return summary
+
         order_gateway = LiveOrderGateway(
             client=self.client,
             strategy_profile=self.strategy_profile_path,
@@ -1998,6 +2039,19 @@ class AutoTradeCycle:
         # Operator-directed market close on trader-owned positions named in
         # decision.close_trade_ids. The verifier (gpt_trader) already confirmed
         # each id is a current trader-owned trade in the broker snapshot.
+        if (
+            gpt_summary.status != "ACCEPTED"
+            or not gpt_summary.allowed
+            or gpt_summary.action != "CLOSE"
+        ):
+            if gpt_summary.close_trade_ids:
+                sys.stderr.write(
+                    f"[automation._close_gpt_trades] blocked non-accepted close: "
+                    f"status={gpt_summary.status} allowed={gpt_summary.allowed} "
+                    f"action={gpt_summary.action} "
+                    f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
+                )
+            return ()
         if not send or not self.live_enabled or not gpt_summary.close_trade_ids:
             sys.stderr.write(
                 f"[automation._close_gpt_trades] short-circuit: "
@@ -2280,6 +2334,20 @@ def _portfolio_add_allowed(snapshot) -> bool:
         and (position.stop_loss is not None or sl_free_active)
         for position in trader_positions
     )
+
+
+def _portfolio_entry_capacity_open(snapshot, target_summary: DailyTargetSummary | None) -> bool:
+    cap = _portfolio_entry_capacity_limit(target_summary)
+    occupancy = _trader_position_count(snapshot) + _pending_entry_order_count(snapshot)
+    return occupancy < cap
+
+
+def _portfolio_entry_capacity_limit(target_summary: DailyTargetSummary | None) -> int:
+    cap = int(RiskPolicy().max_portfolio_positions)
+    target_trades = target_summary.target_trades_per_day if target_summary is not None else None
+    if target_trades and target_trades > 0:
+        cap = max(cap, math.ceil(target_trades / ACTIVE_FX_SESSION_BUCKETS_PER_DAY))
+    return cap
 
 
 def _trader_position_count(snapshot) -> int:

@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+
 
 HISTORY_FILENAME = "forecast_history.jsonl"
 FLIP_PERSISTENCE_CYCLES = int(os.environ.get("QR_FORECAST_FLIP_PERSISTENCE", "3"))
@@ -211,8 +213,8 @@ def assess_position(
 
     # Persistent flip check
     flip_run = 0
-    for d in reversed(directions):
-        if d == opposite_dir:
+    for d, confidence in reversed(tuple(zip(directions, confidences))):
+        if d == opposite_dir and confidence >= ENTRY_CONFIDENCE_MIN:
             flip_run += 1
         else:
             break

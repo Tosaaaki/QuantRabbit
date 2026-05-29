@@ -288,6 +288,24 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("FORECAST FLIPPED", ev.rationale)
 
+    def test_low_confidence_forecast_flip_is_not_close_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._seed_thesis(root)
+            ev = evaluate_thesis_evolution(
+                trade_id="T1", pair="EUR_JPY", side="LONG",
+                open_time_utc="2026-05-15T10:00:00Z",
+                current_forecast=_Forecast("DOWN", 0.21),
+                current_regime="TREND",
+                data_root=root,
+                now=datetime(2026, 5, 15, 13, 0, tzinfo=timezone.utc),
+            )
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertEqual(ev.status, "WEAKENED")
+            self.assertEqual(ev.verdict, "HOLD")
+            self.assertIn("do not convert a weak forecast into Gate A", ev.rationale)
+
     def test_evolution_broken_when_long_invalidation_price_is_hit(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

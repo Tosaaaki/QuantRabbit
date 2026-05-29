@@ -54,6 +54,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
+
 
 LEDGER_FILENAME = "entry_thesis_ledger.jsonl"
 PENDING_LEDGER_FILENAME = "pending_entry_thesis_ledger.jsonl"
@@ -857,22 +859,31 @@ def evaluate_thesis_evolution(
             f"entry was {entry_dir} but current forecast is {current_dir} — directional edge lost"
         )
     elif current_dir != aligned_dir and current_dir != "UNCLEAR":
-        return ThesisEvolution(
-            trade_id=trade_id, pair=pair, side=side_up,
-            age_hours=age_hours,
-            entry_forecast=entry_dir,
-            current_forecast=current_dir,
-            entry_confidence=thesis.forecast_confidence,
-            current_confidence=current_conf,
-            entry_regime=thesis.regime,
-            current_regime=current_regime,
-            status="BROKEN",
-            verdict="RECOMMEND_CLOSE",
-            rationale=(
-                f"FORECAST FLIPPED: entry {entry_dir} → current {current_dir} "
-                f"(position {side_up})"
-            ),
-        )
+        if current_conf < ENTRY_CONFIDENCE_MIN:
+            status = "WEAKENED"
+            verdict = "HOLD"
+            reasons.append(
+                f"forecast direction flipped to {current_dir}, but confidence "
+                f"{current_conf:.2f} < ENTRY_CONFIDENCE_MIN={ENTRY_CONFIDENCE_MIN:.2f}; "
+                "do not convert a weak forecast into Gate A close evidence"
+            )
+        else:
+            return ThesisEvolution(
+                trade_id=trade_id, pair=pair, side=side_up,
+                age_hours=age_hours,
+                entry_forecast=entry_dir,
+                current_forecast=current_dir,
+                entry_confidence=thesis.forecast_confidence,
+                current_confidence=current_conf,
+                entry_regime=thesis.regime,
+                current_regime=current_regime,
+                status="BROKEN",
+                verdict="RECOMMEND_CLOSE",
+                rationale=(
+                    f"FORECAST FLIPPED: entry {entry_dir} → current {current_dir} "
+                    f"(position {side_up})"
+                ),
+            )
     else:
         status = "WEAKENED"
         verdict = "HOLD"
