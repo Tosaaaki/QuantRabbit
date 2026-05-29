@@ -227,10 +227,10 @@ fi
 cycle_exit="$?"
 set -e
 
-# Slack notifications. Each tool is idempotent, manages its own state
-# marker, and posts only on actual events (not on every cycle). Failures
-# inside a notifier must not break the trader cycle — they are advisory.
-if [[ "${QR_SLACK_NOTIFY_DISABLE:-0}" != "1" ]]; then
+# Slack notifications are opt-in. User directive 2026-05-30:
+# 「Slackに送らないで」. Each notifier is still idempotent if explicitly
+# enabled, but the live trader must not post to Slack by default.
+if [[ "${QR_SLACK_NOTIFY_ENABLE:-0}" == "1" && "${QR_SLACK_NOTIFY_DISABLE:-0}" != "1" ]]; then
   if [[ -x "$(command -v python3)" && -f "${ROOT_DIR}/tools/slack_fill_notify.py" ]]; then
     python3 "${ROOT_DIR}/tools/slack_fill_notify.py" 2>&1 | sed 's/^/[slack-fill] /' || true
   fi

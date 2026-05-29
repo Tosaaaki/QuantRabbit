@@ -5,6 +5,9 @@ Reads Slack credentials from `.env.local` (vNext convention; AGENT_CONTRACT §9
 forbids `config/env.toml`). Override the env file with `QR_SLACK_ENV_FILE` or
 share `QR_OANDA_ENV_FILE` (the loader falls back to it).
 
+Slack posting is disabled by default. Set `QR_SLACK_SEND_ENABLE=1` in the
+process environment to allow a real `chat.postMessage` call.
+
 Usage:
     python3 tools/slack_post.py "message" [--channel CHANNEL_ID] [--thread TS]
 """
@@ -25,6 +28,8 @@ ALLOWED_KEYS = {
     "QR_SLACK_CHANNEL_DAILY",
     "QR_SLACK_CHANNEL_COMMANDS",
 }
+
+TRUE_VALUES = {"1", "true", "TRUE", "yes", "YES"}
 
 
 def _repo_root() -> Path:
@@ -69,7 +74,15 @@ def load_slack_config() -> dict[str, str]:
     return cfg
 
 
+def slack_send_enabled() -> bool:
+    return os.environ.get("QR_SLACK_SEND_ENABLE", "").strip() in TRUE_VALUES
+
+
 def post_message(text: str, channel_id: str, token: str, thread_ts: str | None = None) -> dict:
+    if not slack_send_enabled():
+        print("SKIP: Slack posting disabled (set QR_SLACK_SEND_ENABLE=1 to send)")
+        return {"ok": True, "skipped": True, "reason": "slack_disabled"}
+
     payload: dict[str, object] = {"channel": channel_id, "text": text}
     if thread_ts:
         payload["thread_ts"] = thread_ts
@@ -109,6 +122,10 @@ def main() -> None:
     if args.dry_run:
         print(f"[dry-run] channel={channel} thread={args.thread}")
         print(args.message)
+        return
+
+    if not slack_send_enabled():
+        post_message(args.message, channel or "", token or "", thread_ts=args.thread)
         return
 
     if not token:
