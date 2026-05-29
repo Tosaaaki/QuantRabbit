@@ -7,6 +7,7 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Iterable
 
 from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_REPORT
 from quant_rabbit.ai_test_bot import (
@@ -179,6 +180,157 @@ def _bootstrap_sl_free_defaults() -> None:
             + ",".join(applied)
             + " (override with explicit env to revert)\n"
         )
+
+
+def _refresh_current_forecast_history(
+    *,
+    snapshot_payload: dict[str, Any],
+    pair_charts_path: Path,
+    pairs: Iterable[str],
+    data_root: Path,
+    cycle_source: str,
+) -> dict[str, Any]:
+    """Persist current pair forecasts for position-management-only cycles.
+
+    TraderBrain records forecasts while scoring fresh-entry lanes. When an
+    account is already occupied and the cycle routes straight into position
+    management, no fresh lane may be scored; persistence then goes stale and
+    cannot detect that a held position lost its directional edge.
+    """
+    unique_pairs = sorted({str(pair) for pair in pairs if str(pair or "").strip()})
+    if not unique_pairs:
+        return {"recorded": 0, "skipped": {}, "cycle_id": None}
+    try:
+        pair_charts_payload = json.loads(pair_charts_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {
+            "recorded": 0,
+            "skipped": {pair: "pair_charts_unavailable" for pair in unique_pairs},
+            "cycle_id": None,
+        }
+    try:
+        from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
+        from quant_rabbit.strategy.intent_generator import (
+            _forecast_seed_for_pair,
+            _forecast_seed_regime_label,
+            _load_pair_charts,
+            _snapshot_from_json,
+        )
+        from quant_rabbit.strategy.projection_ledger import record_directional_forecast
+    except Exception as exc:
+        return {
+            "recorded": 0,
+            "skipped": {pair: f"forecast_import_failed:{exc.__class__.__name__}" for pair in unique_pairs},
+            "cycle_id": None,
+        }
+    charts = _load_pair_charts(pair_charts_path)
+    if not charts:
+        return {
+            "recorded": 0,
+            "skipped": {pair: "pair_charts_empty" for pair in unique_pairs},
+            "cycle_id": None,
+        }
+    try:
+        snapshot = _snapshot_from_json(snapshot_payload)
+    except Exception as exc:
+        return {
+            "recorded": 0,
+            "skipped": {pair: f"snapshot_parse_failed:{exc.__class__.__name__}" for pair in unique_pairs},
+            "cycle_id": None,
+        }
+    cycle_id = _forecast_refresh_cycle_id(
+        snapshot_payload=snapshot_payload,
+        pair_charts_payload=pair_charts_payload,
+        cycle_source=cycle_source,
+    )
+    recorded: dict[str, dict[str, Any]] = {}
+    skipped: dict[str, str] = {}
+    for pair in unique_pairs:
+        if _forecast_history_has_cycle_pair(data_root, pair, cycle_id):
+            skipped[pair] = "already_recorded_for_cycle"
+            continue
+        if pair not in charts:
+            skipped[pair] = "pair_chart_missing"
+            continue
+        quote = snapshot.quotes.get(pair)
+        if quote is None:
+            skipped[pair] = "quote_missing"
+            continue
+        forecast = _forecast_seed_for_pair(pair, charts, snapshot)
+        if forecast is None:
+            skipped[pair] = "forecast_unavailable"
+            continue
+        raw_chart = charts[pair].get("__raw_chart") if isinstance(charts[pair], dict) else None
+        regime = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
+        record_forecast(forecast, data_root=data_root, cycle_id=cycle_id)
+        try:
+            record_directional_forecast(
+                forecast,
+                pair=pair,
+                current_price=float(quote.mid),
+                data_root=data_root,
+                regime_at_emission=regime,
+                cycle_id=cycle_id,
+            )
+        except Exception:
+            pass
+        recorded[pair] = {
+            "direction": getattr(forecast, "direction", "UNCLEAR"),
+            "confidence": float(getattr(forecast, "confidence", 0.0) or 0.0),
+        }
+    return {
+        "recorded": len(recorded),
+        "forecasts": recorded,
+        "skipped": skipped,
+        "cycle_id": cycle_id,
+    }
+
+
+def _forecast_refresh_cycle_id(
+    *,
+    snapshot_payload: dict[str, Any],
+    pair_charts_payload: dict[str, Any],
+    cycle_source: str,
+) -> str:
+    fetched = snapshot_payload.get("fetched_at_utc") or (
+        snapshot_payload.get("account") or {}
+    ).get("fetched_at_utc") or "snapshot-unknown"
+    charts_generated = pair_charts_payload.get("generated_at_utc") or "charts-unknown"
+    return f"{cycle_source}:{fetched}:{charts_generated}"
+
+
+def _forecast_history_has_cycle_pair(data_root: Path, pair: str, cycle_id: str) -> bool:
+    path = data_root / "forecast_history.jsonl"
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if item.get("pair") == pair and item.get("cycle_id") == cycle_id:
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def _trader_position_pairs(positions: Iterable[Any]) -> list[str]:
+    pairs: list[str] = []
+    for position in positions:
+        owner = getattr(position, "owner", None)
+        owner_value = owner.value if hasattr(owner, "value") else str(owner or "")
+        if owner_value.lower() != Owner.TRADER.value:
+            continue
+        pair = str(getattr(position, "pair", "") or "")
+        if pair:
+            pairs.append(pair)
+    return pairs
 
 
 # Subcommands that read or write against real broker truth (or feed the
@@ -579,9 +731,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p_fperst = sub.add_parser(
         "forecast-persistence-check",
-        help="Read forecast_history.jsonl and emit per-position persistence verdicts (RECOMMEND_CLOSE on N-cycle flip / EXTEND on N-cycle aligned / HOLD on mixed) to data/forecast_persistence_report.json. Fresh RECOMMEND_CLOSE is Gate A evidence only; Gate B still required.",
+        help="Refresh/read forecast_history.jsonl and emit per-position persistence verdicts (RECOMMEND_CLOSE on N-cycle flip / EXTEND on N-cycle aligned / HOLD on mixed) to data/forecast_persistence_report.json. Fresh RECOMMEND_CLOSE is Gate A evidence only; Gate B still required.",
     )
     p_fperst.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_fperst.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_fperst.add_argument("--output", type=Path, default=Path("data/forecast_persistence_report.json"))
 
     p_plim = sub.add_parser(
@@ -2078,13 +2231,21 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:
                 continue
 
+        data_root = Path("data")
+        forecast_refresh = _refresh_current_forecast_history(
+            snapshot_payload=snapshot_payload,
+            pair_charts_path=args.pair_charts,
+            pairs=_trader_position_pairs(positions),
+            data_root=data_root,
+            cycle_source="position-forecast-refresh",
+        )
+
         class _ForecastShim:
             __slots__ = ("direction", "confidence")
             def __init__(self, direction: str, confidence: float):
                 self.direction = direction
                 self.confidence = confidence
 
-        data_root = Path("data")
         forecasts_by_pair: dict = {}
         regimes_by_pair: dict = {}
         for pos in positions:
@@ -2128,6 +2289,7 @@ def main(argv: list[str] | None = None) -> int:
                 "WEAKENED": sum(1 for e in evolutions if e.status == "WEAKENED"),
                 "BROKEN": sum(1 for e in evolutions if e.status == "BROKEN"),
             },
+            "forecast_refresh": forecast_refresh,
             "verdicts": [
                 {"trade_id": e.trade_id, "pair": e.pair, "side": e.side,
                  "status": e.status, "verdict": e.verdict,
@@ -2177,6 +2339,13 @@ def main(argv: list[str] | None = None) -> int:
                 ))
             except Exception:
                 continue
+        forecast_refresh = _refresh_current_forecast_history(
+            snapshot_payload=snapshot_payload,
+            pair_charts_path=args.pair_charts,
+            pairs=_trader_position_pairs(positions),
+            data_root=Path("data"),
+            cycle_source="position-forecast-refresh",
+        )
         verdicts = _persistence_assess_all(
             positions,
             data_root=Path("data"),
@@ -2193,6 +2362,7 @@ def main(argv: list[str] | None = None) -> int:
                 "EXTEND": sum(1 for v in verdicts if v.verdict == "EXTEND"),
                 "HOLD": sum(1 for v in verdicts if v.verdict == "HOLD"),
             },
+            "forecast_refresh": forecast_refresh,
             "verdicts": [v.to_dict() for v in verdicts],
         }, ensure_ascii=False, indent=2))
         print(json.dumps({
@@ -2203,6 +2373,7 @@ def main(argv: list[str] | None = None) -> int:
                 "EXTEND": sum(1 for v in verdicts if v.verdict == "EXTEND"),
                 "HOLD": sum(1 for v in verdicts if v.verdict == "HOLD"),
             },
+            "forecast_refresh": forecast_refresh,
             "verdicts": [
                 {"trade_id": v.trade_id, "pair": v.pair, "side": v.side,
                  "verdict": v.verdict, "reason": v.reason}

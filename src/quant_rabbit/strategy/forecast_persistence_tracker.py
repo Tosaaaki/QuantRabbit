@@ -190,8 +190,6 @@ def assess_position(
             verdict="HOLD", reason="no forecast history yet",
         )
 
-    directions = tuple(str(r.get("direction", "")) for r in recent)
-    confidences = tuple(float(r.get("confidence", 0)) for r in recent)
     latest_ts = _parse_timestamp(recent[-1].get("timestamp_utc"))
     if fresh_after_utc is not None:
         if fresh_after_utc.tzinfo is None:
@@ -200,9 +198,11 @@ def assess_position(
             fresh_after = fresh_after_utc.astimezone(timezone.utc)
         if latest_ts is None or latest_ts < fresh_after:
             latest_text = latest_ts.isoformat() if latest_ts is not None else "unknown"
+            stale_directions = tuple(str(r.get("direction", "")) for r in recent)
+            stale_confidences = tuple(float(r.get("confidence", 0)) for r in recent)
             return PersistenceVerdict(
                 trade_id=trade_id, pair=pair, side=side_up,
-                last_n_directions=directions, last_n_confidences=confidences,
+                last_n_directions=stale_directions, last_n_confidences=stale_confidences,
                 verdict="HOLD",
                 reason=(
                     "stale forecast history: latest forecast "
@@ -210,6 +210,18 @@ def assess_position(
                     "refresh trader-brain forecast before persistence close advice"
                 ),
             )
+    continuous_recent = _continuous_recent_window(recent)
+    if len(continuous_recent) < len(recent):
+        recent = continuous_recent
+        if not recent:
+            return PersistenceVerdict(
+                trade_id=trade_id, pair=pair, side=side_up,
+                last_n_directions=(), last_n_confidences=(),
+                verdict="HOLD", reason="forecast history continuity reset — need fresh consecutive cycles",
+            )
+
+    directions = tuple(str(r.get("direction", "")) for r in recent)
+    confidences = tuple(float(r.get("confidence", 0)) for r in recent)
 
     # Persistent flip check
     flip_run = 0
@@ -262,6 +274,60 @@ def assess_position(
         verdict="HOLD",
         reason=f"mixed forecast history — recent={list(directions[-3:])}",
     )
+
+
+def _continuous_recent_window(recent: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop forecasts before a time discontinuity in the persistence window.
+
+    Persistence means consecutive cycle evidence. If the forecast loop was
+    down for days, old RANGE / flip records must not be stitched to one fresh
+    record and treated as an unbroken run. The continuity budget is derived
+    from the observed cadence and forecast horizons in the same window rather
+    than a wall-clock literal.
+    """
+    if len(recent) < 2:
+        return recent
+    timestamps = [_parse_timestamp(item.get("timestamp_utc")) for item in recent]
+    if any(ts is None for ts in timestamps):
+        return recent
+    gaps = [
+        (timestamps[idx] - timestamps[idx - 1]).total_seconds()
+        for idx in range(1, len(timestamps))
+        if timestamps[idx] is not None
+        and timestamps[idx - 1] is not None
+        and (timestamps[idx] - timestamps[idx - 1]).total_seconds() > 0
+    ]
+    if not gaps:
+        return recent
+    horizons = []
+    for item in recent:
+        try:
+            horizon_seconds = float(item.get("horizon_min") or 0.0) * 60.0
+        except (TypeError, ValueError):
+            horizon_seconds = 0.0
+        if horizon_seconds > 0:
+            horizons.append(horizon_seconds)
+    cadence_seconds = _median(gaps)
+    horizon_seconds = _median(horizons) if horizons else 0.0
+    continuity_budget_seconds = max(cadence_seconds, horizon_seconds) * max(HISTORY_LOOKBACK_CYCLES, 1)
+    if continuity_budget_seconds <= 0:
+        return recent
+    start_index = 0
+    for idx in range(1, len(timestamps)):
+        gap_seconds = (timestamps[idx] - timestamps[idx - 1]).total_seconds()
+        if gap_seconds > continuity_budget_seconds:
+            start_index = idx
+    return recent[start_index:]
+
+
+def _median(values: List[float]) -> float:
+    ordered = sorted(values)
+    if not ordered:
+        return 0.0
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def assess_all_positions(

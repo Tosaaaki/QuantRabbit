@@ -108,6 +108,37 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
             self.assertEqual(verdict.verdict, "HOLD")
             self.assertIn("stale forecast history", verdict.reason)
 
+    def test_stale_gap_does_not_stitch_old_unclear_run_to_fresh_forecast(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = datetime(2026, 5, 18, 0, 0, tzinfo=timezone.utc)
+            for idx in range(5):
+                record_forecast(
+                    _forecast("EUR_USD", "UNCLEAR", confidence=0.2),
+                    data_root=root,
+                    now=base + timedelta(minutes=idx),
+                    cycle_id=f"old-cycle-{idx}",
+                )
+            fresh = base + timedelta(days=11)
+            record_forecast(
+                _forecast("EUR_USD", "UNCLEAR", confidence=0.2),
+                data_root=root,
+                now=fresh,
+                cycle_id="fresh-cycle",
+            )
+
+            verdict = assess_position(
+                trade_id="t1",
+                pair="EUR_USD",
+                side="LONG",
+                data_root=root,
+                fresh_after_utc=fresh - timedelta(minutes=1),
+            )
+
+            self.assertEqual(verdict.verdict, "HOLD")
+            self.assertEqual(verdict.last_n_directions, ("UNCLEAR",))
+            self.assertIn("mixed forecast history", verdict.reason)
+
     def test_record_forecast_persists_audit_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

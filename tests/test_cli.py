@@ -7,9 +7,15 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
-from quant_rabbit.cli import _LIVE_RUNTIME_COMMANDS, _SL_FREE_RUNTIME_DEFAULTS, main
+from quant_rabbit.cli import (
+    _LIVE_RUNTIME_COMMANDS,
+    _SL_FREE_RUNTIME_DEFAULTS,
+    _refresh_current_forecast_history,
+    main,
+)
 
 
 class CliHelpTest(unittest.TestCase):
@@ -86,6 +92,75 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 2)
         payload = json.loads(stdout.getvalue())
         self.assertIn("--decision-response", payload["error"])
+
+    def test_refresh_current_forecast_history_records_snapshot_cycle_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            pair_charts = root / "pair_charts.json"
+            pair_charts.write_text(json.dumps({
+                "generated_at_utc": "2026-05-30T00:01:00+00:00",
+                "charts": [{"pair": "EUR_USD", "views": []}],
+            }))
+            snapshot_payload = {
+                "fetched_at_utc": "2026-05-30T00:00:00+00:00",
+                "positions": [],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {
+                        "bid": 1.1000,
+                        "ask": 1.1002,
+                        "timestamp_utc": "2026-05-30T00:00:00+00:00",
+                    }
+                },
+            }
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="UP",
+                confidence=0.72,
+                current_price=1.1001,
+                invalidation_price=1.0990,
+                target_price=1.1020,
+                horizon_min=60,
+                raw_confidence=0.72,
+                calibration_multiplier=1.0,
+                up_score=12.0,
+                down_score=3.0,
+                range_score=0.0,
+                drivers_for=("test up",),
+                drivers_against=(),
+                rationale_summary="UP=12 DOWN=3",
+            )
+
+            with mock.patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                first = _refresh_current_forecast_history(
+                    snapshot_payload=snapshot_payload,
+                    pair_charts_path=pair_charts,
+                    pairs=["EUR_USD"],
+                    data_root=data_root,
+                    cycle_source="test",
+                )
+                second = _refresh_current_forecast_history(
+                    snapshot_payload=snapshot_payload,
+                    pair_charts_path=pair_charts,
+                    pairs=["EUR_USD"],
+                    data_root=data_root,
+                    cycle_source="test",
+                )
+
+            self.assertEqual(first["recorded"], 1)
+            self.assertEqual(first["forecasts"]["EUR_USD"]["direction"], "UP")
+            self.assertEqual(second["recorded"], 0)
+            self.assertEqual(second["skipped"]["EUR_USD"], "already_recorded_for_cycle")
+            rows = (data_root / "forecast_history.jsonl").read_text().splitlines()
+            self.assertEqual(len(rows), 1)
+            row = json.loads(rows[0])
+            self.assertEqual(row["pair"], "EUR_USD")
+            self.assertEqual(row["cycle_id"], "test:2026-05-30T00:00:00+00:00:2026-05-30T00:01:00+00:00")
+            self.assertEqual(row["direction"], "UP")
 
     def test_replay_execution_missing_prices_returns_json_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

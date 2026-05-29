@@ -266,8 +266,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 # 6e. Thesis evolution check (2026-05-15, user directive: 「どの視点で
 # エントリーしたのか、時間がたって今のポジ状況はエントリーしたときと
 # 市況が変わってないか」). Reads the entry-time thesis recorded at
-# fill time from data/entry_thesis_ledger.jsonl and compares against
-# the latest per-cycle forecast in data/forecast_history.jsonl.
+# fill time from data/entry_thesis_ledger.jsonl, refreshes the current
+# pair-level forecast from broker_snapshot + pair_charts when needed,
+# and compares against data/forecast_history.jsonl.
 # Emits data/thesis_evolution_report.json with per-position
 # STILL_VALID / WEAKENED / BROKEN + HOLD / EXTEND / RECOMMEND_CLOSE.
 # A fresh BROKEN / RECOMMEND_CLOSE is Gate A evidence only; Gate B is
@@ -276,8 +277,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 
 # 6f. Forecast persistence check — N-cycle consistency rule. Reads
-# data/forecast_history.jsonl (written every cycle by trader_brain)
-# and asks: are the last N forecasts for this pair pointing AGAINST
+# data/forecast_history.jsonl (refreshed from broker_snapshot +
+# pair_charts even when no fresh-entry lane is scored) and asks: are
+# the last N forecasts for this pair pointing AGAINST
 # the position (≥ QR_FORECAST_FLIP_PERSISTENCE=3 cycles) or have they
 # all gone RANGE/UNCLEAR (≥ QR_FORECAST_RANGE_PERSISTENCE=5 cycles)?
 # Either pattern → RECOMMEND_CLOSE. Aligned ≥3 cycles → EXTEND.
