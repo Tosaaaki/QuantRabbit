@@ -1,18 +1,18 @@
 ---
 name: daily-slack-summary
-description: Auto-post daily trade summary to Slack #qr-daily every morning at 7:00 JST
+description: Build the daily trade summary without posting to Slack
 ---
 
-Post the previous JST day's trade summary to the Slack `#qr-daily` channel.
+Build the previous JST day's trade summary. Do not post it to Slack unless the
+operator explicitly reverses the 2026-05-30 directive: 「Slackに送らないで」.
 
 Steps:
-1. Run the script:
+1. Run the script in dry-run mode:
 ```bash
-cd /Users/tossaki/App/QuantRabbit && PYTHONPATH=src python3 tools/slack_daily_summary.py
+cd /Users/tossaki/App/QuantRabbit && PYTHONPATH=src python3 tools/slack_daily_summary.py --dry-run
 ```
-2. If it prints `Posted daily summary for YYYY-MM-DD to channel ...`, done.
-3. If it prints `Already posted for YYYY-MM-DD, skipping`, done — duplicate guard.
-4. On error, inspect the output and fix; rerun without arguments.
+2. Review the rendered summary in stdout.
+3. On error, inspect the output and fix; rerun with `--dry-run`.
 
 Manual / verification (does not post to Slack):
 ```bash
@@ -24,4 +24,4 @@ Notes:
 - Daily-realized-percent is `realized_pl / day_start_balance × 100`, where `day_start_balance` is reconstructed from the first fill's `accountBalance − pl`.
 - The `Account Status` block is the **current** account state at report time — it is not an end-of-day historical NAV snapshot.
 - Manual `--date` runs bypass the dedup lock at `logs/daily_summary_last.txt`. Auto-runs (cron) write the lock so the same date is never double-posted.
-- Credentials live in `.env.local` (vNext §9). Required keys: `QR_OANDA_TOKEN`, `QR_OANDA_ACCOUNT_ID`, `QR_OANDA_BASE_URL`, `QR_SLACK_BOT_TOKEN`, `QR_SLACK_CHANNEL_DAILY`. Manual checks must use `--dry-run` unless the intent is to post a real Slack report.
+- Credentials live in `.env.local` (vNext §9). Required OANDA keys: `QR_OANDA_TOKEN`, `QR_OANDA_ACCOUNT_ID`, `QR_OANDA_BASE_URL`. Slack credentials are not needed for dry-run review.
