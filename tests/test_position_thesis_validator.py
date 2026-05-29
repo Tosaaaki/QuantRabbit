@@ -118,6 +118,7 @@ class PositionThesisValidatorTest(unittest.TestCase):
 
             self.assertEqual(overridden[0].verdict, "REVIEW_CLOSE")
             self.assertIn("invalidation hit", " ".join(overridden[0].context_notes))
+            self.assertIn("post-close re-entry discipline", " ".join(overridden[0].context_notes))
 
     def test_missing_invalidation_underwater_uses_entry_buffer_plus_technicals(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -151,6 +152,7 @@ class PositionThesisValidatorTest(unittest.TestCase):
         notes = " ".join(overridden[0].context_notes)
         self.assertIn("adverse technical loss", notes)
         self.assertIn("technical invalidation confirmed against SHORT", notes)
+        self.assertIn("post-close re-entry discipline", notes)
 
     def test_missing_invalidation_loss_cut_deferred_when_recovery_stack_supports_position(self) -> None:
         with tempfile.TemporaryDirectory() as td:

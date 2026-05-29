@@ -71,6 +71,9 @@ CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
 SL-free the per-trade risk number is advisory; market structure is authoritative.
 A justified loss-cut is allowed when Gate A proves the thesis is broken and
 Gate B is freshly authorized; holding a broken thesis is not the objective.
+Do not combine loss-cut and re-entry in one `TRADE` receipt. Close the broken
+position first, refresh broker truth / intents, then re-enter only if the next
+cycle still produces a fresh `LIVE_READY` lane.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
 currently profitable trader-owned positions when the adaptive TP / macro-micro

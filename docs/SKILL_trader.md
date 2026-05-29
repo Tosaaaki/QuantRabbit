@@ -174,8 +174,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 #
 # CLOSE discipline (AGENT_CONTRACT §10, feedback_no_unilateral_close.md):
 # Never autonomously emit CLOSE — the trader cannot decide on its own to close
-# trader-owned positions. A CLOSE receipt (or a TRADE receipt that lists
-# close_trade_ids) requires BOTH:
+# trader-owned positions. A CLOSE receipt requires BOTH:
 #   - Gate A: market evidence — pair_charts shows BOS/CHOCH against the
 #     position side on M15 or H4, OR `invalidation_price` + `invalidation_tf`
 #     in the receipt with broker truth confirming the level has traded, OR a
@@ -185,6 +184,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 #     `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
+# A TRADE receipt must not list close_trade_ids. If the recovery edge is gone,
+# close first, refresh broker truth / intents, and only re-enter on a fresh
+# LIVE_READY lane in the next cycle.
 # If either gate fails, `gpt-trader-decision` REJECTs the receipt with
 # `CLOSE_THESIS_STILL_VALID` or `CLOSE_OPERATOR_AUTH_REQUIRED`. The default
 # stance when no user instruction is present is HOLD / WAIT — do not write a

@@ -354,7 +354,12 @@ def _apply_entry_invalidation_overrides(
                 side=assessment.side,
             )
             if technical_reason:
-                out.append(assessment.with_verdict("REVIEW_CLOSE", reason, technical_reason))
+                out.append(assessment.with_verdict(
+                    "REVIEW_CLOSE",
+                    reason,
+                    technical_reason,
+                    _post_loss_cut_reentry_note(),
+                ))
             else:
                 out.append(assessment.with_verdict(
                     assessment.verdict,
@@ -382,7 +387,12 @@ def _apply_entry_invalidation_overrides(
                     if deferred is not None:
                         out.append(deferred)
                     else:
-                        out.append(assessment.with_verdict("REVIEW_CLOSE", adverse_reason, technical_reason))
+                        out.append(assessment.with_verdict(
+                            "REVIEW_CLOSE",
+                            adverse_reason,
+                            technical_reason,
+                            _post_loss_cut_reentry_note(),
+                        ))
                 else:
                     out.append(assessment.with_verdict(
                         assessment.verdict,
@@ -391,6 +401,14 @@ def _apply_entry_invalidation_overrides(
             else:
                 out.append(assessment)
     return out
+
+
+def _post_loss_cut_reentry_note() -> str:
+    return (
+        "post-close re-entry discipline: close the broken recovery edge first; "
+        "do not re-enter in the same receipt; refresh broker truth / intents "
+        "and require a fresh LIVE_READY lane before entering again"
+    )
 
 
 def _defer_missing_invalidation_loss_cut_for_recovery_support(

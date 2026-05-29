@@ -375,9 +375,9 @@ class GPTTraderDecision:
     evidence_refs: tuple[str, ...]
     operator_summary: str
     # Operator-directed market close on existing trader-owned positions.
-    # Used with action="CLOSE" or attached to TRADE when an entry should
-    # also retire prior positions in the same cycle. Each id must match a
-    # current trader-owned open trade in the broker snapshot.
+    # Used only with action="CLOSE". A loss-cut and a new entry must be
+    # separated by a fresh broker snapshot / intent cycle so "cut and
+    # re-enter" cannot become same-packet chase behavior.
     close_trade_ids: tuple[str, ...] = ()
     strategy_reviews: tuple[dict[str, Any], ...] = ()
     specialist_reviews: tuple[dict[str, Any], ...] = ()
@@ -609,7 +609,7 @@ class GPTTraderBrain:
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` (or TRADE+`close_trade_ids`) requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` cleared by broker truth beyond the anti-wick buffer with chart/technical confirmation) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` cleared by broker truth beyond the anti-wick buffer with chart/technical confirmation) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). `TRADE` must not include `close_trade_ids`; close first, then rerun fresh broker truth before re-entry. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -648,6 +648,14 @@ class DecisionVerifier:
         if decision.action == "TRADE":
             if not selected_lane_ids:
                 issues.append(VerificationIssue("LANE_REQUIRED", "TRADE requires selected_lane_id or selected_lane_ids"))
+            if decision.close_trade_ids:
+                issues.append(
+                    VerificationIssue(
+                        "CLOSE_REENTRY_SAME_CYCLE",
+                        "TRADE must not include close_trade_ids. Loss-cut first with action=CLOSE, then "
+                        "rerun broker-snapshot / intents and re-enter only if a fresh LIVE_READY lane survives.",
+                    )
+                )
             if exposure_blockers:
                 issues.append(VerificationIssue("EXPOSURE_BLOCKS_TRADE", "; ".join(exposure_blockers[:3])))
             if _target_requires_entry(self.packet) and attack_lane_ids and not exposure_blockers:
@@ -841,9 +849,10 @@ class DecisionVerifier:
             if decision.action == "CLOSE":
                 self._verify_close_trade_ids(decision, issues)
                 self._verify_close_discipline(decision, issues)
-        # CLOSE attached to TRADE: validate close_trade_ids and discipline
-        # even when action is TRADE (a TRADE receipt may also retire prior
-        # positions, and those closures must clear the same gates).
+        # A TRADE receipt may no longer execute close+reentry in one packet,
+        # but still validate any supplied close_trade_ids so the report shows
+        # every violation instead of hiding bad ids or missing Gate A/B behind
+        # the same-cycle reentry blocker.
         if decision.action == "TRADE" and decision.close_trade_ids:
             self._verify_close_trade_ids(decision, issues)
             self._verify_close_discipline(decision, issues)
