@@ -13,6 +13,38 @@ from quant_rabbit.cli import _LIVE_RUNTIME_COMMANDS, _SL_FREE_RUNTIME_DEFAULTS, 
 
 
 class CliHelpTest(unittest.TestCase):
+    def _adverse_partial_close_files(self, root: Path) -> tuple[Path, Path]:
+        snapshot = root / "snapshot.json"
+        snapshot.write_text(json.dumps({
+            "positions": [
+                {
+                    "trade_id": "t-adverse",
+                    "pair": "EUR_USD",
+                    "side": "LONG",
+                    "units": 10000,
+                    "entry_price": 1.2,
+                    "take_profit": None,
+                    "stop_loss": None,
+                    "unrealized_pl_jpy": -1000,
+                    "owner": "trader",
+                }
+            ],
+            "orders": [],
+            "quotes": {"EUR_USD": {"bid": 1.195, "ask": 1.1951}},
+        }))
+        pair_charts = root / "pair_charts.json"
+        pair_charts.write_text(json.dumps({
+            "charts": [
+                {
+                    "pair": "EUR_USD",
+                    "chart_story": "EUR_USD RANGE; M5(UNCLEAR struct=CHOCH_DOWN@1.1950)",
+                    "confluence": {"h4_atr_pips": 20.0},
+                    "views": [],
+                }
+            ]
+        }))
+        return snapshot, pair_charts
+
     def test_top_level_help_renders_daily_target_percent_text(self) -> None:
         stdout = io.StringIO()
 
@@ -105,6 +137,101 @@ class CliHelpTest(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertTrue(digest.exists())
             self.assertTrue(flow.exists())
+
+    def test_adverse_partial_close_defaults_to_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"QR_DISABLE_ADVERSE_PARTIAL_CLOSE": ""}):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.OandaExecutionClient") as client_cls, redirect_stdout(stdout):
+                code = main([
+                    "adverse-partial-close",
+                    "--snapshot",
+                    str(snapshot),
+                    "--pair-charts",
+                    str(pair_charts),
+                ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertTrue(payload["dry_run"])
+        self.assertFalse(payload["send"])
+        self.assertEqual(payload["actions_count"], 1)
+        self.assertFalse(payload["results"][0]["sent"])
+        client_cls.assert_not_called()
+
+    def test_adverse_partial_close_send_requires_confirm_live_and_live_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"QR_DISABLE_ADVERSE_PARTIAL_CLOSE": ""}, clear=False):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.OandaExecutionClient") as client_cls, redirect_stdout(stdout):
+                code = main([
+                    "adverse-partial-close",
+                    "--snapshot",
+                    str(snapshot),
+                    "--pair-charts",
+                    str(pair_charts),
+                    "--send",
+                ])
+
+        self.assertEqual(code, 2)
+        self.assertIn("--confirm-live", json.loads(stdout.getvalue())["error"])
+        client_cls.assert_not_called()
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
+            "QR_DISABLE_ADVERSE_PARTIAL_CLOSE": "",
+            "QR_LIVE_ENABLED": "",
+        }, clear=False):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.OandaExecutionClient") as client_cls, redirect_stdout(stdout):
+                code = main([
+                    "adverse-partial-close",
+                    "--snapshot",
+                    str(snapshot),
+                    "--pair-charts",
+                    str(pair_charts),
+                    "--send",
+                    "--confirm-live",
+                ])
+
+        self.assertEqual(code, 2)
+        self.assertIn("QR_LIVE_ENABLED=1", json.loads(stdout.getvalue())["error"])
+        client_cls.assert_not_called()
+
+    def test_adverse_partial_close_send_calls_broker_when_explicitly_live(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
+            "QR_DISABLE_ADVERSE_PARTIAL_CLOSE": "",
+            "QR_LIVE_ENABLED": "1",
+        }, clear=False):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            stdout = io.StringIO()
+            client = mock.Mock()
+            client.close_trade.return_value = {"ok": True}
+
+            with mock.patch("quant_rabbit.cli.OandaExecutionClient", return_value=client), redirect_stdout(stdout):
+                code = main([
+                    "adverse-partial-close",
+                    "--snapshot",
+                    str(snapshot),
+                    "--pair-charts",
+                    str(pair_charts),
+                    "--send",
+                    "--confirm-live",
+                ])
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertFalse(payload["dry_run"])
+        self.assertTrue(payload["send"])
+        self.assertTrue(payload["results"][0]["sent"])
+        client.close_trade.assert_called_once_with("t-adverse", units="5000")
 
     def test_generate_intents_refreshes_market_story_when_news_is_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

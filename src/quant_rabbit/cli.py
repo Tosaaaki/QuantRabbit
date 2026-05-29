@@ -623,7 +623,13 @@ def main(argv: list[str] | None = None) -> int:
     p_advpart.add_argument(
         "--dry-run",
         action="store_true",
-        help="Compute actions but do not call broker.close_trade().",
+        help="Compute actions but do not call broker.close_trade(). This is the default unless --send is set.",
+    )
+    p_advpart.add_argument("--send", action="store_true", help="Send partial-close requests to OANDA.")
+    p_advpart.add_argument(
+        "--confirm-live",
+        action="store_true",
+        help="Required with --send; prevents accidental live loss-side partial close.",
     )
 
     p_profitpart = sub.add_parser(
@@ -2394,14 +2400,31 @@ def main(argv: list[str] | None = None) -> int:
             quotes=quotes_keyed,
             pair_charts=pair_charts_keyed,
         )
+        if args.dry_run and args.send:
+            print(json.dumps({
+                "error": "adverse-partial-close cannot combine --dry-run and --send",
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        live_send = bool(args.send)
+        if live_send and not args.confirm_live:
+            print(json.dumps({
+                "error": "adverse-partial-close --send requires --confirm-live",
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        if live_send and os.environ.get("QR_LIVE_ENABLED") != "1":
+            print(json.dumps({
+                "error": "adverse-partial-close --send requires QR_LIVE_ENABLED=1",
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
         client = None
-        if not args.dry_run and actions:
+        if live_send and actions:
             client = OandaExecutionClient()
-        results = apply_partial_closes(actions, client, dry_run=args.dry_run)
+        results = apply_partial_closes(actions, client, dry_run=not live_send)
         print(json.dumps(
             {
                 "status": "OK",
-                "dry_run": args.dry_run,
+                "dry_run": not live_send,
+                "send": live_send,
                 "actions_count": len(actions),
                 "results": results,
             },

@@ -293,10 +293,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
 # (「SL-free 下で CLOSE 判断は構造/MTF/thesis のみ。含み損%/JPY は
 # 遅行指標で判断材料にしない」). Locking in losses on adverse-pip
 # threshold IS the anti-pattern SL-free was designed to avoid.
-# Module file kept in src/quant_rabbit/strategy/adverse_partial_close.py
-# for reference + future "structural-trigger only" rewrite; CLI line
-# below is commented out so no cycle invokes it.
-# PYTHONPATH=src python3 -m quant_rabbit.cli adverse-partial-close
+# Module file kept in src/quant_rabbit/strategy/adverse_partial_close.py.
+# The CLI is dry-run by default and live execution is triple-gated by
+# --send --confirm-live plus QR_LIVE_ENABLED=1, but the scheduled trader
+# still does not invoke it.
+# PYTHONPATH=src python3 -m quant_rabbit.cli adverse-partial-close --dry-run
 ```
 
 ## End Report

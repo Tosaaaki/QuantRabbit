@@ -31,6 +31,8 @@ Trigger conditions (all must be true):
   a position that's already too small to halve meaningfully)
 
 Kill switch: `QR_DISABLE_ADVERSE_PARTIAL_CLOSE=1`.
+CLI live sends are dry-run by default and require `--send --confirm-live`
+plus `QR_LIVE_ENABLED=1`; this module must not become an implicit close path.
 """
 
 from __future__ import annotations
