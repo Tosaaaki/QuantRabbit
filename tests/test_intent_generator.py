@@ -18,12 +18,20 @@ class IntentGeneratorTest(unittest.TestCase):
             "QR_REQUIRE_FORECAST_FOR_LIVE",
             None,
         )
+        self._prior_require_telemetry_for_live = os.environ.pop(
+            "QR_REQUIRE_TELEMETRY_FOR_LIVE",
+            None,
+        )
 
     def tearDown(self) -> None:
         if self._prior_require_forecast_for_live is None:
             os.environ.pop("QR_REQUIRE_FORECAST_FOR_LIVE", None)
         else:
             os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = self._prior_require_forecast_for_live
+        if self._prior_require_telemetry_for_live is None:
+            os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+        else:
+            os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = self._prior_require_telemetry_for_live
 
     def test_requires_snapshot_before_pricing_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -112,6 +120,125 @@ class IntentGeneratorTest(unittest.TestCase):
         blockers = [blocker for item in payload["results"] for blocker in item["live_blockers"]]
         self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", issue_codes)
         self.assertTrue(any("no fresh executable pair forecast" in blocker for blocker in blockers))
+
+    def test_live_entry_requires_forecast_telemetry_when_live_default_active(self) -> None:
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with (
+                    patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                ):
+                    summary = IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.46,
+                            short_score=0.54,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+        issue_codes = {issue["code"] for item in short_results for issue in item["risk_issues"]}
+        self.assertEqual(summary.live_ready, 0)
+        self.assertTrue(short_results)
+        self.assertTrue(any(item["status"] == "DRY_RUN_PASSED" for item in short_results))
+        self.assertTrue(all(item["status"] != "LIVE_READY" for item in short_results))
+        self.assertIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", issue_codes)
+
+    def test_matching_forecast_telemetry_allows_live_ready(self) -> None:
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                snapshot = _snapshot(root)
+                _write_forecast_telemetry(root, direction="DOWN", confidence=0.91)
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with (
+                    patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                ):
+                    summary = IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.46,
+                            short_score=0.54,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=snapshot)
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+        self.assertGreater(summary.live_ready, 0)
+        self.assertTrue(any(item["status"] == "LIVE_READY" for item in short_results))
+        self.assertTrue(
+            all(
+                "TELEMETRY_" not in issue["code"]
+                for item in short_results
+                for issue in item["risk_issues"]
+            )
+        )
 
     def test_watch_only_strategy_profile_cannot_become_live_ready_under_sl_free(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
@@ -2014,6 +2141,53 @@ def _snapshot(
         )
     )
     return path
+
+
+def _write_forecast_telemetry(
+    root: Path,
+    *,
+    direction: str,
+    confidence: float,
+    cycle_id: str = "test-cycle",
+) -> None:
+    data_root = root / "data"
+    data_root.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    (data_root / "forecast_history.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp_utc": ts,
+                "cycle_id": cycle_id,
+                "pair": "EUR_USD",
+                "direction": direction,
+                "confidence": confidence,
+                "current_price": 1.17326,
+                "target_price": 1.1712,
+                "invalidation_price": 1.1742,
+                "horizon_min": 60,
+            }
+        )
+        + "\n"
+    )
+    (data_root / "projection_ledger.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp_emitted_utc": ts,
+                "pair": "EUR_USD",
+                "signal_name": "directional_forecast",
+                "direction": direction,
+                "lead_time_min": 60,
+                "confidence": confidence,
+                "entry_price": 1.17326,
+                "predicted_target_price": 1.1712,
+                "predicted_invalidation_price": 1.1742,
+                "resolution_window_min": 120,
+                "resolution_status": "PENDING",
+                "cycle_id": cycle_id,
+            }
+        )
+        + "\n"
+    )
 
 
 def _snapshot_with_position(root: Path) -> Path:

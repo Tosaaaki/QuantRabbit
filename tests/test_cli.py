@@ -448,6 +448,8 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         # attach a tight broker SL or trail an existing one.
         "QR_NEW_ENTRY_INITIAL_SL",
         "QR_DISABLE_TRAILING_SL",
+        "QR_REQUIRE_FORECAST_FOR_LIVE",
+        "QR_REQUIRE_TELEMETRY_FOR_LIVE",
     )
 
     def setUp(self) -> None:

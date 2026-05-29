@@ -73,6 +73,11 @@ export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 # thin-session noise on 2026-05-13.
 export QR_NEW_ENTRY_INITIAL_SL="${QR_NEW_ENTRY_INITIAL_SL:-0}"
 export QR_DISABLE_TRAILING_SL="${QR_DISABLE_TRAILING_SL:-1}"
+# Fresh entries need both executable forecast context and auditable telemetry.
+# If forecast_history, projection_ledger, or execution_ledger sync is missing,
+# generate-intents may diagnose the lane but must not emit LIVE_READY.
+export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
+export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 
 # 1. Route to the right prompt branch
 PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route

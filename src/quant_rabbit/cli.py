@@ -165,6 +165,9 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # prevents campaign/range coverage lanes from becoming broker-fillable when
     # the prediction layer is stale, missing, or too weak to justify a side.
     "QR_REQUIRE_FORECAST_FOR_LIVE": "1",
+    # A prediction that is not logged, projection-tracked, and reconciled with
+    # broker transaction truth is not auditable enough for live order flow.
+    "QR_REQUIRE_TELEMETRY_FOR_LIVE": "1",
 }
 
 
@@ -978,6 +981,28 @@ def main(argv: list[str] | None = None) -> int:
                 report_path=args.market_story_report,
                 news_dir=args.market_news_dir,
             )
+        forecast_refresh: dict[str, Any] | None = None
+        if (
+            os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip()
+            in {"1", "true", "TRUE", "yes", "YES"}
+            and (not _running_under_test_harness() or os.environ.get("QR_LIVE_ENABLED") == "1")
+            and args.snapshot is not None
+            and args.snapshot.exists()
+        ):
+            try:
+                snapshot_payload = json.loads(args.snapshot.read_text())
+            except (OSError, json.JSONDecodeError):
+                snapshot_payload = None
+            if isinstance(snapshot_payload, dict):
+                quote_payload = snapshot_payload.get("quotes") or {}
+                pairs = quote_payload.keys() if isinstance(quote_payload, dict) else ()
+                forecast_refresh = _refresh_current_forecast_history(
+                    snapshot_payload=snapshot_payload,
+                    pair_charts_path=DEFAULT_PAIR_CHARTS,
+                    pairs=pairs,
+                    data_root=ROOT / "data",
+                    cycle_source="pre-entry-forecast-refresh",
+                )
         summary = IntentGenerator(
             campaign_plan=args.campaign_plan,
             strategy_profile=args.strategy_profile,
@@ -999,6 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
                     "generated": summary.generated,
                     "needs_snapshot": summary.needs_snapshot,
                     "dry_run_passed": summary.dry_run_passed,
+                    "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
                 },
                 ensure_ascii=False,

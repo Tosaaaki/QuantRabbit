@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_STRATEGY_PROFILE,
+    ROOT,
 )
 from quant_rabbit.risk import (
     DEFAULT_SPECS,
@@ -2247,6 +2249,15 @@ class IntentGenerator:
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
             live_blockers = (*live_blockers, forecast_live_issue["message"])
+        telemetry_live_issues = _telemetry_live_readiness_issues(
+            intent,
+            intent.metadata or {},
+            snapshot,
+            validation_time_utc,
+        )
+        if telemetry_live_issues:
+            risk_issues.extend(telemetry_live_issues)
+            live_blockers = (*live_blockers, *(issue["message"] for issue in telemetry_live_issues))
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -3090,8 +3101,273 @@ def _forecast_live_readiness_issue(
     return None
 
 
+def _telemetry_live_readiness_issues(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    snapshot: BrokerSnapshot,
+    validation_time_utc: datetime,
+) -> tuple[dict[str, str], ...]:
+    if not _require_telemetry_for_live_active():
+        return ()
+
+    issues: list[dict[str, str]] = []
+    data_root = ROOT / "data"
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    if direction not in {"UP", "DOWN", "RANGE"}:
+        issues.append(
+            _telemetry_issue(
+                "TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+                (
+                    f"{intent.pair} {intent.side.value} has no executable forecast metadata; "
+                    "telemetry cannot prove what the live entry is predicting."
+                ),
+            )
+        )
+    latest = _latest_forecast_history_for_pair(intent.pair, data_root=data_root)
+    latest_is_current = False
+    if latest is None:
+        issues.append(
+            _telemetry_issue(
+                "TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE",
+                (
+                    f"{intent.pair} {intent.side.value} cannot become LIVE_READY because "
+                    "forecast_history.jsonl has no current row for this pair; live entries "
+                    "must leave an auditable forecast trail before the broker can receive them."
+                ),
+            )
+        )
+    else:
+        latest_ts = _parse_telemetry_time(latest.get("timestamp_utc"))
+        snapshot_ts = _ensure_utc(getattr(snapshot, "fetched_at_utc", None))
+        if latest_ts is None or (snapshot_ts is not None and latest_ts < snapshot_ts):
+            latest_text = latest.get("timestamp_utc") or "unknown"
+            snapshot_text = snapshot_ts.isoformat() if snapshot_ts is not None else "unknown"
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} forecast telemetry is stale "
+                        f"(forecast_history={latest_text}, snapshot={snapshot_text}); "
+                        "refresh the forecast from the same broker snapshot before live entry."
+                    ),
+                )
+            )
+        else:
+            latest_is_current = True
+
+        latest_direction = str(latest.get("direction") or "").upper()
+        if direction in {"UP", "DOWN", "RANGE"} and latest_direction != direction:
+            latest_is_current = False
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} intent forecast {direction} "
+                        f"does not match latest forecast_history direction {latest_direction or 'missing'}; "
+                        "do not send a broker order when the executable lane and audit trail disagree."
+                    ),
+                )
+            )
+        latest_confidence = _optional_float(latest.get("confidence"))
+        if (
+            direction in {"UP", "DOWN", "RANGE"}
+            and confidence is not None
+            and latest_confidence is not None
+            and round(latest_confidence, 4) != round(confidence, 4)
+        ):
+            latest_is_current = False
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} intent forecast confidence "
+                        f"{confidence:.4f} does not match latest forecast_history confidence "
+                        f"{latest_confidence:.4f}; refresh before live entry."
+                    ),
+                )
+            )
+
+    if latest_is_current and direction in {"UP", "DOWN"}:
+        cycle_id = str(latest.get("cycle_id") or "")
+        if not cycle_id or not _directional_projection_recorded(
+            intent.pair,
+            cycle_id,
+            data_root=data_root,
+        ):
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} has a directional forecast but "
+                        "projection_ledger.jsonl has no matching directional_forecast row for "
+                        f"cycle_id={cycle_id or 'missing'}; the prediction must be logged for "
+                        "future hit/miss calibration before live entry."
+                    ),
+                )
+            )
+
+    expired_pending = _expired_pending_projection_count(
+        data_root=data_root,
+        validation_time_utc=validation_time_utc,
+    )
+    if expired_pending:
+        issues.append(
+            _telemetry_issue(
+                "TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE",
+                (
+                    f"projection_ledger.jsonl has {expired_pending} expired PENDING projection(s); "
+                    "run projection verification before adding new live exposure."
+                ),
+            )
+        )
+
+    execution_issue = _execution_ledger_sync_live_issue(snapshot, data_root=data_root)
+    if execution_issue is not None:
+        issues.append(execution_issue)
+    return tuple(issues)
+
+
+def _telemetry_issue(code: str, message: str) -> dict[str, str]:
+    return {"code": code, "message": message, "severity": "WARN"}
+
+
+def _latest_forecast_history_for_pair(pair: str, *, data_root: Path) -> dict[str, Any] | None:
+    path = data_root / "forecast_history.jsonl"
+    latest: dict[str, Any] | None = None
+    for item in _iter_jsonl_dicts(path):
+        if str(item.get("pair") or "") == pair:
+            latest = item
+    return latest
+
+
+def _directional_projection_recorded(pair: str, cycle_id: str, *, data_root: Path) -> bool:
+    if not cycle_id:
+        return False
+    path = data_root / "projection_ledger.jsonl"
+    for item in _iter_jsonl_dicts(path):
+        if (
+            str(item.get("pair") or "") == pair
+            and str(item.get("cycle_id") or "") == cycle_id
+            and str(item.get("signal_name") or "") == "directional_forecast"
+        ):
+            return True
+    return False
+
+
+def _expired_pending_projection_count(*, data_root: Path, validation_time_utc: datetime) -> int:
+    path = data_root / "projection_ledger.jsonl"
+    now = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
+    expired = 0
+    for item in _iter_jsonl_dicts(path):
+        if str(item.get("resolution_status") or "").upper() != "PENDING":
+            continue
+        emitted = _parse_telemetry_time(item.get("timestamp_emitted_utc"))
+        window_min = _optional_float(item.get("resolution_window_min"))
+        if emitted is None or window_min is None or window_min <= 0:
+            expired += 1
+            continue
+        if (now - emitted).total_seconds() >= window_min * 60.0:
+            expired += 1
+    return expired
+
+
+def _execution_ledger_sync_live_issue(snapshot: BrokerSnapshot, *, data_root: Path) -> dict[str, str] | None:
+    account = getattr(snapshot, "account", None)
+    expected = str(getattr(account, "last_transaction_id", "") or "").strip()
+    if not expected:
+        return None
+    actual = _execution_ledger_last_transaction_id(data_root / "execution_ledger.db")
+    if actual is None:
+        return _telemetry_issue(
+            "TELEMETRY_EXECUTION_LEDGER_STALE_FOR_LIVE",
+            (
+                f"execution ledger is missing last_oanda_transaction_id while broker snapshot "
+                f"is at transaction {expected}; sync OANDA transactions before live entry."
+            ),
+        )
+    if _transaction_id_is_behind(actual, expected):
+        return _telemetry_issue(
+            "TELEMETRY_EXECUTION_LEDGER_STALE_FOR_LIVE",
+            (
+                f"execution ledger last_oanda_transaction_id={actual} is behind broker "
+                f"snapshot transaction {expected}; sync OANDA transactions before live entry."
+            ),
+        )
+    return None
+
+
+def _execution_ledger_last_transaction_id(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "select value from sync_state where key = ?",
+                ("last_oanda_transaction_id",),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    value = str(row[0] or "").strip()
+    return value or None
+
+
+def _transaction_id_is_behind(actual: str, expected: str) -> bool:
+    try:
+        return int(actual) < int(expected)
+    except (TypeError, ValueError):
+        return actual != expected
+
+
+def _iter_jsonl_dicts(path: Path) -> tuple[dict[str, Any], ...]:
+    if not path.exists():
+        return ()
+    items: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    item = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict):
+                    items.append(item)
+    except OSError:
+        return ()
+    return tuple(items)
+
+
+def _parse_telemetry_time(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _ensure_utc(parsed)
+
+
+def _ensure_utc(value: object) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _require_forecast_for_live_active() -> bool:
     return os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
+    }
+
+
+def _require_telemetry_for_live_active() -> bool:
+    return os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() in {
         "1", "true", "TRUE", "yes", "YES",
     }
 
