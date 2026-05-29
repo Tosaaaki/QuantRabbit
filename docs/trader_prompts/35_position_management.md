@@ -109,8 +109,12 @@ positions.
   `position_thesis` can also flag an underwater trader-owned position whose
   entry thesis has no usable invalidation price when broker truth has moved
   beyond the entry-price anti-wick buffer and M5/M15/M30/H1 technicals confirm
-  the move against the side. This is the machine-checkable "no longer likely
-  to recover to plus" path. Cite `position:thesis:<trade_id>`,
+  the move against the side. This no-ledger fallback must degrade to HOLD when
+  the current position prediction stack still strongly supports the position
+  direction; early loss-cut is for broken recovery edge, not cutting into a
+  supported recovery only because the ledger was incomplete. This is the
+  machine-checkable "no longer likely to recover to plus" path. Cite
+  `position:thesis:<trade_id>`,
   `position:evolution:<trade_id>`, or `position:persistence:<trade_id>` and
   the sidecar reason. Stale sidecars are ignored.
 

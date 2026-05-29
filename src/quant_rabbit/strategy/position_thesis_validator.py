@@ -374,7 +374,15 @@ def _apply_entry_invalidation_overrides(
                     side=assessment.side,
                 )
                 if technical_reason:
-                    out.append(assessment.with_verdict("REVIEW_CLOSE", adverse_reason, technical_reason))
+                    deferred = _defer_missing_invalidation_loss_cut_for_recovery_support(
+                        assessment,
+                        adverse_reason=adverse_reason,
+                        technical_reason=technical_reason,
+                    )
+                    if deferred is not None:
+                        out.append(deferred)
+                    else:
+                        out.append(assessment.with_verdict("REVIEW_CLOSE", adverse_reason, technical_reason))
                 else:
                     out.append(assessment.with_verdict(
                         assessment.verdict,
@@ -383,6 +391,39 @@ def _apply_entry_invalidation_overrides(
             else:
                 out.append(assessment)
     return out
+
+
+def _defer_missing_invalidation_loss_cut_for_recovery_support(
+    assessment: PositionThesisAssessment,
+    *,
+    adverse_reason: str,
+    technical_reason: str,
+) -> Optional[PositionThesisAssessment]:
+    """Avoid turning a no-ledger fallback into a contradictory panic cut.
+
+    Recorded entry invalidation still wins above. This guard applies only to
+    legacy/no-invalidation positions where the fallback inferred a review from
+    entry-buffer distance plus current technicals. If the same prediction stack
+    that feeds position review still strongly supports the position direction,
+    the correct outcome is urgent HOLD/recheck, not REVIEW_CLOSE. This keeps
+    "cut early when thesis breaks" separate from "cut into a supported recovery
+    just because the ledger was incomplete".
+    """
+
+    if assessment.aggregate_score < THESIS_EXTEND_THRESHOLD:
+        return None
+    return assessment.with_verdict(
+        "HOLD",
+        adverse_reason,
+        technical_reason,
+        (
+            "loss-cut deferred: current prediction stack still supports "
+            f"{assessment.side} (aggregate_score={assessment.aggregate_score:.1f} >= "
+            f"THESIS_EXTEND_THRESHOLD={THESIS_EXTEND_THRESHOLD:.1f}); "
+            "wait for recovery support to fail or use recorded invalidation / "
+            "structure Gate A"
+        ),
+    )
 
 
 def _entry_buffer_adverse_loss_reason(

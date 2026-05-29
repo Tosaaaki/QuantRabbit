@@ -13,17 +13,26 @@ from quant_rabbit.strategy.position_thesis_validator import (
 )
 
 
-def _assessment(trade_id: str, side: str, verdict: str = "EXTEND") -> PositionThesisAssessment:
+def _assessment(
+    trade_id: str,
+    side: str,
+    verdict: str = "EXTEND",
+    *,
+    pattern_score: float = 10.0,
+    projection_score: float = 15.0,
+    aggregate_score: float | None = None,
+) -> PositionThesisAssessment:
+    aggregate = aggregate_score if aggregate_score is not None else pattern_score + projection_score
     return PositionThesisAssessment(
         trade_id=trade_id,
         pair="EUR_USD",
         side=side,
-        pattern_score=10.0,
-        projection_score=15.0,
+        pattern_score=pattern_score,
+        projection_score=projection_score,
         correlation_score=0.0,
         path_score=0.0,
         reversal_against=False,
-        aggregate_score=25.0,
+        aggregate_score=aggregate,
         verdict=verdict,
         rationale_lines=("synthetic detector support",),
     )
@@ -125,7 +134,13 @@ class PositionThesisValidatorTest(unittest.TestCase):
             ]
 
             overridden = _apply_entry_invalidation_overrides(
-                [_assessment("short-1", "SHORT", verdict="HOLD")],
+                [_assessment(
+                    "short-1",
+                    "SHORT",
+                    verdict="HOLD",
+                    pattern_score=0.0,
+                    projection_score=0.0,
+                )],
                 positions,
                 quotes_by_pair={"EUR_USD": {"ask": 1.16392, "bid": 1.16384}},
                 pair_charts_full={"EUR_USD": _up_tech_chart()},
@@ -136,6 +151,40 @@ class PositionThesisValidatorTest(unittest.TestCase):
         notes = " ".join(overridden[0].context_notes)
         self.assertIn("adverse technical loss", notes)
         self.assertIn("technical invalidation confirmed against SHORT", notes)
+
+    def test_missing_invalidation_loss_cut_deferred_when_recovery_stack_supports_position(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            positions = [
+                BrokerPosition(
+                    "short-1",
+                    "EUR_USD",
+                    Side.SHORT,
+                    7000,
+                    1.1609,
+                    unrealized_pl_jpy=-4647.7,
+                    owner=Owner.TRADER,
+                ),
+            ]
+
+            overridden = _apply_entry_invalidation_overrides(
+                [_assessment(
+                    "short-1",
+                    "SHORT",
+                    verdict="EXTEND",
+                    pattern_score=30.0,
+                    projection_score=25.0,
+                )],
+                positions,
+                quotes_by_pair={"EUR_USD": {"ask": 1.16506, "bid": 1.16498}},
+                pair_charts_full={"EUR_USD": _up_tech_chart()},
+                data_root=Path(td),
+            )
+
+        self.assertEqual(overridden[0].verdict, "HOLD")
+        notes = " ".join(overridden[0].context_notes)
+        self.assertIn("adverse technical loss", notes)
+        self.assertIn("loss-cut deferred", notes)
+        self.assertIn("current prediction stack still supports SHORT", notes)
 
     def test_missing_invalidation_buffer_does_not_cut_profitable_position(self) -> None:
         with tempfile.TemporaryDirectory() as td:
