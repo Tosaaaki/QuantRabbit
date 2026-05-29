@@ -1,9 +1,19 @@
+import os
 import unittest
+from unittest import mock
 
 from tools import slack_cycle_alert
 
 
 class SlackCycleAlertTest(unittest.TestCase):
+    def test_cycle_status_alerts_disabled_by_default(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(slack_cycle_alert._cycle_status_alerts_enabled())
+
+    def test_cycle_status_alerts_require_explicit_opt_in(self) -> None:
+        with mock.patch.dict(os.environ, {"QR_SLACK_CYCLE_STATUS_ALERT_ENABLE": "1"}, clear=True):
+            self.assertTrue(slack_cycle_alert._cycle_status_alerts_enabled())
+
     def test_contaminated_pending_cleanup_stays_quiet(self) -> None:
         self.assertFalse(slack_cycle_alert._is_alert_status("CANCELED_CONTAMINATED_PENDING"))
 

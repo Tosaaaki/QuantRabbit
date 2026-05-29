@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Post cycle anomalies (BLOCKED status / new gap reports) to Slack `#qr-commands`.
+"""Post new gap reports to Slack `#qr-commands`.
 
 Reads:
 - `docs/autotrade_cycle_report.md` — parses the front-matter bullets to
-  extract `Status`, daily target, and GPT verdict. Posts when status
-  signals a hard block (e.g. anything other than the success / WAIT /
-  HOLD_PROTECTED / SENT / GPT_* family) or when the cycle ended without
-  taking action while the daily target is open and `LIVE_READY` lanes
-  exist (campaign-exposure occupancy hint).
+  extract `Status`, daily target, and GPT verdict. Cycle-status alerts are
+  disabled by default; set `QR_SLACK_CYCLE_STATUS_ALERT_ENABLE=1` to opt in.
 - `docs/gap_report_*.md` — posts when a new gap report appears since the
   marker, citing its severity and 1-line summary.
 
@@ -25,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -171,6 +169,16 @@ def _is_alert_status(status: str | None) -> bool:
         return True
     # Otherwise: unrecognized status → alert (better safe than silent).
     return True
+
+
+def _cycle_status_alerts_enabled() -> bool:
+    return os.environ.get("QR_SLACK_CYCLE_STATUS_ALERT_ENABLE", "").strip() in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }
 
 
 STATUS_DIAGNOSIS: dict[str, str] = {
@@ -330,7 +338,11 @@ def main() -> None:
     if report and report.get("status"):
         last_marker = _read_status_marker()
         marker_value = f"{report.get('generated_at')}|{report.get('status')}"
-        if marker_value != last_marker and _is_alert_status(report["status"]):
+        if (
+            _cycle_status_alerts_enabled()
+            and marker_value != last_marker
+            and _is_alert_status(report["status"])
+        ):
             text = _format_cycle_alert(report)
             if args.dry_run:
                 print(text)
