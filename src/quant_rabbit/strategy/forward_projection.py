@@ -65,6 +65,11 @@ BB_SQUEEZE_BONUS = float(os.environ.get("QR_BB_SQUEEZE_BONUS", "8.0"))
 # Liquidity sweep
 LIQUIDITY_SWEEP_DISTANCE_ATR_MULT = float(os.environ.get("QR_LIQ_SWEEP_DIST_ATR", "0.5"))
 LIQUIDITY_SWEEP_BONUS = float(os.environ.get("QR_LIQ_SWEEP_BONUS", "12.0"))
+# Sweep targets inside the current operating noise are not forecasts; they are
+# ordinary spread / micro-candle wobble. A quarter of the view ATR keeps the
+# sweep target inside the existing 0.5 ATR "near enough to matter" window while
+# filtering sub-noise 0.x-pip equal highs/lows that inflated fade confidence.
+LIQUIDITY_SWEEP_MIN_DISTANCE_ATR_MULT = float(os.environ.get("QR_LIQ_SWEEP_MIN_DIST_ATR", "0.25"))
 
 # News catalyst
 NEWS_LOOKAHEAD_MIN = float(os.environ.get("QR_NEWS_LOOKAHEAD_MIN", "60.0"))  # warn 60 min before
@@ -156,6 +161,9 @@ def _detect_liquidity_sweep_target(view: Dict[str, Any], tf: str, current_price:
         return []
     pip_size = 1.0 / pip_factor
     threshold_distance = LIQUIDITY_SWEEP_DISTANCE_ATR_MULT * atr_pips * pip_size
+    spread_pips = _to_float(ind.get("spread_pips")) or 0.0
+    min_distance_pips = max(spread_pips, LIQUIDITY_SWEEP_MIN_DISTANCE_ATR_MULT * atr_pips)
+    min_distance = min_distance_pips * pip_size
 
     structure = view.get("structure") or {}
     liquidity = structure.get("liquidity") or []
@@ -182,7 +190,7 @@ def _detect_liquidity_sweep_target(view: Dict[str, Any], tf: str, current_price:
     if prices_above:
         nearest = min(prices_above)
         dist = nearest - current_price
-        if dist <= threshold_distance:
+        if min_distance <= dist <= threshold_distance:
             pips_to = dist * pip_factor
             out.append(ProjectionSignal(
                 name="liquidity_sweep_high",
@@ -196,7 +204,7 @@ def _detect_liquidity_sweep_target(view: Dict[str, Any], tf: str, current_price:
     if prices_below:
         nearest = max(prices_below)
         dist = current_price - nearest
-        if dist <= threshold_distance:
+        if min_distance <= dist <= threshold_distance:
             pips_to = dist * pip_factor
             out.append(ProjectionSignal(
                 name="liquidity_sweep_low",

@@ -76,6 +76,30 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         self.assertGreater(long_score, 0.0, long_reasons)
         self.assertLess(short_score, 0.0, short_reasons)
 
+    def test_sweep_inside_operating_noise_is_not_projection_signal(self) -> None:
+        signals = detect_forward_projections(
+            _chart_with_liquidity(side="EQ_HIGH", price=1.1001),
+            pair="EUR_USD",
+            current_price=1.1000,
+            now=_QUIET_SESSION_NOW,
+        )
+
+        self.assertFalse(any(s.name == "liquidity_sweep_high" for s in signals), signals)
+
+    def test_sweep_inside_current_spread_is_not_projection_signal(self) -> None:
+        chart = _chart_with_liquidity(side="EQ_LOW", price=1.0997)
+        chart["views"][0]["indicators"]["atr_pips"] = 0.8
+        chart["views"][0]["indicators"]["spread_pips"] = 4.0
+
+        signals = detect_forward_projections(
+            chart,
+            pair="EUR_USD",
+            current_price=1.1000,
+            now=_QUIET_SESSION_NOW,
+        )
+
+        self.assertFalse(any(s.name == "liquidity_sweep_low" for s in signals), signals)
+
     def test_projection_score_prefers_direction_specific_calibration(self) -> None:
         signals = [
             ProjectionSignal(

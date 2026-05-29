@@ -90,6 +90,7 @@ class RecordTest(unittest.TestCase):
                     "confidence": 0.73,
                     "current_price": 1.1000,
                     "target_price": 1.0950,
+                    "invalidation_price": 1.1030,
                     "horizon_min": 60,
                 },
             )()
@@ -119,6 +120,7 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(entries[0].direction, "DOWN")
             self.assertEqual(entries[0].entry_price, 1.1000)
             self.assertEqual(entries[0].predicted_target_price, 1.0950)
+            self.assertEqual(entries[0].predicted_invalidation_price, 1.1030)
 
 
 class VerifyTest(unittest.TestCase):
@@ -137,6 +139,7 @@ class VerifyTest(unittest.TestCase):
             predicted_target_price=signal.get("target"),
             resolution_window_min=signal.get("window", 20),
             resolution_status="PENDING",
+            predicted_invalidation_price=signal.get("invalidation"),
         )
         from quant_rabbit.strategy.projection_ledger import write_ledger
         write_ledger([entry], root)
@@ -275,6 +278,124 @@ class VerifyTest(unittest.TestCase):
             self.assertEqual(counts["TIMEOUT"], 1)
             self.assertEqual(load_ledger(root)[0].resolution_status, "TIMEOUT")
 
+    def test_directional_forecast_invalidation_before_target_is_miss(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "UP",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.1020,
+            "invalidation": 1.0990,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                            "high": 1.1005,
+                            "low": 1.0988,
+                            "close": 1.0992,
+                        },
+                        {
+                            "timestamp": (emitted + timedelta(minutes=2)).isoformat(),
+                            "high": 1.1022,
+                            "low": 1.0992,
+                            "close": 1.1015,
+                        },
+                    ]
+                },
+            )
+
+            self.assertEqual(counts["MISS"], 1)
+            entry = load_ledger(root)[0]
+            self.assertEqual(entry.resolution_status, "MISS")
+            self.assertIn("invalidation 1.09900 touched before target 1.10200", entry.resolution_evidence)
+
+    def test_directional_forecast_target_before_invalidation_is_hit(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "DOWN",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.0980,
+            "invalidation": 1.1010,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                            "high": 1.1003,
+                            "low": 1.0978,
+                            "close": 1.0985,
+                        },
+                        {
+                            "timestamp": (emitted + timedelta(minutes=2)).isoformat(),
+                            "high": 1.1012,
+                            "low": 1.0983,
+                            "close": 1.1008,
+                        },
+                    ]
+                },
+            )
+
+            self.assertEqual(counts["HIT"], 1)
+            entry = load_ledger(root)[0]
+            self.assertEqual(entry.resolution_status, "HIT")
+            self.assertIn("target 1.09800 touched before invalidation 1.10100", entry.resolution_evidence)
+
+    def test_directional_forecast_same_candle_target_and_invalidation_is_miss(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "UP",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.1020,
+            "invalidation": 1.0990,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                            "high": 1.1022,
+                            "low": 1.0988,
+                            "close": 1.1005,
+                        }
+                    ]
+                },
+            )
+
+            self.assertEqual(counts["MISS"], 1)
+            self.assertIn("ordering ambiguous", load_ledger(root)[0].resolution_evidence)
+
     def test_pending_within_window(self) -> None:
         # Emitted just now with 60-min window → still pending
         tmp, root = self._setup({"window": 60}, ts_offset_min=10)
@@ -365,6 +486,23 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(hr["directional_forecast"]["EUR_USD:TREND"]["hit_rate"], 0.5)
             self.assertAlmostEqual(hr["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"], 0.0)
             self.assertAlmostEqual(hr["directional_forecast_down"]["EUR_USD:TREND"]["hit_rate"], 1.0)
+
+    def test_legacy_directional_forecast_without_invalidation_is_not_calibration_sample(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            write_ledger([
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                    pair="EUR_USD", signal_name="directional_forecast", direction="UP",
+                    lead_time_min=60, confidence=0.7,
+                    entry_price=1.0, predicted_target_price=1.01,
+                    resolution_window_min=60, resolution_status="HIT",
+                    regime_at_emission="TREND",
+                )
+            ], root)
+
+            self.assertEqual(compute_hit_rates(root), {})
 
     def test_detector_hit_rates_are_split_by_direction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

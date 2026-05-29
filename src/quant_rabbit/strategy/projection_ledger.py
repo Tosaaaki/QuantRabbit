@@ -6,7 +6,8 @@ Every `ProjectionSignal` emitted by `forward_projection.py` is recorded
 to `data/projection_ledger.jsonl` at emission time with:
 - timestamp_emitted_utc, pair, signal_name, direction, lead_time_min
 - entry_price (current price when prediction was made)
-- predicted_target_price (for liquidity sweep) or None (for EITHER)
+- predicted_target_price (for liquidity sweep / directional forecast) or None (for EITHER)
+- predicted_invalidation_price for synthesized directional forecasts
 - resolution_window_min = lead_time_min × 2 (give the move 2x slack)
 - resolution_status = "PENDING" initially
 
@@ -21,6 +22,9 @@ mean-reverted is still counted correctly:
   signal direction is the post-sweep fade / entry direction, so target
   side is derived from `signal_name` (`*_high` uses window high,
   `*_low` uses window low).
+- For directional_forecast with both target and invalidation: whichever
+  level touches first wins. Invalidation-first is MISS even if the target
+  prints later; same-candle ambiguity is treated as MISS for calibration.
 
 Resolved entries get tagged HIT / MISS / TIMEOUT. Rolling hit-rate per
 `(signal_name, pair, regime, direction)` is then queryable by `confidence_calibration()`
@@ -71,6 +75,7 @@ class LedgerEntry:
     predicted_target_price: Optional[float]
     resolution_window_min: float
     resolution_status: str  # "PENDING" | "HIT" | "MISS" | "TIMEOUT"
+    predicted_invalidation_price: Optional[float] = None
     resolved_at_utc: Optional[str] = None
     resolution_evidence: str = ""
     pre_emission_range_pips: Optional[float] = None
@@ -91,6 +96,7 @@ class LedgerEntry:
             "confidence": self.confidence,
             "entry_price": self.entry_price,
             "predicted_target_price": self.predicted_target_price,
+            "predicted_invalidation_price": self.predicted_invalidation_price,
             "resolution_window_min": self.resolution_window_min,
             "resolution_status": self.resolution_status,
             "resolved_at_utc": self.resolved_at_utc,
@@ -113,6 +119,7 @@ class LedgerEntry:
             predicted_target_price=d.get("predicted_target_price"),
             resolution_window_min=float(d.get("resolution_window_min", 0)),
             resolution_status=str(d.get("resolution_status", "PENDING")),
+            predicted_invalidation_price=d.get("predicted_invalidation_price"),
             resolved_at_utc=d.get("resolved_at_utc"),
             resolution_evidence=str(d.get("resolution_evidence", "")),
             pre_emission_range_pips=d.get("pre_emission_range_pips"),
@@ -223,6 +230,11 @@ def record_directional_forecast(
         parsed_target = float(target_price) if target_price is not None else None
     except (TypeError, ValueError):
         parsed_target = None
+    invalidation_price = getattr(forecast, "invalidation_price", None)
+    try:
+        parsed_invalidation = float(invalidation_price) if invalidation_price is not None else None
+    except (TypeError, ValueError):
+        parsed_invalidation = None
     try:
         horizon_min = float(getattr(forecast, "horizon_min", 0) or 0)
     except (TypeError, ValueError):
@@ -252,6 +264,7 @@ def record_directional_forecast(
         predicted_target_price=parsed_target,
         resolution_window_min=horizon_min,
         resolution_status="PENDING",
+        predicted_invalidation_price=parsed_invalidation,
         pre_emission_range_pips=None,
         regime_at_emission=regime_at_emission,
         cycle_id=cycle_id,
@@ -435,7 +448,41 @@ def verify_pending(
             # touch by signal name so sweep_high + DOWN is valid.
             target = e.predicted_target_price
             signal_name = e.signal_name.lower()
-            if "liquidity_sweep_high" in signal_name:
+            if signal_name == "directional_forecast" and e.predicted_invalidation_price is not None:
+                ordered_outcome = _directional_target_invalidation_outcome(
+                    e,
+                    emitted_at=emitted_at,
+                    expires_at=expires_at,
+                    entry_price=entry_price,
+                    candles_by_pair=candles_by_pair,
+                )
+                if ordered_outcome is not None:
+                    status, evidence = ordered_outcome
+                    e.resolution_status = status
+                    e.resolution_evidence = evidence
+                    counts[status] += 1
+                elif _directional_invalidation_touched(e, price_path):
+                    e.resolution_status = "MISS"
+                    e.resolution_evidence = (
+                        "target/invalidation ordering unavailable; invalidation also touched in aggregate window"
+                    )
+                    counts["MISS"] += 1
+                elif e.direction == "UP" and price_path["high"] >= target:
+                    e.resolution_status = "HIT"
+                    e.resolution_evidence = f"window high {price_path['high']:.5f} reached target {target:.5f}"
+                    counts["HIT"] += 1
+                elif e.direction == "DOWN" and price_path["low"] <= target:
+                    e.resolution_status = "HIT"
+                    e.resolution_evidence = f"window low {price_path['low']:.5f} reached target {target:.5f}"
+                    counts["HIT"] += 1
+                else:
+                    e.resolution_status = "MISS"
+                    e.resolution_evidence = (
+                        f"window high/low {price_path['high']:.5f}/{price_path['low']:.5f} "
+                        f"did not reach target {target:.5f}"
+                    )
+                    counts["MISS"] += 1
+            elif "liquidity_sweep_high" in signal_name:
                 if price_path["high"] >= target:
                     e.resolution_status = "HIT"
                     e.resolution_evidence = f"window high {price_path['high']:.5f} reached sweep-high target {target:.5f}"
@@ -540,6 +587,31 @@ def _price_path_for_entry(
 ) -> Optional[dict[str, float]]:
     if candles_by_pair is None:
         return None
+    window = _normalised_candle_window(
+        entry,
+        emitted_at=emitted_at,
+        expires_at=expires_at,
+        candles_by_pair=candles_by_pair,
+    )
+    if not window:
+        return None
+    return {
+        "entry": window[0]["close"],
+        "high": max(item["high"] for item in window),
+        "low": min(item["low"] for item in window),
+        "close": window[-1]["close"],
+    }
+
+
+def _normalised_candle_window(
+    entry: LedgerEntry,
+    *,
+    emitted_at: datetime,
+    expires_at: datetime,
+    candles_by_pair: Optional[Dict[str, List[Any]]],
+) -> list[dict[str, Any]]:
+    if candles_by_pair is None:
+        return []
     candles = candles_by_pair.get(entry.pair) or []
     window = []
     # M1 candles are timestamped at bar open. Include the candle that overlaps
@@ -552,15 +624,83 @@ def _price_path_for_entry(
         ts = norm["timestamp"]
         if overlap_start <= ts <= expires_at:
             window.append(norm)
+    window.sort(key=lambda item: item["timestamp"])
+    return window
+
+
+def _directional_target_invalidation_outcome(
+    entry: LedgerEntry,
+    *,
+    emitted_at: datetime,
+    expires_at: datetime,
+    entry_price: float,
+    candles_by_pair: Optional[Dict[str, List[Any]]],
+) -> Optional[tuple[str, str]]:
+    """Resolve directional forecasts by first target/invalidation touch.
+
+    Aggregate high/low verification inflated calibration because a target touch
+    after invalidation still counted as HIT. Ordered M1 candles are the minimum
+    truth needed to learn whether the forecast was useful before it was wrong.
+    """
+    target = entry.predicted_target_price
+    invalidation = entry.predicted_invalidation_price
+    if target is None or invalidation is None:
+        return None
+    direction = str(entry.direction or "").upper()
+    if direction == "UP":
+        if target <= entry_price:
+            return "MISS", f"invalid UP target geometry target {target:.5f} <= entry {entry_price:.5f}"
+        if invalidation >= entry_price:
+            return "MISS", f"invalid UP invalidation geometry invalidation {invalidation:.5f} >= entry {entry_price:.5f}"
+    elif direction == "DOWN":
+        if target >= entry_price:
+            return "MISS", f"invalid DOWN target geometry target {target:.5f} >= entry {entry_price:.5f}"
+        if invalidation <= entry_price:
+            return "MISS", f"invalid DOWN invalidation geometry invalidation {invalidation:.5f} <= entry {entry_price:.5f}"
+    else:
+        return None
+
+    window = _normalised_candle_window(
+        entry,
+        emitted_at=emitted_at,
+        expires_at=expires_at,
+        candles_by_pair=candles_by_pair,
+    )
     if not window:
         return None
-    window.sort(key=lambda item: item["timestamp"])
-    return {
-        "entry": window[0]["close"],
-        "high": max(item["high"] for item in window),
-        "low": min(item["low"] for item in window),
-        "close": window[-1]["close"],
-    }
+
+    for item in window:
+        target_touched = (
+            item["high"] >= target if direction == "UP" else item["low"] <= target
+        )
+        invalidation_touched = (
+            item["low"] <= invalidation if direction == "UP" else item["high"] >= invalidation
+        )
+        ts = item["timestamp"].isoformat().replace("+00:00", "Z")
+        if target_touched and invalidation_touched:
+            return (
+                "MISS",
+                f"{ts} M1 candle touched target {target:.5f} and invalidation {invalidation:.5f}; "
+                "ordering ambiguous, counted as MISS for calibration",
+            )
+        if invalidation_touched:
+            return "MISS", f"{ts} invalidation {invalidation:.5f} touched before target {target:.5f}"
+        if target_touched:
+            return "HIT", f"{ts} target {target:.5f} touched before invalidation {invalidation:.5f}"
+
+    return "MISS", f"target {target:.5f} not reached before invalidation {invalidation:.5f}"
+
+
+def _directional_invalidation_touched(entry: LedgerEntry, price_path: dict[str, float]) -> bool:
+    invalidation = entry.predicted_invalidation_price
+    if invalidation is None:
+        return False
+    direction = str(entry.direction or "").upper()
+    if direction == "UP":
+        return price_path["low"] <= invalidation
+    if direction == "DOWN":
+        return price_path["high"] >= invalidation
+    return False
 
 
 def _quote_point_path(
@@ -640,7 +780,10 @@ def compute_hit_rates(
     buckets when there aren't enough samples in the granular one.
     """
     entries = load_ledger(data_root)
-    resolved = [e for e in entries if e.resolution_status in ("HIT", "MISS")]
+    resolved = [
+        e for e in entries
+        if e.resolution_status in ("HIT", "MISS") and _calibration_entry_eligible(e)
+    ]
     resolved = resolved[-lookback * 10:]  # rough bound on size
     grouped: Dict[str, Dict[str, List[bool]]] = {}
     for e in resolved:
@@ -663,6 +806,17 @@ def compute_hit_rates(
             hr = sum(1 for r in recent if r) / float(n)
             out[sig][key] = {"hit_rate": round(hr, 3), "samples": n}
     return out
+
+
+def _calibration_entry_eligible(entry: LedgerEntry) -> bool:
+    """Exclude known-ambiguous legacy forecast samples from confidence learning."""
+    if (
+        entry.signal_name == "directional_forecast"
+        and entry.predicted_target_price is not None
+        and entry.predicted_invalidation_price is None
+    ):
+        return False
+    return True
 
 
 def _calibration_signal_names(entry: LedgerEntry) -> tuple[str, ...]:
