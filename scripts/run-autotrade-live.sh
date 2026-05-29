@@ -61,6 +61,9 @@ export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 # trader entries with an entry thesis ledger may execute only hard structural
 # loss-cut exits.
 export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
+# Fresh live entries require a current executable pair forecast. Campaign
+# pressure cannot turn a stale/no-forecast lane into a broker-fillable order.
+export QR_REQUIRE_FORECAST_FOR_LIVE="${QR_REQUIRE_FORECAST_FOR_LIVE:-1}"
 
 readonly QR_AUTOTRADE_LOCK_DIR="${QR_AUTOTRADE_LOCK_DIR:-${ROOT_DIR}/.quant_rabbit_live.lock}"
 readonly QR_LIVE_SYNC_ENABLED="${QR_LIVE_SYNC_ENABLED:-1}"

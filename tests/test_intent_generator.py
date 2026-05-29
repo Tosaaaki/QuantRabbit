@@ -13,6 +13,18 @@ from quant_rabbit.strategy.intent_generator import IntentGenerator
 
 
 class IntentGeneratorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._prior_require_forecast_for_live = os.environ.pop(
+            "QR_REQUIRE_FORECAST_FOR_LIVE",
+            None,
+        )
+
+    def tearDown(self) -> None:
+        if self._prior_require_forecast_for_live is None:
+            os.environ.pop("QR_REQUIRE_FORECAST_FOR_LIVE", None)
+        else:
+            os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = self._prior_require_forecast_for_live
+
     def test_requires_snapshot_before_pricing_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -69,6 +81,37 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET")
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
+
+    def test_live_entry_requires_fresh_forecast_when_live_default_active(self) -> None:
+        prior = os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE")
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+
+                summary = IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_REQUIRE_FORECAST_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = prior
+
+        self.assertEqual(summary.live_ready, 0)
+        self.assertGreater(summary.dry_run_passed, 0)
+        issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+        blockers = [blocker for item in payload["results"] for blocker in item["live_blockers"]]
+        self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertTrue(any("no fresh executable pair forecast" in blocker for blocker in blockers))
 
     def test_watch_only_strategy_profile_cannot_become_live_ready_under_sl_free(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")

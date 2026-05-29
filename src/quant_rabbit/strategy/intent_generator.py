@@ -2243,6 +2243,10 @@ class IntentGenerator:
             # mirror. User 2026-05-11「他の通貨入らないね」.
             if any(issue.get("severity") == "BLOCK" for issue in context_issues):
                 risk_allowed = False
+        forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
+        if forecast_live_issue is not None:
+            risk_issues.append(forecast_live_issue)
+            live_blockers = (*live_blockers, forecast_live_issue["message"])
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -3042,6 +3046,53 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
             f" while this forecast is fresh{tail}."
         ),
         "severity": "BLOCK",
+    }
+
+
+def _forecast_live_readiness_issue(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    method: TradeMethod | None,
+) -> dict[str, str] | None:
+    if not _require_forecast_for_live_active():
+        return None
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    min_confidence = _forecast_seed_min_confidence()
+    if direction not in {"UP", "DOWN", "RANGE"}:
+        return {
+            "code": "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+            "message": (
+                f"{intent.pair} {intent.side.value} has no fresh executable pair forecast; "
+                "fresh entries must be predicted before they can become LIVE_READY."
+            ),
+            "severity": "WARN",
+        }
+    if confidence is None or confidence < min_confidence:
+        return {
+            "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+            "message": (
+                f"{intent.pair} {intent.side.value} forecast {direction} confidence "
+                f"{0.0 if confidence is None else confidence:.2f} < {min_confidence:.2f}; "
+                "do not trade a weak prediction just to satisfy campaign exposure."
+            ),
+            "severity": "WARN",
+        }
+    if direction == "RANGE" and method != TradeMethod.RANGE_ROTATION:
+        return {
+            "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
+            "message": (
+                f"{intent.pair} {intent.side.value} has a RANGE forecast; only executable "
+                "RANGE_ROTATION rail geometry may become LIVE_READY from a RANGE prediction."
+            ),
+            "severity": "WARN",
+        }
+    return None
+
+
+def _require_forecast_for_live_active() -> bool:
+    return os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE", "").strip() in {
+        "1", "true", "TRUE", "yes", "YES",
     }
 
 

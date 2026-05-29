@@ -160,6 +160,10 @@ _SL_FREE_RUNTIME_DEFAULTS: dict[str, str] = {
     # not silently re-introduce noise-band stops.
     "QR_NEW_ENTRY_INITIAL_SL": "0",
     "QR_DISABLE_TRAILING_SL": "1",
+    # Live fresh entries must carry a current executable pair forecast. This
+    # prevents campaign/range coverage lanes from becoming broker-fillable when
+    # the prediction layer is stale, missing, or too weak to justify a side.
+    "QR_REQUIRE_FORECAST_FOR_LIVE": "1",
 }
 
 
