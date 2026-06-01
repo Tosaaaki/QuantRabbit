@@ -1314,8 +1314,10 @@ def _append_forecast_seed_lanes(
     the predictor never got to express that opportunity. This helper inverts
     the first step: every pair in the fresh chart packet gets one pair-level
     forecast, and sufficiently confident forecasts seed same-direction lanes
-    before `max_candidates` is applied. They remain ordinary intents after
-    that point; risk/profile/GPT can still block them.
+    before `max_candidates` is applied. Lower-confidence forecasts are still
+    attached to existing lanes so live readiness can say "weak forecast"
+    instead of pretending forecast context is missing. They remain ordinary
+    intents after that point; risk/profile/GPT can still block them.
     """
     if charts is None or snapshot is None:
         return lanes
@@ -1341,9 +1343,10 @@ def _append_forecast_seed_lanes(
             continue
         direction = str(getattr(forecast, "direction", "") or "").upper()
         confidence = _optional_float(getattr(forecast, "confidence", None))
+        if direction in {"UP", "DOWN", "RANGE"} and confidence is not None:
+            forecasts_by_pair[pair] = forecast
         if confidence is None or confidence < _forecast_seed_min_confidence():
             continue
-        forecasts_by_pair[pair] = forecast
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
             continue
@@ -2475,6 +2478,14 @@ def _intent_from_lane(
         stop_widen_mult=stop_widen_mult,
         chart_context=chart_context,
     )
+    position_metadata = _position_intent_metadata(pair, side, snapshot)
+    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
+        position_metadata.update(_hedge_timing_metadata(side, position_metadata, chart_context, lane))
+    recovery_target_units: int | None = None
+    if _is_hedge_recovery_metadata(position_metadata):
+        recovery_metadata = _recovery_hedge_sizing_metadata(side, position_metadata, chart_context, lane)
+        position_metadata.update(recovery_metadata)
+        recovery_target_units = int(position_metadata.get("hedge_recovery_units") or 0) or None
     tp, tp_execution_metadata = _take_profit_execution_plan(
         pair=pair,
         side=side,
@@ -2492,15 +2503,8 @@ def _intent_from_lane(
         forecast_direction=lane.get("forecast_direction"),
         forecast_confidence=_optional_float(lane.get("forecast_confidence")),
         forecast_target_price=_optional_float(lane.get("forecast_target_price")),
+        hedge_recovery=_is_hedge_recovery_metadata(position_metadata),
     )
-    position_metadata = _position_intent_metadata(pair, side, snapshot)
-    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
-        position_metadata.update(_hedge_timing_metadata(side, position_metadata, chart_context, lane))
-    recovery_target_units: int | None = None
-    if _is_hedge_recovery_metadata(position_metadata):
-        recovery_metadata = _recovery_hedge_sizing_metadata(side, position_metadata, chart_context, lane)
-        position_metadata.update(recovery_metadata)
-        recovery_target_units = int(position_metadata.get("hedge_recovery_units") or 0) or None
     geometry_metadata = _geometry_metadata(
         pair,
         side,
@@ -3036,7 +3040,7 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
     if direction not in {"UP", "DOWN"}:
         return None
     confidence = _optional_float(metadata.get("forecast_confidence"))
-    if confidence is None or confidence < _forecast_seed_min_confidence():
+    if confidence is None or confidence < _forecast_live_min_confidence(metadata):
         return None
     forecast_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
     if forecast_side == intent.side.value:
@@ -3069,7 +3073,7 @@ def _forecast_live_readiness_issue(
         return None
     direction = str(metadata.get("forecast_direction") or "").upper()
     confidence = _optional_float(metadata.get("forecast_confidence"))
-    min_confidence = _forecast_seed_min_confidence()
+    min_confidence = _forecast_live_min_confidence(metadata)
     if direction not in {"UP", "DOWN", "RANGE"}:
         return {
             "code": "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
@@ -3099,6 +3103,16 @@ def _forecast_live_readiness_issue(
             "severity": "WARN",
         }
     return None
+
+
+def _forecast_live_min_confidence(metadata: dict[str, Any]) -> float:
+    entry_min = _forecast_seed_min_confidence()
+    if (
+        _is_hedge_recovery_metadata(metadata)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    ):
+        return min(entry_min, RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE)
+    return entry_min
 
 
 def _telemetry_live_readiness_issues(
@@ -3467,6 +3481,7 @@ def _take_profit_execution_plan(
     forecast_direction: object | None = None,
     forecast_confidence: float | None = None,
     forecast_target_price: float | None = None,
+    hedge_recovery: bool = False,
 ) -> tuple[float, dict[str, Any]]:
     """Return the virtual TP and broker-attachment metadata.
 
@@ -3514,9 +3529,9 @@ def _take_profit_execution_plan(
     if (
         attach_tp
         and target_intent == "HARVEST"
-        and method == TradeMethod.BREAKOUT_FAILURE
+        and (method == TradeMethod.BREAKOUT_FAILURE or hedge_recovery)
         and not structural_target_found
-        and harvest_target_too_far
+        and (harvest_target_too_far or hedge_recovery)
     ):
         fallback_tp, fallback_reason = _attached_harvest_floor_tp_candidate(
             pair=pair,

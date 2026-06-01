@@ -654,6 +654,129 @@ class IntentGeneratorTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
+    def test_below_entry_forecast_still_marks_existing_lanes_as_forecast_context(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.51,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="UP forecast below fresh-entry threshold",
+                drivers_for=("pair_chart LONG_LEAN",),
+                drivers_against=("confidence below entry gate",),
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                summary = IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.72,
+                        short_score=0.28,
+                        dominant_regime="TREND_UP",
+                        m5_regime="TREND_UP",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+        issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+
+        self.assertEqual(summary.live_ready, 0)
+        self.assertIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertNotIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertTrue(
+            all(
+                item["intent"]["metadata"]["forecast_direction"] == "UP"
+                and item["intent"]["metadata"]["forecast_confidence"] == 0.51
+                and not item["intent"]["metadata"]["forecast_seed"]
+                for item in payload["results"]
+                if item["intent"]["pair"] == "EUR_USD"
+            )
+        )
+
+    def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import (
+            _forecast_live_readiness_issue,
+            _method_context_issues,
+        )
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        recovery_metadata = {
+            "position_intent": "HEDGE",
+            "hedge_recovery": True,
+            "hedge_timing_class": "REVERSAL",
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.51,
+            "forecast_target_price": 1.1762,
+            "forecast_invalidation_price": 1.1718,
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="reversal recovery hedge",
+            market_context=MarketContext(
+                regime="UNCLEAR current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=recovery_metadata,
+        )
+
+        fresh_entry_issue = _forecast_live_readiness_issue(
+            OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.STOP_ENTRY,
+                units=5000,
+                entry=1.1734,
+                tp=1.1762,
+                sl=1.1718,
+                thesis="fresh entry",
+                market_context=intent.market_context,
+                metadata={**recovery_metadata, "position_intent": "NEW", "hedge_recovery": False},
+            ),
+            {**recovery_metadata, "position_intent": "NEW", "hedge_recovery": False},
+            TradeMethod.TREND_CONTINUATION,
+        )
+
+        self.assertIsNone(_forecast_live_readiness_issue(intent, recovery_metadata, TradeMethod.TREND_CONTINUATION))
+        self.assertEqual(fresh_entry_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+
+        opposed = OrderIntent(
+            pair="EUR_USD",
+            side=Side.SHORT,
+            order_type=OrderType.STOP_ENTRY,
+            units=5000,
+            entry=1.1730,
+            tp=1.1700,
+            sl=1.1750,
+            thesis="opposed reversal recovery hedge",
+            market_context=intent.market_context,
+            metadata=recovery_metadata,
+        )
+        opposed_codes = {issue["code"] for issue in _method_context_issues(opposed)}
+        self.assertIn("FORECAST_DIRECTION_CONFLICT", opposed_codes)
+
     def test_blocks_chart_direction_conflict_before_live_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -978,6 +1101,114 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(metadata["tp_target_distance_pips"], 27.4)
         self.assertEqual(metadata["virtual_take_profit_reward_risk"], 0.601)
         self.assertIn("structural anchor missing", metadata["tp_target_reason"])
+
+    def test_recovery_hedge_missing_harvest_structure_uses_operating_floor_tp(self) -> None:
+        from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _take_profit_execution_plan
+
+        tp, metadata = _take_profit_execution_plan(
+            pair="EUR_USD",
+            side=Side.LONG,
+            method=TradeMethod.TREND_CONTINUATION,
+            order_type=OrderType.STOP_ENTRY,
+            quote=Quote(pair="EUR_USD", bid=1.16264, ask=1.16272),
+            entry=1.16288,
+            tp=1.17200,
+            sl=1.16220,
+            reward_risk=4.2,
+            execution_regime="UNCLEAR",
+            chart_context={"range_24h_sigma_multiple": 2.8},
+            pair_chart={
+                "pair": "EUR_USD",
+                "views": [{"granularity": "M5", "indicators": {"atr_pips": 6.8}}],
+            },
+            atr_pips=6.8,
+            hedge_recovery=True,
+        )
+
+        self.assertEqual(tp, 1.16329)
+        self.assertEqual(metadata["tp_target_source"], "OPERATING_HARVEST_FLOOR")
+        self.assertLessEqual(metadata["tp_target_distance_pips"], 27.2)
+        self.assertIn("structural anchor missing", metadata["tp_target_reason"])
+
+    def test_recovery_hedge_intent_passes_recovery_state_into_tp_plan(self) -> None:
+        from quant_rabbit.models import (
+            AccountSummary,
+            BrokerPosition,
+            BrokerSnapshot,
+            OrderType,
+            Owner,
+            Quote,
+            Side,
+        )
+        from quant_rabbit.strategy.intent_generator import _intent_from_lane, _method_context_issues
+
+        now = datetime.now(timezone.utc)
+        quote = Quote(pair="EUR_USD", bid=1.16264, ask=1.16272, timestamp_utc=now)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            positions=(
+                BrokerPosition(
+                    trade_id="trapped-short",
+                    pair="EUR_USD",
+                    side=Side.SHORT,
+                    units=22_000,
+                    entry_price=1.15800,
+                    unrealized_pl_jpy=-23_000.0,
+                    owner=Owner.TRADER,
+                ),
+            ),
+            orders=(),
+            quotes={
+                "EUR_USD": quote,
+                "USD_JPY": Quote(pair="USD_JPY", bid=156.64, ask=156.648, timestamp_utc=now),
+            },
+            account=AccountSummary(
+                nav_jpy=200_000.0,
+                balance_jpy=220_000.0,
+                margin_used_jpy=120_000.0,
+                margin_available_jpy=80_000.0,
+                hedging_enabled=True,
+                fetched_at_utc=now,
+            ),
+            home_conversions={"USD": 156.64},
+        )
+        intent = _intent_from_lane(
+            {
+                "desk": "trend_trader",
+                "pair": "EUR_USD",
+                "direction": "LONG",
+                "method": "TREND_CONTINUATION",
+                "adoption": "RISK_REPAIR_DRY_RUN",
+                "campaign_role": "NOW_IF_REPAIRED",
+                "reason": "reversal recovery hedge",
+                "required_receipt": "dry-run under loss cap",
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.51,
+                "forecast_target_price": 1.1662,
+                "forecast_invalidation_price": 1.1618,
+            },
+            quote,
+            snapshot,
+            max_loss_jpy=500.0,
+            atr_pips=6.8,
+            order_type_override=OrderType.STOP_ENTRY,
+            regime_state="UNCLEAR",
+            chart_context={"range_24h_sigma_multiple": 2.8},
+            pair_chart={
+                "pair": "EUR_USD",
+                "views": [{"granularity": "M5", "indicators": {"atr_pips": 6.8}}],
+            },
+        )
+
+        self.assertEqual(intent.metadata["position_intent"], "HEDGE")
+        self.assertTrue(intent.metadata["hedge_recovery"])
+        self.assertEqual(intent.metadata["hedge_timing_class"], "REVERSAL")
+        self.assertEqual(intent.metadata["tp_target_source"], "OPERATING_HARVEST_FLOOR")
+        self.assertNotIn(
+            "HARVEST_TP_STRUCTURE_MISSING",
+            {issue["code"] for issue in _method_context_issues(intent)},
+        )
 
     def test_strong_trend_uses_runner_no_broker_tp_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
