@@ -1234,7 +1234,12 @@ class TraderBrain:
                 blockers.append(f"strategy profile is {profile_status}")
         else:
             score -= 40.0
-            blockers.append("missing strategy profile")
+            if status == "LIVE_READY" and _trader_sl_repair_disabled():
+                rationale.append(
+                    "missing strategy profile; current live-ready receipt remains executable under SL-free"
+                )
+            else:
+                blockers.append("missing strategy profile")
 
         pretrade_net = float(strategy.get("pretrade_net_jpy") or 0.0)
         live_net = float(strategy.get("live_net_jpy") or 0.0)
@@ -1417,10 +1422,12 @@ class TraderBrain:
         # ai_attack_advice.recommended_now_lane_ids gets a flat bonus +
         # rationale so it edges past unadvised peers at score parity. The
         # promotion never overrides §11 hard blocks (BLOCK_UNTIL_NEW_EVIDENCE,
-        # missing strategy profile, missing receipt, exposure blockers) —
-        # those still keep the lane out of SEND_ENTRY. The bonus only applies
-        # when status == "LIVE_READY"; lanes that intent_generator already
-        # demoted stay demoted.
+        # missing executable receipt, exposure blockers) — those still keep
+        # the lane out of SEND_ENTRY. Missing mined history for a fully current
+        # LIVE_READY forecast-first lane is advisory under SL-free, otherwise a
+        # new pair can never generate the evidence it lacks. The bonus only
+        # applies when status == "LIVE_READY"; lanes that intent_generator
+        # already demoted stay demoted.
         if attack_ranks and status == "LIVE_READY" and lane_id in attack_ranks:
             rank = attack_ranks[lane_id]
             score += ATTACK_ADVICE_PROMOTION_BONUS
@@ -1516,11 +1523,19 @@ class TraderBrain:
 
         technical_opposition = technical_invalidation_confirmation_reason(pa_chart_for_timing, side=direction)
         if technical_opposition and status == "LIVE_READY":
-            blockers.append(
-                "technical_entry_opposed: operating-timeframe chart/technicals oppose entry; wait for confirmed rejection before sending"
-            )
-            score -= 90.0
-            rationale.insert(0, f"technical hard block: {technical_opposition}")
+            if order_type.upper() == "MARKET":
+                blockers.append(
+                    "technical_entry_opposed: operating-timeframe chart/technicals oppose entry; wait for confirmed rejection before sending"
+                )
+                score -= 90.0
+                rationale.insert(0, f"technical hard block: {technical_opposition}")
+            else:
+                score -= 12.0
+                rationale.insert(
+                    0,
+                    "technical caution: "
+                    f"{technical_opposition}; pending trigger/retest must confirm before fill",
+                )
 
         # Module C: daily-review overrides (lane_id blocks + (pair, direction)
         # score bias). Empty overrides → no-op. Expired overrides already
@@ -2948,6 +2963,8 @@ def _discretionary_gate_check(
     else:
         blockers.append(f"receipt is not live-ready: {status}")
 
+    sl_free_live_ready = status == "LIVE_READY" and _trader_sl_repair_disabled()
+
     if profile_status == "CANDIDATE":
         judgment.append("strategy profile is live-eligible")
     elif profile_status:
@@ -2966,7 +2983,10 @@ def _discretionary_gate_check(
         else:
             blockers.append(f"strategy profile is not live-eligible: {profile_status}")
     else:
-        blockers.append("missing strategy profile")
+        if sl_free_live_ready:
+            judgment.append("missing strategy profile is advisory under SL-free; current live-ready receipt remains executable")
+        else:
+            blockers.append("missing strategy profile")
 
     if not str(intent.get("thesis") or "").strip():
         blockers.append("missing trader thesis")
@@ -2989,7 +3009,8 @@ def _discretionary_gate_check(
     if int(intent.get("units") or 0) <= 0:
         blockers.append("missing executable units")
 
-    adoption = str(lane.get("adoption") or "")
+    metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+    adoption = str(lane.get("adoption") or metadata.get("adoption") or "")
     if adoption in {"ORDER_INTENT_REQUIRED", "RISK_REPAIR_DRY_RUN", "TRIGGER_RECEIPT_REQUIRED"}:
         judgment.append(f"campaign lane is executable after receipts: {adoption}")
     elif adoption and _trader_sl_repair_disabled():
@@ -3001,7 +3022,10 @@ def _discretionary_gate_check(
         # branches above. Without SL-free the legacy hard block remains.
         judgment.append(f"campaign lane adoption is {adoption} (advisory under SL-free)")
     else:
-        blockers.append(f"campaign lane is not executable: {adoption or 'missing'}")
+        if sl_free_live_ready:
+            judgment.append("campaign lane adoption is missing from plan but current receipt is live-ready")
+        else:
+            blockers.append(f"campaign lane is not executable: {adoption or 'missing'}")
 
     pretrade_net = float(strategy.get("pretrade_net_jpy") or 0.0)
     live_net = float(strategy.get("live_net_jpy") or 0.0)
@@ -3009,7 +3033,7 @@ def _discretionary_gate_check(
         judgment.append("mined or repaired edge evidence is positive")
     elif status == "LIVE_READY" and (
         profile_status == "CANDIDATE"
-        or (profile_status and _trader_sl_repair_disabled())
+        or _trader_sl_repair_disabled()
     ):
         # Under SL-free, the per_trade cap (`per_trade_risk_budget_jpy`)
         # bounds the loss, so a LIVE_READY receipt with a non-CANDIDATE
@@ -3029,6 +3053,8 @@ def _discretionary_gate_check(
         or str(strategy.get("status")) == "CANDIDATE"
     ):
         judgment.append("market story is weak, but evidence is strong enough to keep under review")
+    elif method and sl_free_live_ready:
+        judgment.append("market story method pressure is weak, but current live-ready receipt remains executable")
     else:
         blockers.append("market story does not support the selected method")
     return blockers, judgment

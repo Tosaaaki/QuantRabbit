@@ -111,6 +111,32 @@ class AutoTradeCycleTest(unittest.TestCase):
 
         self.assertFalse(_passes_gpt_prefilter(score))
 
+    def test_live_ready_advisory_history_blockers_remain_gpt_prefilter_eligible(self) -> None:
+        score = LaneScore(
+            lane_id="trend_trader:NZD_CHF:LONG:TREND_CONTINUATION",
+            pair="NZD_CHF",
+            direction="LONG",
+            method="TREND_CONTINUATION",
+            order_type="STOP-ENTRY",
+            entry=0.46789,
+            tp=0.46935,
+            sl=0.46699,
+            status="LIVE_READY",
+            score=20.45,
+            action=ACTION_NO_TRADE,
+            blockers=(
+                "missing strategy profile",
+                "campaign lane is not executable: missing",
+                "no positive mined or repaired edge evidence",
+                "market story does not support the selected method",
+            ),
+            rationale=(),
+            size_multiple=0.9,
+            estimated_margin_jpy=3_820.0,
+        )
+
+        self.assertTrue(_passes_gpt_prefilter(score))
+
     def test_recovery_hedge_gpt_selection_can_bypass_empty_prefilter(self) -> None:
         lane_id = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
         payload = {

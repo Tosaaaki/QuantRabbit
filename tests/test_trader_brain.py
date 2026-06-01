@@ -865,6 +865,71 @@ class TraderBrainTest(unittest.TestCase):
             self.assertTrue(any("technical_entry_opposed" in blocker for blocker in score.blockers))
             self.assertTrue(any("technical hard block" in item for item in score.rationale))
 
+    def test_live_ready_pending_trigger_not_vetoed_by_missing_profile_or_current_technical_opposition(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                lane_id = "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION"
+                lane = _result(lane_id, "EUR_USD", "SHORT", "TREND_CONTINUATION")
+                lane["intent"] = {
+                    **lane["intent"],
+                    "metadata": {
+                        **lane["intent"].get("metadata", {}),
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                    },
+                }
+                intents_path = root / "intents.json"
+                intents_path.write_text(json.dumps({"results": [lane]}))
+                strategy_path = root / "strategy.json"
+                strategy_path.write_text(
+                    json.dumps(
+                        {
+                            "system_contract": {
+                                "loss_cap_jpy": 500.0,
+                                "loss_cap_source": "test current campaign cap",
+                            },
+                            "profiles": [],
+                        }
+                    )
+                )
+                empty_story_path = root / "stories.json"
+                empty_story_path.write_text(json.dumps({"pair_profiles": []}))
+                empty_campaign_path = root / "campaign.json"
+                empty_campaign_path.write_text(json.dumps({"lanes": []}))
+
+                brain = TraderBrain(
+                    intents_path=intents_path,
+                    campaign_plan_path=empty_campaign_path,
+                    strategy_profile_path=strategy_path,
+                    market_story_profile_path=empty_story_path,
+                    target_state_path=root / "missing_target.json",
+                    trader_settings_path=root / "settings.json",
+                    attack_advice_path=root / "missing_attack_advice.json",
+                    pair_charts_path=_technical_opposition_pair_charts(root),
+                    output_path=root / "decision.json",
+                    report_path=root / "decision.md",
+                )
+
+                decision = brain.run(_snapshot())
+
+                score = next(item for item in decision.scores if item.lane_id == lane_id)
+                self.assertEqual(score.action, ACTION_SEND_ENTRY)
+                self.assertEqual(decision.selected_lane_id, lane_id)
+                blocker_text = " ".join(score.blockers)
+                self.assertNotIn("missing strategy profile", blocker_text)
+                self.assertNotIn("campaign lane is not executable", blocker_text)
+                self.assertNotIn("no positive mined or repaired edge evidence", blocker_text)
+                self.assertNotIn("market story does not support", blocker_text)
+                self.assertNotIn("technical_entry_opposed", blocker_text)
+                self.assertTrue(any("technical caution" in item for item in score.rationale))
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
     def test_historical_worst_loss_is_scaled_by_current_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

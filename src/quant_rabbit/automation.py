@@ -105,12 +105,14 @@ def _buffered_basket_margin_budget_jpy(
 
 # Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
 # only hard reasons to keep a LIVE_READY lane out of the GPT prefilter set.
-# Anything else (mining edge quality, narrative, capture-rate caution) is a
-# discretionary penalty that already sizes the lane down through score →
-# size_multiple, and must not be re-stacked as a prose veto. These patterns
-# are matched as substrings (case-sensitive) against LaneScore.blockers — they
-# come from `_score_lane`, `_discretionary_gate_check`, and
-# `_exposure_blockers` in `quant_rabbit.strategy.trader_brain`.
+# Anything else (missing mined history, narrative caution, capture-rate
+# caution, campaign-plan drift) is a discretionary penalty that already sizes
+# the lane down through score → size_multiple, and must not be re-stacked as a
+# prose veto after IntentGenerator has emitted a current LIVE_READY receipt.
+# These patterns are matched as substrings (case-sensitive) against
+# LaneScore.blockers — they come from `_score_lane`,
+# `_discretionary_gate_check`, and `_exposure_blockers` in
+# `quant_rabbit.strategy.trader_brain`.
 _PREFILTER_HARD_BLOCKER_PATTERNS = (
     # §7 lane completeness — every executable lane must include thesis,
     # context, geometry, and units; missing any is a hard veto.
@@ -119,10 +121,11 @@ _PREFILTER_HARD_BLOCKER_PATTERNS = (
     "incomplete market context",
     "missing TP/SL geometry",
     "missing executable units",
-    # §11 strategy receipts — profile / lane gating.
-    "missing strategy profile",
+    # §11 strategy receipts — explicit non-live eligibility remains hard.
+    # A fully LIVE_READY receipt with no mined profile is advisory only under
+    # SL-free live mode; otherwise the first valid forecast-first lane for a
+    # new pair can never reach the gateway and refresh its own evidence.
     "strategy profile is not live-eligible",
-    "campaign lane is not executable",
     # §9 lane status — anything not LIVE_READY shouldn't be in the set anyway,
     # but keep an explicit guard.
     "intent status is",
