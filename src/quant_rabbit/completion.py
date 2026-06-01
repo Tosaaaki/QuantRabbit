@@ -107,6 +107,7 @@ class CompletionAuditor:
             positions=positions,
             pending_entries=pending_entries,
             live_ready=live_ready,
+            remaining_target=remaining_target,
             close_recommendations=close_recommendations,
             close_authorization_fresh=close_authorization_fresh,
             coverage=coverage,
@@ -213,8 +214,8 @@ class CompletionAuditor:
                 "## Completion Contract",
                 "",
                 "- Completion requires broker truth, live-ready coverage, execution replay, learning receipts, and dry-run certification to pass together.",
-                "- Only unprotected trader-owned, external, over-budget, or trader/external pending-entry exposure blocks fresh entries; manual/tagless operator exposure is TP-managed only.",
-                "- Protected trader-owned exposure may add only through portfolio risk validation.",
+                "- Only unprotected trader-owned, external, or over-budget exposure blocks fresh entries; manual/tagless operator exposure is TP-managed only.",
+                "- Protected trader-owned exposure and trader-owned pending entries may add only through basket portfolio risk validation.",
                 "- The 10% daily target remains a risk-bounded product KPI, not permission to force trades.",
             ]
         )
@@ -256,11 +257,18 @@ def _blockers(
                 f"unprotected, external, or non-trader broker exposure blocks fresh entries: {summaries}",
             )
         )
-    if pending_entries:
+    blocking_pending_entries = _blocking_pending_entries(pending_entries, remaining_target=remaining_target)
+    if blocking_pending_entries:
         summaries = ", ".join(
-            f"{item.get('pair')} {item.get('order_type')} id={item.get('order_id')}" for item in pending_entries[:3]
+            f"{item.get('pair')} {item.get('order_type')} id={item.get('order_id')}"
+            for item in blocking_pending_entries[:3]
         )
-        blockers.append(_item("PENDING_ENTRY_OPEN", f"pending entry orders must be resolved before fresh entries: {summaries}"))
+        blockers.append(
+            _item(
+                "PENDING_ENTRY_BLOCKED",
+                "pending entry orders must be resolved before fresh entries: " + summaries,
+            )
+        )
     if remaining_target > 0 and live_ready <= 0:
         blockers.append(_item("NO_LIVE_READY_INTENTS", "no LIVE_READY order intents are available"))
     if close_recommendations:
@@ -326,6 +334,7 @@ def _next_actions(
     positions: list[Any],
     pending_entries: list[dict[str, Any]],
     live_ready: int,
+    remaining_target: float,
     close_recommendations: list[dict[str, Any]],
     close_authorization_fresh: bool,
     coverage: dict[str, Any],
@@ -347,7 +356,18 @@ def _next_actions(
             )
         )
     if pending_entries:
-        actions.append(_item("RESOLVE_PENDING_ENTRIES", "cancel or adopt stale pending entries through the autotrade gateway path"))
+        blocking_pending_entries = _blocking_pending_entries(pending_entries, remaining_target=remaining_target)
+        if blocking_pending_entries:
+            actions.append(
+                _item("RESOLVE_PENDING_ENTRIES", "cancel or adopt stale pending entries through the autotrade gateway path")
+            )
+        else:
+            actions.append(
+                _item(
+                    "BASKET_VALIDATE_PENDING_ENTRIES",
+                    "keep compatible trader-owned pending entries and count them in LiveOrderGateway basket risk/margin validation",
+                )
+            )
     if live_ready <= 0:
         actions.append(_item("BUILD_LIVE_READY_RECEIPTS", "generate risk-valid receipts after broker exposure is flat; promote only receipts that clear risk/profile blockers"))
     if close_recommendations:
@@ -413,6 +433,16 @@ def _pending_entries(broker: dict[str, Any]) -> list[dict[str, Any]]:
         and not _is_operator_managed_manual(item)
         and str(item.get("order_type") or "").upper() in pending_types
     ]
+
+
+def _blocking_pending_entries(pending_entries: list[dict[str, Any]], *, remaining_target: float) -> list[dict[str, Any]]:
+    # AGENT_CONTRACT §8: trader-owned pending entries are campaign
+    # occupancy, not a blanket fresh-entry stop. They block completion
+    # only after the target is done, or when the owner is not the trader
+    # and cannot be basket-validated as QuantRabbit risk.
+    if remaining_target <= 0:
+        return list(pending_entries)
+    return [item for item in pending_entries if str(item.get("owner") or "").lower() != "trader"]
 
 
 def _trader_sl_repair_disabled() -> bool:

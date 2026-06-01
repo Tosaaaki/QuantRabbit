@@ -97,6 +97,101 @@ class CompletionAuditorTest(unittest.TestCase):
             payload = json.loads((root / "completion.json").read_text())
             self.assertNotIn("BROKER_EXPOSURE_OPEN", {item["code"] for item in payload["blockers"]})
 
+    def test_trader_pending_entry_does_not_blanket_block_open_campaign(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _complete_fixture(root)
+            files["broker"].write_text(
+                json.dumps(
+                    {
+                        "positions": [],
+                        "orders": [
+                            {
+                                "order_id": "pending-1",
+                                "pair": "GBP_USD",
+                                "order_type": "LIMIT",
+                                "trade_id": None,
+                                "owner": "trader",
+                                "state": "PENDING",
+                            }
+                        ],
+                    }
+                )
+            )
+            files["target"].write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 22000.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            summary = CompletionAuditor(
+                broker_snapshot_path=files["broker"],
+                order_intents_path=files["intents"],
+                target_state_path=files["target"],
+                coverage_path=files["coverage"],
+                replay_backtest_path=files["replay"],
+                execution_replay_path=files["execution"],
+                dry_run_certification_path=files["certification"],
+                live_order_path=files["live_order"],
+                output_path=root / "completion.json",
+                report_path=root / "completion.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COMPLETE")
+            payload = json.loads((root / "completion.json").read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["next_actions"]}
+            self.assertNotIn("PENDING_ENTRY_OPEN", blocker_codes)
+            self.assertNotIn("PENDING_ENTRY_BLOCKED", blocker_codes)
+            self.assertIn("BASKET_VALIDATE_PENDING_ENTRIES", action_codes)
+            self.assertNotIn("RESOLVE_PENDING_ENTRIES", action_codes)
+
+    def test_trader_pending_entry_blocks_after_target_reached(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _complete_fixture(root)
+            files["broker"].write_text(
+                json.dumps(
+                    {
+                        "positions": [],
+                        "orders": [
+                            {
+                                "order_id": "pending-1",
+                                "pair": "GBP_USD",
+                                "order_type": "LIMIT",
+                                "trade_id": None,
+                                "owner": "trader",
+                                "state": "PENDING",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = CompletionAuditor(
+                broker_snapshot_path=files["broker"],
+                order_intents_path=files["intents"],
+                target_state_path=files["target"],
+                coverage_path=files["coverage"],
+                replay_backtest_path=files["replay"],
+                execution_replay_path=files["execution"],
+                dry_run_certification_path=files["certification"],
+                live_order_path=files["live_order"],
+                output_path=root / "completion.json",
+                report_path=root / "completion.md",
+            ).run()
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "completion.json").read_text())
+            blocker_codes = {item["code"] for item in payload["blockers"]}
+            action_codes = {item["code"] for item in payload["next_actions"]}
+            self.assertIn("PENDING_ENTRY_BLOCKED", blocker_codes)
+            self.assertIn("RESOLVE_PENDING_ENTRIES", action_codes)
+
     def test_stale_coverage_does_not_override_current_live_ready_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
