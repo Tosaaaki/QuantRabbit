@@ -1995,10 +1995,10 @@ class IntentGenerator:
         self.risk_equity_jpy = risk_equity_jpy
 
     def run(self, *, snapshot_path: Path | None = None, max_candidates: int = 12) -> IntentGenerationSummary:
-        validation_time_utc = datetime.now(timezone.utc)
         plan = json.loads(self.campaign_plan.read_text())
         lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
+        validation_time_utc = _snapshot_validation_time(snapshot)
         # Load ATR / regime per pair from pair_charts.json before lane
         # expansion. Range phases need different executable tactics:
         # forming/stable boxes get rail LIMIT rotation coverage; confirmed
@@ -4791,6 +4791,15 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
         account=account,
         home_conversions={str(k).upper(): float(v) for k, v in (payload.get("home_conversions") or {}).items()},
     )
+
+
+def _snapshot_validation_time(snapshot: BrokerSnapshot | None) -> datetime:
+    if snapshot is None:
+        return datetime.now(timezone.utc)
+    fetched_at = getattr(snapshot, "fetched_at_utc", None)
+    if isinstance(fetched_at, datetime):
+        return fetched_at.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
 
 
 def _account_summary_from_payload(payload: object):

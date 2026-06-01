@@ -144,6 +144,10 @@ PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+# Resolve expired forward-projection telemetry before intent pricing. Fresh
+# entries cannot become LIVE_READY while old PENDING predictions are past
+# their resolution window because the next trade would not be auditable.
+PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice

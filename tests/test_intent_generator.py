@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -239,6 +239,73 @@ class IntentGeneratorTest(unittest.TestCase):
                 for issue in item["risk_issues"]
             )
         )
+
+    def test_snapshot_packet_time_prevents_self_stale_intents(self) -> None:
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                fetched_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+                quote_at = fetched_at - timedelta(seconds=10)
+                snapshot = _snapshot(
+                    root,
+                    fetched_at_utc=fetched_at.isoformat(),
+                    quote_timestamp_utc=quote_at.isoformat(),
+                )
+                _write_forecast_telemetry(root, direction="DOWN", confidence=0.91)
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with (
+                    patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                ):
+                    summary = IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.46,
+                            short_score=0.54,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=snapshot)
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+        stale_codes = {
+            issue["code"]
+            for item in short_results
+            for issue in item["risk_issues"]
+            if issue["code"] == "STALE_QUOTE"
+        }
+        self.assertGreater(summary.live_ready, 0)
+        self.assertFalse(stale_codes)
 
     def test_watch_only_strategy_profile_cannot_become_live_ready_under_sl_free(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
@@ -2117,9 +2184,12 @@ def _snapshot(
     balance_jpy: float = 200_000.0,
     margin_used_jpy: float = 0.0,
     margin_available_jpy: float = 200_000.0,
+    fetched_at_utc: str | None = None,
+    quote_timestamp_utc: str | None = None,
 ) -> Path:
     path = root / "snapshot.json"
-    now = datetime.now(timezone.utc).isoformat()
+    now = fetched_at_utc or datetime.now(timezone.utc).isoformat()
+    quote_time = quote_timestamp_utc or now
     path.write_text(
         json.dumps(
             {
@@ -2127,8 +2197,8 @@ def _snapshot(
                 "positions": [],
                 "orders": [],
                 "quotes": {
-                    "EUR_USD": {"bid": eur_bid, "ask": eur_ask, "timestamp_utc": now},
-                    "USD_JPY": {"bid": usd_jpy, "ask": usd_jpy + 0.008, "timestamp_utc": now},
+                    "EUR_USD": {"bid": eur_bid, "ask": eur_ask, "timestamp_utc": quote_time},
+                    "USD_JPY": {"bid": usd_jpy, "ask": usd_jpy + 0.008, "timestamp_utc": quote_time},
                 },
                 "account": {
                     "nav_jpy": nav_jpy,
