@@ -32,10 +32,11 @@ from __future__ import annotations
 
 import json
 import os
+import fcntl
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, IO, List, Optional
 
 from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
 
@@ -92,8 +93,6 @@ def record_forecast(
     path = data_root / HISTORY_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     pair = getattr(forecast, "pair", "")
-    if cycle_id and _history_has_cycle_pair(path, cycle_id=cycle_id, pair=pair):
-        return False
     now = now or datetime.now(timezone.utc)
     entry = {
         "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
@@ -114,8 +113,15 @@ def record_forecast(
         "drivers_against": list(getattr(forecast, "drivers_against", ()) or ()),
         "rationale_summary": getattr(forecast, "rationale_summary", ""),
     }
-    with path.open("a", encoding="utf-8") as f:
+    with path.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        if cycle_id and _history_handle_has_cycle_pair(f, cycle_id=cycle_id, pair=pair):
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            return False
+        f.seek(0, os.SEEK_END)
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        f.flush()
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
 
 
@@ -131,6 +137,21 @@ def _history_has_cycle_pair(path: Path, *, cycle_id: str, pair: str) -> bool:
                 return True
     except (OSError, json.JSONDecodeError):
         return False
+    return False
+
+
+def _history_handle_has_cycle_pair(handle: IO[str], *, cycle_id: str, pair: str) -> bool:
+    """Check idempotency under the same file lock used for append."""
+    handle.seek(0)
+    for line in handle:
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if item.get("cycle_id") == cycle_id and item.get("pair") == pair:
+            return True
     return False
 
 

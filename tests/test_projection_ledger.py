@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from quant_rabbit.strategy.projection_ledger import (
     CONFIDENCE_MAX_MULTIPLIER,
@@ -79,6 +81,49 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0].cycle_id, "2026-05-15T00:00:00Z")
 
+    def test_record_projections_dedupes_same_cycle_pair_signal_race(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sig = _Sig("liquidity_sweep_low", "UP", 15, 0.9, 12.0, "M5 equal-lows at 1.16800 (4.0pip down)")
+            thread_count = 6
+            barrier = threading.Barrier(thread_count)
+
+            def stale_precheck(*_args: object, **_kwargs: object) -> set[tuple]:
+                barrier.wait(timeout=5)
+                return set()
+
+            results: list[int] = []
+            errors: list[BaseException] = []
+
+            def worker() -> None:
+                try:
+                    results.append(
+                        record_projections(
+                            [sig],
+                            pair="EUR_USD",
+                            current_price=1.16840,
+                            data_root=root,
+                            cycle_id="cycle-race",
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with mock.patch(
+                "quant_rabbit.strategy.projection_ledger._existing_projection_keys",
+                side_effect=stale_precheck,
+            ):
+                threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(sum(results), 1)
+            entries = load_ledger(root)
+            self.assertEqual(len(entries), 1)
+
     def test_record_directional_forecast_feeds_calibration_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -121,6 +166,61 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(entries[0].entry_price, 1.1000)
             self.assertEqual(entries[0].predicted_target_price, 1.0950)
             self.assertEqual(entries[0].predicted_invalidation_price, 1.1030)
+
+    def test_record_directional_forecast_dedupes_same_cycle_race(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            forecast = type(
+                "Forecast",
+                (),
+                {
+                    "direction": "DOWN",
+                    "confidence": 0.73,
+                    "current_price": 1.1000,
+                    "target_price": 1.0950,
+                    "invalidation_price": 1.1030,
+                    "horizon_min": 60,
+                },
+            )()
+            thread_count = 6
+            barrier = threading.Barrier(thread_count)
+
+            def stale_precheck(*_args: object, **_kwargs: object) -> set[tuple]:
+                barrier.wait(timeout=5)
+                return set()
+
+            results: list[int] = []
+            errors: list[BaseException] = []
+
+            def worker() -> None:
+                try:
+                    results.append(
+                        record_directional_forecast(
+                            forecast,
+                            pair="EUR_USD",
+                            current_price=None,
+                            data_root=root,
+                            regime_at_emission="TREND",
+                            cycle_id="cycle-race",
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with mock.patch(
+                "quant_rabbit.strategy.projection_ledger._existing_projection_keys",
+                side_effect=stale_precheck,
+            ):
+                threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(sum(results), 1)
+            entries = load_ledger(root)
+            self.assertEqual(len(entries), 1)
 
 
 class VerifyTest(unittest.TestCase):

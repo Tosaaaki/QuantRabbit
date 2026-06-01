@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 from quant_rabbit.strategy.forecast_persistence_tracker import (
     assess_position,
@@ -44,6 +46,46 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
 
             self.assertEqual(verdict.verdict, "HOLD")
             self.assertEqual(verdict.last_n_directions, ("DOWN",))
+            rows = (root / "forecast_history.jsonl").read_text().splitlines()
+            self.assertEqual(len(rows), 1)
+
+    def test_duplicate_pair_forecasts_race_counts_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            thread_count = 6
+            barrier = threading.Barrier(thread_count)
+
+            def stale_precheck(*_args: object, **_kwargs: object) -> bool:
+                barrier.wait(timeout=5)
+                return False
+
+            results: list[bool] = []
+            errors: list[BaseException] = []
+
+            def worker() -> None:
+                try:
+                    results.append(
+                        record_forecast(
+                            _forecast("EUR_USD", "DOWN"),
+                            data_root=root,
+                            cycle_id="cycle-race",
+                        )
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with mock.patch(
+                "quant_rabbit.strategy.forecast_persistence_tracker._history_has_cycle_pair",
+                side_effect=stale_precheck,
+            ):
+                threads = [threading.Thread(target=worker) for _ in range(thread_count)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+
+            self.assertEqual(errors, [])
+            self.assertEqual(results.count(True), 1)
             rows = (root / "forecast_history.jsonl").read_text().splitlines()
             self.assertEqual(len(rows), 1)
 

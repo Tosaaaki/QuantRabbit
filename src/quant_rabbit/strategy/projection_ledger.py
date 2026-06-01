@@ -45,10 +45,11 @@ from __future__ import annotations
 import json
 import math
 import os
+import fcntl
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, IO, List, Optional
 
 from quant_rabbit.instruments import instrument_pip_factor
 
@@ -158,8 +159,10 @@ def record_projections(
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     written = 0
-    seen_keys = _existing_projection_keys(data_root, cycle_id=cycle_id, pair=pair) if cycle_id else set()
-    with path.open("a", encoding="utf-8") as f:
+    with path.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        seen_keys = _existing_projection_keys_from_handle(f, cycle_id=cycle_id, pair=pair) if cycle_id else set()
+        f.seek(0, os.SEEK_END)
         for s in signals:
             # Liquidity sweep signals carry an implied target price in
             # the rationale; capture it heuristically when present.
@@ -192,6 +195,8 @@ def record_projections(
             f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
             seen_keys.add(key)
             written += 1
+        f.flush()
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return written
 
 
@@ -251,8 +256,6 @@ def record_directional_forecast(
         entry_price=parsed_entry,
         target_price=parsed_target,
     )
-    if cycle_id and key in _existing_projection_keys(data_root, cycle_id=cycle_id, pair=pair):
-        return 0
     entry = LedgerEntry(
         timestamp_emitted_utc=ts,
         pair=pair,
@@ -271,8 +274,15 @@ def record_directional_forecast(
     )
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
+    with path.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        if cycle_id and key in _existing_projection_keys_from_handle(f, cycle_id=cycle_id, pair=pair):
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            return 0
+        f.seek(0, os.SEEK_END)
         f.write(json.dumps(entry.to_dict(), ensure_ascii=False) + "\n")
+        f.flush()
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return 1
 
 
@@ -319,6 +329,38 @@ def _existing_projection_keys(data_root: Path, *, cycle_id: Optional[str], pair:
                 direction=entry.direction,
                 entry_price=entry.entry_price,
                 target_price=entry.predicted_target_price,
+            )
+        )
+    return keys
+
+
+def _existing_projection_keys_from_handle(
+    handle: IO[str],
+    *,
+    cycle_id: Optional[str],
+    pair: str,
+) -> set[tuple]:
+    if not cycle_id:
+        return set()
+    keys: set[tuple] = set()
+    handle.seek(0)
+    for line in handle:
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if str(item.get("cycle_id") or "") != cycle_id or str(item.get("pair") or "") != pair:
+            continue
+        keys.add(
+            _projection_key(
+                cycle_id=cycle_id,
+                pair=pair,
+                signal_name=str(item.get("signal_name", "")),
+                direction=str(item.get("direction", "")),
+                entry_price=item.get("entry_price"),
+                target_price=item.get("predicted_target_price"),
             )
         )
     return keys
