@@ -210,6 +210,18 @@ RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE = 0.50
 # expectancy by hedge_timing_class once enough receipts exist.
 RECOVERY_HEDGE_CONTINUATION_MAX_SCALE = 0.35
 
+# Projection verification is a cycle preflight, while market-context refresh,
+# broker snapshot, and intent generation can take several minutes. A projection
+# that was still inside its verification window at preflight should not become
+# a global live-entry blocker seconds later in the same cycle. The grace is an
+# execution tolerance, not a forecast-validity extension: projections older
+# than the grace remain BLOCKing until verify-projections resolves them.
+PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_float(
+    "QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS",
+    300.0,
+    minimum=0.0,
+)
+
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
     """Compute reward_risk from current market state.
@@ -3281,7 +3293,8 @@ def _expired_pending_projection_count(*, data_root: Path, validation_time_utc: d
         if emitted is None or window_min is None or window_min <= 0:
             expired += 1
             continue
-        if (now - emitted).total_seconds() >= window_min * 60.0:
+        expiry_age_seconds = (now - emitted).total_seconds() - (window_min * 60.0)
+        if expiry_age_seconds >= PROJECTION_PENDING_EXPIRY_GRACE_SECONDS:
             expired += 1
     return expired
 

@@ -777,6 +777,43 @@ class IntentGeneratorTest(unittest.TestCase):
         opposed_codes = {issue["code"] for issue in _method_context_issues(opposed)}
         self.assertIn("FORECAST_DIRECTION_CONFLICT", opposed_codes)
 
+    def test_projection_expiry_grace_avoids_same_cycle_false_blocker(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _expired_pending_projection_count
+
+        emitted_at = datetime(2026, 6, 1, 6, 56, 21, tzinfo=timezone.utc)
+        row = {
+            "timestamp_emitted_utc": emitted_at.isoformat().replace("+00:00", "Z"),
+            "pair": "EUR_USD",
+            "signal_name": "bb_squeeze_expansion_imminent",
+            "direction": "EITHER",
+            "resolution_window_min": 150.0,
+            "resolution_status": "PENDING",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            (data_root / "projection_ledger.jsonl").write_text(json.dumps(row) + "\n")
+            with patch(
+                "quant_rabbit.strategy.intent_generator.PROJECTION_PENDING_EXPIRY_GRACE_SECONDS",
+                300.0,
+            ):
+                just_after_expiry = emitted_at + timedelta(minutes=150, seconds=60)
+                stale_after_grace = emitted_at + timedelta(minutes=150, seconds=301)
+
+                self.assertEqual(
+                    _expired_pending_projection_count(
+                        data_root=data_root,
+                        validation_time_utc=just_after_expiry,
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    _expired_pending_projection_count(
+                        data_root=data_root,
+                        validation_time_utc=stale_after_grace,
+                    ),
+                    1,
+                )
+
     def test_blocks_chart_direction_conflict_before_live_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
