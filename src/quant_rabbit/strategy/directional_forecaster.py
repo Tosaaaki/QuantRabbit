@@ -28,8 +28,9 @@ detector outputs:
 Trader_brain consumes this single forecast:
   - LONG entry iff direction == "UP" AND confidence ≥ ENTRY_CONFIDENCE_MIN
   - SHORT entry iff direction == "DOWN" AND confidence ≥ ENTRY_CONFIDENCE_MIN
-  - RANGE / UNCLEAR → NO TRADE (critical — current system enters
-    even when ranging, that's the leak)
+  - RANGE supports only RANGE_ROTATION with executable rail geometry.
+    UNCLEAR remains NO TRADE. This keeps "no direction" from becoming
+    a trend chase while still allowing a predicted box to rotate rails.
 
 Position management consumes forecast EVOLUTION:
   - Position UP + forecast still UP → HOLD or EXTEND TP
@@ -1117,6 +1118,63 @@ def _top_reasons(
     return tuple(f"{rationale} ({mag:.1f})" for mag, rationale in items[:limit])
 
 
+def _contested_range_raw_confidence(
+    *,
+    phase: _RangePhase,
+    winner_score: float,
+    runner_up_score: float,
+    range_score: float,
+    margin: float,
+) -> Optional[float]:
+    """Return RANGE confidence when direction is contested inside a box.
+
+    This does not introduce a separate market threshold. It reuses the same
+    decisiveness margin that would otherwise produce UNCLEAR: if the active
+    range evidence is at least as large as the UP/DOWN separation, the correct
+    forecast is "trade the box only", not "no executable forecast metadata".
+    Confidence blends two normalized score facts equally: how indecisive the
+    directional book is, and how material range evidence is versus the weaker
+    directional side.
+    """
+    if phase.phase not in {"IN_RANGE", "RANGE_FORMING"}:
+        return None
+    if range_score <= 0 or winner_score <= 0 or runner_up_score <= 0:
+        return None
+    if range_score < margin:
+        return None
+    directional_uncertainty = 1.0 - min(1.0, margin / max(winner_score, 1.0))
+    range_materiality = min(1.0, range_score / max(runner_up_score, 1.0))
+    return min(1.0, max(0.0, (directional_uncertainty + range_materiality) / 2.0))
+
+
+def _calibrated_confidence(
+    *,
+    pair: str,
+    direction: str,
+    raw_confidence: float,
+    hit_rates: Dict[str, Dict[str, Any]] | None,
+    regime: Optional[str],
+) -> tuple[float, float]:
+    if hit_rates is None:
+        return raw_confidence, 1.0
+    from quant_rabbit.strategy.projection_ledger import (
+        confidence_calibration,
+        select_calibration_signal_name,
+    )
+
+    cal_signal_name = select_calibration_signal_name(
+        "directional_forecast",
+        direction,
+        pair,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
+    cal_mult = confidence_calibration(
+        cal_signal_name, pair, hit_rates=hit_rates, regime=regime,
+    )
+    return min(1.0, raw_confidence * cal_mult), cal_mult
+
+
 def synthesize_forecast(
     *,
     pair: str,
@@ -1292,6 +1350,51 @@ def synthesize_forecast(
     # Decisiveness: need clear winner, not close call
     margin = winner_score - runner_up_score
     if margin < winner_score * 0.25:
+        contested_range_confidence = _contested_range_raw_confidence(
+            phase=range_phase,
+            winner_score=winner_score,
+            runner_up_score=runner_up_score,
+            range_score=range_score,
+            margin=margin,
+        )
+        if contested_range_confidence is not None:
+            calibrated_confidence, cal_mult = _calibrated_confidence(
+                pair=pair,
+                direction="RANGE",
+                raw_confidence=contested_range_confidence,
+                hit_rates=hit_rates,
+                regime=regime,
+            )
+            evidence = "; ".join(range_phase.evidence[:3])
+            rationale_summary = (
+                f"contested direction inside {range_phase.phase}: "
+                f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} "
+                f"EITHER={either_score:.1f}, margin={margin:.1f} ≤ range evidence "
+                f"→ RANGE conf {contested_range_confidence:.2f} × cal {cal_mult:.2f} = "
+                f"{calibrated_confidence:.2f}"
+            )
+            return DirectionalForecast(
+                pair=pair,
+                direction="RANGE",
+                confidence=calibrated_confidence,
+                invalidation_price=None,
+                target_price=None,
+                horizon_min=120,
+                drivers_for=(
+                    (range_phase.rationale,)
+                    + ((evidence,) if evidence else ())
+                    + _top_reasons(contributions, direction="RANGE", limit=3)
+                ),
+                drivers_against=_top_reasons(contributions, direction=winner),
+                rationale_summary=rationale_summary,
+                current_price=_round_price(pair, current_price),
+                up_score=up_score,
+                down_score=down_score,
+                range_score=range_score,
+                raw_confidence=contested_range_confidence,
+                calibration_multiplier=cal_mult,
+                component_scores={"UP": up_score, "DOWN": down_score, "RANGE": range_score, "EITHER": either_score},
+            )
         # Too contested → UNCLEAR
         return DirectionalForecast(
             pair=pair, direction="UNCLEAR",
@@ -1311,25 +1414,13 @@ def synthesize_forecast(
     raw_confidence = min(1.0, (margin / total) + 0.3)
 
     # Bayesian calibration at forecast level
-    if hit_rates is not None:
-        from quant_rabbit.strategy.projection_ledger import (
-            confidence_calibration,
-            select_calibration_signal_name,
-        )
-        cal_signal_name = select_calibration_signal_name(
-            "directional_forecast",
-            winner,
-            pair,
-            hit_rates=hit_rates,
-            regime=regime,
-        )
-        cal_mult = confidence_calibration(
-            cal_signal_name, pair, hit_rates=hit_rates, regime=regime,
-        )
-        calibrated_confidence = min(1.0, raw_confidence * cal_mult)
-    else:
-        cal_mult = 1.0
-        calibrated_confidence = raw_confidence
+    calibrated_confidence, cal_mult = _calibrated_confidence(
+        pair=pair,
+        direction=winner,
+        raw_confidence=raw_confidence,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
 
     target_price, invalidation_price = _forecast_geometry(
         pair=pair,

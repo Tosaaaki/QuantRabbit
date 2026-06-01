@@ -433,6 +433,16 @@ FORECAST_SEED_DESK_BY_METHOD = {
     TradeMethod.TREND_CONTINUATION.value: "trend_trader",
     TradeMethod.RANGE_ROTATION.value: "range_trader",
 }
+# RANGE forecasts answer "is the box still a tradeable box?", not "will the
+# next directional leg trend far enough?" A calibrated probability above 50%
+# is therefore the natural live floor, but only for executable RANGE_RAIL_LIMIT
+# geometry with TP inside the box and SL outside it. Trend/breakout forecasts
+# still use the stricter directional ENTRY_CONFIDENCE_MIN from the forecaster.
+FORECAST_RANGE_ROTATION_MIN_CONFIDENCE = _env_float(
+    "QR_FORECAST_RANGE_ROTATION_MIN_CONFIDENCE",
+    0.50,
+    minimum=0.50,
+)
 # Forecast-first seeds are allowed only when the chart packet contains at
 # least two independent TF readings with both regime and family-score context.
 # A single TF can be enough for a unit fixture, but it is not enough market
@@ -3119,12 +3129,23 @@ def _forecast_live_readiness_issue(
 
 def _forecast_live_min_confidence(metadata: dict[str, Any]) -> float:
     entry_min = _forecast_seed_min_confidence()
+    if _is_range_rotation_forecast_metadata(metadata):
+        return min(entry_min, FORECAST_RANGE_ROTATION_MIN_CONFIDENCE)
     if (
         _is_hedge_recovery_metadata(metadata)
         and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
     ):
         return min(entry_min, RECOVERY_HEDGE_DEFAULT_CONVICTION_SCALE)
     return entry_min
+
+
+def _is_range_rotation_forecast_metadata(metadata: dict[str, Any]) -> bool:
+    return (
+        str(metadata.get("forecast_direction") or "").upper() == "RANGE"
+        and str(metadata.get("geometry_model") or "").upper() == "RANGE_RAIL_LIMIT"
+        and bool(metadata.get("range_tp_is_inside_box"))
+        and bool(metadata.get("range_sl_outside_box"))
+    )
 
 
 def _telemetry_live_readiness_issues(

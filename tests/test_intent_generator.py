@@ -777,6 +777,45 @@ class IntentGeneratorTest(unittest.TestCase):
         opposed_codes = {issue["code"] for issue in _method_context_issues(opposed)}
         self.assertIn("FORECAST_DIRECTION_CONFLICT", opposed_codes)
 
+    def test_range_rotation_uses_range_probability_floor_for_live_context(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "RANGE",
+            "forecast_confidence": 0.51,
+            "geometry_model": "RANGE_RAIL_LIMIT",
+            "range_support": 1.1618,
+            "range_resistance": 1.1650,
+            "range_tp_is_inside_box": True,
+            "range_sl_outside_box": True,
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=4000,
+            entry=1.1619,
+            tp=1.1633,
+            sl=1.1601,
+            thesis="range rail rotation",
+            market_context=MarketContext(
+                regime="RANGE current; RANGE_ROTATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        self.assertIsNone(_forecast_live_readiness_issue(intent, metadata, TradeMethod.RANGE_ROTATION))
+
+        weak_metadata = {**metadata, "forecast_confidence": 0.49}
+        weak_issue = _forecast_live_readiness_issue(intent, weak_metadata, TradeMethod.RANGE_ROTATION)
+        self.assertEqual(weak_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+
     def test_projection_expiry_grace_avoids_same_cycle_false_blocker(self) -> None:
         from quant_rabbit.strategy.intent_generator import _expired_pending_projection_count
 

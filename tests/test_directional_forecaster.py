@@ -434,6 +434,85 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertGreater(forecast.range_score, forecast.up_score)
         self.assertIn("inside stable range", " ".join(forecast.drivers_for))
 
+    def test_contested_direction_inside_range_forecasts_range(self) -> None:
+        pair_chart = {
+            "confluence": {
+                "score_balance": "TIED",
+                "score_gap": 0.0,
+                "dominant_regime": "RANGE",
+            },
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime": "UNCLEAR",
+                    "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 18.0,
+                        "choppiness_14": 56.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                },
+                {
+                    "granularity": "M15",
+                    "regime": "UNCLEAR",
+                    "regime_reading": {"state": "TREND_WEAK", "confidence": 0.6},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 19.0,
+                        "choppiness_14": 55.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.1000,
+                        "donchian_high": 1.1100,
+                    },
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "UNCLEAR",
+                    "regime_reading": {"state": "TRANSITION", "confidence": 0.6},
+                    "indicators": {
+                        "pip_size": 0.0001,
+                        "adx_14": 20.0,
+                        "choppiness_14": 50.0,
+                        "close": 1.1050,
+                        "donchian_low": 1.0990,
+                        "donchian_high": 1.1110,
+                    },
+                },
+            ],
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1050,
+            pattern_signals=[_Sig("UP", 55.0, 1.0, "up evidence")],
+            projection_signals=[_Sig("DOWN", 53.0, 1.0, "down evidence")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "RANGE")
+        self.assertGreaterEqual(forecast.confidence, 0.55)
+        self.assertIn("contested direction inside RANGE_FORMING", forecast.rationale_summary)
+        self.assertIn("range forming", " ".join(forecast.drivers_for))
+
+    def test_contested_direction_without_range_evidence_stays_unclear(self) -> None:
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart={"views": [{"granularity": "M15", "indicators": {"pip_size": 0.0001}}]},
+            current_price=1.1050,
+            pattern_signals=[_Sig("UP", 55.0, 1.0, "up evidence")],
+            projection_signals=[_Sig("DOWN", 53.0, 1.0, "down evidence")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UNCLEAR")
+        self.assertIn("contested", forecast.rationale_summary)
+
     def test_lower_half_range_location_contests_downside_chase_forecast(self) -> None:
         pair_chart = {
             "confluence": {
