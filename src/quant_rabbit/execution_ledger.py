@@ -343,6 +343,8 @@ def _gateway_live_order_event(payload: dict[str, Any], *, now: str, index: int) 
         event_type = "GATEWAY_ORDER_SENT"
     elif status == "BLOCKED":
         event_type = "GATEWAY_ORDER_BLOCKED"
+    elif status == "NO_ACTION" or not order:
+        event_type = "GATEWAY_ORDER_NO_ACTION"
     lane_id = _text(payload.get("lane_id"))
     order_id = _response_order_id(response)
     trade_id = _response_trade_id(response)

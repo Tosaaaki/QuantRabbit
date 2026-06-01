@@ -76,6 +76,10 @@ class CompletionAuditor:
         live_ready = _live_ready_lanes(intents)
         remaining_target = _remaining_target(target, coverage)
         coverage_stale = _coverage_is_stale(intents, coverage, live_ready)
+        certification_stale = _certification_is_stale(
+            certification,
+            dependencies=(coverage, intents, execution, live_order),
+        )
         blockers = _blockers(
             broker=broker,
             positions=positions,
@@ -87,6 +91,7 @@ class CompletionAuditor:
             replay=replay,
             execution=execution,
             certification=certification,
+            certification_stale=certification_stale,
             live_order=live_order,
         )
         next_actions = _next_actions(
@@ -127,6 +132,10 @@ class CompletionAuditor:
                 "stale": coverage_stale,
                 "live_ready_reward_jpy": _optional_float(coverage.get("live_ready_reward_jpy")) or 0.0,
                 "potential_reward_jpy": _optional_float(coverage.get("potential_reward_jpy")) or 0.0,
+            },
+            "certification": {
+                "status": certification.get("status"),
+                "stale": certification_stale,
             },
             "replay": {
                 "historical_target_hits": _nested_int(replay, "summary", "historical_target_hits"),
@@ -206,6 +215,7 @@ def _blockers(
     replay: dict[str, Any],
     execution: dict[str, Any],
     certification: dict[str, Any],
+    certification_stale: bool,
     live_order: dict[str, Any],
 ) -> list[dict[str, str]]:
     blockers: list[dict[str, str]] = []
@@ -257,6 +267,13 @@ def _blockers(
         blockers.append(_item("EXECUTION_REPLAY_BLOCKED", "; ".join(str(item) for item in execution.get("blockers", []) or [])))
     if live_order.get("sent") is True or live_order.get("send_requested") is True:
         blockers.append(_item("LIVE_SEND_ARTIFACT_PRESENT", "latest live-order artifact records a send; dry-run certification needs a fresh no-send stage receipt or an archived live audit path"))
+    if certification_stale:
+        blockers.append(
+            _item(
+                "CERTIFICATION_STALE",
+                "dry-run certification is older than current coverage, order-intents, execution replay, or live-order artifacts",
+            )
+        )
     if certification.get("status") != "CERTIFIED":
         for message in certification.get("blockers", []) or ["dry-run certification has not passed"]:
             blockers.append(_item("CERTIFICATION_BLOCKER", str(message)))
@@ -396,6 +413,31 @@ def _coverage_is_stale(intents: dict[str, Any], coverage: dict[str, Any], live_r
         if coverage_live_ready != live_ready:
             return True
     return False
+
+
+def _certification_is_stale(certification: dict[str, Any], *, dependencies: tuple[dict[str, Any], ...]) -> bool:
+    certification_ts = _payload_timestamp(certification)
+    if certification_ts is None:
+        return False
+    for payload in dependencies:
+        payload_ts = _payload_timestamp(payload)
+        if payload_ts is not None and payload_ts > certification_ts:
+            return True
+    return False
+
+
+def _payload_timestamp(payload: dict[str, Any]) -> datetime | None:
+    if not payload:
+        return None
+    for key in ("generated_at_utc", "generated_at"):
+        raw = payload.get(key)
+        if not raw:
+            continue
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return None
 
 
 def _intent_result_blockers(result: dict[str, Any]) -> list[str]:

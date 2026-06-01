@@ -162,6 +162,33 @@ class ExecutionLedgerTest(unittest.TestCase):
                 ),
             )
 
+    def test_records_no_action_gateway_receipt_without_staged_order_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "live_order.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T10:35:45+00:00",
+                        "status": "NO_ACTION",
+                        "reason": "cleared stale latest-state live order artifact before current cycle decision",
+                        "order_request": None,
+                        "send_requested": False,
+                        "sent": False,
+                    }
+                )
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.record_gateway_receipt(kind="live_order", receipt_path=receipt)
+
+            self.assertEqual(summary.events_inserted, 1)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    "SELECT event_type, lane_id, pair, side, units FROM execution_events"
+                ).fetchone()
+            self.assertEqual(row, ("GATEWAY_ORDER_NO_ACTION", None, None, None, None))
+
     def test_sync_promotes_pending_entry_thesis_on_order_fill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -159,6 +159,75 @@ class CompletionAuditorTest(unittest.TestCase):
             self.assertNotIn("NO_LIVE_READY_INTENTS", blocker_codes)
             self.assertNotIn("no LIVE_READY lanes exist", blocker_messages)
 
+    def test_stale_certification_blocks_completion_even_when_certified(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _complete_fixture(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T10:00:00+00:00",
+                        "results": [{"status": "LIVE_READY", "intent": {"pair": "EUR_USD"}}],
+                    }
+                )
+            )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T10:00:00+00:00",
+                        "status": "TARGET_REACHED_PROTECT",
+                        "blockers": [],
+                        "action_items": [],
+                    }
+                )
+            )
+            files["execution"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T10:00:00+00:00",
+                        "status": "TARGET_HIT",
+                        "target_hit": True,
+                        "blockers": [],
+                    }
+                )
+            )
+            files["live_order"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T10:00:00+00:00",
+                        "sent": False,
+                        "send_requested": False,
+                    }
+                )
+            )
+            files["certification"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-01T09:59:00+00:00",
+                        "status": "CERTIFIED",
+                        "blockers": [],
+                    }
+                )
+            )
+
+            summary = CompletionAuditor(
+                broker_snapshot_path=files["broker"],
+                order_intents_path=files["intents"],
+                target_state_path=files["target"],
+                coverage_path=files["coverage"],
+                replay_backtest_path=files["replay"],
+                execution_replay_path=files["execution"],
+                dry_run_certification_path=files["certification"],
+                live_order_path=files["live_order"],
+                output_path=root / "completion.json",
+                report_path=root / "completion.md",
+            ).run()
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "completion.json").read_text())
+            self.assertIn("CERTIFICATION_STALE", {item["code"] for item in payload["blockers"]})
+            self.assertTrue(payload["certification"]["stale"])
+
 
 def _blocked_fixture(root: Path) -> dict[str, Path]:
     files = _paths(root)
