@@ -44,6 +44,8 @@ class ForecastPersistenceTrackerTest(unittest.TestCase):
 
             self.assertEqual(verdict.verdict, "HOLD")
             self.assertEqual(verdict.last_n_directions, ("DOWN",))
+            rows = (root / "forecast_history.jsonl").read_text().splitlines()
+            self.assertEqual(len(rows), 1)
 
     def test_distinct_cycle_flips_still_recommend_close(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

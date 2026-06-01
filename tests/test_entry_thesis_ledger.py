@@ -288,6 +288,41 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(ev.verdict, "RECOMMEND_CLOSE")
             self.assertIn("FORECAST FLIPPED", ev.rationale)
 
+    def test_evolution_age_parses_oanda_nanosecond_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            record_entry_thesis(
+                EntryThesis(
+                    timestamp_utc="2026-05-28T06:55:31.164316691Z",
+                    trade_id="S1",
+                    pair="EUR_USD",
+                    side="SHORT",
+                    entry_price=1.1609,
+                    forecast_direction="DOWN",
+                    forecast_confidence=0.69,
+                    regime="RANGE",
+                    invalidation_price=1.16097,
+                    target_price=1.16019,
+                    key_drivers=[],
+                ),
+                root,
+            )
+
+            ev = evaluate_thesis_evolution(
+                trade_id="S1",
+                pair="EUR_USD",
+                side="SHORT",
+                open_time_utc=None,
+                current_forecast=_Forecast("DOWN", 0.70),
+                current_regime="RANGE",
+                data_root=root,
+                now=datetime(2026, 5, 28, 9, 55, 31, tzinfo=timezone.utc),
+            )
+
+            self.assertIsNotNone(ev)
+            assert ev is not None
+            self.assertAlmostEqual(ev.age_hours, 3.0, places=3)
+
     def test_low_confidence_forecast_flip_is_not_close_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

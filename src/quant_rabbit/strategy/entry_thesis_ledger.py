@@ -413,6 +413,30 @@ def _is_disabled() -> bool:
     }
 
 
+def _parse_utc_timestamp(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    text = raw[:-1] + "+00:00" if raw.endswith("Z") else raw
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        # OANDA timestamps may carry nanoseconds. Python's stdlib accepts only
+        # microseconds, so truncate the fractional part for age/audit math.
+        import re
+
+        match = re.match(r"^(.*\.\d{6})\d+([+-]\d{2}:\d{2})$", text)
+        if not match:
+            return None
+        try:
+            parsed = datetime.fromisoformat(match.group(1) + match.group(2))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def record_entry_thesis(thesis: EntryThesis, data_root: Path) -> None:
     """Append entry thesis to ledger."""
     if _is_disabled():
@@ -784,18 +808,9 @@ def evaluate_thesis_evolution(
         return None
     now = now or datetime.now(timezone.utc)
     age_hours = 0.0
-    if open_time_utc:
-        try:
-            opened = datetime.fromisoformat(open_time_utc.replace("Z", "+00:00").split(".")[0] + "+00:00")
-            age_hours = (now - opened).total_seconds() / 3600
-        except (TypeError, ValueError):
-            pass
-    elif thesis.timestamp_utc:
-        try:
-            opened = datetime.fromisoformat(thesis.timestamp_utc.replace("Z", "+00:00"))
-            age_hours = (now - opened).total_seconds() / 3600
-        except (TypeError, ValueError):
-            pass
+    opened = _parse_utc_timestamp(open_time_utc) or _parse_utc_timestamp(thesis.timestamp_utc)
+    if opened is not None:
+        age_hours = (now - opened).total_seconds() / 3600
 
     current_dir = getattr(current_forecast, "direction", "UNCLEAR")
     current_conf = float(getattr(current_forecast, "confidence", 0))

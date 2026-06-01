@@ -80,17 +80,25 @@ def record_forecast(
     data_root: Path,
     now: Optional[datetime] = None,
     cycle_id: str | None = None,
-) -> None:
-    """Append a `DirectionalForecast` to forecast_history.jsonl."""
+) -> bool:
+    """Append a `DirectionalForecast` to forecast_history.jsonl.
+
+    A cycle-level forecast is a pair fact, not a lane fact. Several runtime
+    branches may ask for the same pair forecast inside one cycle, so
+    `cycle_id + pair` is idempotent to keep persistence statistics honest.
+    """
     if _is_disabled():
-        return
+        return False
     path = data_root / HISTORY_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
+    pair = getattr(forecast, "pair", "")
+    if cycle_id and _history_has_cycle_pair(path, cycle_id=cycle_id, pair=pair):
+        return False
     now = now or datetime.now(timezone.utc)
     entry = {
         "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
         "cycle_id": cycle_id,
-        "pair": getattr(forecast, "pair", ""),
+        "pair": pair,
         "direction": getattr(forecast, "direction", "UNCLEAR"),
         "confidence": float(getattr(forecast, "confidence", 0)),
         "current_price": getattr(forecast, "current_price", None),
@@ -108,6 +116,22 @@ def record_forecast(
     }
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return True
+
+
+def _history_has_cycle_pair(path: Path, *, cycle_id: str, pair: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            if item.get("cycle_id") == cycle_id and item.get("pair") == pair:
+                return True
+    except (OSError, json.JSONDecodeError):
+        return False
+    return False
 
 
 def _load_recent(data_root: Path, pair: str, count: int) -> List[Dict[str, Any]]:
