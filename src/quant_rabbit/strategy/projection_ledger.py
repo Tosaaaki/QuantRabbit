@@ -383,19 +383,29 @@ def load_ledger(data_root: Path) -> List[LedgerEntry]:
     path = _ledger_path(data_root)
     if not path.exists():
         return []
-    out: List[LedgerEntry] = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
+        with path.open("r", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)
             try:
-                d = json.loads(line)
-                out.append(LedgerEntry.from_dict(d))
-            except json.JSONDecodeError:
-                continue
+                return _load_ledger_from_handle(f)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except OSError:
         return []
+
+
+def _load_ledger_from_handle(handle: IO[str]) -> List[LedgerEntry]:
+    out: List[LedgerEntry] = []
+    handle.seek(0)
+    for line in handle:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+            out.append(LedgerEntry.from_dict(d))
+        except json.JSONDecodeError:
+            continue
     return out
 
 
@@ -403,9 +413,20 @@ def write_ledger(entries: List[LedgerEntry], data_root: Path) -> None:
     """Overwrite ledger with the given list (used after resolution updates)."""
     path = _ledger_path(data_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        for e in entries:
-            f.write(json.dumps(e.to_dict(), ensure_ascii=False) + "\n")
+    with path.open("a+", encoding="utf-8") as f:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            _write_ledger_to_handle(entries, f)
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
+
+def _write_ledger_to_handle(entries: List[LedgerEntry], handle: IO[str]) -> None:
+    handle.seek(0)
+    handle.truncate(0)
+    for e in entries:
+        handle.write(json.dumps(e.to_dict(), ensure_ascii=False) + "\n")
+    handle.flush()
 
 
 def verify_pending(
@@ -415,6 +436,32 @@ def verify_pending(
     atr_pips_by_pair: Optional[Dict[str, float]] = None,
     candles_by_pair: Optional[Dict[str, List[Any]]] = None,
     now: Optional[datetime] = None,
+) -> Dict[str, int]:
+    path = _ledger_path(data_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            return _verify_pending_unlocked(
+                data_root,
+                quotes_by_pair=quotes_by_pair,
+                atr_pips_by_pair=atr_pips_by_pair,
+                candles_by_pair=candles_by_pair,
+                now=now,
+                ledger_handle=lock_handle,
+            )
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _verify_pending_unlocked(
+    data_root: Path,
+    *,
+    quotes_by_pair: Optional[Dict[str, Dict[str, float]]] = None,
+    atr_pips_by_pair: Optional[Dict[str, float]] = None,
+    candles_by_pair: Optional[Dict[str, List[Any]]] = None,
+    now: Optional[datetime] = None,
+    ledger_handle: Optional[IO[str]] = None,
 ) -> Dict[str, int]:
     """Walk PENDING ledger entries; resolve those past their window.
 
@@ -428,7 +475,7 @@ def verify_pending(
     Returns count summary {"HIT": n, "MISS": n, "TIMEOUT": n}.
     """
     now = now or datetime.now(timezone.utc)
-    entries = load_ledger(data_root)
+    entries = _load_ledger_from_handle(ledger_handle) if ledger_handle is not None else load_ledger(data_root)
     if not entries:
         return {"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0}
 
@@ -616,7 +663,10 @@ def verify_pending(
                 )
                 counts["MISS"] += 1
         e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-    write_ledger(entries, data_root)
+    if ledger_handle is not None:
+        _write_ledger_to_handle(entries, ledger_handle)
+    else:
+        write_ledger(entries, data_root)
     return counts
 
 

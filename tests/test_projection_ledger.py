@@ -506,6 +506,97 @@ class VerifyTest(unittest.TestCase):
             )
             self.assertEqual(counts["PENDING"], 1)
 
+    def test_verify_pending_preserves_append_started_mid_resolution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+            from quant_rabbit.strategy import projection_ledger as ledger_mod
+
+            ledger_mod.write_ledger(
+                [
+                    LedgerEntry(
+                        timestamp_emitted_utc=emitted.isoformat().replace("+00:00", "Z"),
+                        pair="EUR_USD",
+                        signal_name="directional_probe",
+                        direction="UP",
+                        lead_time_min=5,
+                        confidence=0.7,
+                        entry_price=1.1700,
+                        predicted_target_price=None,
+                        resolution_window_min=10,
+                        resolution_status="PENDING",
+                        cycle_id="verify-cycle",
+                    )
+                ],
+                root,
+            )
+
+            verify_inside = threading.Event()
+            release_verify = threading.Event()
+            append_entered_critical = threading.Event()
+            errors: list[BaseException] = []
+            original_quote_point_path = ledger_mod._quote_point_path
+            original_existing_keys = ledger_mod._existing_projection_keys_from_handle
+
+            def paused_quote_point_path(entry, *, quotes_by_pair):
+                verify_inside.set()
+                if not release_verify.wait(timeout=5):
+                    raise AssertionError("verification did not resume")
+                return original_quote_point_path(entry, quotes_by_pair=quotes_by_pair)
+
+            def observed_existing_keys(handle, *, cycle_id, pair):
+                if cycle_id == "append-cycle":
+                    append_entered_critical.set()
+                return original_existing_keys(handle, cycle_id=cycle_id, pair=pair)
+
+            def run_verify() -> None:
+                try:
+                    verify_pending(
+                        root,
+                        quotes_by_pair={"EUR_USD": {"bid": 1.1715, "ask": 1.1715}},
+                        atr_pips_by_pair={"EUR_USD": 10.0},
+                        now=emitted + timedelta(minutes=20),
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            def run_append() -> None:
+                try:
+                    record_projections(
+                        [_Sig("liquidity_sweep_low", "UP", 15, 0.9, 12.0, "M5 equal-lows at 1.16800 (4.0pip down)")],
+                        pair="EUR_USD",
+                        current_price=1.16840,
+                        data_root=root,
+                        cycle_id="append-cycle",
+                    )
+                except BaseException as exc:
+                    errors.append(exc)
+
+            with mock.patch.object(ledger_mod, "_quote_point_path", side_effect=paused_quote_point_path), \
+                 mock.patch.object(ledger_mod, "_existing_projection_keys_from_handle", side_effect=observed_existing_keys):
+                verify_thread = threading.Thread(target=run_verify)
+                verify_thread.start()
+                self.assertTrue(verify_inside.wait(timeout=5))
+
+                append_thread = threading.Thread(target=run_append)
+                append_thread.start()
+                self.assertFalse(append_entered_critical.wait(timeout=0.2))
+
+                release_verify.set()
+                verify_thread.join(timeout=5)
+                append_thread.join(timeout=5)
+
+            self.assertFalse(verify_thread.is_alive())
+            self.assertFalse(append_thread.is_alive())
+            self.assertEqual(errors, [])
+            self.assertTrue(append_entered_critical.is_set())
+
+            entries = load_ledger(root)
+            self.assertEqual(len(entries), 2)
+            by_cycle = {entry.cycle_id: entry for entry in entries}
+            self.assertEqual(by_cycle["verify-cycle"].resolution_status, "HIT")
+            self.assertEqual(by_cycle["append-cycle"].resolution_status, "PENDING")
+
 
 class HitRatesTest(unittest.TestCase):
     def test_compute_hit_rates_per_pair_regime(self) -> None:
