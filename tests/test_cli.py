@@ -485,6 +485,9 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # profit-partial-close reads broker truth / pair_charts
                     # and may send risk-reducing profit partial closes.
                     "profit-partial-close",
+                    # completion-status audits live exposure and must classify
+                    # SL-free trader positions under the same runtime defaults.
+                    "completion-status",
                 }
             ),
         )

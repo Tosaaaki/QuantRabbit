@@ -369,6 +369,11 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # across both paths.
         "daily-target-state",
         "profit-partial-close",
+        # completion-status is an audit command, but it classifies open
+        # trader exposure. Under the SL-free runtime, TP-only trader
+        # positions are intentional; without this bootstrap a standalone
+        # audit misreports them as unprotected broker exposure.
+        "completion-status",
     }
 )
 
