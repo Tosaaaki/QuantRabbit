@@ -822,10 +822,10 @@ def compute_hit_rates(
     buckets when there aren't enough samples in the granular one.
     """
     entries = load_ledger(data_root)
-    resolved = [
+    resolved = _deduped_calibration_entries([
         e for e in entries
         if e.resolution_status in ("HIT", "MISS") and _calibration_entry_eligible(e)
-    ]
+    ])
     resolved = resolved[-lookback * 10:]  # rough bound on size
     grouped: Dict[str, Dict[str, List[bool]]] = {}
     for e in resolved:
@@ -848,6 +848,33 @@ def compute_hit_rates(
             hr = sum(1 for r in recent if r) / float(n)
             out[sig][key] = {"hit_rate": round(hr, 3), "samples": n}
     return out
+
+
+def _deduped_calibration_entries(entries: list[LedgerEntry]) -> list[LedgerEntry]:
+    """Collapse historical duplicate projection writes for calibration only.
+
+    The JSONL ledger stays append-only for audit. Confidence learning is a
+    statistical consumer, so one cycle/pair/signal prediction must contribute
+    one sample even if concurrent workers wrote the same prediction twice.
+    """
+    latest: dict[tuple[Any, ...], tuple[int, LedgerEntry]] = {}
+    for index, entry in enumerate(entries):
+        key = _calibration_dedupe_key(entry, fallback_index=index)
+        latest[key] = (index, entry)
+    return [entry for _index, entry in sorted(latest.values(), key=lambda item: item[0])]
+
+
+def _calibration_dedupe_key(entry: LedgerEntry, *, fallback_index: int) -> tuple[Any, ...]:
+    if not entry.cycle_id:
+        return ("no-cycle", fallback_index)
+    return _projection_key(
+        cycle_id=entry.cycle_id,
+        pair=entry.pair,
+        signal_name=entry.signal_name,
+        direction=entry.direction,
+        entry_price=entry.entry_price,
+        target_price=entry.predicted_target_price,
+    )
 
 
 def _calibration_entry_eligible(entry: LedgerEntry) -> bool:

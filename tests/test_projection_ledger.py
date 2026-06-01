@@ -534,6 +534,51 @@ class HitRatesTest(unittest.TestCase):
             self.assertIn("EUR_USD:_all_regimes", hr["bb_squeeze"])
             self.assertIn("_all_pairs:_all_regimes", hr["bb_squeeze"])
 
+    def test_compute_hit_rates_dedupes_historical_cycle_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            duplicate_hit = LedgerEntry(
+                timestamp_emitted_utc="2026-05-14T00:00:00Z",
+                pair="EUR_USD",
+                signal_name="liquidity_sweep_low",
+                direction="UP",
+                lead_time_min=15,
+                confidence=0.9,
+                entry_price=1.1684,
+                predicted_target_price=1.1680,
+                resolution_window_min=30,
+                resolution_status="HIT",
+                regime_at_emission="RANGE",
+                cycle_id="cycle-race",
+            )
+            entries = [
+                duplicate_hit,
+                duplicate_hit,
+                LedgerEntry(
+                    timestamp_emitted_utc="2026-05-14T00:30:00Z",
+                    pair="EUR_USD",
+                    signal_name="liquidity_sweep_low",
+                    direction="UP",
+                    lead_time_min=15,
+                    confidence=0.9,
+                    entry_price=1.1685,
+                    predicted_target_price=1.1681,
+                    resolution_window_min=30,
+                    resolution_status="MISS",
+                    regime_at_emission="RANGE",
+                    cycle_id="cycle-next",
+                ),
+            ]
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+
+            bucket = hr["liquidity_sweep_low"]["EUR_USD:RANGE"]
+            self.assertEqual(bucket["samples"], 2)
+            self.assertAlmostEqual(bucket["hit_rate"], 0.5)
+
     def test_regime_segmented_separates_by_regime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
