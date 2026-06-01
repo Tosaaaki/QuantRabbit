@@ -454,6 +454,170 @@ class RiskEngineTest(unittest.TestCase):
         self.assertTrue(decision.allowed, decision.block_reasons)
         self.assertNotIn("OPEN_POSITION_EXISTS", {issue.code for issue in decision.issues})
 
+    def test_same_pair_position_cap_blocks_fresh_stack(self) -> None:
+        first = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1760,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        second = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=3000,
+            entry_price=1.1710,
+            take_profit=1.1760,
+            stop_loss=1.1710,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="same_pair_stack_must_not_monopolize_basket",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="third EUR_USD add would consume opportunity slots",
+                chart_story="trend continuation trigger",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(first, second)))
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("PAIR_CONCENTRATION_LIMIT", {issue.code for issue in decision.issues})
+
+    def test_same_pair_position_cap_does_not_block_explicit_hedge(self) -> None:
+        first = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=3000,
+            entry_price=1.1700,
+            take_profit=1.1640,
+            stop_loss=1.1710,
+            owner=Owner.TRADER,
+        )
+        second = BrokerPosition(
+            trade_id="2",
+            pair="EUR_USD",
+            side=Side.SHORT,
+            units=3000,
+            entry_price=1.1690,
+            take_profit=1.1640,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=1000,
+            entry=1.1710,
+            tp=1.1730,
+            sl=1.1702,
+            thesis="explicit_hedge_can_reduce_trapped_side_without_new_pair_stack",
+            market_context=MarketContext(
+                regime="RANGE_ROTATION campaign lane",
+                narrative="hedge against trapped short exposure",
+                chart_story="box rail reclaim into midpoint",
+                method=TradeMethod.RANGE_ROTATION,
+                invalidation="SL trades",
+            ),
+            metadata={
+                "position_intent": "HEDGE",
+                "position_fill": "OPEN_ONLY",
+                "hedge_timing_class": "OPPOSITE_EXPOSURE",
+                "hedge_unwind_plan_required": True,
+                "hedge_review_trigger": "next_m15_close_or_structure_change",
+            },
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_same_pair_trader_positions=1,
+                max_same_pair_margin_utilization_pct=1.0,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(intent, snapshot(positions=(first, second), hedging_enabled=True))
+
+        issue_codes = {issue.code for issue in decision.issues}
+        self.assertTrue(decision.allowed, decision.block_reasons)
+        self.assertNotIn("PAIR_CONCENTRATION_LIMIT", issue_codes)
+        self.assertNotIn("PAIR_MARGIN_CONCENTRATION_LIMIT", issue_codes)
+
+    def test_same_pair_margin_cap_blocks_fresh_stack_before_portfolio_margin_is_full(self) -> None:
+        large_same_pair = BrokerPosition(
+            trade_id="1",
+            pair="EUR_USD",
+            side=Side.LONG,
+            units=12_000,
+            entry_price=1.1700,
+            take_profit=1.1760,
+            stop_loss=1.1700,
+            owner=Owner.TRADER,
+        )
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=1000,
+            entry=1.1735,
+            tp=1.1750,
+            sl=1.1725,
+            thesis="same_pair_margin_must_leave_room_for_other_pairs",
+            market_context=MarketContext(
+                regime="TREND_CONTINUATION campaign lane",
+                narrative="fresh add would push EUR_USD over pair margin reserve",
+                chart_story="trend continuation trigger",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="SL trades",
+            ),
+            metadata={"position_intent": "PYRAMID", "position_fill": "OPEN_ONLY"},
+        )
+
+        from quant_rabbit.risk import RiskPolicy
+
+        decision = RiskEngine(
+            policy=RiskPolicy(
+                allow_protected_trader_position_adds=True,
+                max_portfolio_loss_jpy=50_000.0,
+            )
+        ).validate(
+            intent,
+            snapshot(
+                positions=(large_same_pair,),
+                nav_jpy=200_000.0,
+                margin_used_jpy=70_000.0,
+                margin_available_jpy=130_000.0,
+            ),
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertIn("PAIR_MARGIN_CONCENTRATION_LIMIT", {issue.code for issue in decision.issues})
+
     def test_portfolio_policy_blocks_opposing_same_pair_entry_without_hedging_proof(self) -> None:
         protected_short = BrokerPosition(
             trade_id="2",
@@ -1076,6 +1240,8 @@ class RiskEngineTest(unittest.TestCase):
                     max_loss_jpy=5_000.0,
                     max_portfolio_loss_jpy=50_000.0,
                     max_margin_utilization_pct=92.0,
+                    max_same_pair_trader_positions=None,
+                    max_same_pair_margin_utilization_pct=None,
                 )
             ).validate(
                 intent,

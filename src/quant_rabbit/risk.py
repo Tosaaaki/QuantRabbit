@@ -40,6 +40,7 @@ def _layerable_trader_position(position) -> bool:
 from .models import (
     AccountSummary,
     BrokerOrder,
+    BrokerPosition,
     BrokerSnapshot,
     OrderIntent,
     OrderType,
@@ -132,6 +133,34 @@ def _env_float_or(name: str, default: float, *, minimum: float = 0.0) -> float:
     if value < minimum:
         return minimum
     return value
+
+
+def _env_optional_int(name: str, default: int | None) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"0", "none", "off", "false", "disabled"}:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else None
+
+
+def _env_optional_float(name: str, default: float | None) -> float | None:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"0", "none", "off", "false", "disabled"}:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else None
 
 
 _SPREAD_SESSION_MULTS: dict[str, float] = {
@@ -424,6 +453,35 @@ class RiskPolicy:
     max_portfolio_positions: int = field(
         default_factory=lambda: int(os.environ.get("QR_MAX_PORTFOLIO_POSITIONS", "4") or "4")
     )
+    # Same-pair concentration guard for protected-position add mode.
+    # (a) market reality: the trader scans 28 FX pairs, but one trapped pair can
+    #     consume position slots, margin headroom, and GPT selection priority;
+    #     2026-06-01 live truth had 6 trader-owned EUR_USD positions and
+    #     high-confidence GBP_USD/EUR_GBP candidates blocked by margin.
+    # (b) constant rather than derived: this is an operator portfolio-shape
+    #     policy. Two same-pair trader positions allow one thesis plus one
+    #     controlled follow-on, but stop a single pair from monopolizing the
+    #     default 4-position basket or the live 10-position attack-mode basket.
+    # (c) replace via: QR_MAX_SAME_PAIR_TRADER_POSITIONS, or a future
+    #     expectancy-derived allocator that budgets slots by pair correlation
+    #     and realized turnover.
+    max_same_pair_trader_positions: int | None = field(
+        default_factory=lambda: _env_optional_int("QR_MAX_SAME_PAIR_TRADER_POSITIONS", 2)
+    )
+    # Per-pair margin concentration cap for fresh, non-hedge adds.
+    # (a) market reality: margin utilization is the binding opportunity cost;
+    #     when one pair uses roughly half of NAV as initial margin, independent
+    #     pairs cannot reach the 1000u production lot even if their forecast is
+    #     stronger.
+    # (b) constant rather than derived: 45% is a portfolio-shape reserve under
+    #     the 92% total margin ceiling, forcing headroom for at least one other
+    #     independent pair before a same-pair add can continue stacking.
+    # (c) replace via: QR_MAX_SAME_PAIR_MARGIN_UTILIZATION_PCT, or a broker
+    #     instrument-margin allocator once pair-level margin budgets are wired
+    #     from account/instrument telemetry.
+    max_same_pair_margin_utilization_pct: float | None = field(
+        default_factory=lambda: _env_optional_float("QR_MAX_SAME_PAIR_MARGIN_UTILIZATION_PCT", 45.0)
+    )
     max_portfolio_loss_jpy: float | None = None
 
 
@@ -534,6 +592,7 @@ class RiskEngine:
                             "intent.metadata['position_intent']='HEDGE'",
                         )
                     )
+            issues.extend(self._same_pair_position_concentration_issues(intent, entry_relevant_positions))
 
         if self.policy.block_new_entries_with_external_risk:
             for position in entry_relevant_positions:
@@ -628,6 +687,7 @@ class RiskEngine:
         if quote_to_jpy is None:
             return RiskDecision(False, None, tuple(issues))
 
+        issues.extend(self._same_pair_margin_concentration_issues(intent, snapshot, entry_price, quote_to_jpy, spec))
         metrics = self._metrics(intent, quote, spec, entry_price, quote_to_jpy, snapshot)
         issues.extend(self._margin_issues(snapshot, metrics))
         if metrics.loss_pips <= 0:
@@ -716,6 +776,85 @@ class RiskEngine:
             metrics=metrics,
             issues=tuple(issues),
         )
+
+    def _same_pair_position_concentration_issues(
+        self,
+        intent: OrderIntent,
+        entry_relevant_positions: tuple[BrokerPosition, ...],
+    ) -> list[RiskIssue]:
+        cap = self.policy.max_same_pair_trader_positions
+        if cap is None or _intent_declares_hedge(intent):
+            return []
+        if cap <= 0:
+            return [
+                RiskIssue(
+                    "INVALID_PAIR_CONCENTRATION_POLICY",
+                    f"max_same_pair_trader_positions must be positive or None, got {cap}",
+                )
+            ]
+        same_pair_count = sum(
+            1
+            for position in entry_relevant_positions
+            if position.owner == Owner.TRADER and position.pair == intent.pair
+        )
+        if same_pair_count < cap:
+            return []
+        return [
+            RiskIssue(
+                "PAIR_CONCENTRATION_LIMIT",
+                f"open trader {intent.pair} positions {same_pair_count} reached same-pair cap {cap}; "
+                "wait for TP/position-management or emit an explicit HEDGE intent before adding same-pair risk",
+            )
+        ]
+
+    def _same_pair_margin_concentration_issues(
+        self,
+        intent: OrderIntent,
+        snapshot: BrokerSnapshot,
+        entry_price: float,
+        quote_to_jpy: float,
+        spec: InstrumentSpec,
+    ) -> list[RiskIssue]:
+        cap_pct = self.policy.max_same_pair_margin_utilization_pct
+        if cap_pct is None or _intent_declares_hedge(intent):
+            return []
+        if cap_pct <= 0 or cap_pct > 100:
+            return [
+                RiskIssue(
+                    "INVALID_PAIR_MARGIN_POLICY",
+                    f"max_same_pair_margin_utilization_pct must be within 0-100 or None, got {cap_pct}",
+                )
+            ]
+        account = snapshot.account
+        if account is None or account.nav_jpy <= 0:
+            return []
+
+        long_units, short_units = _same_pair_position_units(snapshot, intent.pair, owner=Owner.TRADER)
+        candidate_units = max(0, abs(int(intent.units)))
+        if intent.side == Side.LONG:
+            long_units += candidate_units
+        else:
+            short_units += candidate_units
+        pair_margin_units = max(long_units, short_units)
+        if pair_margin_units <= 0:
+            return []
+        estimated_pair_margin = estimate_required_margin_jpy(
+            units=pair_margin_units,
+            entry_price=entry_price,
+            quote_to_jpy=quote_to_jpy,
+            spec=spec,
+        )
+        cap_jpy = account.nav_jpy * (cap_pct / 100.0)
+        if estimated_pair_margin <= cap_jpy:
+            return []
+        return [
+            RiskIssue(
+                "PAIR_MARGIN_CONCENTRATION_LIMIT",
+                f"{intent.pair} trader margin after candidate would be {estimated_pair_margin:.0f} JPY "
+                f"({estimated_pair_margin / account.nav_jpy * 100.0:.1f}% NAV), above same-pair cap "
+                f"{cap_pct:.1f}% ({cap_jpy:.0f} JPY); wait for that pair to harvest or route an explicit HEDGE",
+            )
+        ]
 
     def _entry_relevant_positions(self, snapshot: BrokerSnapshot) -> tuple[BrokerPosition, ...]:
         if not self.policy.allow_operator_managed_manual_exposure:

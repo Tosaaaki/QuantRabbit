@@ -665,47 +665,55 @@ class LiveOrderGatewayTest(unittest.TestCase):
 
     def test_batch_position_cap_scales_with_target_trades_per_day(self) -> None:
         execution_module._target_trades_per_day_from_state = lambda path=None: 30
+        prior_pair_cap = os.environ.get("QR_MAX_SAME_PAIR_TRADER_POSITIONS")
+        os.environ["QR_MAX_SAME_PAIR_TRADER_POSITIONS"] = "10"
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            client = FakeExecutionClient()
-            now = client.snapshot_value.fetched_at_utc
-            client.snapshot_value = BrokerSnapshot(
-                fetched_at_utc=now,
-                positions=tuple(
-                    BrokerPosition(
-                        trade_id=str(200 + index),
-                        pair="EUR_USD",
-                        side=Side.LONG,
-                        units=1000,
-                        entry_price=1.1710 + index * 0.0001,
-                        take_profit=1.1750,
-                        stop_loss=1.1710 + index * 0.0001,
-                        owner=Owner.TRADER,
-                    )
-                    for index in range(4)
-                ),
-                orders=(),
-                quotes=client.snapshot_value.quotes,
-                account=client.snapshot_value.account,
-            )
+            try:
+                root = Path(tmp)
+                client = FakeExecutionClient()
+                now = client.snapshot_value.fetched_at_utc
+                client.snapshot_value = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=tuple(
+                        BrokerPosition(
+                            trade_id=str(200 + index),
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=1000,
+                            entry_price=1.1710 + index * 0.0001,
+                            take_profit=1.1750,
+                            stop_loss=1.1710 + index * 0.0001,
+                            owner=Owner.TRADER,
+                        )
+                        for index in range(4)
+                    ),
+                    orders=(),
+                    quotes=client.snapshot_value.quotes,
+                    account=client.snapshot_value.account,
+                )
 
-            summary = LiveOrderGateway(
-                client=client,
-                strategy_profile=_profile(root),
-                output_path=root / "request.json",
-                report_path=root / "report.md",
-                live_enabled=True,
-            ).run_batch(
-                intents_path=_intents(root, order_type="MARKET"),
-                lane_ids=("lane:EUR_USD:LONG",),
-            )
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run_batch(
+                    intents_path=_intents(root, order_type="MARKET"),
+                    lane_ids=("lane:EUR_USD:LONG",),
+                )
 
-            self.assertEqual(summary.status, "STAGED")
-            payload = json.loads((root / "request.json").read_text())
-            self.assertEqual(payload["portfolio_position_cap"], 10)
-            issue_codes = {issue["code"] for issue in payload["risk_issues"]}
-            self.assertNotIn("BASKET_PORTFOLIO_POSITION_LIMIT", issue_codes)
-            self.assertNotIn("PORTFOLIO_POSITION_LIMIT", issue_codes)
+                self.assertEqual(summary.status, "STAGED")
+                payload = json.loads((root / "request.json").read_text())
+                self.assertEqual(payload["portfolio_position_cap"], 10)
+                issue_codes = {issue["code"] for issue in payload["risk_issues"]}
+                self.assertNotIn("BASKET_PORTFOLIO_POSITION_LIMIT", issue_codes)
+                self.assertNotIn("PORTFOLIO_POSITION_LIMIT", issue_codes)
+            finally:
+                if prior_pair_cap is None:
+                    os.environ.pop("QR_MAX_SAME_PAIR_TRADER_POSITIONS", None)
+                else:
+                    os.environ["QR_MAX_SAME_PAIR_TRADER_POSITIONS"] = prior_pair_cap
 
     def test_non_live_ready_intent_is_not_staged_even_if_fresh_risk_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
