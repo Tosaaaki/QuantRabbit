@@ -74,6 +74,13 @@ class CompletionAuditor:
         positions = broker.get("positions", []) if isinstance(broker.get("positions"), list) else []
         pending_entries = _pending_entries(broker)
         live_ready = _live_ready_lanes(intents)
+        close_recommendations = _fresh_close_recommendations_for_completion(
+            broker,
+            data_root=self.broker_snapshot_path.parent,
+        )
+        close_authorization_fresh = _close_authorization_fresh(
+            data_root=self.broker_snapshot_path.parent,
+        )
         remaining_target = _remaining_target(target, coverage)
         coverage_stale = _coverage_is_stale(intents, coverage, live_ready)
         certification_stale = _certification_is_stale(
@@ -85,6 +92,8 @@ class CompletionAuditor:
             positions=positions,
             pending_entries=pending_entries,
             live_ready=live_ready,
+            close_recommendations=close_recommendations,
+            close_authorization_fresh=close_authorization_fresh,
             remaining_target=remaining_target,
             coverage=coverage,
             coverage_stale=coverage_stale,
@@ -98,6 +107,8 @@ class CompletionAuditor:
             positions=positions,
             pending_entries=pending_entries,
             live_ready=live_ready,
+            close_recommendations=close_recommendations,
+            close_authorization_fresh=close_authorization_fresh,
             coverage=coverage,
             coverage_stale=coverage_stale,
             execution=execution,
@@ -143,6 +154,11 @@ class CompletionAuditor:
                 "days": _nested_int(replay, "summary", "days"),
             },
             "live_ready_lanes": live_ready,
+            "close_recommendations": {
+                "count": len(close_recommendations),
+                "gate_b_authorized": close_authorization_fresh,
+                "items": close_recommendations,
+            },
             "blockers": blockers,
             "next_actions": next_actions,
         }
@@ -173,6 +189,8 @@ class CompletionAuditor:
             f"- Pending entry orders: `{payload['broker']['pending_entries']}`",
             f"- Remaining target: `{payload['target']['remaining_target_jpy']:.0f} JPY`",
             f"- Live-ready lanes: `{payload['live_ready_lanes']}`",
+            f"- Close recommendations: `{payload['close_recommendations']['count']}`",
+            f"- Close Gate B authorized: `{payload['close_recommendations']['gate_b_authorized']}`",
             f"- Coverage status: `{payload['coverage']['status']}`",
             "",
             "## Blockers",
@@ -209,6 +227,8 @@ def _blockers(
     positions: list[Any],
     pending_entries: list[dict[str, Any]],
     live_ready: int,
+    close_recommendations: list[dict[str, Any]],
+    close_authorization_fresh: bool,
     remaining_target: float,
     coverage: dict[str, Any],
     coverage_stale: bool,
@@ -243,6 +263,27 @@ def _blockers(
         blockers.append(_item("PENDING_ENTRY_OPEN", f"pending entry orders must be resolved before fresh entries: {summaries}"))
     if remaining_target > 0 and live_ready <= 0:
         blockers.append(_item("NO_LIVE_READY_INTENTS", "no LIVE_READY order intents are available"))
+    if close_recommendations:
+        summaries = ", ".join(
+            f"{item.get('pair')} {item.get('side')} id={item.get('trade_id')} {item.get('source')}"
+            for item in close_recommendations[:3]
+        )
+        if close_authorization_fresh:
+            blockers.append(
+                _item(
+                    "CLOSE_RECEIPT_REQUIRED",
+                    "fresh Gate A close recommendation(s) and Gate B authorization exist; submit a verified CLOSE receipt before completion: "
+                    f"{summaries}",
+                )
+            )
+        else:
+            blockers.append(
+                _item(
+                    "CLOSE_AUTHORIZATION_REQUIRED",
+                    "fresh Gate A close recommendation(s) exist but Gate B is not authorized: "
+                    f"{summaries}",
+                )
+            )
     if coverage_stale:
         blockers.append(
             _item(
@@ -285,6 +326,8 @@ def _next_actions(
     positions: list[Any],
     pending_entries: list[dict[str, Any]],
     live_ready: int,
+    close_recommendations: list[dict[str, Any]],
+    close_authorization_fresh: bool,
     coverage: dict[str, Any],
     coverage_stale: bool,
     execution: dict[str, Any],
@@ -307,6 +350,21 @@ def _next_actions(
         actions.append(_item("RESOLVE_PENDING_ENTRIES", "cancel or adopt stale pending entries through the autotrade gateway path"))
     if live_ready <= 0:
         actions.append(_item("BUILD_LIVE_READY_RECEIPTS", "generate risk-valid receipts after broker exposure is flat; promote only receipts that clear risk/profile blockers"))
+    if close_recommendations:
+        if close_authorization_fresh:
+            actions.append(
+                _item(
+                    "SUBMIT_VERIFIED_CLOSE_RECEIPT",
+                    "Gate A close evidence and Gate B authorization are present; submit a CLOSE receipt before re-entry",
+                )
+            )
+        else:
+            actions.append(
+                _item(
+                    "AUTHORIZE_OR_REJECT_CLOSE_RECOMMENDATIONS",
+                    "operator must either create a fresh close token/override for the recommended loss-cut batch or record a reason to keep holding",
+                )
+            )
     if coverage_stale:
         actions.append(_item("RUN_COVERAGE_OPTIMIZATION", "rerun optimize-coverage against the current order intents"))
     else:
@@ -318,6 +376,30 @@ def _next_actions(
         actions.append(_item("REFRESH_NO_SEND_STAGE", "preserve the live audit, then create a fresh no-send live-order stage artifact for dry-run certification"))
     actions.append(_item("RERUN_CERTIFICATION", "rerun certify-dry-run after coverage, replay, learning, and no-send artifacts pass"))
     return _dedupe(actions)
+
+
+def _fresh_close_recommendations_for_completion(
+    broker: dict[str, Any],
+    *,
+    data_root: Path,
+) -> list[dict[str, Any]]:
+    if not broker:
+        return []
+    try:
+        from quant_rabbit.trader_prompts import _fresh_close_recommendations
+
+        return [dict(item) for item in _fresh_close_recommendations(broker, data_root=data_root)]
+    except Exception:
+        return []
+
+
+def _close_authorization_fresh(*, data_root: Path) -> bool:
+    try:
+        from quant_rabbit.gpt_trader import _operator_close_override_active, _operator_close_token_fresh
+
+        return bool(_operator_close_override_active() or _operator_close_token_fresh(data_root=data_root))
+    except Exception:
+        return False
 
 
 def _pending_entries(broker: dict[str, Any]) -> list[dict[str, Any]]:

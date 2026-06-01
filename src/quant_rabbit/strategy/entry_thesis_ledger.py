@@ -38,6 +38,8 @@ The trader/operator reads thesis_evolution_report.json and:
 - STILL_VALID + EXTEND → hold, let winners run
 - WEAKENED → caution, smaller TP if any
 - BROKEN → fresh Gate A evidence for close; Gate B still required
+- Missing entry-thesis rows are surfaced as WEAKENED/HOLD coverage gaps so
+  legacy positions cannot disappear from the management surface.
 
 No auto-close from this module. The kill switch (QR_DISABLE_AUTO_CLOSE)
 stays on; close decisions go through gpt_trader and still need Gate B.
@@ -926,6 +928,54 @@ def evaluate_thesis_evolution(
     )
 
 
+def evaluate_missing_entry_thesis_position(
+    *,
+    trade_id: str,
+    pair: str,
+    side: str,
+    open_time_utc: Optional[str],
+    current_forecast: Any,
+    current_regime: Optional[str],
+    now: Optional[datetime] = None,
+) -> ThesisEvolution:
+    """Surface a trader-owned open position that has no entry thesis row.
+
+    The row is HOLD-only by design. A missing ledger is a coverage defect, not
+    standalone Gate A close evidence; no-ledger close evidence still comes from
+    position_thesis_report with entry-buffer and multi-TF confirmation.
+    """
+
+    now = now or datetime.now(timezone.utc)
+    opened = _parse_utc_timestamp(open_time_utc)
+    age_hours = (now - opened).total_seconds() / 3600 if opened is not None else 0.0
+    side_up = side.upper()
+    current_dir = getattr(current_forecast, "direction", "UNCLEAR")
+    current_conf = float(getattr(current_forecast, "confidence", 0))
+    aligned_dir = "UP" if side_up == "LONG" else "DOWN"
+    support_word = "supports" if current_dir == aligned_dir else "does not confirm"
+    return ThesisEvolution(
+        trade_id=trade_id,
+        pair=pair,
+        side=side_up,
+        age_hours=age_hours,
+        entry_forecast="MISSING_ENTRY_THESIS",
+        current_forecast=current_dir,
+        entry_confidence=0.0,
+        current_confidence=current_conf,
+        entry_regime=None,
+        current_regime=current_regime,
+        status="WEAKENED",
+        verdict="HOLD",
+        rationale=(
+            "missing entry_thesis_ledger row; original entry reason cannot be "
+            "compared, so thesis_evolution will not authorize Gate A; "
+            f"current forecast {current_dir} conf={current_conf:.2f} {support_word} {side_up}; "
+            "use position_thesis no-ledger fallback or forecast_persistence for "
+            "machine-checkable close evidence"
+        ),
+    )
+
+
 def evaluate_all_open_positions(
     positions: List[Any],
     *,
@@ -942,7 +992,8 @@ def evaluate_all_open_positions(
     keyed by OANDA pair string (e.g. "EUR_JPY"). Forecasts can be
     `DirectionalForecast` instances or anything with `.direction` and
     `.confidence`. Positions without an entry thesis record (legacy
-    pre-2026-05-15) are skipped silently.
+    pre-2026-05-15 or failed fill promotion) are reported as WEAKENED/HOLD
+    coverage gaps instead of being skipped silently.
     """
     if _is_disabled():
         return []
@@ -990,8 +1041,17 @@ def evaluate_all_open_positions(
             pair_chart=(pair_charts_by_pair or {}).get(pair),
             now=now,
         )
-        if ev is not None:
-            out.append(ev)
+        if ev is None:
+            ev = evaluate_missing_entry_thesis_position(
+                trade_id=trade_id,
+                pair=pair,
+                side=side_up,
+                open_time_utc=open_time,
+                current_forecast=forecast,
+                current_regime=regime,
+                now=now,
+            )
+        out.append(ev)
     return out
 
 
@@ -1006,6 +1066,7 @@ def write_thesis_evolution_report(
     report_path = output_path or data_root / "thesis_evolution_report.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     now = now or datetime.now(timezone.utc)
+    missing_thesis = [e.trade_id for e in evolutions if e.entry_forecast == "MISSING_ENTRY_THESIS"]
     payload = {
         "generated_at_utc": now.isoformat().replace("+00:00", "Z"),
         "count": len(evolutions),
@@ -1013,6 +1074,11 @@ def write_thesis_evolution_report(
             "STILL_VALID": sum(1 for e in evolutions if e.status == "STILL_VALID"),
             "WEAKENED": sum(1 for e in evolutions if e.status == "WEAKENED"),
             "BROKEN": sum(1 for e in evolutions if e.status == "BROKEN"),
+        },
+        "entry_thesis_coverage": {
+            "recorded": len(evolutions) - len(missing_thesis),
+            "missing": len(missing_thesis),
+            "missing_trade_ids": missing_thesis,
         },
         "evolutions": [e.to_dict() for e in evolutions],
     }

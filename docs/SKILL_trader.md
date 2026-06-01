@@ -124,7 +124,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
   --report data/market_story_report.md
 #
 # daily-review: refresh `data/trader_overrides.json` from the last 24h
-# of realized P&L so trader_brain's Module C reads a current snapshot.
+# of realized P&L plus structural pair/side underperformance, so
+# trader_brain's Module C reads a current snapshot.
 # Idempotent and fast (single SQLite read, no network), so safe to run
 # every cycle. Expiry is JST midnight, so this also keeps the file
 # rolling without manual intervention.

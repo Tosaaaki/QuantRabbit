@@ -514,6 +514,33 @@ class EntryThesisLedgerTest(unittest.TestCase):
             )
             self.assertIsNone(ev)
 
+    def test_evaluate_all_positions_surfaces_missing_thesis_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            evs = evaluate_all_open_positions(
+                [
+                    _Position(
+                        trade_id="LEGACY1",
+                        pair="EUR_USD",
+                        side="SHORT",
+                        owner="trader",
+                        open_time_utc="2026-05-28T06:55:31.164316691Z",
+                    )
+                ],
+                current_forecasts_by_pair={"EUR_USD": _Forecast("UNCLEAR", 0.06)},
+                current_regimes_by_pair={"EUR_USD": "RANGE"},
+                data_root=root,
+                now=datetime(2026, 5, 28, 9, 55, 31, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(len(evs), 1)
+            self.assertEqual(evs[0].trade_id, "LEGACY1")
+            self.assertEqual(evs[0].entry_forecast, "MISSING_ENTRY_THESIS")
+            self.assertEqual(evs[0].status, "WEAKENED")
+            self.assertEqual(evs[0].verdict, "HOLD")
+            self.assertIn("missing entry_thesis_ledger row", evs[0].rationale)
+            self.assertAlmostEqual(evs[0].age_hours, 3.0, places=3)
+
     def test_regime_shift_demotes_still_valid_to_weakened(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -613,6 +640,7 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(payload["count"], 2)
             self.assertEqual(payload["by_status"]["BROKEN"], 1)
             self.assertEqual(payload["by_status"]["STILL_VALID"], 1)
+            self.assertEqual(payload["entry_thesis_coverage"]["missing"], 0)
 
 
 if __name__ == "__main__":

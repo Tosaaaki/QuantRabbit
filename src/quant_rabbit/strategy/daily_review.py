@@ -40,6 +40,12 @@ DAILY_REVIEW_BIAS_PL_THRESHOLD = float(os.environ.get("QR_DAILY_REVIEW_BIAS_PL_T
 DAILY_REVIEW_BIAS_SATURATION = float(os.environ.get("QR_DAILY_REVIEW_BIAS_SATURATION", "3000"))
 DAILY_REVIEW_MAX_BIAS = float(os.environ.get("QR_DAILY_REVIEW_MAX_BIAS", "20.0"))
 DAILY_REVIEW_N_LOSSES_FOR_BLOCK = int(os.environ.get("QR_DAILY_REVIEW_N_LOSSES_FOR_BLOCK", "3"))
+# Structural review catches repeatable pair/direction underperformance that can
+# disappear from a sparse 24h window. The default 0 means "all available ledger
+# history"; expiry still remains next JST midnight, so this is recomputed rather
+# than becoming a permanent hard block.
+DAILY_REVIEW_STRUCTURAL_LOOKBACK_HOURS = float(os.environ.get("QR_DAILY_REVIEW_STRUCTURAL_LOOKBACK_HOURS", "0"))
+DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS = int(os.environ.get("QR_DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS", "10"))
 
 
 @dataclass
@@ -50,7 +56,10 @@ class DailyReviewReport:
     expires_at_utc: str = ""
     source_window_start_utc: str = ""
     source_window_end_utc: str = ""
+    structural_window_start_utc: str = ""
     pair_pl_breakdown: Dict[str, float] = field(default_factory=dict)
+    structural_pair_pl_breakdown: Dict[str, float] = field(default_factory=dict)
+    structural_pair_counts: Dict[str, int] = field(default_factory=dict)
     lane_loss_counts: Dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -62,9 +71,16 @@ class DailyReviewReport:
             "_diagnostics": {
                 "source_window_start_utc": self.source_window_start_utc,
                 "source_window_end_utc": self.source_window_end_utc,
+                "structural_window_start_utc": self.structural_window_start_utc,
                 "pair_direction_net_pl_jpy": {
                     f"{k[0]}:{k[1]}": v for k, v in self.pair_pl_breakdown.items()
                 } if all(isinstance(k, tuple) for k in self.pair_pl_breakdown.keys()) else self.pair_pl_breakdown,
+                "structural_pair_direction_net_pl_jpy": {
+                    f"{k[0]}:{k[1]}": v for k, v in self.structural_pair_pl_breakdown.items()
+                } if all(isinstance(k, tuple) for k in self.structural_pair_pl_breakdown.keys()) else self.structural_pair_pl_breakdown,
+                "structural_pair_direction_counts": {
+                    f"{k[0]}:{k[1]}": v for k, v in self.structural_pair_counts.items()
+                } if all(isinstance(k, tuple) for k in self.structural_pair_counts.keys()) else self.structural_pair_counts,
                 "lane_loss_counts": self.lane_loss_counts,
             },
         }
@@ -159,6 +175,27 @@ def _read_recent_closes(
     return rows
 
 
+def _aggregate_rows(
+    rows: list[tuple[str, str, float, str | None]],
+) -> tuple[Dict[Tuple[str, str], float], Dict[Tuple[str, str], int], Dict[str, int]]:
+    pair_pl: Dict[Tuple[str, str], float] = {}
+    pair_count: Dict[Tuple[str, str], int] = {}
+    lane_losses: Dict[str, int] = {}
+    for pair, direction, pl, lane_id in rows:
+        key = (pair, direction)
+        pair_pl[key] = pair_pl.get(key, 0.0) + pl
+        pair_count[key] = pair_count.get(key, 0) + 1
+        if lane_id and pl < 0:
+            lane_losses[lane_id] = lane_losses.get(lane_id, 0) + 1
+    return pair_pl, pair_count, lane_losses
+
+
+def _structural_window_start(now: datetime) -> datetime:
+    if DAILY_REVIEW_STRUCTURAL_LOOKBACK_HOURS <= 0:
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return now - timedelta(hours=DAILY_REVIEW_STRUCTURAL_LOOKBACK_HOURS)
+
+
 def compute_daily_review(
     db_path: Path,
     *,
@@ -171,17 +208,12 @@ def compute_daily_review(
     window_start = now - timedelta(hours=lookback_hours)
 
     rows = _read_recent_closes(db_path, window_start, window_end)
+    structural_start = _structural_window_start(now)
+    structural_rows = _read_recent_closes(db_path, structural_start, window_end)
 
     # Aggregate per (pair, direction)
-    pair_pl: Dict[Tuple[str, str], float] = {}
-    pair_count: Dict[Tuple[str, str], int] = {}
-    lane_losses: Dict[str, int] = {}
-    for pair, direction, pl, lane_id in rows:
-        key = (pair, direction)
-        pair_pl[key] = pair_pl.get(key, 0.0) + pl
-        pair_count[key] = pair_count.get(key, 0) + 1
-        if lane_id and pl < 0:
-            lane_losses[lane_id] = lane_losses.get(lane_id, 0) + 1
+    pair_pl, pair_count, lane_losses = _aggregate_rows(rows)
+    structural_pair_pl, structural_pair_count, _structural_lane_losses = _aggregate_rows(structural_rows)
 
     # Direction bias: per (pair, direction) where count ≥ N and |net_pl| beyond threshold
     bias_overrides: Dict[str, Dict[str, float]] = {}
@@ -194,6 +226,20 @@ def compute_daily_review(
         magnitude = DAILY_REVIEW_MAX_BIAS * math.tanh(abs(net_pl) / DAILY_REVIEW_BIAS_SATURATION)
         sign = 1.0 if net_pl > 0 else -1.0
         bias_overrides.setdefault(pair, {})[direction] = round(sign * magnitude, 2)
+
+    # Structural negative bias: if the short tactical window is sparse or quiet,
+    # still tell trader_brain about pair/direction loss contributors with enough
+    # realized samples. This is a daily expiring score penalty, not a hard block.
+    for (pair, direction), net_pl in structural_pair_pl.items():
+        if direction in bias_overrides.get(pair, {}):
+            continue
+        count = structural_pair_count[(pair, direction)]
+        if count < DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS:
+            continue
+        if net_pl >= 0:
+            continue
+        magnitude = DAILY_REVIEW_MAX_BIAS * math.tanh(abs(net_pl) / DAILY_REVIEW_BIAS_SATURATION)
+        bias_overrides.setdefault(pair, {})[direction] = round(-magnitude, 2)
 
     # Blocked lanes
     blocked = [
@@ -212,11 +258,18 @@ def compute_daily_review(
         for k, v in sorted(pair_pl.items(), key=lambda x: -x[1])[:3]
         if v > DAILY_REVIEW_BIAS_PL_THRESHOLD
     ]
+    structural_losers = [
+        f"{k[0]}:{k[1]} {v:+.0f}JPY/{structural_pair_count[k]}trades"
+        for k, v in sorted(structural_pair_pl.items(), key=lambda x: x[1])[:3]
+        if v < 0 and structural_pair_count[k] >= DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS
+    ]
     parts: list[str] = []
     if losers:
         parts.append("losing: " + ", ".join(losers))
     if winners:
         parts.append("winning: " + ", ".join(winners))
+    if structural_losers:
+        parts.append("structural losing: " + ", ".join(structural_losers))
     if not parts:
         parts.append(f"no decisive (pair, direction) signal in last {lookback_hours:.0f}h")
     narrative = "; ".join(parts)
@@ -230,7 +283,10 @@ def compute_daily_review(
         expires_at_utc=expires.isoformat().replace("+00:00", "Z"),
         source_window_start_utc=window_start.isoformat().replace("+00:00", "Z"),
         source_window_end_utc=window_end.isoformat().replace("+00:00", "Z"),
+        structural_window_start_utc=structural_start.isoformat().replace("+00:00", "Z"),
         pair_pl_breakdown={k: round(v, 2) for k, v in pair_pl.items()},
+        structural_pair_pl_breakdown={k: round(v, 2) for k, v in structural_pair_pl.items()},
+        structural_pair_counts=structural_pair_count,
         lane_loss_counts=lane_losses,
     )
 

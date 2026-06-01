@@ -12,6 +12,7 @@ from pathlib import Path
 from quant_rabbit.strategy.daily_review import (
     DAILY_REVIEW_MAX_BIAS,
     DAILY_REVIEW_N_LOSSES_FOR_BLOCK,
+    DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS,
     DAILY_REVIEW_N_TRADES_FOR_BIAS,
     compute_daily_review,
     write_trader_overrides,
@@ -153,6 +154,31 @@ class DailyReviewTest(unittest.TestCase):
             self.assertNotIn("AUD_JPY", report.bias_overrides)
             # EUR_USD trades are recent, should appear
             self.assertIn("EUR_USD", report.bias_overrides)
+
+    def test_structural_losing_direction_triggers_bias_when_recent_window_is_sparse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            trades = [
+                {
+                    "pair": "GBP_USD",
+                    "close_side": "LONG",
+                    "pl": -900,
+                    "ts_utc": self._ts(30 + i),
+                }
+                for i in range(DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS)
+            ]
+            _make_db(path, trades)
+
+            report = compute_daily_review(path, now=self.now, lookback_hours=24)
+
+            self.assertIn("GBP_USD", report.bias_overrides)
+            self.assertIn("SHORT", report.bias_overrides["GBP_USD"])
+            self.assertLess(report.bias_overrides["GBP_USD"]["SHORT"], 0)
+            self.assertIn("structural losing: GBP_USD:SHORT", report.narrative_summary)
+            self.assertEqual(
+                report.structural_pair_counts[("GBP_USD", "SHORT")],
+                DAILY_REVIEW_STRUCTURAL_N_TRADES_FOR_BIAS,
+            )
 
     def test_lane_id_with_n_losses_gets_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
