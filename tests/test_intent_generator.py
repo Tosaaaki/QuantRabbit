@@ -3705,12 +3705,26 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         codes = {issue["code"] for issue in _method_context_issues(intent)}
         self.assertIn("EXHAUSTION_RANGE_CHASE", codes)
 
-    def test_recovery_hedge_at_extended_side_warns_instead_of_blocks(self) -> None:
+    def test_recovery_hedge_market_at_extended_side_blocks(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues
         intent = self._intent(
             side="SHORT",
             sigma_mult=2.5,
             price_pct_24h=0.08,
+            metadata_extra={"position_intent": "HEDGE", "hedge_recovery": True},
+        )
+        issue = next(
+            issue for issue in _method_context_issues(intent) if issue["code"] == "EXHAUSTION_RANGE_CHASE"
+        )
+        self.assertEqual(issue["severity"], "BLOCK")
+
+    def test_recovery_hedge_stop_at_extended_side_warns_instead_of_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=2.5,
+            price_pct_24h=0.08,
+            order_type="STOP-ENTRY",
             metadata_extra={"position_intent": "HEDGE", "hedge_recovery": True},
         )
         issue = next(
@@ -4051,6 +4065,50 @@ class PatternReversalChaseTest(unittest.TestCase):
         issue = next(issue for issue in _method_context_issues(intent) if issue["code"] == "PATTERN_REVERSAL_CHASE")
 
         self.assertEqual(issue["severity"], "WARN")
+
+    def test_recovery_hedge_market_against_reversal_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            order_type="MARKET",
+            metadata_extra={"position_intent": "HEDGE", "hedge_recovery": True},
+        )
+        issue = next(issue for issue in _method_context_issues(intent) if issue["code"] == "PATTERN_REVERSAL_CHASE")
+
+        self.assertEqual(issue["severity"], "BLOCK")
+
+    def test_recovery_hedge_market_buy_into_short_reversal_and_exhaustion_blocks(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="LONG",
+            order_type="MARKET",
+            metadata_extra={
+                "position_intent": "HEDGE",
+                "hedge_recovery": True,
+                "hedge_timing_class": "REVERSAL",
+                "pattern_reversal_dominant_side": "SHORT",
+                "pattern_reversal_weight_long": 33.75,
+                "pattern_reversal_weight_short": 39.11,
+                "pattern_signals": [
+                    {
+                        "name": "rsi_extreme_top",
+                        "timeframe": "M5",
+                        "direction": "DOWN",
+                        "side": "SHORT",
+                        "weight": 11.25,
+                        "chase_block_evidence": True,
+                        "rationale": "M5 top exhaustion -> DOWN",
+                    },
+                ],
+                "range_24h_sigma_multiple": 8.657,
+                "price_percentile_24h": 0.83,
+            },
+        )
+        issues = {issue["code"]: issue for issue in _method_context_issues(intent)}
+
+        self.assertEqual(issues["PATTERN_REVERSAL_CHASE"]["severity"], "BLOCK")
+        self.assertEqual(issues["EXHAUSTION_RANGE_CHASE"]["severity"], "BLOCK")
 
     def test_aligned_pattern_dominance_passes(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues

@@ -2910,7 +2910,7 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
         if chasing and _is_structural_retest_entry(intent, metadata, method):
             chasing = False
         if chasing:
-            severity = "WARN" if hedge_recovery else "BLOCK"
+            severity = _same_side_chase_severity(intent, hedge_recovery=hedge_recovery)
             issues.append(
                 {
                     "code": "EXHAUSTION_RANGE_CHASE",
@@ -2918,19 +2918,34 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
                         f"{intent.pair} {intent.side.value} chases a move already "
                         f"{sigma_mult:.2f}× typical hourly range over 24h "
                         f"(p24h={ppct_24h:.2f}); "
-                        + (
-                            "allowing as recovery hedge against trapped opposite exposure."
-                            if hedge_recovery
-                            else (
-                                "refuse same-direction entry after the "
-                                f"{EXHAUSTION_RANGE_SIGMA_MULTIPLE:.1f}σ-equivalent extension."
-                            )
-                        )
+                        + _same_side_chase_tail(intent, hedge_recovery=hedge_recovery)
                     ),
                     "severity": severity,
                 }
             )
     return issues
+
+
+def _same_side_chase_severity(intent: OrderIntent, *, hedge_recovery: bool) -> str:
+    if not hedge_recovery:
+        return "BLOCK"
+    if intent.order_type == OrderType.MARKET:
+        return "BLOCK"
+    return "WARN"
+
+
+def _same_side_chase_tail(intent: OrderIntent, *, hedge_recovery: bool) -> str:
+    if not hedge_recovery:
+        return (
+            "refuse same-direction entry after the "
+            f"{EXHAUSTION_RANGE_SIGMA_MULTIPLE:.1f}σ-equivalent extension."
+        )
+    if intent.order_type == OrderType.MARKET:
+        return (
+            "recovery hedge must wait for a pullback, retest, or non-market trigger "
+            "instead of buying/selling the already extended price."
+        )
+    return "allowing as recovery hedge against trapped opposite exposure."
 
 
 # A support/resistance box midpoint is the geometry boundary between "at the
@@ -3133,7 +3148,7 @@ def _pattern_reversal_chase_issue(
             f"{'; '.join(evidence)}. Wait for M5/M15 close-confirmed {intent.side.value} "
             "BOS/CHOCH, or use a retest LIMIT instead of chasing the failed side."
         ),
-        "severity": "WARN" if hedge_recovery else "BLOCK",
+        "severity": _same_side_chase_severity(intent, hedge_recovery=hedge_recovery),
     }
 
 
