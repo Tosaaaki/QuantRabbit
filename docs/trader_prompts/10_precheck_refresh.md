@@ -26,20 +26,17 @@ PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 ```
 
 **News is produced out-of-band** by the dedicated `qr-news-digest`
-Claude Desktop routine (hourly at :23 JST). That routine runs in the
-dev worktree (`/Users/tossaki/App/QuantRabbit/`) and writes
-WebSearch-curated trader-perspective content to
-`logs/news_digest.md` + `logs/news_flow_log.md`. The live worktree's
-`logs/news_digest.md` is a symlink pointing to the dev file so this
-cycle automatically sees the curated digest. **Do not call
-`news-snapshot` from the trader cycle** — that would write raw RSS
-output through the symlink and clobber the curated content. If the
-digest goes stale (the routine fails or is paused), `market_story.py`
+Codex Desktop routine (hourly). That routine runs in the live runtime
+worktree (`/Users/tossaki/App/QuantRabbit-live/`) and writes
+WebSearch-curated trader-perspective content to ignored runtime artifacts:
+`data/news_items.json`, `logs/news_digest.md`, and
+`logs/news_flow_log.md`. **Do not call `news-snapshot` from the trader
+cycle** — that would replace the curated digest with raw RSS output. If
+the digest goes stale (the routine fails or is paused), `market_story.py`
 surfaces missing-evidence rationale on lanes; it does not crash. The
-2026-05-13 incident exposed a different bug: live's `logs/news_digest.md`
-was a standalone file, 7 days stale (last refresh 2026-05-06), while
-the dev routine was writing fresh hourly to its own file the trader
-never read. Symlink resolves the bridge.
+2026-05-13 incident exposed a stale-live-digest bridge bug; the current
+contract fixes it by making the news routine write directly in the same
+live runtime worktree that the trader reads.
 
 Refresh the derived live market-story profile from that curated digest before
 intent pricing. `logs/news_digest.md` being fresh is not sufficient by itself:

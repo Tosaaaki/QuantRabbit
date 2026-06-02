@@ -102,22 +102,22 @@ PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
 # News is produced by a separate dedicated routine (`qr-news-digest`,
-# Claude Desktop, hourly at :23 JST). That routine runs in the dev
-# worktree at `/Users/tossaki/App/QuantRabbit/` and writes
-# WebSearch-curated trader-perspective content to its own
-# `logs/news_digest.md` + `logs/news_flow_log.md`. The live worktree's
-# `logs/news_digest.md` is symlinked to the dev path so this cycle sees
-# the dedicated routine's curated digest. The trader cycle must NOT run
-# `news-snapshot` here — that would write raw RSS output through the
-# symlink and clobber the curated digest. If the digest goes stale (the
-# routine fails or is paused), `strategy/market_story.py` will surface
-# missing-evidence rationale on lanes but will not crash.
+# Codex Desktop, hourly). That routine runs in the live runtime worktree
+# at `/Users/tossaki/App/QuantRabbit-live/` and writes WebSearch-curated
+# trader-perspective content to ignored runtime artifacts:
+# `data/news_items.json`, `logs/news_digest.md`, and
+# `logs/news_flow_log.md`. The trader cycle must NOT run
+# `news-snapshot` here — that would replace the curated digest with raw
+# RSS output. If the digest goes stale (the routine fails or is paused),
+# `strategy/market_story.py` will surface missing-evidence rationale on
+# lanes but will not crash.
 #
 # Reflect the curated news into the live decision artifact before any intent
-# pricing. The digest symlink alone is not enough: trader_brain and
-# gpt_trader read `data/market_story_profile.json`, so that derived profile
-# must be newer than the news files. Write the side report under `data/` to
-# avoid tracked `docs/*_report.md` drift during precheck refresh.
+# pricing. `logs/news_digest.md` alone is not enough: trader_brain and
+# gpt_trader read `data/market_story_profile.json`, so that derived
+# profile must be newer than the news files. Write the side report under
+# `data/` to avoid tracked `docs/*_report.md` drift during precheck
+# refresh.
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
   --news-dir logs \
   --profile data/market_story_profile.json \

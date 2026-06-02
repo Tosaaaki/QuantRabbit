@@ -8,7 +8,7 @@ OANDA write gateways, print secrets, or write tracked `docs/*_report.md` files.
 
 ## Working Directory
 
-`/Users/tossaki/App/QuantRabbit`
+`/Users/tossaki/App/QuantRabbit-live`
 
 ## Steps
 
@@ -21,7 +21,7 @@ OANDA write gateways, print secrets, or write tracked `docs/*_report.md` files.
    with WebSearch results if it fails.
 
 ```bash
-cd /Users/tossaki/App/QuantRabbit && PYTHONPATH=src python3 tools/news_fetcher.py
+cd /Users/tossaki/App/QuantRabbit-live && PYTHONPATH=src python3 tools/news_fetcher.py
 ```
 
 3. Also refresh the deterministic RSS artifacts. This writes `data/news_items.json`,
