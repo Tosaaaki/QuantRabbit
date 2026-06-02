@@ -140,7 +140,7 @@ class PositionManagerTest(unittest.TestCase):
             self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
             self.assertIn("session noise", (root / "pm.md").read_text())
 
-    def test_sl_free_profitable_short_gets_profit_lock_after_micro_noise_clears(self) -> None:
+    def test_sl_free_profitable_short_waits_until_tp_progress_gate_clears(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
         try:
@@ -170,12 +170,54 @@ class PositionManagerTest(unittest.TestCase):
                     report_path=root / "pm.md",
                 ).run(snapshot)
 
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(result.positions[0].recommended_stop_loss)
+                report = (root / "pm.md").read_text()
+                self.assertIn("TP-progress gate", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_sl_free_profitable_short_gets_profit_lock_after_noise_and_tp_progress_clear(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=120, short_score=160)
+                pair_charts = _pair_charts(root, atr_pips=1.0)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="short-be",
+                        pair="EUR_USD",
+                        side=Side.SHORT,
+                        units=22000,
+                        entry_price=1.16077,
+                        unrealized_pl_jpy=3000,
+                        take_profit=1.15946,
+                        stop_loss=None,
+                    ),
+                    bid=1.15962,
+                    ask=1.15970,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
                 self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
                 self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
-                self.assertEqual(result.positions[0].recommended_stop_loss, 1.1603)
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.1598)
                 report = (root / "pm.md").read_text()
                 self.assertIn("SL-free profit-lock trigger", report)
-                self.assertIn("+4.7pip", report)
+                self.assertIn("TP progress gate", report)
+                self.assertIn("+9.7pip", report)
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -242,8 +284,8 @@ class PositionManagerTest(unittest.TestCase):
                         take_profit=1.15946,
                         stop_loss=None,
                     ),
-                    bid=1.16012,
-                    ask=1.16020,
+                    bid=1.15962,
+                    ask=1.15970,
                 )
 
                 result = PositionManager(
@@ -341,8 +383,8 @@ class PositionManagerTest(unittest.TestCase):
                         take_profit=1.15950,
                         stop_loss=None,
                     ),
-                    bid=1.16012,
-                    ask=1.16020,
+                    bid=1.15962,
+                    ask=1.15970,
                 )
 
                 result = PositionManager(
@@ -354,7 +396,7 @@ class PositionManagerTest(unittest.TestCase):
 
                 self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
                 self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
-                self.assertEqual(result.positions[0].recommended_stop_loss, 1.1603)
+                self.assertEqual(result.positions[0].recommended_stop_loss, 1.1598)
                 self.assertIsNone(result.positions[0].recommended_take_profit)
                 report = (root / "pm.md").read_text()
                 self.assertIn("BB rail", report)

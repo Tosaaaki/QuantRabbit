@@ -106,6 +106,12 @@ PROFIT_PROTECTION_SPREAD_MULT = GEOMETRY_SPREAD_FLOOR_MULT
 PROFIT_BREAK_EVEN_ATR_TIMEFRAME = GEOMETRY_ATR_TIMEFRAME
 PROFIT_BREAK_EVEN_NOISE_ATR_MULT = PROFIT_PROTECTION_NOISE_ATR_MULT
 PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
+# Profit-lock SL must not convert a planned TP trade into a micro-scalp.
+# A broker-side stop is allowed only after the executable move has captured a
+# majority of the current broker TP distance. The 60% gate represents "most of
+# the planned reward has already developed"; before that point the TP is still
+# the profit-taking mechanism and the SL-free directive should remain intact.
+PROFIT_BREAK_EVEN_MIN_TP_PROGRESS = float(os.environ.get("QR_PROFIT_BREAK_EVEN_MIN_TP_PROGRESS", "0.60"))
 # Quick volatility for broker-side BE/profit-lock must be recent enough that
 # it describes the noise around the current quote, not a stale previous cycle.
 # Granularity seconds are broker timeframe definitions; the quick window is the
@@ -1224,6 +1230,15 @@ def _sl_free_profit_lock_stop_candidate(
                 f"micro-noise {noise_pips:.1f}pip ({noise_basis})",
             ),
         )
+    tp_gate, tp_gate_note = _profit_lock_tp_progress_gate_pips(position)
+    if tp_gate is not None and profit_pips < tp_gate:
+        return (
+            None,
+            (
+                f"SL-free profit-lock deferred: executable profit {profit_pips:.1f}pip < "
+                f"TP-progress gate {tp_gate:.1f}pip ({tp_gate_note})",
+            ),
+        )
     lock_stop = _profit_lock_stop(position, quote, noise_pips)
     if lock_stop is None:
         return None, ("SL-free profit-lock deferred: market-valid stop cannot be computed",)
@@ -1233,9 +1248,18 @@ def _sl_free_profit_lock_stop_candidate(
         lock_stop,
         (
             f"SL-free profit-lock trigger: executable profit {profit_pips:.1f}pip >= "
-            f"micro-noise {noise_pips:.1f}pip ({noise_basis}); stop {lock_stop:.5f} ({lock_label})",
+            f"micro-noise {noise_pips:.1f}pip ({noise_basis}); "
+            f"{tp_gate_note}; stop {lock_stop:.5f} ({lock_label})",
         ),
     )
+
+
+def _profit_lock_tp_progress_gate_pips(position: BrokerPosition) -> tuple[float | None, str]:
+    tp_pips = _position_tp_pips(position)
+    if tp_pips is None or tp_pips <= 0:
+        return None, "no broker TP progress gate"
+    gate = tp_pips * PROFIT_BREAK_EVEN_MIN_TP_PROGRESS
+    return gate, f"TP progress gate {PROFIT_BREAK_EVEN_MIN_TP_PROGRESS:.0%} of {tp_pips:.1f}pip target"
 
 
 def _profit_lock_stop(position: BrokerPosition, quote, noise_pips: float) -> float | None:
