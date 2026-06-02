@@ -257,7 +257,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_
 # Same trade/milestone is persisted in
 # data/profit_partial_close_state.json after a successful send to avoid
 # repeat partial closes on the same band.
-PYTHONPATH=src python3 -m quant_rabbit.cli profit-partial-close --send --confirm-live
+QR_LIVE_ENABLED=1 PYTHONPATH=src python3 -m quant_rabbit.cli profit-partial-close --send --confirm-live
 
 # 6c. Verify pending forward-projection predictions against OANDA
 # prices. Resolves PENDING → HIT/MISS/TIMEOUT in
