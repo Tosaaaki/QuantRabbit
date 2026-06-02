@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -13,6 +14,7 @@ from unittest import mock
 from quant_rabbit.cli import (
     _LIVE_RUNTIME_COMMANDS,
     _SL_FREE_RUNTIME_DEFAULTS,
+    _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
     main,
 )
@@ -439,6 +441,9 @@ class CliHelpTest(unittest.TestCase):
             ), mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
                 "quant_rabbit.cli.ExecutionLedger"
             ) as ledger_cls, mock.patch(
+                "quant_rabbit.strategy.projection_ledger.load_ledger",
+                return_value=[],
+            ), mock.patch(
                 "quant_rabbit.cli._refresh_current_forecast_history",
                 return_value={"recorded": 0, "skipped": {}, "cycle_id": "cycle"},
             ), mock.patch(
@@ -631,6 +636,50 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         self.assertEqual(code, 2)
         for key, expected in _SL_FREE_RUNTIME_DEFAULTS.items():
             self.assertEqual(os.environ.get(key), expected, key)
+
+    def test_generate_intents_preflight_verifies_expired_projection_telemetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "quotes": {
+                            "EUR_USD": {
+                                "bid": 1.1642,
+                                "ask": 1.1643,
+                            }
+                        }
+                    }
+                )
+            )
+            expired = SimpleNamespace(
+                resolution_status="PENDING",
+                pair="EUR_USD",
+                timestamp_emitted_utc=(datetime.now(timezone.utc) - timedelta(minutes=90))
+                .isoformat()
+                .replace("+00:00", "Z"),
+                resolution_window_min=60.0,
+            )
+            os.environ["QR_PROJECTION_VERIFY_M1_COUNT"] = "0"
+            try:
+                with mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False):
+                    with mock.patch("quant_rabbit.strategy.projection_ledger.load_ledger", return_value=[expired]):
+                        with mock.patch(
+                            "quant_rabbit.strategy.projection_ledger.verify_pending",
+                            return_value={"HIT": 1, "MISS": 0, "TIMEOUT": 0, "PENDING": 0},
+                        ) as verify_pending:
+                            summary = _pre_entry_projection_verification_if_required(
+                                telemetry_required=True,
+                                snapshot_path=snapshot,
+                                pair_charts_path=root / "missing_pair_charts.json",
+                            )
+            finally:
+                os.environ.pop("QR_PROJECTION_VERIFY_M1_COUNT", None)
+
+        self.assertEqual(summary["status"], "OK")
+        self.assertEqual(summary["expired_pending_pairs"], 1)
+        verify_pending.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -3222,7 +3222,14 @@ def _forecast_live_readiness_issue(
             ),
             "severity": "WARN",
         }
-    if direction == "RANGE" and method != TradeMethod.RANGE_ROTATION:
+    if (
+        direction == "RANGE"
+        and method != TradeMethod.RANGE_ROTATION
+        and not (
+            _is_hedge_recovery_metadata(metadata)
+            and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+        )
+    ):
         return {
             "code": "RANGE_FORECAST_REQUIRES_RANGE_ROTATION",
             "message": (

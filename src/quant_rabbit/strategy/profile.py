@@ -185,6 +185,8 @@ def _synthetic_missing_profile_severity(
     if not (sl_free and for_live_send):
         return None
     metadata = intent.metadata or {}
+    if _is_reversal_recovery_hedge(metadata):
+        return "WARN"
     if metadata.get("forecast_seed"):
         return "WARN"
     mirror_of = str(metadata.get("mirror_of") or "").strip().upper()
@@ -198,6 +200,22 @@ def _synthetic_missing_profile_severity(
     if source.status in {"CANDIDATE", "RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE"}:
         return "WARN"
     return None
+
+
+def _is_reversal_recovery_hedge(metadata: dict[str, Any]) -> bool:
+    """Return True for a same-pair recovery hedge backed by reversal evidence.
+
+    Missing mined strategy history remains a live blocker for ordinary fresh
+    entries. A REVERSAL recovery hedge is different: it is an executable risk
+    response to already-open trapped exposure, and its live permission comes
+    from broker-truth hedge metadata plus risk validation rather than archived
+    pair/side strategy promotion.
+    """
+    return (
+        str(metadata.get("position_intent") or "").upper() == "HEDGE"
+        and bool(metadata.get("hedge_recovery"))
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    )
 
 
 def _watch_only_severity(intent: OrderIntent, *, sl_free: bool, for_live_send: bool) -> str:

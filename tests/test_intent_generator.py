@@ -971,6 +971,32 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertIsNone(_forecast_live_readiness_issue(intent, recovery_metadata, TradeMethod.TREND_CONTINUATION))
         self.assertEqual(fresh_entry_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
 
+        range_recovery_metadata = {
+            **recovery_metadata,
+            "forecast_direction": "RANGE",
+            "forecast_confidence": 0.82,
+        }
+        self.assertIsNone(
+            _forecast_live_readiness_issue(intent, range_recovery_metadata, TradeMethod.TREND_CONTINUATION)
+        )
+        range_fresh_issue = _forecast_live_readiness_issue(
+            OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.MARKET,
+                units=5000,
+                entry=1.1734,
+                tp=1.1762,
+                sl=1.1718,
+                thesis="fresh range trend entry",
+                market_context=intent.market_context,
+                metadata={**range_recovery_metadata, "position_intent": "NEW", "hedge_recovery": False},
+            ),
+            {**range_recovery_metadata, "position_intent": "NEW", "hedge_recovery": False},
+            TradeMethod.TREND_CONTINUATION,
+        )
+        self.assertEqual(range_fresh_issue["code"], "RANGE_FORECAST_REQUIRES_RANGE_ROTATION")
+
         opposed = OrderIntent(
             pair="EUR_USD",
             side=Side.SHORT,

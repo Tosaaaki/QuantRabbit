@@ -342,6 +342,123 @@ def _pre_entry_execution_ledger_sync_if_required(
     }
 
 
+def _pre_entry_projection_verification_if_required(
+    *,
+    telemetry_required: bool,
+    snapshot_path: Path | None,
+    pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+) -> dict[str, Any] | None:
+    """Resolve expired projection telemetry before pricing live intents.
+
+    `generate-intents` is the first place that can decide whether a lane is
+    LIVE_READY. If the scheduled model skips the playbook's explicit
+    `verify-projections` step, every otherwise-valid live lane receives the
+    expired-PENDING telemetry blocker. This read-only broker preflight mirrors
+    the playbook so model omissions do not turn into systematic no-trade cycles.
+    """
+    if not telemetry_required:
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+    if snapshot_path is None or not snapshot_path.exists():
+        return None
+    try:
+        from quant_rabbit.analysis.candles import fetch_candles_via_client
+        from quant_rabbit.strategy.projection_ledger import load_ledger, verify_pending
+
+        now = datetime.now(timezone.utc)
+        entries = load_ledger(ROOT / "data")
+        expired_pairs: set[str] = set()
+        pending_pairs: set[str] = set()
+        for entry in entries:
+            if getattr(entry, "resolution_status", None) != "PENDING":
+                continue
+            pair = str(getattr(entry, "pair", "") or "")
+            if pair:
+                pending_pairs.add(pair)
+            try:
+                emitted_at = datetime.fromisoformat(
+                    str(getattr(entry, "timestamp_emitted_utc", "")).replace("Z", "+00:00")
+                )
+                window_min = float(getattr(entry, "resolution_window_min", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if (now - emitted_at).total_seconds() / 60.0 >= window_min and pair:
+                expired_pairs.add(pair)
+        if not expired_pairs:
+            return {"status": "NO_EXPIRED_PENDING", "expired_pending_pairs": 0}
+
+        snapshot_payload = json.loads(snapshot_path.read_text())
+        quotes_by_pair: dict[str, dict[str, float]] = {}
+        for pair_key, quote_data in (snapshot_payload.get("quotes") or {}).items():
+            if isinstance(quote_data, dict):
+                try:
+                    quotes_by_pair[str(pair_key)] = {
+                        "bid": float(quote_data.get("bid", 0)),
+                        "ask": float(quote_data.get("ask", 0)),
+                    }
+                except (TypeError, ValueError):
+                    continue
+
+        atr_pips_by_pair: dict[str, float] = {}
+        if pair_charts_path.exists():
+            pair_charts_payload = json.loads(pair_charts_path.read_text())
+            for chart in pair_charts_payload.get("charts", []) or []:
+                if not isinstance(chart, dict):
+                    continue
+                pair = str(chart.get("pair") or "")
+                if not pair:
+                    continue
+                for view in chart.get("views", []) or []:
+                    if not isinstance(view, dict) or view.get("granularity") != "H1":
+                        continue
+                    try:
+                        atr = float((view.get("indicators") or {}).get("atr_pips"))
+                    except (TypeError, ValueError):
+                        continue
+                    if atr > 0:
+                        atr_pips_by_pair[pair] = atr
+                        break
+
+        candles_by_pair: dict[str, list[Any]] | None = None
+        candle_counts: dict[str, int] = {}
+        candle_errors: dict[str, str] = {}
+        m1_count = int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500"))
+        if pending_pairs and m1_count > 0:
+            candles_by_pair = {}
+            try:
+                client = OandaReadOnlyClient()
+            except Exception as exc:
+                candle_errors["_client"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                candles_by_pair = None
+            else:
+                for pair in sorted(pending_pairs):
+                    try:
+                        candles = list(fetch_candles_via_client(client, pair, "M1", count=m1_count))
+                    except Exception as exc:
+                        candle_errors[pair] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                        continue
+                    candles_by_pair[pair] = candles
+                    candle_counts[pair] = len(candles)
+
+        counts = verify_pending(
+            ROOT / "data",
+            quotes_by_pair=quotes_by_pair,
+            atr_pips_by_pair=atr_pips_by_pair,
+            candles_by_pair=candles_by_pair,
+        )
+    except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+        return {"status": "VERIFY_FAILED", "error": str(exc)}
+    return {
+        "status": "OK",
+        "expired_pending_pairs": len(expired_pairs),
+        "pending_pairs": len(pending_pairs),
+        "resolution_counts": counts,
+        "candle_counts": candle_counts,
+        "candle_errors": candle_errors,
+    }
+
+
 def _forecast_history_has_cycle_pair(data_root: Path, pair: str, cycle_id: str) -> bool:
     path = data_root / "forecast_history.jsonl"
     if not path.exists():
@@ -1035,6 +1152,11 @@ def main(argv: list[str] | None = None) -> int:
             telemetry_required=telemetry_required,
             snapshot_path=args.snapshot,
         )
+        projection_verification = _pre_entry_projection_verification_if_required(
+            telemetry_required=telemetry_required,
+            snapshot_path=args.snapshot,
+            pair_charts_path=DEFAULT_PAIR_CHARTS,
+        )
         if (
             telemetry_required
             and (not _running_under_test_harness() or os.environ.get("QR_LIVE_ENABLED") == "1")
@@ -1079,6 +1201,7 @@ def main(argv: list[str] | None = None) -> int:
                     "execution_ledger_sync": execution_ledger_sync,
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
+                    "projection_verification": projection_verification,
                 },
                 ensure_ascii=False,
                 indent=2,
