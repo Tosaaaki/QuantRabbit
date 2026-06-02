@@ -97,6 +97,102 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertTrue(any("no LIVE_READY lanes" in item for item in payload["blockers"]))
             self.assertEqual(payload["recommended_now_lane_ids"], [])
 
+    def test_precision_filtered_live_ready_lanes_report_precision_blocker_not_risk_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:MARKET",
+                                pair="AUD_JPY",
+                                side="LONG",
+                                reward_jpy=500.0,
+                                risk_jpy=100.0,
+                                rr=5.0,
+                                metadata={"tf_agreement_score": 0.3333},
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1500.0,
+                        "remaining_risk_budget_jpy": 1000.0,
+                    }
+                )
+            )
+
+            summary = AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=root / "missing_backtest.json",
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=root / "missing_coverage.json",
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(summary.status, "NO_ATTACK_ADVICE")
+            self.assertEqual(
+                payload["precision_filtered_lane_ids"],
+                ["failure_trader:AUD_JPY:LONG:BREAKOUT_FAILURE:MARKET"],
+            )
+            self.assertTrue(any("precision filters excluded" in item for item in payload["blockers"]))
+            self.assertFalse(any("risk budget" in item for item in payload["blockers"]))
+            self.assertIn("tf agreement", (root / "advice.md").read_text())
+
+    def test_live_ready_lanes_that_pass_precision_but_exceed_budget_keep_budget_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                reward_jpy=900.0,
+                                risk_jpy=600.0,
+                                rr=1.5,
+                                metadata={"tf_agreement_score": 1.0},
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1500.0,
+                        "remaining_risk_budget_jpy": 500.0,
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=root / "missing_backtest.json",
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=root / "missing_coverage.json",
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["precision_filtered_lane_ids"], [])
+            self.assertTrue(any("risk budget" in item for item in payload["blockers"]))
+
     def test_cli_writes_read_only_advice_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

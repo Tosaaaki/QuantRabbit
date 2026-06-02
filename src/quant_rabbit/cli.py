@@ -302,6 +302,46 @@ def _forecast_refresh_cycle_id(
     return f"{cycle_source}:{fetched}:{charts_generated}"
 
 
+def _pre_entry_execution_ledger_sync_if_required(
+    *,
+    telemetry_required: bool,
+    snapshot_path: Path | None,
+) -> dict[str, Any] | None:
+    """Keep direct generate-intents invocations audit-current.
+
+    `autotrade-cycle` already syncs the execution ledger before intent
+    pricing. The standalone CLI used by operators and diagnostics can refresh
+    a broker snapshot and then price intents without that audit pass, which
+    makes every otherwise-valid live lane fail on stale transaction truth.
+    This is read-only against OANDA and only writes the append-only local
+    ledger/report; missing credentials preserve offline dry-run behavior.
+    """
+    if not telemetry_required:
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+    if snapshot_path is None or not snapshot_path.exists():
+        return None
+    try:
+        summary = ExecutionLedger(
+            db_path=DEFAULT_EXECUTION_LEDGER_DB,
+            report_path=DEFAULT_EXECUTION_LEDGER_REPORT,
+        ).sync_oanda_transactions(OandaReadOnlyClient())
+    except (RuntimeError, OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "SYNC_FAILED",
+            "error": str(exc),
+        }
+    return {
+        "status": summary.status,
+        "transactions_seen": summary.transactions_seen,
+        "transactions_inserted": summary.transactions_inserted,
+        "events_inserted": summary.events_inserted,
+        "last_transaction_id": summary.last_transaction_id,
+        "baseline_transaction_id": summary.baseline_transaction_id,
+    }
+
+
 def _forecast_history_has_cycle_pair(data_root: Path, pair: str, cycle_id: str) -> bool:
     path = data_root / "forecast_history.jsonl"
     if not path.exists():
@@ -987,9 +1027,15 @@ def main(argv: list[str] | None = None) -> int:
                 news_dir=args.market_news_dir,
             )
         forecast_refresh: dict[str, Any] | None = None
+        telemetry_required = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() in {
+            "1", "true", "TRUE", "yes", "YES"
+        }
+        execution_ledger_sync = _pre_entry_execution_ledger_sync_if_required(
+            telemetry_required=telemetry_required,
+            snapshot_path=args.snapshot,
+        )
         if (
-            os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip()
-            in {"1", "true", "TRUE", "yes", "YES"}
+            telemetry_required
             and (not _running_under_test_harness() or os.environ.get("QR_LIVE_ENABLED") == "1")
             and args.snapshot is not None
             and args.snapshot.exists()
@@ -1029,6 +1075,7 @@ def main(argv: list[str] | None = None) -> int:
                     "generated": summary.generated,
                     "needs_snapshot": summary.needs_snapshot,
                     "dry_run_passed": summary.dry_run_passed,
+                    "execution_ledger_sync": execution_ledger_sync,
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
                 },

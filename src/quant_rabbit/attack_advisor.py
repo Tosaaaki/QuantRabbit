@@ -137,9 +137,15 @@ class AttackAdvisor:
         # Pulls per-lane chart context from the intent metadata
         # already populated by intent_generator (_chart_context_for).
         precision_index = _precision_index_from_intents(intents)
+        precision_filtered_reasons = {
+            lane.lane_id: reason
+            for lane in live_ready
+            for reason in (_precision_lane_blocker(lane, precision_index),)
+            if reason
+        }
         live_ready_filtered = tuple(
             lane for lane in live_ready
-            if _precision_lane_passes(lane, precision_index)
+            if lane.lane_id not in precision_filtered_reasons
         )
         ranked = tuple(sorted(live_ready_filtered, key=lambda lane: (lane.score, lane.reward_jpy, lane.lane_id), reverse=True))
         recommended = _recommend_now(ranked, remaining_risk_jpy=remaining_risk, remaining_target_jpy=remaining_target)
@@ -155,6 +161,7 @@ class AttackAdvisor:
                 target=target,
                 remaining_target=remaining_target,
                 live_ready=live_ready,
+                live_ready_filtered=live_ready_filtered,
                 recommended=recommended,
             )
         )
@@ -184,6 +191,8 @@ class AttackAdvisor:
             "remaining_target_jpy": remaining_target,
             "remaining_risk_budget_jpy": remaining_risk,
             "live_ready_lanes": len(live_ready),
+            "precision_filtered_lane_ids": list(precision_filtered_reasons),
+            "precision_filtered_reasons": precision_filtered_reasons,
             "live_ready_reward_jpy": live_ready_reward,
             "coverage_pct": coverage_pct,
             "recommended_now_lane_ids": [lane.lane_id for lane in recommended],
@@ -258,6 +267,12 @@ class AttackAdvisor:
         if payload["watchlist_lane_ids"]:
             for lane_id in payload["watchlist_lane_ids"][:REPORT_LANE_LIMIT]:
                 lines.append(f"- `{lane_id}`")
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Precision Filtered", ""])
+        if payload.get("precision_filtered_reasons"):
+            for lane_id, reason in payload["precision_filtered_reasons"].items():
+                lines.append(f"- `{lane_id}`: {reason}")
         else:
             lines.append("- none")
         lines.extend(["", "## Blockers", ""])
@@ -677,6 +692,7 @@ def _blockers(
     target: dict[str, Any],
     remaining_target: float | None,
     live_ready: tuple[AttackLaneAdvice, ...],
+    live_ready_filtered: tuple[AttackLaneAdvice, ...],
     recommended: tuple[AttackLaneAdvice, ...],
 ) -> Iterator[str]:
     if not intents:
@@ -687,7 +703,9 @@ def _blockers(
         yield "remaining target is missing or already complete"
     if not live_ready:
         yield "no LIVE_READY lanes are available for attack advice"
-    if live_ready and not recommended:
+    if live_ready and not live_ready_filtered:
+        yield "LIVE_READY lanes exist but precision filters excluded every advice lane"
+    elif live_ready_filtered and not recommended:
         yield "LIVE_READY lanes exist but none fit current remaining risk budget"
 
 
@@ -826,6 +844,10 @@ def _precision_index_from_intents(intents: dict[str, Any]) -> dict[str, dict[str
 
 
 def _precision_lane_passes(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any]]) -> bool:
+    return _precision_lane_blocker(lane, idx) is None
+
+
+def _precision_lane_blocker(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any]]) -> str | None:
     """E: drop lanes from the advice surface if their direction is
     same-side at a 24h percentile extreme, or if M15/M30/H1 are too
     fractured to chase. Missing context = lane passes (no filter
@@ -833,15 +855,24 @@ def _precision_lane_passes(lane: AttackLaneAdvice, idx: dict[str, dict[str, Any]
     """
     ctx = idx.get(lane.lane_id)
     if ctx is None:
-        return True
+        return None
     direction = (lane.direction or "").upper()
     ppct = ctx.get("price_percentile_24h")
     if ppct is not None and direction in {"LONG", "SHORT"}:
         if direction == "LONG" and ppct >= ATTACK_PRECISION_EXTREME_HIGH:
-            return False
+            return (
+                f"LONG at 24h price percentile {ppct:.2f} >= "
+                f"{ATTACK_PRECISION_EXTREME_HIGH:.2f}"
+            )
         if direction == "SHORT" and ppct <= ATTACK_PRECISION_EXTREME_LOW:
-            return False
+            return (
+                f"SHORT at 24h price percentile {ppct:.2f} <= "
+                f"{ATTACK_PRECISION_EXTREME_LOW:.2f}"
+            )
     tf_agree = ctx.get("tf_agreement_score")
     if tf_agree is not None and tf_agree < ATTACK_PRECISION_TF_AGREEMENT_MIN:
-        return False
-    return True
+        return (
+            f"tf agreement {tf_agree:.2f} < "
+            f"{ATTACK_PRECISION_TF_AGREEMENT_MIN:.2f}"
+        )
+    return None

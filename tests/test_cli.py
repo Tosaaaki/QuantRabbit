@@ -374,6 +374,74 @@ class CliHelpTest(unittest.TestCase):
             max_candidates=56,
         )
 
+    def test_generate_intents_syncs_execution_ledger_before_live_telemetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "data" / "broker_snapshot.json"
+            snapshot.parent.mkdir()
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": "2026-06-02T01:00:00+00:00",
+                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                    }
+                )
+            )
+            summary = SimpleNamespace(
+                output_path=root / "data" / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=0,
+                generated=0,
+                needs_snapshot=False,
+                dry_run_passed=0,
+                live_ready=0,
+            )
+            ledger_summary = SimpleNamespace(
+                status="SYNCED",
+                transactions_seen=3,
+                transactions_inserted=2,
+                events_inserted=2,
+                last_transaction_id="471858",
+                baseline_transaction_id=None,
+            )
+            stdout = io.StringIO()
+
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+                "quant_rabbit.cli._running_under_test_harness", return_value=False
+            ), mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
+                "quant_rabbit.cli.ExecutionLedger"
+            ) as ledger_cls, mock.patch(
+                "quant_rabbit.cli._refresh_current_forecast_history",
+                return_value={"recorded": 0, "skipped": {}, "cycle_id": "cycle"},
+            ), mock.patch(
+                "quant_rabbit.cli.IntentGenerator"
+            ) as generator_cls, redirect_stdout(stdout):
+                ledger_cls.return_value.sync_oanda_transactions.return_value = ledger_summary
+                generator_cls.return_value.run.return_value = summary
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(snapshot),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        client_cls.assert_called_once_with()
+        ledger_cls.return_value.sync_oanda_transactions.assert_called_once_with(client_cls.return_value)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["execution_ledger_sync"]["status"], "SYNCED")
+        self.assertEqual(payload["execution_ledger_sync"]["last_transaction_id"], "471858")
+
     def test_autotrade_gpt_protect_status_exits_zero(self) -> None:
         summary = type(
             "Summary",
