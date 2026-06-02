@@ -9,6 +9,7 @@ from quant_rabbit.strategy.entry_thesis_ledger import EntryThesis, record_entry_
 from quant_rabbit.strategy.position_thesis_validator import (
     PositionThesisAssessment,
     _apply_entry_invalidation_overrides,
+    _chart_alignment_score,
     _reconcile_same_pair_hedges,
 )
 
@@ -31,6 +32,7 @@ def _assessment(
         projection_score=projection_score,
         correlation_score=0.0,
         path_score=0.0,
+        technical_score=0.0,
         reversal_against=False,
         aggregate_score=aggregate,
         verdict=verdict,
@@ -59,7 +61,45 @@ def _up_tech_chart() -> dict:
     }
 
 
+def _broad_down_tech_chart() -> dict:
+    return {
+        "confluence": {
+            "score_balance": "SHORT_LEAN",
+            "score_gap": -0.93,
+            "price_percentile_24h": 0.01,
+            "range_24h_sigma_multiple": 4.3,
+        },
+        "views": [
+            {
+                "granularity": tf,
+                "long_bias": 0.0,
+                "short_bias": 1.0,
+                "regime": "TREND_DOWN",
+                "indicators": {
+                    "rsi_14": 28.0,
+                    "macd_hist": -0.0002,
+                    "supertrend_dir": -1,
+                    "ichimoku_cloud_pos": -1,
+                    "plus_di_14": 10.0,
+                    "minus_di_14": 35.0,
+                },
+                "structure": {"last_event": {"kind": "BOS_DOWN", "close_confirmed": True}},
+            }
+            for tf in ("M5", "M15", "M30", "H1")
+        ],
+    }
+
+
 class PositionThesisValidatorTest(unittest.TestCase):
+    def test_chart_alignment_scores_strong_opposite_panel_against_position(self) -> None:
+        long_score, long_reasons = _chart_alignment_score(_broad_down_tech_chart(), "LONG")
+        short_score, short_reasons = _chart_alignment_score(_broad_down_tech_chart(), "SHORT")
+
+        self.assertLess(long_score, -20.0)
+        self.assertGreater(short_score, 20.0)
+        self.assertTrue(any("SHORT_LEAN" in reason for reason in long_reasons))
+        self.assertTrue(any("operating TF" in reason for reason in short_reasons))
+
     def test_same_pair_opposite_extends_are_suppressed_to_hold(self) -> None:
         positions = [
             BrokerPosition("long-1", "EUR_USD", Side.LONG, 7000, 1.16, owner=Owner.TRADER),
@@ -187,6 +227,40 @@ class PositionThesisValidatorTest(unittest.TestCase):
         self.assertIn("adverse technical loss", notes)
         self.assertIn("loss-cut deferred", notes)
         self.assertIn("current prediction stack still supports SHORT", notes)
+
+    def test_missing_invalidation_loss_cut_not_deferred_when_broad_technicals_invalidate(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            positions = [
+                BrokerPosition(
+                    "long-1",
+                    "EUR_USD",
+                    Side.LONG,
+                    4000,
+                    1.1667,
+                    unrealized_pl_jpy=-2692.1,
+                    owner=Owner.TRADER,
+                ),
+            ]
+
+            overridden = _apply_entry_invalidation_overrides(
+                [_assessment(
+                    "long-1",
+                    "LONG",
+                    verdict="EXTEND",
+                    pattern_score=30.0,
+                    projection_score=25.0,
+                )],
+                positions,
+                quotes_by_pair={"EUR_USD": {"ask": 1.16258, "bid": 1.16250}},
+                pair_charts_full={"EUR_USD": _broad_down_tech_chart()},
+                data_root=Path(td),
+            )
+
+        self.assertEqual(overridden[0].verdict, "REVIEW_CLOSE")
+        notes = " ".join(overridden[0].context_notes)
+        self.assertIn("adverse technical loss", notes)
+        self.assertIn("technical invalidation confirmed against LONG", notes)
+        self.assertNotIn("loss-cut deferred", notes)
 
     def test_missing_invalidation_buffer_does_not_cut_profitable_position(self) -> None:
         with tempfile.TemporaryDirectory() as td:

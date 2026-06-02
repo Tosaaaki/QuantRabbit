@@ -48,6 +48,16 @@ from typing import Any, Dict, List, Optional
 THESIS_EXIT_THRESHOLD = float(os.environ.get("QR_THESIS_EXIT_THRESHOLD", "-25.0"))
 THESIS_EXTEND_THRESHOLD = float(os.environ.get("QR_THESIS_EXTEND_THRESHOLD", "20.0"))
 
+# Position thesis is not an entry signal; it decides whether an already-open
+# leg still has technical support. The score-gap prior mirrors the forecast
+# layer, while the operating-TF cap keeps M5/M15/M30/H1 agreement large enough
+# to overrule one micro exhaustion pattern but not large enough to force a close
+# without the separate entry-buffer / Gate-A checks below.
+THESIS_OPERATING_TF_ALIGNMENT_GAIN = float(os.environ.get("QR_THESIS_OPERATING_TF_ALIGNMENT_GAIN", "6.0"))
+THESIS_OPERATING_TF_ALIGNMENT_CAP = float(os.environ.get("QR_THESIS_OPERATING_TF_ALIGNMENT_CAP", "18.0"))
+THESIS_LOCATION_PRIOR_CAP = float(os.environ.get("QR_THESIS_LOCATION_PRIOR_CAP", "10.0"))
+THESIS_STRONG_INVALIDATION_TF_COUNT = int(os.environ.get("QR_THESIS_STRONG_INVALIDATION_TF_COUNT", "3"))
+
 
 @dataclass(frozen=True)
 class PositionThesisAssessment:
@@ -58,6 +68,7 @@ class PositionThesisAssessment:
     projection_score: float
     correlation_score: float
     path_score: float
+    technical_score: float
     reversal_against: bool
     aggregate_score: float
     verdict: str  # "EXTEND" | "HOLD" | "REVIEW_CLOSE"
@@ -73,6 +84,7 @@ class PositionThesisAssessment:
             "projection_score": self.projection_score,
             "correlation_score": self.correlation_score,
             "path_score": self.path_score,
+            "technical_score": self.technical_score,
             "reversal_against": self.reversal_against,
             "aggregate_score": self.aggregate_score,
             "verdict": self.verdict,
@@ -89,6 +101,7 @@ class PositionThesisAssessment:
             projection_score=self.projection_score,
             correlation_score=self.correlation_score,
             path_score=self.path_score,
+            technical_score=self.technical_score,
             reversal_against=self.reversal_against,
             aggregate_score=self.aggregate_score,
             verdict=verdict,
@@ -153,7 +166,7 @@ def assess_position(
         return PositionThesisAssessment(
             trade_id=trade_id, pair=pair, side=side_up,
             pattern_score=0.0, projection_score=0.0,
-            correlation_score=0.0, path_score=0.0,
+            correlation_score=0.0, path_score=0.0, technical_score=0.0,
             reversal_against=False, aggregate_score=0.0,
             verdict="HOLD",
             rationale_lines=("validator disabled",),
@@ -198,6 +211,13 @@ def assess_position(
     if path_score != 0:
         rationale_lines.append(f"path-proj {path_score:+.1f}: " + "; ".join(path_rat[:1]))
 
+    # 4b. Broad chart alignment. Pattern/projection detectors are allowed to
+    # spot early fades, but they must not outrank a full M5/M15/M30/H1 panel
+    # that is currently against the position.
+    technical_score, technical_rat = _chart_alignment_score(pair_chart, side_up)
+    if technical_score != 0:
+        rationale_lines.append(f"chart-tech {technical_score:+.1f}: " + "; ".join(technical_rat[:3]))
+
     # 5. Reversal signal — but inverted: a reversal signal for the
     # OPPOSITE direction means the market is about to turn AGAINST
     # this position. That's the relevant signal for thesis validation.
@@ -211,7 +231,7 @@ def assess_position(
             f"reversal-AGAINST {reversal_score:+.1f}: {reversal_against_pos.rationale[:80]}"
         )
 
-    aggregate = pattern_score + projection_score + correlation_score + path_score + reversal_score
+    aggregate = pattern_score + projection_score + correlation_score + path_score + technical_score + reversal_score
 
     if aggregate <= THESIS_EXIT_THRESHOLD:
         verdict = "REVIEW_CLOSE"
@@ -226,11 +246,131 @@ def assess_position(
         projection_score=round(projection_score, 2),
         correlation_score=round(correlation_score, 2),
         path_score=round(path_score, 2),
+        technical_score=round(technical_score, 2),
         reversal_against=reversal_against,
         aggregate_score=round(aggregate, 2),
         verdict=verdict,
         rationale_lines=tuple(rationale_lines),
     )
+
+
+def _chart_alignment_score(pair_chart: Dict[str, Any], side: str) -> tuple[float, list[str]]:
+    """Score whether the full chart panel still supports the position side.
+
+    Micro exhaustion can mark the start of a turn, but an open-position thesis
+    must still account for the current M5/M15/M30/H1 panel and pair-level score
+    gap. This layer is deliberately bounded; it can stop a bad defer/extend, but
+    the separate entry-buffer and Gate-A checks still decide REVIEW_CLOSE.
+    """
+
+    try:
+        from quant_rabbit.strategy.directional_forecaster import (
+            FORECAST_MARKET_LOCATION_EXTREME,
+            FORECAST_SCORE_GAP_PRIOR_CAP,
+            FORECAST_SCORE_GAP_PRIOR_GAIN,
+            RANGE_PHASE_TIMEFRAMES,
+        )
+    except Exception:
+        FORECAST_MARKET_LOCATION_EXTREME = 0.15
+        FORECAST_SCORE_GAP_PRIOR_CAP = 30.0
+        FORECAST_SCORE_GAP_PRIOR_GAIN = 35.0
+        RANGE_PHASE_TIMEFRAMES = {"M5", "M15", "M30", "H1"}
+
+    side_up = side.upper()
+    if side_up not in {"LONG", "SHORT"}:
+        return 0.0, []
+    confluence = pair_chart.get("confluence") if isinstance(pair_chart.get("confluence"), dict) else {}
+    score = 0.0
+    rationales: list[str] = []
+
+    balance = str((confluence or {}).get("score_balance") or "").upper()
+    score_gap = _to_float((confluence or {}).get("score_gap"))
+    if score_gap is not None and balance in {"LONG_LEAN", "SHORT_LEAN"}:
+        aligned_balance = "LONG_LEAN" if side_up == "LONG" else "SHORT_LEAN"
+        magnitude = min(FORECAST_SCORE_GAP_PRIOR_CAP, abs(score_gap) * FORECAST_SCORE_GAP_PRIOR_GAIN)
+        signed = magnitude if balance == aligned_balance else -magnitude
+        score += signed
+        rationales.append(f"pair_chart {balance} score_gap={score_gap:+.3f} -> {signed:+.1f}")
+
+    tf_score = 0.0
+    tf_bits: list[str] = []
+    for view in pair_chart.get("views") or []:
+        if not isinstance(view, dict):
+            continue
+        tf = str(view.get("granularity") or view.get("timeframe") or "").upper()
+        if tf not in RANGE_PHASE_TIMEFRAMES:
+            continue
+        long_bias = _to_float(view.get("long_bias"))
+        short_bias = _to_float(view.get("short_bias"))
+        if long_bias is None or short_bias is None:
+            continue
+        directional_bias = (long_bias - short_bias) if side_up == "LONG" else (short_bias - long_bias)
+        if abs(directional_bias) < 1e-9:
+            continue
+        tf_score += directional_bias * THESIS_OPERATING_TF_ALIGNMENT_GAIN
+        tf_bits.append(f"{tf} bias={directional_bias:+.2f}")
+    tf_score = _clamp(tf_score, -THESIS_OPERATING_TF_ALIGNMENT_CAP, THESIS_OPERATING_TF_ALIGNMENT_CAP)
+    if tf_score:
+        score += tf_score
+        rationales.append(f"operating TF {' '.join(tf_bits[:4])} -> {tf_score:+.1f}")
+
+    location_score, location_note = _range_location_alignment_score(
+        confluence,
+        side_up,
+        extreme=FORECAST_MARKET_LOCATION_EXTREME,
+    )
+    if location_score:
+        score += location_score
+        rationales.append(location_note)
+
+    return round(score, 2), rationales
+
+
+def _range_location_alignment_score(
+    confluence: Dict[str, Any],
+    side: str,
+    *,
+    extreme: float,
+) -> tuple[float, str]:
+    p24 = _to_float((confluence or {}).get("price_percentile_24h"))
+    p7 = _to_float((confluence or {}).get("price_percentile_7d"))
+    sigma = _to_float((confluence or {}).get("range_24h_sigma_multiple"))
+    lower = []
+    upper = []
+    if p24 is not None and p24 <= extreme:
+        lower.append(f"24h_pct={p24:.2f}")
+    if p7 is not None and p7 <= extreme:
+        lower.append(f"7d_pct={p7:.2f}")
+    upper_cutoff = 1.0 - extreme
+    if p24 is not None and p24 >= upper_cutoff:
+        upper.append(f"24h_pct={p24:.2f}")
+    if p7 is not None and p7 >= upper_cutoff:
+        upper.append(f"7d_pct={p7:.2f}")
+
+    labels = lower if side == "LONG" else upper
+    against_labels = upper if side == "LONG" else lower
+    if labels:
+        boost = 1.0 if sigma is not None and sigma >= 2.0 else 0.7
+        score = THESIS_LOCATION_PRIOR_CAP * boost
+        return score, f"market location {' '.join(labels)} supports {side} mean-reversion -> {score:+.1f}"
+    if against_labels:
+        boost = 1.0 if sigma is not None and sigma >= 2.0 else 0.7
+        score = -THESIS_LOCATION_PRIOR_CAP * boost
+        return score, f"market location {' '.join(against_labels)} opposes {side} continuation -> {score:+.1f}"
+    return 0.0, ""
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
 
 
 def assess_all_positions(
@@ -430,6 +570,8 @@ def _defer_missing_invalidation_loss_cut_for_recovery_support(
 
     if assessment.aggregate_score < THESIS_EXTEND_THRESHOLD:
         return None
+    if _strong_invalidation_tf_count(technical_reason) >= THESIS_STRONG_INVALIDATION_TF_COUNT:
+        return None
     return assessment.with_verdict(
         "HOLD",
         adverse_reason,
@@ -442,6 +584,14 @@ def _defer_missing_invalidation_loss_cut_for_recovery_support(
             "structure Gate A"
         ),
     )
+
+
+def _strong_invalidation_tf_count(technical_reason: str) -> int:
+    seen: set[str] = set()
+    for tf in ("M5", "M15", "M30", "H1", "H4", "D"):
+        if f"{tf}:" in technical_reason:
+            seen.add(tf)
+    return len(seen)
 
 
 def _entry_buffer_adverse_loss_reason(
