@@ -771,6 +771,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_tevol = sub.add_parser(
         "thesis-evolution-check",
+        aliases=["thesis-evolution"],
         help="Compare each open position's CURRENT forecast against its entry-time thesis; emit STILL_VALID/WEAKENED/BROKEN to data/thesis_evolution_report.json. Fresh BROKEN/RECOMMEND_CLOSE is Gate A evidence only; Gate B still required.",
     )
     p_tevol.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
@@ -2273,7 +2274,7 @@ def main(argv: list[str] | None = None) -> int:
             "output_path": str(args.output),
         }, indent=2, ensure_ascii=False))
         return 0
-    if args.command == "thesis-evolution-check":
+    if args.command in {"thesis-evolution-check", "thesis-evolution"}:
         # Compare entry-time thesis vs latest cycle forecast per open
         # position. Reads the canonical latest forecast from
         # data/forecast_history.jsonl (written each cycle by trader_brain)

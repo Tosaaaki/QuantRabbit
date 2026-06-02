@@ -93,6 +93,34 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertIn("--decision-response", payload["error"])
 
+    def test_thesis_evolution_legacy_alias_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            snapshot.write_text(json.dumps({"positions": [], "orders": [], "quotes": {}}))
+            pair_charts = root / "pair_charts.json"
+            pair_charts.write_text(json.dumps({"charts": []}))
+            output = root / "thesis_evolution.json"
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "thesis-evolution",
+                        "--snapshot",
+                        str(snapshot),
+                        "--pair-charts",
+                        str(pair_charts),
+                        "--output",
+                        str(output),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["status"], "OK")
+        self.assertEqual(payload["evolution_count"], 0)
+
     def test_refresh_current_forecast_history_records_snapshot_cycle_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

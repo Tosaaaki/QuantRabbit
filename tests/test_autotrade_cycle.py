@@ -108,11 +108,72 @@ class AutoTradeCycleTest(unittest.TestCase):
             issues=1,
             close_trade_ids=("471232",),
         )
+        snapshot = BrokerSnapshot(fetched_at_utc=datetime.now(timezone.utc))
 
-        closed = cycle._close_gpt_trades(summary, send=True)
+        execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
 
-        self.assertEqual(closed, ())
+        self.assertEqual(execution.status, "NO_ACTION")
+        self.assertFalse(execution.sent)
         self.assertEqual(client.closed, [])
+
+    def test_accepted_gpt_close_routes_through_position_gateway_receipt(self) -> None:
+        class Client:
+            def __init__(self) -> None:
+                self.closed: list[tuple[str, str]] = []
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+                self.closed.append((trade_id, units))
+                return {"relatedTransactionIDs": ["20"]}
+
+            def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
+                raise AssertionError("GPT CLOSE must not replace dependent orders")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="471232",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1729,
+                        unrealized_pl_jpy=-250.0,
+                        take_profit=1.1740,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1710, 1.1711, timestamp_utc=now)},
+            )
+            client = Client()
+            cycle = AutoTradeCycle(
+                client=client,
+                live_enabled=True,
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+            )
+            summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CLOSE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                close_trade_ids=("471232",),
+            )
+
+            execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
+
+            self.assertEqual(execution.status, "SENT")
+            self.assertTrue(execution.sent)
+            self.assertEqual(client.closed, [("471232", "ALL")])
+            payload = json.loads((root / "pe.json").read_text())
+            self.assertEqual(payload["status"], "SENT")
+            self.assertEqual(payload["actions"][0]["request"]["type"], "CLOSE")
+            self.assertEqual(payload["actions"][0]["trade_id"], "471232")
+            self.assertIn("CLOSE", (root / "pe.md").read_text())
 
     def test_forecast_blocker_is_not_gpt_prefilter_eligible(self) -> None:
         score = LaneScore(

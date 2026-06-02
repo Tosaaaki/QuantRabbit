@@ -11,7 +11,7 @@ from pathlib import Path
 
 from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
-from quant_rabbit.broker.position_execution import PositionProtectionGateway
+from quant_rabbit.broker.position_execution import PositionExecutionSummary, PositionProtectionGateway
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
@@ -49,7 +49,7 @@ from quant_rabbit.risk import RiskPolicy, margin_budget_jpy, resolve_max_loss_jp
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
 from quant_rabbit.strategy.market_story import MarketStoryMiner
-from quant_rabbit.strategy.position_manager import PositionManager
+from quant_rabbit.strategy.position_manager import ACTION_REVIEW_EXIT, ManagedPosition, PositionManagementDecision, PositionManager
 from quant_rabbit.strategy.receipt_promotion import ReceiptPromoter, ReceiptPromotionSummary
 from quant_rabbit.strategy.trader_brain import (
     ACTION_NO_TRADE,
@@ -101,6 +101,20 @@ def _buffered_basket_margin_budget_jpy(
     if base is None:
         return None
     return max(0.0, float(base)) * MARGIN_AWARE_BASKET_BUFFER
+
+
+def _position_execution_cycle_status(
+    execution: PositionExecutionSummary,
+    *,
+    fallback: str,
+) -> str:
+    if execution.sent:
+        return "POSITION_ACTION_SENT"
+    if execution.status == "STAGED":
+        return "POSITION_ACTION_STAGED"
+    if execution.status == "BLOCKED":
+        return "POSITION_ACTION_BLOCKED"
+    return fallback
 
 
 def _projection_atr_pips_by_pair(pair_charts_path: Path) -> dict[str, float]:
@@ -900,9 +914,9 @@ class AutoTradeCycle:
                             and gpt_summary.allowed
                             and gpt_summary.action == "CLOSE"
                         ):
-                            closed_trades = self._close_gpt_trades(gpt_summary, send=send)
+                            close_execution = self._close_gpt_trades(gpt_summary, snapshot=snapshot, send=send)
                             summary = AutoTradeCycleSummary(
-                                status="CLOSED_GPT_TRADES" if closed_trades else "GPT_CLOSE",
+                                status=_position_execution_cycle_status(close_execution, fallback="GPT_CLOSE"),
                                 report_path=self.report_path,
                                 snapshot_path=self.snapshot_path,
                                 intents_path=self.intents_path,
@@ -916,9 +930,9 @@ class AutoTradeCycle:
                                 canceled_orders=tuple(canceled_orders),
                                 receipt_promotions=0,
                                 decision_source="gpt_trader",
-                                position_management_action=position_decision.action,
-                                position_execution_status=position_execution.status,
-                                position_execution_sent=position_execution.sent,
+                                position_management_action="GPT_CLOSE",
+                                position_execution_status=close_execution.status,
+                                position_execution_sent=close_execution.sent,
                                 target_status=target_summary.status if target_summary else None,
                                 target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
                                 target_progress_pct=target_summary.progress_pct if target_summary else None,
@@ -1054,10 +1068,6 @@ class AutoTradeCycle:
                                 already_canceled=tuple(canceled_orders),
                             )
                         )
-                        # TRADE may also retire prior trader-owned positions
-                        # in the same cycle. Close runs before basket validation
-                        # so freed margin counts toward the new entries.
-                        self._close_gpt_trades(gpt_summary, send=send)
                         if target_open:
                             basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
                                 decision=decision,
@@ -1210,9 +1220,9 @@ class AutoTradeCycle:
                 # these branches, an ACCEPTED CLOSE silently returns GPT_CLOSE and
                 # the broker is never asked to retire the named trades.
                 if gpt_summary.action == "CLOSE":
-                    closed_trades = self._close_gpt_trades(gpt_summary, send=send)
+                    close_execution = self._close_gpt_trades(gpt_summary, snapshot=snapshot, send=send)
                     summary = AutoTradeCycleSummary(
-                        status="CLOSED_GPT_TRADES" if closed_trades else "GPT_CLOSE",
+                        status=_position_execution_cycle_status(close_execution, fallback="GPT_CLOSE"),
                         report_path=self.report_path,
                         snapshot_path=self.snapshot_path,
                         intents_path=self.intents_path,
@@ -1224,9 +1234,9 @@ class AutoTradeCycle:
                         live_ready=intent_summary.live_ready,
                         receipt_promotions=promotion_summary.promoted,
                         decision_source="gpt_trader",
-                        position_management_action=position_decision.action if position_decision else None,
-                        position_execution_status=position_execution.status if position_execution else None,
-                        position_execution_sent=position_execution.sent if position_execution else False,
+                        position_management_action="GPT_CLOSE",
+                        position_execution_status=close_execution.status,
+                        position_execution_sent=close_execution.sent,
                         target_status=target_summary.status if target_summary else None,
                         target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
                         target_progress_pct=target_summary.progress_pct if target_summary else None,
@@ -1397,6 +1407,42 @@ class AutoTradeCycle:
                 }
                 if gpt_summary is None:
                     gpt_summary = self._run_gpt_handoff()
+                if (
+                    gpt_summary.status == "ACCEPTED"
+                    and gpt_summary.allowed
+                    and gpt_summary.action == "CLOSE"
+                ):
+                    close_execution = self._close_gpt_trades(gpt_summary, snapshot=snapshot, send=send)
+                    summary = AutoTradeCycleSummary(
+                        status=_position_execution_cycle_status(close_execution, fallback="GPT_CLOSE"),
+                        report_path=self.report_path,
+                        snapshot_path=self.snapshot_path,
+                        intents_path=self.intents_path,
+                        selected_lane_id=None,
+                        deterministic_lane_id=deterministic_lane_id,
+                        sent=False,
+                        positions=positions,
+                        orders=orders,
+                        live_ready=intent_summary.live_ready,
+                        decision_source="gpt_trader",
+                        receipt_promotions=promotion_summary.promoted,
+                        position_management_action="GPT_CLOSE",
+                        position_execution_status=close_execution.status,
+                        position_execution_sent=close_execution.sent,
+                        target_status=target_summary.status if target_summary else None,
+                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+                        target_progress_pct=target_summary.progress_pct if target_summary else None,
+                        gpt_status=gpt_summary.status,
+                        gpt_action=gpt_summary.action,
+                        gpt_allowed=gpt_summary.allowed,
+                        gpt_issues=gpt_summary.issues,
+                        gpt_error=gpt_summary.error,
+                        gpt_wait_retries=gpt_wait_retries,
+                        gpt_recovery_source=gpt_recovery_source,
+                        campaign_exposure_required=campaign_exposure_required,
+                    )
+                    self._write_report(summary, generated_at)
+                    return summary
                 gpt_trade_accepted = (
                     gpt_summary.status == "ACCEPTED"
                     and gpt_summary.allowed
@@ -2116,11 +2162,21 @@ class AutoTradeCycle:
         self,
         gpt_summary: GptHandoffSummary,
         *,
+        snapshot,
         send: bool,
-    ) -> tuple[str, ...]:
-        # Operator-directed market close on trader-owned positions named in
-        # decision.close_trade_ids. The verifier (gpt_trader) already confirmed
-        # each id is a current trader-owned trade in the broker snapshot.
+    ) -> PositionExecutionSummary:
+        # Operator-directed market close on trade ids named in
+        # decision.close_trade_ids. The verifier (gpt_trader) supplies Gate A/B;
+        # PositionProtectionGateway still re-checks broker truth, ownership, live
+        # enablement, and receipt/report persistence before any broker write.
+        no_action = PositionExecutionSummary(
+            status="NO_ACTION",
+            output_path=self.position_execution_path,
+            report_path=self.position_execution_report_path,
+            sent=False,
+            actions=0,
+            blocked=0,
+        )
         if (
             gpt_summary.status != "ACCEPTED"
             or not gpt_summary.allowed
@@ -2133,33 +2189,61 @@ class AutoTradeCycle:
                     f"action={gpt_summary.action} "
                     f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
                 )
-            return ()
-        if not send or not self.live_enabled or not gpt_summary.close_trade_ids:
+            return no_action
+        if not gpt_summary.close_trade_ids:
             sys.stderr.write(
                 f"[automation._close_gpt_trades] short-circuit: "
-                f"send={send} live_enabled={self.live_enabled} "
                 f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
             )
-            return ()
-        closed: list[str] = []
+            return no_action
+        decision = self._gpt_close_position_decision(gpt_summary, snapshot=snapshot)
+        return self._position_gateway().run(decision=decision, snapshot=snapshot, send=send)
+
+    def _gpt_close_position_decision(
+        self,
+        gpt_summary: GptHandoffSummary,
+        *,
+        snapshot,
+    ) -> PositionManagementDecision:
+        positions_by_id = {
+            str(getattr(position, "trade_id", "")): position
+            for position in getattr(snapshot, "positions", ()) or ()
+        }
+        managed: list[ManagedPosition] = []
         for trade_id in gpt_summary.close_trade_ids:
-            try:
-                response = self.client.close_trade(str(trade_id), "ALL")
-                closed.append(str(trade_id))
-                sys.stderr.write(
-                    f"[automation._close_gpt_trades] closed trade_id={trade_id} "
-                    f"resp_keys={list(response.keys()) if isinstance(response, dict) else type(response).__name__}\n"
+            position = positions_by_id.get(str(trade_id))
+            side = getattr(position, "side", "") if position is not None else ""
+            owner = getattr(position, "owner", None) if position is not None else None
+            managed.append(
+                ManagedPosition(
+                    trade_id=str(trade_id),
+                    pair=str(getattr(position, "pair", "") if position is not None else ""),
+                    side=str(getattr(side, "value", side) or ""),
+                    units=int(getattr(position, "units", 0) or 0) if position is not None else 0,
+                    action=ACTION_REVIEW_EXIT,
+                    unrealized_pl_jpy=(
+                        float(getattr(position, "unrealized_pl_jpy", 0.0) or 0.0)
+                        if position is not None
+                        else 0.0
+                    ),
+                    remaining_risk_jpy=None,
+                    remaining_reward_jpy=None,
+                    same_direction_score=None,
+                    opposite_direction_score=None,
+                    recommended_stop_loss=None,
+                    recommended_take_profit=None,
+                    reasons=(
+                        "gpt-close: accepted gpt_trader CLOSE receipt passed Gate A/B; "
+                        "execute only through PositionProtectionGateway",
+                    ),
+                    owner=str(getattr(owner, "value", owner) or "trader"),
                 )
-            except Exception as exc:
-                # Failure to close (already closed, race) is non-fatal; the
-                # next cycle reads broker truth and re-decides. Log the exact
-                # exception so the operator can diagnose silent failures.
-                sys.stderr.write(
-                    f"[automation._close_gpt_trades] FAILED trade_id={trade_id} "
-                    f"exc_type={type(exc).__name__} exc_msg={exc}\n"
-                )
-                continue
-        return tuple(closed)
+            )
+        return PositionManagementDecision(
+            generated_at_utc=datetime.now(timezone.utc).isoformat(),
+            action="GPT_CLOSE",
+            positions=tuple(managed),
+        )
 
     def _gpt_brain(self) -> GPTTraderBrain:
         return GPTTraderBrain(

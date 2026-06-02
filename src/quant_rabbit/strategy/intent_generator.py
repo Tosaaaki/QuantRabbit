@@ -1409,10 +1409,26 @@ def _append_forecast_seed_lanes(
             if key in seeded_keys:
                 continue
             source = existing_by_key.get(key) or source_by_pair.get(pair)
-            seeds.append(_forecast_seed_lane(source, pair=pair, side=side, method=method, forecast=forecast))
+            seeds.append(
+                _forecast_seed_lane(
+                    source,
+                    pair=pair,
+                    side=side,
+                    method=method,
+                    forecast=forecast,
+                    cycle_id=forecast_cycle_id,
+                )
+            )
             seeded_keys.add(key)
 
-    lanes = [_lane_with_forecast_context(lane, forecasts_by_pair.get(str(lane.get("pair") or ""))) for lane in lanes]
+    lanes = [
+        _lane_with_forecast_context(
+            lane,
+            forecasts_by_pair.get(str(lane.get("pair") or "")),
+            cycle_id=forecast_cycle_id,
+        )
+        for lane in lanes
+    ]
     if not seeds:
         return lanes
     return seeds + [
@@ -1442,9 +1458,10 @@ def _record_forecast_seed_telemetry(
         from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
         from quant_rabbit.strategy.projection_ledger import record_directional_forecast
 
-        record_forecast(forecast, data_root=data_root, cycle_id=cycle_id)
+        forecast_record = _forecast_with_pair(forecast, pair=pair)
+        record_forecast(forecast_record, data_root=data_root, cycle_id=cycle_id)
         record_directional_forecast(
-            forecast,
+            forecast_record,
             pair=pair,
             current_price=current_price,
             data_root=data_root,
@@ -1453,6 +1470,21 @@ def _record_forecast_seed_telemetry(
         )
     except Exception:
         return
+
+
+class _ForecastPairProxy:
+    def __init__(self, forecast: Any, *, pair: str) -> None:
+        self._forecast = forecast
+        self.pair = pair
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._forecast, name)
+
+
+def _forecast_with_pair(forecast: Any, *, pair: str) -> Any:
+    if str(getattr(forecast, "pair", "") or ""):
+        return forecast
+    return _ForecastPairProxy(forecast, pair=pair)
 
 
 def _forecast_seed_for_pair(
@@ -1643,6 +1675,7 @@ def _forecast_seed_lane(
     side: str,
     method: str,
     forecast: Any,
+    cycle_id: str | None,
 ) -> dict[str, Any]:
     lane = dict(source or {})
     confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
@@ -1680,23 +1713,29 @@ def _forecast_seed_lane(
             "blockers": list(lane.get("blockers") or []),
             "story_examples": drivers_for or list(lane.get("story_examples") or [])[:2],
             "forecast_seed": True,
-            **_forecast_context_payload(forecast),
+            **_forecast_context_payload(forecast, cycle_id=cycle_id),
         }
     )
     return lane
 
 
-def _lane_with_forecast_context(lane: dict[str, Any], forecast: Any | None) -> dict[str, Any]:
+def _lane_with_forecast_context(
+    lane: dict[str, Any],
+    forecast: Any | None,
+    *,
+    cycle_id: str | None,
+) -> dict[str, Any]:
     if forecast is None:
         return lane
     out = dict(lane)
-    out.update(_forecast_context_payload(forecast))
+    out.update(_forecast_context_payload(forecast, cycle_id=cycle_id))
     return out
 
 
-def _forecast_context_payload(forecast: Any) -> dict[str, Any]:
+def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> dict[str, Any]:
     confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
     return {
+        "forecast_cycle_id": cycle_id,
         "forecast_direction": str(getattr(forecast, "direction", "") or ""),
         "forecast_confidence": round(confidence, 4),
         "forecast_current_price": getattr(forecast, "current_price", None),
@@ -2656,6 +2695,7 @@ def _intent_from_lane(
             "campaign_role": lane.get("campaign_role"),
             "required_receipt": lane.get("required_receipt"),
             "forecast_seed": bool(lane.get("forecast_seed")),
+            "forecast_cycle_id": lane.get("forecast_cycle_id"),
             "forecast_direction": lane.get("forecast_direction"),
             "forecast_confidence": lane.get("forecast_confidence"),
             "forecast_current_price": lane.get("forecast_current_price"),
@@ -3254,7 +3294,34 @@ def _telemetry_live_readiness_issues(
     else:
         latest_ts = _parse_telemetry_time(latest.get("timestamp_utc"))
         snapshot_ts = _ensure_utc(getattr(snapshot, "fetched_at_utc", None))
-        if latest_ts is None or (snapshot_ts is not None and latest_ts < snapshot_ts):
+        expected_cycle_id = str(metadata.get("forecast_cycle_id") or "")
+        latest_cycle_id = str(latest.get("cycle_id") or "")
+        latest_matches_intent_cycle = bool(expected_cycle_id and latest_cycle_id == expected_cycle_id)
+        if latest_ts is None:
+            latest_text = latest.get("timestamp_utc") or "unknown"
+            snapshot_text = snapshot_ts.isoformat() if snapshot_ts is not None else "unknown"
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} forecast telemetry is stale "
+                        f"(forecast_history={latest_text}, snapshot={snapshot_text}); "
+                        "refresh the forecast from the same broker snapshot before live entry."
+                    ),
+                )
+            )
+        elif expected_cycle_id and latest_cycle_id != expected_cycle_id:
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} forecast telemetry cycle_id "
+                        f"{latest_cycle_id or 'missing'} does not match intent forecast_cycle_id "
+                        f"{expected_cycle_id}; refresh the forecast from the same broker snapshot before live entry."
+                    ),
+                )
+            )
+        elif snapshot_ts is not None and latest_ts < snapshot_ts and not latest_matches_intent_cycle:
             latest_text = latest.get("timestamp_utc") or "unknown"
             snapshot_text = snapshot_ts.isoformat() if snapshot_ts is not None else "unknown"
             issues.append(
