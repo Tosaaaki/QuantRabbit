@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree as ET
@@ -25,6 +25,10 @@ from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS, G8_CURRENCIES
 
 MARKETPULSE_RSS_URL = "https://www.marketpulse.com/feed/"
 MARKETPULSE_SOURCE = "MarketPulse"
+FXSTREET_NEWS_RSS_URL = "https://www.fxstreet.com/rss/news"
+FXSTREET_NEWS_SOURCE = "FXStreet News"
+FOREXLIVE_RSS_URL = "https://www.forexlive.com/feed"
+FOREXLIVE_SOURCE = "ForexLive"
 
 # (a) Freshness window for macro/news headlines used by the intraday trader.
 # (b) Constant because MarketPulse declares an hourly RSS cadence and the trader
@@ -73,6 +77,13 @@ ENTRY_SEPARATOR = "---ENTRY---"
 class NewsSource:
     name: str
     url: str
+
+
+DEFAULT_NEWS_SOURCES: tuple[NewsSource, ...] = (
+    NewsSource(name=MARKETPULSE_SOURCE, url=MARKETPULSE_RSS_URL),
+    NewsSource(name=FXSTREET_NEWS_SOURCE, url=FXSTREET_NEWS_RSS_URL),
+    NewsSource(name=FOREXLIVE_SOURCE, url=FOREXLIVE_RSS_URL),
+)
 
 
 @dataclass(frozen=True)
@@ -130,6 +141,12 @@ def fetch_rss(url: str, *, timeout: int = FETCH_TIMEOUT_SECONDS) -> bytes:
 def parse_marketpulse_rss(payload: bytes) -> tuple[NewsItem, ...]:
     """Parse MarketPulse RSS into compact news items."""
 
+    return parse_rss_feed(payload, source_name=MARKETPULSE_SOURCE)
+
+
+def parse_rss_feed(payload: bytes, *, source_name: str) -> tuple[NewsItem, ...]:
+    """Parse a standard RSS feed into compact news items."""
+
     root = ET.fromstring(payload)
     items: list[NewsItem] = []
     for node in root.findall(".//item"):
@@ -153,7 +170,7 @@ def parse_marketpulse_rss(payload: bytes) -> tuple[NewsItem, ...]:
         topics = _extract_topics(title, summary, categories)
         items.append(
             NewsItem(
-                source=MARKETPULSE_SOURCE,
+                source=source_name,
                 title=title,
                 link=link,
                 published_at_utc=published_at.isoformat(),
@@ -174,29 +191,48 @@ def build_news_snapshot(
     max_items: int = DEFAULT_MAX_ITEMS,
     fetch: bool = True,
     marketpulse_payload: bytes | None = None,
+    source_payloads: Mapping[str, bytes] | None = None,
+    sources: Sequence[NewsSource] = DEFAULT_NEWS_SOURCES,
 ) -> NewsSnapshot:
     """Fetch and normalize configured news sources."""
 
     now = now_utc or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    sources = (NewsSource(name=MARKETPULSE_SOURCE, url=MARKETPULSE_RSS_URL),)
+    configured_sources = tuple(sources)
     issues: list[str] = []
     items: list[NewsItem] = []
 
+    payloads: dict[str, bytes] = dict(source_payloads or {})
     if marketpulse_payload is not None:
+        payloads[MARKETPULSE_SOURCE] = marketpulse_payload
+
+    source_items: dict[str, tuple[NewsItem, ...]] = {}
+    for source in configured_sources:
+        issue_slug = _source_issue_slug(source.name)
         try:
-            items.extend(parse_marketpulse_rss(marketpulse_payload))
+            payload = payloads.get(source.name) or payloads.get(source.url)
+            if payload is None:
+                if not fetch:
+                    continue
+                payload = fetch_rss(source.url)
+            parsed = parse_rss_feed(payload, source_name=source.name)
+            source_items[source.name] = parsed
+            items.extend(parsed)
         except ET.ParseError as exc:
-            issues.append(f"MALFORMED_MARKETPULSE_FEED: {exc}")
-    elif fetch:
-        try:
-            items.extend(parse_marketpulse_rss(fetch_rss(MARKETPULSE_RSS_URL)))
-        except (URLError, ET.ParseError, OSError, TimeoutError, ValueError) as exc:
-            issues.append(f"MISSING_MARKETPULSE_FEED: {exc}")
+            issues.append(f"MALFORMED_{issue_slug}_FEED: {exc}")
+        except (URLError, OSError, TimeoutError, ValueError) as exc:
+            issues.append(f"MISSING_{issue_slug}_FEED: {exc}")
 
     items = list(sorted(_dedupe_items(items), key=_sort_key, reverse=True))
     cutoff = now - timedelta(hours=lookback_hours)
+    for source_name, parsed_items in source_items.items():
+        if parsed_items and not any(_published_at(item) >= cutoff for item in parsed_items):
+            newest = max(_published_at(item) for item in parsed_items)
+            issues.append(
+                f"STALE_{_source_issue_slug(source_name)}_FEED: "
+                f"newest={newest.isoformat()} lookback_hours={lookback_hours}"
+            )
     fresh_items = [item for item in items if _published_at(item) >= cutoff]
     if items and not fresh_items:
         newest = max(_published_at(item) for item in items)
@@ -208,7 +244,7 @@ def build_news_snapshot(
     return NewsSnapshot(
         generated_at_utc=now.isoformat(),
         lookback_hours=lookback_hours,
-        sources=sources,
+        sources=configured_sources,
         items=retained,
         issues=tuple(issues),
     )
@@ -346,12 +382,20 @@ def _dedupe_items(items: Iterable[NewsItem]) -> tuple[NewsItem, ...]:
     seen: set[str] = set()
     out: list[NewsItem] = []
     for item in items:
-        key = item.link or item.title
+        key = _dedupe_key(item)
         if key in seen:
             continue
         seen.add(key)
         out.append(item)
     return tuple(out)
+
+
+def _dedupe_key(item: NewsItem) -> str:
+    return (item.link or item.title).strip().rstrip("/").lower()
+
+
+def _source_issue_slug(name: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")
 
 
 def _published_at(item: NewsItem) -> datetime:
@@ -508,12 +552,16 @@ __all__ = [
     "DEFAULT_LOOKBACK_HOURS",
     "DEFAULT_MAX_ITEMS",
     "MARKETPULSE_RSS_URL",
+    "FXSTREET_NEWS_RSS_URL",
+    "FOREXLIVE_RSS_URL",
+    "DEFAULT_NEWS_SOURCES",
     "NewsItem",
     "NewsSnapshot",
     "NewsSource",
     "build_news_snapshot",
     "fetch_rss",
     "parse_marketpulse_rss",
+    "parse_rss_feed",
     "render_flow_entry",
     "render_news_digest",
     "write_news_artifacts",

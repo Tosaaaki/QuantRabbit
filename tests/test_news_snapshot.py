@@ -8,6 +8,8 @@ from pathlib import Path
 
 from quant_rabbit.analysis.news import (
     ENTRY_SEPARATOR,
+    FXSTREET_NEWS_SOURCE,
+    MARKETPULSE_SOURCE,
     build_news_snapshot,
     parse_marketpulse_rss,
     render_flow_entry,
@@ -41,6 +43,21 @@ SAMPLE_MARKETPULSE_RSS = b"""<?xml version="1.0" encoding="utf-8"?>
 </rss>
 """
 
+SAMPLE_FXSTREET_RSS = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>FXStreet News</title>
+    <item>
+      <title>Forex Today: US Dollar weakens after jobs data</title>
+      <link>https://www.fxstreet.com/news/forex-today-dollar-jobs/</link>
+      <description>The US Dollar turns lower as traders react to employment data and Fed pricing.</description>
+      <pubDate>Fri, 08 May 2026 04:45:00 +0000</pubDate>
+      <category>Forex News</category>
+    </item>
+  </channel>
+</rss>
+"""
+
 
 class NewsSnapshotTest(unittest.TestCase):
     def test_parse_marketpulse_rss_extracts_pairs_and_topics(self) -> None:
@@ -62,15 +79,49 @@ class NewsSnapshotTest(unittest.TestCase):
             now_utc=datetime(2026, 5, 8, 5, 0, tzinfo=timezone.utc),
             lookback_hours=1,
             marketpulse_payload=SAMPLE_MARKETPULSE_RSS,
+            fetch=False,
         )
 
         self.assertEqual(len(snap.items), 2)
         self.assertTrue(any(issue.startswith("STALE_NEWS_FEED") for issue in snap.issues))
 
+    def test_fresh_secondary_source_prevents_stale_feed_replay(self) -> None:
+        snap = build_news_snapshot(
+            now_utc=datetime(2026, 5, 8, 5, 0, tzinfo=timezone.utc),
+            lookback_hours=1,
+            source_payloads={
+                MARKETPULSE_SOURCE: SAMPLE_MARKETPULSE_RSS,
+                FXSTREET_NEWS_SOURCE: SAMPLE_FXSTREET_RSS,
+            },
+            fetch=False,
+        )
+
+        self.assertEqual(len(snap.items), 1)
+        self.assertEqual(snap.items[0].source, FXSTREET_NEWS_SOURCE)
+        self.assertIn("employment", snap.items[0].topics)
+        self.assertTrue(any(issue.startswith("STALE_MARKETPULSE_FEED") for issue in snap.issues))
+        self.assertFalse(any(issue.startswith("STALE_NEWS_FEED") for issue in snap.issues))
+
+    def test_malformed_source_does_not_drop_other_fresh_sources(self) -> None:
+        snap = build_news_snapshot(
+            now_utc=datetime(2026, 5, 8, 5, 0, tzinfo=timezone.utc),
+            lookback_hours=1,
+            source_payloads={
+                MARKETPULSE_SOURCE: b"<rss><channel><item>",
+                FXSTREET_NEWS_SOURCE: SAMPLE_FXSTREET_RSS,
+            },
+            fetch=False,
+        )
+
+        self.assertEqual(len(snap.items), 1)
+        self.assertEqual(snap.items[0].source, FXSTREET_NEWS_SOURCE)
+        self.assertTrue(any(issue.startswith("MALFORMED_MARKETPULSE_FEED") for issue in snap.issues))
+
     def test_render_digest_and_flow_are_market_story_compatible(self) -> None:
         snap = build_news_snapshot(
             now_utc=datetime(2026, 5, 6, 6, 0, tzinfo=timezone.utc),
             marketpulse_payload=SAMPLE_MARKETPULSE_RSS,
+            fetch=False,
         )
 
         digest = render_news_digest(snap)
@@ -86,6 +137,7 @@ class NewsSnapshotTest(unittest.TestCase):
         snap = build_news_snapshot(
             now_utc=datetime(2026, 5, 6, 6, 0, tzinfo=timezone.utc),
             marketpulse_payload=SAMPLE_MARKETPULSE_RSS,
+            fetch=False,
         )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
