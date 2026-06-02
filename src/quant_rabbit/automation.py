@@ -103,6 +103,31 @@ def _buffered_basket_margin_budget_jpy(
     return max(0.0, float(base)) * MARGIN_AWARE_BASKET_BUFFER
 
 
+def _projection_atr_pips_by_pair(pair_charts_path: Path) -> dict[str, float]:
+    if not pair_charts_path.exists():
+        return {}
+    try:
+        payload = json.loads(pair_charts_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, float] = {}
+    for chart in payload.get("charts", []) or []:
+        if not isinstance(chart, dict):
+            continue
+        pair = str(chart.get("pair") or "")
+        if not pair:
+            continue
+        for view in chart.get("views", []) or []:
+            if not isinstance(view, dict) or view.get("granularity") != "H1":
+                continue
+            try:
+                out[pair] = float((view.get("indicators") or {}).get("atr_pips"))
+            except (TypeError, ValueError):
+                pass
+            break
+    return out
+
+
 # Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
 # only hard reasons to keep a LIVE_READY lane out of the GPT prefilter set.
 # Anything else (missing mined history, narrative caution, capture-rate
@@ -683,6 +708,8 @@ class AutoTradeCycle:
         # mechanically untouchable. Opt out for tests via
         # `QR_DISABLE_TRAILING_SL=1`; production cycles default ON.
         self._maybe_apply_trailing_sls(snapshot, send=send)
+        if not self.reuse_market_artifacts:
+            self._verify_projection_preflight(snapshot)
         if not trader_positions and not pending_entries and target_summary and target_summary.status == "TARGET_REACHED_PROTECT":
             summary = AutoTradeCycleSummary(
                 status="TARGET_REACHED_PROTECT",
@@ -1747,6 +1774,58 @@ class AutoTradeCycle:
         self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
+
+    def _verify_projection_preflight(self, snapshot) -> None:
+        if os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() not in {
+            "1", "true", "TRUE", "yes", "YES",
+        }:
+            return
+        data_root = self.intents_path.parent
+        try:
+            from quant_rabbit.strategy.projection_ledger import load_ledger, verify_pending
+
+            pending_pairs = sorted(
+                {
+                    entry.pair
+                    for entry in load_ledger(data_root)
+                    if entry.resolution_status == "PENDING" and entry.pair
+                }
+            )
+        except Exception:
+            return
+        if not pending_pairs:
+            return
+        quotes_by_pair: dict[str, dict[str, float]] = {}
+        for pair, quote in getattr(snapshot, "quotes", {}).items():
+            try:
+                quotes_by_pair[str(pair)] = {"bid": float(quote.bid), "ask": float(quote.ask)}
+            except (TypeError, ValueError):
+                continue
+        atr_pips_by_pair = _projection_atr_pips_by_pair(self.pair_charts_path)
+        candles_by_pair = None
+        if hasattr(self.client, "get_json"):
+            try:
+                from quant_rabbit.analysis.candles import fetch_candles_via_client
+
+                candles_by_pair = {}
+                for pair in pending_pairs:
+                    try:
+                        candles_by_pair[pair] = list(fetch_candles_via_client(self.client, pair, "M1", count=200))
+                    except Exception:
+                        continue
+                if not candles_by_pair:
+                    candles_by_pair = None
+            except Exception:
+                candles_by_pair = None
+        try:
+            verify_pending(
+                data_root,
+                quotes_by_pair=quotes_by_pair,
+                atr_pips_by_pair=atr_pips_by_pair,
+                candles_by_pair=candles_by_pair,
+            )
+        except Exception:
+            return
 
     def _maybe_apply_trailing_sls(self, snapshot, *, send: bool) -> None:
         """H (2026-05-13) — trailing SL pass on trader-owned positions

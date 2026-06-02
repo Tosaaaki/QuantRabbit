@@ -1323,10 +1323,25 @@ def _append_current_range_phase_lanes(
     return out
 
 
+def _pre_entry_forecast_cycle_id(snapshot: BrokerSnapshot, *, pair_charts_path: Path) -> str:
+    fetched = snapshot.fetched_at_utc.isoformat()
+    charts_generated = "charts-unknown"
+    try:
+        payload = json.loads(pair_charts_path.read_text())
+        if isinstance(payload, dict):
+            charts_generated = str(payload.get("generated_at_utc") or charts_generated)
+    except (OSError, json.JSONDecodeError):
+        pass
+    return f"pre-entry-forecast-refresh:{fetched}:{charts_generated}"
+
+
 def _append_forecast_seed_lanes(
     lanes: list[dict[str, Any]],
     charts: dict[str, dict[str, Any]] | None,
     snapshot: BrokerSnapshot | None,
+    *,
+    data_root: Path | None = None,
+    forecast_cycle_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Prepend predictor-created candidate lanes before campaign slicing.
 
@@ -1363,6 +1378,14 @@ def _append_forecast_seed_lanes(
         forecast = _forecast_seed_for_pair(pair, charts, snapshot)
         if forecast is None:
             continue
+        _record_forecast_seed_telemetry(
+            forecast,
+            pair=pair,
+            quote=quote,
+            pair_chart=charts.get(pair),
+            data_root=data_root,
+            cycle_id=forecast_cycle_id,
+        )
         direction = str(getattr(forecast, "direction", "") or "").upper()
         confidence = _optional_float(getattr(forecast, "confidence", None))
         if direction in {"UP", "DOWN", "RANGE"} and confidence is not None:
@@ -1397,6 +1420,39 @@ def _append_forecast_seed_lanes(
         for lane in lanes
         if (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method")) not in seeded_keys
     ]
+
+
+def _record_forecast_seed_telemetry(
+    forecast: Any,
+    *,
+    pair: str,
+    quote: Quote,
+    pair_chart: dict[str, Any] | None,
+    data_root: Path | None,
+    cycle_id: str | None,
+) -> None:
+    if not _require_telemetry_for_live_active() or data_root is None or not cycle_id:
+        return
+    raw_chart = pair_chart.get("__raw_chart") if isinstance(pair_chart, dict) else None
+    try:
+        current_price = float(quote.mid)
+    except (TypeError, ValueError):
+        return
+    try:
+        from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
+        from quant_rabbit.strategy.projection_ledger import record_directional_forecast
+
+        record_forecast(forecast, data_root=data_root, cycle_id=cycle_id)
+        record_directional_forecast(
+            forecast,
+            pair=pair,
+            current_price=current_price,
+            data_root=data_root,
+            regime_at_emission=_forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None,
+            cycle_id=cycle_id,
+        )
+    except Exception:
+        return
 
 
 def _forecast_seed_for_pair(
@@ -1434,9 +1490,10 @@ def _forecast_seed_for_pair(
     except Exception:
         return None
 
-    # Keep forecast seeding read-only: unlike TraderBrain's scoring pass, this
-    # must not write forecast/projection ledger rows just because it is forming
-    # the candidate set. TraderBrain records the chosen per-cycle forecasts.
+    # Forecast seeding itself stays side-effect free. IntentGenerator records
+    # the synthesized pair forecast immediately after this helper returns when
+    # live telemetry gates are active, so live-readiness validation can audit
+    # the same snapshot instead of waiting for TraderBrain's later scoring pass.
     cot_payload = _load_optional_json(ROOT / "data" / "cot_snapshot.json")
     option_skew_payload = _load_optional_json(ROOT / "data" / "option_skew_snapshot.json")
     try:
@@ -2038,7 +2095,17 @@ class IntentGenerator:
             if len(lanes) > range_seed_count:
                 max_candidates = max(max_candidates, len(lanes))
             forecast_seed_count = len(lanes)
-            lanes = _append_forecast_seed_lanes(lanes, pair_charts, snapshot)
+            forecast_cycle_id = _pre_entry_forecast_cycle_id(
+                snapshot,
+                pair_charts_path=self.pair_charts_path,
+            )
+            lanes = _append_forecast_seed_lanes(
+                lanes,
+                pair_charts,
+                snapshot,
+                data_root=ROOT / "data",
+                forecast_cycle_id=forecast_cycle_id,
+            )
             if len(lanes) > forecast_seed_count:
                 max_candidates = max(max_candidates, len(lanes))
         # Phase 2 (user 2026-05-08「短期SHORTなら長期LONGでもSHORTいけるでしょ。

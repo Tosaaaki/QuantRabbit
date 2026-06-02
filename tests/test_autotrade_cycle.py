@@ -23,6 +23,72 @@ from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTR
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_projection_preflight_resolves_expired_pending_before_intents(self) -> None:
+        prior = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir()
+                emitted = datetime.now(timezone.utc) - timedelta(minutes=10)
+                (data_root / "projection_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_emitted_utc": emitted.isoformat().replace("+00:00", "Z"),
+                            "pair": "EUR_USD",
+                            "signal_name": "directional_forecast",
+                            "direction": "UP",
+                            "lead_time_min": 1,
+                            "confidence": 0.8,
+                            "entry_price": 1.1000,
+                            "predicted_target_price": 1.1010,
+                            "predicted_invalidation_price": 1.0990,
+                            "resolution_window_min": 1,
+                            "resolution_status": "PENDING",
+                            "cycle_id": "stale-cycle",
+                        }
+                    )
+                    + "\n"
+                )
+                pair_charts = root / "pair_charts.json"
+                pair_charts.write_text(
+                    json.dumps(
+                        {
+                            "charts": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "views": [
+                                        {"granularity": "H1", "indicators": {"atr_pips": 10.0}},
+                                    ],
+                                }
+                            ]
+                        }
+                    )
+                )
+                now = datetime.now(timezone.utc)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.1020, 1.1022, timestamp_utc=now),
+                    },
+                )
+
+                AutoTradeCycle(
+                    client=object(),
+                    intents_path=data_root / "order_intents.json",
+                    pair_charts_path=pair_charts,
+                )._verify_projection_preflight(snapshot)
+
+                row = json.loads((data_root / "projection_ledger.jsonl").read_text())
+        finally:
+            if prior is None:
+                os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior
+
+        self.assertEqual(row["resolution_status"], "HIT")
+
     def test_rejected_gpt_close_ids_do_not_call_broker(self) -> None:
         class Client:
             def __init__(self) -> None:

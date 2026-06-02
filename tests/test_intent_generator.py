@@ -178,6 +178,72 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertTrue(all(item["status"] != "LIVE_READY" for item in short_results))
         self.assertIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", issue_codes)
 
+    def test_generate_intents_records_pre_entry_forecast_telemetry_before_live_validation(self) -> None:
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                snapshot = _snapshot(root)
+                forecast = SimpleNamespace(
+                    pair="EUR_USD",
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from current tape",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                )
+
+                with (
+                    patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.46,
+                            short_score=0.54,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=snapshot)
+
+                payload = json.loads(output.read_text())
+                rows = (root / "data" / "forecast_history.jsonl").read_text().splitlines()
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        self.assertTrue(rows)
+        latest = json.loads(rows[-1])
+        self.assertEqual(latest["pair"], "EUR_USD")
+        self.assertTrue(str(latest["cycle_id"]).startswith("pre-entry-forecast-refresh:"))
+
+        short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
+        issue_codes = {
+            issue["code"]
+            for item in short_results
+            for issue in item["risk_issues"]
+        }
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertNotIn("TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE", issue_codes)
+
     def test_matching_forecast_telemetry_allows_live_ready(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
