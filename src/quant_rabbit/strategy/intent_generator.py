@@ -221,6 +221,11 @@ PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_float(
     300.0,
     minimum=0.0,
 )
+FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(
+    "QR_FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE",
+    0.001,
+    minimum=0.0,
+)
 
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
@@ -3407,7 +3412,7 @@ def _telemetry_live_readiness_issues(
             direction in {"UP", "DOWN", "RANGE"}
             and confidence is not None
             and latest_confidence is not None
-            and round(latest_confidence, 4) != round(confidence, 4)
+            and not _forecast_confidence_matches(latest_confidence, confidence)
         ):
             latest_is_current = False
             issues.append(
@@ -3459,6 +3464,10 @@ def _telemetry_live_readiness_issues(
     if execution_issue is not None:
         issues.append(execution_issue)
     return tuple(issues)
+
+
+def _forecast_confidence_matches(latest_confidence: float, intent_confidence: float) -> bool:
+    return abs(latest_confidence - intent_confidence) <= FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE
 
 
 def _telemetry_issue(code: str, message: str) -> dict[str, str]:
