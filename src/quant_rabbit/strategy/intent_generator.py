@@ -3203,7 +3203,10 @@ def _forecast_live_readiness_issue(
     direction = str(metadata.get("forecast_direction") or "").upper()
     confidence = _optional_float(metadata.get("forecast_confidence"))
     min_confidence = _forecast_live_min_confidence(metadata)
+    recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
     if direction not in {"UP", "DOWN", "RANGE"}:
+        if recovery_reversal_override:
+            return None
         return {
             "code": "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
             "message": (
@@ -3213,6 +3216,8 @@ def _forecast_live_readiness_issue(
             "severity": "WARN",
         }
     if confidence is None or confidence < min_confidence:
+        if recovery_reversal_override:
+            return None
         return {
             "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
             "message": (
@@ -3239,6 +3244,45 @@ def _forecast_live_readiness_issue(
             "severity": "WARN",
         }
     return None
+
+
+def _reversal_recovery_chart_forecast_override(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
+    if not (
+        _is_hedge_recovery_metadata(metadata)
+        and str(metadata.get("hedge_timing_class") or "").upper() == "REVERSAL"
+    ):
+        return False
+    if intent.order_type != OrderType.MARKET:
+        return False
+    side = intent.side.value
+    balance = str(metadata.get("chart_score_balance") or "").upper()
+    if side not in balance:
+        return False
+    score_gap = _optional_float(metadata.get("chart_score_gap"))
+    if score_gap is None:
+        confluence = metadata.get("confluence")
+        if isinstance(confluence, dict):
+            score_gap = _optional_float(confluence.get("score_gap"))
+    if score_gap is None or abs(score_gap) < 0.15:
+        return False
+
+    dominant = str(metadata.get("pattern_reversal_dominant_side") or "").upper()
+    if dominant != side:
+        return False
+    side_key = "pattern_reversal_weight_long" if side == Side.LONG.value else "pattern_reversal_weight_short"
+    other_key = "pattern_reversal_weight_short" if side == Side.LONG.value else "pattern_reversal_weight_long"
+    side_weight = _optional_float(metadata.get(side_key))
+    other_weight = _optional_float(metadata.get(other_key))
+    if side_weight is None or side_weight < 20.0:
+        return False
+    if other_weight is not None and side_weight - other_weight < 6.0:
+        return False
+
+    expected_regime = "TREND_UP" if side == Side.LONG.value else "TREND_DOWN"
+    trend_timeframes = [str(item).upper() for item in metadata.get("trend_timeframes") or []]
+    if trend_timeframes and not any(expected_regime in item for item in trend_timeframes):
+        return False
+    return True
 
 
 def _forecast_live_min_confidence(metadata: dict[str, Any]) -> float:
@@ -3275,7 +3319,8 @@ def _telemetry_live_readiness_issues(
     data_root = ROOT / "data"
     direction = str(metadata.get("forecast_direction") or "").upper()
     confidence = _optional_float(metadata.get("forecast_confidence"))
-    if direction not in {"UP", "DOWN", "RANGE"}:
+    recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
+    if direction not in {"UP", "DOWN", "RANGE"} and not recovery_reversal_override:
         issues.append(
             _telemetry_issue(
                 "TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE",

@@ -916,10 +916,11 @@ class IntentGeneratorTest(unittest.TestCase):
         )
 
     def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
-        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import (
             _forecast_live_readiness_issue,
             _method_context_issues,
+            _telemetry_live_readiness_issues,
         )
 
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
@@ -996,6 +997,87 @@ class IntentGeneratorTest(unittest.TestCase):
             TradeMethod.TREND_CONTINUATION,
         )
         self.assertEqual(range_fresh_issue["code"], "RANGE_FORECAST_REQUIRES_RANGE_ROTATION")
+
+        chart_reversal_metadata = {
+            "position_intent": "HEDGE",
+            "hedge_recovery": True,
+            "hedge_timing_class": "REVERSAL",
+            "chart_score_balance": "LONG_LEAN",
+            "chart_score_gap": 0.183,
+            "pattern_reversal_dominant_side": "LONG",
+            "pattern_reversal_weight_long": 44.25,
+            "pattern_reversal_weight_short": 30.42,
+            "trend_timeframes": ["M1:TREND_UP", "M5:TREND_UP"],
+        }
+        market_recovery = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="chart-confirmed reversal recovery hedge",
+            market_context=intent.market_context,
+            metadata=chart_reversal_metadata,
+        )
+        self.assertIsNone(
+            _forecast_live_readiness_issue(market_recovery, chart_reversal_metadata, TradeMethod.TREND_CONTINUATION)
+        )
+
+        now = datetime.now(timezone.utc)
+        with patch(
+            "quant_rabbit.strategy.intent_generator._latest_forecast_history_for_pair",
+            return_value={
+                "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
+                "direction": "UNCLEAR",
+                "confidence": 0.18,
+                "cycle_id": "cycle",
+            },
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._expired_pending_projection_count",
+            return_value=0,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._execution_ledger_sync_live_issue",
+            return_value=None,
+        ):
+            telemetry_codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    market_recovery,
+                    chart_reversal_metadata,
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={"EUR_USD": Quote("EUR_USD", 1.1733, 1.1735, now)},
+                    ),
+                    now,
+                )
+            }
+        self.assertNotIn("TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE", telemetry_codes)
+
+        weak_chart_reversal = {
+            **chart_reversal_metadata,
+            "pattern_reversal_dominant_side": "SHORT",
+            "pattern_reversal_weight_long": 33.75,
+            "pattern_reversal_weight_short": 36.08,
+        }
+        weak_issue = _forecast_live_readiness_issue(
+            OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.MARKET,
+                units=5000,
+                entry=1.1734,
+                tp=1.1762,
+                sl=1.1718,
+                thesis="weak recovery hedge",
+                market_context=intent.market_context,
+                metadata=weak_chart_reversal,
+            ),
+            weak_chart_reversal,
+            TradeMethod.TREND_CONTINUATION,
+        )
+        self.assertEqual(weak_issue["code"], "FORECAST_CONTEXT_REQUIRED_FOR_LIVE")
 
         opposed = OrderIntent(
             pair="EUR_USD",
