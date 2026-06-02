@@ -61,6 +61,63 @@ class LiveWrapperTest(unittest.TestCase):
             self.assertNotIn("forcing dry-run mode", result.stderr)
             self.assertEqual((root / "sync.args").read_text(), "--live-only --skip-tests\n")
 
+    def test_live_gpt_handoff_adds_missing_send(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertIn("QR_LIVE_ENABLED=1\n", payload)
+            self.assertIn("<--gpt-decision-response><data/codex_trader_decision_response.json>", payload)
+            self.assertIn("<--send>", payload)
+            self.assertIn("adding --send to avoid a stage-only live trader cycle", result.stderr)
+
+    def test_stage_only_live_gpt_handoff_requires_explicit_escape_hatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = root / "capture.json"
+            env = _wrapper_env(root, capture, live_enabled="1")
+            env["QR_ALLOW_LIVE_STAGE_ONLY"] = "1"
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(WRAPPER),
+                    "--reuse-market-artifacts",
+                    "--use-gpt-trader",
+                    "--gpt-decision-response",
+                    "data/codex_trader_decision_response.json",
+                ],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = capture.read_text()
+            self.assertNotIn("<--send>", payload)
+            self.assertIn("QR_ALLOW_LIVE_STAGE_ONLY=1; keeping GPT handoff stage-only", result.stderr)
+
     def test_sync_failure_continues_when_runtime_is_current_with_report_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

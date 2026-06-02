@@ -221,6 +221,19 @@ if [[ "$arg_count" -gt 0 ]] && has_arg "--send" "${args[@]}" && ! has_arg "--use
   echo "[run-autotrade-live] live send requires trader decision handoff; using args=${args[*]}" >&2
 fi
 
+if [[ "$QR_LIVE_ENABLED" == "1" && "$arg_count" -gt 0 ]] \
+  && has_arg "--use-gpt-trader" "${args[@]}" \
+  && has_arg "--gpt-decision-response" "${args[@]}" \
+  && ! has_arg "--send" "${args[@]}"; then
+  if [[ "${QR_ALLOW_LIVE_STAGE_ONLY:-0}" == "1" ]]; then
+    echo "[run-autotrade-live] QR_ALLOW_LIVE_STAGE_ONLY=1; keeping GPT handoff stage-only." >&2
+  else
+    args=("${args[@]}" "--send")
+    arg_count="${#args[@]}"
+    echo "[run-autotrade-live] QR_LIVE_ENABLED=1 GPT handoff omitted --send; adding --send to avoid a stage-only live trader cycle." >&2
+  fi
+fi
+
 set +e
 if [[ "$arg_count" -gt 0 ]]; then
   python3 -m quant_rabbit.cli autotrade-cycle "${args[@]}"
