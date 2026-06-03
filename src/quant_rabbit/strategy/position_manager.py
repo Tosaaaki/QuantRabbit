@@ -24,13 +24,18 @@ from quant_rabbit.strategy.intent_generator import (
     _market_derived_reward_risk,
     _session_bucket_for,
 )
-from quant_rabbit.strategy.entry_thesis_ledger import load_entry_thesis
+from quant_rabbit.strategy.entry_thesis_ledger import load_entry_thesis, load_latest_forecast
 from quant_rabbit.strategy.price_action import (
     aggregate_price_action_score,
     classify_order_block_proximity,
     structural_tp_target,
 )
-from quant_rabbit.strategy.tp_rebalancer import MAX_TP_DISTANCE_ATR_MULT, MIN_TP_TO_MARKET_PIPS
+from quant_rabbit.strategy.tp_rebalancer import (
+    MAX_TP_DISTANCE_ATR_MULT,
+    MIN_TP_TO_MARKET_PIPS,
+    _forecast_runner_drag_reasons,
+    _technical_harvest_pressure,
+)
 
 
 def _load_full_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]]:
@@ -272,6 +277,12 @@ class PositionManager:
         recommended_stop_loss: float | None = None
         recommended_take_profit: float | None = None
         reasons.extend(_session_protection_notes(position, quote, pair_charts))
+        latest_forecast = _latest_forecast_for_position(position.pair, self.output_path.parent)
+        if latest_forecast:
+            reasons.append(
+                f"latest forecast {str(latest_forecast.get('direction') or 'UNCLEAR').upper()} "
+                f"conf={_to_float(latest_forecast.get('confidence')) or 0.0:.2f}"
+            )
 
         sl_free_hold = (
             position.stop_loss is None
@@ -321,7 +332,7 @@ class PositionManager:
                     # and chart_story available, evaluate EXTEND/HARVEST/
                     # NARROW/EXIT (user 2026-05-08「ミクロとマクロの視点」).
                     adaptive_action, adaptive_tp, adaptive_reasons = _adaptive_tp_action(
-                        position, quote, pair_charts, full_pair_charts
+                        position, quote, pair_charts, full_pair_charts, latest_forecast
                     )
                     reasons.extend(adaptive_reasons)
                     if adaptive_action != ACTION_HOLD_PROTECTED:
@@ -664,6 +675,7 @@ def _adaptive_tp_action(
     quote,
     pair_charts: dict[str, dict[str, Any]] | None,
     full_pair_charts: dict[str, dict[str, Any]] | None = None,
+    latest_forecast: dict[str, Any] | None = None,
 ) -> tuple[str, float | None, list[str]]:
     """Decide adaptive TP action for an SL-free, profitable, TP-set position.
 
@@ -703,6 +715,7 @@ def _adaptive_tp_action(
     cur_price = quote.bid if not target_up else quote.ask
     full_charts = full_pair_charts if full_pair_charts is not None else _load_full_pair_charts()
     pair_chart = full_charts.get(position.pair)
+    chart_context = _adaptive_tp_chart_context(pair_chart, pc)
     pa_delta_lane, pa_reasons = aggregate_price_action_score(
         pair_chart, lane_dir, cur_price, pip_factor
     )
@@ -905,7 +918,14 @@ def _adaptive_tp_action(
         elif (target_up and candidate < position.take_profit) or (
             not target_up and candidate > position.take_profit
         ):
-            allowed, gate_reason = _adaptive_tp_contraction_allowed(position, quote, pair_charts, ACTION_HARVEST_TP)
+            allowed, gate_reason = _adaptive_tp_contraction_allowed(
+                position,
+                quote,
+                pair_charts,
+                ACTION_HARVEST_TP,
+                latest_forecast=latest_forecast,
+                chart_context=chart_context,
+            )
             reasons.append(gate_reason)
             if allowed:
                 new_tp = candidate
@@ -928,7 +948,14 @@ def _adaptive_tp_action(
         elif (target_up and candidate < position.take_profit) or (
             not target_up and candidate > position.take_profit
         ):
-            allowed, gate_reason = _adaptive_tp_contraction_allowed(position, quote, pair_charts, ACTION_NARROW_TP)
+            allowed, gate_reason = _adaptive_tp_contraction_allowed(
+                position,
+                quote,
+                pair_charts,
+                ACTION_NARROW_TP,
+                latest_forecast=latest_forecast,
+                chart_context=chart_context,
+            )
             reasons.append(gate_reason)
             if allowed:
                 new_tp = candidate
@@ -1279,13 +1306,91 @@ def _profit_lock_tp_progress_gate_pips(position: BrokerPosition) -> tuple[float 
     return gate, f"TP progress gate {PROFIT_BREAK_EVEN_MIN_TP_PROGRESS:.0%} of {tp_pips:.1f}pip target"
 
 
+def _latest_forecast_for_position(pair: str, data_root: Path) -> dict[str, Any] | None:
+    try:
+        latest = load_latest_forecast(pair, data_root)
+    except Exception:
+        return None
+    return latest if isinstance(latest, dict) else None
+
+
+def _adaptive_tp_chart_context(
+    pair_chart: dict[str, Any] | None,
+    flat_pair_chart: dict[str, Any] | None,
+) -> dict[str, Any]:
+    confluence: dict[str, Any] = {}
+    session: dict[str, Any] = {}
+    indicators_by_tf: dict[str, dict[str, Any]] = {}
+    if isinstance(pair_chart, dict):
+        raw_confluence = pair_chart.get("confluence")
+        if isinstance(raw_confluence, dict):
+            confluence = raw_confluence
+        raw_session = pair_chart.get("session")
+        if isinstance(raw_session, dict):
+            session = raw_session
+        for view in pair_chart.get("views") or []:
+            if not isinstance(view, dict):
+                continue
+            granularity = str(view.get("granularity") or "")
+            indicators = view.get("indicators")
+            if granularity and isinstance(indicators, dict):
+                indicators_by_tf[granularity] = indicators
+    if isinstance(flat_pair_chart, dict):
+        if not confluence and isinstance(flat_pair_chart.get("confluence"), dict):
+            confluence = flat_pair_chart["confluence"]
+        if not session and isinstance(flat_pair_chart.get("session"), dict):
+            session = flat_pair_chart["session"]
+        for tf in ("M15", "M30", "H1"):
+            indicators = flat_pair_chart.get(tf)
+            if tf not in indicators_by_tf and isinstance(indicators, dict):
+                indicators_by_tf[tf] = indicators
+    return {
+        "confluence": confluence,
+        "session": session,
+        "indicators_by_tf": indicators_by_tf,
+    }
+
+
+def _forecast_technical_mfe_risk_reasons(
+    position: BrokerPosition,
+    *,
+    profit_pips: float,
+    latest_forecast: dict[str, Any] | None,
+    chart_context: dict[str, Any] | None,
+) -> tuple[tuple[str, ...], str]:
+    forecast_reasons = _forecast_runner_drag_reasons(
+        side=position.side.value,
+        latest_forecast=latest_forecast,
+    )
+    technical_reasons = _technical_harvest_pressure(
+        side=position.side.value,
+        chart_context=chart_context,
+    )
+    if not forecast_reasons:
+        if latest_forecast:
+            direction = str(latest_forecast.get("direction") or "UNCLEAR").upper()
+            confidence = _to_float(latest_forecast.get("confidence")) or 0.0
+            return (), f"forecast {direction} conf={confidence:.2f} does not weaken {position.side.value} runner"
+        return (), "latest forecast unavailable; cannot prove runner edge has weakened"
+    if len(technical_reasons) < 2:
+        return (), (
+            "forecast drag present but technical MFE-risk stack is incomplete "
+            f"({len(technical_reasons)}/2): " + "; ".join((forecast_reasons + technical_reasons)[:3])
+        )
+    reasons = tuple((forecast_reasons + technical_reasons)[:5])
+    return reasons, "forecast + technical MFE-risk: " + "; ".join(reasons)
+
+
 def _adaptive_tp_contraction_allowed(
     position: BrokerPosition,
     quote,
     pair_charts: dict[str, dict[str, Any]] | None,
     action: str,
+    *,
+    latest_forecast: dict[str, Any] | None = None,
+    chart_context: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Gate HARVEST/NARROW TP contractions so near targets are not micro-scalped."""
+    """Gate HARVEST/NARROW TP contractions with forecast and technical evidence."""
     label = action.lower().replace("_", "-")
     tp_pips = _position_tp_pips(position)
     if tp_pips is None or tp_pips <= 0:
@@ -1298,11 +1403,32 @@ def _adaptive_tp_contraction_allowed(
     if atr_pips is not None and atr_pips > 0:
         stale_wide_gate = ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT * atr_pips
         if tp_pips > stale_wide_gate:
+            mfe_reasons, mfe_note = _forecast_technical_mfe_risk_reasons(
+                position,
+                profit_pips=profit_pips,
+                latest_forecast=latest_forecast,
+                chart_context=chart_context,
+            )
+            if profit_pips < atr_pips:
+                return (
+                    True,
+                    f"{label} allowed: existing TP {tp_pips:.1f}pip > "
+                    f"stale-wide {ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT:.1f}× "
+                    f"{GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip; "
+                    f"profit {profit_pips:.1f}pip < operating ATR {atr_pips:.1f}pip, "
+                    "so original TP is not behaving like a reachable runner",
+                )
+            if mfe_reasons:
+                return (
+                    True,
+                    f"{label} allowed: existing TP {tp_pips:.1f}pip > "
+                    f"stale-wide {ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT:.1f}× "
+                    f"{GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip; {mfe_note}",
+                )
             return (
-                True,
-                f"{label} allowed: existing TP {tp_pips:.1f}pip > "
-                f"stale-wide {ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT:.1f}× "
-                f"{GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip",
+                False,
+                f"{label} skipped: existing TP is stale-wide but current profit "
+                f"{profit_pips:.1f}pip >= operating ATR {atr_pips:.1f}pip and {mfe_note}",
             )
         atr_note = (
             f"; existing TP {tp_pips:.1f}pip is within "
@@ -1311,19 +1437,28 @@ def _adaptive_tp_contraction_allowed(
     else:
         atr_note = f"; {GEOMETRY_ATR_TIMEFRAME} ATR unavailable for stale-wide TP exception"
 
+    mfe_reasons, mfe_note = _forecast_technical_mfe_risk_reasons(
+        position,
+        profit_pips=profit_pips,
+        latest_forecast=latest_forecast,
+        chart_context=chart_context,
+    )
+    if not mfe_reasons:
+        return False, f"{label} skipped: reachable TP contraction needs market-read MFE risk; {mfe_note}{atr_note}"
+
     gate = tp_pips * ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS
     if profit_pips < gate:
         return (
             False,
             f"{label} skipped: executable profit {profit_pips:.1f}pip < "
             f"adaptive TP-progress gate {gate:.1f}pip "
-            f"({ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS:.0%} of {tp_pips:.1f}pip target{atr_note})",
+            f"({ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS:.0%} of {tp_pips:.1f}pip target{atr_note}); {mfe_note}",
         )
     return (
         True,
         f"{label} allowed: executable profit {profit_pips:.1f}pip >= "
         f"adaptive TP-progress gate {gate:.1f}pip "
-        f"({ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS:.0%} of {tp_pips:.1f}pip target{atr_note})",
+        f"({ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS:.0%} of {tp_pips:.1f}pip target{atr_note}); {mfe_note}",
     )
 
 

@@ -417,6 +417,7 @@ class PositionManagerTest(unittest.TestCase):
                 root = Path(tmp)
                 decision = _decision(root, long_score=160, short_score=120)
                 pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=1.0, harvest_price=1.16510)
+                _write_latest_forecast(root, direction="UNCLEAR", confidence=0.24)
                 snapshot = _snapshot(
                     BrokerPosition(
                         trade_id="long-near-tp",
@@ -445,6 +446,93 @@ class PositionManagerTest(unittest.TestCase):
                 report = (root / "pm.md").read_text()
                 self.assertIn("adaptive TP-progress gate", report)
                 self.assertIn("existing TP 7.6pip is within", report)
+                self.assertIn("forecast + technical MFE-risk", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_adaptive_harvest_tp_keeps_reachable_target_when_forecast_supports_runner(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=1.0, harvest_price=1.16550)
+                _write_latest_forecast(root, direction="UP", confidence=0.80)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="long-supported-runner",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3600,
+                        entry_price=1.16492,
+                        unrealized_pl_jpy=400,
+                        take_profit=1.16568,
+                        stop_loss=None,
+                    ),
+                    bid=1.16545,
+                    ask=1.16547,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_BREAK_EVEN_STOP)
+                self.assertEqual(result.positions[0].action, ACTION_BREAK_EVEN_STOP)
+                self.assertIsNone(result.positions[0].recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("forecast UP conf=0.80 does not weaken LONG runner", report)
+                self.assertIn("reachable TP contraction needs market-read MFE risk", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_adaptive_harvest_tp_requires_forecast_technical_and_progress_for_reachable_target(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=1.0, harvest_price=1.16550)
+                _write_latest_forecast(root, direction="UNCLEAR", confidence=0.24)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="long-market-read-harvest",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3600,
+                        entry_price=1.16492,
+                        unrealized_pl_jpy=400,
+                        take_profit=1.16568,
+                        stop_loss=None,
+                    ),
+                    bid=1.16545,
+                    ask=1.16547,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HARVEST_TP)
+                self.assertEqual(result.positions[0].action, ACTION_HARVEST_TP)
+                self.assertEqual(result.positions[0].recommended_take_profit, 1.1655)
+                report = (root / "pm.md").read_text()
+                self.assertIn("forecast + technical MFE-risk", report)
+                self.assertIn("harvest TP", report)
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -458,7 +546,7 @@ class PositionManagerTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 decision = _decision(root, long_score=160, short_score=120)
-                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=1.0, harvest_price=1.16510)
+                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=2.0, harvest_price=1.16510)
                 snapshot = _snapshot(
                     BrokerPosition(
                         trade_id="long-stale-wide-tp",
@@ -909,6 +997,31 @@ def _decision(root: Path, *, long_score: float, short_score: float) -> Path:
     return path
 
 
+def _write_latest_forecast(
+    root: Path,
+    *,
+    pair: str = "EUR_USD",
+    direction: str,
+    confidence: float,
+    horizon_min: float = 0.0,
+) -> Path:
+    path = root / "forecast_history.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "cycle_id": "test-cycle",
+                "pair": pair,
+                "direction": direction,
+                "confidence": confidence,
+                "horizon_min": horizon_min,
+            }
+        )
+        + "\n"
+    )
+    return path
+
+
 def _snapshot(
     position: BrokerPosition,
     *,
@@ -990,6 +1103,12 @@ def _adaptive_harvest_pair_charts(root: Path, *, atr_pips: float, harvest_price:
                     {
                         "pair": "EUR_USD",
                         "chart_story": chart_story,
+                        "confluence": {
+                            "price_percentile_24h": 0.98,
+                            "price_percentile_7d": 0.98,
+                            "tf_agreement_score": 0.33,
+                            "range_24h_sigma_multiple": 3.1,
+                        },
                         "session": {"current_tag": "LONDON_KILLZONE"},
                         "views": [
                             {
@@ -1000,7 +1119,15 @@ def _adaptive_harvest_pair_charts(root: Path, *, atr_pips: float, harvest_price:
                             {
                                 "granularity": "M15",
                                 "regime": "TREND_UP",
-                                "indicators": {"atr_pips": atr_pips * 2.0},
+                                "indicators": {
+                                    "atr_pips": atr_pips * 2.0,
+                                    "rsi_14": 74.0,
+                                    "stoch_rsi": 0.91,
+                                    "williams_r_14": -12.0,
+                                    "close": harvest_price,
+                                    "bb_upper": harvest_price - 0.00001,
+                                    "donchian_high": harvest_price - 0.00001,
+                                },
                                 "structure": {
                                     "liquidity": [
                                         {
