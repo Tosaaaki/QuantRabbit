@@ -523,6 +523,8 @@ class GPTTraderBrain:
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
+        pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
+        currencies = _currencies_from_pairs(pairs)
         refs = _allowed_refs(
             snapshot=snapshot,
             target=target,
@@ -530,8 +532,6 @@ class GPTTraderBrain:
             attack_advice=attack_advice,
             predictive_limits=predictive_limits,
         )
-        pairs = _pairs_from_lanes(lanes)
-        currencies = _currencies_from_pairs(pairs)
         return {
             "contract": {
                 "allowed_actions": list(ALLOWED_ACTIONS),
@@ -1451,6 +1451,12 @@ def _allowed_refs(
     for position in snapshot.get("positions", []) or []:
         if not isinstance(position, dict) or str(position.get("owner") or "") != "trader":
             continue
+        pair = str(position.get("pair") or "")
+        if pair:
+            pairs.add(pair)
+            for currency in pair.split("_"):
+                if currency:
+                    currencies.add(currency)
         trade_id = str(position.get("trade_id") or "")
         if not trade_id:
             continue
@@ -1757,6 +1763,17 @@ def _pair_from_lane_id(lane_id: str) -> str:
 
 def _pairs_from_lanes(lanes: list[dict[str, Any]]) -> tuple[str, ...]:
     return tuple(sorted({str(lane.get("pair") or "") for lane in lanes if lane.get("pair")}))
+
+
+def _pairs_from_lanes_and_positions(lanes: list[dict[str, Any]], snapshot: dict[str, Any]) -> tuple[str, ...]:
+    pairs = {str(lane.get("pair") or "") for lane in lanes if lane.get("pair")}
+    for position in snapshot.get("positions", []) or []:
+        if not isinstance(position, dict):
+            continue
+        pair = str(position.get("pair") or "")
+        if pair:
+            pairs.add(pair)
+    return tuple(sorted(pairs))
 
 
 def _currencies_from_pairs(pairs: tuple[str, ...]) -> tuple[str, ...]:

@@ -70,6 +70,49 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             self.assertIn("predictive:limits", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_input_packet_accepts_chart_refs_for_open_position_pairs_without_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        **_position(),
+                        "trade_id": "202",
+                        "pair": "GBP_JPY",
+                        "entry_price": 215.104,
+                        "take_profit": 215.276,
+                        "stop_loss": 214.8,
+                    }
+                ],
+            )
+            pair_charts = json.loads(files["pair_charts"].read_text())
+            pair_charts["charts"].append(
+                {
+                    "pair": "GBP_JPY",
+                    "dominant_regime": "RANGE",
+                    "chart_story": "GBP_JPY position-management chart story",
+                    "long_score": 0.4,
+                    "short_score": 0.6,
+                    "views": _chart_views(),
+                }
+            )
+            files["pair_charts"].write_text(json.dumps(pair_charts))
+            decision = _trade_decision()
+            decision["evidence_refs"].append("chart:GBP_JPY:M5")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertIn("chart:GBP_JPY:M5", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn("GBP_JPY", payload["input_packet"]["market_context"]["pairs"])
+            self.assertEqual(
+                payload["input_packet"]["market_context"]["pairs"]["GBP_JPY"]["chart"]["chart_story"],
+                "GBP_JPY position-management chart story",
+            )
+
     def test_report_contract_does_not_treat_receipt_close_flag_as_gate_b(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
