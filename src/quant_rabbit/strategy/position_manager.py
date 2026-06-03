@@ -112,6 +112,13 @@ PROFIT_BREAK_EVEN_SPREAD_MULT = 1.0
 # the planned reward has already developed"; before that point the TP is still
 # the profit-taking mechanism and the SL-free directive should remain intact.
 PROFIT_BREAK_EVEN_MIN_TP_PROGRESS = float(os.environ.get("QR_PROFIT_BREAK_EVEN_MIN_TP_PROGRESS", "0.60"))
+# Adaptive TP contraction shares the same "majority of planned reward" idea as
+# SL-free profit-lock. A HARVEST/NARROW TP may be pulled closer early only when
+# the existing broker TP is already stale-wide versus the operating ATR cap.
+ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS = float(
+    os.environ.get("QR_ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS", str(PROFIT_BREAK_EVEN_MIN_TP_PROGRESS))
+)
+ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT = MAX_TP_DISTANCE_ATR_MULT
 # Quick volatility for broker-side BE/profit-lock must be recent enough that
 # it describes the noise around the current quote, not a stale previous cycle.
 # Granularity seconds are broker timeframe definitions; the quick window is the
@@ -898,8 +905,13 @@ def _adaptive_tp_action(
         elif (target_up and candidate < position.take_profit) or (
             not target_up and candidate > position.take_profit
         ):
-            new_tp = candidate
-            reasons.append(f"harvest TP→{candidate:.5f} ({anchor_reason})")
+            allowed, gate_reason = _adaptive_tp_contraction_allowed(position, quote, pair_charts, ACTION_HARVEST_TP)
+            reasons.append(gate_reason)
+            if allowed:
+                new_tp = candidate
+                reasons.append(f"harvest TP→{candidate:.5f} ({anchor_reason})")
+            else:
+                action = ACTION_HOLD_PROTECTED
         else:
             action = ACTION_HOLD_PROTECTED
             reasons.append(f"harvest skipped: structural anchor {anchor_reason} not closer than current TP")
@@ -916,8 +928,13 @@ def _adaptive_tp_action(
         elif (target_up and candidate < position.take_profit) or (
             not target_up and candidate > position.take_profit
         ):
-            new_tp = candidate
-            reasons.append(f"narrow TP→{candidate:.5f} ({anchor_reason})")
+            allowed, gate_reason = _adaptive_tp_contraction_allowed(position, quote, pair_charts, ACTION_NARROW_TP)
+            reasons.append(gate_reason)
+            if allowed:
+                new_tp = candidate
+                reasons.append(f"narrow TP→{candidate:.5f} ({anchor_reason})")
+            else:
+                action = ACTION_HOLD_PROTECTED
         else:
             action = ACTION_HOLD_PROTECTED
             reasons.append(f"narrow skipped: anchor {anchor_reason} not closer")
@@ -1260,6 +1277,54 @@ def _profit_lock_tp_progress_gate_pips(position: BrokerPosition) -> tuple[float 
         return None, "no broker TP progress gate"
     gate = tp_pips * PROFIT_BREAK_EVEN_MIN_TP_PROGRESS
     return gate, f"TP progress gate {PROFIT_BREAK_EVEN_MIN_TP_PROGRESS:.0%} of {tp_pips:.1f}pip target"
+
+
+def _adaptive_tp_contraction_allowed(
+    position: BrokerPosition,
+    quote,
+    pair_charts: dict[str, dict[str, Any]] | None,
+    action: str,
+) -> tuple[bool, str]:
+    """Gate HARVEST/NARROW TP contractions so near targets are not micro-scalped."""
+    label = action.lower().replace("_", "-")
+    tp_pips = _position_tp_pips(position)
+    if tp_pips is None or tp_pips <= 0:
+        return False, f"{label} skipped: current broker TP distance cannot be measured"
+    profit_pips = _executable_profit_pips(position, quote)
+    if profit_pips is None or profit_pips <= 0:
+        return False, f"{label} skipped: executable profit pips cannot be measured from broker quote"
+
+    atr_pips = _atr_pips_for(position.pair, pair_charts, GEOMETRY_ATR_TIMEFRAME)
+    if atr_pips is not None and atr_pips > 0:
+        stale_wide_gate = ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT * atr_pips
+        if tp_pips > stale_wide_gate:
+            return (
+                True,
+                f"{label} allowed: existing TP {tp_pips:.1f}pip > "
+                f"stale-wide {ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT:.1f}× "
+                f"{GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip",
+            )
+        atr_note = (
+            f"; existing TP {tp_pips:.1f}pip is within "
+            f"{ADAPTIVE_TP_STALE_DISTANCE_ATR_MULT:.1f}× {GEOMETRY_ATR_TIMEFRAME} ATR {atr_pips:.1f}pip"
+        )
+    else:
+        atr_note = f"; {GEOMETRY_ATR_TIMEFRAME} ATR unavailable for stale-wide TP exception"
+
+    gate = tp_pips * ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS
+    if profit_pips < gate:
+        return (
+            False,
+            f"{label} skipped: executable profit {profit_pips:.1f}pip < "
+            f"adaptive TP-progress gate {gate:.1f}pip "
+            f"({ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS:.0%} of {tp_pips:.1f}pip target{atr_note})",
+        )
+    return (
+        True,
+        f"{label} allowed: executable profit {profit_pips:.1f}pip >= "
+        f"adaptive TP-progress gate {gate:.1f}pip "
+        f"({ADAPTIVE_TP_CONTRACTION_MIN_PROGRESS:.0%} of {tp_pips:.1f}pip target{atr_note})",
+    )
 
 
 def _profit_lock_stop(position: BrokerPosition, quote, noise_pips: float) -> float | None:

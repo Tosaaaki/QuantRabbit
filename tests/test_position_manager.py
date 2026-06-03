@@ -11,6 +11,7 @@ from pathlib import Path
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.position_manager import (
     ACTION_BREAK_EVEN_STOP,
+    ACTION_HARVEST_TP,
     ACTION_HOLD_PROTECTED,
     ACTION_HOLD_SL_FREE,
     ACTION_PROFIT_PROTECT,
@@ -402,6 +403,90 @@ class PositionManagerTest(unittest.TestCase):
                 self.assertIn("BB rail", report)
                 self.assertIn("keep existing TP", report)
                 self.assertIn("SL-free profit-lock trigger", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_adaptive_harvest_tp_waits_until_near_target_progress_clears(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=1.0, harvest_price=1.16510)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="long-near-tp",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3600,
+                        entry_price=1.16492,
+                        unrealized_pl_jpy=100,
+                        take_profit=1.16568,
+                        stop_loss=None,
+                    ),
+                    bid=1.16502,
+                    ask=1.16504,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_SL_FREE)
+                self.assertIsNone(result.positions[0].recommended_take_profit)
+                report = (root / "pm.md").read_text()
+                self.assertIn("adaptive TP-progress gate", report)
+                self.assertIn("existing TP 7.6pip is within", report)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+    def test_adaptive_harvest_tp_allows_stale_wide_target_contraction(self) -> None:
+        prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _adaptive_harvest_pair_charts(root, atr_pips=1.0, harvest_price=1.16510)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="long-stale-wide-tp",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=3600,
+                        entry_price=1.16492,
+                        unrealized_pl_jpy=100,
+                        take_profit=1.16802,
+                        stop_loss=None,
+                    ),
+                    bid=1.16502,
+                    ask=1.16504,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HARVEST_TP)
+                self.assertEqual(result.positions[0].action, ACTION_HARVEST_TP)
+                self.assertEqual(result.positions[0].recommended_take_profit, 1.1651)
+                report = (root / "pm.md").read_text()
+                self.assertIn("stale-wide", report)
+                self.assertIn("harvest TP", report)
         finally:
             if prior is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -881,6 +966,54 @@ def _pair_charts(
                         "views": views,
                     }
                 ]
+            }
+        )
+    )
+    return path
+
+
+def _adaptive_harvest_pair_charts(root: Path, *, atr_pips: float, harvest_price: float) -> Path:
+    path = root / "pair_charts_adaptive_harvest.json"
+    now = datetime.now(timezone.utc)
+    chart_story = (
+        "M1(TREND_UP,ADX=19,ST=+,struct=BOS_UP@1.1648) "
+        "M5(TREND_UP,ADX=24,ST=+,struct=BOS_UP@1.1649) "
+        "H1(TREND_UP,ADX=31,ST=+) "
+        "H4(RANGE,ADX=12,ST=+) "
+        "D(RANGE,ADX=10,ST=+)"
+    )
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now.isoformat(),
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": chart_story,
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": atr_pips},
+                            },
+                            {
+                                "granularity": "M15",
+                                "regime": "TREND_UP",
+                                "indicators": {"atr_pips": atr_pips * 2.0},
+                                "structure": {
+                                    "liquidity": [
+                                        {
+                                            "side": "EQ_HIGH",
+                                            "price": harvest_price,
+                                            "indices": [1, 2, 3, 4],
+                                        }
+                                    ]
+                                },
+                            },
+                        ],
+                    }
+                ],
             }
         )
     )
