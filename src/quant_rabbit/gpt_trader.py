@@ -339,11 +339,13 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
 
     `thesis_evolution` compares the entry thesis to current broker truth and
     emits BROKEN / RECOMMEND_CLOSE only after invalidation plus technical
-    confirmation. `position_thesis` may also hard-authorize a legacy/no-ledger
-    trade when it records adverse technical loss plus multi-TF confirmation.
-    Those are the machine-readable "妥当な損切り" paths. Score-only
-    position-thesis and persistence reviews remain softer and need explicit
-    operator Gate B.
+    confirmation. `position_management` can carry the deterministic
+    PositionManager REVIEW_EXIT into this GPT CLOSE route; it is hard only when
+    its own reasons are structural loss-cut reasons. `position_thesis` may also
+    hard-authorize a legacy/no-ledger trade when it records adverse technical
+    loss plus multi-TF confirmation. Those are the machine-readable "妥当な損切り"
+    paths. Score-only position-thesis, soft position-management, and persistence
+    reviews remain softer and need explicit operator Gate B.
     """
     if rec.get("gate_b_standing_authorized") is True:
         return True
@@ -1626,6 +1628,7 @@ def _allowed_refs(
             [
                 f"position:thesis:{trade_id}",
                 f"position:evolution:{trade_id}",
+                f"position:management:{trade_id}",
                 f"position:persistence:{trade_id}",
             ]
         )

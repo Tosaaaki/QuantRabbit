@@ -8,6 +8,7 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from quant_rabbit.cli import main
 from quant_rabbit.trader_prompts import (
@@ -444,6 +445,123 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(len(recs), 1)
         self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_position_management_review_exit_carryforward_routes_to_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471817",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.1800,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1900.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(minutes=20)
+            ).isoformat()
+            (root / "position_management.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "action": "REVIEW_EXIT",
+                        "positions": [
+                            {
+                                "trade_id": "471817",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "action": "REVIEW_EXIT",
+                                "reasons": [
+                                    "score context before structural review",
+                                    "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-1900 JPY)",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+                recs = _fresh_close_recommendations(snapshot, data_root=root)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("position_management REVIEW_EXIT" in reason for reason in route.reasons))
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["source"], "position_management")
+        self.assertEqual(recs[0]["evidence_ref"], "position:management:471817")
+        self.assertTrue(recs[0]["gate_b_standing_authorized"])
+        self.assertIn("loss-cut: structural OB broken", recs[0]["reason"])
+
+    def test_stale_position_management_review_exit_does_not_route_to_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471817",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.1800,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1900.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(minutes=10)
+            ).isoformat()
+            (root / "position_management.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "positions": [
+                            {
+                                "trade_id": "471817",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "action": "REVIEW_EXIT",
+                                "reasons": [
+                                    "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-1900 JPY)",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                with patch("quant_rabbit.trader_prompts.POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS", 60.0):
+                    route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+                    recs = _fresh_close_recommendations(snapshot, data_root=root)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertEqual(recs, ())
+        self.assertFalse(any("position_management REVIEW_EXIT" in reason for reason in route.reasons))
 
     def test_entry_thesis_blocker_routes_without_close_recommendation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

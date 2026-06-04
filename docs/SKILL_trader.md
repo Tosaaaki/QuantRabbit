@@ -163,10 +163,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 # Position close sidecars are read-only prediction/thesis evidence. Refresh
 # them before routing so a trapped position whose plus-recovery edge is gone
 # reaches the position-management prompt instead of being hidden behind fresh
-# entry work. They are Gate A evidence; fresh thesis_evolution BROKEN /
-# RECOMMEND_CLOSE and position_thesis adverse technical loss with multi-TF
-# confirmation are hard standing loss-cut authorization, while softer sidecars
-# still need explicit Gate B authorization below.
+# entry work. `position_management.json` from the previous gateway cycle is
+# also read as bounded carry-forward Gate A evidence when it still marks the
+# same open trader-owned trade REVIEW_EXIT. Fresh thesis_evolution BROKEN /
+# RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, and
+# position_thesis adverse technical loss with multi-TF confirmation are hard
+# standing loss-cut authorization, while softer sidecars still need explicit
+# Gate B authorization below.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
@@ -194,14 +197,16 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 #     position side on M15 or H4, OR `invalidation_price` + `invalidation_tf`
 #     in the receipt with broker truth confirming the level has traded, OR a
 #     fresh position sidecar generated after the current broker snapshot marks
-#     the same trade REVIEW_CLOSE / RECOMMEND_CLOSE.
+#     the same trade REVIEW_CLOSE / RECOMMEND_CLOSE, OR a bounded carry-forward
+#     `position_management.json` REVIEW_EXIT for the same still-open trade.
 #   - Gate B: hard loss-cut standing authorization OR explicit operator
 #     authorization. Hard Gate A is M15/H4 close-confirmed BOS/CHOCH against
 #     side, buffered invalidation_price hit with technical confirmation,
-#     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, or position_thesis
-#     no-ledger adverse technical loss with multi-TF confirmation. Softer
-#     sidecars (score-only position_thesis REVIEW_CLOSE or
-#     forecast_persistence RECOMMEND_CLOSE)
+#     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, structural
+#     position_management REVIEW_EXIT, or position_thesis no-ledger adverse
+#     technical loss with multi-TF confirmation. Softer sidecars (score-only
+#     position_thesis REVIEW_CLOSE, non-structural position_management
+#     REVIEW_EXIT, or forecast_persistence RECOMMEND_CLOSE)
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.

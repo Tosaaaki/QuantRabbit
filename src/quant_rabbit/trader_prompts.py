@@ -22,6 +22,18 @@ def _optional_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
 
+
+# Operational carry-forward window for PositionManager REVIEW_EXIT evidence.
+# The live trader normally cycles about every 20 minutes; this keeps one
+# structural loss-cut review alive across several scheduler / refresh handoffs
+# so GPT CLOSE Gate A can verify it before the next PositionManager pass
+# overwrites the file. It is not a market threshold, JPY cap, pip distance, or
+# reward/risk multiplier. If cycle cadence changes, replace it with an explicit
+# scheduler-cadence config rather than tuning it from trade outcomes.
+POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS = float(
+    os.environ.get("QR_POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS", "7200")
+)
+
 from quant_rabbit.paths import (
     ROOT,
     DEFAULT_AI_ATTACK_ADVICE,
@@ -464,6 +476,7 @@ def _fresh_close_recommendations(snapshot: dict[str, Any], *, data_root: Path) -
     recs: list[dict[str, Any]] = []
     recs.extend(_position_thesis_recommendations(data_root / "position_thesis_report.json", fetched_at))
     recs.extend(_thesis_evolution_recommendations(data_root / "thesis_evolution_report.json", fetched_at))
+    recs.extend(_position_management_recommendations(data_root / "position_management.json", fetched_at))
     recs.extend(_forecast_persistence_recommendations(data_root / "forecast_persistence_report.json", fetched_at))
     out: list[dict[str, Any]] = []
     for rec in recs:
@@ -640,6 +653,80 @@ def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[
     return out
 
 
+def _position_management_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
+    payload = _recent_report_payload(
+        path,
+        fetched_at,
+        max_age_seconds=POSITION_MANAGEMENT_REVIEW_EXIT_TTL_SECONDS,
+    )
+    if not payload:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("positions", []) or []:
+        if not isinstance(item, dict) or str(item.get("action") or "") != "REVIEW_EXIT":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        reason_parts = [str(reason) for reason in item.get("reasons", []) or [] if str(reason)]
+        standing_authorized = _position_management_standing_authorized(reason_parts)
+        selected_reason_parts = _position_management_reason_parts(
+            reason_parts,
+            standing_authorized=standing_authorized,
+        )
+        out.append(
+            {
+                "source": "position_management",
+                "evidence_ref": f"position:management:{trade_id}",
+                "trade_id": trade_id,
+                "pair": item.get("pair"),
+                "side": item.get("side"),
+                "verdict": "REVIEW_EXIT",
+                "gate_b_standing_authorized": standing_authorized,
+                "reason": "; ".join(selected_reason_parts)
+                or "PositionManager REVIEW_EXIT requires GPT CLOSE Gate A/B verification",
+            }
+        )
+    return out
+
+
+def _position_management_standing_authorized(reason_parts: list[str]) -> bool:
+    """Hard structural loss-cut evidence preserved from PositionManager.
+
+    PositionManager can emit softer REVIEW_EXIT reviews, but standing Gate B is
+    granted only for the same structural loss-cut reasons that survive
+    `QR_DISABLE_AUTO_CLOSE=1`: close-confirmed structural break or multi-TF
+    structural order-block break. Score/margin/advisory reviews still require an
+    explicit operator token.
+    """
+
+    for reason in reason_parts:
+        text = str(reason)
+        if not text.startswith("loss-cut:"):
+            continue
+        if "close-confirmed structural break" in text:
+            return True
+        if "structural OB broken" in text:
+            return True
+    return False
+
+
+def _position_management_reason_parts(reason_parts: list[str], *, standing_authorized: bool) -> list[str]:
+    if not standing_authorized:
+        return reason_parts[:3]
+    selected: list[str] = []
+    for part in reason_parts:
+        if len(selected) >= 3:
+            break
+        selected.append(part)
+    for part in reason_parts:
+        if not part.startswith("loss-cut:"):
+            continue
+        if part not in selected:
+            selected.append(part)
+        if len(selected) >= 5:
+            break
+    return selected
+
+
 def _forecast_persistence_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
     payload = _fresh_report_payload(path, fetched_at)
     if not payload:
@@ -675,6 +762,29 @@ def _fresh_report_payload(path: Path, fetched_at: datetime) -> dict[str, Any] | 
     if generated_at is None or generated_at < fetched_at:
         return None
     return payload
+
+
+def _recent_report_payload(
+    path: Path,
+    fetched_at: datetime,
+    *,
+    max_age_seconds: float,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return None
+    if generated_at >= fetched_at:
+        return payload
+    age_seconds = (fetched_at - generated_at).total_seconds()
+    if age_seconds <= max_age_seconds:
+        return payload
+    return None
 
 
 def _parse_utc(value: Any) -> datetime | None:

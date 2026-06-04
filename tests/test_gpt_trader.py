@@ -2349,6 +2349,43 @@ def _write_fresh_thesis_evolution_close_recommendation(
     )
 
 
+def _write_recent_position_management_close_recommendation(
+    root: Path,
+    files: dict[str, Path],
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+    reasons: list[str] | None = None,
+) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(minutes=20)
+    ).isoformat()
+    if reasons is None:
+        reasons = [
+            "score context before structural review",
+            "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-1900 JPY)",
+        ]
+    (root / "position_management.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "action": "REVIEW_EXIT",
+                "positions": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "action": "REVIEW_EXIT",
+                        "reasons": reasons,
+                    }
+                ],
+            }
+        )
+    )
+
+
 class CloseDisciplineTest(unittest.TestCase):
     """Coverage for 2026-05-12 CLOSE two-gate discipline added in
     response to the 2026-05-11 18:17 UTC mass-close regression where the
@@ -2611,6 +2648,32 @@ class CloseDisciplineTest(unittest.TestCase):
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
+    def test_close_rejected_without_operator_token_when_only_soft_position_management_review_exit(self) -> None:
+        # PositionManager REVIEW_EXIT is carried into Gate A, but score/advisory
+        # reasons are not standing loss-cut authorization.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_recent_position_management_close_recommendation(
+                root,
+                files,
+                reasons=["score weakened but no structural loss-cut reason"],
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:management:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_management")
+            self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
     def test_close_accepted_without_operator_token_when_position_thesis_adverse_technical_loss(self) -> None:
         # Legacy/no-ledger positions can still be cut without a fresh token when
         # position_thesis records adverse buffer break plus multi-TF technical
@@ -2644,6 +2707,28 @@ class CloseDisciplineTest(unittest.TestCase):
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertEqual(recs[0]["source"], "position_thesis")
             self.assertTrue(recs[0]["gate_b_standing_authorized"])
+
+    def test_close_accepted_without_operator_token_when_position_management_structural_review_exit(self) -> None:
+        # Regression for 471817: a deterministic structural REVIEW_EXIT must not
+        # disappear before GPT can verify the CLOSE receipt.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_recent_position_management_close_recommendation(root, files)
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:management:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_management")
+            self.assertTrue(recs[0]["gate_b_standing_authorized"])
+            self.assertIn("position:management:555", payload["input_packet"]["allowed_evidence_refs"])
 
     def test_close_accepted_without_operator_token_when_thesis_evolution_is_broken(self) -> None:
         # thesis_evolution BROKEN / RECOMMEND_CLOSE is generated from entry
