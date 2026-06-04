@@ -53,6 +53,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_PROMPTS_DIR,
 )
@@ -148,6 +149,7 @@ def route_trader_prompts(
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
@@ -215,10 +217,18 @@ def route_trader_prompts(
         snapshot,
         trader_overrides_path=trader_overrides_path,
     )
-    if trader_overrides_refresh_reasons:
+    strategy_profile_refresh_reasons = _strategy_profile_refresh_reasons(
+        target_state,
+        strategy_profile_path=strategy_profile_path,
+    )
+    evidence_refresh_reasons = (
+        *trader_overrides_refresh_reasons,
+        *strategy_profile_refresh_reasons,
+    )
+    if evidence_refresh_reasons:
         return _build_route(
             BRANCH_REFRESH,
-            trader_overrides_refresh_reasons,
+            evidence_refresh_reasons,
             include_content=include_content,
         )
 
@@ -997,6 +1007,59 @@ def _trader_overrides_refresh_reasons(
             "daily-review feedback stale while target is open: "
             f"trader_overrides expired at {expires_at.isoformat()} before "
             f"broker snapshot {fetched_at.isoformat()}; run daily-review before entry/verify routing",
+        )
+    return ()
+
+
+def _strategy_profile_refresh_reasons(
+    target_state: dict[str, Any],
+    *,
+    strategy_profile_path: Path | None,
+) -> tuple[str, ...]:
+    """Require mined strategy evidence before target-open entry work.
+
+    An empty profile means intent generation could not evaluate historical
+    eligibility at all. Route that state through evidence refresh so
+    import-legacy/mine-strategy runs before another entry decision.
+    """
+    if strategy_profile_path is None or not _target_open(target_state):
+        return ()
+    if not strategy_profile_path.exists():
+        return (
+            f"strategy profile missing while target is open: {strategy_profile_path}; "
+            "run import-legacy and mine-strategy before entry/verify routing",
+        )
+    try:
+        payload = _load_json(strategy_profile_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"strategy profile unreadable while target is open: {strategy_profile_path}: {exc}; "
+            "run import-legacy and mine-strategy before entry/verify routing",
+        )
+    profiles = payload.get("profiles")
+    if not isinstance(profiles, list):
+        return (
+            f"strategy profile malformed while target is open: {strategy_profile_path}; "
+            "profiles must be a list",
+        )
+    if not profiles:
+        return (
+            f"strategy profile has zero mined profiles while target is open: {strategy_profile_path}; "
+            "run import-legacy and mine-strategy before entry/verify routing",
+        )
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return (
+            f"strategy profile lacks generated_at_utc while target is open: {strategy_profile_path}; "
+            "run mine-strategy before entry/verify routing",
+        )
+    history_db = Path(str(payload.get("history_db") or ""))
+    if not history_db.is_absolute():
+        history_db = strategy_profile_path.parent.parent / history_db
+    if history_db.exists() and history_db.stat().st_mtime_ns > strategy_profile_path.stat().st_mtime_ns:
+        return (
+            f"strategy profile is older than history DB while target is open: {strategy_profile_path}; "
+            "run mine-strategy before entry/verify routing",
         )
     return ()
 

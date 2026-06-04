@@ -72,6 +72,15 @@ class StrategyProfile:
         evidence_repair_severity = "WARN" if sl_free else ("BLOCK" if for_live_send else "WARN")
         strict_live_severity = "BLOCK" if for_live_send else "WARN"
 
+        if not self.entries:
+            return (
+                RiskIssue(
+                    "STRATEGY_PROFILE_EMPTY",
+                    "mined strategy profile has zero usable entries; run import-legacy and mine-strategy before live send",
+                    severity=strict_live_severity,
+                ),
+            )
+
         method = _intent_method(intent)
         entry = self.entries.get((intent.pair, intent.side.value, method))
         if entry is None and method is not None and _has_method_specific_entry(

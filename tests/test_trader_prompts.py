@@ -80,6 +80,37 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("daily-review feedback missing" in reason for reason in route.reasons))
 
+    def test_empty_strategy_profile_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["strategy_profile"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "history_db": str(files["history_db"]),
+                        "profiles": [],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("strategy profile has zero mined profiles" in reason for reason in route.reasons))
+
+    def test_stale_strategy_profile_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            _set_mtime(files["strategy_profile"], 100.0)
+            _set_mtime(files["history_db"], 101.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("strategy profile is older than history DB" in reason for reason in route.reasons))
+
     def test_stale_trader_overrides_does_not_preempt_position_management(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1052,6 +1083,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["attack_advice"]),
                         "--learning-audit",
                         str(files["learning_audit"]),
+                        "--strategy-profile",
+                        str(files["strategy_profile"]),
                         "--trader-overrides",
                         str(files["trader_overrides"]),
                         "--decision-response",
@@ -1086,6 +1119,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "option_skew_path": files["option_skew"],
         "attack_advice_path": files["attack_advice"],
         "learning_audit_path": files["learning_audit"],
+        "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
         "gpt_decision_path": files["gpt_decision"],
         "live_order_path": files["live_order"],
@@ -1113,6 +1147,8 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "option_skew": root / "option_skew_snapshot.json",
         "attack_advice": root / "ai_attack_advice.json",
         "learning_audit": root / "learning_audit.json",
+        "strategy_profile": root / "strategy_profile.json",
+        "history_db": root / "legacy_history.db",
         "trader_overrides": root / "trader_overrides.json",
         "gpt_decision": root / "gpt_trader_decision.json",
         "live_order": root / "live_order_request.json",
@@ -1167,6 +1203,24 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "learning_audit",
     ):
         files[key].write_text(json.dumps({}))
+    files["history_db"].write_text("not a real sqlite db; only mtime matters for routing tests")
+    files["strategy_profile"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "history_db": str(files["history_db"]),
+                "profiles": [
+                    {
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "TREND_CONTINUATION",
+                        "status": "CANDIDATE",
+                        "required_fix": "fixture",
+                    }
+                ],
+            }
+        )
+    )
     files["trader_overrides"].write_text(
         json.dumps(
             {

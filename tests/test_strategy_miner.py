@@ -102,6 +102,52 @@ class StrategyMinerTest(unittest.TestCase):
             self.assertGreaterEqual(profiles["GBP_USD LONG"]["target_reward_risk"], 1.5)
             self.assertIn("Generated System Rules", report.read_text())
 
+    def test_refuses_to_overwrite_with_empty_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "history.db"
+            conn = sqlite3.connect(db_path)
+            conn.executescript(
+                """
+                CREATE TABLE source_files (rel_path TEXT, kind TEXT, size_bytes INTEGER, sha256 TEXT, mtime_utc TEXT);
+                CREATE TABLE legacy_records (
+                    source_table TEXT, source_id TEXT, session_date TEXT, pair TEXT, direction TEXT,
+                    pl REAL, execution_style TEXT, allocation_band TEXT, thesis TEXT, raw_json TEXT
+                );
+                CREATE TABLE live_trade_events (
+                    line_no INTEGER, timestamp_text TEXT, action TEXT, pair TEXT, direction TEXT,
+                    units INTEGER, price TEXT, pl_jpy REAL, spread_pips REAL, trade_id TEXT, reason TEXT, raw_line TEXT
+                );
+                CREATE TABLE jsonl_events (
+                    source_name TEXT, line_no INTEGER, event_type TEXT, timestamp_utc TEXT,
+                    pair TEXT, direction TEXT, raw_json TEXT
+                );
+                """
+            )
+            conn.commit()
+            conn.close()
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "status": "CANDIDATE",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "zero profiles"):
+                StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+
+            payload = json.loads(profile.read_text())
+            self.assertEqual(len(payload["profiles"]), 1)
+            self.assertEqual(payload["profiles"][0]["pair"], "EUR_USD")
+
 
 if __name__ == "__main__":
     unittest.main()

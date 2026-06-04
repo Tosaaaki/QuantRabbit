@@ -235,6 +235,30 @@ class StrategyProfileTest(unittest.TestCase):
         self.assertEqual(issues[0].code, "STRATEGY_PROFILE_MISSING")
         self.assertEqual(issues[0].severity, "BLOCK")
 
+    def test_empty_profile_blocks_forecast_seed_live_send_under_sl_free(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "strategy.json"
+            path.write_text(json.dumps({"profiles": []}))
+            profile = StrategyProfile.load(path)
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                issues = profile.validate(
+                    _intent(
+                        "EUR_USD",
+                        method=TradeMethod.BREAKOUT_FAILURE,
+                        order_type=OrderType.STOP_ENTRY,
+                        metadata={"forecast_seed": True},
+                    ),
+                    for_live_send=True,
+                )
+            finally:
+                _restore_env("QR_TRADER_DISABLE_SL_REPAIR", prior)
+
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].code, "STRATEGY_PROFILE_EMPTY")
+        self.assertEqual(issues[0].severity, "BLOCK")
+
     def test_reversal_recovery_hedge_missing_profile_is_advisory_under_sl_free(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile = StrategyProfile.load(_profile(Path(tmp), status="CANDIDATE"))

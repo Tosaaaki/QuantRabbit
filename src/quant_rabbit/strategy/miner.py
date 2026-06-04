@@ -84,6 +84,11 @@ class StrategyMiner:
             conn.row_factory = sqlite3.Row
             profiles = self._build_profiles(conn, cap.loss_cap_jpy)
             coverage = self._coverage(conn)
+            if not profiles:
+                raise ValueError(
+                    "mine-strategy produced zero profiles; refusing to write an empty strategy profile. "
+                    "Run import-legacy and verify legacy_history.db contains pretrade/live evidence."
+                )
             generated_at = datetime.now(timezone.utc).isoformat()
             self._write_profile(profiles, coverage, generated_at, cap)
             self._write_report(profiles, coverage, generated_at, cap)

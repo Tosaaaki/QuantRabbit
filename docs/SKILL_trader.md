@@ -93,6 +93,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_
 # market-derived, not loss-cap-derived).
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
+PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy
+PYTHONPATH=src python3 -m quant_rabbit.cli mine-strategy
 PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot
 PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot
