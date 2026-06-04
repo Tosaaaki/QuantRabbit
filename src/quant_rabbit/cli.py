@@ -103,6 +103,8 @@ from quant_rabbit.paths import (
     DEFAULT_ENTRY_THESIS_LEDGER,
     DEFAULT_MEMORY_HEALTH,
     DEFAULT_MEMORY_HEALTH_REPORT,
+    DEFAULT_SELF_IMPROVEMENT_AUDIT,
+    DEFAULT_SELF_IMPROVEMENT_AUDIT_REPORT,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CALENDAR_REPORT,
     DEFAULT_COT_SNAPSHOT,
@@ -903,6 +905,36 @@ def main(argv: list[str] | None = None) -> int:
     p_mhealth.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_mhealth.add_argument("--output", type=Path, default=DEFAULT_MEMORY_HEALTH)
     p_mhealth.add_argument("--report", type=Path, default=DEFAULT_MEMORY_HEALTH_REPORT)
+
+    p_self_audit = sub.add_parser(
+        "self-improvement-audit",
+        help="Aggregate profitability, memory, verification, and decision-history holes into ranked repair tasks.",
+    )
+    p_self_audit.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_self_audit.add_argument(
+        "--history-db",
+        type=Path,
+        default=None,
+        help="Optional DB for audit run history. Defaults to --db.",
+    )
+    p_self_audit.add_argument("--output", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT)
+    p_self_audit.add_argument("--report", type=Path, default=DEFAULT_SELF_IMPROVEMENT_AUDIT_REPORT)
+    p_self_audit.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_self_audit.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_self_audit.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_self_audit.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
+    p_self_audit.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_self_audit.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
+    p_self_audit.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
+    p_self_audit.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_self_audit.add_argument("--entry-thesis-ledger", type=Path, default=DEFAULT_ENTRY_THESIS_LEDGER)
+    p_self_audit.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
+    p_self_audit.add_argument("--trader-decision", type=Path, default=DEFAULT_TRADER_DECISION)
+    p_self_audit.add_argument("--position-management", type=Path, default=ROOT / "data" / "position_management.json")
+    p_self_audit.add_argument("--thesis-evolution", type=Path, default=ROOT / "data" / "thesis_evolution_report.json")
+    p_self_audit.add_argument("--position-thesis", type=Path, default=ROOT / "data" / "position_thesis_report.json")
+    p_self_audit.add_argument("--forecast-persistence", type=Path, default=ROOT / "data" / "forecast_persistence_report.json")
+    p_self_audit.add_argument("--window-hours", type=float, default=168.0)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -2433,6 +2465,61 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "self-improvement-audit":
+        try:
+            from quant_rabbit.self_improvement_audit import SelfImprovementAuditor
+
+            summary = SelfImprovementAuditor(
+                db_path=args.db,
+                history_db_path=args.history_db,
+                output_path=args.output,
+                report_path=args.report,
+            ).run(
+                snapshot_path=args.snapshot,
+                target_state_path=args.target_state,
+                order_intents_path=args.order_intents,
+                memory_health_path=args.memory_health,
+                learning_audit_path=args.learning_audit,
+                verification_ledger_path=args.verification_ledger,
+                forecast_history_path=args.forecast_history,
+                projection_ledger_path=args.projection_ledger,
+                entry_thesis_ledger_path=args.entry_thesis_ledger,
+                gpt_decision_path=args.gpt_decision,
+                trader_decision_path=args.trader_decision,
+                position_management_path=args.position_management,
+                thesis_evolution_path=args.thesis_evolution,
+                position_thesis_path=args.position_thesis,
+                forecast_persistence_path=args.forecast_persistence,
+                window_hours=args.window_hours,
+            )
+        except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "db_path": str(summary.db_path),
+                    "history_db_path": str(summary.history_db_path),
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "findings": summary.findings,
+                    "p0_findings": summary.p0_findings,
+                    "p1_findings": summary.p1_findings,
+                    "p2_findings": summary.p2_findings,
+                    "closed_trades": summary.closed_trades,
+                    "net_jpy": summary.net_jpy,
+                    "profit_factor": summary.profit_factor,
+                    "expectancy_jpy": summary.expectancy_jpy,
+                    "live_ready_lanes": summary.live_ready_lanes,
+                    "open_trader_positions": summary.open_trader_positions,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status != "SELF_IMPROVEMENT_BLOCKED" else 2
     if args.command == "trailing-sl-update":
         from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
