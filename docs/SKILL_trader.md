@@ -164,8 +164,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 # them before routing so a trapped position whose plus-recovery edge is gone
 # reaches the position-management prompt instead of being hidden behind fresh
 # entry work. They are Gate A evidence; fresh thesis_evolution BROKEN /
-# RECOMMEND_CLOSE is also hard standing loss-cut authorization, while softer
-# sidecars still need explicit Gate B authorization below.
+# RECOMMEND_CLOSE and position_thesis adverse technical loss with multi-TF
+# confirmation are hard standing loss-cut authorization, while softer sidecars
+# still need explicit Gate B authorization below.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
@@ -196,9 +197,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 #     the same trade REVIEW_CLOSE / RECOMMEND_CLOSE.
 #   - Gate B: hard loss-cut standing authorization OR explicit operator
 #     authorization. Hard Gate A is M15/H4 close-confirmed BOS/CHOCH against
-#     side, buffered invalidation_price hit with technical confirmation, or
-#     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE. Softer sidecars
-#     (position_thesis REVIEW_CLOSE or forecast_persistence RECOMMEND_CLOSE)
+#     side, buffered invalidation_price hit with technical confirmation,
+#     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, or position_thesis
+#     no-ledger adverse technical loss with multi-TF confirmation. Softer
+#     sidecars (score-only position_thesis REVIEW_CLOSE or
+#     forecast_persistence RECOMMEND_CLOSE)
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
@@ -283,9 +286,11 @@ PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 # 6d. Position thesis check — apply the full prediction stack to each
 # open position. Emits data/position_thesis_report.json with per-position
 # EXTEND / HOLD / REVIEW_CLOSE verdicts and score breakdowns. The GPT
-# trader reads a fresh REVIEW_CLOSE as soft Gate A evidence for CLOSE decisions;
-# explicit env/token Gate B is still required unless a separate hard Gate A
-# path also exists.
+# trader reads a fresh REVIEW_CLOSE as Gate A evidence for CLOSE decisions.
+# It is hard standing authorization only when the report records adverse
+# technical loss / invalidation-hit evidence plus multi-TF confirmation;
+# score-only reviews still require explicit env/token Gate B unless a separate
+# hard Gate A path also exists.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 
 # 6e. Thesis evolution check (2026-05-15, user directive: 「どの視点で

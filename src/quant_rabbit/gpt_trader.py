@@ -224,8 +224,10 @@ def _close_thesis_invalidation(
           from the prediction stack, thesis evolution, or N-cycle
           forecast persistence. This is the machine-checkable
           "no longer likely to recover to plus" path. `thesis_evolution`
-          BROKEN / RECOMMEND_CLOSE is treated as hard standing loss-cut
-          authorization; softer sidecars still require env/token Gate B.
+          BROKEN / RECOMMEND_CLOSE and `position_thesis` no-ledger/adverse
+          technical-loss evidence with multi-TF confirmation are treated as
+          hard standing loss-cut authorization; softer sidecars still require
+          env/token Gate B.
     """
     side_upper = str(side or "").upper()
     if side_upper not in {"LONG", "SHORT"}:
@@ -337,15 +339,25 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
 
     `thesis_evolution` compares the entry thesis to current broker truth and
     emits BROKEN / RECOMMEND_CLOSE only after invalidation plus technical
-    confirmation. That is the machine-readable "妥当な損切り" path. Broader
-    position-thesis and persistence reviews can still be useful Gate A, but
-    they remain softer and need explicit operator Gate B.
+    confirmation. `position_thesis` may also hard-authorize a legacy/no-ledger
+    trade when it records adverse technical loss plus multi-TF confirmation.
+    Those are the machine-readable "妥当な損切り" paths. Score-only
+    position-thesis and persistence reviews remain softer and need explicit
+    operator Gate B.
     """
     if rec.get("gate_b_standing_authorized") is True:
         return True
     source = str(rec.get("source") or "").strip()
     verdict = str(rec.get("verdict") or "").strip().upper()
-    return source == "thesis_evolution" and verdict in {"BROKEN", "RECOMMEND_CLOSE"}
+    if source == "thesis_evolution" and verdict in {"BROKEN", "RECOMMEND_CLOSE"}:
+        return True
+    if source == "position_thesis" and verdict == "REVIEW_CLOSE":
+        reason = str(rec.get("reason") or "").lower()
+        has_technical_confirmation = "technical invalidation confirmed against" in reason
+        has_adverse_loss_break = "adverse technical loss:" in reason
+        has_invalidation_hit = "invalidation hit:" in reason
+        return has_technical_confirmation and (has_adverse_loss_break or has_invalidation_hit)
+    return False
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
@@ -693,7 +705,7 @@ class GPTTraderBrain:
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, or fresh thesis_evolution BROKEN/RECOMMEND_CLOSE) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`. `TRADE` must not include `close_trade_ids`; automation may re-enter in the same outer cycle only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, or position_thesis no-ledger adverse technical loss with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`. `TRADE` must not include `close_trade_ids`; automation may re-enter in the same outer cycle only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")

@@ -15,6 +15,7 @@ from quant_rabbit.trader_prompts import (
     BRANCH_POSITION,
     BRANCH_REFRESH,
     BRANCH_VERIFY,
+    _fresh_close_recommendations,
     route_trader_prompts,
 )
 
@@ -344,6 +345,105 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_POSITION)
         self.assertTrue(any("position_thesis REVIEW_CLOSE" in reason for reason in route.reasons))
         self.assertTrue(any("adverse technical loss" in reason for reason in route.reasons))
+
+    def test_position_thesis_adverse_technical_loss_is_standing_authorized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471414",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "take_profit": 1.16056,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -2109.8,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "471414",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "REVIEW_CLOSE",
+                                "aggregate_score": 47.0,
+                                "rationale_lines": [
+                                    "patterns +30.0",
+                                    "forward-proj +25.0",
+                                    "chart-tech -8.0",
+                                ],
+                                "context_notes": [
+                                    "adverse technical loss: no entry thesis; current ask 1.16310 >= entry-buffer 1.15891",
+                                    "technical invalidation confirmed against SHORT: H1 RSI=65.3; M15 trend up; M30 MACD+; M5 ST+",
+                                ],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            recs = _fresh_close_recommendations(snapshot, data_root=root)
+
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["source"], "position_thesis")
+        self.assertTrue(recs[0]["gate_b_standing_authorized"])
+        self.assertIn("adverse technical loss", recs[0]["reason"])
+        self.assertIn("technical invalidation confirmed", recs[0]["reason"])
+
+    def test_position_thesis_score_only_review_is_not_standing_authorized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471414",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "take_profit": 1.16056,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "position_thesis_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "assessments": [
+                            {
+                                "trade_id": "471414",
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "verdict": "REVIEW_CLOSE",
+                                "aggregate_score": 12.0,
+                                "rationale_lines": ["score weakened but no invalidation hit"],
+                                "context_notes": [],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            recs = _fresh_close_recommendations(snapshot, data_root=root)
+
+        self.assertEqual(len(recs), 1)
+        self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
     def test_entry_thesis_blocker_routes_without_close_recommendation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

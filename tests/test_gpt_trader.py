@@ -2290,11 +2290,15 @@ def _write_fresh_position_thesis_close_recommendation(
     trade_id: str = "555",
     pair: str = "EUR_USD",
     side: str = "SHORT",
+    rationale_lines: list[str] | None = None,
+    context_notes: list[str] | None = None,
 ) -> None:
     snapshot = json.loads(files["snapshot"].read_text())
     generated_at = (
         datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
     ).isoformat()
+    rationale_lines = rationale_lines or ["soft position thesis review says recovery edge is weak"]
+    context_notes = context_notes or []
     (root / "position_thesis_report.json").write_text(
         json.dumps(
             {
@@ -2305,8 +2309,8 @@ def _write_fresh_position_thesis_close_recommendation(
                         "pair": pair,
                         "side": side,
                         "verdict": "REVIEW_CLOSE",
-                        "rationale_lines": ["soft position thesis review says recovery edge is weak"],
-                        "context_notes": [],
+                        "rationale_lines": rationale_lines,
+                        "context_notes": context_notes,
                     }
                 ],
             }
@@ -2585,6 +2589,61 @@ class CloseDisciplineTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_close_rejected_without_operator_token_when_only_soft_position_thesis_sidecar(self) -> None:
+        # Score-only position_thesis review is Gate A evidence, but not hard
+        # standing loss-cut authorization.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_position_thesis_close_recommendation(root, files)
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:thesis:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_close_accepted_without_operator_token_when_position_thesis_adverse_technical_loss(self) -> None:
+        # Legacy/no-ledger positions can still be cut without a fresh token when
+        # position_thesis records adverse buffer break plus multi-TF technical
+        # confirmation. This is the live 471414 failure mode.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                rationale_lines=[
+                    "patterns +30.0",
+                    "forward-proj +25.0",
+                    "chart-tech -8.0",
+                ],
+                context_notes=[
+                    "adverse technical loss: no entry thesis; current ask 1.16310 >= entry-buffer 1.15891",
+                    "technical invalidation confirmed against SHORT: H1 RSI=65.3; M15 trend up; M30 MACD+; M5 ST+",
+                ],
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:thesis:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertTrue(summary.allowed)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_thesis")
+            self.assertTrue(recs[0]["gate_b_standing_authorized"])
 
     def test_close_accepted_without_operator_token_when_thesis_evolution_is_broken(self) -> None:
         # thesis_evolution BROKEN / RECOMMEND_CLOSE is generated from entry

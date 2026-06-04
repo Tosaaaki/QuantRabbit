@@ -551,6 +551,8 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
             for x in (list(item.get("rationale_lines") or []) + list(item.get("context_notes") or []))
             if str(x)
         ]
+        standing_authorized = _position_thesis_standing_authorized(item, reason_parts)
+        selected_reason_parts = _position_thesis_reason_parts(reason_parts, standing_authorized=standing_authorized)
         out.append(
             {
                 "source": "position_thesis",
@@ -559,12 +561,55 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "verdict": "REVIEW_CLOSE",
-                "gate_b_standing_authorized": False,
-                "reason": "; ".join(reason_parts[:3])
+                "gate_b_standing_authorized": standing_authorized,
+                "reason": "; ".join(selected_reason_parts)
                 or f"aggregate_score={item.get('aggregate_score')}",
             }
         )
     return out
+
+
+def _position_thesis_standing_authorized(item: dict[str, Any], reason_parts: list[str]) -> bool:
+    """Hard no-ledger/adverse-loss evidence from position_thesis.
+
+    Plain position_thesis REVIEW_CLOSE remains soft. Standing authorization is
+    only granted when the report carries both an adverse price/buffer break and
+    multi-timeframe technical invalidation confirmation. This covers legacy or
+    no-ledger positions whose original thesis cannot be reconstructed, without
+    turning score-only reviews into automatic loss cuts.
+    """
+
+    verdict = str(item.get("verdict") or "").upper()
+    if verdict != "REVIEW_CLOSE":
+        return False
+    texts = [str(part).lower() for part in reason_parts if str(part)]
+    has_technical_confirmation = any("technical invalidation confirmed against" in part for part in texts)
+    has_adverse_loss_break = any("adverse technical loss:" in part for part in texts)
+    has_invalidation_hit = any("invalidation hit:" in part for part in texts)
+    return has_technical_confirmation and (has_adverse_loss_break or has_invalidation_hit)
+
+
+def _position_thesis_reason_parts(reason_parts: list[str], *, standing_authorized: bool) -> list[str]:
+    if not standing_authorized:
+        return reason_parts[:3]
+    selected: list[str] = []
+    for part in reason_parts:
+        if len(selected) >= 3:
+            break
+        selected.append(part)
+    for part in reason_parts:
+        lowered = part.lower()
+        if (
+            "adverse technical loss:" not in lowered
+            and "technical invalidation confirmed against" not in lowered
+            and "invalidation hit:" not in lowered
+        ):
+            continue
+        if part not in selected:
+            selected.append(part)
+        if len(selected) >= 5:
+            break
+    return selected
 
 
 def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[dict[str, Any]]:
