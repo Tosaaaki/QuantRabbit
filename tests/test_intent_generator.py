@@ -3572,6 +3572,39 @@ class MinLotFloorIntentTest(unittest.TestCase):
         )
         self.assertEqual(units, 0)
 
+    def test_min_lot_block_reports_loss_budget_subfloor_separately_from_margin(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import _min_lot_block_issue
+
+        issue = _min_lot_block_issue(
+            pair="EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=50.0,
+            snapshot=self._stub_snapshot(margin_available=200000.0),
+            side=Side.SHORT,
+        )
+
+        self.assertEqual(issue["code"], "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT")
+        self.assertIn("loss budget", issue["message"])
+        self.assertNotIn("margin headroom", issue["message"])
+
+    def test_min_lot_block_still_reports_margin_subfloor_when_margin_is_the_cap(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import _min_lot_block_issue
+
+        issue = _min_lot_block_issue(
+            pair="EUR_USD",
+            entry=1.17290,
+            sl=1.17490,
+            max_loss_jpy=2000.0,
+            snapshot=self._stub_snapshot(margin_available=10.0),
+            side=Side.SHORT,
+        )
+
+        self.assertEqual(issue["code"], "MARGIN_TOO_THIN_FOR_MIN_LOT")
+        self.assertIn("margin headroom", issue["message"])
+
     def test_risk_budgeted_units_caps_same_pair_hedge_by_loss_budget(self) -> None:
         import os
 

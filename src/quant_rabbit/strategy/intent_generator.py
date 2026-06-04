@@ -2356,17 +2356,19 @@ class IntentGenerator:
         # dominated any pip target; this gate stops the same pattern.
         if int(intent.units) == 0 and not _min_lot_test_override_active():
             risk_issues.append(
-                {
-                    "code": "MARGIN_TOO_THIN_FOR_MIN_LOT",
-                    "message": (
-                        f"available margin headroom can only fund "
-                        f"<{MIN_PRODUCTION_LOT_UNITS}u for {pair}; refusing to "
-                        "emit a sub-floor receipt because round-trip spread cost "
-                        "would dominate the pip target. Free margin or wait for "
-                        "open positions to harvest TP."
+                _min_lot_block_issue(
+                    pair=pair,
+                    entry=(
+                        float(intent.entry)
+                        if intent.entry is not None
+                        else (quote.ask if intent.side == Side.LONG else quote.bid)
                     ),
-                    "severity": "BLOCK",
-                }
+                    sl=intent.sl,
+                    max_loss_jpy=max_loss_jpy,
+                    snapshot=snapshot,
+                    side=intent.side,
+                    position_intent=str(intent.metadata.get("position_intent") or ""),
+                )
             )
             risk_allowed = False
         if (
@@ -4942,6 +4944,76 @@ def _risk_budgeted_units(
     ):
         return 0
     return max(1, int(max_units))
+
+
+def _min_lot_block_issue(
+    *,
+    pair: str,
+    entry: float,
+    sl: float,
+    max_loss_jpy: float,
+    snapshot: BrokerSnapshot,
+    side: Side | None = None,
+    position_intent: str | None = None,
+) -> dict[str, str]:
+    pip_factor = PIP_FACTORS[pair]
+    stop_pips = abs(entry - sl) * pip_factor
+    quote_to_jpy = _quote_to_jpy(pair, snapshot)
+    if stop_pips > 0 and quote_to_jpy is not None:
+        loss_budget_units = max_loss_jpy * pip_factor / (stop_pips * quote_to_jpy)
+        margin_budget_units = _margin_budgeted_units(
+            pair,
+            entry,
+            snapshot,
+            side=side,
+            position_intent=position_intent,
+        )
+        loss_subfloor = loss_budget_units < MIN_PRODUCTION_LOT_UNITS
+        margin_subfloor = margin_budget_units is not None and margin_budget_units < MIN_PRODUCTION_LOT_UNITS
+        if loss_subfloor and not margin_subfloor:
+            return {
+                "code": "LOSS_BUDGET_TOO_THIN_FOR_MIN_LOT",
+                "message": (
+                    f"equity-derived loss budget can only fund "
+                    f"{loss_budget_units:.0f}u for {pair} at the current "
+                    f"{stop_pips:.1f}pip stop; refusing to emit a "
+                    f"sub-{MIN_PRODUCTION_LOT_UNITS}u receipt because "
+                    "round-trip spread cost would dominate the pip target. "
+                    "Wait for tighter market-derived geometry or explicit "
+                    "operator pace/equity evidence that raises the per-trade budget."
+                ),
+                "severity": "BLOCK",
+            }
+        if margin_subfloor:
+            return {
+                "code": "MARGIN_TOO_THIN_FOR_MIN_LOT",
+                "message": (
+                    f"available margin headroom can only fund "
+                    f"{margin_budget_units:.0f}u for {pair}; refusing to "
+                    f"emit a sub-{MIN_PRODUCTION_LOT_UNITS}u receipt because "
+                    "round-trip spread cost would dominate the pip target. "
+                    "Free margin or wait for open positions to harvest TP."
+                ),
+                "severity": "BLOCK",
+            }
+    if quote_to_jpy is None:
+        return {
+            "code": "CONVERSION_RATE_MISSING_FOR_MIN_LOT",
+            "message": (
+                f"{pair} cannot be sized against JPY because the quote-currency "
+                "conversion is missing; refusing to infer a production lot."
+            ),
+            "severity": "BLOCK",
+        }
+    return {
+        "code": "MIN_LOT_SIZE_UNAVAILABLE",
+        "message": (
+            f"{pair} resolved to 0 units before the production "
+            f"{MIN_PRODUCTION_LOT_UNITS}u floor; refusing to emit a "
+            "sub-floor receipt until sizing inputs are repaired."
+        ),
+        "severity": "BLOCK",
+    }
 
 
 def _nav_pct_position_units(pair: str, entry: float, snapshot: BrokerSnapshot) -> float | None:
