@@ -22,6 +22,7 @@ class VerificationLedgerTest(unittest.TestCase):
 
             summary = VerificationLedger(
                 db_path=root / "execution_ledger.db",
+                output_path=root / "verification.json",
                 report_path=root / "verification.md",
             ).run(
                 snapshot_path=files["snapshot"],
@@ -83,6 +84,11 @@ class VerificationLedgerTest(unittest.TestCase):
             self.assertEqual(advice_delta, 8.0)
             self.assertIn("INSUFFICIENT_SAMPLE_LT_30", (root / "verification.md").read_text())
             self.assertIn("Learning Evidence", (root / "verification.md").read_text())
+            packet = json.loads((root / "verification.json").read_text())
+            self.assertEqual(packet["status"], "BLOCKED")
+            self.assertEqual(packet["effect_metrics"]["closed_trades"], 2)
+            self.assertTrue(packet["blocking_evidence"][0]["evidence_ref"].startswith("verification:"))
+            self.assertEqual(packet["contract"]["json_packet_is_trader_readable"], True)
 
     def test_cli_records_verification_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -97,6 +103,8 @@ class VerificationLedgerTest(unittest.TestCase):
                         "verification-ledger-audit",
                         "--db",
                         str(root / "execution_ledger.db"),
+                        "--output",
+                        str(root / "verification.json"),
                         "--report",
                         str(root / "verification.md"),
                         "--snapshot",
@@ -131,8 +139,10 @@ class VerificationLedgerTest(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(stdout.getvalue())
             self.assertEqual(payload["status"], "BLOCKED")
+            self.assertEqual(payload["output_path"], str(root / "verification.json"))
             self.assertGreater(payload["observations_inserted"], 0)
             self.assertGreater(payload["measurements_inserted"], 0)
+            self.assertTrue((root / "verification.json").exists())
 
 
 def _fixtures(root: Path) -> dict[str, Path]:

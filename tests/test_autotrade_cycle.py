@@ -1531,6 +1531,15 @@ class AutoTradeCycleTest(unittest.TestCase):
             gpt_payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(gpt_payload["input_packet"]["learning_audit"]["status"], audit_payload["status"])
             self.assertIn("learning:audit", gpt_payload["input_packet"]["allowed_evidence_refs"])
+            verification_payload = json.loads((root / "verification_ledger.json").read_text())
+            self.assertEqual(
+                gpt_payload["input_packet"]["verification_ledger"]["status"],
+                verification_payload["status"],
+            )
+            self.assertIn("verification:ledger", gpt_payload["input_packet"]["allowed_evidence_refs"])
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                rows = conn.execute("SELECT COUNT(*) FROM verification_observations").fetchone()[0]
+            self.assertGreater(rows, 0)
 
     def test_gpt_single_trade_dedupes_prefiltered_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

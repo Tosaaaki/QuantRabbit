@@ -71,6 +71,84 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             self.assertIn("predictive:limits", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_input_packet_includes_verification_ledger_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["verification_ledger"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-04T00:00:00+00:00",
+                        "status": "OK",
+                        "db_path": str(root / "execution_ledger.db"),
+                        "report_path": str(root / "verification_ledger.md"),
+                        "blocking_observations": 0,
+                        "missing_observations": 0,
+                        "effect_metrics": {
+                            "window_hours": 168.0,
+                            "closed_trades": 42,
+                            "net_jpy": 1200.0,
+                            "profit_factor": 1.6,
+                            "win_rate": 0.57,
+                            "expectancy_jpy": 28.57,
+                        },
+                        "blocking_evidence": [],
+                        "missing_artifacts": [],
+                        "learning_evidence": [
+                            {
+                                "evidence_ref": "verification:learning_audit:learning_audit_status:LEARNING_AUDIT_WARN",
+                                "source": "learning_audit",
+                                "subject_type": "learning_audit",
+                                "subject_id": "LEARNING_AUDIT_WARN",
+                                "check_name": "learning_audit_status",
+                                "status": "WARN",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "measurements": [
+                            {
+                                "evidence_ref": "verification:effect:all:net_jpy",
+                                "segment": "all",
+                                "metric_name": "net_jpy",
+                                "metric_value": 1200.0,
+                                "metric_unit": "JPY",
+                                "sample_size": 42,
+                            }
+                        ],
+                        "contract": {
+                            "read_only": True,
+                            "live_permission": False,
+                            "json_packet_is_trader_readable": True,
+                            "markdown_report_is_operator_readable": True,
+                            "learning_cannot_override_risk_or_gateway_gates": True,
+                        },
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "verification:ledger",
+                    "verification:learning_audit:learning_audit_status:LEARNING_AUDIT_WARN",
+                    "verification:effect:all:net_jpy",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            packet = payload["input_packet"]["verification_ledger"]
+            self.assertEqual(packet["status"], "OK")
+            self.assertEqual(packet["effect_metrics"]["closed_trades"], 42)
+            self.assertIn("verification:ledger", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn(
+                "verification:learning_audit:learning_audit_status:LEARNING_AUDIT_WARN",
+                payload["input_packet"]["allowed_evidence_refs"],
+            )
+            self.assertIn("verification:effect:all:net_jpy", payload["input_packet"]["allowed_evidence_refs"])
+
     def test_input_packet_accepts_chart_refs_for_open_position_pairs_without_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1359,6 +1437,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
         learning_audit_path=files["learning_audit"],
+        verification_ledger_path=files["verification_ledger"],
         predictive_limits_path=files["predictive_limits"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
@@ -1406,6 +1485,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
         "learning_audit": root / "learning_audit.json",
+        "verification_ledger": root / "verification_ledger.json",
         "predictive_limits": root / "predictive_limits.json",
     }
     now = datetime.now(timezone.utc).isoformat()
