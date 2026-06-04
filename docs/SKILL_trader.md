@@ -152,6 +152,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
+PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
+PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit
 # Predictive LIMIT timing evidence is generated before the decision receipt so
 # the trader can compare market/pending participation against liquidity-sweep
 # traps. Default is dry-run evidence; live placement still requires a separate
@@ -323,3 +325,4 @@ PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
 - `gpt-trader-decision` result and issue codes.
 - Gateway result and report paths under `docs/*_report.md`.
 - Execution ledger DB/report: `data/execution_ledger.db`, `docs/execution_ledger_report.md`.
+- Verification ledger JSON/SQL/report: `data/verification_ledger.json`, `data/execution_ledger.db`, `docs/verification_ledger_report.md`.

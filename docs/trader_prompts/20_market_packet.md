@@ -21,6 +21,18 @@
   - If the selected lane was moved by learning, cite `learning:audit` and
     `learning:lane:<lane_id>`; a blocked or stale audit is a no-trade gate for
     that lane.
+- `data/verification_ledger.json`
+  - Trader-readable summary of the current JSON artifacts, SQLite
+    `verification_observations` / `effect_measurements`, and the latest MD
+    report path.
+  - Cite `verification:ledger` when using this packet. Cite individual
+    `verification:*` refs when discussing reproducible blockers, missing
+    artifacts, learning evidence, or recent effect metrics.
+  - It is read-only evidence. It cannot grant live permission, override risk
+    gates, or suppress broker-truth blockers.
+- `data/execution_ledger.db` and `docs/verification_ledger_report.md`
+  - SQL is the durable source for accumulated observations and measured
+    outcomes; the MD report is the operator-readable digest.
 
 ## Chart Layer
 

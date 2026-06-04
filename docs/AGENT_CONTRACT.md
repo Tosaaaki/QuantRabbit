@@ -19,6 +19,8 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Live runtime sync | `scripts/sync-live-runtime.sh` |
 | Append-only execution ledger | `data/execution_ledger.db` |
 | Execution ledger latest report | `docs/execution_ledger_report.md` |
+| Trader-readable verification ledger JSON | `data/verification_ledger.json` |
+| Verification ledger latest report | `docs/verification_ledger_report.md` |
 | Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Weekend task switcher | `scripts/qr_weekend_task_switch.py` / `quant_rabbit.weekend_task_switch` |
@@ -370,6 +372,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/brok
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
+PYTHONPATH=src python3 -m quant_rabbit.cli verification-ledger-audit
 
 # Decision verification
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
