@@ -72,6 +72,77 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.layers["medium_term"], "BLOCK")
         self.assertTrue(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING" for issue in payload["issues"]))
 
+    def test_live_ready_lane_keeps_advisory_profile_warnings_from_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "LIVE_READY",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [],
+                                "strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_PROFILE_MISSING",
+                                        "message": "synthetic forecast-seed profile warning",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "live_blockers": [],
+                            },
+                            {
+                                "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                                "status": "DRY_RUN_BLOCKED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [],
+                                "strategy_issues": [],
+                                "live_blockers": ["STRATEGY_PROFILE_MISSING"],
+                            },
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+
+    def test_no_live_ready_memory_blocker_still_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "DRY_RUN_PASSED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [],
+                                "strategy_issues": [],
+                                "live_blockers": ["TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.layers["short_term"], "BLOCK")
+        self.assertTrue(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
 
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
 
