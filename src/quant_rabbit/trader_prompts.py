@@ -559,6 +559,7 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "verdict": "REVIEW_CLOSE",
+                "gate_b_standing_authorized": False,
                 "reason": "; ".join(reason_parts[:3])
                 or f"aggregate_score={item.get('aggregate_score')}",
             }
@@ -587,6 +588,7 @@ def _thesis_evolution_recommendations(path: Path, fetched_at: datetime) -> list[
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "verdict": verdict or status,
+                "gate_b_standing_authorized": True,
                 "reason": item.get("rationale") or f"status={status}",
             }
         )
@@ -610,6 +612,7 @@ def _forecast_persistence_recommendations(path: Path, fetched_at: datetime) -> l
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "verdict": "RECOMMEND_CLOSE",
+                "gate_b_standing_authorized": False,
                 "reason": item.get("reason") or "persistent forecast no longer supports the position",
             }
         )

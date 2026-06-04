@@ -69,14 +69,15 @@
 
 CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
 SL-free the per-trade risk number is advisory; market structure is authoritative.
-A justified loss-cut is allowed when Gate A proves the thesis is broken and
-Gate B is freshly authorized; holding a broken thesis is not the objective.
+A justified loss-cut is allowed when hard Gate A proves the thesis is broken,
+or when softer Gate A is paired with explicit Gate B; holding a broken thesis is
+not the objective.
 Do not combine loss-cut and re-entry in one `TRADE` receipt. Close the broken
 position first, refresh broker truth / intents, then re-enter only if the next
 cycle still produces a fresh `LIVE_READY` lane.
 Fresh sidecar Gate A close evidence also blocks `PROTECT` / `TIGHTEN_SL` as a
-receipt-level escape hatch: either submit the verified `CLOSE` when Gate B is
-fresh, or surface `CLOSE_OPERATOR_AUTH_REQUIRED` when it is not.
+receipt-level escape hatch: submit the verified `CLOSE` when hard Gate A or
+explicit Gate B is available; otherwise surface `CLOSE_OPERATOR_AUTH_REQUIRED`.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
 currently profitable trader-owned positions when the adaptive TP / macro-micro
@@ -101,12 +102,14 @@ positions.
   move runs. Also do **not** propose CLOSE on a `struct=...:wick` event — the
   wick suffix marks a stop-hunt sweep where the high/low was tagged but the
   close held inside the prior range (added 2026-05-13 after the AUD_JPY M15
-  BOS_UP@114.146 0.4-pip wick incident).
+  BOS_UP@114.146 0.4-pip wick incident). This hard Gate A path carries
+  standing loss-cut authorization and does not need a 5-minute token.
 - **Invalidation-price hit (§10 Gate A — receipt-driven)**: receipt populates
   `invalidation_price` + `invalidation_tf` AND broker bid/ask clears the level
   beyond the anti-wick buffer (default `QR_THESIS_INVALIDATION_BUFFER_PIPS=2.0`)
   with chart/technical confirmation across operating timeframes. Cite the
   level + TF + chart/technical evidence. Do not cut on a naked one-tick wick.
+  This hard Gate A path also carries standing loss-cut authorization.
 - **Fresh prediction/thesis sidecar invalidation (§10 Gate A — recovery edge
   lost)**: a sidecar generated after the current
   `broker_snapshot.fetched_at_utc` marks the same trade `REVIEW_CLOSE` /
@@ -122,15 +125,18 @@ positions.
   machine-checkable "no longer likely to recover to plus" path. Cite
   `position:thesis:<trade_id>`,
   `position:evolution:<trade_id>`, or `position:persistence:<trade_id>` and
-  the sidecar reason. Stale sidecars are ignored.
+  the sidecar reason. Stale sidecars are ignored. `thesis_evolution`
+  BROKEN / RECOMMEND_CLOSE is hard Gate A and carries standing authorization;
+  `position_thesis` REVIEW_CLOSE and `forecast_persistence` RECOMMEND_CLOSE are
+  softer Gate A and still require explicit env/token Gate B.
 
 Macro shock, large unrealized loss, or margin pressure can strengthen the
 reason to review a thesis, but none of them is a standalone Gate A. Convert the
-concern into one of the machine-checkable triggers above, or WAIT. Gate B still
-requires operator-controlled authorization: `QR_OPERATOR_CLOSE_OVERRIDE=1` in
-the operator shell, or a fresh `data/.operator_close_token` file. The receipt's
-`operator_close_authorized` field is advisory audit text only and is not
-accepted as authorization.
+concern into one of the machine-checkable triggers above, or WAIT. For soft Gate
+A, Gate B still requires operator-controlled authorization:
+`QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, or a fresh
+`data/.operator_close_token` file. The receipt's `operator_close_authorized`
+field is advisory audit text only and is not accepted as authorization.
 
 ### NOT valid CLOSE triggers (do NOT propose CLOSE on these alone)
 
@@ -140,8 +146,8 @@ accepted as authorization.
   blocks new entries, cancels stale pending risk, and forces smaller future
   baskets. It does **not** authorize closing a directionally valid position.
   A professional trader sizes so the broker never decides; once a position
-  exists, CLOSE still needs Gate A thesis invalidation plus Gate B operator
-  authorization.
+  exists, CLOSE still needs Gate A thesis invalidation plus the applicable Gate
+  B path.
 - `Loss > NAV 5%` by itself — large drawdown is an incident and requires review,
   but it is not a machine-checkable thesis invalidation unless structure or an
   explicit invalidation price confirms the thesis is wrong.

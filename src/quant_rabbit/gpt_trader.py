@@ -177,9 +177,35 @@ def _close_thesis_invalidated(
     trade_id: str | None = None,
     decision: "GPTTraderDecision | None" = None,
 ) -> tuple[bool, str]:
+    invalidated, reason, _standing_authorized = _close_thesis_invalidation(
+        packet,
+        pair,
+        side,
+        trade_id=trade_id,
+        decision=decision,
+    )
+    return invalidated, reason
+
+
+def _close_thesis_invalidation(
+    packet: dict[str, Any],
+    pair: str,
+    side: str,
+    *,
+    trade_id: str | None = None,
+    decision: "GPTTraderDecision | None" = None,
+) -> tuple[bool, str, bool]:
     """Check whether the position's thesis has been invalidated.
 
-    Two acceptance paths (§6-compliant — no JPY/pip/multiplier literals):
+    Returns `(invalidated, reason, standing_authorized)`.
+
+    The first two Gate A paths are hard machine evidence and satisfy the
+    operator's standing instruction that justified loss-cuts are allowed. The
+    sidecar path may be hard (`thesis_evolution`) or soft
+    (`position_thesis` / `forecast_persistence`); soft reviews still require
+    explicit operator Gate B.
+
+    Acceptance paths (§6-compliant — no JPY/pip/multiplier literals):
 
       (a) Structural BOS or CHOCH on M15 or H4 printing AGAINST the
           position side. This is the chart_reader.structure_events lens
@@ -197,12 +223,13 @@ def _close_thesis_invalidated(
           snapshot marks this trade `REVIEW_CLOSE` / `RECOMMEND_CLOSE`
           from the prediction stack, thesis evolution, or N-cycle
           forecast persistence. This is the machine-checkable
-          "no longer likely to recover to plus" path; Gate B still
-          requires operator authorization before any broker close.
+          "no longer likely to recover to plus" path. `thesis_evolution`
+          BROKEN / RECOMMEND_CLOSE is treated as hard standing loss-cut
+          authorization; softer sidecars still require env/token Gate B.
     """
     side_upper = str(side or "").upper()
     if side_upper not in {"LONG", "SHORT"}:
-        return False, "unknown position side"
+        return False, "unknown position side", False
 
     chart_story = _pair_chart_story(packet, pair)
     structs = _parse_struct_events(chart_story)
@@ -221,7 +248,7 @@ def _close_thesis_invalidated(
             return True, (
                 f"{tf} {event_type}_{direction}@{price:g} prints against "
                 f"{side_upper} thesis (close-confirmed)"
-            )
+            ), True
 
     if decision is not None and decision.invalidation_price is not None:
         snapshot = packet.get("broker_snapshot") or {}
@@ -247,18 +274,18 @@ def _close_thesis_invalidated(
                     side=side_upper,
                 )
                 if technical_reason:
-                    return True, f"{reason}; {technical_reason} on {tf} per receipt"
+                    return True, f"{reason}; {technical_reason} on {tf} per receipt", True
 
-    sidecar_ok, sidecar_reason = _position_sidecar_close_recommended(
+    sidecar_ok, sidecar_reason, sidecar_standing_authorized = _position_sidecar_close_recommended(
         packet,
         trade_id=trade_id,
         pair=pair,
         side=side_upper,
     )
     if sidecar_ok:
-        return True, sidecar_reason
+        return True, sidecar_reason, sidecar_standing_authorized
 
-    return False, ""
+    return False, "", False
 
 
 def _position_sidecar_close_recommended(
@@ -267,13 +294,14 @@ def _position_sidecar_close_recommended(
     trade_id: str | None,
     pair: str,
     side: str,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, bool]:
     sidecars = packet.get("protection_sidecars")
     if not isinstance(sidecars, dict):
-        return False, ""
+        return False, "", False
     recs = sidecars.get("position_close_recommendations")
     if not isinstance(recs, list):
-        return False, ""
+        return False, "", False
+    matched: list[dict[str, Any]] = []
     for rec in recs:
         if not isinstance(rec, dict):
             continue
@@ -284,11 +312,40 @@ def _position_sidecar_close_recommended(
             continue
         if side and str(rec.get("side") or "").upper() not in {"", side}:
             continue
-        source = str(rec.get("source") or "position_sidecar")
-        verdict = str(rec.get("verdict") or "RECOMMEND_CLOSE")
-        reason = str(rec.get("reason") or "prediction no longer supports recovery")
-        return True, f"{source} {verdict} for trade {rec_trade}: {reason}"
-    return False, ""
+        matched.append(rec)
+
+    if not matched:
+        return False, "", False
+
+    # A trade may appear in multiple fresh sidecars in deterministic order
+    # (position_thesis before thesis_evolution). Prefer hard evidence so a soft
+    # review cannot mask standing structural loss-cut authorization.
+    rec = next((item for item in matched if _sidecar_close_standing_authorized(item)), matched[0])
+    source = str(rec.get("source") or "position_sidecar")
+    verdict = str(rec.get("verdict") or "RECOMMEND_CLOSE")
+    reason = str(rec.get("reason") or "prediction no longer supports recovery")
+    rec_trade = str(rec.get("trade_id") or "")
+    return (
+        True,
+        f"{source} {verdict} for trade {rec_trade}: {reason}",
+        _sidecar_close_standing_authorized(rec),
+    )
+
+
+def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
+    """Whether a fresh sidecar is strong enough for standing loss-cut auth.
+
+    `thesis_evolution` compares the entry thesis to current broker truth and
+    emits BROKEN / RECOMMEND_CLOSE only after invalidation plus technical
+    confirmation. That is the machine-readable "妥当な損切り" path. Broader
+    position-thesis and persistence reviews can still be useful Gate A, but
+    they remain softer and need explicit operator Gate B.
+    """
+    if rec.get("gate_b_standing_authorized") is True:
+        return True
+    source = str(rec.get("source") or "").strip()
+    verdict = str(rec.get("verdict") or "").strip().upper()
+    return source == "thesis_evolution" and verdict in {"BROKEN", "RECOMMEND_CLOSE"}
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
@@ -391,16 +448,12 @@ class GPTTraderDecision:
     strategy_reviews: tuple[dict[str, Any], ...] = ()
     specialist_reviews: tuple[dict[str, Any], ...] = ()
     # CLOSE-action discipline fields (added 2026-05-12, see
-    # `feedback_no_unilateral_close.md`). A CLOSE receipt must pass two
-    # gates: (A) market evidence that the thesis is invalidated, either
-    # via structural BOS/CHOCH against the position side on M15 or H4
-    # (parsed from pair_charts.chart_story) or via an explicit
-    # `invalidation_price` + `invalidation_tf` that broker truth confirms
-    # has been hit; (B) explicit operator authorization via
-    # `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh
-    # `data/.operator_close_token`. The `operator_close_authorized` field
-    # remains audit text only and is not accepted as authorization, because
-    # the trader can set fields in its own receipt.
+    # `feedback_no_unilateral_close.md`; Gate B split 2026-06-04). A CLOSE
+    # receipt must pass Gate A market evidence plus the applicable Gate B:
+    # hard Gate A carries standing loss-cut authorization, while soft Gate A
+    # requires explicit env/token authorization. The `operator_close_authorized`
+    # field remains audit text only and is not accepted as authorization,
+    # because the trader can set fields in its own receipt.
     invalidation_price: float | None = None
     invalidation_tf: str | None = None
     operator_close_authorized: bool = False
@@ -640,7 +693,7 @@ class GPTTraderBrain:
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` cleared by broker truth beyond the anti-wick buffer with chart/technical confirmation) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). `TRADE` must not include `close_trade_ids`; automation may re-enter in the same outer cycle only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, or fresh thesis_evolution BROKEN/RECOMMEND_CLOSE) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`. `TRADE` must not include `close_trade_ids`; automation may re-enter in the same outer cycle only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -693,6 +746,7 @@ class DecisionVerifier:
             if position_close_reasons:
                 _append_position_close_required_issue(
                     issues,
+                    packet=self.packet,
                     action="TRADE",
                     reasons=position_close_reasons,
                 )
@@ -854,6 +908,7 @@ class DecisionVerifier:
             if position_close_reasons:
                 _append_position_close_required_issue(
                     issues,
+                    packet=self.packet,
                     action=decision.action,
                     reasons=position_close_reasons,
                 )
@@ -922,6 +977,7 @@ class DecisionVerifier:
             if decision.action in {"PROTECT", "TIGHTEN_SL"} and position_close_reasons:
                 _append_position_close_required_issue(
                     issues,
+                    packet=self.packet,
                     action=decision.action,
                     reasons=position_close_reasons,
                 )
@@ -1003,19 +1059,14 @@ class DecisionVerifier:
         `invalidation_tf` that broker truth confirms has been hit. Prose
         `invalidation` text alone does not count.
 
-        Gate B — operator authorization (hardened 2026-05-13 after
-        the 00:33 JST mass-close incident proved the JSON-field
-        version was honor-system). The decision-receipt
-        `operator_close_authorized` boolean is NO LONGER ACCEPTED as
-        authorization on its own — a trader that fills its own JSON
-        receipt can set the flag. Authorization must come from a
-        path the trader code cannot self-set within the receipt-write
-        flow:
+        Gate B — standing hard loss-cut authorization or explicit operator
+        authorization. Hard Gate A is enough for justified loss-cuts; softer
+        Gate A still needs one of:
 
           1. `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR
           2. A fresh `data/.operator_close_token` file (mtime within
              OPERATOR_CLOSE_TOKEN_FRESH_SECONDS = 5 minutes), created
-             by `touch data/.operator_close_token` before each CLOSE
+             by `touch data/.operator_close_token` before each softer CLOSE
              batch.
 
         The `operator_close_authorized` JSON field remains in the
@@ -1031,7 +1082,10 @@ class DecisionVerifier:
         position_by_tid = _trader_position_lookup(self.packet)
 
         # Gate A: thesis-still-valid check, applied to every named trade.
+        # Hard Gate A also carries the operator's standing authorization for a
+        # justified loss-cut; softer Gate A still needs env/token Gate B.
         still_valid: list[str] = []
+        needs_explicit_gate_b: list[str] = []
         for tid in decision.close_trade_ids:
             pos = position_by_tid.get(str(tid))
             if pos is None:
@@ -1040,7 +1094,7 @@ class DecisionVerifier:
                 continue
             pair = str(pos.get("pair") or "")
             side = str(pos.get("side") or "")
-            invalidated, _reason = _close_thesis_invalidated(
+            invalidated, _reason, standing_authorized = _close_thesis_invalidation(
                 self.packet,
                 pair,
                 side,
@@ -1051,6 +1105,8 @@ class DecisionVerifier:
                 still_valid.append(
                     f"{tid} ({pair} {side})"
                 )
+            elif not standing_authorized:
+                needs_explicit_gate_b.append(f"{tid} ({pair} {side})")
 
         if still_valid:
             issues.append(
@@ -1063,22 +1119,23 @@ class DecisionVerifier:
                 )
             )
 
-        # Gate B (hardened 2026-05-13): operator authorization can come
-        # only from env or token file — NEVER from the JSON receipt
-        # field. The trader fills its own decision payload, so the
-        # boolean was a self-authorizing escape that drove the 15:33
-        # UTC mass-close.
-        if not _operator_close_gate_authorized():
+        # Gate B (repaired 2026-06-04): hard machine-confirmed loss cuts
+        # satisfy the operator's standing "妥当な損切りならやっていい" directive.
+        # Softer sidecar-only reviews still require explicit env/token
+        # authorization. The JSON receipt field remains advisory-only.
+        if needs_explicit_gate_b and not _operator_close_gate_authorized():
             issues.append(
                 VerificationIssue(
                     "CLOSE_OPERATOR_AUTH_REQUIRED",
-                    "CLOSE rejected: requires QR_OPERATOR_CLOSE_OVERRIDE=1 in "
-                    "the operator shell OR a fresh data/.operator_close_token "
+                    "CLOSE rejected for softer close evidence: requires "
+                    "QR_OPERATOR_CLOSE_OVERRIDE=1 in the operator shell OR a fresh data/.operator_close_token "
                     f"(mtime within {OPERATOR_CLOSE_TOKEN_FRESH_SECONDS}s). The "
                     "receipt's `operator_close_authorized` field is advisory "
                     "only and is no longer accepted as authorization "
                     "(2026-05-12T15:33 UTC mass-close incident, "
-                    "feedback_no_unilateral_close.md).",
+                    "feedback_no_unilateral_close.md). Standing structural close authorization covered no-token "
+                    "hard loss-cuts only; explicit Gate B is still missing for: "
+                    + ", ".join(needs_explicit_gate_b),
                 )
             )
 
@@ -1988,15 +2045,16 @@ def _position_close_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
 def _append_position_close_required_issue(
     issues: list[VerificationIssue],
     *,
+    packet: dict[str, Any],
     action: str,
     reasons: list[str],
 ) -> None:
     reason_text = "; ".join(reasons[:3])
-    if _operator_close_gate_authorized():
+    if _operator_close_gate_authorized() or _standing_close_authorization_available(packet):
         issues.append(
             VerificationIssue(
                 "POSITION_CLOSE_REQUIRED",
-                f"{action} rejected while fresh position sidecar Gate A close evidence exists. "
+                f"{action} rejected while fresh position sidecar Gate A close evidence exists and close authorization is available. "
                 "Emit action=CLOSE for the named trade(s) first; after the accepted CLOSE receipt is "
                 "sent or staged, refresh broker truth / intents before any separate TRADE receipt: "
                 f"{reason_text}",
@@ -2007,11 +2065,38 @@ def _append_position_close_required_issue(
         VerificationIssue(
             "CLOSE_OPERATOR_AUTH_REQUIRED",
             f"{action} rejected while fresh position sidecar Gate A close evidence exists, but Gate B "
-            "operator authorization is missing. This is not a recovery-confidence hold; require "
+            "operator authorization is missing for the softer close evidence. This is not a recovery-confidence hold; require "
             "QR_OPERATOR_CLOSE_OVERRIDE=1 in the operator shell or a fresh data/.operator_close_token "
             f"before a loss-side CLOSE can be verified: {reason_text}",
         )
     )
+
+
+def _standing_close_authorization_available(packet: dict[str, Any]) -> bool:
+    position_by_tid = _trader_position_lookup(packet)
+    sidecars = packet.get("protection_sidecars")
+    recs = sidecars.get("position_close_recommendations") if isinstance(sidecars, dict) else None
+    if not isinstance(recs, list):
+        return False
+    for rec in recs:
+        if not isinstance(rec, dict):
+            continue
+        trade_id = str(rec.get("trade_id") or "")
+        pos = position_by_tid.get(trade_id)
+        if pos is None:
+            continue
+        pair = str(pos.get("pair") or rec.get("pair") or "")
+        side = str(pos.get("side") or rec.get("side") or "")
+        invalidated, _reason, standing_authorized = _close_thesis_invalidation(
+            packet,
+            pair,
+            side,
+            trade_id=trade_id,
+            decision=None,
+        )
+        if invalidated and standing_authorized:
+            return True
+    return False
 
 
 def _tradeable_live_ready_lanes(packet: dict[str, Any]) -> list[str]:

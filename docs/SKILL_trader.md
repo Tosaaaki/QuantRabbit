@@ -163,8 +163,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 # Position close sidecars are read-only prediction/thesis evidence. Refresh
 # them before routing so a trapped position whose plus-recovery edge is gone
 # reaches the position-management prompt instead of being hidden behind fresh
-# entry work. They are Gate A evidence only; a broker close still needs Gate B
-# operator authorization below.
+# entry work. They are Gate A evidence; fresh thesis_evolution BROKEN /
+# RECOMMEND_CLOSE is also hard standing loss-cut authorization, while softer
+# sidecars still need explicit Gate B authorization below.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
@@ -186,14 +187,19 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 #
 # CLOSE discipline (AGENT_CONTRACT §10, feedback_no_unilateral_close.md):
 # Never autonomously emit CLOSE — the trader cannot decide on its own to close
-# trader-owned positions. A CLOSE receipt requires BOTH:
+# trader-owned positions. A CLOSE receipt requires Gate A plus the applicable
+# Gate B path:
 #   - Gate A: market evidence — pair_charts shows BOS/CHOCH against the
 #     position side on M15 or H4, OR `invalidation_price` + `invalidation_tf`
 #     in the receipt with broker truth confirming the level has traded, OR a
 #     fresh position sidecar generated after the current broker snapshot marks
 #     the same trade REVIEW_CLOSE / RECOMMEND_CLOSE.
-#   - Gate B: operator authorization — require either
-#     `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
+#   - Gate B: hard loss-cut standing authorization OR explicit operator
+#     authorization. Hard Gate A is M15/H4 close-confirmed BOS/CHOCH against
+#     side, buffered invalidation_price hit with technical confirmation, or
+#     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE. Softer sidecars
+#     (position_thesis REVIEW_CLOSE or forecast_persistence RECOMMEND_CLOSE)
+#     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
 # A TRADE receipt must not list close_trade_ids. If the recovery edge is gone,
@@ -202,12 +208,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 # receipt. The automation may do that in the same outer cycle after the close
 # is sent/staged, but never in the same receipt / stale broker packet.
 # Fresh sidecar Gate A close evidence is priority work: do not choose TRADE,
-# WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep it. If Gate B is
-# missing, the verifier must surface `CLOSE_OPERATOR_AUTH_REQUIRED`; if Gate B
-# is present, it must require a CLOSE receipt first. The default stance when no
-# user instruction is present is HOLD / WAIT only when no fresh Gate A close
-# sidecar exists — do not write a CLOSE receipt to "reduce risk" from a
-# still-valid thesis.
+# WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep it. If only soft
+# Gate A exists and explicit Gate B is missing, the verifier must surface
+# `CLOSE_OPERATOR_AUTH_REQUIRED`; if hard Gate A or explicit Gate B is present,
+# it must require a CLOSE receipt first. The default stance when no user
+# instruction is present is HOLD / WAIT only when no fresh Gate A close sidecar
+# exists — do not write a CLOSE receipt to "reduce risk" from a still-valid
+# thesis.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
@@ -276,8 +283,9 @@ PYTHONPATH=src python3 -m quant_rabbit.cli verify-projections
 # 6d. Position thesis check — apply the full prediction stack to each
 # open position. Emits data/position_thesis_report.json with per-position
 # EXTEND / HOLD / REVIEW_CLOSE verdicts and score breakdowns. The GPT
-# trader reads a fresh REVIEW_CLOSE as Gate A evidence for CLOSE decisions;
-# Gate B operator authorization is still required to actually close.
+# trader reads a fresh REVIEW_CLOSE as soft Gate A evidence for CLOSE decisions;
+# explicit env/token Gate B is still required unless a separate hard Gate A
+# path also exists.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 
 # 6e. Thesis evolution check (2026-05-15, user directive: 「どの視点で
@@ -288,8 +296,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 # and compares against data/forecast_history.jsonl.
 # Emits data/thesis_evolution_report.json with per-position
 # STILL_VALID / WEAKENED / BROKEN + HOLD / EXTEND / RECOMMEND_CLOSE.
-# A fresh BROKEN / RECOMMEND_CLOSE is Gate A evidence only; Gate B is
-# still required for actual close. Pairs with TP-なし・SL-なし mode:
+# A fresh BROKEN / RECOMMEND_CLOSE is hard Gate A and satisfies standing
+# structural loss-cut authorization. Pairs with TP-なし・SL-なし mode:
 # trader holds runners on STILL_VALID, considers close on BROKEN.
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 
@@ -303,7 +311,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 # Single-cycle noise does NOT trigger close. Output goes to
 # data/forecast_persistence_report.json. Pairs with the
 # thesis-evolution-check verdict; a fresh RECOMMEND_CLOSE is Gate A
-# evidence only and still needs Gate B operator authorization.
+# evidence only and still needs explicit Gate B operator authorization.
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
 
 # 4c. adverse-partial-close is DISABLED 2026-05-14:

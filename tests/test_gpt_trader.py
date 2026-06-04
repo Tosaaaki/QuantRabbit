@@ -1053,6 +1053,24 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("POSITION_CLOSE_REQUIRED", codes)
             self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
 
+    def test_protect_with_hard_close_sidecar_must_emit_close_first_without_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_thesis_evolution_close_recommendation(root, files)
+            decision = _protect_decision()
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("POSITION_CLOSE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
     def test_rejects_trade_that_ignores_attack_advice_recommended_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2265,6 +2283,68 @@ def _write_fresh_forecast_close_recommendation(
     )
 
 
+def _write_fresh_position_thesis_close_recommendation(
+    root: Path,
+    files: dict[str, Path],
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+    ).isoformat()
+    (root / "position_thesis_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "assessments": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "verdict": "REVIEW_CLOSE",
+                        "rationale_lines": ["soft position thesis review says recovery edge is weak"],
+                        "context_notes": [],
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _write_fresh_thesis_evolution_close_recommendation(
+    root: Path,
+    files: dict[str, Path],
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+    ).isoformat()
+    (root / "thesis_evolution_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "evolutions": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "status": "BROKEN",
+                        "verdict": "RECOMMEND_CLOSE",
+                        "rationale": "invalidation hit and technical invalidation confirmed against the entry thesis",
+                    }
+                ],
+            }
+        )
+    )
+
+
 class CloseDisciplineTest(unittest.TestCase):
     """Coverage for 2026-05-12 CLOSE two-gate discipline added in
     response to the 2026-05-11 18:17 UTC mass-close regression where the
@@ -2390,9 +2470,10 @@ class CloseDisciplineTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_THESIS_STILL_VALID", codes)
 
-    def test_close_rejected_without_operator_authorization_even_when_thesis_invalidated(self) -> None:
-        # Structural invalidation passes (M15 BOS_UP vs SHORT) but no
-        # operator_close_authorized field and no env override → gate B fails.
+    def test_close_accepted_without_operator_token_when_structural_invalidation_is_hard(self) -> None:
+        # Structural invalidation passes (M15 BOS_UP vs SHORT). The user's
+        # standing directive allows justified loss-cuts, so hard Gate A does
+        # not need the 5-minute token.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="UP", h4_dir="UP")
@@ -2404,11 +2485,10 @@ class CloseDisciplineTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "REJECTED")
+            self.assertEqual(summary.status, "ACCEPTED")
+            self.assertTrue(summary.allowed)
             payload = json.loads((root / "gpt_decision.json").read_text())
-            codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
-            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            self.assertEqual(payload["verification_issues"], [])
 
     def test_close_accepted_when_qr_operator_close_override_env_set(self) -> None:
         # Emergency override path: env QR_OPERATOR_CLOSE_OVERRIDE=1
@@ -2485,6 +2565,65 @@ class CloseDisciplineTest(unittest.TestCase):
             sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
             self.assertEqual(sidecar["source"], "forecast_persistence")
             self.assertIn("position:persistence:555", payload["input_packet"]["allowed_evidence_refs"])
+
+    def test_close_rejected_without_operator_token_when_only_forecast_persistence_sidecar(self) -> None:
+        # Forecast persistence is useful Gate A evidence, but it is softer than
+        # structural invalidation / thesis_evolution BROKEN. It still needs
+        # explicit env/token Gate B.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_forecast_close_recommendation(root, files)
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_close_accepted_without_operator_token_when_thesis_evolution_is_broken(self) -> None:
+        # thesis_evolution BROKEN / RECOMMEND_CLOSE is generated from entry
+        # thesis invalidation plus technical confirmation, so it is hard Gate A.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_thesis_evolution_close_recommendation(root, files)
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:evolution:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            sidecar = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"][0]
+            self.assertEqual(sidecar["source"], "thesis_evolution")
+            self.assertTrue(sidecar["gate_b_standing_authorized"])
+
+    def test_hard_sidecar_takes_precedence_over_soft_sidecar_for_same_trade(self) -> None:
+        # Live packets can contain position_thesis REVIEW_CLOSE before
+        # thesis_evolution RECOMMEND_CLOSE for the same trade. The verifier must
+        # not let the earlier soft sidecar hide standing hard authorization.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_position_thesis_close_recommendation(root, files)
+            _write_fresh_thesis_evolution_close_recommendation(root, files)
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(["position:thesis:555", "position:evolution:555"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual([item["source"] for item in recs], ["position_thesis", "thesis_evolution"])
 
     def test_stale_forecast_persistence_close_recommendation_does_not_pass_gate_a(self) -> None:
         _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"

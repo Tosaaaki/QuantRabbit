@@ -37,14 +37,16 @@ This module:
 The trader/operator reads thesis_evolution_report.json and:
 - STILL_VALID + EXTEND → hold, let winners run
 - WEAKENED → caution, smaller TP if any
-- BROKEN → fresh Gate A evidence for close; Gate B still required
+- BROKEN → hard Gate A evidence for close; standing structural loss-cut
+  authorization applies
 - Missing entry-thesis rows are surfaced as UNVERIFIABLE /
   REQUIRE_THESIS_REPAIR hard management blockers. They are not standalone
   close evidence, but they block normal WAIT/new-risk/TP-expansion paths until
   position_thesis / forecast_persistence supplies machine-checkable evidence.
 
 No auto-close from this module. The kill switch (QR_DISABLE_AUTO_CLOSE)
-stays on; close decisions go through gpt_trader and still need Gate B.
+stays on; close decisions go through gpt_trader and still need a verified
+CLOSE receipt.
 
 Kill switch: `QR_DISABLE_ENTRY_THESIS_LEDGER=1`.
 """

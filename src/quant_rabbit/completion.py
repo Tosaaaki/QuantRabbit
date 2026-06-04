@@ -81,6 +81,9 @@ class CompletionAuditor:
         close_authorization_fresh = _close_authorization_fresh(
             data_root=self.broker_snapshot_path.parent,
         )
+        close_authorization_available = close_authorization_fresh or _standing_close_recommendation_present(
+            close_recommendations
+        )
         remaining_target = _remaining_target(target, coverage)
         coverage_stale = _coverage_is_stale(intents, coverage, live_ready)
         certification_stale = _certification_is_stale(
@@ -157,7 +160,8 @@ class CompletionAuditor:
             "live_ready_lanes": live_ready,
             "close_recommendations": {
                 "count": len(close_recommendations),
-                "gate_b_authorized": close_authorization_fresh,
+                "gate_b_authorized": close_authorization_available,
+                "explicit_gate_b_authorized": close_authorization_fresh,
                 "items": close_recommendations,
             },
             "blockers": blockers,
@@ -191,7 +195,8 @@ class CompletionAuditor:
             f"- Remaining target: `{payload['target']['remaining_target_jpy']:.0f} JPY`",
             f"- Live-ready lanes: `{payload['live_ready_lanes']}`",
             f"- Close recommendations: `{payload['close_recommendations']['count']}`",
-            f"- Close Gate B authorized: `{payload['close_recommendations']['gate_b_authorized']}`",
+            f"- Close authorization available: `{payload['close_recommendations']['gate_b_authorized']}`",
+            f"- Explicit Gate B authorized: `{payload['close_recommendations']['explicit_gate_b_authorized']}`",
             f"- Coverage status: `{payload['coverage']['status']}`",
             "",
             "## Blockers",
@@ -276,11 +281,11 @@ def _blockers(
             f"{item.get('pair')} {item.get('side')} id={item.get('trade_id')} {item.get('source')}"
             for item in close_recommendations[:3]
         )
-        if close_authorization_fresh:
+        if close_authorization_fresh or _standing_close_recommendation_present(close_recommendations):
             blockers.append(
                 _item(
                     "CLOSE_RECEIPT_REQUIRED",
-                    "fresh Gate A close recommendation(s) and Gate B authorization exist; submit a verified CLOSE receipt before completion: "
+                    "fresh hard Gate A close recommendation(s) or Gate B authorization exist; submit a verified CLOSE receipt before completion: "
                     f"{summaries}",
                 )
             )
@@ -371,11 +376,11 @@ def _next_actions(
     if live_ready <= 0:
         actions.append(_item("BUILD_LIVE_READY_RECEIPTS", "generate risk-valid receipts after broker exposure is flat; promote only receipts that clear risk/profile blockers"))
     if close_recommendations:
-        if close_authorization_fresh:
+        if close_authorization_fresh or _standing_close_recommendation_present(close_recommendations):
             actions.append(
                 _item(
                     "SUBMIT_VERIFIED_CLOSE_RECEIPT",
-                    "Gate A close evidence and Gate B authorization are present; submit a CLOSE receipt before re-entry",
+                    "hard Gate A close evidence or Gate B authorization is present; submit a CLOSE receipt before re-entry",
                 )
             )
         else:
@@ -420,6 +425,15 @@ def _close_authorization_fresh(*, data_root: Path) -> bool:
         return bool(_operator_close_override_active() or _operator_close_token_fresh(data_root=data_root))
     except Exception:
         return False
+
+
+def _standing_close_recommendation_present(close_recommendations: list[dict[str, Any]]) -> bool:
+    try:
+        from quant_rabbit.gpt_trader import _sidecar_close_standing_authorized
+
+        return any(_sidecar_close_standing_authorized(item) for item in close_recommendations)
+    except Exception:
+        return any(item.get("gate_b_standing_authorized") is True for item in close_recommendations)
 
 
 def _pending_entries(broker: dict[str, Any]) -> list[dict[str, Any]]:

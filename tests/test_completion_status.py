@@ -381,6 +381,40 @@ class CompletionAuditorTest(unittest.TestCase):
             self.assertIn("CLOSE_RECEIPT_REQUIRED", codes)
             self.assertIn("SUBMIT_VERIFIED_CLOSE_RECEIPT", actions)
             self.assertTrue(payload["close_recommendations"]["gate_b_authorized"])
+            self.assertTrue(payload["close_recommendations"]["explicit_gate_b_authorized"])
+
+    def test_hard_close_recommendation_requires_close_receipt_without_explicit_gate_b(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _complete_fixture(root)
+            _write_protected_position_with_hard_close_recommendation(root, files["broker"])
+            prior_override = os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            try:
+                summary = CompletionAuditor(
+                    broker_snapshot_path=files["broker"],
+                    order_intents_path=files["intents"],
+                    target_state_path=files["target"],
+                    coverage_path=files["coverage"],
+                    replay_backtest_path=files["replay"],
+                    execution_replay_path=files["execution"],
+                    dry_run_certification_path=files["certification"],
+                    live_order_path=files["live_order"],
+                    output_path=root / "completion.json",
+                    report_path=root / "completion.md",
+                ).run()
+            finally:
+                if prior_override is not None:
+                    os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior_override
+
+            self.assertEqual(summary.status, "BLOCKED")
+            payload = json.loads((root / "completion.json").read_text())
+            codes = {item["code"] for item in payload["blockers"]}
+            actions = {item["code"] for item in payload["next_actions"]}
+            self.assertIn("CLOSE_RECEIPT_REQUIRED", codes)
+            self.assertNotIn("CLOSE_AUTHORIZATION_REQUIRED", codes)
+            self.assertIn("SUBMIT_VERIFIED_CLOSE_RECEIPT", actions)
+            self.assertTrue(payload["close_recommendations"]["gate_b_authorized"])
+            self.assertFalse(payload["close_recommendations"]["explicit_gate_b_authorized"])
 
 
 def _blocked_fixture(root: Path) -> dict[str, Path]:
@@ -447,6 +481,44 @@ def _write_protected_position_with_close_recommendation(root: Path, broker_path:
                         "verdict": "REVIEW_CLOSE",
                         "rationale_lines": ["prediction stack invalidated SHORT recovery"],
                         "context_notes": [],
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _write_protected_position_with_hard_close_recommendation(root: Path, broker_path: Path) -> None:
+    broker_path.write_text(
+        json.dumps(
+            {
+                "fetched_at_utc": "2026-06-01T10:00:00+00:00",
+                "positions": [
+                    {
+                        "trade_id": "1",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "owner": "trader",
+                        "take_profit": 1.15,
+                        "stop_loss": 1.18,
+                    }
+                ],
+                "orders": [],
+            }
+        )
+    )
+    (root / "thesis_evolution_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": "2026-06-01T10:01:00+00:00",
+                "evolutions": [
+                    {
+                        "trade_id": "1",
+                        "pair": "EUR_USD",
+                        "side": "SHORT",
+                        "status": "BROKEN",
+                        "verdict": "RECOMMEND_CLOSE",
+                        "rationale": "invalidation hit and technical invalidation confirmed",
                     }
                 ],
             }

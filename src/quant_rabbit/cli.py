@@ -942,7 +942,7 @@ def main(argv: list[str] | None = None) -> int:
     p_tevol = sub.add_parser(
         "thesis-evolution-check",
         aliases=["thesis-evolution"],
-        help="Compare each open position's CURRENT forecast against its entry-time thesis; emit STILL_VALID/WEAKENED/BROKEN to data/thesis_evolution_report.json. Fresh BROKEN/RECOMMEND_CLOSE is Gate A evidence only; Gate B still required.",
+        help="Compare each open position's CURRENT forecast against its entry-time thesis; emit STILL_VALID/WEAKENED/BROKEN to data/thesis_evolution_report.json. Fresh BROKEN/RECOMMEND_CLOSE is hard Gate A and carries standing structural loss-cut authorization.",
     )
     p_tevol.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_tevol.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
@@ -950,7 +950,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_fperst = sub.add_parser(
         "forecast-persistence-check",
-        help="Refresh/read forecast_history.jsonl and emit per-position persistence verdicts (RECOMMEND_CLOSE on N-cycle flip / EXTEND on N-cycle aligned / HOLD on mixed) to data/forecast_persistence_report.json. Fresh RECOMMEND_CLOSE is Gate A evidence only; Gate B still required.",
+        help="Refresh/read forecast_history.jsonl and emit per-position persistence verdicts (RECOMMEND_CLOSE on N-cycle flip / EXTEND on N-cycle aligned / HOLD on mixed) to data/forecast_persistence_report.json. Fresh RECOMMEND_CLOSE is soft Gate A and still needs explicit env/token Gate B.",
     )
     p_fperst.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_fperst.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
