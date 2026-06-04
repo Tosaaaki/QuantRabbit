@@ -1358,7 +1358,7 @@ class IntentGeneratorTest(unittest.TestCase):
                 ).run(snapshot_path=_snapshot(root))
 
                 failure_results = json.loads(failure_output.read_text())["results"]
-                self.assertEqual({item["intent"]["order_type"] for item in failure_results}, {"STOP-ENTRY"})
+                self.assertEqual({item["intent"]["order_type"] for item in failure_results}, {"LIMIT", "STOP-ENTRY"})
                 self.assertTrue(
                     any(item["status"] == "LIVE_READY" for item in failure_results),
                     f"breakout-failure trigger entries should remain available, got {failure_results}",
@@ -1416,10 +1416,47 @@ class IntentGeneratorTest(unittest.TestCase):
             lane_ids = {item["lane_id"] for item in payload["results"]}
             order_types = {item["intent"]["order_type"] for item in payload["results"]}
 
-            self.assertEqual(summary.generated, 1)
-            self.assertEqual(order_types, {"STOP-ENTRY"})
-            self.assertEqual(lane_ids, {"failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"})
+            self.assertEqual(summary.generated, 2)
+            self.assertEqual(order_types, {"LIMIT", "STOP-ENTRY"})
+            self.assertEqual(
+                lane_ids,
+                {
+                    "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                    "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                },
+            )
             self.assertFalse(any(lane_id.endswith(":MARKET") for lane_id in lane_ids))
+
+    def test_breakout_failure_generates_retest_limit_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_breakout_failure_campaign(root),
+                strategy_profile=_strategy(root, status="CANDIDATE"),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            by_lane_id = {item["lane_id"]: item for item in payload["results"]}
+            parent = "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"
+
+            self.assertEqual(summary.generated, 3)
+            self.assertEqual(
+                {lane_id: item["intent"]["order_type"] for lane_id, item in by_lane_id.items()},
+                {
+                    f"{parent}:LIMIT": "LIMIT",
+                    parent: "STOP-ENTRY",
+                    f"{parent}:MARKET": "MARKET",
+                },
+            )
+            limit = by_lane_id[f"{parent}:LIMIT"]
+            self.assertEqual(limit["intent"]["metadata"]["parent_lane_id"], parent)
+            self.assertEqual(limit["intent"]["metadata"]["order_timing"], "PENDING_TRIGGER")
 
     def test_sizes_repair_receipt_to_use_loss_budget_without_breaking_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2489,6 +2526,32 @@ def _trigger_campaign(root: Path) -> Path:
                         "campaign_role": "BACKUP_OR_RELOAD",
                         "reason": "missed-edge trigger pressure",
                         "required_receipt": "Arm only a trigger/pending-entry receipt; no market chase.",
+                        "target_reward_risk": 2.0,
+                        "blockers": [],
+                        "story_examples": ["quality_audit: failed downside break reclaimed the box"],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _breakout_failure_campaign(root: Path) -> Path:
+    path = root / "breakout_failure_campaign.json"
+    path.write_text(
+        json.dumps(
+            {
+                "lanes": [
+                    {
+                        "desk": "failure_trader",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "BREAKOUT_FAILURE",
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                        "campaign_role": "NOW",
+                        "reason": "failed downside break reclaimed support",
+                        "required_receipt": "wait for failed-break retest or confirmed trigger; no blind chase.",
                         "target_reward_risk": 2.0,
                         "blockers": [],
                         "story_examples": ["quality_audit: failed downside break reclaimed the box"],

@@ -2240,7 +2240,13 @@ class IntentGenerator:
         validation_time_utc: datetime | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
-        lane_id = _variant_lane_id(parent_lane_id, order_type_override)
+        method = TradeMethod.parse(str(lane["method"]))
+        default_order_type = _order_type_for(method)
+        lane_id = _variant_lane_id(
+            parent_lane_id,
+            order_type_override,
+            default_order_type=default_order_type,
+        )
         pair = str(lane["pair"])
         direction = str(lane["direction"])
         if snapshot is None:
@@ -2352,7 +2358,6 @@ class IntentGenerator:
                 }
             )
             risk_allowed = False
-        method = TradeMethod.parse(str(lane["method"]))
         if (
             method == TradeMethod.RANGE_ROTATION
             and order_type_override == OrderType.MARKET
@@ -2535,18 +2540,35 @@ def _lane_id(lane: dict[str, Any]) -> str:
     return f"{lane.get('desk')}:{lane.get('pair')}:{lane.get('direction')}:{lane.get('method')}"
 
 
-def _variant_lane_id(parent_lane_id: str, order_type: OrderType | None) -> str:
-    if order_type == OrderType.MARKET:
-        return f"{parent_lane_id}:MARKET"
+def _variant_lane_id(
+    parent_lane_id: str,
+    order_type: OrderType | None,
+    *,
+    default_order_type: OrderType | None = None,
+) -> str:
+    if order_type is None or order_type == default_order_type:
+        return parent_lane_id
+    suffix_by_type = {
+        OrderType.LIMIT: "LIMIT",
+        OrderType.MARKET: "MARKET",
+        OrderType.STOP_ENTRY: "STOP",
+    }
+    suffix = suffix_by_type.get(order_type)
+    if suffix:
+        return f"{parent_lane_id}:{suffix}"
     return parent_lane_id
 
 
 def _order_variants_for(lane: dict[str, Any]) -> tuple[OrderType, ...]:
     method = TradeMethod.parse(str(lane["method"]))
     base = _order_type_for(method)
-    if _lane_forbids_market_chase(lane):
-        return (base,)
-    return (base, OrderType.MARKET)
+    variants: list[OrderType] = []
+    if method == TradeMethod.BREAKOUT_FAILURE:
+        variants.append(OrderType.LIMIT)
+    variants.append(base)
+    if not _lane_forbids_market_chase(lane):
+        variants.append(OrderType.MARKET)
+    return tuple(dict.fromkeys(variants))
 
 
 def _lane_forbids_market_chase(lane: dict[str, Any]) -> bool:
