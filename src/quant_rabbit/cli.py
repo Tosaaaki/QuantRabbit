@@ -1283,20 +1283,16 @@ def main(argv: list[str] | None = None) -> int:
             and args.snapshot is not None
             and args.snapshot.exists()
         ):
-            try:
-                snapshot_payload = json.loads(args.snapshot.read_text())
-            except (OSError, json.JSONDecodeError):
-                snapshot_payload = None
-            if isinstance(snapshot_payload, dict):
-                quote_payload = snapshot_payload.get("quotes") or {}
-                pairs = quote_payload.keys() if isinstance(quote_payload, dict) else ()
-                forecast_refresh = _refresh_current_forecast_history(
-                    snapshot_payload=snapshot_payload,
-                    pair_charts_path=DEFAULT_PAIR_CHARTS,
-                    pairs=pairs,
-                    data_root=ROOT / "data",
-                    cycle_source="pre-entry-forecast-refresh",
-                )
+            # IntentGenerator synthesizes the forecast used by executable lanes
+            # and records that exact forecast under the pre-entry cycle id before
+            # live validation. A separate CLI pre-refresh can compute a slightly
+            # different calibrated confidence, win the cycle_id+pair idempotency
+            # race in forecast_history.jsonl, and then make the generated intent
+            # fail its own telemetry audit as a mismatch.
+            forecast_refresh = {
+                "status": "DELEGATED_TO_INTENT_GENERATOR",
+                "reason": "avoid duplicate pre-entry forecast synthesis before live validation",
+            }
         summary = IntentGenerator(
             campaign_plan=args.campaign_plan,
             strategy_profile=args.strategy_profile,
