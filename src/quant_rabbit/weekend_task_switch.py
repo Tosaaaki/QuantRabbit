@@ -27,8 +27,11 @@ except ModuleNotFoundError:  # pragma: no cover - kept for older local Python.
 
 CODEX_ACTIVE = "ACTIVE"
 CODEX_PAUSED = "PAUSED"
-DEFAULT_CODEX_TASK_IDS = ("qr-trader", "qr-news-digest")
+DEFAULT_CODEX_TASK_IDS = ("qr-trader", "qr-news-digest", "qr-hole-audit", "qr-self-improvement-watch")
 DEFAULT_CLAUDE_TASK_IDS = ("trader", "trader_v2")
+CODEX_TASK_EXCLUDED_PREFIXES = ("qr-weekend-",)
+WEEKDAY_CODES = frozenset({"MO", "TU", "WE", "TH", "FR"})
+QUANT_RABBIT_PROJECT_BASENAMES = frozenset({"QuantRabbit", "QuantRabbit-live"})
 TRADER_TASK_KEYS = frozenset({"codex:qr-trader", "claude:trader", "claude:trader_v2"})
 
 
@@ -170,7 +173,7 @@ def _task_specs() -> list[TaskSpec]:
     codex_root = Path(os.environ.get("QR_WEEKEND_CODEX_AUTOMATION_ROOT", "~/.codex/automations")).expanduser()
     claude_root = Path(os.environ.get("QR_WEEKEND_CLAUDE_TASK_ROOT", "~/.claude/scheduled-tasks")).expanduser()
     specs: list[TaskSpec] = []
-    for task_id in _env_list("QR_WEEKEND_CODEX_TASKS", DEFAULT_CODEX_TASK_IDS):
+    for task_id in _codex_task_ids(codex_root):
         specs.append(
             TaskSpec(
                 key=f"codex:{task_id}",
@@ -179,7 +182,7 @@ def _task_specs() -> list[TaskSpec]:
                 path=codex_root / task_id / "automation.toml",
             )
         )
-    for task_id in _env_list("QR_WEEKEND_CLAUDE_TASKS", DEFAULT_CLAUDE_TASK_IDS):
+    for task_id in _claude_task_ids(claude_root):
         specs.append(
             TaskSpec(
                 key=f"claude:{task_id}",
@@ -189,6 +192,135 @@ def _task_specs() -> list[TaskSpec]:
             )
         )
     return specs
+
+
+def _codex_task_ids(root: Path) -> tuple[str, ...]:
+    configured = _env_list("QR_WEEKEND_CODEX_TASKS", ())
+    if configured:
+        return configured
+    discovered = _discover_codex_weekday_task_ids(root)
+    return discovered or DEFAULT_CODEX_TASK_IDS
+
+
+def _claude_task_ids(root: Path) -> tuple[str, ...]:
+    configured = _env_list("QR_WEEKEND_CLAUDE_TASKS", ())
+    if configured:
+        return configured
+    discovered = _discover_claude_weekday_task_ids(root)
+    return discovered or DEFAULT_CLAUDE_TASK_IDS
+
+
+def _discover_codex_weekday_task_ids(root: Path) -> tuple[str, ...]:
+    if not root.exists():
+        return ()
+    task_ids: list[str] = []
+    for path in sorted(root.glob("*/automation.toml")):
+        payload = _read_toml_payload(path)
+        task_id = str(payload.get("id") or path.parent.name)
+        if not task_id.startswith("qr-"):
+            continue
+        if _codex_task_excluded(task_id):
+            continue
+        if not _schedule_touches_weekdays(str(payload.get("rrule") or "")):
+            continue
+        task_ids.append(task_id)
+    return tuple(dict.fromkeys(task_ids))
+
+
+def _discover_claude_weekday_task_ids(root: Path) -> tuple[str, ...]:
+    if not root.exists():
+        return ()
+    task_ids: list[str] = []
+    for path in sorted(root.glob("*/schedule.json")):
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError as exc:
+            raise TaskSwitchError(f"invalid Claude schedule JSON: {path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            continue
+        project = str(payload.get("project") or "")
+        if Path(project).name not in QUANT_RABBIT_PROJECT_BASENAMES:
+            continue
+        if not _schedule_touches_weekdays(str(payload.get("cronExpression") or "")):
+            continue
+        task_id = str(payload.get("taskId") or path.parent.name)
+        task_ids.append(task_id)
+    return tuple(dict.fromkeys(task_ids))
+
+
+def _codex_task_excluded(task_id: str) -> bool:
+    return any(task_id.startswith(prefix) for prefix in CODEX_TASK_EXCLUDED_PREFIXES)
+
+
+def _schedule_touches_weekdays(schedule: str) -> bool:
+    if not schedule.strip():
+        return False
+    rrule_match = re.search(r"(?:^|;)BYDAY=([^;]+)", schedule)
+    if rrule_match:
+        days = {day.strip().upper() for day in rrule_match.group(1).split(",") if day.strip()}
+        return bool(days & WEEKDAY_CODES)
+    cron_parts = schedule.split()
+    if len(cron_parts) == 5:
+        return _cron_day_of_week_touches_weekdays(cron_parts[4])
+    return True
+
+
+def _cron_day_of_week_touches_weekdays(field: str) -> bool:
+    normalized = field.strip().upper()
+    if not normalized or normalized in {"*", "?", "MON-FRI"}:
+        return True
+    if normalized in {"SAT", "SUN", "SA", "SU", "6", "0", "7", "6,0", "6,7"}:
+        return False
+    weekday_names = {
+        "MON": 1,
+        "MO": 1,
+        "TUE": 2,
+        "TU": 2,
+        "WED": 3,
+        "WE": 3,
+        "THU": 4,
+        "TH": 4,
+        "FRI": 5,
+        "FR": 5,
+        "SAT": 6,
+        "SA": 6,
+        "SUN": 0,
+        "SU": 0,
+    }
+    for part in normalized.split(","):
+        token = part.split("/", 1)[0]
+        if "-" in token:
+            start_raw, end_raw = token.split("-", 1)
+            start = weekday_names.get(start_raw, _parse_cron_day_int(start_raw))
+            end = weekday_names.get(end_raw, _parse_cron_day_int(end_raw))
+            if start is None or end is None:
+                return True
+            days = _cron_day_range(start, end)
+        else:
+            day = weekday_names.get(token, _parse_cron_day_int(token))
+            if day is None:
+                return True
+            days = {day}
+        if days & {1, 2, 3, 4, 5}:
+            return True
+    return False
+
+
+def _parse_cron_day_int(value: str) -> int | None:
+    if not value.isdigit():
+        return None
+    day = int(value)
+    if day == 7:
+        return 0
+    if 0 <= day <= 6:
+        return day
+    return None
+
+
+def _cron_day_range(start: int, end: int) -> set[int]:
+    if start <= end:
+        return set(range(start, end + 1))
+    return set(range(start, 7)) | set(range(0, end + 1))
 
 
 def _env_list(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -285,18 +417,27 @@ def _apply_states(
 
 def _read_codex_status(path: Path) -> str:
     text = path.read_text()
-    if tomllib is not None:
-        try:
-            payload = tomllib.loads(text)
-            status = payload.get("status")
-            if isinstance(status, str):
-                return status
-        except tomllib.TOMLDecodeError as exc:
-            raise TaskSwitchError(f"invalid TOML: {path}: {exc}") from exc
+    payload = _read_toml_payload(path, text=text)
+    status = payload.get("status")
+    if isinstance(status, str):
+        return status
     match = re.search(r'(?m)^status = "([^"]+)"$', text)
     if not match:
         raise TaskSwitchError(f"missing Codex automation status: {path}")
     return match.group(1)
+
+
+def _read_toml_payload(path: Path, *, text: str | None = None) -> dict[str, Any]:
+    source = path.read_text() if text is None else text
+    if tomllib is None:
+        return {}
+    try:
+        payload = tomllib.loads(source)
+    except tomllib.TOMLDecodeError as exc:
+        raise TaskSwitchError(f"invalid TOML: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        return {}
+    return payload
 
 
 def _write_codex_status(path: Path, status: str) -> None:

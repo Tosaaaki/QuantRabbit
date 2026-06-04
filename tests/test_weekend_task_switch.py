@@ -17,6 +17,10 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             env, codex_root, claude_root, state_file = _env(Path(tmp))
             _codex_task(codex_root, "qr-trader", "ACTIVE")
             _codex_task(codex_root, "qr-news-digest", "ACTIVE")
+            _codex_task(codex_root, "qr-hole-audit", "ACTIVE")
+            _codex_task(codex_root, "qr-self-improvement-watch", "ACTIVE")
+            _codex_task(codex_root, "qr-weekend-market-off", "ACTIVE")
+            _codex_task(codex_root, "qr-weekend-market-on", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
 
@@ -25,16 +29,25 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "PAUSED")
             self.assertEqual(_codex_status(codex_root, "qr-news-digest"), "PAUSED")
+            self.assertEqual(_codex_status(codex_root, "qr-hole-audit"), "PAUSED")
+            self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "PAUSED")
+            self.assertEqual(_codex_status(codex_root, "qr-weekend-market-off"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-weekend-market-on"), "ACTIVE")
             self.assertFalse(_claude_enabled(claude_root, "trader"))
             state = json.loads(state_file.read_text())
             self.assertEqual(state["mode"], "paused")
             self.assertEqual(state["tasks"]["codex:qr-trader"]["status"], "ACTIVE")
+            self.assertEqual(state["tasks"]["codex:qr-hole-audit"]["status"], "ACTIVE")
+            self.assertNotIn("codex:qr-weekend-market-off", state["tasks"])
 
     def test_restore_uses_snapshot_without_enabling_disabled_claude_traders(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             env, codex_root, claude_root, _state_file = _env(Path(tmp))
             _codex_task(codex_root, "qr-trader", "ACTIVE")
             _codex_task(codex_root, "qr-news-digest", "ACTIVE")
+            _codex_task(codex_root, "qr-hole-audit", "ACTIVE")
+            _codex_task(codex_root, "qr-self-improvement-watch", "ACTIVE")
+            _codex_task(codex_root, "qr-weekend-market-off", "ACTIVE")
             _claude_task(claude_root, "trader", False)
             _claude_task(claude_root, "trader_v2", False)
             self.assertEqual(_run_switch("pause", env).returncode, 0)
@@ -44,8 +57,32 @@ class WeekendTaskSwitchTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(_codex_status(codex_root, "qr-trader"), "ACTIVE")
             self.assertEqual(_codex_status(codex_root, "qr-news-digest"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-hole-audit"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-self-improvement-watch"), "ACTIVE")
+            self.assertEqual(_codex_status(codex_root, "qr-weekend-market-off"), "ACTIVE")
             self.assertFalse(_claude_enabled(claude_root, "trader"))
             self.assertFalse(_claude_enabled(claude_root, "trader_v2"))
+
+    def test_claude_quant_rabbit_weekday_tasks_are_snapshot_managed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env, codex_root, claude_root, _state_file = _env(Path(tmp))
+            _codex_task(codex_root, "qr-trader", "ACTIVE")
+            _claude_task(claude_root, "trader", False, project="/Users/tossaki/App/QuantRabbit-live")
+            _claude_task(claude_root, "daily-review", True, project="/Users/tossaki/App/QuantRabbit")
+            _claude_task(claude_root, "daily-slack-summary", True, project="/Users/tossaki/App/QuantRabbit")
+            _claude_task(claude_root, "other-project", True, project="/tmp/not-qr")
+            self.assertEqual(_run_switch("pause", env).returncode, 0)
+
+            self.assertFalse(_claude_enabled(claude_root, "daily-review"))
+            self.assertFalse(_claude_enabled(claude_root, "daily-slack-summary"))
+            self.assertTrue(_claude_enabled(claude_root, "other-project"))
+
+            result = _run_switch("restore", env)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(_claude_enabled(claude_root, "daily-review"))
+            self.assertTrue(_claude_enabled(claude_root, "daily-slack-summary"))
+            self.assertTrue(_claude_enabled(claude_root, "other-project"))
 
     def test_pause_is_idempotent_and_keeps_original_active_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,14 +167,14 @@ def _codex_task(root: Path, task_id: str, status: str) -> None:
     )
 
 
-def _claude_task(root: Path, task_id: str, enabled: bool) -> None:
+def _claude_task(root: Path, task_id: str, enabled: bool, *, project: str = "/tmp/live") -> None:
     task_dir = root / task_id
     task_dir.mkdir(parents=True)
     (task_dir / "schedule.json").write_text(
         json.dumps(
             {
                 "taskId": task_id,
-                "project": "/tmp/live",
+                "project": project,
                 "description": "test",
                 "cronExpression": "*/20 * * * 1-6",
                 "enabled": enabled,
