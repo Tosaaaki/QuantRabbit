@@ -52,6 +52,7 @@ from quant_rabbit.paths import (
     DEFAULT_DRY_RUN_CERTIFICATION_REPORT,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_LEDGER_REPORT,
+    DEFAULT_VERIFICATION_LEDGER,
     DEFAULT_VERIFICATION_LEDGER_REPORT,
     DEFAULT_EXECUTION_REPLAY,
     DEFAULT_EXECUTION_REPLAY_REPORT,
@@ -880,6 +881,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Record cycle verifiability and effect metrics into the execution ledger DB.",
     )
     p_vledger.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_vledger.add_argument("--output", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
     p_vledger.add_argument("--report", type=Path, default=DEFAULT_VERIFICATION_LEDGER_REPORT)
     p_vledger.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_vledger.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -1120,6 +1122,8 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--trader-settings", type=Path, default=DEFAULT_TRADER_SETTINGS)
     p_auto.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_auto.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
+    p_auto.add_argument("--gpt-verification-ledger", type=Path, default=None)
+    p_auto.add_argument("--gpt-verification-ledger-report", type=Path, default=None)
 
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
@@ -1329,6 +1333,8 @@ def main(argv: list[str] | None = None) -> int:
                 use_gpt_trader=use_gpt_trader,
                 gpt_provider=gpt_provider,
                 gpt_max_lanes=args.gpt_max_lanes,
+                gpt_verification_ledger_path=args.gpt_verification_ledger,
+                gpt_verification_ledger_report_path=args.gpt_verification_ledger_report,
                 reuse_market_artifacts=args.reuse_market_artifacts,
                 trader_settings_path=args.trader_settings,
                 execution_ledger_db_path=args.execution_ledger_db,
@@ -2235,7 +2241,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from quant_rabbit.verification_ledger import VerificationLedger
 
-            summary = VerificationLedger(db_path=args.db, report_path=args.report).run(
+            summary = VerificationLedger(db_path=args.db, output_path=args.output, report_path=args.report).run(
                 snapshot_path=args.snapshot,
                 order_intents_path=args.order_intents,
                 gpt_decision_path=args.gpt_decision,
@@ -2259,6 +2265,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "status": summary.status,
                     "db_path": str(summary.db_path),
+                    "output_path": str(summary.output_path),
                     "report_path": str(summary.report_path),
                     "observations_inserted": summary.observations_inserted,
                     "measurements_inserted": summary.measurements_inserted,
