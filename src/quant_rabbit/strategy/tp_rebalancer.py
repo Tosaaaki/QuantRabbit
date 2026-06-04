@@ -194,6 +194,40 @@ def load_close_review_trade_ids(data_root: Path = Path("data"), *, now: Optional
     return reviewed
 
 
+def load_entry_thesis_blocker_trade_ids(
+    data_root: Path = Path("data"),
+    *,
+    now: Optional[datetime] = None,
+) -> set[str]:
+    """Return trade ids whose fresh thesis-evolution report is unverifiable.
+
+    Missing entry thesis is not close evidence. It is a management blocker:
+    automated TP changes must not reinterpret a position whose original entry
+    reason cannot be machine-checked.
+    """
+    path = data_root / "thesis_evolution_report.json"
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict) or not _sidecar_is_recent(payload, now=now):
+        return set()
+    blocked: set[str] = set()
+    for item in payload.get("evolutions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "").upper()
+        verdict = str(item.get("verdict") or "").upper()
+        if status != "UNVERIFIABLE" and verdict != "REQUIRE_THESIS_REPAIR":
+            continue
+        trade_id = str(item.get("trade_id") or "").strip()
+        if trade_id:
+            blocked.add(trade_id)
+    return blocked
+
+
 def _forecast_direction_for_side(side: str) -> str:
     return "UP" if side.upper() == "LONG" else "DOWN"
 
@@ -468,6 +502,7 @@ def compute_tp_adjustment(
     latest_forecast: Optional[Dict[str, Any]] = None,
     pair_chart: Optional[Dict[str, Any]] = None,
     close_review_active: bool = False,
+    entry_thesis_block_active: bool = False,
 ) -> Optional[TPAdjustment]:
     """Compute a new TP for one position.
 
@@ -497,6 +532,8 @@ def compute_tp_adjustment(
     owner, trader-owned missing TP, change below hysteresis, safety violation).
     """
     if _is_disabled():
+        return None
+    if entry_thesis_block_active:
         return None
     owner_normalized = owner.strip().lower()
     if not _profit_take_owner_allowed(owner_normalized):
@@ -809,6 +846,7 @@ def compute_all_tp_adjustments(
     market_reward_risk_fn,
     latest_forecasts_by_pair: Optional[Dict[str, Dict[str, Any]]] = None,
     close_review_trade_ids: Optional[set[str]] = None,
+    entry_thesis_block_trade_ids: Optional[set[str]] = None,
 ) -> list[TPAdjustment]:
     """Loop profit-managed positions and compute TP adjustments.
 
@@ -823,6 +861,7 @@ def compute_all_tp_adjustments(
         return []
     adjustments: list[TPAdjustment] = []
     close_review_ids = close_review_trade_ids or set()
+    entry_thesis_block_ids = entry_thesis_block_trade_ids or set()
     for position in positions:
         owner = getattr(position, "owner", None)
         owner_str = owner.value if hasattr(owner, "value") else str(owner or "")
@@ -883,6 +922,7 @@ def compute_all_tp_adjustments(
             latest_forecast=(latest_forecasts_by_pair or {}).get(pair),
             pair_chart=chart,
             close_review_active=trade_id in close_review_ids,
+            entry_thesis_block_active=trade_id in entry_thesis_block_ids,
         )
         if adj is not None:
             adjustments.append(adj)

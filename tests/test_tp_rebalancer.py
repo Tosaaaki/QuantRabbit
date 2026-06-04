@@ -17,6 +17,7 @@ from quant_rabbit.strategy.tp_rebalancer import (
     apply_tp_adjustments,
     compute_tp_adjustment,
     load_close_review_trade_ids,
+    load_entry_thesis_blocker_trade_ids,
 )
 
 
@@ -92,6 +93,18 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertGreater(adj.new_tp, adj.current_tp)
         self.assertLess(adj.new_tp, 1.16090)
         self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+
+    def test_entry_thesis_blocker_freezes_tp_adjustment(self) -> None:
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471720", pair="EUR_USD", side="SHORT",
+            entry_price=1.16090, current_tp=1.16004,
+            current_price=1.15970,
+            atr_pips=21.3, reward_risk=2.7,
+            entry_thesis_block_active=True,
+        )
+
+        self.assertIsNone(adj)
 
     def test_expand_only_mode_blocks_contraction_when_in_profit(self) -> None:
         """LONG in profit (current > entry), small desired distance
@@ -733,6 +746,28 @@ class CloseReviewSidecarTest(unittest.TestCase):
                 load_close_review_trade_ids(root, now=now),
                 {"471720", "471717"},
             )
+
+    def test_loads_recent_entry_thesis_blocker_trade_ids(self) -> None:
+        now = datetime.now(timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": now.isoformat(),
+                        "evolutions": [
+                            {
+                                "trade_id": "471910",
+                                "status": "UNVERIFIABLE",
+                                "verdict": "REQUIRE_THESIS_REPAIR",
+                            },
+                            {"trade_id": "471817", "status": "WEAKENED", "verdict": "HOLD"},
+                        ],
+                    }
+                )
+            )
+
+            self.assertEqual(load_entry_thesis_blocker_trade_ids(root, now=now), {"471910"})
 
     def test_ignores_stale_review_close_sidecars(self) -> None:
         now = datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc)

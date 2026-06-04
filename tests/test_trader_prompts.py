@@ -345,6 +345,50 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("position_thesis REVIEW_CLOSE" in reason for reason in route.reasons))
         self.assertTrue(any("adverse technical loss" in reason for reason in route.reasons))
 
+    def test_entry_thesis_blocker_routes_without_close_recommendation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471910",
+                        "pair": "AUD_USD",
+                        "side": "SHORT",
+                        "take_profit": 0.7164,
+                        "stop_loss": 0.7195,
+                        "owner": "trader",
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            generated_at = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+            ).isoformat()
+            (root / "thesis_evolution_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": generated_at,
+                        "evolutions": [
+                            {
+                                "trade_id": "471910",
+                                "pair": "AUD_USD",
+                                "side": "SHORT",
+                                "status": "UNVERIFIABLE",
+                                "verdict": "REQUIRE_THESIS_REPAIR",
+                                "rationale": "missing entry_thesis_ledger row",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("entry-thesis repair required" in reason for reason in route.reasons))
+        self.assertFalse(any("loss-cut review required" in reason for reason in route.reasons))
+
     def test_stale_forecast_persistence_recommend_close_does_not_route_to_position_management(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -724,6 +768,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["option_skew"]),
                         "--attack-advice",
                         str(files["attack_advice"]),
+                        "--learning-audit",
+                        str(files["learning_audit"]),
                         "--decision-response",
                         str(root / "missing_decision_response.json"),
                         "--live-order",
@@ -755,6 +801,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "cot_path": files["cot"],
         "option_skew_path": files["option_skew"],
         "attack_advice_path": files["attack_advice"],
+        "learning_audit_path": files["learning_audit"],
         "gpt_decision_path": files["gpt_decision"],
         "live_order_path": files["live_order"],
         "position_execution_path": files["position_execution"],
@@ -780,6 +827,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "cot": root / "cot_snapshot.json",
         "option_skew": root / "option_skew_snapshot.json",
         "attack_advice": root / "ai_attack_advice.json",
+        "learning_audit": root / "learning_audit.json",
         "gpt_decision": root / "gpt_trader_decision.json",
         "live_order": root / "live_order_request.json",
         "position_execution": root / "position_execution.json",
@@ -830,6 +878,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "cot",
         "option_skew",
         "attack_advice",
+        "learning_audit",
     ):
         files[key].write_text(json.dumps({}))
     return files

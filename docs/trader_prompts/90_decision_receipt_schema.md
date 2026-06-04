@@ -88,4 +88,6 @@ Write `data/codex_trader_decision_response.json`.
 - Method mismatch with selected primary lane.
 - WAIT / REQUEST_EVIDENCE while target is open and clean tradeable lanes exist, unless a named gate blocks them.
 - Ignoring current tradeable `ai_attack_advice` priority.
+- Selecting a learning-influenced lane without non-blocked `learning_audit`
+  coverage and `learning:audit` / `learning:lane:<lane_id>` evidence refs.
 - Specialist review grants live permission or carries execution fields.

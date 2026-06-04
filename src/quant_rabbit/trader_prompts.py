@@ -36,6 +36,7 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LEVELS_SNAPSHOT,
+    DEFAULT_LEARNING_AUDIT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
@@ -133,6 +134,7 @@ def route_trader_prompts(
     cot_path: Path = DEFAULT_COT_SNAPSHOT,
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+    learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
     live_order_path: Path | None = DEFAULT_LIVE_ORDER_REQUEST,
@@ -153,6 +155,7 @@ def route_trader_prompts(
         "option_skew_snapshot": option_skew_path,
         "order_intents": intents_path,
         "ai_attack_advice": attack_advice_path,
+        "learning_audit": learning_audit_path,
     }
     missing_artifacts = tuple(name for name, path in artifacts.items() if not path.exists())
     if missing_artifacts:
@@ -177,10 +180,19 @@ def route_trader_prompts(
         snapshot,
         snapshot_path=snapshot_path,
     )
-    if position_reasons or tp_rebalance_reasons or close_review_reasons:
+    entry_thesis_block_reasons = _entry_thesis_blocker_reasons(
+        snapshot,
+        snapshot_path=snapshot_path,
+    )
+    if position_reasons or tp_rebalance_reasons or close_review_reasons or entry_thesis_block_reasons:
         return _build_route(
             BRANCH_POSITION,
-            (*position_reasons, *tp_rebalance_reasons, *close_review_reasons),
+            (
+                *position_reasons,
+                *tp_rebalance_reasons,
+                *close_review_reasons,
+                *entry_thesis_block_reasons,
+            ),
             include_content=include_content,
         )
 
@@ -422,6 +434,28 @@ def _position_close_recommendation_reasons(
     return tuple(reasons)
 
 
+def _entry_thesis_blocker_reasons(
+    snapshot: dict[str, Any],
+    *,
+    snapshot_path: Path,
+) -> tuple[str, ...]:
+    """Route unverifiable active positions to position management.
+
+    This is deliberately separate from `_fresh_close_recommendations`: a
+    missing entry thesis is not Gate A close evidence, but normal WAIT/new-risk
+    routing must not proceed while the position cannot be audited.
+    """
+    data_root = snapshot_path.parent
+    reasons: list[str] = []
+    for rec in _fresh_entry_thesis_blockers(snapshot, data_root=data_root):
+        reasons.append(
+            "entry-thesis repair required: "
+            f"{rec.get('pair') or '?'} {rec.get('side') or '?'} id={rec.get('trade_id')}: "
+            f"{rec.get('reason') or 'original entry thesis is not machine-verifiable'}"
+        )
+    return tuple(reasons)
+
+
 def _fresh_close_recommendations(snapshot: dict[str, Any], *, data_root: Path) -> tuple[dict[str, Any], ...]:
     fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
     if fetched_at is None:
@@ -444,6 +478,47 @@ def _fresh_close_recommendations(snapshot: dict[str, Any], *, data_root: Path) -
         if active["side"] and rec_side and rec_side != active["side"]:
             continue
         out.append({**rec, "pair": rec_pair or active["pair"], "side": rec_side or active["side"]})
+    return tuple(out)
+
+
+def _fresh_entry_thesis_blockers(snapshot: dict[str, Any], *, data_root: Path) -> tuple[dict[str, Any], ...]:
+    fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
+    if fetched_at is None:
+        return ()
+    payload = _fresh_report_payload(data_root / "thesis_evolution_report.json", fetched_at)
+    if not payload:
+        return ()
+    active_positions = _active_trader_positions_by_trade_id(snapshot)
+    out: list[dict[str, Any]] = []
+    for item in payload.get("evolutions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "").upper()
+        verdict = str(item.get("verdict") or "").upper()
+        if status != "UNVERIFIABLE" and verdict != "REQUIRE_THESIS_REPAIR":
+            continue
+        trade_id = str(item.get("trade_id") or "")
+        active = active_positions.get(trade_id)
+        if not active:
+            continue
+        rec_pair = str(item.get("pair") or active["pair"])
+        rec_side = str(item.get("side") or active["side"]).upper()
+        if active["pair"] and rec_pair and rec_pair != active["pair"]:
+            continue
+        if active["side"] and rec_side and rec_side != active["side"]:
+            continue
+        out.append(
+            {
+                "source": "entry_thesis",
+                "evidence_ref": f"position:evolution:{trade_id}",
+                "trade_id": trade_id,
+                "pair": rec_pair or active["pair"],
+                "side": rec_side or active["side"],
+                "verdict": "REQUIRE_THESIS_REPAIR",
+                "status": status or "UNVERIFIABLE",
+                "reason": item.get("rationale") or "original entry thesis is not machine-verifiable",
+            }
+        )
     return tuple(out)
 
 
@@ -596,7 +671,10 @@ def _tp_rebalance_reasons(
 
     from quant_rabbit.strategy.entry_thesis_ledger import load_latest_forecast
     from quant_rabbit.strategy.intent_generator import _market_derived_reward_risk
-    from quant_rabbit.strategy.tp_rebalancer import compute_all_tp_adjustments
+    from quant_rabbit.strategy.tp_rebalancer import (
+        compute_all_tp_adjustments,
+        load_entry_thesis_blocker_trade_ids,
+    )
 
     data_root = snapshot_path.parent
     latest_forecasts_by_pair: dict[str, dict[str, Any]] = {}
@@ -611,6 +689,7 @@ def _tp_rebalance_reasons(
         pair_charts=pair_charts_keyed,
         market_reward_risk_fn=_market_derived_reward_risk,
         latest_forecasts_by_pair=latest_forecasts_by_pair,
+        entry_thesis_block_trade_ids=load_entry_thesis_blocker_trade_ids(data_root),
     )
     reasons: list[str] = []
     for adjustment in adjustments:

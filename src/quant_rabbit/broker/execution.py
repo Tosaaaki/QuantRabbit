@@ -175,6 +175,8 @@ class LiveOrderGateway:
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
         response = None
         sent = False
+        entry_thesis_record = None
+        entry_thesis_issues: list[dict[str, str]] = []
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
             response = self.client.post_order_json(order_request)
@@ -188,15 +190,33 @@ class LiveOrderGateway:
             # and snapshots it alongside the SENT trade_id.
             try:
                 from quant_rabbit.strategy.entry_thesis_ledger import (
-                    record_entry_thesis_from_response,
+                    record_entry_thesis_from_response_result,
                 )
-                record_entry_thesis_from_response(
+                record_result = record_entry_thesis_from_response_result(
                     response=response,
                     intent=intent,
                     data_root=_QR_ROOT / "data",
                 )
+                entry_thesis_record = record_result.to_dict()
+                if record_result.status in {"FAILED", "DISABLED"}:
+                    status = "SENT_WITH_ENTRY_THESIS_GAP"
+                    entry_thesis_issues.append(
+                        {
+                            "severity": "BLOCK",
+                            "code": "ENTRY_THESIS_RECORD_MISSING",
+                            "message": record_result.issue or "entry thesis sidecar could not be verified after send",
+                        }
+                    )
             except Exception:
-                pass
+                status = "SENT_WITH_ENTRY_THESIS_GAP"
+                entry_thesis_record = {"status": "FAILED", "issue": "entry thesis recorder raised unexpectedly"}
+                entry_thesis_issues.append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "ENTRY_THESIS_RECORD_MISSING",
+                        "message": "entry thesis recorder raised unexpectedly",
+                    }
+                )
         result = {
             "generated_at_utc": generated_at,
             "status": status,
@@ -209,11 +229,13 @@ class LiveOrderGateway:
                 *send_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
+                *entry_thesis_issues,
             ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
             "sent": sent,
             "response": response,
+            "entry_thesis_record": entry_thesis_record,
             "snapshot": {
                 "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
                 "positions": len(snapshot.positions),
@@ -376,8 +398,15 @@ class LiveOrderGateway:
 
         staged_count = sum(1 for item in order_results if item.get("status") == "STAGED")
         blocked_count = sum(1 for item in order_results if item.get("status") == "BLOCKED")
+        entry_thesis_gap_count = sum(
+            1 for item in order_results if item.get("status") == "SENT_WITH_ENTRY_THESIS_GAP"
+        )
         if send:
-            if sent_count and blocked_count:
+            if entry_thesis_gap_count and blocked_count:
+                status = "PARTIAL_SENT_WITH_ENTRY_THESIS_GAP"
+            elif entry_thesis_gap_count:
+                status = "SENT_WITH_ENTRY_THESIS_GAP"
+            elif sent_count and blocked_count:
                 status = "PARTIAL_SENT"
             elif sent_count:
                 status = "SENT"
@@ -512,6 +541,8 @@ class LiveOrderGateway:
         all_blocked = all_blocked or any(issue["severity"] == "BLOCK" for issue in order_build_issues)
         response = None
         sent = False
+        entry_thesis_record = None
+        entry_thesis_issues: list[dict[str, str]] = []
         status = "BLOCKED" if all_blocked else "STAGED"
         if send and order_request is not None and not all_blocked:
             response = self.client.post_order_json(order_request)
@@ -520,15 +551,33 @@ class LiveOrderGateway:
             # Entry thesis recording — see comment in run() for rationale.
             try:
                 from quant_rabbit.strategy.entry_thesis_ledger import (
-                    record_entry_thesis_from_response,
+                    record_entry_thesis_from_response_result,
                 )
-                record_entry_thesis_from_response(
+                record_result = record_entry_thesis_from_response_result(
                     response=response,
                     intent=intent,
                     data_root=_QR_ROOT / "data",
                 )
+                entry_thesis_record = record_result.to_dict()
+                if record_result.status in {"FAILED", "DISABLED"}:
+                    status = "SENT_WITH_ENTRY_THESIS_GAP"
+                    entry_thesis_issues.append(
+                        {
+                            "severity": "BLOCK",
+                            "code": "ENTRY_THESIS_RECORD_MISSING",
+                            "message": record_result.issue or "entry thesis sidecar could not be verified after send",
+                        }
+                    )
             except Exception:
-                pass
+                status = "SENT_WITH_ENTRY_THESIS_GAP"
+                entry_thesis_record = {"status": "FAILED", "issue": "entry thesis recorder raised unexpectedly"}
+                entry_thesis_issues.append(
+                    {
+                        "severity": "BLOCK",
+                        "code": "ENTRY_THESIS_RECORD_MISSING",
+                        "message": "entry thesis recorder raised unexpectedly",
+                    }
+                )
         return {
             "generated_at_utc": generated_at,
             "status": status,
@@ -541,11 +590,13 @@ class LiveOrderGateway:
                 *send_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
+                *entry_thesis_issues,
             ],
             "strategy_issues": list(strategy_issues),
             "send_requested": send,
             "sent": sent,
             "response": response,
+            "entry_thesis_record": entry_thesis_record,
             "snapshot": {
                 "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
                 "positions": len(snapshot.positions),

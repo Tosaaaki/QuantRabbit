@@ -16,6 +16,11 @@
 - `data/ai_attack_advice.json`
   - Read-only rank of current `LIVE_READY` lanes.
   - It cannot grant live permission, increase risk, or place orders.
+- `data/learning_audit.json`
+  - Audits whether learning evidence is allowed to influence lane ranking.
+  - If the selected lane was moved by learning, cite `learning:audit` and
+    `learning:lane:<lane_id>`; a blocked or stale audit is a no-trade gate for
+    that lane.
 
 ## Chart Layer
 

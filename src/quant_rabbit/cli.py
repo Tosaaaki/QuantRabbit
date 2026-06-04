@@ -52,6 +52,7 @@ from quant_rabbit.paths import (
     DEFAULT_DRY_RUN_CERTIFICATION_REPORT,
     DEFAULT_EXECUTION_LEDGER_DB,
     DEFAULT_EXECUTION_LEDGER_REPORT,
+    DEFAULT_VERIFICATION_LEDGER_REPORT,
     DEFAULT_EXECUTION_REPLAY,
     DEFAULT_EXECUTION_REPLAY_REPORT,
     DEFAULT_GPT_TRADER_DECISION,
@@ -86,6 +87,8 @@ from quant_rabbit.paths import (
     DEFAULT_CURRENCY_STRENGTH_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEVELS_REPORT,
+    DEFAULT_LEARNING_AUDIT,
+    DEFAULT_LEARNING_AUDIT_REPORT,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CALENDAR_REPORT,
     DEFAULT_COT_SNAPSHOT,
@@ -735,6 +738,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--cot", type=Path, default=DEFAULT_COT_SNAPSHOT)
     p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
     p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_prompt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
     p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_prompt.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_prompt.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
@@ -844,6 +848,20 @@ def main(argv: list[str] | None = None) -> int:
     p_attack.add_argument("--output", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_attack.add_argument("--report", type=Path, default=DEFAULT_AI_ATTACK_ADVICE_REPORT)
 
+    p_laudit = sub.add_parser(
+        "learning-audit",
+        help="Audit learning evidence, live ranking influence, and recent effect metrics.",
+    )
+    p_laudit.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_laudit.add_argument("--output", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_laudit.add_argument("--report", type=Path, default=DEFAULT_LEARNING_AUDIT_REPORT)
+    p_laudit.add_argument("--ai-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
+    p_laudit.add_argument("--outcome-mart", type=Path, default=DEFAULT_OUTCOME_MART)
+    p_laudit.add_argument("--post-trade-learning", type=Path, default=DEFAULT_POST_TRADE_LEARNING)
+    p_laudit.add_argument("--ai-attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_laudit.add_argument("--window-hours", type=float, default=168.0)
+    p_laudit.add_argument("--min-effect-sample", type=int, default=30)
+
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_exec_replay.add_argument("--prices", type=Path, required=True)
@@ -856,6 +874,27 @@ def main(argv: list[str] | None = None) -> int:
     p_ledger.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_ledger.add_argument("--report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_ledger.add_argument("--since-transaction-id", default=None)
+
+    p_vledger = sub.add_parser(
+        "verification-ledger-audit",
+        help="Record cycle verifiability and effect metrics into the execution ledger DB.",
+    )
+    p_vledger.add_argument("--db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_vledger.add_argument("--report", type=Path, default=DEFAULT_VERIFICATION_LEDGER_REPORT)
+    p_vledger.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_vledger.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_vledger.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
+    p_vledger.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_vledger.add_argument("--position-execution", type=Path, default=DEFAULT_POSITION_EXECUTION)
+    p_vledger.add_argument("--thesis-evolution", type=Path, default=Path("data/thesis_evolution_report.json"))
+    p_vledger.add_argument("--position-thesis", type=Path, default=Path("data/position_thesis_report.json"))
+    p_vledger.add_argument("--forecast-persistence", type=Path, default=Path("data/forecast_persistence_report.json"))
+    p_vledger.add_argument("--ai-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
+    p_vledger.add_argument("--outcome-mart", type=Path, default=DEFAULT_OUTCOME_MART)
+    p_vledger.add_argument("--post-trade-learning", type=Path, default=DEFAULT_POST_TRADE_LEARNING)
+    p_vledger.add_argument("--ai-attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_vledger.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_vledger.add_argument("--window-hours", type=float, default=168.0)
 
     p_learn = sub.add_parser("learn-post-trade", help="Create receipt-backed post-trade learning candidates.")
     p_learn.add_argument("--outcome", type=Path, default=None)
@@ -1002,6 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_gpt.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_gpt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
+    p_gpt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
@@ -1767,6 +1807,7 @@ def main(argv: list[str] | None = None) -> int:
                 cot_path=args.cot,
                 option_skew_path=args.option_skew,
                 attack_advice_path=args.attack_advice,
+                learning_audit_path=args.learning_audit,
                 decision_response_path=args.decision_response,
                 gpt_decision_path=args.gpt_decision,
                 live_order_path=args.live_order,
@@ -2190,6 +2231,93 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "verification-ledger-audit":
+        try:
+            from quant_rabbit.verification_ledger import VerificationLedger
+
+            summary = VerificationLedger(db_path=args.db, report_path=args.report).run(
+                snapshot_path=args.snapshot,
+                order_intents_path=args.order_intents,
+                gpt_decision_path=args.gpt_decision,
+                live_order_path=args.live_order,
+                position_execution_path=args.position_execution,
+                thesis_evolution_path=args.thesis_evolution,
+                position_thesis_path=args.position_thesis,
+                forecast_persistence_path=args.forecast_persistence,
+                ai_backtest_path=args.ai_backtest,
+                outcome_mart_path=args.outcome_mart,
+                post_trade_learning_path=args.post_trade_learning,
+                ai_attack_advice_path=args.ai_attack_advice,
+                learning_audit_path=args.learning_audit,
+                window_hours=args.window_hours,
+            )
+        except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "db_path": str(summary.db_path),
+                    "report_path": str(summary.report_path),
+                    "observations_inserted": summary.observations_inserted,
+                    "measurements_inserted": summary.measurements_inserted,
+                    "blocking_observations": summary.blocking_observations,
+                    "missing_observations": summary.missing_observations,
+                    "closed_trades": summary.closed_trades,
+                    "net_jpy": summary.net_jpy,
+                    "profit_factor": summary.profit_factor,
+                    "win_rate": summary.win_rate,
+                    "expectancy_jpy": summary.expectancy_jpy,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "learning-audit":
+        try:
+            from quant_rabbit.learning_audit import LearningAuditor
+
+            summary = LearningAuditor(
+                db_path=args.db,
+                output_path=args.output,
+                report_path=args.report,
+            ).run(
+                ai_backtest_path=args.ai_backtest,
+                outcome_mart_path=args.outcome_mart,
+                post_trade_learning_path=args.post_trade_learning,
+                ai_attack_advice_path=args.ai_attack_advice,
+                window_hours=args.window_hours,
+                min_effect_sample=args.min_effect_sample,
+            )
+        except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "db_path": str(summary.db_path),
+                    "checks": summary.checks,
+                    "blockers": summary.blockers,
+                    "warnings": summary.warnings,
+                    "influenced_lanes": summary.influenced_lanes,
+                    "total_learning_score_delta": summary.total_learning_score_delta,
+                    "closed_trades": summary.closed_trades,
+                    "net_jpy": summary.net_jpy,
+                    "profit_factor": summary.profit_factor,
+                    "expectancy_jpy": summary.expectancy_jpy,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0 if summary.status != "LEARNING_AUDIT_BLOCKED" else 2
     if args.command == "trailing-sl-update":
         from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
@@ -2490,6 +2618,7 @@ def main(argv: list[str] | None = None) -> int:
                 "STILL_VALID": sum(1 for e in evolutions if e.status == "STILL_VALID"),
                 "WEAKENED": sum(1 for e in evolutions if e.status == "WEAKENED"),
                 "BROKEN": sum(1 for e in evolutions if e.status == "BROKEN"),
+                "UNVERIFIABLE": sum(1 for e in evolutions if e.status == "UNVERIFIABLE"),
             },
             "forecast_refresh": forecast_refresh,
             "verdicts": [
@@ -2661,6 +2790,7 @@ def main(argv: list[str] | None = None) -> int:
             apply_tp_adjustments,
             compute_all_tp_adjustments,
             load_close_review_trade_ids,
+            load_entry_thesis_blocker_trade_ids,
         )
         from quant_rabbit.strategy.intent_generator import _market_derived_reward_risk
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
@@ -2719,6 +2849,7 @@ def main(argv: list[str] | None = None) -> int:
             market_reward_risk_fn=_market_derived_reward_risk,
             latest_forecasts_by_pair=latest_forecasts_by_pair,
             close_review_trade_ids=load_close_review_trade_ids(Path("data")),
+            entry_thesis_block_trade_ids=load_entry_thesis_blocker_trade_ids(Path("data")),
         )
         client = None
         if not args.dry_run and adjustments:
@@ -3034,6 +3165,7 @@ def main(argv: list[str] | None = None) -> int:
                 market_story_profile_path=args.market_story_profile,
                 target_state_path=args.target_state,
                 attack_advice_path=args.attack_advice,
+                learning_audit_path=args.learning_audit,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,

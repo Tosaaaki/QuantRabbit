@@ -37,6 +37,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 - `data/option_skew_snapshot.json`
 - `data/order_intents.json`
 - `data/ai_attack_advice.json`
+- `data/learning_audit.json`
 
 ## Branch Discipline
 

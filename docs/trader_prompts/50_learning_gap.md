@@ -22,6 +22,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli promote-receipts
 PYTHONPATH=src python3 -m quant_rabbit.cli replay-backtest --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-test-bot-backtest --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
+PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
+PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
 PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
 ```
 
@@ -29,6 +31,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
 
 ```bash
 PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.json
+PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
 ```
 
 ## Gap Report Content
@@ -41,5 +44,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.js
 ## Non-Negotiables
 
 - Learning memory is advisory.
+- Learning that changes `ai_attack_advice` lane ranking must be audited by
+  `learning-audit`; blocked or missing audit makes that learning-influenced
+  lane non-executable for live.
 - Negative old evidence cannot override current broker-truth risk geometry once a lane is `LIVE_READY`.
 - `BLOCK_UNTIL_NEW_EVIDENCE` is never auto-promoted.

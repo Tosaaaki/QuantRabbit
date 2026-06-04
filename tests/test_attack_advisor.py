@@ -47,6 +47,9 @@ class AttackAdvisorTest(unittest.TestCase):
             backtest.write_text(
                 json.dumps(
                     {
+                        "status": "TARGET_COVERAGE_CERTIFIED",
+                        "live_permission": False,
+                        "blockers": [],
                         "bucket_contributions": [
                             {"bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED", "managed_net_jpy": 3000.0, "trades": 12},
                             {"bucket": "trades:AUD_JPY:SHORT:UNSPECIFIED:UNSPECIFIED", "managed_net_jpy": -500.0, "trades": 8},
@@ -71,8 +74,141 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertFalse(payload["live_permission"])
             self.assertTrue(payload["read_only"])
             self.assertEqual(payload["recommended_now_lane_ids"][0], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            lane = next(item for item in payload["lanes"] if item["lane_id"] == "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(lane["learning_score_delta"], 25.0)
+            self.assertIn("ai_backtest_certified_positive_edge", lane["learning_influences"])
             self.assertIn("do_not_raise_loss_cap", payload["settings_advice"])
             self.assertIn("AI Attack Advice Report", (root / "advice.md").read_text())
+
+    def test_ignores_blocked_ai_backtest_edges_for_ranking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="small_edge:EUR_USD:LONG:TREND_CONTINUATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                reward_jpy=400.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                            ),
+                            _result(
+                                lane_id="plain:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+                                pair="AUD_JPY",
+                                side="SHORT",
+                                reward_jpy=900.0,
+                                risk_jpy=300.0,
+                                rr=3.0,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 800.0}))
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "live_permission": False,
+                        "blockers": ["out-of-sample managed net is not positive"],
+                        "bucket_contributions": [
+                            {"bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED", "managed_net_jpy": 5000.0, "trades": 3}
+                        ],
+                    }
+                )
+            )
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["recommended_now_lane_ids"][0], "plain:AUD_JPY:SHORT:BREAKOUT_FAILURE")
+            edge_lane = next(item for item in payload["lanes"] if item["lane_id"] == "small_edge:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertIsNone(edge_lane["historical_edge_jpy"])
+
+    def test_allows_audited_profitable_research_backtest_edges_for_ranking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            backtest = root / "ai_backtest.json"
+            coverage = root / "coverage.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                lane_id="small_edge:EUR_USD:LONG:TREND_CONTINUATION",
+                                pair="EUR_USD",
+                                side="LONG",
+                                reward_jpy=400.0,
+                                risk_jpy=200.0,
+                                rr=2.0,
+                            ),
+                            _result(
+                                lane_id="plain:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+                                pair="AUD_JPY",
+                                side="SHORT",
+                                reward_jpy=900.0,
+                                risk_jpy=300.0,
+                                rr=3.0,
+                            ),
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 1000.0, "remaining_risk_budget_jpy": 800.0}))
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                        "live_permission": False,
+                        "blockers": ["10% target was missed on 37/37 validation days"],
+                        "summary": {
+                            "selected_trades": 40,
+                            "total_managed_net_jpy": 2500.0,
+                            "profit_factor": 1.4,
+                        },
+                        "bucket_contributions": [
+                            {"bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED", "managed_net_jpy": 5000.0, "trades": 40}
+                        ],
+                    }
+                )
+            )
+            coverage.write_text(json.dumps({"status": "LIVE_READY_COVERAGE_READY"}))
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=backtest,
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            self.assertEqual(payload["recommended_now_lane_ids"][0], "small_edge:EUR_USD:LONG:TREND_CONTINUATION")
+            edge_lane = next(item for item in payload["lanes"] if item["lane_id"] == "small_edge:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(edge_lane["historical_edge_jpy"], 5000.0)
+            self.assertEqual(edge_lane["learning_score_delta"], 8.0)
+            self.assertIn("ai_backtest_research_positive_edge", edge_lane["learning_influences"])
+            self.assertIn("RESEARCH_PROFITABLE_NOT_CERTIFIED", " ".join(edge_lane["rationale"]))
 
     def test_blocks_when_live_ready_metrics_are_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -314,6 +450,17 @@ class AttackAdvisorTest(unittest.TestCase):
                                 "outcome_n": 10,
                             },
                         ],
+                        "condition_validation": {
+                            "matched_edges": [
+                                {
+                                    "key": "ALL:ALL:RANGE_ROTATION:MARKET:LONDON:TRENDING",
+                                    "predicted_edge": "POSITIVE",
+                                    "outcomes": 10,
+                                    "actual_net_jpy": 400.0,
+                                    "directional_hit_rate_pct": 70.0,
+                                }
+                            ]
+                        },
                         "method_edges": [
                             {
                                 "key": "EUR_USD:LONG:RANGE_ROTATION:ALL:ALL:ALL",

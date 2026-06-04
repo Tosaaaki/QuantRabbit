@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+import io
+import json
+import sqlite3
+import tempfile
+import unittest
+from contextlib import redirect_stdout
+from datetime import datetime, timezone
+from pathlib import Path
+
+from quant_rabbit.cli import main
+from quant_rabbit.learning_audit import LearningAuditor
+
+
+class LearningAuditorTest(unittest.TestCase):
+    def test_records_research_learning_influence_as_warn_not_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            db = root / "execution_ledger.db"
+            _seed_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_WARN")
+            self.assertEqual(summary.blockers, 0)
+            self.assertGreater(summary.warnings, 0)
+            self.assertEqual(summary.influenced_lanes, 1)
+            self.assertEqual(summary.total_learning_score_delta, 8.0)
+
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertEqual(payload["learning_influence"]["total_learning_score_delta"], 8.0)
+            self.assertIn("Learning Audit Report", (root / "learning_audit.md").read_text())
+            with sqlite3.connect(db) as conn:
+                row = conn.execute(
+                    "SELECT status, influenced_lanes, total_learning_score_delta FROM learning_audit_runs"
+                ).fetchone()
+            self.assertEqual(row, ("LEARNING_AUDIT_WARN", 1, 8.0))
+
+    def test_blocks_research_influence_when_backtest_is_not_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="BLOCKED")
+            db = root / "execution_ledger.db"
+            _seed_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_BLOCKED")
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertTrue(any("research AI backtest influence" in item for item in payload["blockers"]))
+
+    def test_cli_runs_learning_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            db = root / "execution_ledger.db"
+            _seed_execution_events(db)
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "learning-audit",
+                        "--db",
+                        str(db),
+                        "--output",
+                        str(root / "learning_audit.json"),
+                        "--report",
+                        str(root / "learning_audit.md"),
+                        "--ai-backtest",
+                        str(files["ai_backtest"]),
+                        "--outcome-mart",
+                        str(files["outcome_mart"]),
+                        "--post-trade-learning",
+                        str(files["post_trade_learning"]),
+                        "--ai-attack-advice",
+                        str(files["ai_attack_advice"]),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "LEARNING_AUDIT_WARN")
+            self.assertEqual(payload["influenced_lanes"], 1)
+
+
+def _fixtures(root: Path, *, ai_status: str) -> dict[str, Path]:
+    files = {
+        "ai_backtest": root / "ai_backtest.json",
+        "outcome_mart": root / "outcome_mart.json",
+        "post_trade_learning": root / "post_trade_learning.json",
+        "ai_attack_advice": root / "ai_attack_advice.json",
+    }
+    blockers = [] if ai_status == "TARGET_COVERAGE_CERTIFIED" else ["not certified"]
+    files["ai_backtest"].write_text(
+        json.dumps(
+            {
+                "status": ai_status,
+                "live_permission": False,
+                "blockers": blockers,
+                "training_days": 12,
+                "min_train_trades": 5,
+                "summary": {
+                    "selected_trades": 40,
+                    "total_managed_net_jpy": 2500.0 if ai_status != "BLOCKED" else -100.0,
+                    "profit_factor": 1.4 if ai_status != "BLOCKED" else 0.8,
+                },
+            }
+        )
+    )
+    files["outcome_mart"].write_text(
+        json.dumps(
+            {
+                "read_only": True,
+                "live_permission": False,
+                "condition_validation": {
+                    "status": "CONDITION_WALK_FORWARD_READY",
+                    "validated_outcomes": 50,
+                    "directional_hit_rate_pct": 60.0,
+                },
+            }
+        )
+    )
+    files["post_trade_learning"].write_text(
+        json.dumps({"status": "READY_FOR_REVIEW", "blockers": [], "profile_update_candidates": []})
+    )
+    files["ai_attack_advice"].write_text(
+        json.dumps(
+            {
+                "status": "ATTACK_PARTIAL",
+                "read_only": True,
+                "live_permission": False,
+                "recommended_now_lane_ids": ["lane:EUR_USD:LONG"],
+                "lanes": [
+                    {
+                        "lane_id": "lane:EUR_USD:LONG",
+                        "score": 42.0,
+                        "learning_score_delta": 8.0,
+                        "learning_influences": ["ai_backtest_research_positive_edge"],
+                        "learning_influence_details": [
+                            {
+                                "source": "ai_backtest",
+                                "influence": "ai_backtest_research_positive_edge",
+                                "score_delta": 8.0,
+                                "source_status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                                "edge_jpy": 5000.0,
+                                "trades": 40,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return files
+
+
+def _seed_execution_events(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                realized_pl_jpy REAL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO execution_events VALUES ('2026-06-02T23:00:00+00:00', 'TRADE_CLOSED', 120.0)"
+        )
+        conn.execute(
+            "INSERT INTO execution_events VALUES ('2026-06-02T22:00:00+00:00', 'TRADE_CLOSED', -80.0)"
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

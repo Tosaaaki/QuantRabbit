@@ -25,8 +25,10 @@ from quant_rabbit.paths import (
 ADVISORY_REWARD_COVERAGE_SCORE_CAP = 40.0
 ADVISORY_REWARD_RISK_SCORE_MULT = 6.0
 ADVISORY_POSITIVE_EDGE_SCORE = 25.0
+ADVISORY_RESEARCH_POSITIVE_EDGE_SCORE = 8.0
 ADVISORY_NEGATIVE_EDGE_PENALTY = 25.0
 ADVISORY_OUTCOME_MART_EDGE_SCORE = 15.0
+ADVISORY_OUTCOME_MART_UNVALIDATED_EDGE_SCORE = 4.0
 ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY = 15.0
 ADVISORY_OUTCOME_MART_MIN_TRIALS = 5
 ADVISORY_MARKET_PARTICIPATION_SCORE = 5.0
@@ -60,6 +62,9 @@ class AttackLaneAdvice:
     archive_condition_validation_actual_net_jpy: float | None
     archive_condition_validation_hit_rate_pct: float | None
     rationale: tuple[str, ...]
+    learning_influences: tuple[str, ...] = ()
+    learning_influence_details: tuple[dict[str, object], ...] = ()
+    learning_score_delta: float = 0.0
     blockers: tuple[str, ...] = ()
 
 
@@ -259,7 +264,9 @@ class AttackAdvisor:
                     f"condition=`{lane['archive_condition_key']}` "
                     f"condition_edge=`{lane['archive_condition_edge_jpy']}` "
                     f"condition_validated_net=`{lane['archive_condition_validation_actual_net_jpy']}` "
-                    f"method_edge=`{lane['archive_method_edge_jpy']}`"
+                    f"method_edge=`{lane['archive_method_edge_jpy']}` "
+                    f"learning_delta=`{lane.get('learning_score_delta', 0.0):.1f}` "
+                    f"learning=`{', '.join(lane.get('learning_influences') or []) or 'none'}`"
                 )
         else:
             lines.append("- none")
@@ -369,6 +376,9 @@ def _attack_lane(
         _optional_float(condition_validation.get("directional_hit_rate_pct")) if condition_validation else None
     )
     rationale: list[str] = []
+    learning_influences: list[str] = []
+    learning_details: list[dict[str, object]] = []
+    learning_score_delta = 0.0
     score = 0.0
     if reward is not None:
         if remaining_target_jpy and remaining_target_jpy > 0:
@@ -380,11 +390,43 @@ def _attack_lane(
         score += rr * ADVISORY_REWARD_RISK_SCORE_MULT
         rationale.append("reward/risk efficiency")
     if edge_jpy is not None and edge_jpy > 0:
-        score += ADVISORY_POSITIVE_EDGE_SCORE
-        rationale.append("positive AI-test-bot pair/direction edge")
+        source_status = str(edge.get("source_status") or "")
+        if source_status == "TARGET_COVERAGE_CERTIFIED":
+            delta = ADVISORY_POSITIVE_EDGE_SCORE
+            influence = "ai_backtest_certified_positive_edge"
+        else:
+            delta = ADVISORY_RESEARCH_POSITIVE_EDGE_SCORE
+            influence = "ai_backtest_research_positive_edge"
+        score += delta
+        learning_score_delta += delta
+        learning_influences.append(influence)
+        learning_details.append(
+            {
+                "source": "ai_backtest",
+                "influence": influence,
+                "score_delta": delta,
+                "source_status": source_status,
+                "edge_jpy": _round(edge_jpy),
+                "trades": edge_trades,
+            }
+        )
+        rationale.append(f"positive AI-test-bot pair/direction edge ({source_status}, +{delta:.1f})")
     elif edge_jpy is not None and edge_jpy < 0:
-        score -= ADVISORY_NEGATIVE_EDGE_PENALTY
-        rationale.append("negative AI-test-bot pair/direction edge")
+        delta = -ADVISORY_NEGATIVE_EDGE_PENALTY
+        score += delta
+        learning_score_delta += delta
+        learning_influences.append("ai_backtest_negative_edge")
+        learning_details.append(
+            {
+                "source": "ai_backtest",
+                "influence": "ai_backtest_negative_edge",
+                "score_delta": delta,
+                "source_status": str(edge.get("source_status") or ""),
+                "edge_jpy": _round(edge_jpy),
+                "trades": edge_trades,
+            }
+        )
+        rationale.append(f"negative AI-test-bot pair/direction edge ({edge.get('source_status')}, {delta:.1f})")
     condition_is_actionable = condition_trials >= ADVISORY_OUTCOME_MART_MIN_TRIALS
     if condition_net_jpy is not None and condition_is_actionable and condition_net_jpy > 0:
         if (
@@ -393,11 +435,61 @@ def _attack_lane(
             and condition_validation_actual_net_jpy <= 0
         ):
             rationale.append("positive archive condition edge failed walk-forward validation")
+        elif (
+            condition_validation_outcomes >= ADVISORY_OUTCOME_MART_MIN_TRIALS
+            and condition_validation_actual_net_jpy is not None
+            and condition_validation_actual_net_jpy > 0
+        ):
+            delta = ADVISORY_OUTCOME_MART_EDGE_SCORE
+            score += delta
+            learning_score_delta += delta
+            learning_influences.append("outcome_mart_walk_forward_positive_edge")
+            learning_details.append(
+                {
+                    "source": "outcome_mart",
+                    "influence": "outcome_mart_walk_forward_positive_edge",
+                    "score_delta": delta,
+                    "condition_key": condition_key,
+                    "outcomes": condition_validation_outcomes,
+                    "actual_net_jpy": _round(condition_validation_actual_net_jpy),
+                    "hit_rate_pct": _round(condition_validation_hit_rate_pct)
+                    if condition_validation_hit_rate_pct is not None
+                    else None,
+                }
+            )
+            rationale.append(f"positive archive condition edge passed walk-forward validation (+{delta:.1f})")
         else:
-            score += ADVISORY_OUTCOME_MART_EDGE_SCORE
-            rationale.append("positive archive condition edge")
+            delta = ADVISORY_OUTCOME_MART_UNVALIDATED_EDGE_SCORE
+            score += delta
+            learning_score_delta += delta
+            learning_influences.append("outcome_mart_unvalidated_positive_edge")
+            learning_details.append(
+                {
+                    "source": "outcome_mart",
+                    "influence": "outcome_mart_unvalidated_positive_edge",
+                    "score_delta": delta,
+                    "condition_key": condition_key,
+                    "outcomes": condition_trials,
+                    "validation_outcomes": condition_validation_outcomes,
+                }
+            )
+            rationale.append(f"positive archive condition edge lacks walk-forward validation floor (+{delta:.1f})")
     elif condition_net_jpy is not None and condition_is_actionable and condition_net_jpy < 0:
-        score -= ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY
+        delta = -ADVISORY_OUTCOME_MART_NEGATIVE_PENALTY
+        score += delta
+        learning_score_delta += delta
+        learning_influences.append("outcome_mart_negative_edge")
+        learning_details.append(
+            {
+                "source": "outcome_mart",
+                "influence": "outcome_mart_negative_edge",
+                "score_delta": delta,
+                "condition_key": condition_key,
+                "outcomes": condition_trials,
+                "net_jpy": _round(condition_net_jpy),
+                "validation_outcomes": condition_validation_outcomes,
+            }
+        )
         if (
             condition_validation_outcomes >= ADVISORY_OUTCOME_MART_MIN_TRIALS
             and condition_validation_actual_net_jpy is not None
@@ -441,6 +533,9 @@ def _attack_lane(
         if condition_validation_hit_rate_pct is not None
         else None,
         rationale=tuple(rationale),
+        learning_influences=tuple(learning_influences),
+        learning_influence_details=tuple(learning_details),
+        learning_score_delta=_round(learning_score_delta),
         blockers=tuple(blockers),
     )
 
@@ -490,6 +585,9 @@ def _geometry_key(lane: AttackLaneAdvice) -> tuple[str, str, str, float, float, 
 
 def _edge_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     index: dict[tuple[str, str], dict[str, Any]] = {}
+    if not _ai_backtest_edge_indexable(payload):
+        return index
+    source_status = str(payload.get("status") or "UNKNOWN")
     for item in payload.get("bucket_contributions", []) or []:
         if not isinstance(item, dict):
             continue
@@ -498,11 +596,32 @@ def _edge_index(payload: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]
         if len(parts) < 3:
             continue
         key = (parts[1], parts[2])
-        current = index.setdefault(key, {"managed_net_jpy": 0.0, "trades": 0, "buckets": []})
+        current = index.setdefault(
+            key,
+            {"managed_net_jpy": 0.0, "trades": 0, "buckets": [], "source_status": source_status},
+        )
         current["managed_net_jpy"] = _round(float(current["managed_net_jpy"]) + float(item.get("managed_net_jpy") or 0.0))
         current["trades"] = int(current["trades"]) + int(item.get("trades") or 0)
         current["buckets"].append(label)
     return index
+
+
+def _ai_backtest_edge_indexable(payload: dict[str, Any]) -> bool:
+    if not payload:
+        return False
+    if payload.get("live_permission") is True:
+        return False
+    status = str(payload.get("status") or "")
+    blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    if status == "TARGET_COVERAGE_CERTIFIED":
+        return not blockers
+    if status != "RESEARCH_PROFITABLE_NOT_CERTIFIED":
+        return False
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    selected_trades = int(_optional_float(summary.get("selected_trades")) or 0)
+    managed_net = _optional_float(summary.get("total_managed_net_jpy")) or 0.0
+    profit_factor = _optional_float(summary.get("profit_factor")) or 0.0
+    return selected_trades >= 30 and managed_net > 0 and profit_factor > 1.0
 
 
 def _outcome_index(payload: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:

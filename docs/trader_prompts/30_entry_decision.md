@@ -12,11 +12,14 @@
 2. State the pair-level next forecast for each candidate pair: `UP`, `DOWN`, `RANGE`, or `UNCLEAR`. Treat forecast target/invalidation levels inside current M1/M5 ATR/spread noise as non-structural. In an active range, lower-half price carries bounce/retest risk and upper-half price carries fade risk before a breakout is proved.
 3. List every current `LIVE_READY` lane.
 4. Intersect `ai_attack_advice.recommended_now_lane_ids` with current tradeable lanes.
-5. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
-6. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
-7. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
-8. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
-9. Write exactly one `data/codex_trader_decision_response.json`.
+5. If an advised lane has `learning_influences`, require `data/learning_audit.json`
+   to be non-blocked and to cover that lane before treating the advice as
+   executable. Cite `learning:audit` and `learning:lane:<lane_id>` in the receipt.
+6. If the target is open and the first advised lane is tradeable, include it in the selected basket unless a named deterministic gate now blocks it.
+7. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
+8. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
+9. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
+10. Write exactly one `data/codex_trader_decision_response.json`.
 
 ## Valid Actions
 

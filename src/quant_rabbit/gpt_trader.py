@@ -80,6 +80,11 @@ def _operator_close_token_fresh(data_root: Path | None = None) -> bool:
     return age <= OPERATOR_CLOSE_TOKEN_FRESH_SECONDS
 
 
+def _operator_close_gate_authorized() -> bool:
+    """Gate B authorization for loss-side CLOSE decisions."""
+    return _operator_close_override_active() or _operator_close_token_fresh()
+
+
 # Matches a single per-timeframe segment in chart_reader's chart_story format.
 # Example tokens captured:
 #   "M15(RANGE, ADX=15.4 ... struct=CHOCH_UP@113.9900)"        (close confirmed)
@@ -298,12 +303,14 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
+    DEFAULT_LEARNING_AUDIT,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
     DEFAULT_STRATEGY_PROFILE,
+    DEFAULT_VERIFICATION_LEDGER,
 )
 from quant_rabbit.strategy.entry_thesis_ledger import (
     invalidation_price_hit_reason,
@@ -375,10 +382,10 @@ class GPTTraderDecision:
     evidence_refs: tuple[str, ...]
     operator_summary: str
     # Operator-directed market close on existing trader-owned positions.
-    # Used only with action="CLOSE". A loss-cut and a new entry must
+    # Used only with action="CLOSE". A loss-cut and a new entry must still
     # have separate receipts: automation may resume in the same outer cycle
-    # only after archiving CLOSE, refreshing broker truth, and requiring a
-    # fresh verified TRADE receipt.
+    # only after archiving the CLOSE receipt, refreshing broker truth, and
+    # requiring a fresh verified TRADE receipt.
     close_trade_ids: tuple[str, ...] = ()
     strategy_reviews: tuple[dict[str, Any], ...] = ()
     specialist_reviews: tuple[dict[str, Any], ...] = ()
@@ -458,6 +465,8 @@ class GPTTraderBrain:
         cot_path: Path = DEFAULT_COT_SNAPSHOT,
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+        verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
@@ -478,6 +487,8 @@ class GPTTraderBrain:
         self.cot_path = cot_path
         self.option_skew_path = option_skew_path
         self.attack_advice_path = attack_advice_path
+        self.learning_audit_path = learning_audit_path
+        self.verification_ledger_path = verification_ledger_path
         self.predictive_limits_path = predictive_limits_path
         self.output_path = output_path
         self.report_path = report_path
@@ -523,6 +534,8 @@ class GPTTraderBrain:
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
+        learning_audit = _load_optional_json(self.learning_audit_path)
+        verification_ledger = _load_optional_json(self.verification_ledger_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
@@ -531,6 +544,8 @@ class GPTTraderBrain:
             target=target,
             lanes=lanes,
             attack_advice=attack_advice,
+            learning_audit=learning_audit,
+            verification_ledger=verification_ledger,
             predictive_limits=predictive_limits,
         )
         return {
@@ -544,11 +559,16 @@ class GPTTraderBrain:
                 "strategy_reviews_must_use_lane_id_not_desk_alias": True,
                 "predictive_limits_are_advisory_timing_evidence": True,
                 "tp_rebalance_sidecar_blocks_wait": True,
+                "entry_thesis_blocker_blocks_trade_and_wait": True,
+                "learning_audit_blocks_unsafe_learning_influence": True,
+                "verification_ledger_is_read_only_structured_evidence": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
             "ai_attack_advice": _attack_advice_packet(attack_advice),
+            "learning_audit": _learning_audit_packet(learning_audit),
+            "verification_ledger": _verification_ledger_packet(verification_ledger),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
@@ -608,7 +628,9 @@ class GPTTraderBrain:
                 "- `TRADE` requires known `LIVE_READY` lane(s); pending entries are counted by gateway basket validation.",
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
+                "- Learning may only rank already-live-ready lanes. Any learning-influenced selected lane must be covered by a non-blocked `learning_audit` packet and cite `learning:audit` plus `learning:lane:<lane_id>`.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
+                "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` requires gate A (structural BOS/CHOCH against side on M15/H4, or `invalidation_price`+`invalidation_tf` cleared by broker truth beyond the anti-wick buffer with chart/technical confirmation) AND gate B (`QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`). `TRADE` must not include `close_trade_ids`; automation may re-enter in the same outer cycle only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -645,6 +667,8 @@ class DecisionVerifier:
         tradeable_lanes = _tradeable_live_ready_lanes(self.packet)
         attack_lane_ids = _attack_recommended_tradeable_lane_ids(self.packet, tradeable_lanes)
         exposure_blockers = _trade_exposure_blockers(self.packet)
+        entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
+        position_close_reasons = _position_close_sidecar_reasons(self.packet)
 
         if decision.action == "TRADE":
             if not selected_lane_ids:
@@ -658,8 +682,23 @@ class DecisionVerifier:
                         "separate verified TRADE receipt if a fresh LIVE_READY lane survives.",
                     )
                 )
+            if position_close_reasons:
+                _append_position_close_required_issue(
+                    issues,
+                    action="TRADE",
+                    reasons=position_close_reasons,
+                )
             if exposure_blockers:
                 issues.append(VerificationIssue("EXPOSURE_BLOCKS_TRADE", "; ".join(exposure_blockers[:3])))
+            if entry_thesis_blockers:
+                issues.append(
+                    VerificationIssue(
+                        "ENTRY_THESIS_REPAIR_REQUIRED",
+                        "TRADE rejected while active trader position(s) have unverifiable entry thesis: "
+                        + "; ".join(entry_thesis_blockers[:3]),
+                    )
+                )
+            issues.extend(_learning_audit_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
             if _target_requires_entry(self.packet) and attack_lane_ids and not exposure_blockers:
                 selected_attack_lanes = [lane_id for lane_id in selected_lane_ids if lane_id in attack_lane_ids]
                 if not selected_attack_lanes:
@@ -787,6 +826,14 @@ class DecisionVerifier:
         elif decision.action in {"WAIT", "REQUEST_EVIDENCE"}:
             if decision.selected_lane_id is not None:
                 issues.append(VerificationIssue("WAIT_SELECTED_LANE", f"{decision.action} must not select a lane"))
+            if decision.action == "WAIT" and entry_thesis_blockers:
+                issues.append(
+                    VerificationIssue(
+                        "ENTRY_THESIS_REPAIR_REQUIRED",
+                        "WAIT rejected while active trader position(s) have unverifiable entry thesis: "
+                        + "; ".join(entry_thesis_blockers[:3]),
+                    )
+                )
             tp_rebalance_reasons = _tp_rebalance_sidecar_reasons(self.packet)
             if tp_rebalance_reasons:
                 issues.append(
@@ -796,7 +843,18 @@ class DecisionVerifier:
                         f"executable adjustment(s): {tp_rebalance_reasons[0]}",
                     )
                 )
-            if _target_requires_entry(self.packet) and not exposure_blockers and attack_lane_ids:
+            if position_close_reasons:
+                _append_position_close_required_issue(
+                    issues,
+                    action=decision.action,
+                    reasons=position_close_reasons,
+                )
+            if (
+                not position_close_reasons
+                and _target_requires_entry(self.packet)
+                and not exposure_blockers
+                and attack_lane_ids
+            ):
                 issues.append(
                     VerificationIssue(
                         "ATTACK_ADVICE_REQUIRES_TRADE",
@@ -805,7 +863,12 @@ class DecisionVerifier:
                         f"the advice after a named hard blocker fires: {', '.join(attack_lane_ids[:3])}",
                     )
                 )
-            if _target_requires_entry(self.packet) and not exposure_blockers and tradeable_lanes:
+            if (
+                not position_close_reasons
+                and _target_requires_entry(self.packet)
+                and not exposure_blockers
+                and tradeable_lanes
+            ):
                 if not _trader_exposure_present(self.packet):
                     issues.append(
                         VerificationIssue(
@@ -991,7 +1054,7 @@ class DecisionVerifier:
         # field. The trader fills its own decision payload, so the
         # boolean was a self-authorizing escape that drove the 15:33
         # UTC mass-close.
-        if not _operator_close_override_active() and not _operator_close_token_fresh():
+        if not _operator_close_gate_authorized():
             issues.append(
                 VerificationIssue(
                     "CLOSE_OPERATOR_AUTH_REQUIRED",
@@ -1400,10 +1463,17 @@ def _protection_sidecars_packet(
     snapshot_path: Path,
     pair_charts_path: Path,
 ) -> dict[str, Any]:
-    from quant_rabbit.trader_prompts import _fresh_close_recommendations, _tp_rebalance_reasons
+    from quant_rabbit.trader_prompts import (
+        _fresh_close_recommendations,
+        _fresh_entry_thesis_blockers,
+        _tp_rebalance_reasons,
+    )
 
     position_close_recommendations = list(
         _fresh_close_recommendations(snapshot, data_root=snapshot_path.parent)
+    )
+    entry_thesis_blockers = list(
+        _fresh_entry_thesis_blockers(snapshot, data_root=snapshot_path.parent)
     )
     if not pair_charts_path.exists():
         return {
@@ -1413,6 +1483,7 @@ def _protection_sidecars_packet(
                 "issue": f"missing pair_charts: {pair_charts_path}",
             },
             "position_close_recommendations": position_close_recommendations,
+            "entry_thesis_blockers": entry_thesis_blockers,
         }
     pair_charts = _load_json(pair_charts_path)
 
@@ -1427,6 +1498,7 @@ def _protection_sidecars_packet(
             "reasons": list(reasons),
         },
         "position_close_recommendations": position_close_recommendations,
+        "entry_thesis_blockers": entry_thesis_blockers,
     }
 
 
@@ -1436,6 +1508,8 @@ def _allowed_refs(
     target: dict[str, Any],
     lanes: list[dict[str, Any]],
     attack_advice: dict[str, Any] | None,
+    learning_audit: dict[str, Any] | None,
+    verification_ledger: dict[str, Any] | None,
     predictive_limits: dict[str, Any] | None,
 ) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
@@ -1447,7 +1521,7 @@ def _allowed_refs(
     timeframes = DEFAULT_PAIR_CHART_TIMEFRAMES
     structure_keys = ("structure",)
     cross_assets = ("dxy", "USB10Y_USD", "USB02Y_USD", "spx", "gold", "oil", "btc")
-    refs = ["broker:snapshot", "target:daily"]
+    refs = ["broker:snapshot", "target:daily", "verification:ledger"]
     pairs: set[str] = set()
     currencies: set[str] = set()
     for position in snapshot.get("positions", []) or []:
@@ -1515,6 +1589,25 @@ def _allowed_refs(
             refs.append(f"attack:lane:{lane_id}")
         for lane_id in attack_advice.get("watchlist_lane_ids", []) or []:
             refs.append(f"attack:lane:{lane_id}")
+    if learning_audit:
+        refs.append("learning:audit")
+        influence = learning_audit.get("learning_influence") if isinstance(learning_audit.get("learning_influence"), dict) else {}
+        for lane in influence.get("lanes", []) or []:
+            if not isinstance(lane, dict):
+                continue
+            lane_id = str(lane.get("lane_id") or "")
+            if lane_id:
+                refs.append(f"learning:lane:{lane_id}")
+    if verification_ledger:
+        refs.extend(["verification:blockers", "verification:effect:all"])
+        for key in ("blocking_evidence", "missing_artifacts", "learning_evidence", "measurements"):
+            rows = verification_ledger.get(key) if isinstance(verification_ledger.get(key), list) else []
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                ref = str(item.get("evidence_ref") or "").strip()
+                if ref:
+                    refs.append(ref)
     if predictive_limits:
         refs.append("predictive:limits")
         for item in predictive_limits.get("orders", []) or []:
@@ -1530,6 +1623,24 @@ def _allowed_refs(
 def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not payload:
         return {"evidence_ref": "attack:advice", "status": "missing"}
+    recommended_ids = {str(item) for item in payload.get("recommended_now_lane_ids", []) or [] if str(item).strip()}
+    lane_summaries: list[dict[str, Any]] = []
+    learning_influenced_lane_ids: list[str] = []
+    for lane in payload.get("lanes", []) or []:
+        if not isinstance(lane, dict):
+            continue
+        lane_id = str(lane.get("lane_id") or "")
+        if not lane_id or lane_id not in recommended_ids:
+            continue
+        influences = [str(item) for item in (lane.get("learning_influences") or []) if str(item).strip()]
+        lane_summary = {
+            "lane_id": lane_id,
+            "learning_influences": influences,
+            "learning_score_delta": lane.get("learning_score_delta"),
+        }
+        lane_summaries.append(lane_summary)
+        if influences:
+            learning_influenced_lane_ids.append(lane_id)
     return {
         "evidence_ref": "attack:advice",
         "status": payload.get("status"),
@@ -1540,8 +1651,137 @@ def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
         "recommended_now_reward_jpy": payload.get("recommended_now_reward_jpy"),
         "recommended_now_risk_jpy": payload.get("recommended_now_risk_jpy"),
         "required_additional_reward_jpy": payload.get("required_additional_reward_jpy"),
+        "recommended_lane_learning": lane_summaries[:20],
+        "learning_influenced_lane_ids": learning_influenced_lane_ids[:20],
         "settings_advice": payload.get("settings_advice") if isinstance(payload.get("settings_advice"), dict) else {},
     }
+
+
+def _learning_audit_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "learning:audit",
+            "status": "missing",
+            "blockers": [],
+            "warnings": [],
+            "learning_influence": {
+                "influenced_lanes": 0,
+                "total_learning_score_delta": 0.0,
+                "lanes": [],
+            },
+        }
+    influence = payload.get("learning_influence") if isinstance(payload.get("learning_influence"), dict) else {}
+    lanes: list[dict[str, Any]] = []
+    for lane in influence.get("lanes", []) or []:
+        if not isinstance(lane, dict):
+            continue
+        lanes.append(
+            {
+                "evidence_ref": f"learning:lane:{lane.get('lane_id')}",
+                "lane_id": lane.get("lane_id"),
+                "learning_influences": list(lane.get("learning_influences", []) or []),
+                "learning_score_delta": lane.get("learning_score_delta"),
+            }
+        )
+    effect = payload.get("effect_metrics") if isinstance(payload.get("effect_metrics"), dict) else {}
+    return {
+        "evidence_ref": "learning:audit",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "blockers": list(payload.get("blockers", []) or [])[:12],
+        "warnings": list(payload.get("warnings", []) or [])[:12],
+        "effect_metrics": _small_dict(
+            effect,
+            (
+                "closed_trades",
+                "net_jpy",
+                "profit_factor",
+                "expectancy_jpy",
+            ),
+        ),
+        "learning_influence": {
+            "influenced_lanes": influence.get("influenced_lanes", 0),
+            "total_learning_score_delta": influence.get("total_learning_score_delta", 0.0),
+            "lanes": lanes[:20],
+        },
+    }
+
+
+def _verification_ledger_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "verification:ledger",
+            "status": "missing",
+            "blocking_observations": 0,
+            "missing_observations": 0,
+            "effect_metrics": {},
+            "blocking_evidence": [],
+            "learning_evidence": [],
+        }
+    effect = payload.get("effect_metrics") if isinstance(payload.get("effect_metrics"), dict) else {}
+    return {
+        "evidence_ref": "verification:ledger",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "db_path": payload.get("db_path"),
+        "report_path": payload.get("report_path"),
+        "blocking_observations": payload.get("blocking_observations"),
+        "missing_observations": payload.get("missing_observations"),
+        "effect_metrics": _small_dict(
+            effect,
+            (
+                "window_hours",
+                "closed_trades",
+                "net_jpy",
+                "profit_factor",
+                "win_rate",
+                "expectancy_jpy",
+                "sample_warning",
+            ),
+        ),
+        "blocking_evidence": _verification_rows(payload.get("blocking_evidence")),
+        "missing_artifacts": _verification_rows(payload.get("missing_artifacts")),
+        "learning_evidence": _verification_rows(payload.get("learning_evidence")),
+        "measurements": _verification_rows(payload.get("measurements")),
+        "contract": _small_dict(
+            payload.get("contract"),
+            (
+                "read_only",
+                "live_permission",
+                "sqlite_tables",
+                "json_packet_is_trader_readable",
+                "markdown_report_is_operator_readable",
+                "learning_cannot_override_risk_or_gateway_gates",
+            ),
+        ),
+    }
+
+
+def _verification_rows(rows: object) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(rows, list):
+        return out
+    for item in rows[:12]:
+        if not isinstance(item, dict):
+            continue
+        out.append(
+            _small_dict(
+                item,
+                (
+                    "evidence_ref",
+                    "source",
+                    "subject_type",
+                    "subject_id",
+                    "check_name",
+                    "status",
+                    "severity",
+                    "metric_value",
+                    "metric_unit",
+                    "evidence",
+                ),
+            )
+        )
+    return out
 
 
 def _predictive_limits_packet(payload: dict[str, Any] | None, *, pairs: set[str]) -> dict[str, Any]:
@@ -1685,6 +1925,78 @@ def _tp_rebalance_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
     ]
 
 
+def _entry_thesis_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return []
+    blockers = sidecars.get("entry_thesis_blockers")
+    if not isinstance(blockers, list):
+        return []
+    reasons: list[str] = []
+    for item in blockers:
+        if not isinstance(item, dict):
+            continue
+        trade_id = str(item.get("trade_id") or "").strip()
+        pair = str(item.get("pair") or "").strip()
+        side = str(item.get("side") or "").strip()
+        reason = str(item.get("reason") or "original entry thesis is not machine-verifiable").strip()
+        label = " ".join(part for part in (pair, side, f"id={trade_id}" if trade_id else "") if part)
+        reasons.append(f"{label}: {reason}" if label else reason)
+    return reasons
+
+
+def _position_close_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
+    sidecars = packet.get("protection_sidecars")
+    if not isinstance(sidecars, dict):
+        return []
+    recommendations = sidecars.get("position_close_recommendations")
+    if not isinstance(recommendations, list):
+        return []
+    reasons: list[str] = []
+    for item in recommendations:
+        if not isinstance(item, dict):
+            continue
+        trade_id = str(item.get("trade_id") or "").strip()
+        pair = str(item.get("pair") or "").strip()
+        side = str(item.get("side") or "").strip()
+        source = str(item.get("source") or "position_sidecar").strip()
+        verdict = str(item.get("verdict") or "RECOMMEND_CLOSE").strip()
+        reason = str(item.get("reason") or "position recovery edge is broken").strip()
+        label = " ".join(part for part in (pair, side, f"id={trade_id}" if trade_id else "") if part)
+        prefix = f"{source} {verdict}"
+        reasons.append(f"{prefix} {label}: {reason}" if label else f"{prefix}: {reason}")
+    return reasons
+
+
+def _append_position_close_required_issue(
+    issues: list[VerificationIssue],
+    *,
+    action: str,
+    reasons: list[str],
+) -> None:
+    reason_text = "; ".join(reasons[:3])
+    if _operator_close_gate_authorized():
+        issues.append(
+            VerificationIssue(
+                "POSITION_CLOSE_REQUIRED",
+                f"{action} rejected while fresh position sidecar Gate A close evidence exists. "
+                "Emit action=CLOSE for the named trade(s) first; after the accepted CLOSE receipt is "
+                "sent or staged, refresh broker truth / intents before any separate TRADE receipt: "
+                f"{reason_text}",
+            )
+        )
+        return
+    issues.append(
+        VerificationIssue(
+            "CLOSE_OPERATOR_AUTH_REQUIRED",
+            f"{action} rejected while fresh position sidecar Gate A close evidence exists, but Gate B "
+            "operator authorization is missing. This is not a recovery-confidence hold; require "
+            "QR_OPERATOR_CLOSE_OVERRIDE=1 in the operator shell or a fresh data/.operator_close_token "
+            f"before a loss-side CLOSE can be verified: {reason_text}",
+        )
+    )
+
+
 def _tradeable_live_ready_lanes(packet: dict[str, Any]) -> list[str]:
     lanes: list[str] = []
     for lane in packet.get("lanes", []) or []:
@@ -1711,9 +2023,101 @@ def _attack_recommended_tradeable_lane_ids(
     lane_ids: list[str] = []
     for raw_lane_id in advice.get("recommended_now_lane_ids", []) or []:
         lane_id = str(raw_lane_id or "")
-        if lane_id and lane_id in current and lane_id not in lane_ids:
+        learning_allowed, _reason = _learning_audit_allows_influenced_lane(packet, lane_id)
+        if lane_id and lane_id in current and lane_id not in lane_ids and learning_allowed:
             lane_ids.append(lane_id)
     return lane_ids
+
+
+def _attack_lane_learning_influenced(packet: dict[str, Any], lane_id: str) -> bool:
+    advice = packet.get("ai_attack_advice")
+    if not isinstance(advice, dict):
+        return False
+    influenced = {str(item) for item in advice.get("learning_influenced_lane_ids", []) or []}
+    if lane_id in influenced:
+        return True
+    for lane in advice.get("recommended_lane_learning", []) or []:
+        if not isinstance(lane, dict) or str(lane.get("lane_id") or "") != lane_id:
+            continue
+        return bool([item for item in (lane.get("learning_influences") or []) if str(item).strip()])
+    return False
+
+
+def _learning_audit_lane_ids(packet: dict[str, Any]) -> set[str]:
+    audit = packet.get("learning_audit")
+    if not isinstance(audit, dict):
+        return set()
+    influence = audit.get("learning_influence") if isinstance(audit.get("learning_influence"), dict) else {}
+    out: set[str] = set()
+    for lane in influence.get("lanes", []) or []:
+        if not isinstance(lane, dict):
+            continue
+        lane_id = str(lane.get("lane_id") or "")
+        if lane_id:
+            out.add(lane_id)
+    return out
+
+
+def _learning_audit_allows_influenced_lane(packet: dict[str, Any], lane_id: str) -> tuple[bool, str]:
+    if not _attack_lane_learning_influenced(packet, lane_id):
+        return True, ""
+    audit = packet.get("learning_audit")
+    if not isinstance(audit, dict):
+        return False, "learning audit packet is missing"
+    status = str(audit.get("status") or "missing")
+    if status in {"", "missing"}:
+        return False, "learning audit is missing"
+    if status == "LEARNING_AUDIT_BLOCKED":
+        blockers = [str(item) for item in (audit.get("blockers") or []) if str(item).strip()]
+        suffix = f": {'; '.join(blockers[:3])}" if blockers else ""
+        return False, f"learning audit is blocked{suffix}"
+    if lane_id not in _learning_audit_lane_ids(packet):
+        return False, f"learning audit does not cover influenced lane {lane_id}"
+    return True, ""
+
+
+def _learning_audit_trade_issues(
+    packet: dict[str, Any],
+    selected_lane_ids: tuple[str, ...],
+    evidence_refs: tuple[str, ...],
+) -> list[VerificationIssue]:
+    issues: list[VerificationIssue] = []
+    refs = set(evidence_refs)
+    for lane_id in selected_lane_ids:
+        if not _attack_lane_learning_influenced(packet, lane_id):
+            continue
+        allowed, reason = _learning_audit_allows_influenced_lane(packet, lane_id)
+        if not allowed:
+            code = "LEARNING_AUDIT_BLOCKED"
+            audit = packet.get("learning_audit")
+            status = str(audit.get("status") or "") if isinstance(audit, dict) else ""
+            if status in {"", "missing"}:
+                code = "LEARNING_AUDIT_REQUIRED"
+            elif "does not cover" in reason:
+                code = "LEARNING_AUDIT_STALE"
+            issues.append(
+                VerificationIssue(
+                    code,
+                    f"TRADE rejected for learning-influenced lane {lane_id}: {reason}",
+                )
+            )
+            continue
+        if "learning:audit" not in refs:
+            issues.append(
+                VerificationIssue(
+                    "LEARNING_AUDIT_EVIDENCE_MISSING",
+                    f"TRADE selecting learning-influenced lane {lane_id} must cite learning:audit",
+                )
+            )
+        lane_ref = f"learning:lane:{lane_id}"
+        if lane_ref not in refs:
+            issues.append(
+                VerificationIssue(
+                    "LEARNING_LANE_EVIDENCE_MISSING",
+                    f"TRADE selecting learning-influenced lane {lane_id} must cite {lane_ref}",
+                )
+            )
+    return issues
 
 
 def _lane_forecast_direction_issue(lane: dict[str, Any]) -> VerificationIssue | None:

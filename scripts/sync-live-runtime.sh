@@ -25,6 +25,7 @@ Environment overrides:
   QR_SYNC_MAIN_BRANCH
   QR_SYNC_LIVE_BRANCH
   QR_SYNC_AUTOMATION_FILE
+  QR_WEEKEND_TASK_STATE_FILE
   QR_SYNC_SKIP_AUTOMATION_CHECK=1
 USAGE
 }
@@ -34,6 +35,7 @@ readonly DEFAULT_LIVE_ROOT="/Users/tossaki/App/QuantRabbit-live"
 readonly DEFAULT_MAIN_BRANCH="main"
 readonly DEFAULT_LIVE_BRANCH="codex/live-trader-runtime"
 readonly DEFAULT_AUTOMATION_FILE="/Users/tossaki/.codex/automations/qr-trader/automation.toml"
+readonly DEFAULT_WEEKEND_TASK_STATE_FILE="/Users/tossaki/.codex/quant_rabbit_weekend_task_state.json"
 
 LIVE_ONLY=0
 SKIP_TESTS=0
@@ -65,6 +67,7 @@ LIVE_ROOT="${QR_SYNC_LIVE_ROOT:-$DEFAULT_LIVE_ROOT}"
 MAIN_BRANCH="${QR_SYNC_MAIN_BRANCH:-$DEFAULT_MAIN_BRANCH}"
 LIVE_BRANCH="${QR_SYNC_LIVE_BRANCH:-$DEFAULT_LIVE_BRANCH}"
 AUTOMATION_FILE="${QR_SYNC_AUTOMATION_FILE:-$DEFAULT_AUTOMATION_FILE}"
+WEEKEND_TASK_STATE_FILE="${QR_WEEKEND_TASK_STATE_FILE:-$DEFAULT_WEEKEND_TASK_STATE_FILE}"
 
 if [[ ! -d "$DEV_ROOT/.git" ]]; then
   echo "[sync-live-runtime] missing development git repo: $DEV_ROOT" >&2
@@ -255,14 +258,37 @@ verify_automation() {
     echo "[sync-live-runtime] automation file not found: $AUTOMATION_FILE" >&2
     exit 6
   fi
-  if ! grep -Fq 'status = "ACTIVE"' "$AUTOMATION_FILE"; then
-    echo "[sync-live-runtime] QR vNext Trader automation is not ACTIVE." >&2
-    exit 6
-  fi
   if ! grep -Fq "cwds = [\"$LIVE_ROOT\"]" "$AUTOMATION_FILE"; then
     echo "[sync-live-runtime] QR vNext Trader automation does not point at $LIVE_ROOT." >&2
     exit 6
   fi
+  if grep -Fq 'status = "ACTIVE"' "$AUTOMATION_FILE"; then
+    return 0
+  fi
+  if grep -Fq 'status = "PAUSED"' "$AUTOMATION_FILE" && weekend_guard_paused; then
+    echo "[sync-live-runtime] QR vNext Trader automation is PAUSED by weekend task guard." >&2
+    return 0
+  fi
+  echo "[sync-live-runtime] QR vNext Trader automation is not ACTIVE." >&2
+  exit 6
+}
+
+weekend_guard_paused() {
+  [[ -f "$WEEKEND_TASK_STATE_FILE" ]] || return 1
+  python3 - "$WEEKEND_TASK_STATE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text())
+except Exception:
+    sys.exit(1)
+tasks = payload.get("tasks")
+if payload.get("mode") == "paused" and isinstance(tasks, dict) and "codex:qr-trader" in tasks:
+    sys.exit(0)
+sys.exit(1)
+PY
 }
 
 copy_local_runtime_files() {

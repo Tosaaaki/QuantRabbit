@@ -8,6 +8,7 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from quant_rabbit.cli import main
 from quant_rabbit.gpt_trader import GPTTraderBrain, StaticTraderProvider
@@ -569,6 +570,37 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("TP_REBALANCE_REQUIRED", codes)
             self.assertTrue(payload["input_packet"]["protection_sidecars"]["tp_rebalance"]["required"])
 
+    def test_rejects_trade_when_entry_thesis_is_unverifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[_position()])
+            _write_entry_thesis_blocker(root, files, trade_id="101")
+            brain = _brain(root, files, _trade_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ENTRY_THESIS_REPAIR_REQUIRED", codes)
+            blockers = payload["input_packet"]["protection_sidecars"]["entry_thesis_blockers"]
+            self.assertEqual(blockers[0]["trade_id"], "101")
+            self.assertEqual(blockers[0]["verdict"], "REQUIRE_THESIS_REPAIR")
+
+    def test_rejects_wait_when_entry_thesis_is_unverifiable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, positions=[_position()])
+            _write_entry_thesis_blocker(root, files, trade_id="101")
+            brain = _brain(root, files, _wait_decision())
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("ENTRY_THESIS_REPAIR_REQUIRED", codes)
+
     def test_rejects_cancel_pending_without_order_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -725,6 +757,81 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["input_packet"]["ai_attack_advice"]["recommended_now_lane_ids"], [LANE_ID])
             self.assertFalse(payload["input_packet"]["ai_attack_advice"]["live_permission"])
 
+    def test_rejects_learning_influenced_trade_without_learning_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(json.dumps({}))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("LEARNING_AUDIT_REQUIRED", codes)
+
+    def test_rejects_learning_influenced_trade_when_audit_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(
+                json.dumps(_learning_audit_payload(status="LEARNING_AUDIT_BLOCKED", blockers=["recent learned lane effect is negative"]))
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{LANE_ID}", "learning:audit", f"learning:lane:{LANE_ID}"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("LEARNING_AUDIT_BLOCKED", codes)
+
+    def test_rejects_learning_influenced_trade_without_learning_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(json.dumps(_learning_audit_payload(status="LEARNING_AUDIT_WARN")))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(["attack:advice", f"attack:lane:{LANE_ID}"])
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("LEARNING_AUDIT_EVIDENCE_MISSING", codes)
+            self.assertIn("LEARNING_LANE_EVIDENCE_MISSING", codes)
+
+    def test_accepts_learning_influenced_trade_with_warn_audit_and_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(json.dumps(_learning_influenced_attack_advice()))
+            files["learning_audit"].write_text(json.dumps(_learning_audit_payload(status="LEARNING_AUDIT_WARN")))
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{LANE_ID}", "learning:audit", f"learning:lane:{LANE_ID}"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            self.assertEqual(payload["input_packet"]["learning_audit"]["status"], "LEARNING_AUDIT_WARN")
+
     def test_rejects_wait_when_attack_advice_recommends_lane_even_with_trader_exposure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -749,6 +856,74 @@ class GPTTraderBrainTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+
+    def test_wait_with_close_sidecar_reports_operator_auth_before_attack_advice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_forecast_close_recommendation(root, files)
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(
+                ["position:persistence:555", "attack:advice", f"attack:lane:{LANE_ID}"]
+            )
+            brain = _brain(root, files, decision)
+
+            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertNotIn("WAIT_MISSING_LIVE_READY_REJECTION", codes)
+            message = "\n".join(issue["message"] for issue in payload["verification_issues"])
+            self.assertIn("not a recovery-confidence hold", message)
+
+    def test_trade_with_unresolved_close_sidecar_requires_operator_close_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_forecast_close_recommendation(root, files)
+            decision = _trade_decision()
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
+    def test_wait_with_authorized_close_sidecar_must_emit_close_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_forecast_close_recommendation(root, files)
+            decision = _wait_decision()
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=True):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("POSITION_CLOSE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
 
     def test_rejects_trade_that_ignores_attack_advice_recommended_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1183,8 +1358,33 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         cot_path=files["cot"],
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
+        learning_audit_path=files["learning_audit"],
         predictive_limits_path=files["predictive_limits"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
+    )
+
+
+def _write_entry_thesis_blocker(root: Path, files: dict[str, Path], *, trade_id: str) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+    ).isoformat()
+    (root / "thesis_evolution_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "evolutions": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "status": "UNVERIFIABLE",
+                        "verdict": "REQUIRE_THESIS_REPAIR",
+                        "rationale": "missing entry_thesis_ledger row",
+                    }
+                ],
+            }
+        )
     )
 
 
@@ -1205,6 +1405,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "cot": root / "cot.json",
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
+        "learning_audit": root / "learning_audit.json",
         "predictive_limits": root / "predictive_limits.json",
     }
     now = datetime.now(timezone.utc).isoformat()
@@ -1401,6 +1602,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         )
     )
     files["attack_advice"].write_text(json.dumps({}))
+    files["learning_audit"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     return files
 
@@ -1547,6 +1749,64 @@ def _batch_trade_decision(lane_ids: list[str]) -> dict:
     decision["evidence_refs"] = refs
     decision["operator_summary"] = "Accept the verified EUR_USD continuation basket."
     return decision
+
+
+def _learning_influenced_attack_advice(*, lane_id: str = LANE_ID) -> dict:
+    return {
+        "status": "ATTACK_PARTIAL",
+        "read_only": True,
+        "live_permission": False,
+        "recommended_now_lane_ids": [lane_id],
+        "recommended_now_reward_jpy": 900.0,
+        "recommended_now_risk_jpy": 300.0,
+        "lanes": [
+            {
+                "lane_id": lane_id,
+                "score": 44.0,
+                "learning_influences": ["ai_backtest_research_positive_edge"],
+                "learning_score_delta": 8.0,
+                "learning_influence_details": [
+                    {
+                        "influence": "ai_backtest_research_positive_edge",
+                        "source": "ai_backtest",
+                        "reason": "profitable research edge, reduced weight",
+                        "score_delta": 8.0,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _learning_audit_payload(
+    *,
+    status: str,
+    lane_id: str = LANE_ID,
+    blockers: list[str] | None = None,
+) -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "blockers": blockers or [],
+        "warnings": ["research edge is not target-coverage certified"] if status == "LEARNING_AUDIT_WARN" else [],
+        "learning_influence": {
+            "influenced_lanes": 1,
+            "total_learning_score_delta": 8.0,
+            "lanes": [
+                {
+                    "lane_id": lane_id,
+                    "learning_influences": ["ai_backtest_research_positive_edge"],
+                    "learning_score_delta": 8.0,
+                }
+            ],
+        },
+        "effect_metrics": {
+            "closed_trades": 30,
+            "net_jpy": 1200.0,
+            "profit_factor": 1.2,
+            "expectancy_jpy": 40.0,
+        },
+    }
 
 
 def _specialist_review(
@@ -1796,6 +2056,36 @@ def _close_fixtures(
     pc["charts"][0]["views"] = _close_tech_views("UP" if position_side == "SHORT" else "DOWN")
     files["pair_charts"].write_text(json.dumps(pc))
     return files
+
+
+def _write_fresh_forecast_close_recommendation(
+    root: Path,
+    files: dict[str, Path],
+    *,
+    trade_id: str = "555",
+    pair: str = "EUR_USD",
+    side: str = "SHORT",
+) -> None:
+    snapshot = json.loads(files["snapshot"].read_text())
+    generated_at = (
+        datetime.fromisoformat(snapshot["fetched_at_utc"]) + timedelta(seconds=1)
+    ).isoformat()
+    (root / "forecast_persistence_report.json").write_text(
+        json.dumps(
+            {
+                "generated_at_utc": generated_at,
+                "verdicts": [
+                    {
+                        "trade_id": trade_id,
+                        "pair": pair,
+                        "side": side,
+                        "verdict": "RECOMMEND_CLOSE",
+                        "reason": "fresh forecast persistence no longer supports recovery",
+                    }
+                ],
+            }
+        )
+    )
 
 
 class CloseDisciplineTest(unittest.TestCase):

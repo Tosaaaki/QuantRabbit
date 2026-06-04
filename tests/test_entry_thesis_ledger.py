@@ -10,6 +10,8 @@ from pathlib import Path
 
 from quant_rabbit.strategy.entry_thesis_ledger import (
     EntryThesis,
+    REQUIRE_THESIS_REPAIR_VERDICT,
+    UNVERIFIABLE_STATUS,
     evaluate_all_open_positions,
     evaluate_thesis_evolution,
     load_entry_thesis,
@@ -18,6 +20,7 @@ from quant_rabbit.strategy.entry_thesis_ledger import (
     record_entry_thesis,
     record_entry_thesis_from_order_fill,
     record_entry_thesis_from_response,
+    record_entry_thesis_from_response_result,
     write_thesis_evolution_report,
 )
 
@@ -251,6 +254,36 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertAlmostEqual(promoted.entry_price, 1.16013)
             loaded = load_entry_thesis("471492", root)
             self.assertIsNotNone(loaded)
+
+    def test_record_from_response_result_verifies_pending_write(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("SHORT")
+                thesis = "pending write verification"
+                entry = 1.16013
+                tp = 1.1583
+                sl = 1.1641
+                metadata: dict = {}
+
+            result = record_entry_thesis_from_response_result(
+                response={
+                    "orderCreateTransaction": {
+                        "id": "471491",
+                        "type": "STOP_ORDER",
+                        "instrument": "EUR_USD",
+                    }
+                },
+                intent=FakeIntent(),
+                data_root=root,
+            )
+
+            self.assertEqual(result.status, "PENDING_RECORDED")
+            self.assertEqual(result.order_id, "471491")
+            self.assertIsNotNone(result.pending)
+            self.assertEqual(result.to_dict()["pending"]["order_id"], "471491")
 
     def _seed_thesis(self, root: Path) -> None:
         record_entry_thesis(
@@ -536,9 +569,10 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(len(evs), 1)
             self.assertEqual(evs[0].trade_id, "LEGACY1")
             self.assertEqual(evs[0].entry_forecast, "MISSING_ENTRY_THESIS")
-            self.assertEqual(evs[0].status, "WEAKENED")
-            self.assertEqual(evs[0].verdict, "HOLD")
+            self.assertEqual(evs[0].status, UNVERIFIABLE_STATUS)
+            self.assertEqual(evs[0].verdict, REQUIRE_THESIS_REPAIR_VERDICT)
             self.assertIn("missing entry_thesis_ledger row", evs[0].rationale)
+            self.assertIn("do not expand TP", evs[0].rationale)
             self.assertAlmostEqual(evs[0].age_hours, 3.0, places=3)
 
     def test_regime_shift_demotes_still_valid_to_weakened(self) -> None:
@@ -556,6 +590,24 @@ class EntryThesisLedgerTest(unittest.TestCase):
             assert ev is not None
             self.assertEqual(ev.status, "WEAKENED")
             self.assertIn("regime SHIFTED", ev.rationale)
+
+    def test_write_report_marks_missing_thesis_as_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            evs = evaluate_all_open_positions(
+                [_Position(trade_id="LEGACY1", pair="EUR_USD", side="SHORT", owner="trader")],
+                current_forecasts_by_pair={"EUR_USD": _Forecast("UNCLEAR", 0.06)},
+                current_regimes_by_pair={"EUR_USD": "RANGE"},
+                data_root=root,
+            )
+
+            path = write_thesis_evolution_report(evs, data_root=root)
+            payload = json.loads(path.read_text())
+
+            self.assertEqual(payload["by_status"]["UNVERIFIABLE"], 1)
+            self.assertEqual(payload["entry_thesis_coverage"]["missing"], 1)
+            self.assertTrue(payload["entry_thesis_coverage"]["blocking"])
+            self.assertEqual(payload["entry_thesis_coverage"]["blocking_trade_ids"], ["LEGACY1"])
 
     def test_evaluate_all_positions_filters_non_trader(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -640,7 +692,9 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(payload["count"], 2)
             self.assertEqual(payload["by_status"]["BROKEN"], 1)
             self.assertEqual(payload["by_status"]["STILL_VALID"], 1)
+            self.assertEqual(payload["by_status"]["UNVERIFIABLE"], 0)
             self.assertEqual(payload["entry_thesis_coverage"]["missing"], 0)
+            self.assertFalse(payload["entry_thesis_coverage"]["blocking"])
 
 
 if __name__ == "__main__":

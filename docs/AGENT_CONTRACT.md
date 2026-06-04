@@ -21,6 +21,8 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Execution ledger latest report | `docs/execution_ledger_report.md` |
 | Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
+| Weekend task switcher | `scripts/qr_weekend_task_switch.py` / `quant_rabbit.weekend_task_switch` |
+| Weekend task state | `~/.codex/quant_rabbit_weekend_task_state.json` |
 | Legacy archive root | `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` |
 | Archive manifest | `…/ARCHIVE_MANIFEST_20260430T151527Z.md` |
 | Archive log pointer | `ARCHIVE_POINTER.md` |
@@ -38,6 +40,7 @@ Rules:
 
 - **Exactly one trader scheduled task enabled at a time.** Two tasks against the same OANDA account = duplicate orders, double-counted exposure, contradictory protection actions.
 - **Switch by enabling / disabling scheduled tasks.** No code, prompt, or playbook changes are required to swap the executing model.
+- **Weekend scheduler guard.** Codex automation `qr-weekend-market-off` pauses related QuantRabbit schedulers every Saturday 06:00 JST; `qr-weekend-market-on` restores them every Monday 07:00 JST. The switcher snapshots current task state before pausing and restores only that snapshot, so a disabled Claude trader is not enabled accidentally and multiple trader schedulers are never restored. While `~/.codex/quant_rabbit_weekend_task_state.json` has `mode=paused`, `sync-live-runtime.sh` may accept `qr-trader` as `PAUSED`; without that guard state, a paused trader automation remains a sync blocker.
 - **Every cycle reads the same `docs/SKILL_trader.md`.** Changes there affect every subsequent cycle whichever model runs.
 - **Runtime/development worktrees are separated.** Active trader scheduled tasks must use `/Users/tossaki/App/QuantRabbit-live`, a clean committed worktree dedicated to broker reads, receipts, and gateway execution. Development and strategy improvement may happen in `/Users/tossaki/App/QuantRabbit` or another worktree, but a dirty development tree must never be the live trader `cwd`.
 - **Main is the stable integration branch.** Development commits are promoted by `scripts/sync-live-runtime.sh`: source branch → `main` (fast-forward only) → `codex/live-trader-runtime` (fast-forward only). Do not commit directly in `/Users/tossaki/App/QuantRabbit-live`; that branch mirrors `main` for runtime and creates no live-side commits. The live wrapper runs `scripts/sync-live-runtime.sh --live-only --skip-tests` before each gateway cycle so a promoted `main` cannot be forgotten and runtime `docs/*_report.md` drift is cleared.
@@ -187,6 +190,14 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 - Parallel strategy review is allowed only as read-only reasoning over the same broker/market packet. Trend, range, and breakout-failure reviewers may produce advisory `strategy_reviews`, but only the final trader receipt may select a lane or `selected_lane_ids` basket, and execution still flows only through the verified `gpt-trader-decision` → gateway path.
 - Parallel specialist observation is allowed only as processed read-only input to the single trader. Macro/news, indicator, flow/levels, risk-audit, strategy, and portfolio-context specialists may produce advisory `specialist_reviews` over the same broker/market packet, but they must declare `read_only=true`, `live_permission=false`, cite only packet evidence refs, and must not select lanes, cancel orders, change risk budgets, stage orders, or create a second trader loop.
 - `ai-attack-advice` is also read-only. It may rank current `LIVE_READY` lanes and expose advisory parameter surfaces to Codex automation, but it cannot grant live permission, raise risk budgets, stage orders, or create a second trader loop.
+- `learning-audit` is the live-facing audit for that ranking. Learning may
+  influence score order only among already-`LIVE_READY` lanes. If an advised
+  lane exposes `learning_influences`, `gpt-trader-decision` must require a
+  current non-blocked `data/learning_audit.json` covering that lane and the
+  receipt must cite `learning:audit` plus `learning:lane:<lane_id>`. Missing,
+  stale, or blocked learning audit is a no-trade gate for that learning-
+  influenced lane; it is not a reason to override RiskEngine, gateway,
+  entry-thesis, TP, spread, event, or broker-truth blockers.
 - When `ai_attack_advice.recommended_now_lane_ids` intersects current tradeable `LIVE_READY` lanes and the daily target remains open, WAIT / REQUEST_EVIDENCE is invalid unless a named deterministic exposure, risk, strategy, spread, event, or broker-truth gate blocks the lane. Protected trader-owned exposure is not by itself a no-trade gate; additional entries are still decided by `gpt-trader-decision` and validated by `LiveOrderGateway` basket / portfolio checks. A TRADE using advised lanes must cite both `attack:advice` and `attack:lane:<lane_id>`. The first tradeable lane in `recommended_now_lane_ids` is the dynamic missed-edge repair priority for the cycle; the selected basket must include it before lower-ranked advice may be used. If that first lane is `EUR_USD` `SHORT`, it is the primary repair target unless a named deterministic gate blocks it after the advice packet was built.
 - Basket breadth is not a GPT JSON formatting veto. If the accepted decision includes the first advised lane but omits other advised pairs, `gpt-trader-decision` records a warning and the gateway cycle expands to the deterministic prefilter basket; pairs that cannot fit are rejected by executable risk, margin, exposure, strategy, spread, event, duplicate-geometry, or broker-truth gates.
 - Deterministic prefilter overlays `ai_attack_advice`. The trader_brain prefilter that produces `basket_lane_ids` must surface the same primary advised lanes the verifier expects: a `LIVE_READY` lane appearing in `ai_attack_advice.recommended_now_lane_ids[:K]` (where K = `ATTACK_ADVICE_PROMOTION_RANK_CEILING`, mirroring `gpt_trader.PRIMARY_ATTACK_RANK_CEILING = 4`) receives a documented score bonus + rationale entry, so it does not silently fall out of `SEND_ENTRY` because `pair_charts` long/short bias points the other way. The overlay never overrides §11 hard blocks (`BLOCK_UNTIL_NEW_EVIDENCE`, missing strategy profile, missing receipt) or §9 exposure blocks; it only nudges scoring among already-LIVE_READY candidates. The K cap is the same conviction gate the verifier uses for `BASKET_PAIR_COVERAGE_INCOMPLETE` — both must move together.
@@ -358,10 +369,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/br
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
+PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
 
 # Decision verification
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
     --snapshot data/broker_snapshot.json \
+    --learning-audit data/learning_audit.json \
     --decision-response data/codex_trader_decision_response.json
 
 # Risk / receipts
@@ -379,6 +392,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli autotrade-cycle \
 # Replay / learning / certification
 PYTHONPATH=src python3 -m quant_rabbit.cli replay-execution --prices data/quote_path.json --target-jpy 22278
 PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.json
+PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
 PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
 
 # LIVE (gated)

@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sys
+import sqlite3
 import shutil
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -26,25 +27,32 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
+    DEFAULT_LEARNING_AUDIT,
+    DEFAULT_LEARNING_AUDIT_REPORT,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_OUTCOME_MART,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_POSITION_EXECUTION_REPORT,
     DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_MANAGEMENT_REPORT,
+    DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_DECISION_REPORT,
     DEFAULT_TRADER_JOURNAL,
     DEFAULT_TRADER_SETTINGS,
+    DEFAULT_VERIFICATION_LEDGER,
+    DEFAULT_VERIFICATION_LEDGER_REPORT,
     ROOT,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
+from quant_rabbit.learning_audit import LearningAuditor
 from quant_rabbit.risk import RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
@@ -59,6 +67,7 @@ from quant_rabbit.strategy.trader_brain import (
     TraderDecision,
     load_trader_settings,
 )
+from quant_rabbit.verification_ledger import VerificationLedger
 
 
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
@@ -288,6 +297,32 @@ def _default_pair_charts_path(campaign_plan_path: Path) -> Path:
     return DEFAULT_PAIR_CHARTS
 
 
+def _gpt_sidecar_path(
+    *,
+    explicit: Path | None,
+    gpt_decision_path: Path,
+    default_path: Path,
+) -> Path:
+    if explicit is not None:
+        return explicit
+    if gpt_decision_path == DEFAULT_GPT_TRADER_DECISION:
+        return default_path
+    return gpt_decision_path.with_name(default_path.name)
+
+
+def _attack_sidecar_path(
+    *,
+    explicit: Path | None,
+    attack_advice_path: Path,
+    default_path: Path,
+) -> Path:
+    if explicit is not None:
+        return explicit
+    if attack_advice_path == DEFAULT_AI_ATTACK_ADVICE:
+        return default_path
+    return attack_advice_path.with_name(default_path.name)
+
+
 def _passes_basket_prefilter(score: LaneScore, *, allow_existing_pending: bool = False) -> bool:
     if _passes_gpt_prefilter(score):
         return True
@@ -428,6 +463,14 @@ class AutoTradeCycle:
         gpt_decision_report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
         gpt_target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         gpt_attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        gpt_learning_audit_path: Path | None = None,
+        gpt_learning_audit_report_path: Path | None = None,
+        gpt_learning_audit_db_path: Path | None = None,
+        gpt_verification_ledger_path: Path | None = None,
+        gpt_verification_ledger_report_path: Path | None = None,
+        gpt_ai_backtest_path: Path | None = None,
+        gpt_outcome_mart_path: Path | None = None,
+        gpt_post_trade_learning_path: Path | None = None,
         gpt_max_lanes: int = DEFAULT_GPT_MAX_LANES,
         gpt_wait_retry_limit: int = 2,
         reuse_market_artifacts: bool = False,
@@ -468,6 +511,46 @@ class AutoTradeCycle:
         self.gpt_decision_report_path = gpt_decision_report_path
         self.gpt_target_state_path = gpt_target_state_path
         self.gpt_attack_advice_path = gpt_attack_advice_path
+        self.gpt_learning_audit_path = _gpt_sidecar_path(
+            explicit=gpt_learning_audit_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_LEARNING_AUDIT,
+        )
+        self.gpt_learning_audit_report_path = _gpt_sidecar_path(
+            explicit=gpt_learning_audit_report_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_LEARNING_AUDIT_REPORT,
+        )
+        self.gpt_learning_audit_db_path = _gpt_sidecar_path(
+            explicit=gpt_learning_audit_db_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_EXECUTION_LEDGER_DB,
+        )
+        self.gpt_verification_ledger_path = _gpt_sidecar_path(
+            explicit=gpt_verification_ledger_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_VERIFICATION_LEDGER,
+        )
+        self.gpt_verification_ledger_report_path = _gpt_sidecar_path(
+            explicit=gpt_verification_ledger_report_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_VERIFICATION_LEDGER_REPORT,
+        )
+        self.gpt_ai_backtest_path = _attack_sidecar_path(
+            explicit=gpt_ai_backtest_path,
+            attack_advice_path=gpt_attack_advice_path,
+            default_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+        )
+        self.gpt_outcome_mart_path = _attack_sidecar_path(
+            explicit=gpt_outcome_mart_path,
+            attack_advice_path=gpt_attack_advice_path,
+            default_path=DEFAULT_OUTCOME_MART,
+        )
+        self.gpt_post_trade_learning_path = _attack_sidecar_path(
+            explicit=gpt_post_trade_learning_path,
+            attack_advice_path=gpt_attack_advice_path,
+            default_path=DEFAULT_POST_TRADE_LEARNING,
+        )
         self.gpt_max_lanes = gpt_max_lanes
         self.gpt_wait_retry_limit = gpt_wait_retry_limit
         self.reuse_market_artifacts = reuse_market_artifacts
@@ -2074,6 +2157,8 @@ class AutoTradeCycle:
 
     def _run_gpt_handoff(self) -> GptHandoffSummary:
         try:
+            self._run_learning_audit_for_gpt_handoff()
+            self._run_verification_ledger_for_gpt_handoff()
             summary = self._gpt_brain().run(snapshot_path=self.snapshot_path)
             return GptHandoffSummary(
                 status=summary.status,
@@ -2085,7 +2170,7 @@ class AutoTradeCycle:
                 cancel_order_ids=summary.cancel_order_ids,
                 close_trade_ids=summary.close_trade_ids,
             )
-        except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+        except (RuntimeError, ValueError, OSError, sqlite3.Error, json.JSONDecodeError) as exc:
             return GptHandoffSummary(
                 status="ERROR",
                 action=None,
@@ -2177,6 +2262,36 @@ class AutoTradeCycle:
             archive_path = path.with_name(f"{path.stem}.close_reentry{path.suffix}")
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, archive_path)
+
+    def _run_learning_audit_for_gpt_handoff(self) -> None:
+        LearningAuditor(
+            db_path=self.gpt_learning_audit_db_path,
+            output_path=self.gpt_learning_audit_path,
+            report_path=self.gpt_learning_audit_report_path,
+        ).run(
+            ai_backtest_path=self.gpt_ai_backtest_path,
+            outcome_mart_path=self.gpt_outcome_mart_path,
+            post_trade_learning_path=self.gpt_post_trade_learning_path,
+            ai_attack_advice_path=self.gpt_attack_advice_path,
+        )
+
+    def _run_verification_ledger_for_gpt_handoff(self) -> None:
+        VerificationLedger(
+            db_path=self.gpt_learning_audit_db_path,
+            output_path=self.gpt_verification_ledger_path,
+            report_path=self.gpt_verification_ledger_report_path,
+        ).run(
+            snapshot_path=self.snapshot_path,
+            order_intents_path=self.intents_path,
+            gpt_decision_path=self.gpt_decision_path,
+            live_order_path=self.live_order_output_path,
+            position_execution_path=self.position_execution_path,
+            ai_backtest_path=self.gpt_ai_backtest_path,
+            outcome_mart_path=self.gpt_outcome_mart_path,
+            post_trade_learning_path=self.gpt_post_trade_learning_path,
+            ai_attack_advice_path=self.gpt_attack_advice_path,
+            learning_audit_path=self.gpt_learning_audit_path,
+        )
 
     def _cancel_gpt_pending_orders(
         self,
@@ -2294,6 +2409,8 @@ class AutoTradeCycle:
             target_state_path=self.gpt_target_state_path,
             pair_charts_path=self.pair_charts_path,
             attack_advice_path=self.gpt_attack_advice_path,
+            learning_audit_path=self.gpt_learning_audit_path,
+            verification_ledger_path=self.gpt_verification_ledger_path,
             output_path=self.gpt_decision_path,
             report_path=self.gpt_decision_report_path,
             max_lanes=self.gpt_max_lanes,

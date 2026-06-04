@@ -29,8 +29,8 @@ This module:
      * regime: same (TREND→TREND OK)? shifted (TREND→RANGE = caution)?
      * key drivers: still active? broken?
    - Emit `ThesisEvolution`:
-     * status: STILL_VALID / WEAKENED / BROKEN
-     * verdict: HOLD / EXTEND / RECOMMEND_CLOSE
+     * status: STILL_VALID / WEAKENED / BROKEN / UNVERIFIABLE
+     * verdict: HOLD / EXTEND / RECOMMEND_CLOSE / REQUIRE_THESIS_REPAIR
      * rationale: what changed
    Writes to `data/thesis_evolution_report.json` per cycle.
 
@@ -38,8 +38,10 @@ The trader/operator reads thesis_evolution_report.json and:
 - STILL_VALID + EXTEND → hold, let winners run
 - WEAKENED → caution, smaller TP if any
 - BROKEN → fresh Gate A evidence for close; Gate B still required
-- Missing entry-thesis rows are surfaced as WEAKENED/HOLD coverage gaps so
-  legacy positions cannot disappear from the management surface.
+- Missing entry-thesis rows are surfaced as UNVERIFIABLE /
+  REQUIRE_THESIS_REPAIR hard management blockers. They are not standalone
+  close evidence, but they block normal WAIT/new-risk/TP-expansion paths until
+  position_thesis / forecast_persistence supplies machine-checkable evidence.
 
 No auto-close from this module. The kill switch (QR_DISABLE_AUTO_CLOSE)
 stays on; close decisions go through gpt_trader and still need Gate B.
@@ -65,6 +67,8 @@ FORECAST_HISTORY_FILENAME = "forecast_history.jsonl"
 PENDING_ORDER_TYPES = {"LIMIT_ORDER", "STOP_ORDER", "MARKET_IF_TOUCHED_ORDER"}
 DEFAULT_THESIS_INVALIDATION_BUFFER_PIPS = 2.0
 TECHNICAL_INVALIDATION_TFS = ("M5", "M15", "M30", "H1")
+UNVERIFIABLE_STATUS = "UNVERIFIABLE"
+REQUIRE_THESIS_REPAIR_VERDICT = "REQUIRE_THESIS_REPAIR"
 
 
 def thesis_invalidation_buffer_pips(buffer_pips: Optional[float] = None) -> float:
@@ -376,6 +380,30 @@ class PendingEntryThesis:
 
 
 @dataclass(frozen=True)
+class EntryThesisRecordResult:
+    status: str
+    trade_id: Optional[str] = None
+    order_id: Optional[str] = None
+    issue: Optional[str] = None
+    thesis: Optional[EntryThesis] = None
+    pending: Optional[PendingEntryThesis] = None
+
+    def to_dict(self) -> dict:
+        payload: dict[str, Any] = {"status": self.status}
+        if self.trade_id:
+            payload["trade_id"] = self.trade_id
+        if self.order_id:
+            payload["order_id"] = self.order_id
+        if self.issue:
+            payload["issue"] = self.issue
+        if self.thesis is not None:
+            payload["thesis"] = self.thesis.to_dict()
+        if self.pending is not None:
+            payload["pending"] = self.pending.to_dict()
+        return payload
+
+
+@dataclass(frozen=True)
 class ThesisEvolution:
     trade_id: str
     pair: str
@@ -387,8 +415,8 @@ class ThesisEvolution:
     current_confidence: float
     entry_regime: Optional[str]
     current_regime: Optional[str]
-    status: str  # "STILL_VALID" | "WEAKENED" | "BROKEN"
-    verdict: str  # "HOLD" | "EXTEND" | "RECOMMEND_CLOSE"
+    status: str  # "STILL_VALID" | "WEAKENED" | "BROKEN" | "UNVERIFIABLE"
+    verdict: str  # "HOLD" | "EXTEND" | "RECOMMEND_CLOSE" | "REQUIRE_THESIS_REPAIR"
     rationale: str
 
     def to_dict(self) -> dict:
@@ -637,64 +665,86 @@ def _side_from_units(units: Optional[int]) -> Optional[str]:
     return "LONG" if units > 0 else "SHORT"
 
 
-def record_entry_thesis_from_response(
+def record_entry_thesis_from_response_result(
     *,
     response: Optional[Dict[str, Any]],
     intent: Any,
     data_root: Path,
     now: Optional[datetime] = None,
-) -> Optional[EntryThesis]:
-    """Build an `EntryThesis` from a SENT OANDA response + intent metadata.
+) -> EntryThesisRecordResult:
+    """Build and verify entry-thesis sidecars from a SENT OANDA response.
 
     Called from execution.LiveOrderGateway right after a successful
     `post_order_json` returns. Reads the canonical forecast that
     trader_brain just wrote for this pair, snapshots side/entry_price,
-    and appends to `data/entry_thesis_ledger.jsonl`. Returns the
-    written thesis (or None when disabled / unable to identify trade).
-
-    Failure here MUST NOT raise — execution path is the hot path.
+    and appends to `data/entry_thesis_ledger.jsonl` or the pending-order
+    sidecar. Failure here does not raise, but the result is explicit so the
+    live gateway can surface a verification gap.
     """
     if _is_disabled():
-        return None
+        return EntryThesisRecordResult(
+            status="DISABLED",
+            issue="QR_DISABLE_ENTRY_THESIS_LEDGER is active",
+        )
     try:
         trade_id = _response_trade_id(response)
         if not trade_id:
             pending_order_id = _response_pending_order_id(response)
             if not pending_order_id:
-                return None
+                return EntryThesisRecordResult(status="NOT_APPLICABLE")
             pair = str(getattr(intent, "pair", ""))
             side_up = _intent_side(intent)
             if not pair or side_up not in ("LONG", "SHORT"):
-                return None
+                return EntryThesisRecordResult(
+                    status="FAILED",
+                    order_id=pending_order_id,
+                    issue="pending order response has no recordable pair/side",
+                )
             forecast = load_latest_forecast(pair, data_root) or {}
             metadata = dict(getattr(intent, "metadata", {}) or {})
             now = now or datetime.now(timezone.utc)
-            record_pending_entry_thesis(
-                PendingEntryThesis(
-                    timestamp_utc=now.isoformat().replace("+00:00", "Z"),
-                    order_id=pending_order_id,
-                    pair=pair,
-                    side=side_up,
-                    entry_price=float(getattr(intent, "entry", 0) or 0),
-                    forecast_direction=str(forecast.get("direction") or "UNCLEAR"),
-                    forecast_confidence=float(forecast.get("confidence") or 0.0),
-                    regime=str(forecast.get("regime") or metadata.get("regime_state") or "") or None,
-                    invalidation_price=forecast.get("invalidation_price") or getattr(intent, "sl", None),
-                    target_price=forecast.get("target_price") or getattr(intent, "tp", None),
-                    key_drivers=_build_key_drivers(
-                        forecast=forecast,
-                        metadata=metadata,
-                        thesis_text=str(getattr(intent, "thesis", "") or ""),
-                    ),
-                    lane_id=str(metadata.get("parent_lane_id") or metadata.get("lane_id") or ""),
+            pending = PendingEntryThesis(
+                timestamp_utc=now.isoformat().replace("+00:00", "Z"),
+                order_id=pending_order_id,
+                pair=pair,
+                side=side_up,
+                entry_price=float(getattr(intent, "entry", 0) or 0),
+                forecast_direction=str(forecast.get("direction") or "UNCLEAR"),
+                forecast_confidence=float(forecast.get("confidence") or 0.0),
+                regime=str(forecast.get("regime") or metadata.get("regime_state") or "") or None,
+                invalidation_price=forecast.get("invalidation_price") or getattr(intent, "sl", None),
+                target_price=forecast.get("target_price") or getattr(intent, "tp", None),
+                key_drivers=_build_key_drivers(
+                    forecast=forecast,
+                    metadata=metadata,
+                    thesis_text=str(getattr(intent, "thesis", "") or ""),
                 ),
+                lane_id=str(metadata.get("parent_lane_id") or metadata.get("lane_id") or ""),
+            )
+            record_pending_entry_thesis(
+                pending,
                 data_root,
             )
-            return None
+            loaded_pending = load_pending_entry_thesis(pending_order_id, data_root)
+            if loaded_pending is None:
+                return EntryThesisRecordResult(
+                    status="FAILED",
+                    order_id=pending_order_id,
+                    issue="pending entry thesis write could not be verified",
+                )
+            return EntryThesisRecordResult(
+                status="PENDING_RECORDED",
+                order_id=pending_order_id,
+                pending=loaded_pending,
+            )
         pair = str(getattr(intent, "pair", ""))
         side_up = _intent_side(intent)
         if not pair or side_up not in ("LONG", "SHORT"):
-            return None
+            return EntryThesisRecordResult(
+                status="FAILED",
+                trade_id=trade_id,
+                issue="fill response has no recordable pair/side",
+            )
         fill_price = _response_fill_price(response) or float(getattr(intent, "entry", 0) or 0)
 
         forecast = load_latest_forecast(pair, data_root) or {}
@@ -703,8 +753,9 @@ def record_entry_thesis_from_response(
         regime = forecast.get("regime") or metadata.get("regime_state") or None
 
         now = now or datetime.now(timezone.utc)
-        if load_entry_thesis(trade_id, data_root) is not None:
-            return load_entry_thesis(trade_id, data_root)
+        existing = load_entry_thesis(trade_id, data_root)
+        if existing is not None:
+            return EntryThesisRecordResult(status="RECORDED", trade_id=trade_id, thesis=existing)
         entry_thesis = EntryThesis(
             timestamp_utc=now.isoformat().replace("+00:00", "Z"),
             trade_id=trade_id,
@@ -723,11 +774,32 @@ def record_entry_thesis_from_response(
             ),
         )
         record_entry_thesis(entry_thesis, data_root)
-        return entry_thesis
-    except Exception:
-        # Never break the live order path — thesis recording is purely
-        # informational/auxiliary.
-        return None
+        loaded = load_entry_thesis(trade_id, data_root)
+        if loaded is None:
+            return EntryThesisRecordResult(
+                status="FAILED",
+                trade_id=trade_id,
+                issue="entry thesis write could not be verified",
+            )
+        return EntryThesisRecordResult(status="RECORDED", trade_id=trade_id, thesis=loaded)
+    except Exception as exc:
+        return EntryThesisRecordResult(status="FAILED", issue=str(exc))
+
+
+def record_entry_thesis_from_response(
+    *,
+    response: Optional[Dict[str, Any]],
+    intent: Any,
+    data_root: Path,
+    now: Optional[datetime] = None,
+) -> Optional[EntryThesis]:
+    """Backward-compatible wrapper returning only immediate-fill thesis."""
+    return record_entry_thesis_from_response_result(
+        response=response,
+        intent=intent,
+        data_root=data_root,
+        now=now,
+    ).thesis
 
 
 def record_entry_thesis_from_order_fill(
@@ -940,9 +1012,9 @@ def evaluate_missing_entry_thesis_position(
 ) -> ThesisEvolution:
     """Surface a trader-owned open position that has no entry thesis row.
 
-    The row is HOLD-only by design. A missing ledger is a coverage defect, not
-    standalone Gate A close evidence; no-ledger close evidence still comes from
-    position_thesis_report with entry-buffer and multi-TF confirmation.
+    The row is a hard management blocker, not standalone Gate A close evidence.
+    No-ledger close evidence still comes from position_thesis_report with
+    entry-buffer and multi-TF confirmation.
     """
 
     now = now or datetime.now(timezone.utc)
@@ -964,14 +1036,15 @@ def evaluate_missing_entry_thesis_position(
         current_confidence=current_conf,
         entry_regime=None,
         current_regime=current_regime,
-        status="WEAKENED",
-        verdict="HOLD",
+        status=UNVERIFIABLE_STATUS,
+        verdict=REQUIRE_THESIS_REPAIR_VERDICT,
         rationale=(
             "missing entry_thesis_ledger row; original entry reason cannot be "
-            "compared, so thesis_evolution will not authorize Gate A; "
+            "machine-verified, so thesis_evolution will not authorize Gate A; "
             f"current forecast {current_dir} conf={current_conf:.2f} {support_word} {side_up}; "
-            "use position_thesis no-ledger fallback or forecast_persistence for "
-            "machine-checkable close evidence"
+            "hard management blocker: do not expand TP, do not add new risk, "
+            "and use position_thesis no-ledger fallback or forecast_persistence "
+            "for machine-checkable close/repair evidence"
         ),
     )
 
@@ -992,8 +1065,9 @@ def evaluate_all_open_positions(
     keyed by OANDA pair string (e.g. "EUR_JPY"). Forecasts can be
     `DirectionalForecast` instances or anything with `.direction` and
     `.confidence`. Positions without an entry thesis record (legacy
-    pre-2026-05-15 or failed fill promotion) are reported as WEAKENED/HOLD
-    coverage gaps instead of being skipped silently.
+    pre-2026-05-15 or failed fill promotion) are reported as UNVERIFIABLE /
+    REQUIRE_THESIS_REPAIR hard management blockers instead of being skipped
+    silently.
     """
     if _is_disabled():
         return []
@@ -1067,6 +1141,11 @@ def write_thesis_evolution_report(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     now = now or datetime.now(timezone.utc)
     missing_thesis = [e.trade_id for e in evolutions if e.entry_forecast == "MISSING_ENTRY_THESIS"]
+    blocking_thesis = [
+        e.trade_id
+        for e in evolutions
+        if e.status == UNVERIFIABLE_STATUS or e.verdict == REQUIRE_THESIS_REPAIR_VERDICT
+    ]
     payload = {
         "generated_at_utc": now.isoformat().replace("+00:00", "Z"),
         "count": len(evolutions),
@@ -1074,11 +1153,14 @@ def write_thesis_evolution_report(
             "STILL_VALID": sum(1 for e in evolutions if e.status == "STILL_VALID"),
             "WEAKENED": sum(1 for e in evolutions if e.status == "WEAKENED"),
             "BROKEN": sum(1 for e in evolutions if e.status == "BROKEN"),
+            UNVERIFIABLE_STATUS: sum(1 for e in evolutions if e.status == UNVERIFIABLE_STATUS),
         },
         "entry_thesis_coverage": {
             "recorded": len(evolutions) - len(missing_thesis),
             "missing": len(missing_thesis),
             "missing_trade_ids": missing_thesis,
+            "blocking": bool(blocking_thesis),
+            "blocking_trade_ids": blocking_thesis,
         },
         "evolutions": [e.to_dict() for e in evolutions],
     }

@@ -1367,7 +1367,6 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
 
-
     def test_gpt_close_can_refresh_and_send_new_trade_same_cycle(self) -> None:
         prior_override = os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
         os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
@@ -1477,6 +1476,61 @@ class AutoTradeCycleTest(unittest.TestCase):
                 os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
             else:
                 os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior_override
+
+    def test_gpt_handoff_runs_learning_audit_before_decision_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            lane_id = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"
+            attack_advice_path = root / "ai_attack_advice.json"
+            _write_learning_audit_artifacts(root, attack_advice_path=attack_advice_path, lane_id=lane_id)
+            decision = _gpt_trade_decision(lane_id=lane_id)
+            decision["evidence_refs"].extend(
+                ["attack:advice", f"attack:lane:{lane_id}", "learning:audit", f"learning:lane:{lane_id}"]
+            )
+            client = FakeCycleClient(
+                BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+            )
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=root / "snapshot.json",
+                intents_path=root / "intents.json",
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=attack_advice_path,
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(decision),
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
+            audit_payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertEqual(audit_payload["learning_influence"]["influenced_lanes"], 1)
+            gpt_payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(gpt_payload["input_packet"]["learning_audit"]["status"], audit_payload["status"])
+            self.assertIn("learning:audit", gpt_payload["input_packet"]["allowed_evidence_refs"])
 
     def test_gpt_single_trade_dedupes_prefiltered_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3048,6 +3102,68 @@ def _gpt_close_decision(trade_ids: list[str]) -> dict:
         ],
         "operator_summary": "Close the invalidated trader-owned EUR_USD position.",
     }
+
+
+def _write_learning_audit_artifacts(root: Path, *, attack_advice_path: Path, lane_id: str) -> None:
+    attack_advice_path.write_text(
+        json.dumps(
+            {
+                "status": "ATTACK_PARTIAL",
+                "read_only": True,
+                "live_permission": False,
+                "recommended_now_lane_ids": [lane_id],
+                "lanes": [
+                    {
+                        "lane_id": lane_id,
+                        "score": 44.0,
+                        "learning_influences": ["ai_backtest_research_positive_edge"],
+                        "learning_score_delta": 8.0,
+                        "learning_influence_details": [
+                            {
+                                "influence": "ai_backtest_research_positive_edge",
+                                "source": "ai_backtest",
+                                "reason": "profitable research edge, reduced weight",
+                                "score_delta": 8.0,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    (root / "ai_test_bot_backtest.json").write_text(
+        json.dumps(
+            {
+                "status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                "read_only": True,
+                "live_permission": False,
+                "blockers": [],
+                "summary": {
+                    "selected_trades": 30,
+                    "total_managed_net_jpy": 1_200.0,
+                    "profit_factor": 1.2,
+                },
+            }
+        )
+    )
+    (root / "outcome_mart.json").write_text(
+        json.dumps(
+            {
+                "read_only": True,
+                "live_permission": False,
+                "condition_validation": {"validated_outcomes": 30},
+            }
+        )
+    )
+    (root / "post_trade_learning.json").write_text(
+        json.dumps(
+            {
+                "status": "NO_UPDATES",
+                "blockers": [],
+                "profile_update_candidates": [],
+            }
+        )
+    )
 
 
 def _gpt_wait_decision() -> dict:

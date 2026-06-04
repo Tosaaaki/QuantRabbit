@@ -135,8 +135,66 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertTrue((live / "EXTEND").exists())
             self.assertIn("blocking dirty live path: ?? EXTEND", result.stderr)
 
+    def test_live_only_allows_weekend_guard_paused_automation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            state_file = Path(tmp) / "weekend-state.json"
+            _write_automation(automation_file, live, status="PAUSED")
+            state_file.write_text(
+                '{"mode": "paused", "tasks": {"codex:qr-trader": {"status": "ACTIVE"}}}\n'
+            )
 
-def _sync(repo: Path, live: Path, *, source_branch: str = "feature", live_only: bool = False) -> subprocess.CompletedProcess[str]:
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+                weekend_state_file=state_file,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("automation is PAUSED by weekend task guard", result.stderr)
+
+    def test_live_only_blocks_paused_automation_without_weekend_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            automation_file = Path(tmp) / "automation.toml"
+            _write_automation(automation_file, live, status="PAUSED")
+
+            result = _sync(
+                repo,
+                live,
+                live_only=True,
+                skip_automation_check=False,
+                automation_file=automation_file,
+            )
+
+            self.assertEqual(result.returncode, 6)
+            self.assertIn("QR vNext Trader automation is not ACTIVE", result.stderr)
+
+
+def _sync(
+    repo: Path,
+    live: Path,
+    *,
+    source_branch: str = "feature",
+    live_only: bool = False,
+    skip_automation_check: bool = True,
+    automation_file: Path | None = None,
+    weekend_state_file: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(
         {
@@ -145,9 +203,14 @@ def _sync(repo: Path, live: Path, *, source_branch: str = "feature", live_only: 
             "QR_SYNC_SOURCE_BRANCH": source_branch,
             "QR_SYNC_MAIN_BRANCH": "main",
             "QR_SYNC_LIVE_BRANCH": "runtime",
-            "QR_SYNC_SKIP_AUTOMATION_CHECK": "1",
         }
     )
+    if skip_automation_check:
+        env["QR_SYNC_SKIP_AUTOMATION_CHECK"] = "1"
+    if automation_file is not None:
+        env["QR_SYNC_AUTOMATION_FILE"] = str(automation_file)
+    if weekend_state_file is not None:
+        env["QR_WEEKEND_TASK_STATE_FILE"] = str(weekend_state_file)
     args = ["bash", str(SYNC), "--skip-tests"]
     if live_only:
         args.append("--live-only")
@@ -176,6 +239,27 @@ def _git(repo: Path, *args: str) -> str:
 
 def _run(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+
+
+def _write_automation(path: Path, live: Path, *, status: str) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "version = 1",
+                'id = "qr-trader"',
+                'kind = "cron"',
+                'name = "QR vNext Trader"',
+                'prompt = "test"',
+                f'status = "{status}"',
+                'rrule = "FREQ=WEEKLY;BYDAY=MO;BYHOUR=7;BYMINUTE=0"',
+                'model = "gpt-5.5"',
+                'reasoning_effort = "medium"',
+                'execution_environment = "local"',
+                f'cwds = ["{live}"]',
+            ]
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":
