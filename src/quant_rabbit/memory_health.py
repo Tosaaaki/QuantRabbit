@@ -839,18 +839,35 @@ def _audit_intent_memory_blockers(
     intents: dict[str, Any],
 ) -> None:
     memory_blockers: list[str] = []
+    advisory_memory_blockers = 0
+    live_ready_pairs = _live_ready_pairs(intents)
     for result in intents.get("results", []) or []:
         if not isinstance(result, dict):
             continue
-        for container_name in ("risk_issues", "strategy_issues", "live_blockers"):
+        result_memory_blockers: list[str] = []
+        for container_name in ("risk_issues", "strategy_issues"):
             for item in result.get(container_name) or []:
                 text = _issue_text(item).upper()
-                if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
-                    memory_blockers.append(_issue_text(item))
+                if not any(token in text for token in _MEMORY_BLOCKER_TOKENS):
+                    continue
+                if isinstance(item, dict) and str(item.get("severity") or "").upper() != "BLOCK":
+                    advisory_memory_blockers += 1
+                    continue
+                result_memory_blockers.append(_issue_text(item))
+        for item in result.get("live_blockers") or []:
+            text = _issue_text(item).upper()
+            if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
+                result_memory_blockers.append(_issue_text(item))
+        if result_memory_blockers:
+            if live_ready_pairs or str(result.get("status") or "") == "LIVE_READY":
+                advisory_memory_blockers += len(result_memory_blockers)
+            else:
+                memory_blockers.extend(result_memory_blockers)
     metrics["order_intents"] = {
         "results": len([item for item in intents.get("results", []) or [] if isinstance(item, dict)]),
-        "live_ready": len(_live_ready_pairs(intents)),
+        "live_ready": len(live_ready_pairs),
         "memory_blockers": len(memory_blockers),
+        "advisory_memory_blockers": advisory_memory_blockers,
     }
     if memory_blockers:
         issues.append(
