@@ -201,10 +201,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 # only re-enter on a fresh LIVE_READY lane with a separate verified TRADE
 # receipt. The automation may do that in the same outer cycle after the close
 # is sent/staged, but never in the same receipt / stale broker packet.
-# If either gate fails, `gpt-trader-decision` REJECTs the receipt with
-# `CLOSE_THESIS_STILL_VALID` or `CLOSE_OPERATOR_AUTH_REQUIRED`. The default
-# stance when no user instruction is present is HOLD / WAIT — do not write a
-# CLOSE receipt to "reduce risk" from a still-valid thesis.
+# Fresh sidecar Gate A close evidence is priority work: do not choose TRADE,
+# WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep it. If Gate B is
+# missing, the verifier must surface `CLOSE_OPERATOR_AUTH_REQUIRED`; if Gate B
+# is present, it must require a CLOSE receipt first. The default stance when no
+# user instruction is present is HOLD / WAIT only when no fresh Gate A close
+# sidecar exists — do not write a CLOSE receipt to "reduce risk" from a
+# still-valid thesis.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \

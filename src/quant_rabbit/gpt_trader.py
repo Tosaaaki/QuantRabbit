@@ -919,6 +919,12 @@ class DecisionVerifier:
         elif decision.action in {"PROTECT", "TIGHTEN_SL", "CLOSE"}:
             if positions <= 0:
                 issues.append(VerificationIssue("NO_OPEN_POSITION", f"{decision.action} requires an open position"))
+            if decision.action in {"PROTECT", "TIGHTEN_SL"} and position_close_reasons:
+                _append_position_close_required_issue(
+                    issues,
+                    action=decision.action,
+                    reasons=position_close_reasons,
+                )
             if decision.action == "CLOSE":
                 self._verify_close_trade_ids(decision, issues)
                 self._verify_close_discipline(decision, issues)

@@ -74,6 +74,9 @@ Gate B is freshly authorized; holding a broken thesis is not the objective.
 Do not combine loss-cut and re-entry in one `TRADE` receipt. Close the broken
 position first, refresh broker truth / intents, then re-enter only if the next
 cycle still produces a fresh `LIVE_READY` lane.
+Fresh sidecar Gate A close evidence also blocks `PROTECT` / `TIGHTEN_SL` as a
+receipt-level escape hatch: either submit the verified `CLOSE` when Gate B is
+fresh, or surface `CLOSE_OPERATOR_AUTH_REQUIRED` when it is not.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
 currently profitable trader-owned positions when the adaptive TP / macro-micro

@@ -1016,6 +1016,43 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("POSITION_CLOSE_REQUIRED", codes)
             self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
 
+    def test_protect_with_unresolved_close_sidecar_requires_operator_close_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_forecast_close_recommendation(root, files)
+            decision = _protect_decision()
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            message = "\n".join(issue["message"] for issue in payload["verification_issues"])
+            self.assertIn("not a recovery-confidence hold", message)
+
+    def test_tighten_sl_with_authorized_close_sidecar_must_emit_close_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_forecast_close_recommendation(root, files)
+            decision = _tighten_sl_decision()
+            decision["evidence_refs"].append("position:persistence:555")
+            brain = _brain(root, files, decision)
+
+            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=True):
+                summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("POSITION_CLOSE_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+
     def test_rejects_trade_that_ignores_attack_advice_recommended_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1987,6 +2024,35 @@ def _wait_decision() -> dict:
         ],
         "operator_summary": "Wait with an explicit rejection of the current executable lane.",
     }
+
+
+def _protect_decision() -> dict:
+    decision = _wait_decision()
+    decision.update(
+        {
+            "action": "PROTECT",
+            "confidence": "HIGH",
+            "thesis": "Keep exposure protected while the position-management gateway runs.",
+            "method": "POSITION_MANAGEMENT",
+            "narrative": "Open trader exposure needs protection review before fresh entries.",
+            "chart_story": "Position-management context is active.",
+            "invalidation": "Switch to CLOSE if fresh sidecars prove the recovery edge is broken.",
+            "operator_summary": "Run protection only.",
+        }
+    )
+    return decision
+
+
+def _tighten_sl_decision() -> dict:
+    decision = _protect_decision()
+    decision.update(
+        {
+            "action": "TIGHTEN_SL",
+            "thesis": "Tighten eligible broker-side stop only when protection rules allow it.",
+            "operator_summary": "Tighten stop only.",
+        }
+    )
+    return decision
 
 
 def _cancel_pending_decision(*, cancel_order_ids: list[str] | None = None) -> dict:
