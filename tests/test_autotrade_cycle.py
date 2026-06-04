@@ -1367,6 +1367,117 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
 
+
+    def test_gpt_close_can_refresh_and_send_new_trade_same_cycle(self) -> None:
+        prior_override = os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
+        os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                target_state = _open_target_state(root)
+                target_payload = json.loads(target_state.read_text())
+                target_payload["start_balance_jpy"] = 400_000
+                target_payload["remaining_target_jpy"] = 40_000
+                target_payload["daily_risk_budget_jpy"] = 8_000
+                target_state.write_text(json.dumps(target_payload) + "\n")
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(
+                        BrokerPosition(
+                            trade_id="close-me",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=1000,
+                            entry_price=1.1740,
+                            unrealized_pl_jpy=-120.0,
+                            take_profit=1.1760,
+                            stop_loss=1.1715,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                    account=AccountSummary(
+                        nav_jpy=400_000,
+                        balance_jpy=400_000,
+                        margin_available_jpy=400_000,
+                        fetched_at_utc=now,
+                    ),
+                )
+                client = FakeCycleClient(snapshot)
+                campaign_path = _campaign(root)
+                pair_charts_path = root / "pair_charts.json"
+                pair_charts_payload = json.loads(pair_charts_path.read_text())
+                pair_charts_payload["charts"][0]["chart_story"] = (
+                    "EUR_USD RANGE; "
+                    "M15(RANGE, ADX=20 RSI=40 ATR=3.0p struct=BOS_DOWN@1.1720); "
+                    "H4(RANGE, ADX=20 RSI=45 ATR=8.0p struct=CHOCH_DOWN@1.1700)"
+                )
+                pair_charts_path.write_text(json.dumps(pair_charts_payload) + "\n")
+                settings_path = root / "settings.json"
+                settings_path.write_text(
+                    json.dumps({"size_by_score": {"enabled": False}}) + "\n"
+                )
+
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=root / "snapshot.json",
+                    intents_path=root / "intents.json",
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=campaign_path,
+                    pair_charts_path=pair_charts_path,
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    trader_settings_path=settings_path,
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=SequenceTraderProvider(
+                        _gpt_close_decision(["close-me"]),
+                        _gpt_trade_decision(),
+                    ),
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=True)
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertEqual(summary.decision_source, "gpt_close_then_gpt_trader")
+                self.assertEqual(summary.position_execution_status, "SENT")
+                self.assertTrue(summary.position_execution_sent)
+                self.assertEqual(summary.gpt_action, "TRADE")
+                self.assertEqual(client.trades_closed, [("close-me", "ALL")])
+                self.assertEqual(len(client.orders_sent), 1)
+                self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+                close_archive = json.loads((root / "gpt_decision.close_reentry.json").read_text())
+                current_receipt = json.loads((root / "gpt_decision.json").read_text())
+                self.assertEqual(close_archive["decision"]["action"], "CLOSE")
+                self.assertEqual(current_receipt["decision"]["action"], "TRADE")
+                refreshed_snapshot = json.loads((root / "snapshot.json").read_text())
+                self.assertEqual(refreshed_snapshot["positions"], [])
+        finally:
+            if prior_override is None:
+                os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)
+            else:
+                os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = prior_override
+
     def test_gpt_single_trade_dedupes_prefiltered_parent_variants(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2245,6 +2356,7 @@ class FakeCycleClient:
         self.snapshot_calls: list[tuple[str, ...]] = []
         self.orders_sent: list[dict[str, Any]] = []
         self.orders_canceled: list[str] = []
+        self.trades_closed: list[tuple[str, str]] = []
 
     def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
         self.snapshot_calls.append(pairs)
@@ -2262,6 +2374,14 @@ class FakeCycleClient:
         )
         return {"orderCancelTransaction": {"id": "2", "orderID": order_id}}
 
+    def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+        self.trades_closed.append((trade_id, units))
+        self.snapshot_value = replace(
+            self.snapshot_value,
+            positions=tuple(position for position in self.snapshot_value.positions if position.trade_id != trade_id),
+        )
+        return {"relatedTransactionIDs": ["3"], "closedTradeID": trade_id}
+
 
 class SequenceCycleClient(FakeCycleClient):
     def __init__(self, snapshots: tuple[BrokerSnapshot, ...]) -> None:
@@ -2273,6 +2393,17 @@ class SequenceCycleClient(FakeCycleClient):
         self.snapshot_calls.append(pairs)
         index = min(len(self.snapshot_calls) - 1, len(self.snapshots) - 1)
         return self.snapshots[index]
+
+
+class SequenceTraderProvider:
+    def __init__(self, *decisions: dict[str, Any]) -> None:
+        self.decisions = list(decisions)
+        self.calls = 0
+
+    def decide(self, input_packet: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+        index = min(self.calls, len(self.decisions) - 1)
+        self.calls += 1
+        return dict(self.decisions[index])
 
 
 class LedgerCycleClient(FakeCycleClient):
@@ -2892,6 +3023,31 @@ def _gpt_batch_trade_decision(lane_ids: list[str]) -> dict:
     decision["evidence_refs"] = refs
     decision["operator_summary"] = "Accept the verified EUR_USD continuation basket."
     return decision
+
+
+def _gpt_close_decision(trade_ids: list[str]) -> dict:
+    return {
+        "action": "CLOSE",
+        "selected_lane_id": None,
+        "selected_lane_ids": [],
+        "cancel_order_ids": [],
+        "close_trade_ids": trade_ids,
+        "confidence": "HIGH",
+        "thesis": "The open trader position has printed close-confirmed invalidation against its side.",
+        "method": "POSITION_MANAGEMENT",
+        "narrative": "Close the broken position before refreshing broker truth for any new entry.",
+        "chart_story": "M15/H4 structure invalidates the active thesis.",
+        "invalidation": "Do not close if the named trade is no longer open or Gate A/B does not pass.",
+        "rejected_alternatives": ["WAIT rejected because the active thesis is invalidated."],
+        "risk_notes": ["CLOSE reduces current exposure; any re-entry needs a fresh receipt."],
+        "evidence_refs": [
+            "broker:snapshot",
+            "target:daily",
+            "story:EUR_USD",
+            *(f"position:thesis:{trade_id}" for trade_id in trade_ids),
+        ],
+        "operator_summary": "Close the invalidated trader-owned EUR_USD position.",
+    }
 
 
 def _gpt_wait_decision() -> dict:

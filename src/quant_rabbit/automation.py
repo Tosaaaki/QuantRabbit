@@ -693,7 +693,7 @@ class AutoTradeCycle:
             # must not block live execution. The broker remains canonical.
             pass
 
-    def _run(self, *, send: bool = False) -> AutoTradeCycleSummary:
+    def _run(self, *, send: bool = False, _close_reentry_depth: int = 0) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
         self._clear_stale_live_order_artifact(generated_at=generated_at, cycle_send_requested=send)
         pairs = DEFAULT_TRADER_PAIRS
@@ -915,35 +915,19 @@ class AutoTradeCycle:
                             and gpt_summary.action == "CLOSE"
                         ):
                             close_execution = self._close_gpt_trades(gpt_summary, snapshot=snapshot, send=send)
-                            summary = AutoTradeCycleSummary(
-                                status=_position_execution_cycle_status(close_execution, fallback="GPT_CLOSE"),
-                                report_path=self.report_path,
-                                snapshot_path=self.snapshot_path,
-                                intents_path=self.intents_path,
-                                selected_lane_id=None,
-                                deterministic_lane_id=basket_lane_ids[0] if basket_lane_ids else None,
-                                sent=False,
+                            return self._continue_after_gpt_close(
+                                generated_at=generated_at,
+                                send=send,
+                                close_execution=close_execution,
+                                close_gpt_summary=gpt_summary,
                                 positions=positions,
                                 orders=orders,
                                 live_ready=intent_summary.live_ready,
-                                selected_lane_ids=(),
+                                deterministic_lane_id=basket_lane_ids[0] if basket_lane_ids else None,
+                                target_summary=target_summary,
                                 canceled_orders=tuple(canceled_orders),
-                                receipt_promotions=0,
-                                decision_source="gpt_trader",
-                                position_management_action="GPT_CLOSE",
-                                position_execution_status=close_execution.status,
-                                position_execution_sent=close_execution.sent,
-                                target_status=target_summary.status if target_summary else None,
-                                target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                                target_progress_pct=target_summary.progress_pct if target_summary else None,
-                                gpt_status=gpt_summary.status,
-                                gpt_action=gpt_summary.action,
-                                gpt_allowed=gpt_summary.allowed,
-                                gpt_issues=gpt_summary.issues,
-                                gpt_error=gpt_summary.error,
+                                close_reentry_depth=_close_reentry_depth,
                             )
-                            self._write_report(summary, generated_at)
-                            return summary
                         if (
                             gpt_summary.status == "ACCEPTED"
                             and gpt_summary.allowed
@@ -1221,34 +1205,20 @@ class AutoTradeCycle:
                 # the broker is never asked to retire the named trades.
                 if gpt_summary.action == "CLOSE":
                     close_execution = self._close_gpt_trades(gpt_summary, snapshot=snapshot, send=send)
-                    summary = AutoTradeCycleSummary(
-                        status=_position_execution_cycle_status(close_execution, fallback="GPT_CLOSE"),
-                        report_path=self.report_path,
-                        snapshot_path=self.snapshot_path,
-                        intents_path=self.intents_path,
-                        selected_lane_id=None,
-                        deterministic_lane_id=deterministic_lane_id,
-                        sent=False,
+                    return self._continue_after_gpt_close(
+                        generated_at=generated_at,
+                        send=send,
+                        close_execution=close_execution,
+                        close_gpt_summary=gpt_summary,
                         positions=positions,
                         orders=orders,
                         live_ready=intent_summary.live_ready,
+                        deterministic_lane_id=deterministic_lane_id,
+                        target_summary=target_summary,
                         receipt_promotions=promotion_summary.promoted,
-                        decision_source="gpt_trader",
-                        position_management_action="GPT_CLOSE",
-                        position_execution_status=close_execution.status,
-                        position_execution_sent=close_execution.sent,
-                        target_status=target_summary.status if target_summary else None,
-                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                        target_progress_pct=target_summary.progress_pct if target_summary else None,
-                        gpt_status=gpt_summary.status,
-                        gpt_action=gpt_summary.action,
-                        gpt_allowed=gpt_summary.allowed,
-                        gpt_issues=gpt_summary.issues,
-                        gpt_error=gpt_summary.error,
                         campaign_exposure_required=campaign_exposure_required,
+                        close_reentry_depth=_close_reentry_depth,
                     )
-                    self._write_report(summary, generated_at)
-                    return summary
                 if gpt_summary.action == "CANCEL_PENDING":
                     canceled_pending = self._cancel_gpt_pending_orders(gpt_summary, send=send)
                     summary = AutoTradeCycleSummary(
@@ -1413,36 +1383,22 @@ class AutoTradeCycle:
                     and gpt_summary.action == "CLOSE"
                 ):
                     close_execution = self._close_gpt_trades(gpt_summary, snapshot=snapshot, send=send)
-                    summary = AutoTradeCycleSummary(
-                        status=_position_execution_cycle_status(close_execution, fallback="GPT_CLOSE"),
-                        report_path=self.report_path,
-                        snapshot_path=self.snapshot_path,
-                        intents_path=self.intents_path,
-                        selected_lane_id=None,
-                        deterministic_lane_id=deterministic_lane_id,
-                        sent=False,
+                    return self._continue_after_gpt_close(
+                        generated_at=generated_at,
+                        send=send,
+                        close_execution=close_execution,
+                        close_gpt_summary=gpt_summary,
                         positions=positions,
                         orders=orders,
                         live_ready=intent_summary.live_ready,
-                        decision_source="gpt_trader",
+                        deterministic_lane_id=deterministic_lane_id,
+                        target_summary=target_summary,
                         receipt_promotions=promotion_summary.promoted,
-                        position_management_action="GPT_CLOSE",
-                        position_execution_status=close_execution.status,
-                        position_execution_sent=close_execution.sent,
-                        target_status=target_summary.status if target_summary else None,
-                        target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
-                        target_progress_pct=target_summary.progress_pct if target_summary else None,
-                        gpt_status=gpt_summary.status,
-                        gpt_action=gpt_summary.action,
-                        gpt_allowed=gpt_summary.allowed,
-                        gpt_issues=gpt_summary.issues,
-                        gpt_error=gpt_summary.error,
                         gpt_wait_retries=gpt_wait_retries,
                         gpt_recovery_source=gpt_recovery_source,
                         campaign_exposure_required=campaign_exposure_required,
+                        close_reentry_depth=_close_reentry_depth,
                     )
-                    self._write_report(summary, generated_at)
-                    return summary
                 gpt_trade_accepted = (
                     gpt_summary.status == "ACCEPTED"
                     and gpt_summary.allowed
@@ -2139,6 +2095,89 @@ class AutoTradeCycle:
                 error=str(exc),
             )
 
+    def _continue_after_gpt_close(
+        self,
+        *,
+        generated_at: str,
+        send: bool,
+        close_execution: PositionExecutionSummary,
+        close_gpt_summary: GptHandoffSummary,
+        positions: int,
+        orders: int,
+        live_ready: int,
+        deterministic_lane_id: str | None,
+        target_summary: DailyTargetSummary | None,
+        canceled_orders: tuple[str, ...] = (),
+        receipt_promotions: int = 0,
+        gpt_wait_retries: int = 0,
+        gpt_recovery_source: str | None = None,
+        campaign_exposure_required: bool = False,
+        close_reentry_depth: int = 0,
+    ) -> AutoTradeCycleSummary:
+        """After an accepted GPT CLOSE, take a fresh entry pass in-cycle.
+
+        CLOSE still cannot be bundled into a TRADE receipt. The safe shape is
+        close first, archive that receipt, then restart the cycle logic once so
+        the next entry uses fresh broker truth, freshly-priced intents, and its
+        own verified GPT TRADE receipt.
+        """
+        close_status = _position_execution_cycle_status(close_execution, fallback="GPT_CLOSE")
+        close_only = AutoTradeCycleSummary(
+            status=close_status,
+            report_path=self.report_path,
+            snapshot_path=self.snapshot_path,
+            intents_path=self.intents_path,
+            selected_lane_id=None,
+            deterministic_lane_id=deterministic_lane_id,
+            sent=False,
+            positions=positions,
+            orders=orders,
+            live_ready=live_ready,
+            selected_lane_ids=(),
+            canceled_orders=canceled_orders,
+            receipt_promotions=receipt_promotions,
+            decision_source="gpt_trader",
+            position_management_action="GPT_CLOSE",
+            position_execution_status=close_execution.status,
+            position_execution_sent=close_execution.sent,
+            target_status=target_summary.status if target_summary else None,
+            target_remaining_jpy=target_summary.remaining_target_jpy if target_summary else None,
+            target_progress_pct=target_summary.progress_pct if target_summary else None,
+            gpt_status=close_gpt_summary.status,
+            gpt_action=close_gpt_summary.action,
+            gpt_allowed=close_gpt_summary.allowed,
+            gpt_issues=close_gpt_summary.issues,
+            gpt_error=close_gpt_summary.error,
+            gpt_wait_retries=gpt_wait_retries,
+            gpt_recovery_source=gpt_recovery_source,
+            campaign_exposure_required=campaign_exposure_required,
+        )
+        if close_reentry_depth >= 1 or not (close_execution.sent or close_execution.status == "STAGED"):
+            self._write_report(close_only, generated_at)
+            return close_only
+
+        self._archive_gpt_close_receipt_for_reentry()
+        resumed = self._run(send=send, _close_reentry_depth=close_reentry_depth + 1)
+        resumed_source = resumed.gpt_recovery_source or "FRESH_ENTRY"
+        summary = replace(
+            resumed,
+            decision_source=f"gpt_close_then_{resumed.decision_source}",
+            position_management_action=f"GPT_CLOSE_THEN_{resumed.position_management_action or 'NONE'}",
+            position_execution_status=close_execution.status,
+            position_execution_sent=close_execution.sent,
+            gpt_recovery_source=f"GPT_CLOSE_THEN_{resumed_source}",
+        )
+        self._write_report(summary, generated_at)
+        return summary
+
+    def _archive_gpt_close_receipt_for_reentry(self) -> None:
+        for path in (self.gpt_decision_path, self.gpt_decision_report_path):
+            if not path.exists():
+                continue
+            archive_path = path.with_name(f"{path.stem}.close_reentry{path.suffix}")
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, archive_path)
+
     def _cancel_gpt_pending_orders(
         self,
         gpt_summary: GptHandoffSummary,
@@ -2253,6 +2292,7 @@ class AutoTradeCycle:
             strategy_profile_path=self.strategy_profile_path,
             market_story_profile_path=self.market_story_profile_path,
             target_state_path=self.gpt_target_state_path,
+            pair_charts_path=self.pair_charts_path,
             attack_advice_path=self.gpt_attack_advice_path,
             output_path=self.gpt_decision_path,
             report_path=self.gpt_decision_report_path,

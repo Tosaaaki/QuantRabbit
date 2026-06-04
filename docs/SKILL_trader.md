@@ -195,8 +195,10 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
 # A TRADE receipt must not list close_trade_ids. If the recovery edge is gone,
-# close first, refresh broker truth / intents, and only re-enter on a fresh
-# LIVE_READY lane in the next cycle.
+# close first, archive that CLOSE receipt, refresh broker truth / intents, and
+# only re-enter on a fresh LIVE_READY lane with a separate verified TRADE
+# receipt. The automation may do that in the same outer cycle after the close
+# is sent/staged, but never in the same receipt / stale broker packet.
 # If either gate fails, `gpt-trader-decision` REJECTs the receipt with
 # `CLOSE_THESIS_STILL_VALID` or `CLOSE_OPERATOR_AUTH_REQUIRED`. The default
 # stance when no user instruction is present is HOLD / WAIT — do not write a

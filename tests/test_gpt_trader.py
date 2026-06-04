@@ -1958,8 +1958,8 @@ class CloseDisciplineTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "ACCEPTED")
 
-    def test_trade_receipt_cannot_close_and_reenter_in_same_cycle(self) -> None:
-        # Loss-cut and re-entry must be separate cycles. Otherwise the
+    def test_trade_receipt_cannot_close_and_reenter_in_same_receipt(self) -> None:
+        # Loss-cut and re-entry must be separate receipts. Otherwise the
         # trader can close a broken thesis and immediately chase a new lane
         # without a refreshed broker snapshot / margin / intent packet.
         _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
@@ -1976,7 +1976,7 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(summary.status, "REJECTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("CLOSE_REENTRY_SAME_CYCLE", codes)
+            self.assertIn("CLOSE_REENTRY_SAME_RECEIPT", codes)
 
     def test_close_accepted_when_fresh_forecast_persistence_recommends_close_and_operator_authorized(self) -> None:
         # Sidecar recommendations are Gate A only: they can prove the
