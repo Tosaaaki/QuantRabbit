@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,22 @@ from quant_rabbit.paths import (
 STATUS_OK = "SELF_IMPROVEMENT_OK"
 STATUS_ACTION_REQUIRED = "SELF_IMPROVEMENT_ACTION_REQUIRED"
 STATUS_BLOCKED = "SELF_IMPROVEMENT_BLOCKED"
+
+
+def _env_nonnegative_float(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+# Match the live-entry telemetry gate's cycle-preflight tolerance. Market
+# refresh can take a few minutes after projection verification; inside this
+# window the projection is not yet a stale-state defect.
+PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_nonnegative_float(
+    "QR_PROJECTION_PENDING_EXPIRY_GRACE_SECONDS",
+    300.0,
+)
 
 
 @dataclass(frozen=True)
@@ -1138,7 +1155,8 @@ def _projection_expired(row: dict[str, Any], *, now: datetime) -> bool:
     window_min = _maybe_float(row.get("resolution_window_min"))
     if emitted is None or window_min is None or window_min <= 0:
         return True
-    return now >= emitted + timedelta(minutes=window_min)
+    expiry_age_seconds = (now - emitted).total_seconds() - (window_min * 60.0)
+    return expiry_age_seconds >= PROJECTION_PENDING_EXPIRY_GRACE_SECONDS
 
 
 def _projection_ref(row: dict[str, Any]) -> dict[str, Any]:

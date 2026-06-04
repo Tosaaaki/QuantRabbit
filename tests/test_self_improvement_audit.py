@@ -14,10 +14,21 @@ from quant_rabbit.self_improvement_audit import (
     STATUS_ACTION_REQUIRED,
     STATUS_BLOCKED,
     SelfImprovementAuditor,
+    _projection_expired,
 )
 
 
 class SelfImprovementAuditorTest(unittest.TestCase):
+    def test_projection_expiry_uses_live_telemetry_grace(self) -> None:
+        row = {
+            "timestamp_emitted_utc": (_NOW - timedelta(minutes=32)).isoformat(),
+            "resolution_window_min": 30.0,
+        }
+        self.assertFalse(_projection_expired(row, now=_NOW))
+
+        row["timestamp_emitted_utc"] = (_NOW - timedelta(minutes=36)).isoformat()
+        self.assertTrue(_projection_expired(row, now=_NOW))
+
     def test_blocks_missing_memory_projection_and_entry_thesis_holes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
