@@ -1211,6 +1211,80 @@ class IntentGeneratorTest(unittest.TestCase):
         opposed_codes = {issue["code"] for issue in _method_context_issues(opposed)}
         self.assertIn("FORECAST_DIRECTION_CONFLICT", opposed_codes)
 
+    def test_same_forecast_from_later_cycle_does_not_stale_current_intent(self) -> None:
+        from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _telemetry_live_readiness_issues
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        now = datetime.now(timezone.utc)
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.6133,
+            "forecast_cycle_id": "pre-entry-cycle",
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="current-cycle intent",
+            market_context=MarketContext(
+                regime="TREND_UP",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+        current_cycle = {
+            "timestamp_utc": now.isoformat().replace("+00:00", "Z"),
+            "direction": "UP",
+            "confidence": 0.6133,
+            "cycle_id": "pre-entry-cycle",
+        }
+        later_same_forecast = {
+            "timestamp_utc": (now + timedelta(seconds=10)).isoformat().replace("+00:00", "Z"),
+            "direction": "UP",
+            "confidence": 0.6134,
+            "cycle_id": "position-forecast-cycle",
+        }
+
+        with patch(
+            "quant_rabbit.strategy.intent_generator._forecast_history_for_pair_cycle",
+            return_value=current_cycle,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._latest_forecast_history_for_pair",
+            return_value=later_same_forecast,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._directional_projection_recorded",
+            return_value=True,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._expired_pending_projection_count",
+            return_value=0,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._execution_ledger_sync_live_issue",
+            return_value=None,
+        ):
+            codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    intent,
+                    metadata,
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={"EUR_USD": Quote("EUR_USD", 1.1733, 1.1735, now)},
+                    ),
+                    now,
+                )
+            }
+
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", codes)
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", codes)
+
     def test_range_rotation_uses_range_probability_floor_for_live_context(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue

@@ -3379,9 +3379,17 @@ def _telemetry_live_readiness_issues(
                 ),
             )
         )
+    expected_cycle_id = str(metadata.get("forecast_cycle_id") or "")
     latest = _latest_forecast_history_for_pair(intent.pair, data_root=data_root)
+    cycle_matched = _forecast_history_for_pair_cycle(
+        intent.pair,
+        expected_cycle_id,
+        data_root=data_root,
+    ) if expected_cycle_id else None
+    audit_forecast = cycle_matched or latest
     latest_is_current = False
-    if latest is None:
+    projection_cycle_id = ""
+    if audit_forecast is None:
         issues.append(
             _telemetry_issue(
                 "TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE",
@@ -3393,13 +3401,13 @@ def _telemetry_live_readiness_issues(
             )
         )
     else:
-        latest_ts = _parse_telemetry_time(latest.get("timestamp_utc"))
+        latest_ts = _parse_telemetry_time(audit_forecast.get("timestamp_utc"))
         snapshot_ts = _ensure_utc(getattr(snapshot, "fetched_at_utc", None))
-        expected_cycle_id = str(metadata.get("forecast_cycle_id") or "")
-        latest_cycle_id = str(latest.get("cycle_id") or "")
+        latest_cycle_id = str(audit_forecast.get("cycle_id") or "")
         latest_matches_intent_cycle = bool(expected_cycle_id and latest_cycle_id == expected_cycle_id)
+        projection_cycle_id = latest_cycle_id
         if latest_ts is None:
-            latest_text = latest.get("timestamp_utc") or "unknown"
+            latest_text = audit_forecast.get("timestamp_utc") or "unknown"
             snapshot_text = snapshot_ts.isoformat() if snapshot_ts is not None else "unknown"
             issues.append(
                 _telemetry_issue(
@@ -3412,18 +3420,19 @@ def _telemetry_live_readiness_issues(
                 )
             )
         elif expected_cycle_id and latest_cycle_id != expected_cycle_id:
+            latest_text = latest_cycle_id or "missing"
             issues.append(
                 _telemetry_issue(
                     "TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE",
                     (
                         f"{intent.pair} {intent.side.value} forecast telemetry cycle_id "
-                        f"{latest_cycle_id or 'missing'} does not match intent forecast_cycle_id "
+                        f"{latest_text} does not match intent forecast_cycle_id "
                         f"{expected_cycle_id}; refresh the forecast from the same broker snapshot before live entry."
                     ),
                 )
             )
         elif snapshot_ts is not None and latest_ts < snapshot_ts and not latest_matches_intent_cycle:
-            latest_text = latest.get("timestamp_utc") or "unknown"
+            latest_text = audit_forecast.get("timestamp_utc") or "unknown"
             snapshot_text = snapshot_ts.isoformat() if snapshot_ts is not None else "unknown"
             issues.append(
                 _telemetry_issue(
@@ -3438,7 +3447,7 @@ def _telemetry_live_readiness_issues(
         else:
             latest_is_current = True
 
-        latest_direction = str(latest.get("direction") or "").upper()
+        latest_direction = str(audit_forecast.get("direction") or "").upper()
         if direction in {"UP", "DOWN", "RANGE"} and latest_direction != direction:
             latest_is_current = False
             issues.append(
@@ -3451,7 +3460,7 @@ def _telemetry_live_readiness_issues(
                     ),
                 )
             )
-        latest_confidence = _optional_float(latest.get("confidence"))
+        latest_confidence = _optional_float(audit_forecast.get("confidence"))
         if (
             direction in {"UP", "DOWN", "RANGE"}
             and confidence is not None
@@ -3470,8 +3479,47 @@ def _telemetry_live_readiness_issues(
                 )
             )
 
+        # A later position-management or TraderBrain pass can append the same
+        # pair forecast under its own cycle id while this intent is being
+        # generated. Treat that as harmless only if it agrees with the exact
+        # intent forecast; a newer contradictory row still blocks live use.
+        if latest is not None and latest is not audit_forecast and latest_is_current:
+            latest_row_ts = _parse_telemetry_time(latest.get("timestamp_utc"))
+            if latest_row_ts is not None and latest_ts is not None and latest_row_ts > latest_ts:
+                later_direction = str(latest.get("direction") or "").upper()
+                if direction in {"UP", "DOWN", "RANGE"} and later_direction != direction:
+                    latest_is_current = False
+                    issues.append(
+                        _telemetry_issue(
+                            "TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE",
+                            (
+                                f"{intent.pair} {intent.side.value} newer forecast_history direction "
+                                f"{later_direction or 'missing'} does not match intent forecast {direction}; "
+                                "refresh before live entry."
+                            ),
+                        )
+                    )
+                later_confidence = _optional_float(latest.get("confidence"))
+                if (
+                    direction in {"UP", "DOWN", "RANGE"}
+                    and confidence is not None
+                    and later_confidence is not None
+                    and not _forecast_confidence_matches(later_confidence, confidence)
+                ):
+                    latest_is_current = False
+                    issues.append(
+                        _telemetry_issue(
+                            "TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE",
+                            (
+                                f"{intent.pair} {intent.side.value} newer forecast_history confidence "
+                                f"{later_confidence:.4f} does not match intent forecast confidence "
+                                f"{confidence:.4f}; refresh before live entry."
+                            ),
+                        )
+                    )
+
     if latest_is_current and direction in {"UP", "DOWN"}:
-        cycle_id = str(latest.get("cycle_id") or "")
+        cycle_id = projection_cycle_id
         if not cycle_id or not _directional_projection_recorded(
             intent.pair,
             cycle_id,
@@ -3523,6 +3571,17 @@ def _latest_forecast_history_for_pair(pair: str, *, data_root: Path) -> dict[str
     latest: dict[str, Any] | None = None
     for item in _iter_jsonl_dicts(path):
         if str(item.get("pair") or "") == pair:
+            latest = item
+    return latest
+
+
+def _forecast_history_for_pair_cycle(pair: str, cycle_id: str, *, data_root: Path) -> dict[str, Any] | None:
+    if not cycle_id:
+        return None
+    path = data_root / "forecast_history.jsonl"
+    latest: dict[str, Any] | None = None
+    for item in _iter_jsonl_dicts(path):
+        if str(item.get("pair") or "") == pair and str(item.get("cycle_id") or "") == cycle_id:
             latest = item
     return latest
 
