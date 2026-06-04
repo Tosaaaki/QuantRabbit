@@ -226,6 +226,10 @@ FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(
     0.001,
     minimum=0.0,
 )
+# Fresh entries need positive reward asymmetry before LIVE_READY promotion.
+# Range/recovery dry-runs may document sub-default RR, but a new one-way broker
+# entry with reward <= risk is not profit-larger-than-loss discipline.
+FRESH_ENTRY_LIVE_MIN_REWARD_RISK = 1.0
 
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
@@ -2406,6 +2410,10 @@ class IntentGenerator:
         if telemetry_live_issues:
             risk_issues.extend(telemetry_live_issues)
             live_blockers = (*live_blockers, *(issue["message"] for issue in telemetry_live_issues))
+        fresh_rr_issue = _fresh_entry_live_reward_risk_issue(intent, risk.metrics)
+        if fresh_rr_issue is not None:
+            risk_issues.append(fresh_rr_issue)
+            live_blockers = (*live_blockers, fresh_rr_issue["message"])
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -3293,6 +3301,26 @@ def _forecast_live_readiness_issue(
             "severity": "WARN",
         }
     return None
+
+
+def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None) -> dict[str, str] | None:
+    metadata = intent.metadata or {}
+    if str(metadata.get("position_intent") or "NEW").upper() != "NEW":
+        return None
+    if bool(metadata.get("hedge_recovery")):
+        return None
+    reward_risk = _optional_float(getattr(metrics, "reward_risk", None))
+    if reward_risk is None or reward_risk > FRESH_ENTRY_LIVE_MIN_REWARD_RISK:
+        return None
+    return {
+        "code": "FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE",
+        "message": (
+            f"{intent.pair} {intent.side.value} fresh entry reward/risk {reward_risk:.2f}x "
+            "does not exceed 1.00x; keep as dry-run until TP/entry geometry offers "
+            "positive reward asymmetry."
+        ),
+        "severity": "WARN",
+    }
 
 
 def _reversal_recovery_chart_forecast_override(intent: OrderIntent, metadata: dict[str, Any]) -> bool:
