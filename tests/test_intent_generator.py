@@ -1311,6 +1311,7 @@ class IntentGeneratorTest(unittest.TestCase):
         issue = _fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=0.83))
         self.assertIsNotNone(issue)
         self.assertEqual(issue["code"], "FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE")
+        self.assertEqual(issue["severity"], "BLOCK")
         self.assertIsNone(_fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=1.01)))
         hedge_intent = OrderIntent(
             pair="AUD_NZD",

@@ -3319,7 +3319,7 @@ def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None
             "does not exceed 1.00x; keep as dry-run until TP/entry geometry offers "
             "positive reward asymmetry."
         ),
-        "severity": "WARN",
+        "severity": "BLOCK",
     }
 
 
