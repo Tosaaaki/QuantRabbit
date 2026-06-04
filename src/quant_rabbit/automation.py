@@ -130,7 +130,19 @@ def _position_execution_cycle_status(
         return "POSITION_ACTION_STAGED"
     if execution.status == "BLOCKED":
         return "POSITION_ACTION_BLOCKED"
+    if execution.status == "STALE_CLOSE_SATISFIED":
+        return "POSITION_ACTION_SATISFIED"
     return fallback
+
+
+def _snapshot_refresh_pairs(snapshot: object) -> tuple[str, ...]:
+    pairs = set(DEFAULT_TRADER_PAIRS)
+    pairs.update(str(pair) for pair in getattr(snapshot, "quotes", {}) or {} if pair)
+    for position in getattr(snapshot, "positions", ()) or ():
+        pair = str(getattr(position, "pair", "") or "")
+        if pair:
+            pairs.add(pair)
+    return tuple(sorted(pairs))
 
 
 def _projection_atr_pips_by_pair(pair_charts_path: Path) -> dict[str, float]:
@@ -2257,7 +2269,12 @@ class AutoTradeCycle:
             gpt_recovery_source=gpt_recovery_source,
             campaign_exposure_required=campaign_exposure_required,
         )
-        if close_reentry_depth >= 1 or not (close_execution.sent or close_execution.status == "STAGED"):
+        close_satisfied = (
+            close_execution.sent
+            or close_execution.status == "STAGED"
+            or close_execution.status == "STALE_CLOSE_SATISFIED"
+        )
+        if close_reentry_depth >= 1 or not close_satisfied:
             self._write_report(close_only, generated_at)
             return close_only
 
@@ -2346,8 +2363,8 @@ class AutoTradeCycle:
     ) -> PositionExecutionSummary:
         # Operator-directed market close on trade ids named in
         # decision.close_trade_ids. The verifier (gpt_trader) supplies Gate A/B;
-        # PositionProtectionGateway still re-checks broker truth, ownership, live
-        # enablement, and receipt/report persistence before any broker write.
+        # live sends refresh broker truth immediately before PositionProtectionGateway
+        # checks ownership, live enablement, and receipt/report persistence.
         no_action = PositionExecutionSummary(
             status="NO_ACTION",
             output_path=self.position_execution_path,
@@ -2375,8 +2392,96 @@ class AutoTradeCycle:
                 f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
             )
             return no_action
-        decision = self._gpt_close_position_decision(gpt_summary, snapshot=snapshot)
-        return self._position_gateway().run(decision=decision, snapshot=snapshot, send=send)
+        close_snapshot = snapshot
+        if send and self.live_enabled:
+            close_snapshot = self._refresh_snapshot(_snapshot_refresh_pairs(snapshot))
+            open_trade_ids = {
+                str(getattr(position, "trade_id", "") or "")
+                for position in getattr(close_snapshot, "positions", ()) or ()
+            }
+            if all(str(trade_id) not in open_trade_ids for trade_id in gpt_summary.close_trade_ids):
+                return self._write_stale_gpt_close_satisfied(gpt_summary, snapshot=close_snapshot)
+        decision = self._gpt_close_position_decision(gpt_summary, snapshot=close_snapshot)
+        return self._position_gateway().run(decision=decision, snapshot=close_snapshot, send=send)
+
+    def _write_stale_gpt_close_satisfied(
+        self,
+        gpt_summary: GptHandoffSummary,
+        *,
+        snapshot,
+    ) -> PositionExecutionSummary:
+        generated_at = datetime.now(timezone.utc).isoformat()
+        actions = []
+        for trade_id in gpt_summary.close_trade_ids:
+            actions.append(
+                {
+                    "trade_id": str(trade_id),
+                    "pair": "",
+                    "owner": "",
+                    "management_action": "GPT_CLOSE",
+                    "request": None,
+                    "issues": [
+                        {
+                            "severity": "INFO",
+                            "code": "STALE_CLOSE_ALREADY_ABSENT",
+                            "message": (
+                                "accepted CLOSE receipt named a trade id that is already absent "
+                                "from the refreshed broker snapshot"
+                            ),
+                        }
+                    ],
+                    "sent": False,
+                    "response": None,
+                }
+            )
+        result = {
+            "generated_at_utc": generated_at,
+            "status": "STALE_CLOSE_SATISFIED",
+            "send_requested": True,
+            "sent": False,
+            "snapshot_fetched_at_utc": str(getattr(snapshot, "fetched_at_utc", "") or ""),
+            "actions": actions,
+        }
+        self.position_execution_path.parent.mkdir(parents=True, exist_ok=True)
+        self.position_execution_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        lines = [
+            "# Position Execution Report",
+            "",
+            f"- Generated at UTC: `{result['generated_at_utc']}`",
+            "- Status: `STALE_CLOSE_SATISFIED`",
+            "- Send requested: `True`",
+            "- Sent: `False`",
+            f"- Broker snapshot UTC: `{result['snapshot_fetched_at_utc']}`",
+            "",
+            "## Actions",
+            "",
+        ]
+        for action in actions:
+            lines.append(
+                f"- `{action['trade_id']}` owner=`{action.get('owner')}` management=`{action['management_action']}` "
+                "request=`none` sent=`False`"
+            )
+            for issue in action.get("issues", []):
+                lines.append(f"  - `{issue['severity']}` {issue['code']}: {issue['message']}")
+        lines.extend(
+            [
+                "",
+                "## Execution Contract",
+                "",
+                "- Refreshed broker truth wins over stale local receipts before any market close write.",
+                "- A close receipt is satisfied without sending when every named trade id is already absent.",
+            ]
+        )
+        self.position_execution_report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.position_execution_report_path.write_text("\n".join(lines) + "\n")
+        return PositionExecutionSummary(
+            status="STALE_CLOSE_SATISFIED",
+            output_path=self.position_execution_path,
+            report_path=self.position_execution_report_path,
+            sent=False,
+            actions=0,
+            blocked=0,
+        )
 
     def _gpt_close_position_decision(
         self,

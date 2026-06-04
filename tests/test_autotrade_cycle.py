@@ -12,11 +12,13 @@ from typing import Any
 
 from quant_rabbit.automation import (
     AutoTradeCycle,
+    AutoTradeCycleSummary,
     GptHandoffSummary,
     _gpt_lanes_pass_prefilter_or_recovery,
     _passes_gpt_prefilter,
     _snapshot_to_json,
 )
+from quant_rabbit.broker.position_execution import PositionExecutionSummary
 from quant_rabbit.gpt_trader import StaticTraderProvider
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
 from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTRY, LaneScore, TraderDecision
@@ -120,6 +122,14 @@ class AutoTradeCycleTest(unittest.TestCase):
         class Client:
             def __init__(self) -> None:
                 self.closed: list[tuple[str, str]] = []
+                self.snapshot_payload: BrokerSnapshot | None = None
+                self.snapshot_calls: list[tuple[str, ...]] = []
+
+            def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+                self.snapshot_calls.append(pairs)
+                if self.snapshot_payload is None:
+                    raise AssertionError("missing snapshot payload")
+                return self.snapshot_payload
 
             def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
                 self.closed.append((trade_id, units))
@@ -149,9 +159,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 quotes={"EUR_USD": Quote("EUR_USD", 1.1710, 1.1711, timestamp_utc=now)},
             )
             client = Client()
+            client.snapshot_payload = snapshot
             cycle = AutoTradeCycle(
                 client=client,
                 live_enabled=True,
+                snapshot_path=root / "broker.json",
                 position_execution_path=root / "pe.json",
                 position_execution_report_path=root / "pe.md",
             )
@@ -169,11 +181,155 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(execution.status, "SENT")
             self.assertTrue(execution.sent)
             self.assertEqual(client.closed, [("471232", "ALL")])
+            self.assertEqual(len(client.snapshot_calls), 1)
+            self.assertIn("EUR_USD", client.snapshot_calls[0])
             payload = json.loads((root / "pe.json").read_text())
             self.assertEqual(payload["status"], "SENT")
             self.assertEqual(payload["actions"][0]["request"]["type"], "CLOSE")
             self.assertEqual(payload["actions"][0]["trade_id"], "471232")
             self.assertIn("CLOSE", (root / "pe.md").read_text())
+
+    def test_accepted_gpt_close_uses_refreshed_snapshot_before_send(self) -> None:
+        class Client:
+            def __init__(self, snapshot_payload: BrokerSnapshot) -> None:
+                self.snapshot_payload = snapshot_payload
+                self.snapshot_calls: list[tuple[str, ...]] = []
+                self.closed: list[tuple[str, str]] = []
+
+            def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+                self.snapshot_calls.append(pairs)
+                return self.snapshot_payload
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+                self.closed.append((trade_id, units))
+                return {"relatedTransactionIDs": ["20"]}
+
+            def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
+                raise AssertionError("GPT CLOSE must not replace dependent orders")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            stale_snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="471232",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1729,
+                        unrealized_pl_jpy=-250.0,
+                        take_profit=1.1740,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1710, 1.1711, timestamp_utc=now)},
+            )
+            refreshed_snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1712, 1.1713, timestamp_utc=now)},
+            )
+            client = Client(refreshed_snapshot)
+            cycle = AutoTradeCycle(
+                client=client,
+                live_enabled=True,
+                snapshot_path=root / "broker.json",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+            )
+            summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CLOSE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                close_trade_ids=("471232",),
+            )
+
+            execution = cycle._close_gpt_trades(summary, snapshot=stale_snapshot, send=True)
+
+            self.assertEqual(execution.status, "STALE_CLOSE_SATISFIED")
+            self.assertFalse(execution.sent)
+            self.assertEqual(client.closed, [])
+            self.assertEqual(len(client.snapshot_calls), 1)
+            payload = json.loads((root / "pe.json").read_text())
+            self.assertEqual(payload["status"], "STALE_CLOSE_SATISFIED")
+            self.assertEqual(payload["actions"][0]["issues"][0]["code"], "STALE_CLOSE_ALREADY_ABSENT")
+            self.assertIn("STALE_CLOSE_SATISFIED", (root / "pe.md").read_text())
+
+    def test_stale_gpt_close_satisfied_continues_to_reentry_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            class Cycle(AutoTradeCycle):
+                def __init__(self) -> None:
+                    super().__init__(
+                        client=object(),
+                        report_path=root / "cycle.md",
+                        snapshot_path=root / "broker.json",
+                        intents_path=root / "intents.json",
+                    )
+                    self.archived = False
+                    self.resumed_depth: int | None = None
+
+                def _archive_gpt_close_receipt_for_reentry(self) -> None:
+                    self.archived = True
+
+                def _run(self, *, send: bool = False, _close_reentry_depth: int = 0) -> AutoTradeCycleSummary:
+                    self.resumed_depth = _close_reentry_depth
+                    return AutoTradeCycleSummary(
+                        status="STAGED",
+                        report_path=root / "cycle.md",
+                        snapshot_path=root / "broker.json",
+                        intents_path=root / "intents.json",
+                        selected_lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                        deterministic_lane_id="trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                        sent=False,
+                        positions=0,
+                        orders=0,
+                        live_ready=1,
+                        decision_source="gpt_trader",
+                        position_management_action=None,
+                    )
+
+            cycle = Cycle()
+            close_execution = PositionExecutionSummary(
+                status="STALE_CLOSE_SATISFIED",
+                output_path=root / "pe.json",
+                report_path=root / "pe.md",
+                sent=False,
+                actions=0,
+                blocked=0,
+            )
+            close_summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CLOSE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                close_trade_ids=("471232",),
+            )
+
+            summary = cycle._continue_after_gpt_close(
+                generated_at=datetime.now(timezone.utc).isoformat(),
+                send=True,
+                close_execution=close_execution,
+                close_gpt_summary=close_summary,
+                positions=1,
+                orders=0,
+                live_ready=0,
+                deterministic_lane_id=None,
+                target_summary=None,
+            )
+
+            self.assertTrue(cycle.archived)
+            self.assertEqual(cycle.resumed_depth, 1)
+            self.assertEqual(summary.status, "STAGED")
+            self.assertEqual(summary.decision_source, "gpt_close_then_gpt_trader")
+            self.assertEqual(summary.position_execution_status, "STALE_CLOSE_SATISFIED")
 
     def test_forecast_blocker_is_not_gpt_prefilter_eligible(self) -> None:
         score = LaneScore(

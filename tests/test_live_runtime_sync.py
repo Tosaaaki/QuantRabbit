@@ -103,6 +103,30 @@ class LiveRuntimeSyncTest(unittest.TestCase):
             self.assertEqual((live / "docs" / "cycle_report.md").read_text(), "new runtime drift\n")
             self.assertEqual(_git(live, "status", "--short"), "M docs/cycle_report.md")
 
+    def test_preserves_close_reentry_report_archive_as_runtime_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            live = Path(tmp) / "live"
+            _init_repo(repo)
+            _commit_file(repo, "src/app.py", "print('v1')\n", "initial")
+            _run(["git", "branch", "-m", "main"], cwd=repo)
+            _run(["git", "checkout", "-b", "feature"], cwd=repo)
+            _commit_file(repo, "src/app.py", "print('v2')\n", "feature")
+            _run(["git", "worktree", "add", "-b", "runtime", str(live), "main"], cwd=repo)
+            archive = live / "docs" / "gpt_trader_decision_report.close_reentry.md"
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_text("archived close receipt report\n")
+
+            result = _sync(repo, live, source_branch="feature")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(_git(live, "rev-parse", "HEAD"), _git(repo, "rev-parse", "feature"))
+            self.assertEqual(archive.read_text(), "archived close receipt report\n")
+            self.assertEqual(
+                _git(live, "status", "--short", "--untracked-files=all"),
+                "?? docs/gpt_trader_decision_report.close_reentry.md",
+            )
+
     def test_live_only_removes_empty_verdict_marker_before_clean_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

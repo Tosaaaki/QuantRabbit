@@ -94,7 +94,7 @@ status_lines() {
 
 is_report_path() {
   local path="$1"
-  [[ "$path" == docs/*_report.md ]]
+  [[ "$path" == docs/*_report.md || "$path" == docs/*_report.close_reentry.md ]]
 }
 
 status_path() {
