@@ -915,6 +915,62 @@ class IntentGeneratorTest(unittest.TestCase):
             )
         )
 
+    def test_range_forecast_seed_uses_range_rotation_floor(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                direction="RANGE",
+                confidence=0.52,
+                current_price=1.17326,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=60,
+                rationale_summary="RANGE forecast still supports box rotation",
+                drivers_for=("M5 range rail holds",),
+                drivers_against=("limited directional extension",),
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                IntentGenerator(
+                    campaign_plan=_range_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.52,
+                        short_score=0.48,
+                        dominant_regime="RANGE",
+                        m5_regime="RANGE",
+                        m5_long_bias=0.58,
+                        m5_short_bias=0.22,
+                        regime_state="RANGE",
+                        adx=17.0,
+                        choppiness=65.0,
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        seed = next(
+            item
+            for item in payload["results"]
+            if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+        )
+        seed_issue_codes = {issue["code"] for issue in seed["risk_issues"]}
+
+        self.assertTrue(seed["intent"]["metadata"]["forecast_seed"])
+        self.assertEqual(seed["intent"]["metadata"]["forecast_direction"], "RANGE")
+        self.assertEqual(seed["intent"]["metadata"]["forecast_confidence"], 0.52)
+        self.assertEqual(seed["intent"]["metadata"]["geometry_model"], "RANGE_RAIL_LIMIT")
+        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", seed_issue_codes)
+
     def test_reversal_recovery_hedge_uses_recovery_forecast_floor_for_live_context(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import (

@@ -1395,7 +1395,7 @@ def _append_forecast_seed_lanes(
         confidence = _optional_float(getattr(forecast, "confidence", None))
         if direction in {"UP", "DOWN", "RANGE"} and confidence is not None:
             forecasts_by_pair[pair] = forecast
-        if confidence is None or confidence < _forecast_seed_min_confidence():
+        if confidence is None or confidence < _forecast_seed_min_confidence_for_direction(direction):
             continue
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
@@ -1632,6 +1632,13 @@ def _forecast_seed_min_confidence() -> float:
         # branch is only for import failure in stripped tests; a high threshold
         # fails closed instead of seeding weak predictions.
         return 1.0
+
+
+def _forecast_seed_min_confidence_for_direction(direction: str) -> float:
+    entry_min = _forecast_seed_min_confidence()
+    if direction == "RANGE":
+        return min(entry_min, FORECAST_RANGE_ROTATION_MIN_CONFIDENCE)
+    return entry_min
 
 
 def _forecast_seed_regime_label(raw_chart: dict[str, Any]) -> str | None:
