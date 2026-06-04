@@ -91,6 +91,116 @@ class AutoTradeCycleTest(unittest.TestCase):
 
         self.assertEqual(row["resolution_status"], "HIT")
 
+    def test_reuse_market_artifacts_still_resolves_expired_projection_preflight(self) -> None:
+        prior = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                emitted = now - timedelta(minutes=10)
+                (root / "projection_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_emitted_utc": emitted.isoformat().replace("+00:00", "Z"),
+                            "pair": "EUR_USD",
+                            "signal_name": "directional_forecast",
+                            "direction": "UP",
+                            "lead_time_min": 1,
+                            "confidence": 0.8,
+                            "entry_price": 1.1000,
+                            "predicted_target_price": 1.1010,
+                            "predicted_invalidation_price": 1.0990,
+                            "resolution_window_min": 1,
+                            "resolution_status": "PENDING",
+                            "cycle_id": "reuse-stale-cycle",
+                        }
+                    )
+                    + "\n"
+                )
+                pair_charts = root / "pair_charts.json"
+                pair_charts.write_text(
+                    json.dumps(
+                        {
+                            "charts": [
+                                {
+                                    "pair": "EUR_USD",
+                                    "views": [
+                                        {"granularity": "H1", "indicators": {"atr_pips": 10.0}},
+                                    ],
+                                }
+                            ]
+                        }
+                    )
+                )
+                pending = BrokerOrder(
+                    order_id="pending-1",
+                    pair="EUR_USD",
+                    order_type="STOP",
+                    price=1.1735,
+                    state="PENDING",
+                    units=1000,
+                    owner=Owner.TRADER,
+                )
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    orders=(pending,),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.1020, 1.1022, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                )
+                snapshot_path = root / "snapshot.json"
+                snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+                intents_path = root / "intents.json"
+                _write_two_live_ready_intents(intents_path)
+                target_state = _open_target_state(root)
+
+                summary = AutoTradeCycle(
+                    client=FakeCycleClient(snapshot),
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    pair_charts_path=pair_charts,
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(_gpt_cancel_pending_decision(["pending-1"])),
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=True)
+
+                row = json.loads((root / "projection_ledger.jsonl").read_text())
+                report = (root / "report.md").read_text()
+        finally:
+            if prior is None:
+                os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior
+
+        self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+        self.assertEqual(row["resolution_status"], "HIT")
+        self.assertIn("Projection preflight: status=`OK`", report)
+
     def test_rejected_gpt_close_ids_do_not_call_broker(self) -> None:
         class Client:
             def __init__(self) -> None:

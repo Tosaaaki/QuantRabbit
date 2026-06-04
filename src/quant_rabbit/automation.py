@@ -591,6 +591,7 @@ class AutoTradeCycle:
         self.max_loss_jpy = max_loss_jpy
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
+        self._projection_preflight_summary: dict[str, Any] | None = None
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
@@ -836,8 +837,10 @@ class AutoTradeCycle:
         # mechanically untouchable. Opt out for tests via
         # `QR_DISABLE_TRAILING_SL=1`; production cycles default ON.
         self._maybe_apply_trailing_sls(snapshot, send=send)
-        if not self.reuse_market_artifacts:
-            self._verify_projection_preflight(snapshot)
+        # Projection resolution is learning/audit housekeeping, not intent
+        # repricing. Run it even when the decision packet is reused so a gateway
+        # cycle cannot preserve expired PENDING forecasts into the next audit.
+        self._verify_projection_preflight(snapshot)
         if not trader_positions and not pending_entries and target_summary and target_summary.status == "TARGET_REACHED_PROTECT":
             summary = AutoTradeCycleSummary(
                 status="TARGET_REACHED_PROTECT",
@@ -1843,6 +1846,16 @@ class AutoTradeCycle:
             f"- Market artifact mode: `{'reuse_existing' if self.reuse_market_artifacts else 'refresh_and_reprice'}`",
             f"- Market story refresh: `{self.refresh_market_story}` (source: `{self.market_news_root}`)",
         ]
+        if self._projection_preflight_summary is not None:
+            preflight = self._projection_preflight_summary
+            lines.append(
+                "- Projection preflight: "
+                f"status=`{preflight.get('status')}` "
+                f"expired_pairs=`{preflight.get('expired_pending_pairs')}` "
+                f"pending_pairs=`{preflight.get('pending_pairs')}` "
+                f"counts=`{preflight.get('resolution_counts')}` "
+                f"error=`{preflight.get('error') or 'none'}`"
+            )
         if summary.status == "GPT_REQUIRED_FOR_LIVE_SEND":
             lines.append(
                 "- Live entry blocker: `--send` requires `--use-gpt-trader --gpt-decision-response ...`; "
@@ -1890,26 +1903,48 @@ class AutoTradeCycle:
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
 
-    def _verify_projection_preflight(self, snapshot) -> None:
+    def _verify_projection_preflight(self, snapshot) -> dict[str, Any] | None:
         if os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() not in {
             "1", "true", "TRUE", "yes", "YES",
         }:
-            return
+            self._projection_preflight_summary = {"status": "DISABLED"}
+            return self._projection_preflight_summary
         data_root = self.intents_path.parent
         try:
             from quant_rabbit.strategy.projection_ledger import load_ledger, verify_pending
 
-            pending_pairs = sorted(
-                {
-                    entry.pair
-                    for entry in load_ledger(data_root)
-                    if entry.resolution_status == "PENDING" and entry.pair
-                }
-            )
-        except Exception:
-            return
-        if not pending_pairs:
-            return
+            entries = load_ledger(data_root)
+            now = datetime.now(timezone.utc)
+            pending_pairs: set[str] = set()
+            expired_pairs: set[str] = set()
+            for entry in entries:
+                if entry.resolution_status != "PENDING" or not entry.pair:
+                    continue
+                pending_pairs.add(entry.pair)
+                try:
+                    emitted_at = datetime.fromisoformat(
+                        entry.timestamp_emitted_utc.replace("Z", "+00:00")
+                    )
+                    window_min = float(entry.resolution_window_min or 0)
+                except (TypeError, ValueError):
+                    continue
+                if (now - emitted_at).total_seconds() / 60.0 >= window_min:
+                    expired_pairs.add(entry.pair)
+            pending_pairs_sorted = sorted(pending_pairs)
+            expired_pairs_sorted = sorted(expired_pairs)
+        except Exception as exc:
+            self._projection_preflight_summary = {
+                "status": "LOAD_FAILED",
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+            }
+            return self._projection_preflight_summary
+        if not pending_pairs_sorted:
+            self._projection_preflight_summary = {
+                "status": "NO_PENDING",
+                "expired_pending_pairs": 0,
+                "pending_pairs": 0,
+            }
+            return self._projection_preflight_summary
         quotes_by_pair: dict[str, dict[str, float]] = {}
         for pair, quote in getattr(snapshot, "quotes", {}).items():
             try:
@@ -1918,29 +1953,52 @@ class AutoTradeCycle:
                 continue
         atr_pips_by_pair = _projection_atr_pips_by_pair(self.pair_charts_path)
         candles_by_pair = None
+        candle_counts: dict[str, int] = {}
+        candle_errors: dict[str, str] = {}
         if hasattr(self.client, "get_json"):
             try:
                 from quant_rabbit.analysis.candles import fetch_candles_via_client
 
                 candles_by_pair = {}
-                for pair in pending_pairs:
+                for pair in pending_pairs_sorted:
                     try:
-                        candles_by_pair[pair] = list(fetch_candles_via_client(self.client, pair, "M1", count=200))
-                    except Exception:
+                        candles = list(fetch_candles_via_client(self.client, pair, "M1", count=200))
+                        candles_by_pair[pair] = candles
+                        candle_counts[pair] = len(candles)
+                    except Exception as exc:
+                        candle_errors[pair] = f"{type(exc).__name__}: {str(exc)[:160]}"
                         continue
                 if not candles_by_pair:
                     candles_by_pair = None
-            except Exception:
+            except Exception as exc:
+                candle_errors["_loader"] = f"{type(exc).__name__}: {str(exc)[:160]}"
                 candles_by_pair = None
         try:
-            verify_pending(
+            counts = verify_pending(
                 data_root,
                 quotes_by_pair=quotes_by_pair,
                 atr_pips_by_pair=atr_pips_by_pair,
                 candles_by_pair=candles_by_pair,
             )
-        except Exception:
-            return
+        except Exception as exc:
+            self._projection_preflight_summary = {
+                "status": "VERIFY_FAILED",
+                "expired_pending_pairs": len(expired_pairs_sorted),
+                "pending_pairs": len(pending_pairs_sorted),
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+                "candle_counts": candle_counts,
+                "candle_errors": candle_errors,
+            }
+            return self._projection_preflight_summary
+        self._projection_preflight_summary = {
+            "status": "OK",
+            "expired_pending_pairs": len(expired_pairs_sorted),
+            "pending_pairs": len(pending_pairs_sorted),
+            "resolution_counts": counts,
+            "candle_counts": candle_counts,
+            "candle_errors": candle_errors,
+        }
+        return self._projection_preflight_summary
 
     def _maybe_apply_trailing_sls(self, snapshot, *, send: bool) -> None:
         """H (2026-05-13) — trailing SL pass on trader-owned positions
