@@ -948,11 +948,11 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
 
-    def test_wait_with_close_sidecar_reports_operator_auth_before_attack_advice(self) -> None:
+    def test_wait_with_soft_close_sidecar_still_must_trade_attack_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
-            _write_fresh_forecast_close_recommendation(root, files)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_fresh_forecast_close_recommendation(root, files, side="LONG")
             files["attack_advice"].write_text(
                 json.dumps(
                     {
@@ -969,34 +969,45 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             brain = _brain(root, files, decision)
 
-            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with patch.dict(os.environ, {"QR_TRADER_DISABLE_SL_REPAIR": "1"}, clear=False), patch(
+                "quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False
+            ):
                 summary = brain.run(snapshot_path=files["snapshot"])
 
             self.assertEqual(summary.status, "REJECTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
-            self.assertNotIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
             self.assertNotIn("WAIT_MISSING_LIVE_READY_REJECTION", codes)
             message = "\n".join(issue["message"] for issue in payload["verification_issues"])
-            self.assertIn("not a recovery-confidence hold", message)
+            self.assertIn("choose TRADE", message)
 
-    def test_trade_with_unresolved_close_sidecar_requires_operator_close_auth(self) -> None:
+    def test_trade_with_soft_close_sidecar_and_no_operator_token_is_allowed(self) -> None:
+        """Soft close review is not a blanket blocker for separate entries.
+
+        The same sidecar remains Gate A evidence if the trader chooses CLOSE,
+        but a TP-managed existing position should not freeze all-horizon
+        participation when current LIVE_READY lanes exist.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
-            _write_fresh_forecast_close_recommendation(root, files)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_fresh_forecast_close_recommendation(root, files, side="LONG")
             decision = _trade_decision()
             decision["evidence_refs"].append("position:persistence:555")
             brain = _brain(root, files, decision)
 
-            with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
+            with patch.dict(os.environ, {"QR_TRADER_DISABLE_SL_REPAIR": "1"}, clear=False), patch(
+                "quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False
+            ):
                 summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "REJECTED")
+            self.assertEqual(summary.status, "ACCEPTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertEqual(codes, set())
 
     def test_wait_with_authorized_close_sidecar_must_emit_close_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1016,7 +1027,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("POSITION_CLOSE_REQUIRED", codes)
             self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
 
-    def test_protect_with_unresolved_close_sidecar_requires_operator_close_auth(self) -> None:
+    def test_protect_with_soft_close_sidecar_and_no_operator_token_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
@@ -1028,12 +1039,11 @@ class GPTTraderBrainTest(unittest.TestCase):
             with patch("quant_rabbit.gpt_trader._operator_close_gate_authorized", return_value=False):
                 summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "REJECTED")
+            self.assertEqual(summary.status, "ACCEPTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
-            message = "\n".join(issue["message"] for issue in payload["verification_issues"])
-            self.assertIn("not a recovery-confidence hold", message)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertEqual(codes, set())
 
     def test_tighten_sl_with_authorized_close_sidecar_must_emit_close_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -196,9 +196,16 @@ def route_trader_prompts(
         pair_charts,
         snapshot_path=snapshot_path,
     )
+    live_ready_lanes = _live_ready_lane_ids(intents)
     close_review_reasons = _position_close_recommendation_reasons(
         snapshot,
         snapshot_path=snapshot_path,
+        blocking_only=True,
+    )
+    advisory_close_review_reasons = _position_close_recommendation_reasons(
+        snapshot,
+        snapshot_path=snapshot_path,
+        blocking_only=False,
     )
     entry_thesis_block_reasons = _entry_thesis_blocker_reasons(
         snapshot,
@@ -258,17 +265,24 @@ def route_trader_prompts(
         )
     carry_reasons = decision_state.reasons
 
-    live_ready_lanes = _live_ready_lane_ids(intents)
     if _target_open(target_state) and live_ready_lanes:
         return _build_route(
             BRANCH_ENTRY,
-            (*carry_reasons, f"daily target open with {len(live_ready_lanes)} current LIVE_READY lane(s)"),
+            (
+                *carry_reasons,
+                *advisory_close_review_reasons,
+                f"daily target open with {len(live_ready_lanes)} current LIVE_READY lane(s)",
+            ),
             include_content=include_content,
         )
     if _target_open(target_state):
         return _build_route(
             BRANCH_LEARNING,
-            (*carry_reasons, "daily target open but no current LIVE_READY lane is available"),
+            (
+                *carry_reasons,
+                *advisory_close_review_reasons,
+                "daily target open but no current LIVE_READY lane is available",
+            ),
             include_content=include_content,
         )
 
@@ -460,23 +474,62 @@ def _position_close_recommendation_reasons(
     snapshot: dict[str, Any],
     *,
     snapshot_path: Path,
+    blocking_only: bool = True,
 ) -> tuple[str, ...]:
     """Route fresh loss-cut evidence to the position-management prompt branch.
 
     These sidecars are generated from the current broker snapshot and market
     packet. A stale close recommendation is worse than no recommendation, so
-    reports older than the current snapshot are ignored.
+    reports older than the current snapshot are ignored. Hard or explicitly
+    authorized close evidence blocks fresh-entry routing; soft-only close
+    evidence is advisory so a protected TP-managed position does not starve
+    current LIVE_READY opportunities across other timeframes / pairs.
     """
     data_root = snapshot_path.parent
     reasons: list[str] = []
+    close_gate_b_authorized = _operator_close_gate_b_authorized(data_root)
     for rec in _fresh_close_recommendations(snapshot, data_root=data_root):
+        blocks_entry = _close_recommendation_blocks_entry(
+            rec,
+            close_gate_b_authorized=close_gate_b_authorized,
+        )
+        if blocking_only and not blocks_entry:
+            continue
+        if not blocking_only and blocks_entry:
+            continue
+        prefix = "loss-cut review required" if blocks_entry else "soft close review advisory"
         reasons.append(
-            "loss-cut review required: "
+            f"{prefix}: "
             f"{rec['source']} {rec['verdict']} for "
             f"{rec.get('pair') or '?'} {rec.get('side') or '?'} id={rec.get('trade_id')}: "
             f"{rec.get('reason') or 'prediction no longer supports recovery'}"
         )
     return tuple(reasons)
+
+
+def _close_recommendation_blocks_entry(
+    rec: dict[str, Any],
+    *,
+    close_gate_b_authorized: bool,
+) -> bool:
+    if bool(rec.get("gate_b_standing_authorized")):
+        return True
+    return close_gate_b_authorized
+
+
+def _operator_close_gate_b_authorized(data_root: Path) -> bool:
+    """Mirror the verifier's operator-controlled Gate B check for routing.
+
+    The freshness window and token filename live in `gpt_trader`; this helper
+    imports them lazily so routing and verification stay in sync without
+    duplicating the five-minute token policy.
+    """
+    from quant_rabbit.gpt_trader import (
+        _operator_close_override_active,
+        _operator_close_token_fresh,
+    )
+
+    return _operator_close_override_active() or _operator_close_token_fresh(data_root)
 
 
 def _entry_thesis_blocker_reasons(

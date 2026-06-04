@@ -167,14 +167,15 @@ PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 
 # Position close sidecars are read-only prediction/thesis evidence. Refresh
 # them before routing so a trapped position whose plus-recovery edge is gone
-# reaches the position-management prompt instead of being hidden behind fresh
-# entry work. `position_management.json` from the previous gateway cycle is
-# also read as bounded carry-forward Gate A evidence when it still marks the
-# same open trader-owned trade REVIEW_EXIT. Fresh thesis_evolution BROKEN /
+# reaches the position-management prompt when close authorization is hard or
+# explicit. `position_management.json` from the previous gateway cycle is also
+# read as bounded carry-forward Gate A evidence when it still marks the same
+# open trader-owned trade REVIEW_EXIT. Fresh thesis_evolution BROKEN /
 # RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, and
 # position_thesis adverse technical loss with multi-TF confirmation are hard
-# standing loss-cut authorization, while softer sidecars still need explicit
-# Gate B authorization below.
+# standing loss-cut authorization. Softer sidecars still need explicit Gate B
+# before CLOSE, but without Gate B they are advisory for non-CLOSE actions and
+# must not block separate current LIVE_READY entries on other pairs or horizons.
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
@@ -221,14 +222,17 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 # only re-enter on a fresh LIVE_READY lane with a separate verified TRADE
 # receipt. The automation may do that in the same outer cycle after the close
 # is sent/staged, but never in the same receipt / stale broker packet.
-# Fresh sidecar Gate A close evidence is priority work: do not choose TRADE,
-# WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep it. If only soft
-# Gate A exists and explicit Gate B is missing, the verifier must surface
-# `CLOSE_OPERATOR_AUTH_REQUIRED`; if hard Gate A or explicit Gate B is present,
-# it must require a CLOSE receipt first. The default stance when no user
-# instruction is present is HOLD / WAIT only when no fresh Gate A close sidecar
-# exists — do not write a CLOSE receipt to "reduce risk" from a still-valid
-# thesis.
+# Hard sidecar Gate A or explicit Gate B close evidence is priority work: do
+# not choose TRADE, WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep
+# it. If only soft Gate A exists and explicit Gate B is missing, the sidecar is
+# advisory for non-CLOSE actions; keep TP/profit management active, and still
+# evaluate short / medium / long horizon LIVE_READY entries. If choosing CLOSE
+# from soft evidence, the verifier must surface `CLOSE_OPERATOR_AUTH_REQUIRED`.
+# If hard Gate A or explicit Gate B is present, it must require a CLOSE receipt
+# first. The default stance when no user instruction is present is HOLD / WAIT
+# only when no fresh hard/authorized Gate A close sidecar and no current
+# LIVE_READY lane exists — do not write a CLOSE receipt to "reduce risk" from a
+# still-valid thesis.
 
 # 4. Verify the receipt
 PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \

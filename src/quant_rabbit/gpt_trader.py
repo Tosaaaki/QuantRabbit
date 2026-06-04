@@ -707,7 +707,7 @@ class GPTTraderBrain:
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, or position_thesis no-ledger adverse technical loss with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token`. `TRADE` must not include `close_trade_ids`; automation may re-enter in the same outer cycle only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, or position_thesis no-ledger adverse technical loss with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. `TRADE` must not include `close_trade_ids`; automation may re-enter after a close only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -2034,7 +2034,11 @@ def _entry_thesis_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
     return reasons
 
 
-def _position_close_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
+def _position_close_sidecar_reasons(
+    packet: dict[str, Any],
+    *,
+    blocking_only: bool = True,
+) -> list[str]:
     sidecars = packet.get("protection_sidecars")
     if not isinstance(sidecars, dict):
         return []
@@ -2044,6 +2048,11 @@ def _position_close_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     for item in recommendations:
         if not isinstance(item, dict):
+            continue
+        blocks_non_close_action = _position_close_recommendation_blocks_non_close_action(packet, item)
+        if blocking_only and not blocks_non_close_action:
+            continue
+        if not blocking_only and blocks_non_close_action:
             continue
         trade_id = str(item.get("trade_id") or "").strip()
         pair = str(item.get("pair") or "").strip()
@@ -2055,6 +2064,37 @@ def _position_close_sidecar_reasons(packet: dict[str, Any]) -> list[str]:
         prefix = f"{source} {verdict}"
         reasons.append(f"{prefix} {label}: {reason}" if label else f"{prefix}: {reason}")
     return reasons
+
+
+def _position_close_recommendation_blocks_non_close_action(
+    packet: dict[str, Any],
+    rec: dict[str, Any],
+) -> bool:
+    """Whether a close sidecar must preempt TRADE/WAIT/PROTECT.
+
+    Hard Gate A, or soft Gate A with explicit operator Gate B, requires a CLOSE
+    receipt first. Soft-only sidecars remain usable Gate A evidence if the
+    trader chooses CLOSE, but they do not freeze TP-managed exposure and block
+    fresh all-horizon entries while authorization is absent.
+    """
+    if bool(rec.get("gate_b_standing_authorized")):
+        return True
+    trade_id = str(rec.get("trade_id") or "")
+    if trade_id:
+        pos = _trader_position_lookup(packet).get(trade_id)
+        if pos is not None:
+            pair = str(pos.get("pair") or rec.get("pair") or "")
+            side = str(pos.get("side") or rec.get("side") or "")
+            invalidated, _reason, standing_authorized = _close_thesis_invalidation(
+                packet,
+                pair,
+                side,
+                trade_id=trade_id,
+                decision=None,
+            )
+            if invalidated and standing_authorized:
+                return True
+    return _operator_close_gate_authorized()
 
 
 def _append_position_close_required_issue(

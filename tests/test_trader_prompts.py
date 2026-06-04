@@ -372,7 +372,13 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
 
-    def test_fresh_forecast_persistence_recommend_close_routes_to_position_management(self) -> None:
+    def test_soft_forecast_persistence_close_with_live_ready_routes_to_entry(self) -> None:
+        """Soft-only close evidence must not starve current all-horizon entries.
+
+        Regression: a protected TP-managed position with only forecast
+        persistence RECOMMEND_CLOSE used to trap routing in position_management
+        and then fail Gate B, even while fresh LIVE_READY lanes existed.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -420,8 +426,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                 else:
                     os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
-        self.assertEqual(route.branch, BRANCH_POSITION)
-        self.assertTrue(any("loss-cut review required" in reason for reason in route.reasons))
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
         self.assertTrue(any("forecast_persistence RECOMMEND_CLOSE" in reason for reason in route.reasons))
 
     def test_position_thesis_recommend_close_routes_with_context_notes(self) -> None:

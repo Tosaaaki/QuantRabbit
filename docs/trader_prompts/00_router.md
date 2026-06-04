@@ -18,6 +18,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 | Required broker / market / intent artifact is missing | `refresh_market_context` |
 | Trader-owned position is missing TP or SL | `position_management` |
 | Existing open position has a deterministic `tp-rebalance` adjustment | `position_management` |
+| Hard close sidecar exists, or soft close sidecar has explicit Gate B | `position_management` |
+| Soft-only close sidecar exists without Gate B and current `LIVE_READY` lanes exist | `entry_decision` with advisory reason |
 | Current unconsumed decision receipt exists and still matches current broker / intent artifacts | `verify_execute` |
 | Daily target is open and current `LIVE_READY` lanes exist | `entry_decision` |
 | Daily target is open but no `LIVE_READY` lane exists | `learning_gap` |

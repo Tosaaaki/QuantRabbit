@@ -75,9 +75,13 @@ not the objective.
 Do not combine loss-cut and re-entry in one `TRADE` receipt. Close the broken
 position first, refresh broker truth / intents, then re-enter only if the next
 cycle still produces a fresh `LIVE_READY` lane.
-Fresh sidecar Gate A close evidence also blocks `PROTECT` / `TIGHTEN_SL` as a
-receipt-level escape hatch: submit the verified `CLOSE` when hard Gate A or
-explicit Gate B is available; otherwise surface `CLOSE_OPERATOR_AUTH_REQUIRED`.
+Fresh hard sidecar Gate A close evidence, or soft sidecar evidence paired with
+explicit Gate B, also blocks `PROTECT` / `TIGHTEN_SL` as a receipt-level escape
+hatch: submit the verified `CLOSE` first. Soft-only evidence without Gate B is
+advisory for non-CLOSE actions; keep TP/profit management active and do not use
+it as a blanket reason to stop separate current `LIVE_READY` entries on other
+pairs or horizons. If choosing `CLOSE` from soft evidence, surface
+`CLOSE_OPERATOR_AUTH_REQUIRED` unless Gate B is present.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for
 currently profitable trader-owned positions when the adaptive TP / macro-micro

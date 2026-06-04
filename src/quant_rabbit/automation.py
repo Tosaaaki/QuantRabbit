@@ -976,22 +976,16 @@ class AutoTradeCycle:
                     canceled_orders.append(order_id)
                 if canceled_orders:
                     status = "CANCELED_TARGET_REACHED_PENDING"
-            if (
-                not canceled_orders
-                and send
-                and self.live_enabled
-                and trader_positions == 0
-                and decision.pending_cancel_order_ids
-            ):
-                for order_id in decision.pending_cancel_order_ids:
-                    self.client.cancel_order(order_id)
-                    canceled_orders.append(order_id)
-                status = "CANCELED_CONTAMINATED_PENDING"
             target_open = (
                 target_summary is not None
                 and target_summary.status == "PURSUE_TARGET"
                 and target_summary.remaining_target_jpy > 0
             )
+            # Pending entries are a live thesis, not a one-cycle artifact. If
+            # the target is still open and current LIVE_READY lanes exist, let
+            # GPT/gateway decide whether to preserve, add, or explicitly cancel
+            # them. Preemptively canceling here prevents the market-reading
+            # layer from choosing "keep pending + add current basket".
             if not canceled_orders and target_open:
                 basket_lane_ids, basket_size_multiples = self._basket_lane_plan(
                     decision=decision,
@@ -1166,19 +1160,12 @@ class AutoTradeCycle:
                                 already_canceled=tuple(canceled_orders),
                             )
                         )
-                        if target_open:
-                            basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
-                                decision=decision,
-                                gpt_lane_ids=gpt_lane_ids,
-                                allow_existing_pending=True,
-                                margin_room_jpy=_basket_margin_room_jpy(snapshot),
-                            )
-                        else:
-                            basket_lane_ids = gpt_lane_ids
-                            basket_size_multiples = {
-                                lane_id: basket_size_multiples.get(lane_id, 1.0)
-                                for lane_id in basket_lane_ids
-                            }
+                        basket_lane_ids, basket_size_multiples = self._expanded_gpt_basket_plan(
+                            decision=decision,
+                            gpt_lane_ids=gpt_lane_ids,
+                            allow_existing_pending=True,
+                            margin_room_jpy=_basket_margin_room_jpy(snapshot),
+                        )
                     order_summary = LiveOrderGateway(
                         client=self.client,
                         strategy_profile=self.strategy_profile_path,
@@ -1216,7 +1203,7 @@ class AutoTradeCycle:
                         live_ready=intent_summary.live_ready,
                         canceled_orders=tuple(canceled_orders),
                         receipt_promotions=0,
-                        decision_source="deterministic_basket",
+                        decision_source="gpt_trader" if gpt_summary else "deterministic_basket",
                         position_management_action=position_decision.action,
                         position_execution_status=position_execution.status,
                         position_execution_sent=position_execution.sent,
@@ -1231,6 +1218,17 @@ class AutoTradeCycle:
                     )
                     self._write_report(summary, generated_at)
                     return summary
+            if (
+                not canceled_orders
+                and send
+                and self.live_enabled
+                and trader_positions == 0
+                and decision.pending_cancel_order_ids
+            ):
+                for order_id in decision.pending_cancel_order_ids:
+                    self.client.cancel_order(order_id)
+                    canceled_orders.append(order_id)
+                status = "CANCELED_CONTAMINATED_PENDING"
             summary = AutoTradeCycleSummary(
                 status=status,
                 report_path=self.report_path,
