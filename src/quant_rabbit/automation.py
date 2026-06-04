@@ -875,17 +875,6 @@ class AutoTradeCycle:
             )
             canceled_orders: list[str] = []
             canceled_status = "CANCELED_CONTAMINATED_PENDING"
-            if (
-                pending_entries
-                and send
-                and self.live_enabled
-                and not position_execution.sent
-                and position_execution.status == "NO_ACTION"
-                and decision.pending_cancel_order_ids
-            ):
-                for order_id in decision.pending_cancel_order_ids:
-                    self.client.cancel_order(order_id)
-                    canceled_orders.append(order_id)
             target_open = (
                 target_summary is not None
                 and target_summary.status == "PURSUE_TARGET"
@@ -893,6 +882,18 @@ class AutoTradeCycle:
             )
             target_reached = target_summary is not None and target_summary.status == "TARGET_REACHED_PROTECT"
             portfolio_add_allowed = _portfolio_add_allowed(snapshot)
+            if (
+                pending_entries
+                and send
+                and self.live_enabled
+                and not position_execution.sent
+                and position_execution.status == "NO_ACTION"
+                and decision.pending_cancel_order_ids
+                and not (target_open and portfolio_add_allowed)
+            ):
+                for order_id in decision.pending_cancel_order_ids:
+                    self.client.cancel_order(order_id)
+                    canceled_orders.append(order_id)
             if (
                 pending_entries
                 and target_reached

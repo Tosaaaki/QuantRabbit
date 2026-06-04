@@ -256,6 +256,86 @@ class TraderBrainTest(unittest.TestCase):
 
         self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,)), ())
 
+    def test_aligned_forecast_text_does_not_contaminate_pending_entry(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="aligned-forecast-limit",
+            pair="EUR_USD",
+            order_type="LIMIT",
+            price=1.17120,
+            state="PENDING",
+            units=1000,
+            owner=Owner.TRADER,
+            raw={
+                "clientExtensions": {"tag": "trader"},
+                "takeProfitOnFill": {"price": "1.17360"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(pending,),
+            quotes={"EUR_USD": Quote("EUR_USD", 1.17110, 1.17118, timestamp_utc=now)},
+        )
+        score = LaneScore(
+            lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+            pair="EUR_USD",
+            direction="LONG",
+            method="BREAKOUT_FAILURE",
+            order_type="LIMIT",
+            entry=1.17120,
+            tp=1.17360,
+            sl=None,
+            status="LIVE_READY",
+            score=18.0,
+            action=ACTION_NO_TRADE,
+            blockers=("wide spread for fresh edge=2.4pip",),
+            rationale=("forecast UP aligned LONG; keep waiting for retest fill",),
+            spread_pips=2.4,
+            estimated_margin_jpy=12_000.0,
+        )
+
+        self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,)), ())
+
+    def test_opposed_forecast_text_still_contaminates_pending_entry(self) -> None:
+        now = datetime.now(timezone.utc)
+        pending = BrokerOrder(
+            order_id="opposed-forecast-limit",
+            pair="EUR_USD",
+            order_type="LIMIT",
+            price=1.17120,
+            state="PENDING",
+            units=1000,
+            owner=Owner.TRADER,
+            raw={
+                "clientExtensions": {"tag": "trader"},
+                "takeProfitOnFill": {"price": "1.17360"},
+            },
+        )
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(pending,),
+            quotes={"EUR_USD": Quote("EUR_USD", 1.17110, 1.17118, timestamp_utc=now)},
+        )
+        score = LaneScore(
+            lane_id="failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+            pair="EUR_USD",
+            direction="LONG",
+            method="BREAKOUT_FAILURE",
+            order_type="LIMIT",
+            entry=1.17120,
+            tp=1.17360,
+            sl=None,
+            status="DRY_RUN_PASSED",
+            score=-12.0,
+            action=ACTION_NO_TRADE,
+            blockers=("forecast DOWN opposes LONG -> BLOCK",),
+            rationale=("current forecast invalidates the pending long thesis",),
+            spread_pips=2.4,
+            estimated_margin_jpy=12_000.0,
+        )
+
+        self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,)), ("opposed-forecast-limit",))
+
     def test_keeps_pending_entry_when_market_thesis_still_valid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

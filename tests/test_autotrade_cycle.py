@@ -1012,6 +1012,105 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_canceled, [order.order_id for order in pending_orders])
             self.assertEqual(len(client.orders_sent), 1)
 
+    def test_protected_position_gpt_trade_preserves_pending_cancel_candidate_when_cancel_not_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            pending = BrokerOrder(
+                order_id="protected-stale-but-gpt-preserved",
+                pair="EUR_USD",
+                order_type="STOP",
+                price=1.1800,
+                state="PENDING",
+                units=1000,
+                owner=Owner.TRADER,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="protected-gbp",
+                        pair="GBP_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.3600,
+                        take_profit=1.3620,
+                        stop_loss=1.3590,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                orders=(pending,),
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "GBP_USD": Quote("GBP_USD", 1.3602, 1.3603, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            market_lane = "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"
+            _write_two_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+            gpt_decision = _gpt_batch_trade_decision(
+                [
+                    market_lane,
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                ]
+            )
+            gpt_decision["cancel_order_ids"] = []
+
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=root / "gpt_decision.json",
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(gpt_decision),
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                    max_loss_jpy=1_500,
+                ).run(send=True)
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+
+            self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(summary.sent_count, 1)
+            self.assertEqual(summary.canceled_orders, ())
+            self.assertEqual(client.orders_canceled, [])
+            self.assertEqual(len(client.orders_sent), 1)
+            decision_payload = json.loads((root / "decision.json").read_text())
+            self.assertEqual(decision_payload["pending_cancel_order_ids"], [pending.order_id])
+
     def test_protected_position_can_cancel_contaminated_pending_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
