@@ -221,6 +221,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
   - Explicit lane id
   - `RiskEngine.validate(..., for_live_send=True)` passes
   - Strategy-profile validation passes
+- While the daily target is still open, target-open entry and TRADE-verify routing require a current `data/trader_overrides.json` from `daily-review`. Missing, unreadable, no-expiry, or expired feedback routes back to `refresh_market_context` before any fresh-entry decision is trusted, so same-day loss-tail penalties cannot silently drop at JST midnight. Existing-position TP/close/protection routing has higher priority and must not be delayed by stale entry feedback.
 - `stage-live-order` stages by default; real send additionally requires `--send --confirm-live`.
 - Use explicit env vars: `QR_OANDA_TOKEN`, `QR_OANDA_ACCOUNT_ID`, `QR_OANDA_BASE_URL`.
 - Local OANDA credentials live in `.env.local` at repo root with `QR_OANDA_*` keys. **Never print their values.**

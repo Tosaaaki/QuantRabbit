@@ -53,6 +53,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_PROMPTS_DIR,
 )
 
@@ -147,6 +148,7 @@ def route_trader_prompts(
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
     live_order_path: Path | None = DEFAULT_LIVE_ORDER_REQUEST,
@@ -205,6 +207,18 @@ def route_trader_prompts(
                 *close_review_reasons,
                 *entry_thesis_block_reasons,
             ),
+            include_content=include_content,
+        )
+
+    trader_overrides_refresh_reasons = _trader_overrides_refresh_reasons(
+        target_state,
+        snapshot,
+        trader_overrides_path=trader_overrides_path,
+    )
+    if trader_overrides_refresh_reasons:
+        return _build_route(
+            BRANCH_REFRESH,
+            trader_overrides_refresh_reasons,
             include_content=include_content,
         )
 
@@ -938,6 +952,53 @@ def _target_open(target_state: dict[str, Any]) -> bool:
         return float(remaining or 0.0) > 0.0 and target_state.get("status") != "TARGET_REACHED_PROTECT"
     except (TypeError, ValueError):
         return False
+
+
+def _trader_overrides_refresh_reasons(
+    target_state: dict[str, Any],
+    snapshot: dict[str, Any],
+    *,
+    trader_overrides_path: Path | None,
+) -> tuple[str, ...]:
+    """Require current daily-review feedback before target-open entry work.
+
+    `trader_overrides.json` carries the same-day loss-tail feedback that
+    trader_brain uses to downscore weak pair/direction lanes. It is not needed
+    to manage existing positions, so callers check this after position
+    management routing has had first refusal.
+    """
+    if trader_overrides_path is None or not _target_open(target_state):
+        return ()
+    fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
+    if fetched_at is None:
+        return (
+            "broker snapshot lacks fetched_at_utc; refresh broker truth before target-open entry routing",
+        )
+    if not trader_overrides_path.exists():
+        return (
+            f"daily-review feedback missing while target is open: {trader_overrides_path}; "
+            "run daily-review before entry/verify routing",
+        )
+    try:
+        payload = _load_json(trader_overrides_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"daily-review feedback unreadable while target is open: {trader_overrides_path}: {exc}; "
+            "run daily-review before entry/verify routing",
+        )
+    expires_at = _parse_utc(payload.get("expires_at_utc"))
+    if expires_at is None:
+        return (
+            f"daily-review feedback lacks expires_at_utc while target is open: {trader_overrides_path}; "
+            "run daily-review before entry/verify routing",
+        )
+    if expires_at <= fetched_at:
+        return (
+            "daily-review feedback stale while target is open: "
+            f"trader_overrides expired at {expires_at.isoformat()} before "
+            f"broker snapshot {fetched_at.isoformat()}; run daily-review before entry/verify routing",
+        )
+    return ()
 
 
 def _block_issues(items: object) -> tuple[str, ...]:

@@ -48,6 +48,70 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any(path.endswith("30_entry_decision.md") for path in read_paths))
         self.assertTrue(any(path.endswith("90_decision_receipt_schema.md") for path in read_paths))
 
+    def test_stale_trader_overrides_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            fetched_at = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            files["trader_overrides"].write_text(
+                json.dumps(
+                    {
+                        "expires_at_utc": (fetched_at - timedelta(seconds=1)).isoformat(),
+                        "bias_overrides": {"EUR_USD": {"LONG": -20.0}},
+                        "blocked_lanes": [],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("daily-review feedback stale" in reason for reason in route.reasons))
+
+    def test_missing_trader_overrides_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["trader_overrides"].unlink()
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("daily-review feedback missing" in reason for reason in route.reasons))
+
+    def test_stale_trader_overrides_does_not_preempt_position_management(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "101",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            fetched_at = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            files["trader_overrides"].write_text(
+                json.dumps({"expires_at_utc": (fetched_at - timedelta(seconds=1)).isoformat()})
+            )
+
+            prior = os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            try:
+                route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is not None:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertIn("needs protection repair", route.reasons[0])
+
     def test_routes_unprotected_trader_position_to_position_management(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -988,6 +1052,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["attack_advice"]),
                         "--learning-audit",
                         str(files["learning_audit"]),
+                        "--trader-overrides",
+                        str(files["trader_overrides"]),
                         "--decision-response",
                         str(root / "missing_decision_response.json"),
                         "--live-order",
@@ -1020,6 +1086,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "option_skew_path": files["option_skew"],
         "attack_advice_path": files["attack_advice"],
         "learning_audit_path": files["learning_audit"],
+        "trader_overrides_path": files["trader_overrides"],
         "gpt_decision_path": files["gpt_decision"],
         "live_order_path": files["live_order"],
         "position_execution_path": files["position_execution"],
@@ -1046,6 +1113,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "option_skew": root / "option_skew_snapshot.json",
         "attack_advice": root / "ai_attack_advice.json",
         "learning_audit": root / "learning_audit.json",
+        "trader_overrides": root / "trader_overrides.json",
         "gpt_decision": root / "gpt_trader_decision.json",
         "live_order": root / "live_order_request.json",
         "position_execution": root / "position_execution.json",
@@ -1099,6 +1167,17 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "learning_audit",
     ):
         files[key].write_text(json.dumps({}))
+    files["trader_overrides"].write_text(
+        json.dumps(
+            {
+                "expires_at_utc": (
+                    datetime.fromisoformat(now) + timedelta(hours=1)
+                ).isoformat(),
+                "bias_overrides": {},
+                "blocked_lanes": [],
+            }
+        )
+    )
     return files
 
 

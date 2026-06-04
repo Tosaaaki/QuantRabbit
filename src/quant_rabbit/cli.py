@@ -86,6 +86,7 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_STRATEGY_REPORT,
     DEFAULT_TRADER_SETTINGS,
+    DEFAULT_TRADER_OVERRIDES,
     DEFAULT_TRADER_DECISION,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CROSS_ASSET_REPORT,
@@ -747,6 +748,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
     p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_prompt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_prompt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
     p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_prompt.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_prompt.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
@@ -1851,6 +1853,7 @@ def main(argv: list[str] | None = None) -> int:
                 option_skew_path=args.option_skew,
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,
+                trader_overrides_path=args.trader_overrides,
                 decision_response_path=args.decision_response,
                 gpt_decision_path=args.gpt_decision,
                 live_order_path=args.live_order,

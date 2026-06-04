@@ -128,7 +128,10 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
 # trader_brain's Module C reads a current snapshot.
 # Idempotent and fast (single SQLite read, no network), so safe to run
 # every cycle. Expiry is JST midnight, so this also keeps the file
-# rolling without manual intervention.
+# rolling without manual intervention. `trader-prompt-route` treats a
+# missing or expired file as a refresh requirement before target-open
+# entry/verify routing, while existing-position management still keeps
+# priority.
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-review
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
