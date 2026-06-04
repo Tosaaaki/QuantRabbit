@@ -77,6 +77,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
 PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
 PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
+PYTHONPATH=src python3 -m quant_rabbit.cli memory-health
 PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 ```
 

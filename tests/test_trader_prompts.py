@@ -111,6 +111,45 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("strategy profile is older than history DB" in reason for reason in route.reasons))
 
+    def test_missing_memory_health_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["memory_health"].unlink()
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("memory_health" in reason for reason in route.reasons))
+
+    def test_blocked_memory_health_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["memory_health"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "MEMORY_HEALTH_BLOCKED",
+                        "blockers": ["strategy_profile has zero mined profiles"],
+                        "issues": [
+                            {
+                                "severity": "BLOCK",
+                                "layer": "long_term",
+                                "code": "LONG_STRATEGY_PROFILE_EMPTY",
+                                "message": "strategy_profile has zero mined profiles",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("memory health audit is blocked" in reason for reason in route.reasons))
+        self.assertTrue(any("LONG_STRATEGY_PROFILE_EMPTY" in reason for reason in route.reasons))
+
     def test_stale_trader_overrides_does_not_preempt_position_management(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1083,6 +1122,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["attack_advice"]),
                         "--learning-audit",
                         str(files["learning_audit"]),
+                        "--memory-health",
+                        str(files["memory_health"]),
                         "--strategy-profile",
                         str(files["strategy_profile"]),
                         "--trader-overrides",
@@ -1119,6 +1160,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "option_skew_path": files["option_skew"],
         "attack_advice_path": files["attack_advice"],
         "learning_audit_path": files["learning_audit"],
+        "memory_health_path": files["memory_health"],
         "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
         "gpt_decision_path": files["gpt_decision"],
@@ -1147,6 +1189,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "option_skew": root / "option_skew_snapshot.json",
         "attack_advice": root / "ai_attack_advice.json",
         "learning_audit": root / "learning_audit.json",
+        "memory_health": root / "memory_health.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
         "trader_overrides": root / "trader_overrides.json",
@@ -1203,6 +1246,23 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "learning_audit",
     ):
         files[key].write_text(json.dumps({}))
+    files["memory_health"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "MEMORY_HEALTH_PASS",
+                "layers": {
+                    "short_term": "PASS",
+                    "medium_term": "PASS",
+                    "long_term": "PASS",
+                    "position_memory": "PASS",
+                },
+                "issues": [],
+                "blockers": [],
+                "warnings": [],
+            }
+        )
+    )
     files["history_db"].write_text("not a real sqlite db; only mtime matters for routing tests")
     files["strategy_profile"].write_text(
         json.dumps(

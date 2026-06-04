@@ -1,0 +1,1032 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+from quant_rabbit.paths import (
+    DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_ENTRY_THESIS_LEDGER,
+    DEFAULT_EXECUTION_LEDGER_DB,
+    DEFAULT_FORECAST_HISTORY,
+    DEFAULT_LEARNING_AUDIT,
+    DEFAULT_MEMORY_HEALTH,
+    DEFAULT_MEMORY_HEALTH_REPORT,
+    DEFAULT_ORDER_INTENTS,
+    DEFAULT_PROJECTION_LEDGER,
+    DEFAULT_STRATEGY_PROFILE,
+)
+
+
+STATUS_PASS = "MEMORY_HEALTH_PASS"
+STATUS_WARN = "MEMORY_HEALTH_WARN"
+STATUS_BLOCKED = "MEMORY_HEALTH_BLOCKED"
+
+LAYER_SHORT = "short_term"
+LAYER_MEDIUM = "medium_term"
+LAYER_LONG = "long_term"
+LAYER_POSITION = "position_memory"
+
+_MEMORY_BLOCKER_TOKENS = (
+    "STRATEGY_PROFILE",
+    "TELEMETRY_",
+    "FORECAST_HISTORY",
+    "PROJECTION_LEDGER",
+    "EXECUTION_LEDGER",
+    "ENTRY_THESIS",
+    "LEARNING_AUDIT",
+)
+
+
+@dataclass(frozen=True)
+class MemoryHealthSummary:
+    output_path: Path
+    report_path: Path
+    status: str
+    issues: int
+    blockers: int
+    warnings: int
+    layers: dict[str, str]
+    metrics: dict[str, Any]
+
+
+class MemoryHealthAuditor:
+    """Audit short, medium, long, and position memory before trader routing."""
+
+    def __init__(
+        self,
+        *,
+        output_path: Path = DEFAULT_MEMORY_HEALTH,
+        report_path: Path = DEFAULT_MEMORY_HEALTH_REPORT,
+    ) -> None:
+        self.output_path = output_path
+        self.report_path = report_path
+
+    def run(
+        self,
+        *,
+        snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
+        target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
+        order_intents_path: Path = DEFAULT_ORDER_INTENTS,
+        strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
+        forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
+        projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
+        learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+        entry_thesis_ledger_path: Path = DEFAULT_ENTRY_THESIS_LEDGER,
+        execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
+        now: datetime | None = None,
+    ) -> MemoryHealthSummary:
+        clock = _to_utc(now or datetime.now(timezone.utc))
+        issues: list[dict[str, Any]] = []
+        metrics: dict[str, Any] = {}
+
+        snapshot_loaded = _read_json(snapshot_path)
+        target_loaded = _read_json(target_state_path)
+        intents_loaded = _read_json(order_intents_path)
+        strategy_loaded = _read_json(strategy_profile_path)
+        learning_loaded = _read_json(learning_audit_path)
+
+        snapshot = snapshot_loaded.payload or {}
+        target_state = target_loaded.payload or {}
+        intents = intents_loaded.payload or {}
+        target_open = _target_open(target_state)
+        snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or (snapshot.get("account") or {}).get("fetched_at_utc"))
+        active_positions = _active_trader_positions(snapshot)
+        live_ready_pairs = _live_ready_pairs(intents)
+        intent_pairs = _intent_pairs(intents)
+        required_pairs = tuple(dict.fromkeys([*live_ready_pairs, *intent_pairs, *(p["pair"] for p in active_positions)]))
+
+        metrics["runtime"] = {
+            "target_open": target_open,
+            "snapshot_fetched_at_utc": snapshot_ts.isoformat() if snapshot_ts else None,
+            "active_trader_positions": len(active_positions),
+            "live_ready_pairs": list(live_ready_pairs),
+            "intent_pairs": list(intent_pairs),
+            "required_pairs": list(required_pairs),
+        }
+
+        _check_required_json(
+            issues,
+            loaded=snapshot_loaded,
+            path=snapshot_path,
+            layer=LAYER_SHORT,
+            code="SHORT_BROKER_SNAPSHOT_UNREADABLE",
+            label="broker_snapshot",
+        )
+        _check_required_json(
+            issues,
+            loaded=target_loaded,
+            path=target_state_path,
+            layer=LAYER_SHORT,
+            code="SHORT_DAILY_TARGET_UNREADABLE",
+            label="daily_target_state",
+        )
+        _check_required_json(
+            issues,
+            loaded=intents_loaded,
+            path=order_intents_path,
+            layer=LAYER_SHORT,
+            code="SHORT_ORDER_INTENTS_UNREADABLE",
+            label="order_intents",
+        )
+
+        forecast_rows, forecast_malformed, forecast_error = _read_jsonl(forecast_history_path)
+        _audit_forecast_history(
+            issues,
+            metrics,
+            rows=forecast_rows,
+            malformed=forecast_malformed,
+            error=forecast_error,
+            path=forecast_history_path,
+            snapshot_ts=snapshot_ts,
+            required_pairs=required_pairs,
+            target_open=target_open,
+            active_positions=active_positions,
+        )
+
+        projection_rows, projection_malformed, projection_error = _read_jsonl(projection_ledger_path)
+        _audit_projection_ledger(
+            issues,
+            metrics,
+            rows=projection_rows,
+            malformed=projection_malformed,
+            error=projection_error,
+            path=projection_ledger_path,
+            forecast_rows=forecast_rows,
+            required_pairs=required_pairs,
+            target_open=target_open,
+            active_positions=active_positions,
+            now=clock,
+        )
+
+        _audit_execution_ledger(
+            issues,
+            metrics,
+            db_path=execution_ledger_db_path,
+            snapshot=snapshot,
+        )
+        _audit_learning_audit(
+            issues,
+            metrics,
+            loaded=learning_loaded,
+            path=learning_audit_path,
+        )
+        _audit_strategy_profile(
+            issues,
+            metrics,
+            loaded=strategy_loaded,
+            path=strategy_profile_path,
+        )
+
+        entry_rows, entry_malformed, entry_error = _read_jsonl(entry_thesis_ledger_path)
+        _audit_entry_thesis(
+            issues,
+            metrics,
+            rows=entry_rows,
+            malformed=entry_malformed,
+            error=entry_error,
+            path=entry_thesis_ledger_path,
+            active_positions=active_positions,
+        )
+        _audit_intent_memory_blockers(issues, metrics, intents=intents)
+
+        layer_statuses = _layer_statuses(issues)
+        blockers = [item for item in issues if item["severity"] == "BLOCK"]
+        warnings = [item for item in issues if item["severity"] == "WARN"]
+        status = STATUS_BLOCKED if blockers else (STATUS_WARN if warnings else STATUS_PASS)
+        paths = {
+            "broker_snapshot": str(snapshot_path),
+            "daily_target_state": str(target_state_path),
+            "order_intents": str(order_intents_path),
+            "strategy_profile": str(strategy_profile_path),
+            "forecast_history": str(forecast_history_path),
+            "projection_ledger": str(projection_ledger_path),
+            "learning_audit": str(learning_audit_path),
+            "entry_thesis_ledger": str(entry_thesis_ledger_path),
+            "execution_ledger_db": str(execution_ledger_db_path),
+        }
+        payload = {
+            "generated_at_utc": clock.isoformat(),
+            "status": status,
+            "layers": layer_statuses,
+            "issues": issues,
+            "blockers": [item["message"] for item in blockers],
+            "warnings": [item["message"] for item in warnings],
+            "metrics": metrics,
+            "artifact_paths": paths,
+            "contract": {
+                "short_term": "broker snapshot, order intents, and current forecast history must describe the same executable cycle",
+                "medium_term": "projection and execution ledgers must be reconcilable before new live exposure",
+                "long_term": "strategy_profile must contain mined evidence before target-open entry routing",
+                "position_memory": "open trader-owned positions must retain an entry_thesis row for machine-checkable management",
+                "advisory_only": True,
+                "hard_gates_remain": ["RiskEngine", "IntentGenerator telemetry validation", "LiveOrderGateway"],
+            },
+        }
+        self._write_output(payload)
+        self._write_report(payload)
+        return MemoryHealthSummary(
+            output_path=self.output_path,
+            report_path=self.report_path,
+            status=status,
+            issues=len(issues),
+            blockers=len(blockers),
+            warnings=len(warnings),
+            layers=layer_statuses,
+            metrics=metrics,
+        )
+
+    def _write_output(self, payload: dict[str, Any]) -> None:
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.output_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_report(self, payload: dict[str, Any]) -> None:
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Memory Health Report",
+            "",
+            f"- Generated at UTC: `{payload['generated_at_utc']}`",
+            f"- Status: `{payload['status']}`",
+            "",
+            "## Layers",
+            "",
+        ]
+        for layer, status in payload["layers"].items():
+            lines.append(f"- `{layer}`: `{status}`")
+        lines.extend(["", "## Issues", ""])
+        if payload["issues"]:
+            for issue in payload["issues"]:
+                lines.append(
+                    f"- `{issue['severity']}` `{issue['layer']}` `{issue['code']}`: {issue['message']}"
+                )
+        else:
+            lines.append("- None")
+        lines.extend(
+            [
+                "",
+                "## Contract",
+                "",
+                "- This audit does not grant permission to trade.",
+                "- BLOCK means a memory artifact is missing, stale, unreconciled, or internally inconsistent before routing.",
+                "- Final broker send remains governed by RiskEngine, IntentGenerator telemetry validation, and LiveOrderGateway.",
+            ]
+        )
+        self.report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@dataclass(frozen=True)
+class _LoadedJson:
+    payload: dict[str, Any] | None
+    error: str | None
+
+
+def _read_json(path: Path) -> _LoadedJson:
+    if not path.exists():
+        return _LoadedJson(None, "missing")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return _LoadedJson(None, str(exc))
+    if not isinstance(payload, dict):
+        return _LoadedJson(None, "not a JSON object")
+    return _LoadedJson(payload, None)
+
+
+def _read_jsonl(path: Path) -> tuple[tuple[dict[str, Any], ...], int, str | None]:
+    if not path.exists():
+        return (), 0, "missing"
+    rows: list[dict[str, Any]] = []
+    malformed = 0
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    item = json.loads(text)
+                except json.JSONDecodeError:
+                    malformed += 1
+                    continue
+                if isinstance(item, dict):
+                    rows.append(item)
+                else:
+                    malformed += 1
+    except OSError as exc:
+        return (), malformed, str(exc)
+    return tuple(rows), malformed, None
+
+
+def _check_required_json(
+    issues: list[dict[str, Any]],
+    *,
+    loaded: _LoadedJson,
+    path: Path,
+    layer: str,
+    code: str,
+    label: str,
+) -> None:
+    if loaded.error is None:
+        return
+    issues.append(
+        _issue(
+            layer=layer,
+            severity="BLOCK",
+            code=code,
+            message=f"{label} is unreadable: {path}: {loaded.error}",
+        )
+    )
+
+
+def _audit_forecast_history(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    rows: tuple[dict[str, Any], ...],
+    malformed: int,
+    error: str | None,
+    path: Path,
+    snapshot_ts: datetime | None,
+    required_pairs: tuple[str, ...],
+    target_open: bool,
+    active_positions: list[dict[str, str]],
+) -> None:
+    latest_by_pair: dict[str, dict[str, Any]] = {}
+    latest_ts: datetime | None = None
+    duplicate_cycle_pairs = 0
+    seen_cycle_pairs: set[tuple[str, str]] = set()
+    duplicate_keys: set[tuple[str, str]] = set()
+    for row in rows:
+        pair = str(row.get("pair") or "")
+        ts = _parse_utc(row.get("timestamp_utc"))
+        if pair:
+            latest_by_pair[pair] = row
+        if ts is not None and (latest_ts is None or ts > latest_ts):
+            latest_ts = ts
+        cycle_id = str(row.get("cycle_id") or "")
+        if pair and cycle_id:
+            key = (cycle_id, pair)
+            if key in seen_cycle_pairs:
+                duplicate_keys.add(key)
+            else:
+                seen_cycle_pairs.add(key)
+    duplicate_cycle_pairs = len(duplicate_keys)
+    metrics["forecast_history"] = {
+        "path": str(path),
+        "rows": len(rows),
+        "malformed_rows": malformed,
+        "latest_timestamp_utc": latest_ts.isoformat() if latest_ts else None,
+        "pairs": sorted(latest_by_pair),
+        "duplicate_cycle_pairs": duplicate_cycle_pairs,
+    }
+    if error is not None:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="BLOCK",
+                code="SHORT_FORECAST_HISTORY_UNREADABLE",
+                message=f"forecast_history is unreadable: {path}: {error}",
+            )
+        )
+        return
+    if not rows:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="BLOCK",
+                code="SHORT_FORECAST_HISTORY_EMPTY",
+                message=f"forecast_history has no rows: {path}",
+            )
+        )
+    if malformed:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="WARN",
+                code="SHORT_FORECAST_HISTORY_MALFORMED_ROWS",
+                message=f"forecast_history skipped {malformed} malformed row(s): {path}",
+            )
+        )
+    if duplicate_cycle_pairs:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="WARN",
+                code="SHORT_FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR",
+                message=f"forecast_history has {duplicate_cycle_pairs} duplicate cycle_id/pair key(s)",
+            )
+        )
+    if snapshot_ts is not None and latest_ts is not None and latest_ts < snapshot_ts and (target_open or active_positions):
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="BLOCK",
+                code="SHORT_FORECAST_HISTORY_STALE",
+                message=(
+                    "forecast_history latest row predates broker snapshot "
+                    f"(forecast={latest_ts.isoformat()}, snapshot={snapshot_ts.isoformat()})"
+                ),
+            )
+        )
+    for pair in required_pairs:
+        row = latest_by_pair.get(pair)
+        if row is None:
+            issues.append(
+                _issue(
+                    layer=LAYER_SHORT,
+                    severity="BLOCK",
+                    code="SHORT_FORECAST_PAIR_MISSING",
+                    message=f"forecast_history has no row for required pair {pair}",
+                    evidence={"pair": pair},
+                )
+            )
+            continue
+        row_ts = _parse_utc(row.get("timestamp_utc"))
+        if snapshot_ts is not None and row_ts is not None and row_ts < snapshot_ts and (target_open or active_positions):
+            issues.append(
+                _issue(
+                    layer=LAYER_SHORT,
+                    severity="BLOCK",
+                    code="SHORT_FORECAST_PAIR_STALE",
+                    message=(
+                        f"forecast_history row for {pair} predates broker snapshot "
+                        f"(forecast={row_ts.isoformat()}, snapshot={snapshot_ts.isoformat()})"
+                    ),
+                    evidence={"pair": pair},
+                )
+            )
+
+
+def _audit_projection_ledger(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    rows: tuple[dict[str, Any], ...],
+    malformed: int,
+    error: str | None,
+    path: Path,
+    forecast_rows: tuple[dict[str, Any], ...],
+    required_pairs: tuple[str, ...],
+    target_open: bool,
+    active_positions: list[dict[str, str]],
+    now: datetime,
+) -> None:
+    status_counts: dict[str, int] = {}
+    expired_pending = 0
+    directional_keys: set[tuple[str, str]] = set()
+    seen_projection_keys: set[tuple[Any, ...]] = set()
+    duplicate_projection_keys: set[tuple[Any, ...]] = set()
+    for row in rows:
+        status = str(row.get("resolution_status") or "PENDING").upper()
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status == "PENDING" and _projection_expired(row, now=now):
+            expired_pending += 1
+        pair = str(row.get("pair") or "")
+        cycle_id = str(row.get("cycle_id") or "")
+        if pair and cycle_id and str(row.get("signal_name") or "") == "directional_forecast":
+            directional_keys.add((pair, cycle_id))
+        key = _projection_key(row)
+        if key is not None:
+            if key in seen_projection_keys:
+                duplicate_projection_keys.add(key)
+            else:
+                seen_projection_keys.add(key)
+    metrics["projection_ledger"] = {
+        "path": str(path),
+        "rows": len(rows),
+        "malformed_rows": malformed,
+        "status_counts": status_counts,
+        "expired_pending": expired_pending,
+        "directional_forecast_keys": len(directional_keys),
+        "duplicate_projection_keys": len(duplicate_projection_keys),
+    }
+    if error is not None:
+        severity = "BLOCK" if target_open or active_positions else "WARN"
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity=severity,
+                code="MEDIUM_PROJECTION_LEDGER_UNREADABLE",
+                message=f"projection_ledger is unreadable: {path}: {error}",
+            )
+        )
+        return
+    if not rows and (target_open or active_positions):
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="BLOCK",
+                code="MEDIUM_PROJECTION_LEDGER_EMPTY",
+                message=f"projection_ledger has no rows while live memory is needed: {path}",
+            )
+        )
+    if malformed:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="WARN",
+                code="MEDIUM_PROJECTION_LEDGER_MALFORMED_ROWS",
+                message=f"projection_ledger skipped {malformed} malformed row(s): {path}",
+            )
+        )
+    if duplicate_projection_keys:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="WARN",
+                code="MEDIUM_PROJECTION_LEDGER_DUPLICATE_KEY",
+                message=f"projection_ledger has {len(duplicate_projection_keys)} duplicate cycle projection key(s)",
+            )
+        )
+    if expired_pending:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="BLOCK",
+                code="MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING",
+                message=f"projection_ledger has {expired_pending} expired PENDING projection(s); run verify-projections",
+            )
+        )
+    latest_forecasts = _latest_forecasts_by_pair(forecast_rows)
+    for pair in required_pairs:
+        forecast = latest_forecasts.get(pair)
+        if not forecast:
+            continue
+        direction = str(forecast.get("direction") or "").upper()
+        cycle_id = str(forecast.get("cycle_id") or "")
+        if direction in {"UP", "DOWN"} and cycle_id and (pair, cycle_id) not in directional_keys:
+            issues.append(
+                _issue(
+                    layer=LAYER_MEDIUM,
+                    severity="BLOCK",
+                    code="MEDIUM_DIRECTIONAL_PROJECTION_MISSING",
+                    message=(
+                        f"{pair} directional forecast cycle_id={cycle_id} has no matching "
+                        "directional_forecast row in projection_ledger"
+                    ),
+                    evidence={"pair": pair, "cycle_id": cycle_id},
+                )
+            )
+
+
+def _audit_execution_ledger(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    db_path: Path,
+    snapshot: dict[str, Any],
+) -> None:
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+    expected = str((account or {}).get("last_transaction_id") or "").strip()
+    actual: str | None = None
+    events = 0
+    transactions = 0
+    error: str | None = None
+    if not db_path.exists():
+        error = "missing"
+    else:
+        try:
+            with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                row = conn.execute(
+                    "select value from sync_state where key = ?",
+                    ("last_oanda_transaction_id",),
+                ).fetchone()
+                actual = str(row[0] or "").strip() if row else None
+                events = int(conn.execute("select count(*) from execution_events").fetchone()[0])
+                transactions = int(conn.execute("select count(*) from oanda_transactions").fetchone()[0])
+        except sqlite3.Error as exc:
+            error = str(exc)
+    metrics["execution_ledger"] = {
+        "path": str(db_path),
+        "last_oanda_transaction_id": actual,
+        "snapshot_last_transaction_id": expected or None,
+        "events": events,
+        "transactions": transactions,
+        "error": error,
+    }
+    if error is not None:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="BLOCK",
+                code="MEDIUM_EXECUTION_LEDGER_UNREADABLE",
+                message=f"execution_ledger DB is unreadable: {db_path}: {error}",
+            )
+        )
+        return
+    if expected and not actual:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="BLOCK",
+                code="MEDIUM_EXECUTION_LEDGER_SYNC_MISSING",
+                message=f"execution_ledger lacks last_oanda_transaction_id while snapshot is at {expected}",
+            )
+        )
+    if expected and actual and _transaction_id_is_behind(actual, expected):
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="BLOCK",
+                code="MEDIUM_EXECUTION_LEDGER_STALE",
+                message=f"execution_ledger last_oanda_transaction_id={actual} is behind broker snapshot {expected}",
+            )
+        )
+
+
+def _audit_learning_audit(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    loaded: _LoadedJson,
+    path: Path,
+) -> None:
+    payload = loaded.payload or {}
+    influence = payload.get("learning_influence") if isinstance(payload.get("learning_influence"), dict) else {}
+    influenced_lanes = _int_value((influence or {}).get("influenced_lanes"))
+    blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    warnings = payload.get("warnings") if isinstance(payload.get("warnings"), list) else []
+    status = str(payload.get("status") or "")
+    metrics["learning_audit"] = {
+        "path": str(path),
+        "status": status or None,
+        "influenced_lanes": influenced_lanes,
+        "blockers": len(blockers),
+        "warnings": len(warnings),
+        "error": loaded.error,
+    }
+    if loaded.error is not None:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="WARN",
+                code="MEDIUM_LEARNING_AUDIT_UNREADABLE",
+                message=f"learning_audit is unreadable: {path}: {loaded.error}",
+            )
+        )
+        return
+    if ("BLOCK" in status.upper() or blockers) and influenced_lanes > 0:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="BLOCK",
+                code="MEDIUM_LEARNING_AUDIT_BLOCKING_INFLUENCE",
+                message=(
+                    f"learning_audit is blocked while {influenced_lanes} lane(s) receive learning influence"
+                ),
+            )
+        )
+    elif "BLOCK" in status.upper() or blockers:
+        issues.append(
+            _issue(
+                layer=LAYER_MEDIUM,
+                severity="WARN",
+                code="MEDIUM_LEARNING_AUDIT_BLOCKED_ADVISORY",
+                message="learning_audit is blocked, but no live lane receives learning influence",
+            )
+        )
+
+
+def _audit_strategy_profile(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    loaded: _LoadedJson,
+    path: Path,
+) -> None:
+    payload = loaded.payload or {}
+    profiles = payload.get("profiles")
+    status_counts: dict[str, int] = {}
+    if isinstance(profiles, list):
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            status = str(profile.get("status") or "UNKNOWN")
+            status_counts[status] = status_counts.get(status, 0) + 1
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    history_db_raw = str(payload.get("history_db") or "").strip()
+    history_db = Path(history_db_raw) if history_db_raw else None
+    if history_db is not None and not history_db.is_absolute():
+        history_db = path.parent.parent / history_db
+    metrics["strategy_profile"] = {
+        "path": str(path),
+        "generated_at_utc": generated_at.isoformat() if generated_at else None,
+        "profiles": len(profiles) if isinstance(profiles, list) else None,
+        "status_counts": status_counts,
+        "history_db": str(history_db) if history_db is not None else None,
+        "error": loaded.error,
+    }
+    if loaded.error is not None:
+        issues.append(
+            _issue(
+                layer=LAYER_LONG,
+                severity="BLOCK",
+                code="LONG_STRATEGY_PROFILE_UNREADABLE",
+                message=f"strategy_profile is unreadable: {path}: {loaded.error}",
+            )
+        )
+        return
+    if not isinstance(profiles, list):
+        issues.append(
+            _issue(
+                layer=LAYER_LONG,
+                severity="BLOCK",
+                code="LONG_STRATEGY_PROFILE_MALFORMED",
+                message=f"strategy_profile profiles must be a list: {path}",
+            )
+        )
+        return
+    if not profiles:
+        issues.append(
+            _issue(
+                layer=LAYER_LONG,
+                severity="BLOCK",
+                code="LONG_STRATEGY_PROFILE_EMPTY",
+                message=f"strategy_profile has zero mined profiles: {path}; run import-legacy and mine-strategy",
+            )
+        )
+    if generated_at is None:
+        issues.append(
+            _issue(
+                layer=LAYER_LONG,
+                severity="BLOCK",
+                code="LONG_STRATEGY_PROFILE_GENERATED_AT_MISSING",
+                message=f"strategy_profile lacks generated_at_utc: {path}",
+            )
+        )
+    if history_db is not None and history_db.exists() and path.exists() and history_db.stat().st_mtime_ns > path.stat().st_mtime_ns:
+        issues.append(
+            _issue(
+                layer=LAYER_LONG,
+                severity="BLOCK",
+                code="LONG_STRATEGY_PROFILE_STALE",
+                message=f"strategy_profile is older than history DB: {path}",
+            )
+        )
+
+
+def _audit_entry_thesis(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    rows: tuple[dict[str, Any], ...],
+    malformed: int,
+    error: str | None,
+    path: Path,
+    active_positions: list[dict[str, str]],
+) -> None:
+    thesis_trade_ids = {
+        str(row.get("trade_id") or "")
+        for row in rows
+        if str(row.get("trade_id") or "")
+    }
+    active_trade_ids = [position["trade_id"] for position in active_positions if position.get("trade_id")]
+    missing_trade_ids = [trade_id for trade_id in active_trade_ids if trade_id not in thesis_trade_ids]
+    metrics["entry_thesis_ledger"] = {
+        "path": str(path),
+        "rows": len(rows),
+        "malformed_rows": malformed,
+        "active_trade_ids": active_trade_ids,
+        "missing_active_trade_ids": missing_trade_ids,
+        "error": error,
+    }
+    if error is not None:
+        severity = "BLOCK" if active_trade_ids else "WARN"
+        issues.append(
+            _issue(
+                layer=LAYER_POSITION,
+                severity=severity,
+                code="POSITION_ENTRY_THESIS_UNREADABLE",
+                message=f"entry_thesis_ledger is unreadable: {path}: {error}",
+            )
+        )
+        return
+    if malformed:
+        issues.append(
+            _issue(
+                layer=LAYER_POSITION,
+                severity="WARN",
+                code="POSITION_ENTRY_THESIS_MALFORMED_ROWS",
+                message=f"entry_thesis_ledger skipped {malformed} malformed row(s): {path}",
+            )
+        )
+    if missing_trade_ids:
+        issues.append(
+            _issue(
+                layer=LAYER_POSITION,
+                severity="BLOCK",
+                code="POSITION_ENTRY_THESIS_MISSING_FOR_OPEN_TRADE",
+                message=(
+                    "entry_thesis_ledger is missing active trader-owned trade id(s): "
+                    + ", ".join(missing_trade_ids)
+                ),
+                evidence={"trade_ids": missing_trade_ids},
+            )
+        )
+
+
+def _audit_intent_memory_blockers(
+    issues: list[dict[str, Any]],
+    metrics: dict[str, Any],
+    *,
+    intents: dict[str, Any],
+) -> None:
+    memory_blockers: list[str] = []
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        for container_name in ("risk_issues", "strategy_issues", "live_blockers"):
+            for item in result.get(container_name) or []:
+                text = _issue_text(item).upper()
+                if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
+                    memory_blockers.append(_issue_text(item))
+    metrics["order_intents"] = {
+        "results": len([item for item in intents.get("results", []) or [] if isinstance(item, dict)]),
+        "live_ready": len(_live_ready_pairs(intents)),
+        "memory_blockers": len(memory_blockers),
+    }
+    if memory_blockers:
+        issues.append(
+            _issue(
+                layer=LAYER_SHORT,
+                severity="BLOCK",
+                code="SHORT_ORDER_INTENTS_MEMORY_BLOCKERS",
+                message=f"order_intents contains {len(memory_blockers)} memory/telemetry blocker(s)",
+                evidence={"examples": memory_blockers[:5]},
+            )
+        )
+
+
+def _issue(
+    *,
+    layer: str,
+    severity: str,
+    code: str,
+    message: str,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "layer": layer,
+        "severity": severity,
+        "code": code,
+        "message": message,
+    }
+    if evidence:
+        payload["evidence"] = evidence
+    return payload
+
+
+def _layer_statuses(issues: list[dict[str, Any]]) -> dict[str, str]:
+    statuses = {layer: "PASS" for layer in (LAYER_SHORT, LAYER_MEDIUM, LAYER_LONG, LAYER_POSITION)}
+    for issue in issues:
+        layer = str(issue.get("layer") or "")
+        severity = str(issue.get("severity") or "")
+        if layer not in statuses:
+            continue
+        if severity == "BLOCK":
+            statuses[layer] = "BLOCK"
+        elif severity == "WARN" and statuses[layer] != "BLOCK":
+            statuses[layer] = "WARN"
+    return statuses
+
+
+def _target_open(target_state: dict[str, Any]) -> bool:
+    try:
+        remaining = float(target_state.get("remaining_target_jpy") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return remaining > 0.0 and target_state.get("status") != "TARGET_REACHED_PROTECT"
+
+
+def _active_trader_positions(snapshot: dict[str, Any]) -> list[dict[str, str]]:
+    positions: list[dict[str, str]] = []
+    for raw in snapshot.get("positions", []) or []:
+        if not isinstance(raw, dict):
+            continue
+        owner = str(raw.get("owner") or "").lower()
+        if owner != "trader":
+            continue
+        trade_id = str(raw.get("trade_id") or "")
+        pair = str(raw.get("pair") or "")
+        side = str(raw.get("side") or "").upper()
+        if trade_id and pair and side in {"LONG", "SHORT"}:
+            positions.append({"trade_id": trade_id, "pair": pair, "side": side})
+    return positions
+
+
+def _live_ready_pairs(intents: dict[str, Any]) -> tuple[str, ...]:
+    pairs: list[str] = []
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict) or result.get("status") != "LIVE_READY":
+            continue
+        pair = _intent_pair(result)
+        if pair:
+            pairs.append(pair)
+    return tuple(dict.fromkeys(pairs))
+
+
+def _intent_pairs(intents: dict[str, Any]) -> tuple[str, ...]:
+    pairs: list[str] = []
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        pair = _intent_pair(result)
+        if pair:
+            pairs.append(pair)
+    return tuple(dict.fromkeys(pairs))
+
+
+def _intent_pair(result: dict[str, Any]) -> str | None:
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    pair = str((intent or {}).get("pair") or result.get("pair") or "").strip()
+    if pair:
+        return pair
+    lane_id = str(result.get("lane_id") or "")
+    parts = lane_id.split(":")
+    if len(parts) >= 2 and "_" in parts[1]:
+        return parts[1]
+    return None
+
+
+def _latest_forecasts_by_pair(rows: tuple[dict[str, Any], ...]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        pair = str(row.get("pair") or "")
+        if pair:
+            latest[pair] = row
+    return latest
+
+
+def _projection_expired(row: dict[str, Any], *, now: datetime) -> bool:
+    emitted = _parse_utc(row.get("timestamp_emitted_utc"))
+    window_min = _float_value(row.get("resolution_window_min"))
+    if emitted is None or window_min is None or window_min <= 0:
+        return True
+    return now >= emitted + timedelta(minutes=window_min)
+
+
+def _projection_key(row: dict[str, Any]) -> tuple[Any, ...] | None:
+    cycle_id = str(row.get("cycle_id") or "")
+    if not cycle_id:
+        return None
+    return (
+        cycle_id,
+        str(row.get("pair") or ""),
+        str(row.get("signal_name") or ""),
+        str(row.get("direction") or ""),
+        row.get("entry_price"),
+        row.get("predicted_target_price"),
+    )
+
+
+def _issue_text(item: Any) -> str:
+    if isinstance(item, dict):
+        return str(item.get("code") or item.get("message") or item.get("rationale") or item)
+    return str(item)
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return _to_utc(parsed)
+
+
+def _to_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _float_value(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _transaction_id_is_behind(actual: str, expected: str) -> bool:
+    try:
+        return int(actual) < int(expected)
+    except (TypeError, ValueError):
+        return actual != expected

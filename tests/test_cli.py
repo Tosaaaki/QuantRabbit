@@ -589,6 +589,10 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # completion-status audits live exposure and must classify
                     # SL-free trader positions under the same runtime defaults.
                     "completion-status",
+                    # memory-health audits live routing memory before
+                    # entry/verify routing and must use the same SL-free
+                    # defaults when classifying broker snapshot state.
+                    "memory-health",
                 }
             ),
         )

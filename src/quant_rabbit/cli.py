@@ -98,6 +98,11 @@ from quant_rabbit.paths import (
     DEFAULT_LEVELS_REPORT,
     DEFAULT_LEARNING_AUDIT,
     DEFAULT_LEARNING_AUDIT_REPORT,
+    DEFAULT_FORECAST_HISTORY,
+    DEFAULT_PROJECTION_LEDGER,
+    DEFAULT_ENTRY_THESIS_LEDGER,
+    DEFAULT_MEMORY_HEALTH,
+    DEFAULT_MEMORY_HEALTH_REPORT,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CALENDAR_REPORT,
     DEFAULT_COT_SNAPSHOT,
@@ -543,6 +548,10 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # positions are intentional; without this bootstrap a standalone
         # audit misreports them as unprotected broker exposure.
         "completion-status",
+        # memory-health audits the same live routing artifacts before the
+        # prompt branch can move into entry/verify. It does not send orders,
+        # but it must classify SL-free live state under the same defaults.
+        "memory-health",
     }
 )
 
@@ -748,6 +757,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
     p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_prompt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_prompt.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
     p_prompt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_prompt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
     p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
@@ -877,6 +887,22 @@ def main(argv: list[str] | None = None) -> int:
     p_laudit.add_argument("--ai-attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_laudit.add_argument("--window-hours", type=float, default=168.0)
     p_laudit.add_argument("--min-effect-sample", type=int, default=30)
+
+    p_mhealth = sub.add_parser(
+        "memory-health",
+        help="Audit short, medium, long, and position memory artifacts before trader routing.",
+    )
+    p_mhealth.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_mhealth.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
+    p_mhealth.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_mhealth.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
+    p_mhealth.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
+    p_mhealth.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
+    p_mhealth.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_mhealth.add_argument("--entry-thesis-ledger", type=Path, default=DEFAULT_ENTRY_THESIS_LEDGER)
+    p_mhealth.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_mhealth.add_argument("--output", type=Path, default=DEFAULT_MEMORY_HEALTH)
+    p_mhealth.add_argument("--report", type=Path, default=DEFAULT_MEMORY_HEALTH_REPORT)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
     p_exec_replay.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
@@ -1854,6 +1880,7 @@ def main(argv: list[str] | None = None) -> int:
                 option_skew_path=args.option_skew,
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,
+                memory_health_path=args.memory_health,
                 strategy_profile_path=args.strategy_profile,
                 trader_overrides_path=args.trader_overrides,
                 decision_response_path=args.decision_response,
@@ -2367,6 +2394,45 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0 if summary.status != "LEARNING_AUDIT_BLOCKED" else 2
+    if args.command == "memory-health":
+        try:
+            from quant_rabbit.memory_health import MemoryHealthAuditor
+
+            summary = MemoryHealthAuditor(
+                output_path=args.output,
+                report_path=args.report,
+            ).run(
+                snapshot_path=args.snapshot,
+                target_state_path=args.target_state,
+                order_intents_path=args.order_intents,
+                strategy_profile_path=args.strategy_profile,
+                forecast_history_path=args.forecast_history,
+                projection_ledger_path=args.projection_ledger,
+                learning_audit_path=args.learning_audit,
+                entry_thesis_ledger_path=args.entry_thesis_ledger,
+                execution_ledger_db_path=args.execution_ledger_db,
+            )
+        except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        print(
+            json.dumps(
+                {
+                    "status": summary.status,
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "issues": summary.issues,
+                    "blockers": summary.blockers,
+                    "warnings": summary.warnings,
+                    "layers": summary.layers,
+                    "metrics": summary.metrics,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
     if args.command == "trailing-sl-update":
         from quant_rabbit.strategy.trailing_sl import apply_trailing_sls
         snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}

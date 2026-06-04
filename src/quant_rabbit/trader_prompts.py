@@ -49,6 +49,7 @@ from quant_rabbit.paths import (
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEARNING_AUDIT,
+    DEFAULT_MEMORY_HEALTH,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
@@ -149,6 +150,7 @@ def route_trader_prompts(
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
     strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
@@ -173,6 +175,8 @@ def route_trader_prompts(
         "ai_attack_advice": attack_advice_path,
         "learning_audit": learning_audit_path,
     }
+    if memory_health_path is not None:
+        artifacts["memory_health"] = memory_health_path
     missing_artifacts = tuple(name for name, path in artifacts.items() if not path.exists())
     if missing_artifacts:
         return _build_route(
@@ -221,9 +225,14 @@ def route_trader_prompts(
         target_state,
         strategy_profile_path=strategy_profile_path,
     )
+    memory_health_refresh_reasons = _memory_health_refresh_reasons(
+        target_state,
+        memory_health_path=memory_health_path,
+    )
     evidence_refresh_reasons = (
         *trader_overrides_refresh_reasons,
         *strategy_profile_refresh_reasons,
+        *memory_health_refresh_reasons,
     )
     if evidence_refresh_reasons:
         return _build_route(
@@ -1062,6 +1071,55 @@ def _strategy_profile_refresh_reasons(
             "run mine-strategy before entry/verify routing",
         )
     return ()
+
+
+def _memory_health_refresh_reasons(
+    target_state: dict[str, Any],
+    *,
+    memory_health_path: Path | None,
+) -> tuple[str, ...]:
+    """Require a passing memory health audit before target-open entry work."""
+    if memory_health_path is None or not _target_open(target_state):
+        return ()
+    if not memory_health_path.exists():
+        return (
+            f"memory health audit missing while target is open: {memory_health_path}; "
+            "run memory-health before entry/verify routing",
+        )
+    try:
+        payload = _load_json(memory_health_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"memory health audit unreadable while target is open: {memory_health_path}: {exc}; "
+            "run memory-health before entry/verify routing",
+        )
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return (
+            f"memory health audit lacks generated_at_utc while target is open: {memory_health_path}; "
+            "run memory-health before entry/verify routing",
+        )
+    blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
+    status = str(payload.get("status") or "")
+    if status == "MEMORY_HEALTH_BLOCKED" or blockers:
+        issue_codes = _memory_health_blocker_codes(payload)
+        detail = f": {', '.join(issue_codes)}" if issue_codes else ""
+        return (
+            f"memory health audit is blocked while target is open{detail}; "
+            "refresh short/medium/long memory before entry/verify routing",
+        )
+    return ()
+
+
+def _memory_health_blocker_codes(payload: dict[str, Any]) -> tuple[str, ...]:
+    codes: list[str] = []
+    for item in payload.get("issues", []) or []:
+        if not isinstance(item, dict) or item.get("severity") != "BLOCK":
+            continue
+        code = str(item.get("code") or "")
+        if code:
+            codes.append(code)
+    return tuple(dict.fromkeys(codes[:5]))
 
 
 def _block_issues(items: object) -> tuple[str, ...]:

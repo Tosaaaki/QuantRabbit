@@ -178,6 +178,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
 PYTHONPATH=src python3 -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
+PYTHONPATH=src python3 -m quant_rabbit.cli memory-health
 
 # Re-route after refresh. The refresh branch is not an end state: it must
 # produce one current receipt and then proceed through verification + gateway.
@@ -328,6 +329,13 @@ PYTHONPATH=src python3 -m quant_rabbit.cli thesis-evolution-check
 # thesis-evolution-check verdict; a fresh RECOMMEND_CLOSE is Gate A
 # evidence only and still needs explicit Gate B operator authorization.
 PYTHONPATH=src python3 -m quant_rabbit.cli forecast-persistence-check
+
+# 6g. Memory health check — aggregate short, medium, long, and position
+# memory into data/memory_health.json. BLOCK does not grant/deny a trade by
+# itself; trader-prompt-route reads it and sends target-open entry/verify work
+# back to refresh when forecast_history, projection_ledger, execution_ledger,
+# learning_audit, strategy_profile, or entry_thesis_ledger has a hole.
+PYTHONPATH=src python3 -m quant_rabbit.cli memory-health
 
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based
