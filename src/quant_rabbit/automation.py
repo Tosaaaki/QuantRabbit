@@ -13,6 +13,11 @@ from pathlib import Path
 from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
 from quant_rabbit.broker.position_execution import PositionExecutionSummary, PositionProtectionGateway
+from quant_rabbit.analysis.market_status import (
+    compute_market_status,
+    write_report as write_market_status_report,
+    write_snapshot as write_market_status_snapshot,
+)
 from quant_rabbit.execution_ledger import ExecutionLedger
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
@@ -29,6 +34,8 @@ from quant_rabbit.paths import (
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_LEARNING_AUDIT,
     DEFAULT_LEARNING_AUDIT_REPORT,
+    DEFAULT_MARKET_STATUS,
+    DEFAULT_MARKET_STATUS_REPORT,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_ORDER_INTENT_REPORT,
@@ -468,6 +475,8 @@ class AutoTradeCycle:
         gpt_learning_audit_db_path: Path | None = None,
         gpt_verification_ledger_path: Path | None = None,
         gpt_verification_ledger_report_path: Path | None = None,
+        gpt_market_status_path: Path | None = None,
+        gpt_market_status_report_path: Path | None = None,
         gpt_ai_backtest_path: Path | None = None,
         gpt_outcome_mart_path: Path | None = None,
         gpt_post_trade_learning_path: Path | None = None,
@@ -535,6 +544,16 @@ class AutoTradeCycle:
             explicit=gpt_verification_ledger_report_path,
             gpt_decision_path=gpt_decision_path,
             default_path=DEFAULT_VERIFICATION_LEDGER_REPORT,
+        )
+        self.gpt_market_status_path = _gpt_sidecar_path(
+            explicit=gpt_market_status_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_MARKET_STATUS,
+        )
+        self.gpt_market_status_report_path = _gpt_sidecar_path(
+            explicit=gpt_market_status_report_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_MARKET_STATUS_REPORT,
         )
         self.gpt_ai_backtest_path = _attack_sidecar_path(
             explicit=gpt_ai_backtest_path,
@@ -2157,6 +2176,7 @@ class AutoTradeCycle:
 
     def _run_gpt_handoff(self) -> GptHandoffSummary:
         try:
+            self._run_market_status_for_gpt_handoff()
             self._run_learning_audit_for_gpt_handoff()
             self._run_verification_ledger_for_gpt_handoff()
             summary = self._gpt_brain().run(snapshot_path=self.snapshot_path)
@@ -2262,6 +2282,11 @@ class AutoTradeCycle:
             archive_path = path.with_name(f"{path.stem}.close_reentry{path.suffix}")
             archive_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, archive_path)
+
+    def _run_market_status_for_gpt_handoff(self) -> None:
+        status = compute_market_status()
+        write_market_status_snapshot(status, self.gpt_market_status_path)
+        write_market_status_report(status, self.gpt_market_status_report_path)
 
     def _run_learning_audit_for_gpt_handoff(self) -> None:
         LearningAuditor(
@@ -2406,6 +2431,7 @@ class AutoTradeCycle:
             campaign_plan_path=self.campaign_plan_path,
             strategy_profile_path=self.strategy_profile_path,
             market_story_profile_path=self.market_story_profile_path,
+            market_status_path=self.gpt_market_status_path,
             target_state_path=self.gpt_target_state_path,
             pair_charts_path=self.pair_charts_path,
             attack_advice_path=self.gpt_attack_advice_path,

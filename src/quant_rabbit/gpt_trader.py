@@ -304,6 +304,7 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEARNING_AUDIT,
+    DEFAULT_MARKET_STATUS,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
@@ -455,6 +456,7 @@ class GPTTraderBrain:
         campaign_plan_path: Path = DEFAULT_CAMPAIGN_PLAN,
         strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         market_story_profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
+        market_status_path: Path = DEFAULT_MARKET_STATUS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         cross_asset_path: Path = DEFAULT_CROSS_ASSET_SNAPSHOT,
@@ -477,6 +479,7 @@ class GPTTraderBrain:
         self.campaign_plan_path = campaign_plan_path
         self.strategy_profile_path = strategy_profile_path
         self.market_story_profile_path = market_story_profile_path
+        self.market_status_path = market_status_path
         self.target_state_path = target_state_path
         self.pair_charts_path = pair_charts_path
         self.cross_asset_path = cross_asset_path
@@ -531,6 +534,7 @@ class GPTTraderBrain:
         campaign = _load_json(self.campaign_plan_path)
         strategy = _load_json(self.strategy_profile_path)
         story = _load_json(self.market_story_profile_path)
+        market_status = _load_optional_json(self.market_status_path)
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
@@ -547,6 +551,7 @@ class GPTTraderBrain:
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
             predictive_limits=predictive_limits,
+            market_status=market_status,
         )
         return {
             "contract": {
@@ -562,6 +567,7 @@ class GPTTraderBrain:
                 "entry_thesis_blocker_blocks_trade_and_wait": True,
                 "learning_audit_blocks_unsafe_learning_influence": True,
                 "verification_ledger_is_read_only_structured_evidence": True,
+                "market_status_is_authoritative_calendar_evidence": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
@@ -570,6 +576,7 @@ class GPTTraderBrain:
             "learning_audit": _learning_audit_packet(learning_audit),
             "verification_ledger": _verification_ledger_packet(verification_ledger),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
+            "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
                 snapshot=snapshot,
                 snapshot_path=snapshot_path,
@@ -629,6 +636,7 @@ class GPTTraderBrain:
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Learning may only rank already-live-ready lanes. Any learning-influenced selected lane must be covered by a non-blocked `learning_audit` packet and cite `learning:audit` plus `learning:lane:<lane_id>`.",
+                "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
@@ -1511,6 +1519,7 @@ def _allowed_refs(
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
     predictive_limits: dict[str, Any] | None,
+    market_status: dict[str, Any] | None,
 ) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
     # refs than the base broker/target/lane triple — the trader is required to
@@ -1522,6 +1531,8 @@ def _allowed_refs(
     structure_keys = ("structure",)
     cross_assets = ("dxy", "USB10Y_USD", "USB02Y_USD", "spx", "gold", "oil", "btc")
     refs = ["broker:snapshot", "target:daily", "verification:ledger"]
+    if isinstance(market_status, dict):
+        refs.append(str(market_status.get("evidence_ref") or "market:status"))
     pairs: set[str] = set()
     currencies: set[str] = set()
     for position in snapshot.get("positions", []) or []:
@@ -2189,6 +2200,31 @@ def _currencies_from_pairs(pairs: tuple[str, ...]) -> tuple[str, ...]:
             if currency:
                 currencies.add(currency)
     return tuple(sorted(currencies))
+
+
+def _market_status_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "status": "MISSING",
+            "evidence_ref": None,
+            "is_fx_open": None,
+            "active_sessions": [],
+            "issues": ["MISSING_MARKET_STATUS_ARTIFACT"],
+        }
+    return {
+        "status": "AVAILABLE",
+        "evidence_ref": str(payload.get("evidence_ref") or "market:status"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "weekday": payload.get("weekday"),
+        "weekday_index": payload.get("weekday_index"),
+        "is_fx_open": payload.get("is_fx_open"),
+        "closed_reason": payload.get("closed_reason"),
+        "active_sessions": list(payload.get("active_sessions") or []),
+        "minutes_to_next_open": payload.get("minutes_to_next_open"),
+        "minutes_to_next_close": payload.get("minutes_to_next_close"),
+        "contract": payload.get("contract") if isinstance(payload.get("contract"), dict) else {},
+        "issues": [],
+    }
 
 
 def _market_context_packet(

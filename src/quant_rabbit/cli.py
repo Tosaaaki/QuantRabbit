@@ -19,6 +19,11 @@ from quant_rabbit.ai_test_bot import (
 )
 from quant_rabbit.attack_advisor import AttackAdvisor
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
+from quant_rabbit.analysis.market_status import (
+    compute_market_status,
+    write_report as write_market_status_report,
+    write_snapshot as write_market_status_snapshot,
+)
 from quant_rabbit.broker.execution import LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
 from quant_rabbit.broker.oanda import OandaExecutionClient
@@ -60,6 +65,8 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_HISTORY_DB,
     DEFAULT_IMPORT_REPORT,
+    DEFAULT_MARKET_STATUS,
+    DEFAULT_MARKET_STATUS_REPORT,
     DEFAULT_LIVE_ORDER_REQUEST,
     DEFAULT_LIVE_ORDER_STAGE_REPORT,
     DEFAULT_LEGACY_ARCHIVE,
@@ -759,6 +766,11 @@ def main(argv: list[str] | None = None) -> int:
     p_story.add_argument("--report", type=Path, default=DEFAULT_MARKET_STORY_REPORT)
     p_story.add_argument("--profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_story.add_argument("--news-dir", type=Path, default=ROOT / "logs")
+    p_story.add_argument("--db", type=Path, default=DEFAULT_HISTORY_DB)
+
+    p_market_status = sub.add_parser("market-status", help="Write deterministic FX market/session status.")
+    p_market_status.add_argument("--output", type=Path, default=DEFAULT_MARKET_STATUS)
+    p_market_status.add_argument("--report", type=Path, default=DEFAULT_MARKET_STATUS_REPORT)
 
     p_campaign = sub.add_parser("plan-campaign", help="Build a multi-desk daily campaign plan.")
     p_campaign.add_argument("--start-balance", type=float, required=True)
@@ -1041,6 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_gpt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_gpt.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+    p_gpt.add_argument("--market-status", type=Path, default=DEFAULT_MARKET_STATUS)
     p_gpt.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_gpt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_gpt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
@@ -1124,6 +1137,8 @@ def main(argv: list[str] | None = None) -> int:
     p_auto.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_auto.add_argument("--gpt-verification-ledger", type=Path, default=None)
     p_auto.add_argument("--gpt-verification-ledger-report", type=Path, default=None)
+    p_auto.add_argument("--gpt-market-status", type=Path, default=None)
+    p_auto.add_argument("--gpt-market-status-report", type=Path, default=None)
 
     p_risk = sub.add_parser("risk-dry-run", help="Validate an order intent against a JSON snapshot.")
     p_risk.add_argument("--intent", type=Path, required=True)
@@ -1335,6 +1350,8 @@ def main(argv: list[str] | None = None) -> int:
                 gpt_max_lanes=args.gpt_max_lanes,
                 gpt_verification_ledger_path=args.gpt_verification_ledger,
                 gpt_verification_ledger_report_path=args.gpt_verification_ledger_report,
+                gpt_market_status_path=args.gpt_market_status,
+                gpt_market_status_report_path=args.gpt_market_status_report,
                 reuse_market_artifacts=args.reuse_market_artifacts,
                 trader_settings_path=args.trader_settings,
                 execution_ledger_db_path=args.execution_ledger_db,
@@ -1424,6 +1441,7 @@ def main(argv: list[str] | None = None) -> int:
             report_path=args.report,
             profile_path=args.profile,
             news_root=args.news_dir,
+            db_path=args.db,
         ).run()
         print(
             json.dumps(
@@ -1435,6 +1453,25 @@ def main(argv: list[str] | None = None) -> int:
                     "artifacts": summary.artifacts,
                     "story_lines": summary.story_lines,
                     "pairs": summary.pairs,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.command == "market-status":
+        status = compute_market_status()
+        write_market_status_snapshot(status, args.output)
+        write_market_status_report(status, args.report)
+        print(
+            json.dumps(
+                {
+                    "output_path": str(args.output),
+                    "report_path": str(args.report),
+                    "is_fx_open": status.is_fx_open,
+                    "closed_reason": status.closed_reason,
+                    "active_sessions": list(status.active_sessions),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -3170,6 +3207,7 @@ def main(argv: list[str] | None = None) -> int:
                 campaign_plan_path=args.campaign_plan,
                 strategy_profile_path=args.strategy_profile,
                 market_story_profile_path=args.market_story_profile,
+                market_status_path=args.market_status,
                 target_state_path=args.target_state,
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,

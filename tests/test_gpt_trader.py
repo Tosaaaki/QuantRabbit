@@ -71,6 +71,19 @@ class GPTTraderBrainTest(unittest.TestCase):
             )
             self.assertIn("predictive:limits", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_input_packet_includes_market_status_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            brain = _brain(root, files, _trade_decision())
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["input_packet"]["market_status"]["evidence_ref"], "market:status")
+            self.assertTrue(payload["input_packet"]["market_status"]["is_fx_open"])
+            self.assertIn("market:status", payload["input_packet"]["allowed_evidence_refs"])
+
     def test_input_packet_includes_verification_ledger_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1424,6 +1437,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         campaign_plan_path=files["campaign"],
         strategy_profile_path=files["strategy"],
         market_story_profile_path=files["story"],
+        market_status_path=files["market_status"],
         target_state_path=files["target"],
         output_path=root / "gpt_decision.json",
         report_path=root / "gpt_decision.md",
@@ -1475,6 +1489,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "strategy": root / "strategy.json",
         "story": root / "story.json",
         "target": root / "target.json",
+        "market_status": root / "market_status.json",
         "pair_charts": root / "pair_charts.json",
         "cross_asset": root / "cross_asset.json",
         "flow": root / "flow.json",
@@ -1555,6 +1570,22 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
                 "progress_jpy": 0.0,
                 "remaining_target_jpy": 22278.1,
                 "remaining_risk_budget_jpy": 500.0,
+            }
+        )
+    )
+    files["market_status"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "evidence_ref": "market:status",
+                "weekday": "Monday",
+                "weekday_index": 0,
+                "is_fx_open": True,
+                "closed_reason": None,
+                "active_sessions": ["London", "New_York"],
+                "minutes_to_next_open": None,
+                "minutes_to_next_close": 1800,
+                "contract": {"live_permission": False, "must_not_override_broker_truth": True},
             }
         )
     )

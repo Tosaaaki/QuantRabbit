@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -10,10 +11,18 @@ from typing import Iterable
 
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.models import TradeMethod
-from quant_rabbit.paths import DEFAULT_LEGACY_ARCHIVE, DEFAULT_MARKET_STORY_PROFILE, DEFAULT_MARKET_STORY_REPORT
+from quant_rabbit.paths import (
+    DEFAULT_HISTORY_DB,
+    DEFAULT_LEGACY_ARCHIVE,
+    DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_MARKET_STORY_REPORT,
+)
 
 
 PAIR_RE = re.compile(r"\b([A-Z]{3})[_/]([A-Z]{3})\b")
+HEADER_DATE_RE = re.compile(r"^#{1,4}\s+.*?(\d{4}-\d{2}-\d{2})")
+DAILY_PATH_DATE_RE = re.compile(r"/daily/(\d{4}-\d{2}-\d{2})/")
+EXAMPLES_PER_PAIR = 5
 VALID_PAIRS = set(DEFAULT_TRADER_PAIRS)
 STORY_FILES = (
     "logs/news_digest.md",
@@ -57,11 +66,13 @@ class MarketStoryMiner:
         report_path: Path = DEFAULT_MARKET_STORY_REPORT,
         profile_path: Path = DEFAULT_MARKET_STORY_PROFILE,
         news_root: Path | None = None,
+        db_path: Path = DEFAULT_HISTORY_DB,
     ) -> None:
         self.archive = archive
         self.report_path = report_path
         self.profile_path = profile_path
         self.news_root = news_root
+        self.db_path = db_path
 
     def run(self) -> MarketStorySummary:
         if not self.archive.exists() and self.news_root is None:
@@ -150,11 +161,18 @@ class MarketStoryMiner:
         self, artifacts: list[tuple[Path, StoryArtifact]]
     ) -> tuple[list[PairStoryProfile], Counter[str], Counter[str], int]:
         profiles: dict[str, PairStoryProfile] = {}
+        candidates: dict[str, list[tuple[tuple[float, int], str | None, str]]] = defaultdict(list)
         theme_counts: Counter[str] = Counter()
         method_counts: Counter[str] = Counter()
         story_lines = 0
+        pnl_index = _load_day_pnl_index(self.db_path)
         for path, artifact in artifacts:
+            last_header_date: str | None = None
             for raw in path.read_text(errors="replace").splitlines():
+                stripped = raw.strip()
+                header_match = HEADER_DATE_RE.match(stripped)
+                if header_match:
+                    last_header_date = header_match.group(1)
                 line = _clean_line(raw)
                 if not _is_story_line(line):
                     continue
@@ -166,12 +184,28 @@ class MarketStoryMiner:
                 story_lines += 1
                 theme_counts.update(themes)
                 method_counts.update(method.value for method in methods)
+                source_date = _resolve_source_date(artifact.rel_path, last_header_date)
+                day_pnl = pnl_index.get(source_date) if source_date else None
+                attribution = _attribute_example(artifact.kind, line, source_date, day_pnl)
+                sort_key = (abs(day_pnl), 1) if day_pnl is not None else (0.0, 0)
                 for pair in pairs:
                     profile = profiles.setdefault(pair, PairStoryProfile(pair=pair))
                     profile.themes.update(themes)
                     profile.methods.update(method.value for method in methods)
-                    if len(profile.examples) < 5:
-                        profile.examples.append(f"{artifact.kind}: {line[:240].rstrip()}")
+                    candidates[pair].append((sort_key, source_date, attribution))
+        for pair, items in candidates.items():
+            ranked = sorted(items, key=lambda item: item[0], reverse=True)
+            chosen: list[str] = []
+            seen_dates: set[str] = set()
+            for _, source_date, attribution in ranked:
+                if source_date is not None:
+                    if source_date in seen_dates:
+                        continue
+                    seen_dates.add(source_date)
+                chosen.append(attribution)
+                if len(chosen) >= EXAMPLES_PER_PAIR:
+                    break
+            profiles[pair].examples = chosen
         return sorted(profiles.values(), key=lambda item: (-sum(item.methods.values()), item.pair)), theme_counts, method_counts, story_lines
 
     def _write_profile(
@@ -318,6 +352,68 @@ def _methods_in(text: str) -> list[TradeMethod]:
 
 def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
     return any(needle in text for needle in needles)
+
+
+def _load_day_pnl_index(db_path: Path) -> dict[str, float]:
+    if not db_path.exists():
+        return {}
+    pnl: dict[str, float] = {}
+    try:
+        conn = sqlite3.connect(db_path)
+    except sqlite3.Error:
+        return {}
+    with conn:
+        try:
+            cur = conn.execute(
+                "SELECT session_date, SUM(pl) FROM legacy_records "
+                "WHERE source_table='trades' "
+                "AND session_date IS NOT NULL "
+                "AND pl IS NOT NULL "
+                "GROUP BY session_date"
+            )
+            for date, total in cur:
+                if date is None:
+                    continue
+                pnl[str(date)] = float(total or 0.0)
+        except sqlite3.Error:
+            pass
+        try:
+            cur = conn.execute(
+                "SELECT substr(timestamp_text, 1, 10) AS day, SUM(pl_jpy) "
+                "FROM live_trade_events "
+                "WHERE pl_jpy IS NOT NULL "
+                "AND timestamp_text IS NOT NULL "
+                "AND substr(timestamp_text, 1, 10) GLOB '????-??-??' "
+                "GROUP BY day"
+            )
+            for date, total in cur:
+                if date is None:
+                    continue
+                day = str(date)
+                if day in pnl:
+                    continue
+                pnl[day] = float(total or 0.0)
+        except sqlite3.Error:
+            pass
+    return pnl
+
+
+def _resolve_source_date(rel_path: str, last_header_date: str | None) -> str | None:
+    match = DAILY_PATH_DATE_RE.search(rel_path)
+    if match:
+        return match.group(1)
+    return last_header_date
+
+
+def _attribute_example(
+    kind: str,
+    line: str,
+    source_date: str | None,
+    day_pnl: float | None,
+) -> str:
+    pnl_str = f"{day_pnl:+.0f}" if day_pnl is not None else "?"
+    date_str = source_date or "?"
+    return f"{kind} [day={date_str} pnl={pnl_str}]: {line[:240].rstrip()}"
 
 
 THEME_MAP: dict[str, tuple[str, ...]] = {

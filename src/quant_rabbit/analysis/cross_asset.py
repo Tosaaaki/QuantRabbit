@@ -16,8 +16,9 @@ re-build the ICE DXY basket from the six component pairs:
 US-JP yield spread: US10Y is fetched from OANDA's USB10Y_USD bond CFD price
 (price ≈ 100 + yield component for futures-style CFDs; we report the raw
 price and percent change, marking the absolute yield as MISSING because OANDA
-exposes the future, not the cash yield). JP10Y has no OANDA CFD; we emit a
-`MISSING_JP10Y_FEED` issue so a future feed can be plugged in.
+exposes the future, not the cash yield). JP10Y has no OANDA CFD; the
+US10Y-JP10Y spread row carries that limitation as local metadata so the
+top-level issue list remains reserved for actionable fetch failures.
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ DEFAULT_CROSS_ASSET_INSTRUMENTS: tuple[str, ...] = (
     # Bonds (OANDA bond CFDs)
     "USB02Y_USD", "USB05Y_USD", "USB10Y_USD", "USB30Y_USD",
     # Commodities
-    "XAU_USD", "XAG_USD", "BCO_USD", "WTICO_USD", "NATGAS_USD", "COPPER_USD",
+    "XAU_USD", "XAG_USD", "BCO_USD", "WTICO_USD", "NATGAS_USD",
     # Crypto
     "BTC_USD", "ETH_USD",
 )
@@ -203,8 +204,6 @@ def build_cross_asset_snapshot(
         "US10Y_minus_US2Y", "USB10Y_USD", "USB02Y_USD", asset_candles,
     )
     yield_spreads: list[YieldSpread] = [us_jp_spread, us_us_2_10]
-    if any(s.issue for s in yield_spreads):
-        issues.extend([s.issue for s in yield_spreads if s.issue])
 
     # 4. FX-pair correlations vs every fetched cross-asset
     fx_correlation_candles: dict[str, tuple[Candle, ...]] = dict(fx_candles)

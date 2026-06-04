@@ -7,14 +7,14 @@ OANDA exposes two endpoints that show where retail orders cluster:
 - `/v3/instruments/{pair}/positionBook` — currently open positions distribution
   (where retail is long vs short).
 
-NOTE on access: these endpoints require an OANDA API token with the "Trade
-Information" entitlement. Many live retail tokens return 401 Invalid
-authentication for them even though `/candles` and `/pricing` work with the
-same credential. When that happens, the module emits `MISSING_ORDERBOOK_*`
-or `MISSING_POSITIONBOOK_*` issues per pair so the trader knows the data is
-unavailable, instead of silently treating the absence as "no clusters".
-To enable, regenerate the OANDA token with order book scope, or upgrade the
-account tier.
+NOTE on access: these endpoints require OANDA account/feed entitlement for
+book data. Many live retail accounts return 401 Invalid authentication for
+them even though `/candles` and `/pricing` work with the same credential.
+When that happens, the module emits one feed-level authorization issue and
+marks each pair's book snapshot unavailable, instead of silently treating the
+absence as "no clusters". Reissuing the same account token is not expected
+to fix this; enable the entitlement/account tier or plug in an alternate
+book feed.
 
 We also build a spread time-series proxy from M1 bid/ask candle ranges + the
 latest quote spread, so the trader can see how spread looks vs the recent
@@ -191,7 +191,8 @@ def _book_authorization_issue(feed: str, exc: Exception) -> str | None:
         return None
     return (
         f"{feed}_FEED_UNAUTHORIZED: OANDA book endpoint returned authorization error; "
-        "spread stats remain usable, but order/position-book clusters are unavailable"
+        "spread stats remain usable, but book clusters are unavailable until the "
+        "account/feed entitlement is enabled or an alternate book feed is plugged in"
     )
 
 
