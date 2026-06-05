@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
+from quant_rabbit.cli import main
 from quant_rabbit.coverage import CoverageOptimizer
 
 
@@ -69,6 +72,42 @@ class CoverageOptimizerTest(unittest.TestCase):
             payload = json.loads((root / "coverage.json").read_text())
             self.assertTrue(any("live-ready reward misses" in item for item in payload["blockers"]))
             self.assertTrue(any("promote 1 dry-run receipts" in item for item in payload["action_items"]))
+
+    def test_cli_coverage_gap_is_diagnostic_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            output = root / "coverage.json"
+            report = root / "coverage.md"
+            intents.write_text(json.dumps({"results": []}))
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "optimize-coverage",
+                        "--intents",
+                        str(intents),
+                        "--target-state",
+                        str(target),
+                        "--replay",
+                        str(root / "missing_replay.json"),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["status"], "COVERAGE_GAP")
+            self.assertEqual(summary["live_ready_lanes"], 0)
+            payload = json.loads(output.read_text())
+            self.assertTrue(any("no LIVE_READY lanes exist" in item for item in payload["blockers"]))
+            self.assertTrue(report.exists())
 
     def test_uses_receipted_risk_metrics_instead_of_static_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

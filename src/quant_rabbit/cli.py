@@ -2251,7 +2251,10 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
-        return 0 if summary.status in {"LIVE_READY_COVERAGE_READY", "TARGET_REACHED_PROTECT"} else 2
+        # Coverage gaps are diagnostic output for the trader refresh packet,
+        # not a shell failure. The playbook runs under set -e and still needs
+        # downstream advice/audit/memory reports when no LIVE_READY lane exists.
+        return 0
     if args.command == "replay-execution":
         try:
             summary = ExecutionReplayer(
