@@ -1574,12 +1574,14 @@ class TraderBrain:
         # rationale as lane_history); explicit `blocked_lanes` are kept
         # in force because they represent the operator's hard decision
         # (e.g. "do not touch this lane today" from daily-review).
+        override_delta = 0.0
         if trader_overrides is not None:
             blocked, block_msg = overrides_block_check(trader_overrides, lane_id)
             if blocked:
                 blockers.append(block_msg or f"trader_overrides blocked {lane_id}")
                 score -= 100.0
             ov_delta, ov_rationale = overrides_score_delta(trader_overrides, pair, direction)
+            override_delta = ov_delta
             if ov_delta != 0.0:
                 if _reversal_detected is None:
                     score += ov_delta
@@ -1587,6 +1589,23 @@ class TraderBrain:
                         rationale.insert(0, ov_rationale)
                 elif ov_delta < 0:
                     rationale.insert(0, f"trader_overrides {ov_delta:+.1f} SUPPRESSED by reversal signal")
+
+        if (
+            status == "LIVE_READY"
+            and order_type.upper() == "MARKET"
+            and live_net < 0
+            and override_delta < 0
+        ):
+            blockers.append(
+                f"{pair} {direction} MARKET entry has negative live execution history "
+                "and same-day daily-review headwind; wait for a LIMIT/STOP trigger "
+                "instead of chasing the current quote"
+            )
+            score -= 90.0
+            rationale.insert(
+                0,
+                "market-entry hard block: negative live history plus daily-review headwind requires a trigger/retest",
+            )
 
         # News themes: macro narrative converted to per-(pair, direction)
         # bias by news_themes.parse_news_themes. Currency-strength themes,

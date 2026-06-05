@@ -1298,6 +1298,37 @@ class TraderBrainTest(unittest.TestCase):
             self.assertIn("current receipt is the authority", " ".join(eur.rationale))
             self.assertGreaterEqual(eur.size_multiple, 1.0)
 
+    def test_market_lane_requires_trigger_when_history_and_daily_review_are_negative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "trader_overrides.json").write_text(
+                json.dumps(
+                    {
+                        "expires_at_utc": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+                        "bias_overrides": {"EUR_USD": {"LONG": -20.0}},
+                    }
+                )
+            )
+            brain = TraderBrain(
+                intents_path=_market_preference_intents(root),
+                campaign_plan_path=_mixed_campaign(root),
+                strategy_profile_path=_negative_history_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            market = next(item for item in decision.scores if item.lane_id.endswith(":MARKET"))
+            self.assertEqual(market.action, ACTION_NO_TRADE)
+            self.assertTrue(any("daily-review headwind" in item for item in market.blockers))
+            self.assertEqual(decision.selected_lane_id, "range_trader:EUR_USD:LONG:RANGE_ROTATION")
+
     def test_stale_story_markers_are_advisory_for_live_ready_receipts(self) -> None:
         blockers: list[str] = []
         rationale: list[str] = []

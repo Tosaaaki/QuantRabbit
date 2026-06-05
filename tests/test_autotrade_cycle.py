@@ -189,7 +189,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                     max_loss_jpy=1_500,
                 ).run(send=True)
 
-                row = json.loads((root / "projection_ledger.jsonl").read_text())
+                rows = [
+                    json.loads(line)
+                    for line in (root / "projection_ledger.jsonl").read_text().splitlines()
+                    if line.strip()
+                ]
+                row = next(item for item in rows if item.get("cycle_id") == "reuse-stale-cycle")
                 report = (root / "report.md").read_text()
         finally:
             if prior is None:
