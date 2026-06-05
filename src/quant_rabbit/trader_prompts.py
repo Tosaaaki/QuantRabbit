@@ -919,6 +919,7 @@ def _tp_rebalance_reasons(
     from quant_rabbit.strategy.intent_generator import _market_derived_reward_risk
     from quant_rabbit.strategy.tp_rebalancer import (
         compute_all_tp_adjustments,
+        load_close_review_trade_ids,
         load_entry_thesis_blocker_trade_ids,
     )
 
@@ -935,6 +936,7 @@ def _tp_rebalance_reasons(
         pair_charts=pair_charts_keyed,
         market_reward_risk_fn=_market_derived_reward_risk,
         latest_forecasts_by_pair=latest_forecasts_by_pair,
+        close_review_trade_ids=load_close_review_trade_ids(data_root),
         entry_thesis_block_trade_ids=load_entry_thesis_blocker_trade_ids(data_root),
     )
     reasons: list[str] = []

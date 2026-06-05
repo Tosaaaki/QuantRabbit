@@ -8,6 +8,7 @@ import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from quant_rabbit.cli import main
@@ -497,6 +498,90 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_ENTRY)
         self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
         self.assertTrue(any("forecast_persistence RECOMMEND_CLOSE" in reason for reason in route.reasons))
+
+    def test_soft_close_review_suppresses_tp_rebalance_probe_blocker(self) -> None:
+        """Router TP probe must match tp-rebalance CLI close-review guard.
+
+        A fresh soft close-review is advisory for new entries, but the TP
+        probe used to ignore the same close-review trade ids that the CLI
+        honors, creating a phantom TP_REBALANCE_REQUIRED route blocker.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "555",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 5000,
+                        "entry_price": 1.1700,
+                        "take_profit": 1.18,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1200.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_time = datetime.now(timezone.utc) - timedelta(seconds=30)
+            snapshot["fetched_at_utc"] = snapshot_time.isoformat()
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["pair_charts"].write_text(json.dumps({"charts": [{"pair": "EUR_USD"}]}))
+            (root / "forecast_persistence_report.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (snapshot_time + timedelta(seconds=1)).isoformat(),
+                        "verdicts": [
+                            {
+                                "trade_id": "555",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "verdict": "RECOMMEND_CLOSE",
+                                "reason": "soft forecast persistence review",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            calls: list[dict] = []
+
+            def fake_compute_all_tp_adjustments(**kwargs):
+                calls.append(kwargs)
+                if "555" in (kwargs.get("close_review_trade_ids") or set()):
+                    return []
+                return [
+                    SimpleNamespace(
+                        pair="EUR_USD",
+                        side="LONG",
+                        trade_id="555",
+                        current_tp=1.18,
+                        new_tp=1.19,
+                        rationale="synthetic TP expansion",
+                    )
+                ]
+
+            prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                with patch(
+                    "quant_rabbit.strategy.tp_rebalancer.compute_all_tp_adjustments",
+                    side_effect=fake_compute_all_tp_adjustments,
+                ):
+                    route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+            finally:
+                if prior is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(calls)
+        self.assertIn("555", calls[-1]["close_review_trade_ids"])
+        self.assertTrue(any("soft close review advisory" in reason for reason in route.reasons))
+        self.assertFalse(any("TP rebalance required" in reason for reason in route.reasons))
 
     def test_position_thesis_recommend_close_routes_with_context_notes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
