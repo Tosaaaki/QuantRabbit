@@ -8,7 +8,8 @@
 - Python route command:
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 ```
 
 ## State Classification

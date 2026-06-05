@@ -34,6 +34,14 @@ readonly DEFAULT_DEV_ROOT="/Users/tossaki/App/QuantRabbit"
 readonly DEFAULT_LIVE_ROOT="/Users/tossaki/App/QuantRabbit-live"
 readonly DEFAULT_MAIN_BRANCH="main"
 readonly DEFAULT_LIVE_BRANCH="codex/live-trader-runtime"
+if [[ -z "${QR_PYTHON:-}" ]]; then
+  if [[ -x /opt/homebrew/bin/python3 ]]; then
+    QR_PYTHON="/opt/homebrew/bin/python3"
+  else
+    QR_PYTHON="/usr/bin/python3"
+  fi
+fi
+readonly QR_PYTHON
 readonly DEFAULT_AUTOMATION_FILE="/Users/tossaki/.codex/automations/qr-trader/automation.toml"
 readonly DEFAULT_WEEKEND_TASK_STATE_FILE="/Users/tossaki/.codex/quant_rabbit_weekend_task_state.json"
 
@@ -68,6 +76,11 @@ MAIN_BRANCH="${QR_SYNC_MAIN_BRANCH:-$DEFAULT_MAIN_BRANCH}"
 LIVE_BRANCH="${QR_SYNC_LIVE_BRANCH:-$DEFAULT_LIVE_BRANCH}"
 AUTOMATION_FILE="${QR_SYNC_AUTOMATION_FILE:-$DEFAULT_AUTOMATION_FILE}"
 WEEKEND_TASK_STATE_FILE="${QR_WEEKEND_TASK_STATE_FILE:-$DEFAULT_WEEKEND_TASK_STATE_FILE}"
+
+if [[ ! -x "$QR_PYTHON" ]]; then
+  echo "[sync-live-runtime] QR_PYTHON is not executable: $QR_PYTHON" >&2
+  exit 2
+fi
 
 if [[ ! -d "$DEV_ROOT/.git" ]]; then
   echo "[sync-live-runtime] missing development git repo: $DEV_ROOT" >&2
@@ -275,7 +288,7 @@ verify_automation() {
 
 weekend_guard_paused() {
   [[ -f "$WEEKEND_TASK_STATE_FILE" ]] || return 1
-  python3 - "$WEEKEND_TASK_STATE_FILE" <<'PY'
+  "$QR_PYTHON" - "$WEEKEND_TASK_STATE_FILE" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -308,7 +321,7 @@ if [[ "$LIVE_ONLY" -eq 0 ]]; then
   assert_only_report_drift "$DEV_ROOT" "development"
   if [[ "$SKIP_TESTS" -eq 0 ]]; then
     echo "[sync-live-runtime] running unit tests before promotion."
-    (cd "$DEV_ROOT" && PYTHONPATH=src python3 -m unittest discover -s tests -v)
+    (cd "$DEV_ROOT" && PYTHONPATH=src "$QR_PYTHON" -m unittest discover -s tests -v)
   fi
   fast_forward_ref "$MAIN_BRANCH" "$SOURCE_BRANCH"
 else

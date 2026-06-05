@@ -5,6 +5,14 @@ readonly ROOT_DIR="${QR_TRADER_ROOT_DIR:-/Users/tossaki/App/QuantRabbit-live}"
 cd "$ROOT_DIR"
 
 export PYTHONPATH="src"
+if [[ -z "${QR_PYTHON:-}" ]]; then
+  if [[ -x /opt/homebrew/bin/python3 ]]; then
+    QR_PYTHON="/opt/homebrew/bin/python3"
+  else
+    QR_PYTHON="/usr/bin/python3"
+  fi
+fi
+readonly QR_PYTHON
 export QR_OANDA_ENV_FILE="${QR_OANDA_ENV_FILE:-.env.local}"
 load_live_enabled_from_env_file() {
   if [[ -n "${QR_LIVE_ENABLED:-}" || ! -f "$QR_OANDA_ENV_FILE" ]]; then
@@ -170,6 +178,11 @@ if [[ ! -f "$QR_OANDA_ENV_FILE" ]]; then
   exit 2
 fi
 
+if [[ ! -x "$QR_PYTHON" ]]; then
+  echo "[run-autotrade-live] QR_PYTHON is not executable: $QR_PYTHON" >&2
+  exit 2
+fi
+
 if [[ "$QR_LIVE_ENABLED" != "1" ]]; then
   echo "[run-autotrade-live] QR_LIVE_ENABLED=$QR_LIVE_ENABLED; forcing dry-run mode." >&2
 fi
@@ -236,9 +249,9 @@ fi
 
 set +e
 if [[ "$arg_count" -gt 0 ]]; then
-  python3 -m quant_rabbit.cli autotrade-cycle "${args[@]}"
+  "$QR_PYTHON" -m quant_rabbit.cli autotrade-cycle "${args[@]}"
 else
-  python3 -m quant_rabbit.cli autotrade-cycle
+  "$QR_PYTHON" -m quant_rabbit.cli autotrade-cycle
 fi
 cycle_exit="$?"
 set -e
@@ -247,14 +260,14 @@ set -e
 # 「Slackに送らないで」. Each notifier is still idempotent if explicitly
 # enabled, but the live trader must not post to Slack by default.
 if [[ "${QR_SLACK_NOTIFY_ENABLE:-0}" == "1" && "${QR_SLACK_NOTIFY_DISABLE:-0}" != "1" ]]; then
-  if [[ -x "$(command -v python3)" && -f "${ROOT_DIR}/tools/slack_fill_notify.py" ]]; then
-    python3 "${ROOT_DIR}/tools/slack_fill_notify.py" 2>&1 | sed 's/^/[slack-fill] /' || true
+  if [[ -f "${ROOT_DIR}/tools/slack_fill_notify.py" ]]; then
+    "$QR_PYTHON" "${ROOT_DIR}/tools/slack_fill_notify.py" 2>&1 | sed 's/^/[slack-fill] /' || true
   fi
   if [[ -f "${ROOT_DIR}/tools/slack_target_milestone.py" ]]; then
-    python3 "${ROOT_DIR}/tools/slack_target_milestone.py" 2>&1 | sed 's/^/[slack-target] /' || true
+    "$QR_PYTHON" "${ROOT_DIR}/tools/slack_target_milestone.py" 2>&1 | sed 's/^/[slack-target] /' || true
   fi
   if [[ -f "${ROOT_DIR}/tools/slack_cycle_alert.py" ]]; then
-    python3 "${ROOT_DIR}/tools/slack_cycle_alert.py" 2>&1 | sed 's/^/[slack-cycle] /' || true
+    "$QR_PYTHON" "${ROOT_DIR}/tools/slack_cycle_alert.py" 2>&1 | sed 's/^/[slack-cycle] /' || true
   fi
 fi
 

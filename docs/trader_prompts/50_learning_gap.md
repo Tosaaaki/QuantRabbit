@@ -10,28 +10,31 @@
 ## Evidence Refresh
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy
-PYTHONPATH=src python3 -m quant_rabbit.cli mine-strategy
-PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories
-PYTHONPATH=src python3 -m quant_rabbit.cli promote-receipts
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli import-legacy
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-strategy
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli promote-receipts
 ```
 
 ## Replay And Certification
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli replay-backtest --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
-PYTHONPATH=src python3 -m quant_rabbit.cli ai-test-bot-backtest --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
-PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
-PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
-PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
-PYTHONPATH=src python3 -m quant_rabbit.cli certify-dry-run
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli replay-backtest --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-test-bot-backtest --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli optimize-coverage
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-attack-advice
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli learning-audit
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli certify-dry-run
 ```
 
 ## Post-Trade Learning
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli learn-post-trade --outcome outcome.json
-PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli learn-post-trade --outcome outcome.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli learning-audit
 ```
 
 ## Gap Report Content

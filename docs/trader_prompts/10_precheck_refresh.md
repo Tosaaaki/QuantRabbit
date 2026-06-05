@@ -13,16 +13,17 @@
 ## Refresh Evidence
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
-PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
-PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot
-PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot
-PYTHONPATH=src python3 -m quant_rabbit.cli currency-strength
-PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot
-PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar
-PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot
-PYTHONPATH=src python3 -m quant_rabbit.cli option-skew
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cross-asset-snapshot
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli currency-strength
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli levels-snapshot
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli economic-calendar
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cot-snapshot
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew
 ```
 
 **News is produced out-of-band** by the dedicated `qr-news-digest`
@@ -45,7 +46,8 @@ Write the side report under `data/` so the precheck path does not create new
 tracked `docs/*_report.md` diffs.
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories \
   --news-dir logs \
   --profile data/market_story_profile.json \
   --report data/market_story_report.md
@@ -59,7 +61,8 @@ keeps the override rolling without a separate scheduled task and lets
 new closed trades immediately influence the next cycle's scoring.
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-review
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-review
 ```
 
 ## Reprice Intents
@@ -67,18 +70,19 @@ PYTHONPATH=src python3 -m quant_rabbit.cli daily-review
 Context fetches can outlive the quote freshness window. Refresh broker truth again immediately before intent pricing.
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
-PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance
-PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
-PYTHONPATH=src python3 -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
-PYTHONPATH=src python3 -m quant_rabbit.cli optimize-coverage
-PYTHONPATH=src python3 -m quant_rabbit.cli ai-attack-advice
-PYTHONPATH=src python3 -m quant_rabbit.cli learning-audit
-PYTHONPATH=src python3 -m quant_rabbit.cli generate-predictive-limits
-PYTHONPATH=src python3 -m quant_rabbit.cli memory-health
-PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli optimize-coverage
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-attack-advice
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli learning-audit
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-predictive-limits
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli memory-health
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 ```
 
 Do not stop after evidence refresh. Re-run the router with the refreshed
@@ -97,10 +101,11 @@ packet and order intents cite the actual dependent-order price.
 Run only when strategy artifacts are missing, stale, or a branch explicitly routes to evidence repair.
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy
-PYTHONPATH=src python3 -m quant_rabbit.cli mine-strategy
-PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories
-PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli import-legacy
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-strategy
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli plan-campaign --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
 ```
 
 ## Stop Conditions

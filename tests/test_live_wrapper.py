@@ -276,6 +276,7 @@ def _wrapper_env(
         {
             "PATH": f"{fake_bin}{os.pathsep}{env.get('PATH', '')}",
             "QR_CAPTURE_PATH": str(capture),
+            "QR_PYTHON": str(fake_python),
             "QR_OANDA_ENV_FILE": str(env_file),
             "QR_AUTOTRADE_LOCK_DIR": str(root / "lock"),
             "QR_TRADER_ROOT_DIR": str(root),

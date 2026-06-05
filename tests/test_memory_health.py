@@ -7,7 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from quant_rabbit.memory_health import MemoryHealthAuditor, STATUS_BLOCKED, STATUS_PASS
+from quant_rabbit.memory_health import FORECAST_SNAPSHOT_GRACE, MemoryHealthAuditor, STATUS_BLOCKED, STATUS_PASS
 
 
 class MemoryHealthAuditorTest(unittest.TestCase):
@@ -71,6 +71,35 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.status, STATUS_BLOCKED)
         self.assertEqual(summary.layers["medium_term"], "BLOCK")
         self.assertTrue(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING" for issue in payload["issues"]))
+
+    def test_same_cycle_forecast_snapshot_drift_does_not_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            forecast_ts = _NOW - FORECAST_SNAPSHOT_GRACE + timedelta(seconds=1)
+            _write_forecast_history(files["forecast_history"], forecast_ts)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertFalse(any(issue["code"] == "SHORT_FORECAST_HISTORY_STALE" for issue in payload["issues"]))
+        self.assertFalse(any(issue["code"] == "SHORT_FORECAST_PAIR_STALE" for issue in payload["issues"]))
+
+    def test_forecast_snapshot_drift_beyond_grace_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            forecast_ts = _NOW - FORECAST_SNAPSHOT_GRACE - timedelta(seconds=1)
+            _write_forecast_history(files["forecast_history"], forecast_ts)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        codes = {issue["code"] for issue in payload["issues"] if issue["severity"] == "BLOCK"}
+        self.assertIn("SHORT_FORECAST_HISTORY_STALE", codes)
+        self.assertIn("SHORT_FORECAST_PAIR_STALE", codes)
 
     def test_legacy_duplicate_forecast_and_projection_keys_remain_metrics_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -387,6 +416,21 @@ def _fixtures(
         files["entry_thesis"].write_text("")
     _write_execution_ledger(files["execution_ledger"], last_transaction_id="100")
     return files
+
+
+def _write_forecast_history(path: Path, timestamp: datetime) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp_utc": timestamp.isoformat(),
+                "cycle_id": "cycle-1",
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.8,
+            }
+        )
+        + "\n"
+    )
 
 
 def _write_execution_ledger(path: Path, *, last_transaction_id: str) -> None:

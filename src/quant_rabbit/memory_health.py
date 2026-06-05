@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -39,6 +40,14 @@ _MEMORY_BLOCKER_TOKENS = (
     "EXECUTION_LEDGER",
     "ENTRY_THESIS",
     "LEARNING_AUDIT",
+)
+
+# Memory-health audits a market packet assembled over several network and
+# forecast calls. The live gateway may refresh broker truth immediately after
+# forecast generation for send safety; this engineering grace treats that
+# short same-cycle drift as current without allowing stale multi-cycle memory.
+FORECAST_SNAPSHOT_GRACE = timedelta(
+    seconds=int(os.environ.get("QR_MEMORY_FORECAST_SNAPSHOT_GRACE_SECONDS", "90"))
 )
 
 
@@ -398,6 +407,7 @@ def _audit_forecast_history(
         "pairs": sorted(latest_by_pair),
         "duplicate_cycle_pairs": duplicate_cycle_pairs,
         "current_duplicate_cycle_pairs": current_duplicate_cycle_pairs,
+        "snapshot_grace_seconds": FORECAST_SNAPSHOT_GRACE.total_seconds(),
     }
     if error is not None:
         issues.append(
@@ -439,7 +449,12 @@ def _audit_forecast_history(
                 ),
             )
         )
-    if snapshot_ts is not None and latest_ts is not None and latest_ts < snapshot_ts and (target_open or active_positions):
+    if (
+        snapshot_ts is not None
+        and latest_ts is not None
+        and _forecast_predates_snapshot_beyond_grace(latest_ts, snapshot_ts)
+        and (target_open or active_positions)
+    ):
         issues.append(
             _issue(
                 layer=LAYER_SHORT,
@@ -465,7 +480,12 @@ def _audit_forecast_history(
             )
             continue
         row_ts = _parse_utc(row.get("timestamp_utc"))
-        if snapshot_ts is not None and row_ts is not None and row_ts < snapshot_ts and (target_open or active_positions):
+        if (
+            snapshot_ts is not None
+            and row_ts is not None
+            and _forecast_predates_snapshot_beyond_grace(row_ts, snapshot_ts)
+            and (target_open or active_positions)
+        ):
             issues.append(
                 _issue(
                     layer=LAYER_SHORT,
@@ -1058,6 +1078,10 @@ def _row_is_newer(candidate_ts: datetime | None, current_ts: datetime | None) ->
     if current_ts is None:
         return True
     return _to_utc(candidate_ts) >= _to_utc(current_ts)
+
+
+def _forecast_predates_snapshot_beyond_grace(forecast_ts: datetime, snapshot_ts: datetime) -> bool:
+    return _to_utc(forecast_ts) + FORECAST_SNAPSHOT_GRACE < _to_utc(snapshot_ts)
 
 
 def _issue_text(item: Any) -> str:

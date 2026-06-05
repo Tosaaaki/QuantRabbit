@@ -186,11 +186,12 @@ the noise loss AND forfeits the TP that's still reachable.
 ## Commands
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli tp-rebalance \
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance \
   --snapshot data/broker_snapshot.json \
   --pair-charts data/pair_charts.json
 
-PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 

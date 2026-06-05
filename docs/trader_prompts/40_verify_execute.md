@@ -8,8 +8,9 @@
 ## Verify
 
 ```bash
-PYTHONPATH=src python3 -m quant_rabbit.cli execution-ledger-sync
-PYTHONPATH=src python3 -m quant_rabbit.cli gpt-trader-decision \
+export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli gpt-trader-decision \
   --snapshot data/broker_snapshot.json \
   --decision-response data/codex_trader_decision_response.json
 ```
