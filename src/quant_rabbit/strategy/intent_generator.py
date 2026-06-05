@@ -233,6 +233,17 @@ FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(
 FRESH_ENTRY_LIVE_MIN_REWARD_RISK = 1.0
 
 
+def _broker_price_tick_pips(pair: str) -> float:
+    """Return one broker price tick expressed in pips for the pair precision."""
+    digits = 3 if pair.endswith("_JPY") else 5
+    return (10**-digits) * PIP_FACTORS[pair]
+
+
+def _fresh_entry_live_floor_distance_pips(pair: str, stop_pips: float) -> float:
+    """Minimum TP distance for NEW non-recovery entries to clear live RR."""
+    return (FRESH_ENTRY_LIVE_MIN_REWARD_RISK * stop_pips) + _broker_price_tick_pips(pair)
+
+
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
     """Compute reward_risk from current market state.
 
@@ -3903,6 +3914,7 @@ def _take_profit_execution_plan(
             stop_pips=stop_pips,
             spread_pips=spread_pips,
             atr_pips=atr_pips,
+            fresh_new_entry=not hedge_recovery,
         )
         if fallback_tp is not None:
             effective_tp = fallback_tp
@@ -3925,6 +3937,8 @@ def _take_profit_execution_plan(
             stop_pips=stop_pips,
             spread_pips=spread_pips,
             pip_factor=pip_factor,
+            pair=pair,
+            fresh_new_entry=not hedge_recovery,
         )
         if forecast_ok and _tp_closer_to_entry(entry, forecast_tp, effective_tp):
             effective_tp = forecast_tp
@@ -3961,6 +3975,7 @@ def _attached_harvest_floor_tp_candidate(
     stop_pips: float,
     spread_pips: float,
     atr_pips: float | None,
+    fresh_new_entry: bool,
 ) -> tuple[float | None, str]:
     """Fallback for attached HARVEST TP when no structural anchor is usable.
 
@@ -3973,8 +3988,11 @@ def _attached_harvest_floor_tp_candidate(
     if atr_pips is None or atr_pips <= 0 or stop_pips <= 0:
         return None, "attached HARVEST fallback skipped: missing operating ATR or stop distance"
     policy = RiskPolicy()
+    rr_floor_distance_pips = policy.range_min_reward_risk * stop_pips
+    if fresh_new_entry:
+        rr_floor_distance_pips = max(rr_floor_distance_pips, _fresh_entry_live_floor_distance_pips(pair, stop_pips))
     floor_distance_pips = max(
-        policy.range_min_reward_risk * stop_pips,
+        rr_floor_distance_pips,
         policy.min_target_spread_multiple * spread_pips,
     )
     max_distance_pips = HARVEST_TP_MAX_OPERATING_ATR_MULT * atr_pips
@@ -3994,17 +4012,19 @@ def _attached_harvest_floor_tp_candidate(
     candidate = _round_price(pair, candidate)
 
     # Rounding to broker precision can shave a fraction of a pip; nudge one
-    # price tick outward only if needed to keep the range/hedge RR floor true.
+    # price tick outward only if needed to keep the active RR floor true.
     rounded_distance = abs(candidate - entry) * pip_factor
     if rounded_distance < floor_distance_pips:
-        tick = 10 ** (-(3 if pair.endswith("_JPY") else 5))
+        tick = _broker_price_tick_pips(pair) / pip_factor
         candidate = _round_price(pair, candidate + tick if side == Side.LONG else candidate - tick)
         rounded_distance = abs(candidate - entry) * pip_factor
 
+    rr_label = "fresh_live_rr_floor" if fresh_new_entry else "range_rr_floor"
+    rr_floor = rounded_distance / stop_pips if stop_pips > 0 else 0.0
     return candidate, (
         f"attached HARVEST structural anchor missing; using minimum acceptable "
         f"operating target {rounded_distance:.1f}pip "
-        f"(range_rr_floor={policy.range_min_reward_risk:.2f}, "
+        f"({rr_label}={rr_floor:.2f}, "
         f"max={max_distance_pips:.1f}pip/{HARVEST_TP_MAX_OPERATING_ATR_MULT:.1f}×ATR)"
     )
 
@@ -4041,6 +4061,8 @@ def _forecast_tp_respects_execution_floor(
     stop_pips: float,
     spread_pips: float,
     pip_factor: int,
+    pair: str,
+    fresh_new_entry: bool,
 ) -> tuple[bool, str]:
     target_pips = abs(target - entry) * pip_factor
     policy = RiskPolicy()
@@ -4050,8 +4072,15 @@ def _forecast_tp_respects_execution_floor(
         if method == TradeMethod.RANGE_ROTATION or "RANGE" in regime
         else policy.min_reward_risk
     )
-    if stop_pips > 0 and (target_pips / stop_pips) < active_min_rr:
-        return False, f"forecast TP RR {(target_pips / stop_pips):.2f} < floor {active_min_rr:.2f}"
+    min_target_pips = active_min_rr * stop_pips if stop_pips > 0 else 0.0
+    floor_label = "execution"
+    if fresh_new_entry and stop_pips > 0:
+        live_floor_pips = _fresh_entry_live_floor_distance_pips(pair, stop_pips)
+        if live_floor_pips > min_target_pips:
+            min_target_pips = live_floor_pips
+            floor_label = "fresh-live"
+    if stop_pips > 0 and target_pips < min_target_pips:
+        return False, f"forecast TP RR {(target_pips / stop_pips):.2f} < {floor_label} floor {(min_target_pips / stop_pips):.2f}"
     min_target_pips = spread_pips * policy.min_target_spread_multiple
     if target_pips < min_target_pips:
         return False, f"forecast TP {target_pips:.1f}pip < spread floor {min_target_pips:.1f}pip"

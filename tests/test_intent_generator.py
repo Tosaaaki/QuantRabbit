@@ -1739,7 +1739,7 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["tp_target_source"], "STRUCTURAL_HARVEST")
             self.assertIn("ADX", metadata["tp_attach_reason"])
 
-    def test_attached_harvest_missing_structure_uses_operating_floor_tp(self) -> None:
+    def test_attached_harvest_missing_structure_uses_fresh_live_floor_tp(self) -> None:
         from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _take_profit_execution_plan
 
@@ -1759,11 +1759,12 @@ class IntentGeneratorTest(unittest.TestCase):
             atr_pips=6.8,
         )
 
-        self.assertEqual(tp, 1.15998)
+        self.assertEqual(tp, 1.15814)
         self.assertEqual(metadata["tp_target_source"], "OPERATING_HARVEST_FLOOR")
-        self.assertEqual(metadata["tp_target_distance_pips"], 27.4)
-        self.assertEqual(metadata["virtual_take_profit_reward_risk"], 0.601)
+        self.assertEqual(metadata["tp_target_distance_pips"], 45.8)
+        self.assertGreater(metadata["virtual_take_profit_reward_risk"], 1.0)
         self.assertIn("structural anchor missing", metadata["tp_target_reason"])
+        self.assertIn("fresh_live_rr_floor", metadata["tp_target_reason"])
 
     def test_recovery_hedge_missing_harvest_structure_uses_operating_floor_tp(self) -> None:
         from quant_rabbit.models import OrderType, Quote, Side, TradeMethod
