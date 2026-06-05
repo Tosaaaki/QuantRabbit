@@ -766,14 +766,23 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     range_phase, range_breakout_direction = _current_range_phase(pair, charts)
     long_score = _optional_float(per_tf.get("long_score"))
     short_score = _optional_float(per_tf.get("short_score"))
+    conf = per_tf.get("confluence") if isinstance(per_tf.get("confluence"), dict) else {}
     bias = None
-    if long_score is not None and short_score is not None and long_score != short_score:
+    score_balance = str(conf.get("score_balance") or "").upper()
+    if score_balance == "LONG_LEAN":
+        bias = Side.LONG.value
+    elif score_balance == "SHORT_LEAN":
+        bias = Side.SHORT.value
+    elif (
+        long_score is not None
+        and short_score is not None
+        and abs(long_score - short_score) > CHART_DIRECTION_TIED_GAP_BOUNDARY
+    ):
         bias = Side.LONG.value if long_score > short_score else Side.SHORT.value
     m5_indicators = per_tf.get("M5") if isinstance(per_tf.get("M5"), dict) else {}
     h1_indicators = per_tf.get("H1") if isinstance(per_tf.get("H1"), dict) else {}
     h4_indicators = per_tf.get("H4") if isinstance(per_tf.get("H4"), dict) else {}
     m5_family = per_tf.get("M5__family_scores") if isinstance(per_tf.get("M5__family_scores"), dict) else {}
-    conf = per_tf.get("confluence") if isinstance(per_tf.get("confluence"), dict) else {}
     context = {
         "chart_long_score": long_score,
         "chart_short_score": short_score,
@@ -2098,7 +2107,11 @@ def _direction_bias_from_m5(chart_context: dict[str, Any] | None) -> str | None:
         return None
     long_bias = _optional_float(chart_context.get("m5_long_bias"))
     short_bias = _optional_float(chart_context.get("m5_short_bias"))
-    if long_bias is None or short_bias is None or long_bias == short_bias:
+    if (
+        long_bias is None
+        or short_bias is None
+        or abs(long_bias - short_bias) <= CHART_DIRECTION_TIED_GAP_BOUNDARY
+    ):
         return None
     return Side.LONG.value if long_bias > short_bias else Side.SHORT.value
 

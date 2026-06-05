@@ -1664,6 +1664,36 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn("CHART_DIRECTION_CONFLICT", issue_codes)
             self.assertTrue(all(item["status"] == "DRY_RUN_BLOCKED" for item in payload["results"]))
 
+    def test_tied_chart_score_gap_does_not_emit_direction_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root, direction="LONG"),
+                strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                pair_charts_path=_pair_charts_with_direction(
+                    root,
+                    long_score=0.48,
+                    short_score=0.52,
+                    dominant_regime="RANGE",
+                    m5_regime="RANGE",
+                    m5_long_bias=0.48,
+                    m5_short_bias=0.52,
+                ),
+                output_path=output,
+                report_path=root / "intents.md",
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+            metadata = payload["results"][0]["intent"]["metadata"]
+
+            self.assertEqual(metadata["chart_score_balance"], "TIED")
+            self.assertIsNone(metadata["chart_direction_bias"])
+            self.assertNotIn("CHART_DIRECTION_CONFLICT", issue_codes)
+
     def test_sl_free_still_blocks_decisive_trend_continuation_conflict(self) -> None:
         import os
 
