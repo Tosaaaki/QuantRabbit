@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
+from urllib.error import URLError
 
 from quant_rabbit.analysis.calendar import (
     CalendarEvent,
@@ -92,6 +94,18 @@ class CalendarParseTest(unittest.TestCase):
         self.assertEqual(snap.events, ())
         # When fetch is suppressed, we don't generate a fetch error, just zero events.
         self.assertNotIn("MISSING_FOREX_FACTORY_FEED", " ".join(snap.issues))
+
+    def test_fetch_failure_marks_pairs_as_calendar_unavailable(self) -> None:
+        with patch(
+            "quant_rabbit.analysis.calendar.fetch_calendar_xml",
+            side_effect=URLError("HTTP Error 429: Too Many Requests"),
+        ):
+            snap = build_calendar_snapshot(pairs=("USD_JPY", "EUR_GBP"), fetch=True)
+
+        self.assertIn("MISSING_FOREX_FACTORY_FEED", " ".join(snap.issues))
+        self.assertEqual(snap.events, ())
+        self.assertTrue(all(w.in_window for w in snap.pair_windows))
+        self.assertTrue(all("calendar unavailable" in w.reason for w in snap.pair_windows))
 
 
 SAMPLE_COT_CSV = b"""market_and_exchange_names,report_date_as_yyyy_mm_dd,lev_money_positions_long,lev_money_positions_short,asset_mgr_positions_long,asset_mgr_positions_short,open_interest_all

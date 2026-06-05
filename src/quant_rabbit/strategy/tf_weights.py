@@ -290,6 +290,9 @@ def _high_impact_news_active(
     events = payload.get("events") or payload.get("calendar") or []
     if not isinstance(events, list):
         return False, ""
+    issues = payload.get("issues") or []
+    if not events and any("MISSING_FOREX_FACTORY_FEED" in str(issue) for issue in issues):
+        return True, "calendar_unavailable"
     for ev in events:
         if not isinstance(ev, dict):
             continue

@@ -41,6 +41,31 @@ class DynamicTfWeightsCalendarTest(unittest.TestCase):
         self.assertIn("NY_OVERLAP", label)
         self.assertIn("news:USD:Non-Farm Employment Change", label)
 
+    def test_missing_calendar_feed_triggers_event_risk_overlay(self) -> None:
+        now = datetime(2026, 6, 5, 13, 10, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "economic_calendar.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "events": [],
+                        "issues": ["MISSING_FOREX_FACTORY_FEED: HTTP Error 429: Too Many Requests"],
+                    }
+                )
+            )
+
+            _, label = dynamic_tf_weights(
+                session="ASIA_RANGE",
+                dominant_regime="RANGE",
+                method="RANGE_ROTATION",
+                pair="GBP_USD",
+                calendar_path=path,
+                now_utc=now,
+            )
+
+        self.assertIn("NY_OVERLAP", label)
+        self.assertIn("news:calendar_unavailable", label)
+
 
 if __name__ == "__main__":
     unittest.main()

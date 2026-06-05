@@ -29,9 +29,11 @@ read still gets to win or lose on its own merits.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -105,6 +107,13 @@ _PAIR_NOTE_RE = re.compile(
 )
 _BEARISH_RE = re.compile(r"\b(bearish|short|downside|breakdown|sell)\b", re.IGNORECASE)
 _BULLISH_RE = re.compile(r"\b(bullish|long|upside|breakout|buy)\b", re.IGNORECASE)
+_DIGEST_JST_STAMP_RE = re.compile(r"FX News Digest\s+—\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})\s+JST")
+_PRE_EVENT_LANGUAGE_RE = re.compile(
+    r"\b(ahead\s+of|pre[-\s]?release|next\s+\d+(?:-\d+)?\s+hours?|"
+    r"tonight\s+is\s+the\s+main\s+volatility\s+event|lands?\s+at\s+the\s+same\s+time)\b",
+    re.IGNORECASE,
+)
+_HIGH_IMPACT_TOKENS = {"HIGH", "VERY_HIGH", "RED"}
 
 
 @dataclass(frozen=True)
@@ -266,7 +275,12 @@ def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
 
-def parse_news_themes(digest_path: Path) -> NewsThemes:
+def parse_news_themes(
+    digest_path: Path,
+    *,
+    calendar_path: Path | None = None,
+    now_utc: datetime | None = None,
+) -> NewsThemes:
     """Parse the news digest into per-(pair, direction) biases."""
     if not digest_path.exists():
         return NewsThemes(biases={}, detected_themes=(), source_path=None)
@@ -274,6 +288,8 @@ def parse_news_themes(digest_path: Path) -> NewsThemes:
         text = digest_path.read_text(encoding="utf-8")
     except OSError:
         return NewsThemes(biases={}, detected_themes=(), source_path=None)
+    if _pre_event_digest_is_stale(text, digest_path, calendar_path=calendar_path, now_utc=now_utc):
+        return NewsThemes(biases={}, detected_themes=("stale_pre_event_digest",), source_path=digest_path)
 
     biases: Dict[Tuple[str, str], float] = {}
     themes: list[str] = []
@@ -305,3 +321,104 @@ def parse_news_themes(digest_path: Path) -> NewsThemes:
         detected_themes=tuple(themes),
         source_path=digest_path,
     )
+
+
+def _pre_event_digest_is_stale(
+    text: str,
+    digest_path: Path,
+    *,
+    calendar_path: Path | None,
+    now_utc: datetime | None,
+) -> bool:
+    """Suppress pre-release news bias after the named high-impact event fires.
+
+    The hourly curated digest is advisory. Once a scheduled high-impact event
+    occurs after that digest was written, its pre-event USD/GBP/etc. tone is
+    stale and chart/broker truth must rebuild the market read.
+    """
+    if not text.strip() or calendar_path is None or not calendar_path.exists():
+        return False
+    digest_ts = _digest_timestamp_utc(text, digest_path)
+    now = now_utc or datetime.now(timezone.utc)
+    try:
+        payload = json.loads(calendar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    events = payload.get("events") or payload.get("calendar") or []
+    if isinstance(events, list):
+        text_upper = text.upper()
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            impact = str(event.get("impact") or event.get("importance") or "").upper()
+            if impact not in _HIGH_IMPACT_TOKENS:
+                continue
+            ts = _parse_utc(event.get("timestamp_utc") or event.get("time_utc") or event.get("time") or event.get("timestamp"))
+            if ts is None or not (digest_ts <= ts <= now):
+                continue
+            title = str(event.get("title") or event.get("event") or "")
+            currency = str(event.get("currency") or event.get("country") or "").upper()
+            if _event_mentioned(text_upper, title=title, currency=currency):
+                return True
+
+    issues = payload.get("issues") or []
+    if (
+        any("MISSING_FOREX_FACTORY_FEED" in str(issue) for issue in issues)
+        and _PRE_EVENT_LANGUAGE_RE.search(text)
+    ):
+        return True
+    return False
+
+
+def _digest_timestamp_utc(text: str, digest_path: Path) -> datetime:
+    match = _DIGEST_JST_STAMP_RE.search(text)
+    if match:
+        date_part, hour, minute = match.groups()
+        try:
+            ts = datetime.fromisoformat(f"{date_part}T{hour}:{minute}:00").replace(
+                tzinfo=timezone(timedelta(hours=9))
+            )
+            return ts.astimezone(timezone.utc)
+        except ValueError:
+            pass
+    try:
+        return datetime.fromtimestamp(digest_path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return datetime.now(timezone.utc)
+
+
+def _parse_utc(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
+def _event_mentioned(text_upper: str, *, title: str, currency: str) -> bool:
+    title_upper = title.upper()
+    event_aliases = {
+        "NON-FARM": ("NFP", "NON-FARM", "PAYROLL"),
+        "EMPLOYMENT": ("EMPLOYMENT", "JOBS", "LABOR", "LABOUR"),
+        "UNEMPLOYMENT": ("UNEMPLOYMENT", "JOBS", "LABOR", "LABOUR"),
+        "EARNINGS": ("EARNINGS", "WAGES"),
+        "CPI": ("CPI", "INFLATION"),
+        "FOMC": ("FOMC", "FED"),
+        "RATE": ("RATE", "CENTRAL BANK"),
+        "PMI": ("PMI",),
+        "GDP": ("GDP",),
+    }
+    aliases: set[str] = set()
+    for token, values in event_aliases.items():
+        if token in title_upper:
+            aliases.update(values)
+    words = [w for w in re.findall(r"[A-Z]{4,}", title_upper) if w not in {"CHANGE", "RATE"}]
+    aliases.update(words[:3])
+    if aliases and any(alias in text_upper for alias in aliases):
+        return True
+    return bool(currency and currency in text_upper and _PRE_EVENT_LANGUAGE_RE.search(text_upper))

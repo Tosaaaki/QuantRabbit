@@ -149,7 +149,16 @@ def build_calendar_snapshot(
 
     now = now_utc or datetime.now(timezone.utc)
     pair_windows: list[PairWindow] = []
+    calendar_unavailable = fetch and bool(issues) and not events
     for pair in pairs:
+        if calendar_unavailable:
+            pair_windows.append(PairWindow(
+                pair=pair,
+                in_window=True,
+                reason=f"calendar unavailable: {issues[0]}",
+                next_event=None,
+            ))
+            continue
         base, _, quote = pair.upper().partition("_")
         relevant = [
             e for e in events

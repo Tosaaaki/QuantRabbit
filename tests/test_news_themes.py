@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.strategy.news_themes import (
@@ -134,6 +136,98 @@ class NewsThemesTest(unittest.TestCase):
             delta, rationale = themes.for_pair("EUR_USD", "LONG")
             self.assertEqual(delta, 0.0)
             self.assertIsNone(rationale)
+
+    def test_pre_event_digest_is_ignored_after_named_event_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = _write_digest(
+                root,
+                "# FX News Digest — 2026-06-05 21:18 JST\n"
+                "NFP is the dominant macro event in the next 1-4 hours. USD softer ahead of the release.\n",
+            )
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            themes = parse_news_themes(
+                digest,
+                calendar_path=calendar,
+                now_utc=datetime(2026, 6, 5, 13, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(themes.biases, {})
+        self.assertIn("stale_pre_event_digest", themes.detected_themes)
+
+    def test_pre_event_digest_still_applies_before_event_release(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = _write_digest(
+                root,
+                "# FX News Digest — 2026-06-05 21:18 JST\n"
+                "NFP is the dominant macro event in the next 1-4 hours. USD softer ahead of the release.\n",
+            )
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            themes = parse_news_themes(
+                digest,
+                calendar_path=calendar,
+                now_utc=datetime(2026, 6, 5, 12, 20, tzinfo=timezone.utc),
+            )
+
+        self.assertGreater(themes.biases[("EUR_USD", "LONG")], 0)
+
+    def test_calendar_feed_missing_drops_aged_pre_event_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = _write_digest(
+                root,
+                "# FX News Digest — 2026-06-05 21:18 JST\n"
+                "NFP is the dominant macro event in the next 1-4 hours. USD softer ahead of payrolls.\n",
+            )
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [],
+                        "issues": ["MISSING_FOREX_FACTORY_FEED: HTTP Error 429: Too Many Requests"],
+                    }
+                )
+            )
+
+            themes = parse_news_themes(
+                digest,
+                calendar_path=calendar,
+                now_utc=datetime(2026, 6, 5, 13, 10, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(themes.biases, {})
+        self.assertIn("stale_pre_event_digest", themes.detected_themes)
 
 
 if __name__ == "__main__":

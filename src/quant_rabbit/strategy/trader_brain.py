@@ -1075,7 +1075,10 @@ class TraderBrain:
         # bearish/bullish notes) into bounded per-(pair, direction)
         # score biases. Empty when digest is missing or unparseable.
         logs_root = data_root.parent / "logs" if data_root.name == "data" else data_root / "logs"
-        news_themes = parse_news_themes(logs_root / "news_digest.md")
+        news_themes = parse_news_themes(
+            logs_root / "news_digest.md",
+            calendar_path=_data_artifact_path(data_root, DEFAULT_CALENDAR_SNAPSHOT),
+        )
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)
         pending_entries = _pending_entry_order_count(snapshot)
