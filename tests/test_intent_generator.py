@@ -915,6 +915,122 @@ class IntentGeneratorTest(unittest.TestCase):
             )
         )
 
+    def test_below_entry_forecast_for_missing_strong_chart_pair_becomes_watch_only_lane(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            charts = root / "pair_charts_multi_pair.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "EUR_USD",
+                                "dominant_regime": "TREND_UP",
+                                "long_score": 0.72,
+                                "short_score": 0.28,
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_UP",
+                                        "long_bias": 0.72,
+                                        "short_bias": 0.28,
+                                        "regime_reading": {"state": "TREND_UP", "confidence": 0.6},
+                                        "family_scores": {"trend_score": 0.8, "mean_rev_score": 0.1},
+                                        "indicators": {
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 1.1710,
+                                            "bb_upper": 1.1760,
+                                            "donchian_low": 1.1707,
+                                            "donchian_high": 1.1764,
+                                            "swing_low": 1.1705,
+                                            "swing_high": 1.1767,
+                                            "adx_14": 27.0,
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "pair": "USD_JPY",
+                                "dominant_regime": "TREND_UP",
+                                "long_score": 0.82,
+                                "short_score": 0.12,
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_UP",
+                                        "long_bias": 0.82,
+                                        "short_bias": 0.12,
+                                        "regime_reading": {"state": "TREND_UP", "confidence": 0.72},
+                                        "family_scores": {"trend_score": 0.9, "mean_rev_score": 0.1},
+                                        "indicators": {
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 156.10,
+                                            "bb_upper": 157.20,
+                                            "donchian_low": 156.05,
+                                            "donchian_high": 157.25,
+                                            "swing_low": 155.90,
+                                            "swing_high": 157.40,
+                                            "adx_14": 29.0,
+                                        },
+                                    }
+                                ],
+                            },
+                        ]
+                    }
+                )
+            )
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.51,
+                raw_confidence=0.70,
+                current_price=156.644,
+                target_price=157.20,
+                invalidation_price=156.10,
+                horizon_min=60,
+                rationale_summary="raw chart strong but calibrated below live floor",
+                drivers_for=("USD_JPY LONG_LEAN chart score",),
+                drivers_against=("calibration below entry gate",),
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                summary = IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=charts,
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        usd_jpy_results = [item for item in payload["results"] if item["intent"]["pair"] == "USD_JPY"]
+        eur_usd_results = [item for item in payload["results"] if item["intent"]["pair"] == "EUR_USD"]
+        watch_issue_codes = {
+            issue["code"]
+            for item in usd_jpy_results
+            for issue in item["risk_issues"]
+        }
+
+        self.assertEqual(summary.live_ready, 0)
+        self.assertTrue(usd_jpy_results)
+        self.assertIn("FORECAST_WATCH_ONLY", watch_issue_codes)
+        self.assertTrue(all(item["status"] != "LIVE_READY" for item in usd_jpy_results))
+        self.assertTrue(all(item["intent"]["metadata"]["forecast_seed"] for item in usd_jpy_results))
+        self.assertTrue(all(item["intent"]["metadata"]["forecast_watch_only"] for item in usd_jpy_results))
+        self.assertTrue(
+            all(
+                not item["intent"]["metadata"]["forecast_seed"]
+                and not item["intent"]["metadata"]["forecast_watch_only"]
+                for item in eur_usd_results
+            )
+        )
+
     def test_range_forecast_seed_uses_range_rotation_floor(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:

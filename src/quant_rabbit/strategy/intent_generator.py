@@ -464,6 +464,22 @@ FORECAST_RANGE_ROTATION_MIN_CONFIDENCE = _env_float(
     0.50,
     minimum=0.50,
 )
+# Watch-only forecast lanes expose geometry for pairs the campaign list omits
+# when either the raw forecast or the current chart vote is materially strong,
+# but calibrated confidence is still below the live-entry floor. This prevents
+# the candidate surface from hiding obvious chart opportunities while the
+# FORECAST_WATCH_ONLY blocker keeps them non-fillable until the predictor earns
+# enough calibrated confidence.
+FORECAST_WATCH_MIN_RAW_CONFIDENCE = _env_float(
+    "QR_FORECAST_WATCH_MIN_RAW_CONFIDENCE",
+    0.50,
+    minimum=0.0,
+)
+FORECAST_WATCH_MIN_CHART_SCORE = _env_float(
+    "QR_FORECAST_WATCH_MIN_CHART_SCORE",
+    0.65,
+    minimum=0.50,
+)
 # Forecast-first seeds are allowed only when the chart packet contains at
 # least two independent TF readings with both regime and family-score context.
 # A single TF can be enough for a unit fixture, but it is not enough market
@@ -1411,8 +1427,20 @@ def _append_forecast_seed_lanes(
         confidence = _optional_float(getattr(forecast, "confidence", None))
         if direction in {"UP", "DOWN", "RANGE"} and confidence is not None:
             forecasts_by_pair[pair] = forecast
-        if confidence is None or confidence < _forecast_seed_min_confidence_for_direction(direction):
+        min_confidence = _forecast_seed_min_confidence_for_direction(direction)
+        watch_reason: str | None = None
+        if confidence is None:
             continue
+        if confidence < min_confidence:
+            watch_reason = _forecast_watch_candidate_reason(
+                pair,
+                forecast,
+                charts,
+                source_by_pair=source_by_pair,
+                min_confidence=min_confidence,
+            )
+            if watch_reason is None:
+                continue
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
             continue
@@ -1430,16 +1458,28 @@ def _append_forecast_seed_lanes(
             if key in seeded_keys:
                 continue
             source = existing_by_key.get(key) or source_by_pair.get(pair)
-            seeds.append(
-                _forecast_seed_lane(
-                    source,
-                    pair=pair,
-                    side=side,
-                    method=method,
-                    forecast=forecast,
-                    cycle_id=forecast_cycle_id,
-                )
+            lane = _forecast_seed_lane(
+                source,
+                pair=pair,
+                side=side,
+                method=method,
+                forecast=forecast,
+                cycle_id=forecast_cycle_id,
             )
+            if watch_reason is not None:
+                lane["campaign_role"] = "FORECAST_WATCH"
+                lane["forecast_watch_only"] = True
+                lane["required_receipt"] = (
+                    "Watch-only forecast-first lane: build dry-run geometry and blocker reasons only. "
+                    "Do not send live until calibrated forecast confidence clears the live-entry floor "
+                    "on a fresh snapshot."
+                )
+                lane["reason"] = f"{lane.get('reason') or 'forecast-first candidate discovery'}; {watch_reason}"
+                lane["blockers"] = [
+                    *list(lane.get("blockers") or []),
+                    "watch-only forecast candidate below calibrated live-entry confidence",
+                ]
+            seeds.append(lane)
             seeded_keys.add(key)
 
     lanes = [
@@ -1682,6 +1722,60 @@ def _forecast_seed_methods(
         methods.append(TradeMethod.RANGE_ROTATION.value)
     methods.extend(FORECAST_SEED_DIRECTIONAL_METHODS)
     return tuple(dict.fromkeys(methods))
+
+
+def _forecast_watch_candidate_reason(
+    pair: str,
+    forecast: Any,
+    charts: dict[str, dict[str, Any]],
+    *,
+    source_by_pair: dict[str, dict[str, Any]],
+    min_confidence: float,
+) -> str | None:
+    if pair in source_by_pair:
+        return None
+    direction = str(getattr(forecast, "direction", "") or "").upper()
+    if direction not in {"UP", "DOWN", "RANGE"}:
+        return None
+    confidence = _optional_float(getattr(forecast, "confidence", None))
+    raw_confidence = _optional_float(getattr(forecast, "raw_confidence", None))
+    if raw_confidence is None:
+        raw_confidence = confidence
+    chart_score = _forecast_watch_chart_score(pair, direction, charts)
+    strong_raw = raw_confidence is not None and raw_confidence >= FORECAST_WATCH_MIN_RAW_CONFIDENCE
+    strong_chart = chart_score is not None and chart_score >= FORECAST_WATCH_MIN_CHART_SCORE
+    if not strong_raw and not strong_chart:
+        return None
+    bits = [
+        f"calibrated confidence {0.0 if confidence is None else confidence:.2f} < live floor {min_confidence:.2f}",
+    ]
+    if strong_raw:
+        bits.append(f"raw forecast confidence {raw_confidence:.2f}")
+    if strong_chart:
+        bits.append(f"chart {direction} score {chart_score:.2f}")
+    return "forecast watch-only candidate: " + ", ".join(bits)
+
+
+def _forecast_watch_chart_score(
+    pair: str,
+    direction: str,
+    charts: dict[str, dict[str, Any]],
+) -> float | None:
+    per_tf = charts.get(pair)
+    raw_chart = per_tf.get("__raw_chart") if isinstance(per_tf, dict) else None
+    if not isinstance(raw_chart, dict):
+        return None
+    if direction == "UP":
+        return _optional_float(raw_chart.get("long_score"))
+    if direction == "DOWN":
+        return _optional_float(raw_chart.get("short_score"))
+    if direction == "RANGE":
+        long_score = _optional_float(raw_chart.get("long_score"))
+        short_score = _optional_float(raw_chart.get("short_score"))
+        if long_score is None and short_score is None:
+            return None
+        return max(value for value in (long_score, short_score) if value is not None)
+    return None
 
 
 def _range_seed_direction(pair: str, charts: dict[str, dict[str, Any]], current_price: float) -> str | None:
@@ -2433,6 +2527,10 @@ class IntentGenerator:
         if forecast_live_issue is not None:
             risk_issues.append(forecast_live_issue)
             live_blockers = (*live_blockers, forecast_live_issue["message"])
+        forecast_watch_issue = _forecast_watch_only_issue(intent, intent.metadata or {})
+        if forecast_watch_issue is not None:
+            risk_issues.append(forecast_watch_issue)
+            live_blockers = (*live_blockers, forecast_watch_issue["message"])
         telemetry_live_issues = _telemetry_live_readiness_issues(
             intent,
             intent.metadata or {},
@@ -2770,6 +2868,7 @@ def _intent_from_lane(
             "campaign_role": lane.get("campaign_role"),
             "required_receipt": lane.get("required_receipt"),
             "forecast_seed": bool(lane.get("forecast_seed")),
+            "forecast_watch_only": bool(lane.get("forecast_watch_only")),
             "forecast_cycle_id": lane.get("forecast_cycle_id"),
             "forecast_direction": lane.get("forecast_direction"),
             "forecast_confidence": lane.get("forecast_confidence"),
@@ -3334,6 +3433,23 @@ def _forecast_live_readiness_issue(
             "severity": "WARN",
         }
     return None
+
+
+def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
+    if not metadata.get("forecast_watch_only"):
+        return None
+    direction = str(metadata.get("forecast_direction") or "").upper() or "UNKNOWN"
+    confidence = _optional_float(metadata.get("forecast_confidence"))
+    return {
+        "code": "FORECAST_WATCH_ONLY",
+        "message": (
+            f"{intent.pair} {intent.side.value} is a watch-only forecast candidate "
+            f"({direction} conf={0.0 if confidence is None else confidence:.2f}); "
+            "dry-run geometry is exposed for review, but live send is blocked until "
+            "a fresh calibrated forecast clears the entry floor."
+        ),
+        "severity": "WARN",
+    }
 
 
 def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None) -> dict[str, str] | None:
