@@ -119,6 +119,20 @@ FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT = float(
     os.environ.get("QR_FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT", "0.75")
 )
 
+# Forecast horizons are timeframe definitions, not entry gates. They let the
+# trader distinguish an execution scalp from an operating swing or H4/D anchor
+# while the same risk/profile/gateway checks still decide whether any order can
+# be sent. These values map directly to chart bar durations: one hour for
+# M5/M15 execution follow-through, three hours for M15/M30/H1 operating swings,
+# four hours for H4 anchors, and one day for D+H4 aligned anchors. If live
+# evaluation shows a different play-out window per pair/session, replace these
+# constants with horizon-specific projection-ledger calibration.
+FORECAST_EXECUTION_HORIZON_MIN = int(os.environ.get("QR_FORECAST_EXECUTION_HORIZON_MIN", "60"))
+FORECAST_OPERATING_SWING_HORIZON_MIN = int(os.environ.get("QR_FORECAST_OPERATING_SWING_HORIZON_MIN", "180"))
+FORECAST_H4_ANCHOR_HORIZON_MIN = int(os.environ.get("QR_FORECAST_H4_ANCHOR_HORIZON_MIN", "240"))
+FORECAST_D_ANCHOR_HORIZON_MIN = int(os.environ.get("QR_FORECAST_D_ANCHOR_HORIZON_MIN", "1440"))
+FORECAST_RANGE_HORIZON_MIN = int(os.environ.get("QR_FORECAST_RANGE_HORIZON_MIN", "120"))
+
 RANGE_PHASE_TIMEFRAMES = {"M5", "M15", "M30", "H1"}
 
 
@@ -453,6 +467,63 @@ def _tf_weight(timeframe: str) -> float:
         "H4": 1.7,
         "D": 1.0,
     }.get(timeframe.upper(), 1.0)
+
+
+def _forecast_horizon_for_direction(pair_chart: Dict[str, Any], direction: str) -> tuple[int, str | None]:
+    """Return forecast play-out horizon from aligned timeframe anchors.
+
+    This is not an entry permission. It labels the same forecast with the
+    timeframe stack that supports it so downstream ledgers can evaluate short,
+    medium, and long-horizon forecasts separately.
+    """
+    if direction not in {"UP", "DOWN"}:
+        return FORECAST_EXECUTION_HORIZON_MIN, None
+    m15 = _directional_anchor_reason(pair_chart, "M15", direction)
+    m30 = _directional_anchor_reason(pair_chart, "M30", direction)
+    h1 = _directional_anchor_reason(pair_chart, "H1", direction)
+    h4 = _directional_anchor_reason(pair_chart, "H4", direction)
+    daily = _directional_anchor_reason(pair_chart, "D", direction)
+    if daily and h4:
+        return FORECAST_D_ANCHOR_HORIZON_MIN, f"D/H4 {direction} anchor horizon={FORECAST_D_ANCHOR_HORIZON_MIN}m ({daily}; {h4})"
+    if h4 and (h1 or daily):
+        companion = h1 or daily
+        return FORECAST_H4_ANCHOR_HORIZON_MIN, f"H4 {direction} anchor horizon={FORECAST_H4_ANCHOR_HORIZON_MIN}m ({h4}; {companion})"
+    if h1 and (m30 or m15 or h4):
+        companion = m30 or m15 or h4
+        return (
+            FORECAST_OPERATING_SWING_HORIZON_MIN,
+            f"H1 operating-swing {direction} horizon={FORECAST_OPERATING_SWING_HORIZON_MIN}m ({h1}; {companion})",
+        )
+    return FORECAST_EXECUTION_HORIZON_MIN, None
+
+
+def _directional_anchor_reason(pair_chart: Dict[str, Any], timeframe: str, direction: str) -> str | None:
+    view = _view_by_tf(pair_chart, timeframe)
+    if not isinstance(view, dict):
+        return None
+    regime_direction = _regime_direction(view.get("regime"))
+    reading = view.get("regime_reading") if isinstance(view.get("regime_reading"), dict) else {}
+    if regime_direction is None:
+        regime_direction = _regime_direction((reading or {}).get("state"))
+    if regime_direction != direction:
+        return None
+    evidence: list[str] = []
+    adx = _view_adx(view)
+    if adx is not None and adx >= FORECAST_STRONG_ADX:
+        evidence.append(f"ADX={adx:.1f}")
+    family_scores = view.get("family_scores") if isinstance(view.get("family_scores"), dict) else {}
+    trend_score = _to_float((family_scores or {}).get("trend_score"))
+    if (
+        trend_score is not None
+        and (
+            (direction == "UP" and trend_score >= FORECAST_TECH_FAMILY_MIN_SCORE)
+            or (direction == "DOWN" and trend_score <= -FORECAST_TECH_FAMILY_MIN_SCORE)
+        )
+    ):
+        evidence.append(f"trend_score={trend_score:.2f}")
+    if not evidence:
+        return None
+    return f"{timeframe} {regime_direction} {'/'.join(evidence)}"
 
 
 def _market_location_supports_direction(confluence: Dict[str, Any], direction: str) -> bool:
@@ -1379,7 +1450,7 @@ def synthesize_forecast(
                 confidence=calibrated_confidence,
                 invalidation_price=None,
                 target_price=None,
-                horizon_min=120,
+                horizon_min=FORECAST_RANGE_HORIZON_MIN,
                 drivers_for=(
                     (range_phase.rationale,)
                     + ((evidence,) if evidence else ())
@@ -1441,7 +1512,11 @@ def synthesize_forecast(
             f"→ confidence ×{FORECAST_INCOMPLETE_GEOMETRY_CONFIDENCE_MULT:.2f}"
         )
 
-    horizon_min = 60 if winner != "RANGE" else 120
+    horizon_reason = None
+    if winner == "RANGE":
+        horizon_min = FORECAST_RANGE_HORIZON_MIN
+    else:
+        horizon_min, horizon_reason = _forecast_horizon_for_direction(pair_chart, winner)
 
     rationale_summary = (
         f"UP={up_score:.1f} DOWN={down_score:.1f} RANGE={range_score:.1f} EITHER={either_score:.1f} → "
@@ -1451,13 +1526,18 @@ def synthesize_forecast(
         rationale_summary = f"{rationale_summary}; {adjustment_reason}"
     if geometry_reason:
         rationale_summary = f"{rationale_summary}{geometry_reason}"
+    if horizon_reason:
+        rationale_summary = f"{rationale_summary}; {horizon_reason}"
     opposite = "DOWN" if winner == "UP" else "UP" if winner == "DOWN" else candidates[1][0]
+    drivers_for = _top_reasons(contributions, direction=winner)
+    if horizon_reason:
+        drivers_for = (*drivers_for, horizon_reason)
 
     return DirectionalForecast(
         pair=pair, direction=winner, confidence=calibrated_confidence,
         invalidation_price=invalidation_price, target_price=target_price,
         horizon_min=horizon_min,
-        drivers_for=_top_reasons(contributions, direction=winner),
+        drivers_for=drivers_for,
         drivers_against=_top_reasons(contributions, direction=opposite),
         rationale_summary=rationale_summary,
         current_price=_round_price(pair, current_price),

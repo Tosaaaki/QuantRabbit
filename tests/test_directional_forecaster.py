@@ -5,7 +5,12 @@ from __future__ import annotations
 import unittest
 from dataclasses import dataclass
 
-from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
+from quant_rabbit.strategy.directional_forecaster import (
+    FORECAST_D_ANCHOR_HORIZON_MIN,
+    FORECAST_EXECUTION_HORIZON_MIN,
+    FORECAST_OPERATING_SWING_HORIZON_MIN,
+    synthesize_forecast,
+)
 
 
 @dataclass
@@ -708,3 +713,121 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "UP")
         self.assertLess(forecast.calibration_multiplier, 0.5)
         self.assertLess(forecast.confidence, 0.5)
+
+    def test_d_h4_anchor_extends_directional_forecast_horizon(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "indicators": {"pip_size": 0.0001, "atr_pips": 2.0},
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.1080},
+                            {"side": "LOW", "price": 1.0975},
+                        ]
+                    },
+                },
+                {
+                    "granularity": "H4",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 34.0},
+                    "family_scores": {"trend_score": 0.72, "disagreement": 0.0},
+                },
+                {
+                    "granularity": "D",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001, "adx_14": 31.0},
+                    "family_scores": {"trend_score": 0.68, "disagreement": 0.0},
+                },
+            ]
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 35.0, 1.0, "daily continuation")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertEqual(forecast.horizon_min, FORECAST_D_ANCHOR_HORIZON_MIN)
+        self.assertIn("D/H4 UP anchor", forecast.rationale_summary)
+        self.assertIn("D/H4 UP anchor", " ".join(forecast.drivers_for))
+
+    def test_h1_m30_anchor_uses_operating_swing_horizon(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "indicators": {"pip_size": 0.0001, "atr_pips": 2.0},
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.1025},
+                            {"side": "LOW", "price": 1.0940},
+                        ]
+                    },
+                },
+                {
+                    "granularity": "M30",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001},
+                    "family_scores": {"trend_score": -0.70, "disagreement": 0.0},
+                },
+                {
+                    "granularity": "H1",
+                    "regime": "TREND_DOWN",
+                    "indicators": {"pip_size": 0.0001},
+                    "family_scores": {"trend_score": -0.74, "disagreement": 0.0},
+                },
+            ]
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("DOWN", 35.0, 1.0, "operating swing breakdown")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertEqual(forecast.horizon_min, FORECAST_OPERATING_SWING_HORIZON_MIN)
+        self.assertIn("H1 operating-swing DOWN", forecast.rationale_summary)
+        self.assertIn("H1 operating-swing DOWN", " ".join(forecast.drivers_for))
+
+    def test_micro_only_forecast_keeps_execution_horizon(self) -> None:
+        pair_chart = {
+            "views": [
+                {
+                    "granularity": "M5",
+                    "regime": "TREND_UP",
+                    "indicators": {"pip_size": 0.0001, "atr_pips": 2.0, "adx_14": 31.0},
+                    "family_scores": {"trend_score": 0.80, "disagreement": 0.0},
+                    "structure": {
+                        "swings": [
+                            {"side": "HIGH", "price": 1.1040},
+                            {"side": "LOW", "price": 1.0975},
+                        ]
+                    },
+                }
+            ]
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart=pair_chart,
+            current_price=1.1000,
+            pattern_signals=[],
+            projection_signals=[_Sig("UP", 35.0, 1.0, "M5 impulse")],
+            correlation_signals=[],
+            paths=[],
+        )
+
+        self.assertEqual(forecast.direction, "UP")
+        self.assertEqual(forecast.horizon_min, FORECAST_EXECUTION_HORIZON_MIN)
+        self.assertNotIn("anchor horizon", forecast.rationale_summary)

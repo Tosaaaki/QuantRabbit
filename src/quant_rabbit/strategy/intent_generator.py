@@ -2613,6 +2613,19 @@ class IntentGenerator:
                     f"  - intent: `{intent['pair']} {intent['side']} {intent['order_type']}` "
                     f"units={intent['units']} entry={intent.get('entry')} tp={intent['tp']} sl={intent['sl']}"
                 )
+                metadata = intent.get("metadata") or {}
+                forecast_direction = str(metadata.get("forecast_direction") or "")
+                if forecast_direction or metadata.get("forecast_horizon_min") is not None:
+                    confidence = _optional_float(metadata.get("forecast_confidence"))
+                    confidence_text = f"{confidence:.4f}" if confidence is not None else str(
+                        metadata.get("forecast_confidence") or "n/a"
+                    )
+                    lines.append(
+                        f"  - forecast: direction=`{forecast_direction or 'UNKNOWN'}` "
+                        f"confidence=`{confidence_text}` "
+                        f"horizon_min=`{metadata.get('forecast_horizon_min')}` "
+                        f"watch_only=`{bool(metadata.get('forecast_watch_only'))}`"
+                    )
             if item.risk_metrics:
                 margin_tail = ""
                 if item.risk_metrics.get("estimated_margin_jpy") is not None:
