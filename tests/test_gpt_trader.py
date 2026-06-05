@@ -720,7 +720,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("MISSING_CANCEL_ORDER_IDS", codes)
 
-    def test_accepts_cancel_pending_with_current_order_id(self) -> None:
+    def test_rejects_cancel_pending_when_current_live_ready_lane_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root, orders=[_pending_order()])
@@ -728,10 +728,27 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CANCEL_PENDING_WITH_LIVE_READY_LANES", codes)
+            self.assertEqual(payload["decision"]["cancel_order_ids"], ["pending-1"])
+
+    def test_accepts_cancel_pending_when_no_current_live_ready_lane_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, orders=[_pending_order()])
+            blocked_result = _result()
+            blocked_result["status"] = "DRY_RUN_BLOCKED"
+            blocked_result["live_blockers"] = ["forecast no longer backs this entry"]
+            files["intents"].write_text(json.dumps({"results": [blocked_result]}))
+            brain = _brain(root, files, _cancel_pending_decision(cancel_order_ids=["pending-1"]))
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
             self.assertEqual(summary.status, "ACCEPTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             self.assertEqual(payload["verification_issues"], [])
-            self.assertEqual(payload["decision"]["cancel_order_ids"], ["pending-1"])
 
     def test_cli_uses_external_decision_response_without_model_api(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -153,7 +153,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 snapshot_path = root / "snapshot.json"
                 snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
                 intents_path = root / "intents.json"
-                _write_two_live_ready_intents(intents_path)
+                _write_no_live_ready_intents(intents_path)
                 target_state = _open_target_state(root)
 
                 summary = AutoTradeCycle(
@@ -197,7 +197,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             else:
                 os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior
 
-        self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
+        self.assertEqual(summary.status, "CANCELED_CONTAMINATED_PENDING")
         self.assertEqual(row["resolution_status"], "HIT")
         self.assertIn("Projection preflight: status=`OK`", report)
 
@@ -712,7 +712,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertIn("monitor-only", (root / "report.md").read_text())
             self.assertTrue((root / "decision.json").exists())
 
-    def test_gpt_cancel_pending_executes_verified_pending_cancel(self) -> None:
+    def test_no_live_ready_pending_cleanup_cancels_contaminated_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             now = datetime.now(timezone.utc)
@@ -736,7 +736,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             snapshot_path = root / "snapshot.json"
             snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
             intents_path = root / "intents.json"
-            _write_two_live_ready_intents(intents_path)
+            _write_no_live_ready_intents(intents_path)
             target_state = _open_target_state(root)
             client = FakeCycleClient(snapshot)
 
@@ -772,8 +772,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 max_loss_jpy=1_500,
             ).run(send=True)
 
-            self.assertEqual(summary.status, "CANCELED_GPT_PENDING")
-            self.assertEqual(summary.gpt_action, "CANCEL_PENDING")
+            self.assertEqual(summary.status, "CANCELED_CONTAMINATED_PENDING")
+            self.assertIsNone(summary.gpt_action)
             self.assertEqual(summary.canceled_orders, ("pending-1",))
             self.assertEqual(client.orders_canceled, ["pending-1"])
             self.assertEqual(client.orders_sent, [])
@@ -3481,6 +3481,15 @@ def _write_live_ready_intents(path: Path) -> None:
         )
         + "\n"
     )
+
+
+def _write_no_live_ready_intents(path: Path) -> None:
+    _write_live_ready_intents(path)
+    payload = json.loads(path.read_text())
+    for result in payload.get("results", []):
+        result["status"] = "DRY_RUN_BLOCKED"
+        result["live_blockers"] = ["forecast no longer backs this pending entry"]
+    path.write_text(json.dumps(payload) + "\n")
 
 
 def _write_two_live_ready_intents(path: Path) -> None:

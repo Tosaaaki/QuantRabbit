@@ -1007,6 +1007,21 @@ class DecisionVerifier:
                     )
                 )
             self._verify_cancel_order_ids(decision, issues, action="CANCEL_PENDING")
+            if (
+                _target_requires_entry(self.packet)
+                and not position_close_reasons
+                and not exposure_blockers
+                and tradeable_lanes
+            ):
+                issues.append(
+                    VerificationIssue(
+                        "CANCEL_PENDING_WITH_LIVE_READY_LANES",
+                        "CANCEL_PENDING is stale or contradictory because the packet already contains "
+                        "tradeable LIVE_READY lane(s). If pending entries must be retired while the daily "
+                        "target is still open, choose TRADE with selected lane(s) and optional cancel_order_ids "
+                        f"in the same receipt: {', '.join(tradeable_lanes[:3])}",
+                    )
+                )
         elif decision.action in {"PROTECT", "TIGHTEN_SL", "CLOSE"}:
             if positions <= 0:
                 issues.append(VerificationIssue("NO_OPEN_POSITION", f"{decision.action} requires an open position"))
