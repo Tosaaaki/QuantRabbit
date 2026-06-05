@@ -157,6 +157,7 @@ class MemoryHealthAuditor:
             error=projection_error,
             path=projection_ledger_path,
             forecast_rows=forecast_rows,
+            snapshot_ts=snapshot_ts,
             required_pairs=required_pairs,
             target_open=target_open,
             active_positions=active_positions,
@@ -361,23 +362,34 @@ def _audit_forecast_history(
     latest_by_pair: dict[str, dict[str, Any]] = {}
     latest_ts: datetime | None = None
     duplicate_cycle_pairs = 0
-    seen_cycle_pairs: set[tuple[str, str]] = set()
-    duplicate_keys: set[tuple[str, str]] = set()
+    cycle_pair_latest_ts: dict[tuple[str, str], datetime | None] = {}
+    cycle_pair_counts: dict[tuple[str, str], int] = {}
     for row in rows:
         pair = str(row.get("pair") or "")
         ts = _parse_utc(row.get("timestamp_utc"))
         if pair:
-            latest_by_pair[pair] = row
+            previous = latest_by_pair.get(pair)
+            previous_ts = _parse_utc(previous.get("timestamp_utc")) if previous else None
+            if previous is None or _row_is_newer(ts, previous_ts):
+                latest_by_pair[pair] = row
         if ts is not None and (latest_ts is None or ts > latest_ts):
             latest_ts = ts
         cycle_id = str(row.get("cycle_id") or "")
         if pair and cycle_id:
             key = (cycle_id, pair)
-            if key in seen_cycle_pairs:
-                duplicate_keys.add(key)
+            cycle_pair_counts[key] = cycle_pair_counts.get(key, 0) + 1
+            current_latest = cycle_pair_latest_ts.get(key)
+            if ts is not None and (current_latest is None or ts > current_latest):
+                cycle_pair_latest_ts[key] = ts
             else:
-                seen_cycle_pairs.add(key)
+                cycle_pair_latest_ts.setdefault(key, current_latest)
+    duplicate_keys = {key for key, count in cycle_pair_counts.items() if count > 1}
     duplicate_cycle_pairs = len(duplicate_keys)
+    current_duplicate_cycle_pairs = _current_duplicate_count(
+        duplicate_keys,
+        latest_by_key=cycle_pair_latest_ts,
+        freshness_cutoff=snapshot_ts,
+    )
     metrics["forecast_history"] = {
         "path": str(path),
         "rows": len(rows),
@@ -385,6 +397,7 @@ def _audit_forecast_history(
         "latest_timestamp_utc": latest_ts.isoformat() if latest_ts else None,
         "pairs": sorted(latest_by_pair),
         "duplicate_cycle_pairs": duplicate_cycle_pairs,
+        "current_duplicate_cycle_pairs": current_duplicate_cycle_pairs,
     }
     if error is not None:
         issues.append(
@@ -414,13 +427,16 @@ def _audit_forecast_history(
                 message=f"forecast_history skipped {malformed} malformed row(s): {path}",
             )
         )
-    if duplicate_cycle_pairs:
+    if current_duplicate_cycle_pairs:
         issues.append(
             _issue(
                 layer=LAYER_SHORT,
                 severity="WARN",
                 code="SHORT_FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR",
-                message=f"forecast_history has {duplicate_cycle_pairs} duplicate cycle_id/pair key(s)",
+                message=(
+                    "forecast_history has "
+                    f"{current_duplicate_cycle_pairs} current duplicate cycle_id/pair key(s)"
+                ),
             )
         )
     if snapshot_ts is not None and latest_ts is not None and latest_ts < snapshot_ts and (target_open or active_positions):
@@ -473,6 +489,7 @@ def _audit_projection_ledger(
     error: str | None,
     path: Path,
     forecast_rows: tuple[dict[str, Any], ...],
+    snapshot_ts: datetime | None,
     required_pairs: tuple[str, ...],
     target_open: bool,
     active_positions: list[dict[str, str]],
@@ -481,8 +498,8 @@ def _audit_projection_ledger(
     status_counts: dict[str, int] = {}
     expired_pending = 0
     directional_keys: set[tuple[str, str]] = set()
-    seen_projection_keys: set[tuple[Any, ...]] = set()
-    duplicate_projection_keys: set[tuple[Any, ...]] = set()
+    projection_key_counts: dict[tuple[Any, ...], int] = {}
+    projection_key_latest_ts: dict[tuple[Any, ...], datetime | None] = {}
     for row in rows:
         status = str(row.get("resolution_status") or "PENDING").upper()
         status_counts[status] = status_counts.get(status, 0) + 1
@@ -494,10 +511,19 @@ def _audit_projection_ledger(
             directional_keys.add((pair, cycle_id))
         key = _projection_key(row)
         if key is not None:
-            if key in seen_projection_keys:
-                duplicate_projection_keys.add(key)
+            projection_key_counts[key] = projection_key_counts.get(key, 0) + 1
+            ts = _parse_utc(row.get("timestamp_emitted_utc"))
+            current_latest = projection_key_latest_ts.get(key)
+            if ts is not None and (current_latest is None or ts > current_latest):
+                projection_key_latest_ts[key] = ts
             else:
-                seen_projection_keys.add(key)
+                projection_key_latest_ts.setdefault(key, current_latest)
+    duplicate_projection_keys = {key for key, count in projection_key_counts.items() if count > 1}
+    current_duplicate_projection_keys = _current_duplicate_count(
+        duplicate_projection_keys,
+        latest_by_key=projection_key_latest_ts,
+        freshness_cutoff=snapshot_ts,
+    )
     metrics["projection_ledger"] = {
         "path": str(path),
         "rows": len(rows),
@@ -506,6 +532,7 @@ def _audit_projection_ledger(
         "expired_pending": expired_pending,
         "directional_forecast_keys": len(directional_keys),
         "duplicate_projection_keys": len(duplicate_projection_keys),
+        "current_duplicate_projection_keys": current_duplicate_projection_keys,
     }
     if error is not None:
         severity = "BLOCK" if target_open or active_positions else "WARN"
@@ -536,13 +563,16 @@ def _audit_projection_ledger(
                 message=f"projection_ledger skipped {malformed} malformed row(s): {path}",
             )
         )
-    if duplicate_projection_keys:
+    if current_duplicate_projection_keys:
         issues.append(
             _issue(
                 layer=LAYER_MEDIUM,
                 severity="WARN",
                 code="MEDIUM_PROJECTION_LEDGER_DUPLICATE_KEY",
-                message=f"projection_ledger has {len(duplicate_projection_keys)} duplicate cycle projection key(s)",
+                message=(
+                    "projection_ledger has "
+                    f"{current_duplicate_projection_keys} current duplicate cycle projection key(s)"
+                ),
             )
         )
     if expired_pending:
@@ -1001,6 +1031,33 @@ def _projection_key(row: dict[str, Any]) -> tuple[Any, ...] | None:
         row.get("entry_price"),
         row.get("predicted_target_price"),
     )
+
+
+def _current_duplicate_count(
+    duplicate_keys: set[tuple[Any, ...]],
+    *,
+    latest_by_key: dict[tuple[Any, ...], datetime | None],
+    freshness_cutoff: datetime | None,
+) -> int:
+    if not duplicate_keys:
+        return 0
+    if freshness_cutoff is None:
+        return len(duplicate_keys)
+    cutoff = _to_utc(freshness_cutoff)
+    current = 0
+    for key in duplicate_keys:
+        latest = latest_by_key.get(key)
+        if latest is None or _to_utc(latest) >= cutoff:
+            current += 1
+    return current
+
+
+def _row_is_newer(candidate_ts: datetime | None, current_ts: datetime | None) -> bool:
+    if candidate_ts is None:
+        return current_ts is None
+    if current_ts is None:
+        return True
+    return _to_utc(candidate_ts) >= _to_utc(current_ts)
 
 
 def _issue_text(item: Any) -> str:

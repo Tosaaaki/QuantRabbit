@@ -72,6 +72,101 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.layers["medium_term"], "BLOCK")
         self.assertTrue(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING" for issue in payload["issues"]))
 
+    def test_legacy_duplicate_forecast_and_projection_keys_remain_metrics_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            old_ts = (_NOW - timedelta(days=1)).isoformat()
+            files["forecast_history"].write_text(
+                files["forecast_history"].read_text()
+                + json.dumps(
+                    {
+                        "timestamp_utc": old_ts,
+                        "cycle_id": "old-cycle",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.7,
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "timestamp_utc": old_ts,
+                        "cycle_id": "old-cycle",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.7,
+                    }
+                )
+                + "\n"
+            )
+            old_projection = {
+                "timestamp_emitted_utc": old_ts,
+                "pair": "EUR_USD",
+                "signal_name": "directional_forecast",
+                "direction": "UP",
+                "entry_price": 1.16,
+                "predicted_target_price": 1.17,
+                "resolution_window_min": 30.0,
+                "resolution_status": "HIT",
+                "cycle_id": "old-cycle",
+            }
+            files["projection_ledger"].write_text(
+                files["projection_ledger"].read_text()
+                + json.dumps(old_projection)
+                + "\n"
+                + json.dumps(old_projection)
+                + "\n"
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(payload["metrics"]["forecast_history"]["duplicate_cycle_pairs"], 1)
+        self.assertEqual(payload["metrics"]["forecast_history"]["current_duplicate_cycle_pairs"], 0)
+        self.assertEqual(payload["metrics"]["projection_ledger"]["duplicate_projection_keys"], 1)
+        self.assertEqual(payload["metrics"]["projection_ledger"]["current_duplicate_projection_keys"], 0)
+        self.assertFalse(
+            any(issue["code"] == "SHORT_FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR" for issue in payload["issues"])
+        )
+        self.assertFalse(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_DUPLICATE_KEY" for issue in payload["issues"]))
+
+    def test_current_duplicate_forecast_and_projection_keys_warn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            current_forecast = {
+                "timestamp_utc": _NOW.isoformat(),
+                "cycle_id": "cycle-1",
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.8,
+            }
+            current_projection = {
+                "timestamp_emitted_utc": _NOW.isoformat(),
+                "pair": "EUR_USD",
+                "signal_name": "directional_forecast",
+                "direction": "UP",
+                "entry_price": 1.17,
+                "predicted_target_price": 1.18,
+                "resolution_window_min": 30.0,
+                "resolution_status": "HIT",
+                "cycle_id": "cycle-1",
+            }
+            files["forecast_history"].write_text(files["forecast_history"].read_text() + json.dumps(current_forecast) + "\n")
+            files["projection_ledger"].write_text(files["projection_ledger"].read_text() + json.dumps(current_projection) + "\n")
+
+            _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(payload["metrics"]["forecast_history"]["current_duplicate_cycle_pairs"], 1)
+        self.assertEqual(payload["metrics"]["projection_ledger"]["current_duplicate_projection_keys"], 1)
+        self.assertTrue(
+            any(issue["code"] == "SHORT_FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR" for issue in payload["issues"])
+        )
+        self.assertTrue(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_DUPLICATE_KEY" for issue in payload["issues"]))
+
     def test_live_ready_lane_keeps_advisory_profile_warnings_from_blocking(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
