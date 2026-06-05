@@ -174,7 +174,6 @@ class SelfImprovementAuditor:
                 run_id=run_id,
                 loaded=verification_loaded,
                 path=verification_ledger_path,
-                live_ready_count=len(live_ready),
             )
         )
         findings.extend(
@@ -759,7 +758,6 @@ def _verification_findings(
     run_id: str,
     loaded: _LoadedJson,
     path: Path,
-    live_ready_count: int,
 ) -> list[dict[str, Any]]:
     if loaded.error is not None:
         return [
@@ -777,7 +775,7 @@ def _verification_findings(
     blocking = int(_maybe_float(payload.get("blocking_observations")) or 0)
     blocking_evidence = payload.get("blocking_evidence") if isinstance(payload.get("blocking_evidence"), list) else []
     if status == "BLOCKED" or blocking > 0:
-        if live_ready_count == 0 and _only_order_intent_lane_blockers(blocking_evidence):
+        if _only_order_intent_lane_blockers(blocking_evidence):
             return [
                 _finding(
                     run_id=run_id,

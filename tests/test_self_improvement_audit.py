@@ -101,6 +101,24 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED", codes)
         self.assertNotIn("VERIFICATION_LEDGER_BLOCKED", codes)
 
+    def test_lane_only_verification_blockers_are_not_p0_with_live_ready_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                verification_lane_blockers=True,
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED", codes)
+        self.assertNotIn("VERIFICATION_LEDGER_BLOCKED", codes)
+
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
