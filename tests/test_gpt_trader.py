@@ -34,6 +34,24 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_rejects_trade_receipt_that_predates_broker_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            decision = _trade_decision()
+            decision["generated_at_utc"] = (
+                datetime.fromisoformat(snapshot["fetched_at_utc"]) - timedelta(seconds=1)
+            ).isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("STALE_DECISION_RECEIPT", codes)
+
     def test_rejects_trade_without_twenty_minute_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -26,6 +26,21 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _parse_utc(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _operator_close_override_active() -> bool:
     """Emergency override for the CLOSE-discipline gate.
 
@@ -455,6 +470,7 @@ TWENTY_MINUTE_PLAN_TEXT_FIELDS = (
 
 @dataclass(frozen=True)
 class GPTTraderDecision:
+    generated_at_utc: str | None
     action: str
     selected_lane_id: str | None
     selected_lane_ids: tuple[str, ...]
@@ -742,6 +758,7 @@ class DecisionVerifier:
 
     def verify(self, decision: GPTTraderDecision) -> VerificationResult:
         issues: list[VerificationIssue] = []
+        self._verify_decision_freshness(decision, issues)
         if decision.action not in ALLOWED_ACTIONS:
             issues.append(VerificationIssue("BAD_ACTION", f"unsupported action {decision.action!r}"))
         if decision.confidence not in ALLOWED_CONFIDENCE:
@@ -1044,6 +1061,31 @@ class DecisionVerifier:
             self._verify_close_discipline(decision, issues)
 
         return VerificationResult(allowed=not any(issue.severity == "BLOCK" for issue in issues), issues=tuple(issues))
+
+    def _verify_decision_freshness(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
+        if not decision.generated_at_utc:
+            return
+        decision_ts = _parse_utc(decision.generated_at_utc)
+        if decision_ts is None:
+            issues.append(
+                VerificationIssue(
+                    "BAD_DECISION_TIMESTAMP",
+                    f"generated_at_utc is not parseable: {decision.generated_at_utc}",
+                )
+            )
+            return
+        broker = self.packet.get("broker_snapshot", {})
+        snapshot_ts = _parse_utc(broker.get("fetched_at_utc") if isinstance(broker, dict) else None)
+        if snapshot_ts is None:
+            return
+        if decision_ts < snapshot_ts:
+            issues.append(
+                VerificationIssue(
+                    "STALE_DECISION_RECEIPT",
+                    "decision receipt predates the broker snapshot used for verification; refresh the "
+                    "decision after current broker truth, position sidecars, and order intents are rebuilt",
+                )
+            )
 
     def _verify_cancel_order_ids(
         self,
@@ -1477,6 +1519,9 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
     if not selected_lane_ids and selected_lane_id is not None:
         selected_lane_ids = (str(selected_lane_id),)
     return GPTTraderDecision(
+        generated_at_utc=(
+            str(payload.get("generated_at_utc")) if payload.get("generated_at_utc") else None
+        ),
         action=str(payload.get("action") or ""),
         selected_lane_id=str(selected_lane_id) if selected_lane_id is not None else None,
         selected_lane_ids=selected_lane_ids,
