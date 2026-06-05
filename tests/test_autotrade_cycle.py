@@ -2439,6 +2439,71 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertTrue((root / "live_order.json").exists())
             self.assertIn("Campaign exposure required: `True`", (root / "report.md").read_text())
 
+    def test_gpt_wait_without_live_ready_does_not_regenerate_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            target_state = _open_target_state(root)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(_with_account(snapshot)) + "\n")
+            intents_path = root / "intents.json"
+            intents_path.write_text(json.dumps({"results": []}) + "\n")
+            campaign_path = _campaign(root)
+            wait_decision = _gpt_wait_decision()
+            wait_decision["evidence_refs"] = ["broker:snapshot", "target:daily"]
+
+            class NoRetryCycle(AutoTradeCycle):
+                def _intent_generator(self, max_loss_jpy: float | None = None):  # type: ignore[override]
+                    raise AssertionError("WAIT without LIVE_READY must not regenerate intents")
+
+            client = FakeCycleClient(snapshot)
+            summary = NoRetryCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=campaign_path,
+                pair_charts_path=root / "pair_charts.json",
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(wait_decision),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+            ).run(send=False)
+
+            self.assertEqual(summary.status, "GPT_WAIT")
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(summary.gpt_wait_retries, 0)
+            self.assertFalse(summary.campaign_exposure_required)
+            self.assertEqual(client.snapshot_calls, [])
+            self.assertFalse((root / "live_order.json").exists())
+            self.assertIn("GPT wait recovery attempts: `0`", (root / "report.md").read_text())
+
     def test_campaign_exposure_recovers_from_invalid_gpt_trade_when_flat_target_open(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

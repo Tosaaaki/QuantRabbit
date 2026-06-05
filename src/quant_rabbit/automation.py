@@ -1383,7 +1383,11 @@ class AutoTradeCycle:
                         and target_summary.status == "PURSUE_TARGET"
                         and target_summary.remaining_target_jpy > 0
                     )
-                    if self.gpt_wait_retry_limit > 0 and target_is_pursue:
+                    # Retry only when a current LIVE_READY lane makes flat
+                    # exposure itself the failure. With no exposure candidate,
+                    # regenerating intents just inflates forecast/projection
+                    # ledgers and cannot convert a verified WAIT into a trade.
+                    if self.gpt_wait_retry_limit > 0 and target_is_pursue and campaign_exposure_required:
                         for attempt in range(1, self.gpt_wait_retry_limit + 1):
                             gpt_wait_retries = attempt
                             snapshot = self._refresh_snapshot(pairs)
