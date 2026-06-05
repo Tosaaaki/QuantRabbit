@@ -66,6 +66,13 @@ _REGIME_UP_TOKENS = {"TREND_UP", "IMPULSE_UP", "BULL"}
 _REGIME_DOWN_TOKENS = {"TREND_DOWN", "IMPULSE_DOWN", "BEAR", "FAILURE_RISK"}
 _REGIME_NEUTRAL_TOKENS = {"RANGE", "UNCLEAR", "TRANSITION"}
 
+# TraderBrain spread bands are ranking hints only. The executable spread gate is
+# already enforced earlier by RiskEngine / IntentGenerator and again by
+# LiveOrderGateway against current broker truth; using these bands as another
+# hard veto would turn an already-LIVE_READY lane into a fixed-pip no-trade rule.
+SELECTION_TIGHT_SPREAD_PIPS = 1.2
+SELECTION_ACCEPTABLE_SPREAD_PIPS = 2.0
+
 
 def _structural_chart_story(intent: dict[str, Any] | None) -> str:
     """Return the inline multi-TF structural chart_story for an intent.
@@ -2828,15 +2835,20 @@ def _technical_consensus_score(
         if reward_risk >= 2.0:
             score += 2.5
             rationale.append(f"reward/risk geometry supports edge: {reward_risk:.2f}R")
-        if spread_pips <= 1.2:
+        if spread_pips <= SELECTION_TIGHT_SPREAD_PIPS:
             score += 2.0
             support_ticks += 1
             rationale.append(f"tight spread={spread_pips:.1f}pip")
-        elif spread_pips <= 2.0:
+        elif spread_pips <= SELECTION_ACCEPTABLE_SPREAD_PIPS:
             score += 0.8
         else:
             score -= 2.0
-            blockers.append(f"wide spread for fresh edge={spread_pips:.1f}pip")
+            if status == "LIVE_READY":
+                rationale.append(
+                    f"wide spread={spread_pips:.1f}pip is advisory after executable spread validation"
+                )
+            else:
+                blockers.append(f"wide spread for fresh edge={spread_pips:.1f}pip")
         if loss_cap_jpy is None:
             blockers.append("trader loss cap missing for risk geometry ranking")
         else:

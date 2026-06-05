@@ -88,6 +88,41 @@ class TraderBrainTest(unittest.TestCase):
             self.assertGreater(eur["score"] - aud["score"], 50.0)
             self.assertLess(aud["size_multiple"], 1.0)
 
+    def test_live_ready_lane_keeps_send_entry_when_only_selection_spread_is_wide(self) -> None:
+        """RiskEngine/Gateway own executable spread validation.
+
+        TraderBrain may penalize a wide-spread LIVE_READY lane in ranking, but
+        must not add a fixed-pip blocker after the lane already cleared current
+        spread economics.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents_path = _eur_only_intents(root)
+            payload = json.loads(intents_path.read_text())
+            payload["results"][0]["risk_metrics"]["spread_pips"] = 2.4
+            intents_path.write_text(json.dumps(payload))
+            brain = TraderBrain(
+                intents_path=intents_path,
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=_eur_strategy(root),
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            self.assertEqual(decision.action, ACTION_SEND_ENTRY)
+            self.assertEqual(decision.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            lane = decision.scores[0]
+            self.assertEqual(lane.action, ACTION_SEND_ENTRY)
+            self.assertFalse(any("wide spread for fresh edge" in item for item in lane.blockers))
+            self.assertTrue(any("wide spread=2.4pip is advisory" in item for item in lane.rationale))
+
     def test_existing_pending_order_forces_monitor_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
