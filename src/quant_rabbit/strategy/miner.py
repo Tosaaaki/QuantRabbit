@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,7 @@ from quant_rabbit.risk import RiskPolicy
 class PairDirectionProfile:
     pair: str
     direction: str
+    method: str | None = None
     pretrade_n: int = 0
     pretrade_net_jpy: float = 0.0
     pretrade_avg_jpy: float = 0.0
@@ -37,10 +38,12 @@ class PairDirectionProfile:
     top_block_reasons: list[str] = field(default_factory=list)
     status: str = "WATCH_ONLY"
     required_fix: str = ""
+    receipt_promotion: dict[str, Any] | None = None
 
     @property
     def key(self) -> str:
-        return f"{self.pair} {self.direction}"
+        method = f" {self.method}" if self.method else ""
+        return f"{self.pair} {self.direction}{method}"
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,7 @@ class StrategyMiner:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             profiles = self._build_profiles(conn, cap.loss_cap_jpy)
+            profiles = self._with_preserved_receipt_promotions(profiles)
             coverage = self._coverage(conn)
             if not profiles:
                 raise ValueError(
@@ -197,6 +201,43 @@ class StrategyMiner:
             self._classify(item, loss_cap_jpy)
         return sorted(profiles.values(), key=_profile_sort_key)
 
+    def _with_preserved_receipt_promotions(
+        self,
+        profiles: list[PairDirectionProfile],
+    ) -> list[PairDirectionProfile]:
+        """Carry method-scoped receipt promotions across mine-strategy refreshes.
+
+        `promote-receipts` converts a concrete dry-run receipt into a
+        method-scoped CANDIDATE. A later `mine-strategy` pass rebuilds the base
+        pair/direction profile from archive evidence, so without this merge the
+        long-term memory forgets the promoted method every refresh.
+        """
+        preserved = _load_preservable_receipt_profiles(self.profile_path)
+        if not preserved:
+            return profiles
+
+        base_by_pair_direction = {(item.pair, item.direction): item for item in profiles if item.method is None}
+        seen = {(item.pair, item.direction, item.method) for item in profiles}
+        merged = list(profiles)
+        for item in preserved:
+            base = base_by_pair_direction.get((item.pair, item.direction))
+            if base is None or base.status not in {"CANDIDATE", "RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE"}:
+                continue
+            key = (item.pair, item.direction, item.method)
+            if key in seen:
+                continue
+            merged.append(
+                replace(
+                    base,
+                    method=item.method,
+                    status="CANDIDATE",
+                    required_fix=item.required_fix,
+                    receipt_promotion=item.receipt_promotion,
+                )
+            )
+            seen.add(key)
+        return sorted(merged, key=_profile_sort_key)
+
     def _classify(self, item: PairDirectionProfile, loss_cap_jpy: float) -> None:
         worst_loss = item.live_worst_jpy if item.live_worst_jpy is not None else 0.0
         positive_pretrade = item.pretrade_n >= 5 and item.pretrade_net_jpy > 0
@@ -275,6 +316,20 @@ class StrategyMiner:
                 "risk_repair_status": "RISK_REPAIR_CANDIDATE",
             },
         }
+        promotions = [
+            item.receipt_promotion
+            for item in profiles
+            if item.receipt_promotion is not None
+        ]
+        if promotions:
+            payload["receipt_promotions"] = promotions
+            promoted_at = [
+                str(item.get("promoted_at_utc") or "")
+                for item in promotions
+                if isinstance(item, dict) and item.get("promoted_at_utc")
+            ]
+            if promoted_at:
+                payload["last_receipt_promotion_at_utc"] = max(promoted_at)
         self.profile_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
     def _write_report(
@@ -356,6 +411,49 @@ def _profile_sort_key(item: PairDirectionProfile) -> tuple[int, float, float, st
         "BLOCK_UNTIL_NEW_EVIDENCE": 4,
     }.get(item.status, 9)
     return (rank, -item.pretrade_net_jpy, item.live_net_jpy, item.key)
+
+
+def _load_preservable_receipt_profiles(path: Path) -> list[PairDirectionProfile]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    profiles = payload.get("profiles")
+    if not isinstance(profiles, list):
+        return []
+
+    preserved: list[PairDirectionProfile] = []
+    for item in profiles:
+        if not isinstance(item, dict) or str(item.get("status") or "") != "CANDIDATE":
+            continue
+        promotion = item.get("receipt_promotion")
+        if not isinstance(promotion, dict):
+            continue
+        pair = str(item.get("pair") or "").strip()
+        direction = str(item.get("direction") or "").strip().upper()
+        method = str(item.get("method") or promotion.get("method") or "").strip().upper()
+        if not pair or not direction or not method:
+            continue
+        required_fix = str(item.get("required_fix") or "").strip()
+        if not required_fix:
+            lane_id = str(promotion.get("lane_id") or "")
+            reason = str(promotion.get("reason") or "receipt promotion")
+            required_fix = f"promoted by {reason}; source lane {lane_id}".strip()
+        preserved.append(
+            PairDirectionProfile(
+                pair=pair,
+                direction=direction,
+                method=method,
+                status="CANDIDATE",
+                required_fix=required_fix,
+                receipt_promotion=dict(promotion),
+            )
+        )
+    return preserved
 
 
 def _profile_line(item: PairDirectionProfile) -> str:

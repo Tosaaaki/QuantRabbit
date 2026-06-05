@@ -148,6 +148,141 @@ class StrategyMinerTest(unittest.TestCase):
             self.assertEqual(len(payload["profiles"]), 1)
             self.assertEqual(payload["profiles"][0]["pair"], "EUR_USD")
 
+    def test_preserves_method_receipt_promotion_on_remine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "history.db"
+            _create_schema(db_path)
+            with sqlite3.connect(db_path) as conn:
+                for i in range(3):
+                    conn.execute(
+                        "INSERT INTO legacy_records VALUES ('seat_outcomes', ?, '2026-04-30', 'AUD_USD', 'LONG', NULL, NULL, NULL, NULL, ?)",
+                        (
+                            str(i),
+                            json.dumps(
+                                {
+                                    "id": i,
+                                    "pair": "AUD_USD",
+                                    "direction": "LONG",
+                                    "discovered": 1,
+                                    "missed": 1,
+                                    "captured": 0,
+                                    "directionally_correct": 1,
+                                }
+                            ),
+                        ),
+                    )
+
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "AUD_USD",
+                                "direction": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "status": "CANDIDATE",
+                                "required_fix": "promoted from MINE_MISSED_EDGE by trigger receipt",
+                                "receipt_promotion": {
+                                    "from_status": "MINE_MISSED_EDGE",
+                                    "lane_id": "range_trader:AUD_USD:LONG:RANGE_ROTATION",
+                                    "method": "RANGE_ROTATION",
+                                    "promoted_at_utc": "2026-06-05T00:00:00+00:00",
+                                    "reason": "missed edge converted into LIMIT trigger receipt",
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+
+            self.assertEqual(summary.candidates, 1)
+            payload = json.loads(profile.read_text())
+            profiles = {
+                (item["pair"], item["direction"], item.get("method")): item
+                for item in payload["profiles"]
+            }
+            self.assertEqual(profiles[("AUD_USD", "LONG", None)]["status"], "MINE_MISSED_EDGE")
+            self.assertEqual(profiles[("AUD_USD", "LONG", "RANGE_ROTATION")]["status"], "CANDIDATE")
+            self.assertEqual(payload["last_receipt_promotion_at_utc"], "2026-06-05T00:00:00+00:00")
+
+    def test_drops_receipt_promotion_when_current_history_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "history.db"
+            _create_schema(db_path)
+            with sqlite3.connect(db_path) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO legacy_records VALUES
+                    ('pretrade_outcomes', ?, '2026-04-30', 'GBP_USD', 'LONG', ?, 'MARKET', 'B+', 'weak', ?)
+                    """,
+                    [(str(i), -100.0, json.dumps({"id": i})) for i in range(5)],
+                )
+                conn.executemany(
+                    "INSERT INTO live_trade_events VALUES (?, 't', 'CLOSE', 'GBP_USD', 'LONG', 1000, '1.0', ?, 0.8, ?, '', '')",
+                    [(i, -50.0, str(i)) for i in range(1, 4)],
+                )
+
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "GBP_USD",
+                                "direction": "LONG",
+                                "method": "BREAKOUT_FAILURE",
+                                "status": "CANDIDATE",
+                                "required_fix": "promoted from old receipt",
+                                "receipt_promotion": {
+                                    "from_status": "MINE_MISSED_EDGE",
+                                    "lane_id": "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                                    "method": "BREAKOUT_FAILURE",
+                                    "promoted_at_utc": "2026-06-05T00:00:00+00:00",
+                                    "reason": "old trigger receipt",
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+
+            self.assertEqual(summary.candidates, 0)
+            payload = json.loads(profile.read_text())
+            profiles = {
+                (item["pair"], item["direction"], item.get("method")): item
+                for item in payload["profiles"]
+            }
+            self.assertEqual(profiles[("GBP_USD", "LONG", None)]["status"], "BLOCK_UNTIL_NEW_EVIDENCE")
+            self.assertNotIn(("GBP_USD", "LONG", "BREAKOUT_FAILURE"), profiles)
+
+
+def _create_schema(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE source_files (rel_path TEXT, kind TEXT, size_bytes INTEGER, sha256 TEXT, mtime_utc TEXT);
+            CREATE TABLE legacy_records (
+                source_table TEXT, source_id TEXT, session_date TEXT, pair TEXT, direction TEXT,
+                pl REAL, execution_style TEXT, allocation_band TEXT, thesis TEXT, raw_json TEXT
+            );
+            CREATE TABLE live_trade_events (
+                line_no INTEGER, timestamp_text TEXT, action TEXT, pair TEXT, direction TEXT,
+                units INTEGER, price TEXT, pl_jpy REAL, spread_pips REAL, trade_id TEXT, reason TEXT, raw_line TEXT
+            );
+            CREATE TABLE jsonl_events (
+                source_name TEXT, line_no INTEGER, event_type TEXT, timestamp_utc TEXT,
+                pair TEXT, direction TEXT, raw_json TEXT
+            );
+            """
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
