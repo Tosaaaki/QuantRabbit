@@ -21,7 +21,8 @@
 9. If advice spans multiple distinct pairs, include one lane per advised pair up to portfolio capacity when practical; otherwise the verifier records a warning and the gateway cycle expands the accepted trade to the deterministic prefilter basket so margin, cumulative risk, duplicate geometry, and position-count gates decide what fits.
 10. Prefer a `MARKET` variant for immediate participation when it is current `LIVE_READY`; pending entries are basket-counted by the gateway and are not blanket no-trade reasons. Exception: `BREAKOUT_FAILURE` must be at the retest/rejection side of the M5/M15 box. For SHORT, do not market-sell the lower half/support and do not arm a lower-half sell-stop; wait for upper-half resistance rejection/LIMIT or require a separate true trend-continuation breakout lane. For LONG, do not market-buy the upper half/resistance and do not arm an upper-half buy-stop; wait for lower-half support rejection/LIMIT or require a separate true trend-continuation breakout lane.
 11. If current trader-owned pending entries already consume portfolio capacity, explicitly decide whether to keep that pending basket or replace it. A `TRADE` that needs capacity for current `MARKET` lanes may include `cancel_order_ids` for current trader-owned pending entry ids that should be cleared before gateway validation; never name manual/unknown orders.
-12. Write exactly one `data/codex_trader_decision_response.json`.
+12. Fill `twenty_minute_plan` before choosing the final action. The trader runs roughly one decision every 20 minutes, so a receipt that only says "trend looks good" or "timing unclear" is too shallow. State the next-cycle primary path, the failure path, the exact entry/hold trigger, the invalidation/cancel trigger, the strongest counterargument, and what must be checked on the next cycle.
+13. Write exactly one `data/codex_trader_decision_response.json`.
 
 ## Valid Actions
 
@@ -87,6 +88,23 @@ contradicts your chosen direction, downgrade size, switch method, or WAIT.
    evidence against your direction from the chart_story and explain why
    you still win. If you can't find one, you haven't read the chart.
 
+## 20-Minute Plan (mandatory for TRADE / WAIT / REQUEST_EVIDENCE)
+
+Add `twenty_minute_plan` to the decision receipt:
+
+- `horizon_minutes`: `20`.
+- `primary_path`: what price / structure / flow should do before the next cycle if the decision is right.
+- `failure_path`: what would make the decision wrong before the next cycle.
+- `entry_or_hold_trigger`: the concrete trigger for entry, basket keep, or WAIT continuation.
+- `invalidation_or_cancel_trigger`: the concrete level / structure / packet gate that cancels the idea.
+- `counterargument`: the strongest current evidence against the chosen action, not a generic risk sentence.
+- `next_cycle_check`: what the next trader must verify first if no fill / no close / no new blocker occurs.
+- `evidence_refs`: known packet refs supporting this plan, including the selected `intent:<lane_id>` for TRADE and at least one chart ref when current tradeable lanes exist.
+
+This does not create a new market-risk gate. It forces the trader to expose
+the 20-minute scenario tree so the verifier and the next cycle can catch
+shallow or contradictory reasoning.
+
 ## Hedge Timing Rubric
 
 Opening an opposite-side position on a pair you already hold is hedging,
@@ -112,6 +130,7 @@ unwind plan is not a time-efficient trade; it is passive loss-freezing.
 - Rejected alternatives.
 - Risk notes naming `per_trade_risk_budget_jpy`, spread state, calendar state, strength alignment or conflict, and any COT warning.
 - Evidence refs for broker, target, intent, campaign, strategy, story, charts, cross-asset, strength, flow, levels, calendar, COT, option skew, and attack advice when used.
+- `twenty_minute_plan` with packet refs as above.
 
 ## Specialist Reviews
 

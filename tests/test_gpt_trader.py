@@ -34,6 +34,21 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertIn("GPT Trader Decision Report", (root / "gpt_decision.md").read_text())
 
+    def test_rejects_trade_without_twenty_minute_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision.pop("twenty_minute_plan")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SHALLOW_DECISION_HORIZON", codes)
+
     def test_input_packet_includes_predictive_limit_timing_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1911,7 +1926,10 @@ def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION
             f"campaign:{lane_id}",
             "strategy:EUR_USD:LONG",
             "story:EUR_USD",
+            "chart:EUR_USD:M5",
+            "chart:EUR_USD:M15",
         ],
+        "twenty_minute_plan": _twenty_minute_plan(lane_ids=[lane_id]),
         "operator_summary": "Accept the verified EUR_USD continuation lane.",
     }
 
@@ -1923,8 +1941,25 @@ def _batch_trade_decision(lane_ids: list[str]) -> dict:
     for lane_id in lane_ids[1:]:
         refs.extend([f"intent:{lane_id}", f"campaign:{lane_id}"])
     decision["evidence_refs"] = refs
+    decision["twenty_minute_plan"] = _twenty_minute_plan(lane_ids=lane_ids)
     decision["operator_summary"] = "Accept the verified EUR_USD continuation basket."
     return decision
+
+
+def _twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "EUR_USD") -> dict:
+    refs = [f"chart:{pair}:M5", f"chart:{pair}:M15"]
+    for lane_id in lane_ids or []:
+        refs.append(f"intent:{lane_id}")
+    return {
+        "horizon_minutes": 20,
+        "primary_path": f"{pair} should hold the M5 shelf and press toward the selected trigger before the next cycle.",
+        "failure_path": "A close back through the shelf or a newly named packet blocker makes the idea wrong.",
+        "entry_or_hold_trigger": "Use only the current LIVE_READY intent trigger or hold WAIT if that trigger is absent.",
+        "invalidation_or_cancel_trigger": "Cancel the idea if the invalidation shelf breaks or the selected intent leaves LIVE_READY.",
+        "counterargument": "M15 can still fade the move; the trade is only acceptable because current chart refs keep the shelf intact.",
+        "next_cycle_check": "First re-check broker truth, the selected lane status, and M5/M15 structure before extending the thesis.",
+        "evidence_refs": refs,
+    }
 
 
 def _learning_influenced_attack_advice(*, lane_id: str = LANE_ID) -> dict:
@@ -2025,7 +2060,8 @@ def _request_evidence_decision() -> dict:
         "invalidation": "Refresh when current broker truth produces a live-ready lane.",
         "rejected_alternatives": ["TRADE rejected because no current lane appears executable."],
         "risk_notes": ["Stay flat until executable evidence appears."],
-        "evidence_refs": ["broker:snapshot", "target:daily"],
+        "evidence_refs": ["broker:snapshot", "target:daily", "chart:EUR_USD:M5"],
+        "twenty_minute_plan": _twenty_minute_plan(),
         "operator_summary": "Do not trade from this stale evidence request.",
     }
 
@@ -2049,7 +2085,9 @@ def _wait_decision() -> dict:
             f"campaign:{LANE_ID}",
             "strategy:EUR_USD:LONG",
             "story:EUR_USD",
+            "chart:EUR_USD:M5",
         ],
+        "twenty_minute_plan": _twenty_minute_plan(lane_ids=[LANE_ID]),
         "operator_summary": "Wait with an explicit rejection of the current executable lane.",
     }
 

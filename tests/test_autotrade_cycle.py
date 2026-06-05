@@ -2458,6 +2458,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             campaign_path = _campaign(root)
             wait_decision = _gpt_wait_decision()
             wait_decision["evidence_refs"] = ["broker:snapshot", "target:daily"]
+            wait_decision["twenty_minute_plan"]["evidence_refs"] = ["broker:snapshot", "target:daily"]
 
             class NoRetryCycle(AutoTradeCycle):
                 def _intent_generator(self, max_loss_jpy: float | None = None):  # type: ignore[override]
@@ -3590,7 +3591,10 @@ def _gpt_trade_decision(
             f"campaign:{lane_id}",
             f"strategy:{pair}:{direction}",
             f"story:{pair}",
+            f"chart:{pair}:M5",
+            f"chart:{pair}:M15",
         ],
+        "twenty_minute_plan": _gpt_twenty_minute_plan(lane_ids=[lane_id], pair=pair),
         "operator_summary": "Accept the verified EUR_USD continuation lane.",
     }
 
@@ -3602,8 +3606,25 @@ def _gpt_batch_trade_decision(lane_ids: list[str]) -> dict:
     for lane_id in lane_ids[1:]:
         refs.extend([f"intent:{lane_id}", f"campaign:{lane_id}"])
     decision["evidence_refs"] = refs
+    decision["twenty_minute_plan"] = _gpt_twenty_minute_plan(lane_ids=lane_ids)
     decision["operator_summary"] = "Accept the verified EUR_USD continuation basket."
     return decision
+
+
+def _gpt_twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "EUR_USD") -> dict:
+    refs = [f"chart:{pair}:M5", f"chart:{pair}:M15"]
+    for lane_id in lane_ids or []:
+        refs.append(f"intent:{lane_id}")
+    return {
+        "horizon_minutes": 20,
+        "primary_path": f"{pair} should hold the operating shelf and follow through toward the selected trigger before the next cycle.",
+        "failure_path": "A close through the shelf or a newly named deterministic blocker makes the decision wrong.",
+        "entry_or_hold_trigger": "Use only the current LIVE_READY intent trigger; do not chase if price leaves the planned structure.",
+        "invalidation_or_cancel_trigger": "Cancel or wait if the invalidation structure breaks or the selected lane leaves LIVE_READY.",
+        "counterargument": "The move can still fade on M15; the receipt wins only while the cited M5/M15 structure remains intact.",
+        "next_cycle_check": "Refresh broker truth, selected lane status, and M5/M15 structure before extending or replacing the thesis.",
+        "evidence_refs": refs,
+    }
 
 
 def _gpt_close_decision(trade_ids: list[str]) -> dict:
@@ -3714,7 +3735,11 @@ def _gpt_wait_decision() -> dict:
             "campaign:trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
             "strategy:EUR_USD:LONG",
             "story:EUR_USD",
+            "chart:EUR_USD:M5",
         ],
+        "twenty_minute_plan": _gpt_twenty_minute_plan(
+            lane_ids=["trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET"]
+        ),
         "operator_summary": "Wait even though a live-ready lane exists.",
     }
 

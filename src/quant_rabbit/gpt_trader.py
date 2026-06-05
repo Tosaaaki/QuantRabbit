@@ -436,6 +436,22 @@ BASKET_PAIR_COVERAGE_TARGET = 4
 # feedback_high_conviction_execution.md).
 PRIMARY_ATTACK_RANK_CEILING = 4
 
+# The scheduled trader cadence is approximately one operator decision every
+# 20 minutes. This is an operational receipt horizon, not a market threshold,
+# JPY cap, pip distance, or reward/risk multiplier. If scheduler cadence
+# changes, replace this with scheduler config rather than tuning it from trade
+# outcomes.
+TRADER_DECISION_HORIZON_MINUTES = 20
+ENTRY_DECISION_HORIZON_ACTIONS = ("TRADE", "WAIT", "REQUEST_EVIDENCE")
+TWENTY_MINUTE_PLAN_TEXT_FIELDS = (
+    "primary_path",
+    "failure_path",
+    "entry_or_hold_trigger",
+    "invalidation_or_cancel_trigger",
+    "counterargument",
+    "next_cycle_check",
+)
+
 
 @dataclass(frozen=True)
 class GPTTraderDecision:
@@ -453,6 +469,7 @@ class GPTTraderDecision:
     risk_notes: tuple[str, ...]
     evidence_refs: tuple[str, ...]
     operator_summary: str
+    twenty_minute_plan: dict[str, Any] | None = None
     # Operator-directed market close on existing trader-owned positions.
     # Used only with action="CLOSE". A loss-cut and a new entry must still
     # have separate receipts: automation may resume in the same outer cycle
@@ -625,6 +642,8 @@ class GPTTraderBrain:
                 "allowed_actions": list(ALLOWED_ACTIONS),
                 "trade_requires_live_ready_lane": True,
                 "trade_may_select_multiple_live_ready_lanes": True,
+                "entry_decisions_require_twenty_minute_plan": True,
+                "decision_horizon_minutes": TRADER_DECISION_HORIZON_MINUTES,
                 "pending_entries_are_basket_counted_by_gateway": True,
                 "protected_trader_position_adds_require_portfolio_validation": True,
                 "model_output_is_advisory_until_verified": True,
@@ -681,6 +700,7 @@ class GPTTraderBrain:
             f"- Selected basket lanes: `{', '.join(decision.get('selected_lane_ids') or []) or 'none'}`",
             f"- Cancel order ids: `{', '.join(decision.get('cancel_order_ids') or []) or 'none'}`",
             f"- Confidence: `{decision.get('confidence')}`",
+            f"- 20m plan: `{decision.get('twenty_minute_plan') or 'missing'}`",
             f"- Specialist reviews: `{len(decision.get('specialist_reviews') or [])}`",
             f"- Operator summary: {decision.get('operator_summary')}",
             "",
@@ -703,6 +723,7 @@ class GPTTraderBrain:
                 "- `TRADE`/`CANCEL_PENDING` cancel ids must be current trader-owned pending entry orders from broker truth.",
                 "- Current `ai_attack_advice` recommendations make generic WAIT invalid while the daily target is open, but never grant live permission.",
                 "- Learning may only rank already-live-ready lanes. Any learning-influenced selected lane must be covered by a non-blocked `learning_audit` packet and cite `learning:audit` plus `learning:lane:<lane_id>`.",
+                "- `TRADE`, `WAIT`, and `REQUEST_EVIDENCE` receipts must include `twenty_minute_plan`: the next-20-minute primary path, failure path, trigger, invalidation/cancel trigger, strongest counterargument, next-cycle check, and known packet refs. This is a receipt-depth gate, not a new market-risk gate.",
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
@@ -734,6 +755,7 @@ class DecisionVerifier:
             issues.append(VerificationIssue("UNKNOWN_EVIDENCE_REF", f"unknown evidence refs: {', '.join(unknown_refs)}"))
         self._verify_strategy_reviews(decision, issues)
         self._verify_specialist_reviews(decision, issues)
+        self._verify_twenty_minute_plan(decision, issues)
 
         broker = self.packet.get("broker_snapshot", {})
         positions = int(broker.get("positions") or 0)
@@ -1028,6 +1050,95 @@ class DecisionVerifier:
                 )
             )
 
+    def _verify_twenty_minute_plan(
+        self,
+        decision: GPTTraderDecision,
+        issues: list[VerificationIssue],
+    ) -> None:
+        if decision.action not in ENTRY_DECISION_HORIZON_ACTIONS:
+            return
+        plan = decision.twenty_minute_plan if isinstance(decision.twenty_minute_plan, dict) else {}
+        if not plan:
+            issues.append(
+                VerificationIssue(
+                    "SHALLOW_DECISION_HORIZON",
+                    "TRADE / WAIT / REQUEST_EVIDENCE receipts must include twenty_minute_plan so the "
+                    "operator states the next-cycle path before acting.",
+                )
+            )
+            return
+
+        horizon = _optional_float(plan.get("horizon_minutes"))
+        if horizon is None or abs(horizon - TRADER_DECISION_HORIZON_MINUTES) > 0.01:
+            issues.append(
+                VerificationIssue(
+                    "BAD_DECISION_HORIZON_MINUTES",
+                    f"twenty_minute_plan.horizon_minutes must match the scheduled trader cadence "
+                    f"({TRADER_DECISION_HORIZON_MINUTES} minutes), not an invented holding period.",
+                )
+            )
+
+        missing_fields = [
+            field
+            for field in TWENTY_MINUTE_PLAN_TEXT_FIELDS
+            if not str(plan.get(field) or "").strip()
+        ]
+        if missing_fields:
+            issues.append(
+                VerificationIssue(
+                    "INCOMPLETE_TWENTY_MINUTE_PLAN",
+                    "twenty_minute_plan is missing required reasoning fields: "
+                    + ", ".join(missing_fields),
+                )
+            )
+
+        raw_refs = plan.get("evidence_refs")
+        if isinstance(raw_refs, list):
+            plan_refs = tuple(str(ref) for ref in raw_refs if str(ref))
+        else:
+            plan_refs = ()
+        if len(plan_refs) < 2:
+            issues.append(
+                VerificationIssue(
+                    "TWENTY_MINUTE_PLAN_REFS_MISSING",
+                    "twenty_minute_plan.evidence_refs must cite at least two packet refs used by the next-cycle path.",
+                )
+            )
+        unknown_refs = sorted(set(plan_refs) - self.allowed_refs)
+        if unknown_refs:
+            issues.append(
+                VerificationIssue(
+                    "UNKNOWN_TWENTY_MINUTE_PLAN_REF",
+                    "twenty_minute_plan uses unknown evidence refs: " + ", ".join(unknown_refs),
+                )
+            )
+
+        tradeable_lanes = _tradeable_live_ready_lanes(self.packet)
+        if (decision.action == "TRADE" or tradeable_lanes) and not any(
+            ref.startswith("chart:") for ref in plan_refs
+        ):
+            issues.append(
+                VerificationIssue(
+                    "TWENTY_MINUTE_PLAN_CHART_REF_MISSING",
+                    "twenty_minute_plan must cite chart evidence when deciding from current tradeable lanes.",
+                )
+            )
+
+        if decision.action == "TRADE":
+            missing_lane_refs = [
+                lane_id
+                for lane_id in _selected_trade_lane_ids(decision)
+                if f"intent:{lane_id}" not in plan_refs
+            ]
+            if missing_lane_refs:
+                issues.append(
+                    VerificationIssue(
+                        "TWENTY_MINUTE_PLAN_LANE_REF_MISSING",
+                        "twenty_minute_plan must cite the selected intent ref(s): "
+                        + ", ".join(missing_lane_refs),
+                    )
+                )
+
     def _verify_close_trade_ids(
         self,
         decision: GPTTraderDecision,
@@ -1254,6 +1365,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "risk_notes",
         "evidence_refs",
         "operator_summary",
+        "twenty_minute_plan",
     ],
     "properties": {
         "action": {"type": "string", "enum": list(ALLOWED_ACTIONS)},
@@ -1274,6 +1386,30 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "risk_notes": {"type": "array", "items": {"type": "string"}},
         "evidence_refs": {"type": "array", "items": {"type": "string"}},
         "operator_summary": {"type": "string"},
+        "twenty_minute_plan": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": [
+                "horizon_minutes",
+                "primary_path",
+                "failure_path",
+                "entry_or_hold_trigger",
+                "invalidation_or_cancel_trigger",
+                "counterargument",
+                "next_cycle_check",
+                "evidence_refs",
+            ],
+            "properties": {
+                "horizon_minutes": {"type": "number"},
+                "primary_path": {"type": "string"},
+                "failure_path": {"type": "string"},
+                "entry_or_hold_trigger": {"type": "string"},
+                "invalidation_or_cancel_trigger": {"type": "string"},
+                "counterargument": {"type": "string"},
+                "next_cycle_check": {"type": "string"},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}},
+            },
+        },
         "strategy_reviews": {
             "type": "array",
             "items": {
@@ -1340,6 +1476,11 @@ def _decision_from_payload(payload: dict[str, Any]) -> GPTTraderDecision:
         risk_notes=tuple(str(item) for item in payload.get("risk_notes", []) or []),
         evidence_refs=tuple(str(item) for item in payload.get("evidence_refs", []) or []),
         operator_summary=str(payload.get("operator_summary") or ""),
+        twenty_minute_plan=(
+            dict(payload.get("twenty_minute_plan"))
+            if isinstance(payload.get("twenty_minute_plan"), dict)
+            else None
+        ),
         close_trade_ids=tuple(str(item) for item in payload.get("close_trade_ids", []) or []),
         invalidation_price=_optional_float(payload.get("invalidation_price")),
         invalidation_tf=(

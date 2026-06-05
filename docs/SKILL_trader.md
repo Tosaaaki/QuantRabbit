@@ -192,6 +192,12 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
+# For TRADE / WAIT / REQUEST_EVIDENCE, include `twenty_minute_plan`.
+# The live cadence is about 20 minutes; the plan must state the primary
+# path, failure path, trigger, invalidation/cancel trigger, strongest
+# counterargument, next-cycle check, and packet evidence refs. This is a
+# receipt-depth requirement so the next cycle can audit the scenario tree;
+# it is not a new market-risk threshold or permission to invent blockers.
 # If current trader-owned pending entries consume portfolio capacity, either keep
 # that pending basket explicitly or name verified trader pending ids in
 # cancel_order_ids when replacing them with current MARKET participation.
