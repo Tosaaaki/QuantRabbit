@@ -33,6 +33,7 @@ from quant_rabbit.risk import (
     margin_budget_jpy,
     resolve_max_loss_jpy,
 )
+from quant_rabbit.snapshot_json import snapshot_payload_order_raw
 from quant_rabbit.strategy.price_action import structural_tp_target
 from quant_rabbit.strategy.profile import StrategyProfile
 
@@ -5216,6 +5217,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             state=item.get("state"),
             units=int(item["units"]) if item.get("units") is not None else None,
             owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
+            raw=snapshot_payload_order_raw(item),
         )
         for item in payload.get("orders", []) or []
     )

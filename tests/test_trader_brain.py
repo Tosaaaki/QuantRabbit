@@ -32,6 +32,7 @@ from quant_rabbit.strategy.trader_brain import (
     _tf_strength_multiplier,
 )
 from quant_rabbit.strategy.directional_forecaster import DirectionalForecast
+from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record_pending_entry_thesis
 
 
 class TraderBrainTest(unittest.TestCase):
@@ -295,6 +296,121 @@ class TraderBrainTest(unittest.TestCase):
         )
 
         self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,)), ())
+
+    def test_snapshot_reuse_keeps_pending_with_ledger_thesis_when_forecast_softens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=now.isoformat(),
+                    order_id="ledger-backed-stop",
+                    pair="GBP_CAD",
+                    side="LONG",
+                    entry_price=1.86796,
+                    forecast_direction="UP",
+                    forecast_confidence=0.636,
+                    regime="UNCLEAR",
+                    invalidation_price=1.86646,
+                    target_price=1.86753,
+                    key_drivers=["forecast UP at entry"],
+                    lane_id="trend_trader:GBP_CAD:LONG:TREND_CONTINUATION",
+                ),
+                root,
+            )
+            pending = BrokerOrder(
+                order_id="ledger-backed-stop",
+                pair="GBP_CAD",
+                order_type="STOP",
+                price=1.86796,
+                state="PENDING",
+                units=3000,
+                owner=Owner.TRADER,
+                raw={},
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"GBP_CAD": Quote("GBP_CAD", 1.86720, 1.86730, timestamp_utc=now)},
+            )
+            score = LaneScore(
+                lane_id="trend_trader:GBP_CAD:LONG:TREND_CONTINUATION",
+                pair="GBP_CAD",
+                direction="LONG",
+                method="TREND_CONTINUATION",
+                order_type="STOP-ENTRY",
+                entry=1.86796,
+                tp=1.87852,
+                sl=None,
+                status="DRY_RUN_PASSED",
+                score=22.0,
+                action=ACTION_NO_TRADE,
+                blockers=("forecast confidence 0.48 < 0.55 threshold",),
+                rationale=("forecast UP conf 0.48 too low",),
+                spread_pips=1.0,
+                estimated_margin_jpy=10_000.0,
+            )
+
+            self.assertEqual(_contaminated_pending_order_ids(snapshot, (score,), data_root=root), ())
+
+    def test_snapshot_reuse_cancels_pending_when_ledger_invalidation_breaks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            record_pending_entry_thesis(
+                PendingEntryThesis(
+                    timestamp_utc=now.isoformat(),
+                    order_id="ledger-invalidated-stop",
+                    pair="GBP_CAD",
+                    side="LONG",
+                    entry_price=1.86796,
+                    forecast_direction="UP",
+                    forecast_confidence=0.636,
+                    regime="UNCLEAR",
+                    invalidation_price=1.86646,
+                    target_price=1.86753,
+                    key_drivers=["forecast UP at entry"],
+                    lane_id="trend_trader:GBP_CAD:LONG:TREND_CONTINUATION",
+                ),
+                root,
+            )
+            pending = BrokerOrder(
+                order_id="ledger-invalidated-stop",
+                pair="GBP_CAD",
+                order_type="STOP",
+                price=1.86796,
+                state="PENDING",
+                units=3000,
+                owner=Owner.TRADER,
+                raw={},
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(pending,),
+                quotes={"GBP_CAD": Quote("GBP_CAD", 1.86640, 1.86650, timestamp_utc=now)},
+            )
+            score = LaneScore(
+                lane_id="trend_trader:GBP_CAD:LONG:TREND_CONTINUATION",
+                pair="GBP_CAD",
+                direction="LONG",
+                method="TREND_CONTINUATION",
+                order_type="STOP-ENTRY",
+                entry=1.86796,
+                tp=1.87852,
+                sl=None,
+                status="DRY_RUN_PASSED",
+                score=22.0,
+                action=ACTION_NO_TRADE,
+                blockers=("forecast confidence 0.48 < 0.55 threshold",),
+                rationale=("forecast UP conf 0.48 too low",),
+                spread_pips=1.0,
+                estimated_margin_jpy=10_000.0,
+            )
+
+            self.assertEqual(
+                _contaminated_pending_order_ids(snapshot, (score,), data_root=root),
+                ("ledger-invalidated-stop",),
+            )
 
     def test_opposed_forecast_text_still_contaminates_pending_entry(self) -> None:
         now = datetime.now(timezone.utc)

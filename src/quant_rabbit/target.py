@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.snapshot_json import snapshot_payload_order_raw
 
 
 def _trader_sl_repair_disabled() -> bool:
@@ -812,6 +813,7 @@ def _snapshot_from_json(payload: dict[str, Any]) -> BrokerSnapshot:
             state=item.get("state"),
             units=int(item["units"]) if item.get("units") is not None else None,
             owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
+            raw=snapshot_payload_order_raw(item),
         )
         for item in payload.get("orders", []) or []
     )

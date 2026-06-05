@@ -122,6 +122,7 @@ from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, Stati
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS_ARG
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
+from quant_rabbit.snapshot_json import snapshot_order_raw, snapshot_payload_order_raw
 from quant_rabbit.strategy.ensemble import CampaignPlanner
 from quant_rabbit.strategy.intent_generator import IntentGenerator
 from quant_rabbit.strategy.market_story import MarketStoryMiner
@@ -3482,6 +3483,7 @@ def _snapshot_to_json(snapshot: BrokerSnapshot) -> str:
                 "state": order.state,
                 "units": order.units,
                 "owner": order.owner.value,
+                "raw": snapshot_order_raw(order.raw),
             }
             for order in snapshot.orders
         ],
@@ -3575,6 +3577,7 @@ def _snapshot_from_json(payload: dict) -> BrokerSnapshot:
                 state=item.get("state"),
                 units=int(item["units"]) if item.get("units") is not None else None,
                 owner=Owner(str(item.get("owner") or Owner.UNKNOWN.value)),
+                raw=snapshot_payload_order_raw(item),
             )
         )
     quotes = {}

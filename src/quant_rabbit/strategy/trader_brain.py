@@ -474,7 +474,11 @@ from quant_rabbit.strategy.directional_forecaster import (
 from quant_rabbit.strategy.forecast_persistence_tracker import (
     record_forecast,
 )
-from quant_rabbit.strategy.entry_thesis_ledger import technical_invalidation_confirmation_reason
+from quant_rabbit.strategy.entry_thesis_ledger import (
+    PendingEntryThesis,
+    load_pending_entry_thesis,
+    technical_invalidation_confirmation_reason,
+)
 
 
 # Rank ceiling for "primary attack" lanes consumed by the trader_brain
@@ -1092,7 +1096,7 @@ class TraderBrain:
         # are flagged for cleanup whether we MONITOR or layer (AGENT_CONTRACT §11
         # — protected trader-owned exposure is not by itself a no-trade gate,
         # and a self-contradicting pending must not silently lock the basket).
-        pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores)
+        pending_cancel_order_ids = _contaminated_pending_order_ids(snapshot, scores, data_root=data_root)
         # MONITOR only when the open exposure is unprotected (portfolio_add_allowed
         # is False) and there's something to monitor. A pending entry alone does
         # NOT lock the basket when portfolio_add_allowed=True: the pending will
@@ -2386,7 +2390,12 @@ def _portfolio_add_allowed(snapshot: BrokerSnapshot) -> bool:
     )
 
 
-def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[LaneScore, ...]) -> tuple[str, ...]:
+def _contaminated_pending_order_ids(
+    snapshot: BrokerSnapshot,
+    scores: tuple[LaneScore, ...],
+    *,
+    data_root: Path | None = None,
+) -> tuple[str, ...]:
     scores_by_key: dict[tuple[str, str, str], list[LaneScore]] = {}
     for score in scores:
         key = (score.pair, score.direction, _normalized_entry_type(score.order_type))
@@ -2400,17 +2409,27 @@ def _contaminated_pending_order_ids(snapshot: BrokerSnapshot, scores: tuple[Lane
             continue
         if order.owner != Owner.TRADER:
             continue
+        pending_thesis = _load_pending_entry_thesis_for_order(order, data_root)
         compatible_scores = scores_by_key.get((order.pair, direction, _normalized_entry_type(order.order_type)), [])
         if not compatible_scores:
-            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores):
+            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores, pending_thesis):
                 continue
             contaminated.append(order.order_id)
             continue
         if not any(_keeps_pending_order(order, score) for score in compatible_scores):
-            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores):
+            if _pending_entry_still_has_live_thesis(order, snapshot, scores, compatible_scores, pending_thesis):
                 continue
             contaminated.append(order.order_id)
     return tuple(contaminated)
+
+
+def _load_pending_entry_thesis_for_order(
+    order: BrokerOrder,
+    data_root: Path | None,
+) -> PendingEntryThesis | None:
+    if data_root is None or not order.order_id:
+        return None
+    return load_pending_entry_thesis(str(order.order_id), data_root)
 
 
 def _pending_entry_still_has_live_thesis(
@@ -2418,6 +2437,7 @@ def _pending_entry_still_has_live_thesis(
     snapshot: BrokerSnapshot,
     scores: tuple[LaneScore, ...],
     compatible_scores: list[LaneScore],
+    pending_thesis: PendingEntryThesis | None,
 ) -> bool:
     """Keep GTC entries while current market evidence has not broken them.
 
@@ -2426,9 +2446,9 @@ def _pending_entry_still_has_live_thesis(
     should not cancel it; market invalidation, hard risk vetoes, or a clear
     opposite current thesis should.
     """
-    if not _pending_entry_has_broker_thesis_anchor(order):
+    if not _pending_entry_has_broker_thesis_anchor(order, pending_thesis):
         return False
-    if _pending_entry_invalidation_breached(order, snapshot):
+    if _pending_entry_invalidation_breached(order, snapshot, pending_thesis):
         return False
     if _pending_recovery_hedge_still_has_live_thesis(order, snapshot, compatible_scores):
         return True
@@ -2460,16 +2480,19 @@ def _pending_recovery_hedge_still_has_live_thesis(
     )
 
 
-def _pending_entry_has_broker_thesis_anchor(order: BrokerOrder) -> bool:
+def _pending_entry_has_broker_thesis_anchor(
+    order: BrokerOrder,
+    pending_thesis: PendingEntryThesis | None = None,
+) -> bool:
     raw = order.raw if isinstance(order.raw, dict) else {}
-    return bool(raw.get("createTime") or raw.get("time") or raw.get("clientExtensions"))
+    return bool(raw.get("createTime") or raw.get("time") or raw.get("clientExtensions") or pending_thesis)
 
 
 def _pending_entry_has_hard_current_veto(scores: list[LaneScore]) -> bool:
     if not scores:
         return False
     for score in scores:
-        blocker_text = " ".join(score.blockers + score.rationale).upper()
+        blocker_text = " ".join(score.blockers).upper()
         if any(keyword in blocker_text for keyword in PENDING_ENTRY_HARD_CANCEL_KEYWORDS):
             return True
     return False
@@ -2504,12 +2527,18 @@ def _score_market_text_opposes_pending(score: LaneScore) -> bool:
     return "MICRO_STRUCTURE_OPPOSED" in text
 
 
-def _pending_entry_invalidation_breached(order: BrokerOrder, snapshot: BrokerSnapshot) -> bool:
+def _pending_entry_invalidation_breached(
+    order: BrokerOrder,
+    snapshot: BrokerSnapshot,
+    pending_thesis: PendingEntryThesis | None = None,
+) -> bool:
     pair = order.pair or ""
     quote = snapshot.quotes.get(pair)
     if quote is None:
         return False
     stop_loss = _raw_dependent_price(order.raw, "stopLossOnFill")
+    if stop_loss is None and pending_thesis is not None:
+        stop_loss = _optional_float(pending_thesis.invalidation_price)
     direction = _order_direction(order.units)
     if stop_loss is None or direction is None:
         return False

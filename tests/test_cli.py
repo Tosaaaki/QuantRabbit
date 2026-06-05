@@ -16,8 +16,12 @@ from quant_rabbit.cli import (
     _SL_FREE_RUNTIME_DEFAULTS,
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
+    _snapshot_from_json,
+    _snapshot_to_json,
     main,
 )
+from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
+from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
 class CliHelpTest(unittest.TestCase):
@@ -63,6 +67,43 @@ class CliHelpTest(unittest.TestCase):
         help_text = stdout.getvalue()
         self.assertIn("daily-target-state", help_text)
         self.assertIn("10% target", help_text)
+
+    def test_snapshot_json_preserves_pending_order_thesis_raw_fields(self) -> None:
+        now = datetime.now(timezone.utc)
+        snapshot = BrokerSnapshot(
+            fetched_at_utc=now,
+            orders=(
+                BrokerOrder(
+                    order_id="472032",
+                    pair="GBP_CAD",
+                    order_type="STOP",
+                    price=1.86796,
+                    state="PENDING",
+                    units=3000,
+                    owner=Owner.TRADER,
+                    raw={
+                        "accountID": "should-not-be-persisted",
+                        "createTime": "2026-06-04T22:45:52.123456789Z",
+                        "clientExtensions": {"tag": "trader", "comment": "qr-vnext"},
+                        "takeProfitOnFill": {"price": "1.87852"},
+                        "stopLossOnFill": {"price": "1.86646"},
+                        "timeInForce": "GTC",
+                    },
+                ),
+            ),
+            quotes={"GBP_CAD": Quote("GBP_CAD", 1.8672, 1.8673, timestamp_utc=now)},
+        )
+
+        payload = json.loads(_snapshot_to_json(snapshot))
+        order_raw = payload["orders"][0]["raw"]
+        restored = _snapshot_from_json(payload)
+        restored_for_reuse = _intent_snapshot_from_json(payload)
+
+        self.assertNotIn("accountID", order_raw)
+        self.assertEqual(order_raw["createTime"], "2026-06-04T22:45:52.123456789Z")
+        self.assertEqual(restored.orders[0].raw["clientExtensions"]["tag"], "trader")
+        self.assertEqual(restored.orders[0].raw["stopLossOnFill"]["price"], "1.86646")
+        self.assertEqual(restored_for_reuse.orders[0].raw["takeProfitOnFill"]["price"], "1.87852")
 
     def test_autotrade_missing_gpt_decision_response_returns_json_error(self) -> None:
         stdout = io.StringIO()

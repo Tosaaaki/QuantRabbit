@@ -61,6 +61,7 @@ from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, Trade
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.learning_audit import LearningAuditor
 from quant_rabbit.risk import RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
+from quant_rabbit.snapshot_json import snapshot_order_raw
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
 from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
 from quant_rabbit.strategy.market_story import MarketStoryMiner
@@ -2761,6 +2762,7 @@ def _snapshot_to_json(snapshot) -> str:
                 "state": order.state,
                 "units": order.units,
                 "owner": order.owner.value,
+                "raw": snapshot_order_raw(order.raw),
             }
             for order in snapshot.orders
         ],
