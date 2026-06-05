@@ -220,6 +220,105 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         )
         self.assertIsNone(adj)
 
+    def test_profitable_short_reversal_keeps_reachable_harvest_tp_under_mfe_risk(self) -> None:
+        """A reversal print must not expand a profitable HARVEST TP when the
+        same packet says the runner edge is gone.
+
+        Regression for 2026-06-05 AUD_NZD: PositionManager staged HARVEST_TP
+        near 1.21364, then tp_rebalancer's expand_reversal path wanted to
+        stretch it back to a 29pip runner.
+        """
+        self._kill_switch_off()
+        pair_chart = {
+            "pair": "AUD_NZD",
+            "views": [
+                {
+                    "granularity": "M15",
+                    "structure": {
+                        "liquidity": [
+                            {
+                                "side": "EQ_LOW",
+                                "price": 1.21364,
+                                "indices": list(range(21)),
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        harvest_context = {
+            "confluence": {
+                "tf_agreement_score": 0.33,
+                "range_24h_sigma_multiple": 4.84,
+            },
+            "indicators_by_tf": {
+                "M5": {"atr_pips": 2.1},
+                "M30": {"stoch_rsi": 0.20, "williams_r_14": -80.7},
+            },
+        }
+
+        adj = compute_tp_adjustment(
+            trade_id="472037", pair="AUD_NZD", side="SHORT",
+            entry_price=1.21445, current_tp=1.21364,
+            current_price=1.21420,
+            atr_pips=19.5, reward_risk=1.5,
+            is_reversal_firing=True,
+            latest_forecast={"direction": "UNCLEAR", "confidence": 0.20, "horizon_min": 0},
+            chart_context=harvest_context,
+            pair_chart=pair_chart,
+        )
+
+        self.assertIsNone(adj)
+
+    def test_profitable_short_reversal_contracts_stale_tp_to_harvest_anchor(self) -> None:
+        """If the broker TP is already stale-wide, forecast+technical MFE-risk
+        should contract it even when a side-aligned reversal signal exists."""
+        self._kill_switch_off()
+        pair_chart = {
+            "pair": "AUD_NZD",
+            "views": [
+                {
+                    "granularity": "M15",
+                    "structure": {
+                        "liquidity": [
+                            {
+                                "side": "EQ_LOW",
+                                "price": 1.21364,
+                                "indices": list(range(21)),
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        harvest_context = {
+            "confluence": {
+                "tf_agreement_score": 0.33,
+                "range_24h_sigma_multiple": 4.84,
+            },
+            "indicators_by_tf": {
+                "M5": {"atr_pips": 2.1},
+                "M30": {"stoch_rsi": 0.20, "williams_r_14": -80.7},
+            },
+        }
+
+        adj = compute_tp_adjustment(
+            trade_id="472037", pair="AUD_NZD", side="SHORT",
+            entry_price=1.21445, current_tp=1.21152,
+            current_price=1.21420,
+            atr_pips=19.5, reward_risk=1.5,
+            is_reversal_firing=True,
+            latest_forecast={"direction": "UNCLEAR", "confidence": 0.20, "horizon_min": 0},
+            chart_context=harvest_context,
+            pair_chart=pair_chart,
+        )
+
+        self.assertIsNotNone(adj)
+        self.assertEqual(adj.new_tp, 1.21364)
+        self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
+        self.assertIn("forecast_harvest", adj.rationale)
+        self.assertIn("forecast UNCLEAR", adj.rationale)
+
     def test_profitable_short_existing_tp_skips_nearest_anchor_inside_market_safety(self) -> None:
         self._kill_switch_off()
         pair_chart = {

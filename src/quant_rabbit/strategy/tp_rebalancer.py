@@ -510,8 +510,10 @@ def compute_tp_adjustment(
 
     1. **expand_reversal** — reversal signal fires for this side:
        use the full `reward_risk × ATR` distance from entry, letting
-       the bounce run further. May expand or be a no-op (never
-       contract here — reversal means we want MORE room).
+       the bounce run further. May expand or be a no-op. Profitable
+       positions with forecast + technical MFE-risk are excluded from this
+       shortcut so the TP sidecar cannot fight PositionManager's HARVEST_TP
+       read of the same market packet.
     2. **contract_adverse** — position is ≥ `ADVERSE_ATR_MULT × ATR`
        underwater AND no reversal signal: pull TP to
        `entry + max(MIN_LOCK_IN_PIPS, atr × LOCK_IN_ATR_MULT)` (LONG;
@@ -579,6 +581,7 @@ def compute_tp_adjustment(
         if current_tp is not None
         else []
     )
+    profit_harvest_override = bool(existing_tp_harvest_reasons)
     insurance_missing_tp = current_tp is None and bool(insurance_reasons)
     if current_tp is None and not (manual_missing_tp_repair or insurance_missing_tp):
         return None
@@ -589,7 +592,7 @@ def compute_tp_adjustment(
     entry_lock_harvest_reasons: list[str] = []
     if (
         current_tp is not None
-        and not tp_reversal_firing
+        and (not tp_reversal_firing or profit_harvest_override)
         and distance_old <= lock_in_pips + HYSTERESIS_PIPS
         and desired_distance_pips > distance_old
     ):
@@ -605,7 +608,7 @@ def compute_tp_adjustment(
     stale_distance_technical_reasons: list[str] = []
     stale_distance_too_far = (
         current_tp is not None
-        and not tp_reversal_firing
+        and (not tp_reversal_firing or profit_harvest_override)
         and operating_atr is not None
         and distance_old > MAX_TP_DISTANCE_ATR_MULT * operating_atr
     )
@@ -633,7 +636,7 @@ def compute_tp_adjustment(
     reachable_harvest_tp_reasons: list[str] = []
     if (
         current_tp is not None
-        and not tp_reversal_firing
+        and (not tp_reversal_firing or profit_harvest_override)
         and operating_atr is not None
         and distance_old <= MAX_TP_DISTANCE_ATR_MULT * operating_atr
     ):
@@ -678,16 +681,6 @@ def compute_tp_adjustment(
             entry_anchored = entry_price - desired_distance_pips * pip_size
             market_safe = current_price - MIN_TP_TO_MARKET_PIPS * pip_size
             candidate_tp = min(entry_anchored, market_safe)
-    elif tp_reversal_firing:
-        mode = "expand_reversal"
-        if side_up == "LONG":
-            candidate_tp = entry_price + desired_distance_pips * pip_size
-        else:
-            candidate_tp = entry_price - desired_distance_pips * pip_size
-        # In reversal mode we never want to contract; if the desired
-        # distance is shorter than the old TP, leave it alone.
-        if desired_distance_pips <= distance_old:
-            return None
     elif entry_lock_harvest_reasons:
         return None
     elif existing_tp_harvest_reasons:
@@ -702,6 +695,16 @@ def compute_tp_adjustment(
             pip_factor=pip_factor,
         )
         if candidate_tp is None:
+            return None
+    elif tp_reversal_firing:
+        mode = "expand_reversal"
+        if side_up == "LONG":
+            candidate_tp = entry_price + desired_distance_pips * pip_size
+        else:
+            candidate_tp = entry_price - desired_distance_pips * pip_size
+        # In reversal mode we do not contract unless a profitable forecast /
+        # technical harvest override above already selected that path.
+        if desired_distance_pips <= distance_old:
             return None
     elif stale_distance_reasons:
         if profit_pips > 0:
