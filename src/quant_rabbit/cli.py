@@ -3349,7 +3349,10 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
-        return 0 if summary.recommended_now_lanes > 0 else 2
+        # NO_ATTACK_ADVICE is a normal diagnostic state: the refresh playbook
+        # runs under set -e and must continue to memory-health / routing even
+        # when the current market packet has no fillable attack lane.
+        return 0
     if args.command == "gpt-trader-decision":
         try:
             provider = _static_gpt_provider(

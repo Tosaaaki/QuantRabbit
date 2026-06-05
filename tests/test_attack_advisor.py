@@ -369,6 +369,46 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertFalse(payload["live_permission"])
             self.assertTrue(report.exists())
 
+    def test_cli_no_attack_advice_is_diagnostic_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            output = root / "advice.json"
+            report = root / "advice.md"
+            intents.write_text(json.dumps({"results": []}))
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main(
+                    [
+                        "ai-attack-advice",
+                        "--intents",
+                        str(intents),
+                        "--target-state",
+                        str(target),
+                        "--ai-backtest",
+                        str(root / "missing_backtest.json"),
+                        "--outcome-mart",
+                        str(root / "missing_outcome_mart.json"),
+                        "--coverage",
+                        str(root / "missing_coverage.json"),
+                        "--output",
+                        str(output),
+                        "--report",
+                        str(report),
+                    ]
+                )
+
+            self.assertEqual(code, 0)
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["status"], "NO_ATTACK_ADVICE")
+            self.assertEqual(summary["recommended_now_lanes"], 0)
+            payload = json.loads(output.read_text())
+            self.assertTrue(any("no LIVE_READY lanes" in item for item in payload["blockers"]))
+            self.assertTrue(report.exists())
+
     def test_archive_outcome_mart_boosts_condition_specific_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
