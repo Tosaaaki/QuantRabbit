@@ -2119,6 +2119,14 @@ class IntentGenerationSummary:
     live_ready: int
 
 
+@dataclass(frozen=True)
+class _TelemetryLiveReadinessCache:
+    latest_forecasts_by_pair: dict[str, dict[str, Any]]
+    forecasts_by_pair_cycle: dict[tuple[str, str], dict[str, Any]]
+    directional_projection_keys: set[tuple[str, str]]
+    expired_pending_projection_count: int
+
+
 class IntentGenerator:
     def __init__(
         self,
@@ -2219,6 +2227,14 @@ class IntentGenerator:
         # the ledger is missing — the validator skips the portfolio gate
         # rather than synthesizing a literal.
         portfolio_loss_cap = _daily_risk_budget_from_state()
+        telemetry_cache = (
+            _build_telemetry_live_readiness_cache(
+                data_root=ROOT / "data",
+                validation_time_utc=validation_time_utc,
+            )
+            if snapshot is not None and _require_telemetry_for_live_active()
+            else None
+        )
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)
@@ -2234,6 +2250,7 @@ class IntentGenerator:
                         levels_snapshot=levels_snapshot,
                         order_type_override=order_type,
                         validation_time_utc=validation_time_utc,
+                        telemetry_cache=telemetry_cache,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -2261,6 +2278,7 @@ class IntentGenerator:
         levels_snapshot: dict[str, Any] | None = None,
         order_type_override: OrderType | None = None,
         validation_time_utc: datetime | None = None,
+        telemetry_cache: _TelemetryLiveReadinessCache | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -2420,6 +2438,7 @@ class IntentGenerator:
             intent.metadata or {},
             snapshot,
             validation_time_utc,
+            cache=telemetry_cache,
         )
         if telemetry_live_issues:
             risk_issues.extend(telemetry_live_issues)
@@ -3402,6 +3421,8 @@ def _telemetry_live_readiness_issues(
     metadata: dict[str, Any],
     snapshot: BrokerSnapshot,
     validation_time_utc: datetime,
+    *,
+    cache: _TelemetryLiveReadinessCache | None = None,
 ) -> tuple[dict[str, str], ...]:
     if not _require_telemetry_for_live_active():
         return ()
@@ -3422,12 +3443,20 @@ def _telemetry_live_readiness_issues(
             )
         )
     expected_cycle_id = str(metadata.get("forecast_cycle_id") or "")
-    latest = _latest_forecast_history_for_pair(intent.pair, data_root=data_root)
-    cycle_matched = _forecast_history_for_pair_cycle(
-        intent.pair,
-        expected_cycle_id,
-        data_root=data_root,
-    ) if expected_cycle_id else None
+    if cache is not None:
+        latest = cache.latest_forecasts_by_pair.get(intent.pair)
+        cycle_matched = (
+            cache.forecasts_by_pair_cycle.get((intent.pair, expected_cycle_id))
+            if expected_cycle_id
+            else None
+        )
+    else:
+        latest = _latest_forecast_history_for_pair(intent.pair, data_root=data_root)
+        cycle_matched = _forecast_history_for_pair_cycle(
+            intent.pair,
+            expected_cycle_id,
+            data_root=data_root,
+        ) if expected_cycle_id else None
     audit_forecast = cycle_matched or latest
     latest_is_current = False
     projection_cycle_id = ""
@@ -3562,11 +3591,16 @@ def _telemetry_live_readiness_issues(
 
     if latest_is_current and direction in {"UP", "DOWN"}:
         cycle_id = projection_cycle_id
-        if not cycle_id or not _directional_projection_recorded(
-            intent.pair,
-            cycle_id,
-            data_root=data_root,
-        ):
+        projection_recorded = (
+            (intent.pair, cycle_id) in cache.directional_projection_keys
+            if cache is not None
+            else _directional_projection_recorded(
+                intent.pair,
+                cycle_id,
+                data_root=data_root,
+            )
+        )
+        if not cycle_id or not projection_recorded:
             issues.append(
                 _telemetry_issue(
                     "TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE",
@@ -3579,9 +3613,13 @@ def _telemetry_live_readiness_issues(
                 )
             )
 
-    expired_pending = _expired_pending_projection_count(
-        data_root=data_root,
-        validation_time_utc=validation_time_utc,
+    expired_pending = (
+        cache.expired_pending_projection_count
+        if cache is not None
+        else _expired_pending_projection_count(
+            data_root=data_root,
+            validation_time_utc=validation_time_utc,
+        )
     )
     if expired_pending:
         issues.append(
@@ -3598,6 +3636,51 @@ def _telemetry_live_readiness_issues(
     if execution_issue is not None:
         issues.append(execution_issue)
     return tuple(issues)
+
+
+def _build_telemetry_live_readiness_cache(
+    *,
+    data_root: Path,
+    validation_time_utc: datetime,
+) -> _TelemetryLiveReadinessCache:
+    latest_forecasts_by_pair: dict[str, dict[str, Any]] = {}
+    forecasts_by_pair_cycle: dict[tuple[str, str], dict[str, Any]] = {}
+    forecast_path = data_root / "forecast_history.jsonl"
+    for item in _iter_jsonl_dicts(forecast_path):
+        pair = str(item.get("pair") or "")
+        if not pair:
+            continue
+        latest_forecasts_by_pair[pair] = item
+        cycle_id = str(item.get("cycle_id") or "")
+        if cycle_id:
+            forecasts_by_pair_cycle[(pair, cycle_id)] = item
+
+    directional_projection_keys: set[tuple[str, str]] = set()
+    expired_pending = 0
+    now = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
+    projection_path = data_root / "projection_ledger.jsonl"
+    for item in _iter_jsonl_dicts(projection_path):
+        pair = str(item.get("pair") or "")
+        cycle_id = str(item.get("cycle_id") or "")
+        if pair and cycle_id and str(item.get("signal_name") or "") == "directional_forecast":
+            directional_projection_keys.add((pair, cycle_id))
+        if str(item.get("resolution_status") or "").upper() != "PENDING":
+            continue
+        emitted = _parse_telemetry_time(item.get("timestamp_emitted_utc"))
+        window_min = _optional_float(item.get("resolution_window_min"))
+        if emitted is None or window_min is None or window_min <= 0:
+            expired_pending += 1
+            continue
+        expiry_age_seconds = (now - emitted).total_seconds() - (window_min * 60.0)
+        if expiry_age_seconds >= PROJECTION_PENDING_EXPIRY_GRACE_SECONDS:
+            expired_pending += 1
+
+    return _TelemetryLiveReadinessCache(
+        latest_forecasts_by_pair=latest_forecasts_by_pair,
+        forecasts_by_pair_cycle=forecasts_by_pair_cycle,
+        directional_projection_keys=directional_projection_keys,
+        expired_pending_projection_count=expired_pending,
+    )
 
 
 def _forecast_confidence_matches(latest_confidence: float, intent_confidence: float) -> bool:

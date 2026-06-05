@@ -1285,6 +1285,123 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", codes)
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", codes)
 
+    def test_telemetry_cache_supplies_forecast_and_projection_checks(self) -> None:
+        from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import (
+            _build_telemetry_live_readiness_cache,
+            _telemetry_live_readiness_issues,
+        )
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        now = datetime(2026, 6, 5, 2, 40, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            data_root.mkdir()
+            current_ts = now.isoformat().replace("+00:00", "Z")
+            expired_ts = (now - timedelta(minutes=90)).isoformat().replace("+00:00", "Z")
+            (data_root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": current_ts,
+                        "cycle_id": "cycle-1",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.6133,
+                    }
+                )
+                + "\n"
+            )
+            (data_root / "projection_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_emitted_utc": current_ts,
+                        "pair": "EUR_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "UP",
+                        "resolution_window_min": 120,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "cycle-1",
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "timestamp_emitted_utc": expired_ts,
+                        "pair": "GBP_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "DOWN",
+                        "resolution_window_min": 30,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "expired-cycle",
+                    }
+                )
+                + "\n"
+            )
+
+            cache = _build_telemetry_live_readiness_cache(
+                data_root=data_root,
+                validation_time_utc=now,
+            )
+
+        self.assertIn(("EUR_USD", "cycle-1"), cache.directional_projection_keys)
+        self.assertEqual(cache.expired_pending_projection_count, 1)
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="cached telemetry intent",
+            market_context=MarketContext(
+                regime="TREND_UP",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata={
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.6133,
+                "forecast_cycle_id": "cycle-1",
+            },
+        )
+
+        with patch(
+            "quant_rabbit.strategy.intent_generator._latest_forecast_history_for_pair",
+            side_effect=AssertionError("cache should avoid forecast_history latest scan"),
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._forecast_history_for_pair_cycle",
+            side_effect=AssertionError("cache should avoid forecast_history cycle scan"),
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._directional_projection_recorded",
+            side_effect=AssertionError("cache should avoid projection_ledger directional scan"),
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._expired_pending_projection_count",
+            side_effect=AssertionError("cache should avoid projection_ledger expiry scan"),
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._execution_ledger_sync_live_issue",
+            return_value=None,
+        ):
+            codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    intent,
+                    intent.metadata,
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={"EUR_USD": Quote("EUR_USD", 1.1733, 1.1735, now)},
+                    ),
+                    now,
+                    cache=cache,
+                )
+            }
+
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", codes)
+        self.assertNotIn("TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE", codes)
+        self.assertIn("TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE", codes)
+
     def test_fresh_entry_requires_positive_reward_asymmetry_for_live_ready(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _fresh_entry_live_reward_risk_issue
