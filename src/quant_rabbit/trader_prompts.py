@@ -234,6 +234,8 @@ def route_trader_prompts(
     )
     memory_health_refresh_reasons = _memory_health_refresh_reasons(
         target_state,
+        snapshot,
+        intents,
         memory_health_path=memory_health_path,
     )
     evidence_refresh_reasons = (
@@ -1128,6 +1130,8 @@ def _strategy_profile_refresh_reasons(
 
 def _memory_health_refresh_reasons(
     target_state: dict[str, Any],
+    snapshot: dict[str, Any],
+    intents: dict[str, Any],
     *,
     memory_health_path: Path | None,
 ) -> tuple[str, ...]:
@@ -1152,6 +1156,14 @@ def _memory_health_refresh_reasons(
             f"memory health audit lacks generated_at_utc while target is open: {memory_health_path}; "
             "run memory-health before entry/verify routing",
         )
+    stale_reasons = _memory_health_staleness_reasons(
+        generated_at=generated_at,
+        snapshot=snapshot,
+        target_state=target_state,
+        intents=intents,
+    )
+    if stale_reasons:
+        return stale_reasons
     blockers = payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     status = str(payload.get("status") or "")
     if status == "MEMORY_HEALTH_BLOCKED" or blockers:
@@ -1162,6 +1174,42 @@ def _memory_health_refresh_reasons(
             "refresh short/medium/long memory before entry/verify routing",
         )
     return ()
+
+
+def _memory_health_staleness_reasons(
+    *,
+    generated_at: datetime,
+    snapshot: dict[str, Any],
+    target_state: dict[str, Any],
+    intents: dict[str, Any],
+) -> tuple[str, ...]:
+    """Return refresh reasons when memory-health predates its audited packet.
+
+    `memory-health` is a routed evidence gate, not a durable permission token.
+    It must be regenerated after broker truth, target state, or order intents
+    move forward; otherwise a stale PASS can hide fresh telemetry blockers.
+    """
+    refs: list[tuple[str, datetime]] = []
+    account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
+    snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or account.get("fetched_at_utc"))
+    target_ts = _parse_utc(target_state.get("generated_at_utc"))
+    intents_ts = _parse_utc(intents.get("generated_at_utc"))
+    if snapshot_ts is not None:
+        refs.append(("broker snapshot", snapshot_ts))
+    if target_ts is not None:
+        refs.append(("daily target state", target_ts))
+    if intents_ts is not None:
+        refs.append(("order intents", intents_ts))
+
+    reasons: list[str] = []
+    for label, ref_ts in refs:
+        if generated_at < ref_ts:
+            reasons.append(
+                "memory health audit stale while target is open: "
+                f"memory_health generated at {generated_at.isoformat()} predates "
+                f"{label} {ref_ts.isoformat()}; run memory-health before entry/verify routing"
+            )
+    return tuple(reasons)
 
 
 def _memory_health_blocker_codes(payload: dict[str, Any]) -> tuple[str, ...]:
