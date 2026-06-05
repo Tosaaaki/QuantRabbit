@@ -136,6 +136,61 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertIn("SHORT_FORECAST_HISTORY_STALE", codes)
         self.assertIn("SHORT_FORECAST_PAIR_STALE", codes)
 
+    def test_stale_blocked_candidate_forecast_does_not_block_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            stale_ts = _NOW - FORECAST_SNAPSHOT_GRACE - timedelta(seconds=1)
+            forecast_rows = [
+                {
+                    "timestamp_utc": _NOW.isoformat(),
+                    "cycle_id": "cycle-1",
+                    "pair": "EUR_USD",
+                    "direction": "UP",
+                    "confidence": 0.8,
+                },
+                {
+                    "timestamp_utc": stale_ts.isoformat(),
+                    "cycle_id": "old-cycle",
+                    "pair": "AUD_NZD",
+                    "direction": "DOWN",
+                    "confidence": 0.7,
+                },
+            ]
+            files["forecast_history"].write_text("\n".join(json.dumps(row) for row in forecast_rows) + "\n")
+            intents = json.loads(files["intents"].read_text())
+            intents["results"].append(
+                {
+                    "lane_id": "trend_trader:AUD_NZD:SHORT:TREND_CONTINUATION",
+                    "status": "BLOCKED",
+                    "intent": {"pair": "AUD_NZD"},
+                    "risk_issues": [
+                        {
+                            "severity": "BLOCK",
+                            "code": "TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE",
+                            "message": "stale non-executable forecast",
+                        }
+                    ],
+                    "strategy_issues": [],
+                    "live_blockers": [],
+                }
+            )
+            files["intents"].write_text(json.dumps(intents))
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertIn("AUD_NZD", payload["metrics"]["runtime"]["intent_pairs"])
+        self.assertNotIn("AUD_NZD", payload["metrics"]["runtime"]["required_pairs"])
+        self.assertFalse(
+            any(
+                issue["code"] == "SHORT_FORECAST_PAIR_STALE"
+                and issue.get("evidence", {}).get("pair") == "AUD_NZD"
+                for issue in payload["issues"]
+            )
+        )
+
     def test_legacy_duplicate_forecast_and_projection_keys_remain_metrics_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

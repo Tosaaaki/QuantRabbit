@@ -253,6 +253,7 @@ class SelfImprovementAuditor:
                 gpt_path=gpt_decision_path,
                 trader_path=trader_decision_path,
                 target_open=target_open,
+                active_trade_ids=active_trade_ids,
             )
         )
 
@@ -1222,6 +1223,7 @@ def _decision_artifact_findings(
     gpt_path: Path,
     trader_path: Path,
     target_open: bool,
+    active_trade_ids: set[str],
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if gpt_loaded.error is not None:
@@ -1251,6 +1253,35 @@ def _decision_artifact_findings(
         if isinstance(issues, list) and issues:
             blocking = [item for item in issues if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"]
             if blocking:
+                decision = gpt_loaded.payload.get("decision") if isinstance(gpt_loaded.payload.get("decision"), dict) else {}
+                action = str(decision.get("action") or "").upper()
+                close_ids = {
+                    str(item)
+                    for item in decision.get("close_trade_ids", []) or []
+                    if str(item)
+                }
+                if action == "CLOSE" and close_ids and close_ids.isdisjoint(active_trade_ids):
+                    out.append(
+                        _finding(
+                            run_id=run_id,
+                            priority="P1",
+                            layer="decision_history",
+                            code="STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES",
+                            message=(
+                                "latest GPT CLOSE decision has blocking verification issue(s), "
+                                "but broker truth no longer shows the requested trader-owned trade(s) as open"
+                            ),
+                            next_action=(
+                                "Do not reuse the stale CLOSE receipt; refresh broker truth and continue with "
+                                "current position/entry routing."
+                            ),
+                            evidence={
+                                "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                                "close_trade_ids": sorted(close_ids),
+                            },
+                        )
+                    )
+                    return out
                 out.append(
                     _finding(
                         run_id=run_id,
@@ -1259,7 +1290,10 @@ def _decision_artifact_findings(
                         code="LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES",
                         message=f"latest GPT decision contains {len(blocking)} blocking verification issue(s)",
                         next_action="Do not reuse the receipt; fix the first blocker and verify a fresh decision.",
-                        evidence={"codes": [str(item.get("code") or "") for item in blocking[:12]]},
+                        evidence={
+                            "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                            "active_close_trade_ids": sorted(close_ids & active_trade_ids),
+                        },
                     )
                 )
     return out

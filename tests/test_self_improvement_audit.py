@@ -144,6 +144,82 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["evidence"]["current_streak"], 3)
 
+    def test_rejected_close_for_closed_trades_is_not_current_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["T1"]},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "CLOSE_THESIS_STILL_VALID",
+                                "message": "CLOSE rejected for stale fixture trade",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        self.assertIn("STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES", codes)
+        self.assertEqual(codes["STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES"]["priority"], "P1")
+
+    def test_rejected_close_for_active_trade_remains_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True)
+            files["entry_thesis"].write_text(
+                json.dumps(
+                    {
+                        "trade_id": "T1",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "filled_at_utc": _NOW.isoformat(),
+                    }
+                )
+                + "\n"
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "CLOSE", "close_trade_ids": ["T1"]},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "CLOSE_THESIS_STILL_VALID",
+                                "message": "CLOSE rejected for active fixture trade",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertGreaterEqual(summary.p0_findings, 1)
+        self.assertIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        self.assertEqual(
+            codes["LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES"]["evidence"]["active_close_trade_ids"],
+            ["T1"],
+        )
+
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

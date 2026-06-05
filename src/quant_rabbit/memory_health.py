@@ -116,7 +116,7 @@ class MemoryHealthAuditor:
         active_positions = _active_trader_positions(snapshot)
         live_ready_pairs = _live_ready_pairs(intents)
         intent_pairs = _intent_pairs(intents)
-        required_pairs = tuple(dict.fromkeys([*live_ready_pairs, *intent_pairs, *(p["pair"] for p in active_positions)]))
+        required_pairs = tuple(dict.fromkeys([*live_ready_pairs, *(p["pair"] for p in active_positions)]))
 
         metrics["runtime"] = {
             "target_open": target_open,
