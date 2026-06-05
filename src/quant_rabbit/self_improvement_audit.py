@@ -55,6 +55,18 @@ AUDIT_HISTORY_DUPLICATE_WINDOW_SECONDS = _env_nonnegative_float(
     120.0,
 )
 
+# Three consecutive non-duplicate audits is an operational trend, not a single
+# market outcome. Persistent negative expectancy plus loss/win asymmetry must
+# block fresh-risk confidence until repaired or explicitly justified.
+PERSISTENT_PROFITABILITY_STREAK_MIN = int(
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_PROFITABILITY_STREAK_MIN", 3.0)
+)
+
+PROFITABILITY_DISCIPLINE_CODES = (
+    "NEGATIVE_RECENT_EXPECTANCY",
+    "SMALL_WIN_LARGE_LOSS_ASYMMETRY",
+)
+
 
 @dataclass(frozen=True)
 class SelfImprovementAuditSummary:
@@ -140,6 +152,7 @@ class SelfImprovementAuditor:
         active_trade_ids = {str(item.get("trade_id") or "") for item in active_positions if item.get("trade_id")}
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         effect_24h = _effect_metrics(self.db_path, window_hours=24.0, now=clock)
+        profitability_streak_before = self._history_code_streak(PROFITABILITY_DISCIPLINE_CODES)
 
         findings: list[dict[str, Any]] = []
         artifact_loads = {
@@ -206,6 +219,7 @@ class SelfImprovementAuditor:
                 effect_24h=effect_24h,
                 snapshot=snapshot,
                 min_sample=3,
+                previous_discipline_streak=profitability_streak_before,
             )
         )
         findings.extend(
@@ -488,6 +502,38 @@ class SelfImprovementAuditor:
                         payload["generated_at_utc"],
                     ),
                 )
+
+    def _history_code_streak(self, required_codes: tuple[str, ...]) -> int:
+        """Return consecutive prior audit runs containing every requested code."""
+        if not required_codes or not self.history_db_path.exists():
+            return 0
+        try:
+            with sqlite3.connect(f"file:{self.history_db_path}?mode=ro", uri=True) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    """
+                    SELECT run_uid
+                    FROM self_improvement_audit_runs
+                    ORDER BY ts_utc DESC
+                    LIMIT 64
+                    """
+                ).fetchall()
+                streak = 0
+                for row in rows:
+                    codes = {
+                        str(item[0] or "")
+                        for item in conn.execute(
+                            "SELECT code FROM self_improvement_findings WHERE run_uid = ?",
+                            (row["run_uid"],),
+                        )
+                    }
+                    if all(code in codes for code in required_codes):
+                        streak += 1
+                        continue
+                    break
+                return streak
+        except sqlite3.Error:
+            return 0
 
 
 def _history_has_recent_duplicate(
@@ -956,6 +1002,7 @@ def _profitability_findings(
     effect_24h: dict[str, Any],
     snapshot: dict[str, Any],
     min_sample: int,
+    previous_discipline_streak: int = 0,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     closed = int(effect.get("closed_trades") or 0)
@@ -991,6 +1038,7 @@ def _profitability_findings(
         )
     avg_win = _maybe_float(effect.get("avg_win_jpy"))
     avg_loss = _maybe_float(effect.get("avg_loss_jpy_abs"))
+    has_loss_asymmetry = avg_win is not None and avg_win > 0 and avg_loss is not None and avg_loss > avg_win * 2
     if avg_win is not None and avg_win > 0 and avg_loss is not None and avg_loss > avg_win * 2:
         out.append(
             _finding(
@@ -1001,6 +1049,46 @@ def _profitability_findings(
                 message=f"average loss {avg_loss:.2f} JPY is more than 2x average win {avg_win:.2f} JPY",
                 next_action="Audit TP capture, giveback, and close discipline for the worst losing segment.",
                 evidence={"avg_win_jpy": avg_win, "avg_loss_jpy_abs": avg_loss, "worst_segments": effect.get("worst_segments", [])[:5]},
+            )
+        )
+    has_negative_expectancy = closed >= min_sample and (
+        net < 0 or (expectancy is not None and expectancy < 0) or (pf is not None and pf < 1.0)
+    )
+    current_discipline_streak = previous_discipline_streak + 1
+    if (
+        has_negative_expectancy
+        and has_loss_asymmetry
+        and current_discipline_streak >= max(1, PERSISTENT_PROFITABILITY_STREAK_MIN)
+    ):
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P0",
+                layer="profitability",
+                code="PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                message=(
+                    f"profitability discipline has failed for {current_discipline_streak} consecutive audit run(s): "
+                    f"PF={_fmt_optional(pf)}, expectancy={_fmt_optional(expectancy)}, "
+                    f"avg_loss={_fmt_optional(avg_loss)} JPY vs avg_win={_fmt_optional(avg_win)} JPY"
+                ),
+                next_action=(
+                    "Block new-risk confidence until execution_ledger.db worst segments prove repaired "
+                    "close discipline or the trader route explicitly justifies the exception."
+                ),
+                evidence={
+                    "current_streak": current_discipline_streak,
+                    "previous_streak": previous_discipline_streak,
+                    "streak_min": PERSISTENT_PROFITABILITY_STREAK_MIN,
+                    "effect_metrics": effect,
+                    "last_24h_effect_metrics": effect_24h,
+                    "system_defect_evidence": {
+                        "profit_factor": pf,
+                        "expectancy_jpy": expectancy,
+                        "avg_win_jpy": avg_win,
+                        "avg_loss_jpy_abs": avg_loss,
+                        "worst_segments": effect.get("worst_segments", [])[:5],
+                    },
+                },
             )
         )
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}

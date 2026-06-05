@@ -119,6 +119,31 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED", codes)
         self.assertNotIn("VERIFICATION_LEDGER_BLOCKED", codes)
 
+    def test_persistent_profitability_discipline_escalates_to_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, -400.0, 50.0, -300.0),
+            )
+
+            first = _run(files, now=_NOW)
+            second = _run(files, now=_NOW + timedelta(minutes=3))
+            third = _run(files, now=_NOW + timedelta(minutes=6))
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(first.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(second.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(third.status, STATUS_BLOCKED)
+        self.assertIn("NEGATIVE_RECENT_EXPECTANCY", codes)
+        self.assertIn("SMALL_WIN_LARGE_LOSS_ASYMMETRY", codes)
+        self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
+        self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["evidence"]["current_streak"], 3)
+
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
