@@ -49,6 +49,22 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(run_count, 1)
             self.assertEqual(finding_count, summary.findings)
 
+    def test_history_dedupes_identical_retry_inside_operational_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=True, write_memory=False)
+
+            first = _run(files, now=_NOW)
+            second = _run(files, now=_NOW + timedelta(seconds=30))
+
+            self.assertEqual(first.status, STATUS_BLOCKED)
+            self.assertEqual(second.status, STATUS_BLOCKED)
+            with sqlite3.connect(files["history_db"]) as conn:
+                run_count = conn.execute("SELECT COUNT(*) FROM self_improvement_audit_runs").fetchone()[0]
+                finding_count = conn.execute("SELECT COUNT(*) FROM self_improvement_findings").fetchone()[0]
+            self.assertEqual(run_count, 1)
+            self.assertEqual(finding_count, first.findings)
+
     def test_action_required_for_hidden_open_loss_and_low_market_rr(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -131,7 +147,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
 
 
-def _run(files: dict[str, Path]):
+def _run(files: dict[str, Path], *, now: datetime = _NOW):
     return SelfImprovementAuditor(
         db_path=files["execution_db"],
         history_db_path=files["history_db"],
@@ -153,7 +169,7 @@ def _run(files: dict[str, Path]):
         thesis_evolution_path=files["thesis_evolution"],
         position_thesis_path=files["position_thesis"],
         forecast_persistence_path=files["forecast_persistence"],
-        now=_NOW,
+        now=now,
     )
 
 

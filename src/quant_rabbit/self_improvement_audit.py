@@ -47,6 +47,14 @@ PROJECTION_PENDING_EXPIRY_GRACE_SECONDS = _env_nonnegative_float(
     300.0,
 )
 
+# Scheduled runners and wrappers can retry the same audit after a blocked exit
+# code; identical evidence inside this operational retry window is one audit
+# observation, not a new trend sample.
+AUDIT_HISTORY_DUPLICATE_WINDOW_SECONDS = _env_nonnegative_float(
+    "QR_SELF_IMPROVEMENT_HISTORY_DUPLICATE_WINDOW_SECONDS",
+    120.0,
+)
+
 
 @dataclass(frozen=True)
 class SelfImprovementAuditSummary:
@@ -166,6 +174,7 @@ class SelfImprovementAuditor:
                 run_id=run_id,
                 loaded=verification_loaded,
                 path=verification_ledger_path,
+                live_ready_count=len(live_ready),
             )
         )
         findings.extend(
@@ -420,6 +429,14 @@ class SelfImprovementAuditor:
         effect = payload["effect_metrics"]["window"]
         runtime = payload["runtime"]
         with sqlite3.connect(self.history_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if _history_has_recent_duplicate(
+                conn,
+                payload=payload,
+                output_path=self.output_path,
+                report_path=self.report_path,
+            ):
+                return
             conn.execute(
                 """
                 INSERT OR IGNORE INTO self_improvement_audit_runs(
@@ -472,6 +489,134 @@ class SelfImprovementAuditor:
                         payload["generated_at_utc"],
                     ),
                 )
+
+
+def _history_has_recent_duplicate(
+    conn: sqlite3.Connection,
+    *,
+    payload: dict[str, Any],
+    output_path: Path,
+    report_path: Path,
+) -> bool:
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return False
+    window_start = generated_at - timedelta(seconds=AUDIT_HISTORY_DUPLICATE_WINDOW_SECONDS)
+    expected_run = _history_run_signature(payload, output_path=output_path, report_path=report_path)
+    expected_findings = _history_findings_signature(payload.get("findings") or [])
+    rows = conn.execute(
+        """
+        SELECT run_uid, ts_utc, status, output_path, report_path, window_hours,
+               findings, p0_findings, p1_findings, p2_findings,
+               closed_trades, net_jpy, profit_factor, expectancy_jpy,
+               live_ready_lanes, open_trader_positions
+        FROM self_improvement_audit_runs
+        WHERE ts_utc >= ? AND ts_utc <= ?
+        ORDER BY ts_utc DESC
+        LIMIT 12
+        """,
+        (window_start.isoformat(), generated_at.isoformat()),
+    ).fetchall()
+    for row in rows:
+        if _history_row_signature(row) != expected_run:
+            continue
+        finding_rows = conn.execute(
+            """
+            SELECT priority, layer, code, message, next_action, evidence_json
+            FROM self_improvement_findings
+            WHERE run_uid = ?
+            """,
+            (row["run_uid"],),
+        ).fetchall()
+        if _history_db_findings_signature(finding_rows) == expected_findings:
+            return True
+    return False
+
+
+def _history_run_signature(
+    payload: dict[str, Any],
+    *,
+    output_path: Path,
+    report_path: Path,
+) -> tuple[Any, ...]:
+    findings = payload.get("findings") or []
+    effect = payload["effect_metrics"]["window"]
+    runtime = payload["runtime"]
+    return (
+        payload["status"],
+        str(output_path),
+        str(report_path),
+        _history_float(payload["window_hours"]),
+        len(findings),
+        sum(1 for item in findings if item["priority"] == "P0"),
+        sum(1 for item in findings if item["priority"] == "P1"),
+        sum(1 for item in findings if item["priority"] == "P2"),
+        int(effect.get("closed_trades") or 0),
+        _history_float(effect.get("net_jpy") or 0.0),
+        _history_float(_maybe_float(effect.get("profit_factor"))),
+        _history_float(_maybe_float(effect.get("expectancy_jpy"))),
+        int(runtime.get("live_ready_lanes") or 0),
+        int(runtime.get("open_trader_positions") or 0),
+    )
+
+
+def _history_row_signature(row: sqlite3.Row) -> tuple[Any, ...]:
+    return (
+        row["status"],
+        row["output_path"],
+        row["report_path"],
+        _history_float(row["window_hours"]),
+        int(row["findings"] or 0),
+        int(row["p0_findings"] or 0),
+        int(row["p1_findings"] or 0),
+        int(row["p2_findings"] or 0),
+        int(row["closed_trades"] or 0),
+        _history_float(row["net_jpy"] or 0.0),
+        _history_float(row["profit_factor"]),
+        _history_float(row["expectancy_jpy"]),
+        int(row["live_ready_lanes"] or 0),
+        int(row["open_trader_positions"] or 0),
+    )
+
+
+def _history_findings_signature(findings: list[dict[str, Any]]) -> tuple[tuple[str, str, str, str, str, str], ...]:
+    return tuple(
+        sorted(
+            (
+                str(item.get("priority") or ""),
+                str(item.get("layer") or ""),
+                str(item.get("code") or ""),
+                str(item.get("message") or ""),
+                str(item.get("next_action") or ""),
+                json.dumps(item.get("evidence") or {}, ensure_ascii=False, sort_keys=True),
+            )
+            for item in findings
+        )
+    )
+
+
+def _history_db_findings_signature(rows: list[sqlite3.Row]) -> tuple[tuple[str, str, str, str, str, str], ...]:
+    return tuple(
+        sorted(
+            (
+                str(row["priority"] or ""),
+                str(row["layer"] or ""),
+                str(row["code"] or ""),
+                str(row["message"] or ""),
+                str(row["next_action"] or ""),
+                str(row["evidence_json"] or "{}"),
+            )
+            for row in rows
+        )
+    )
+
+
+def _history_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    # Nine decimal places preserves audit metrics while ignoring SQLite/Python
+    # binary float representation noise during duplicate-run comparison.
+    return round(float(value), 9)
 
 
 @dataclass(frozen=True)
@@ -609,7 +754,13 @@ def _learning_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> list[
     return []
 
 
-def _verification_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> list[dict[str, Any]]:
+def _verification_findings(
+    *,
+    run_id: str,
+    loaded: _LoadedJson,
+    path: Path,
+    live_ready_count: int,
+) -> list[dict[str, Any]]:
     if loaded.error is not None:
         return [
             _finding(
@@ -624,7 +775,27 @@ def _verification_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> l
     payload = loaded.payload or {}
     status = str(payload.get("status") or "")
     blocking = int(_maybe_float(payload.get("blocking_observations")) or 0)
+    blocking_evidence = payload.get("blocking_evidence") if isinstance(payload.get("blocking_evidence"), list) else []
     if status == "BLOCKED" or blocking > 0:
+        if live_ready_count == 0 and _only_order_intent_lane_blockers(blocking_evidence):
+            return [
+                _finding(
+                    run_id=run_id,
+                    priority="P1",
+                    layer="verification",
+                    code="VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED",
+                    message=(
+                        f"verification ledger recorded {blocking} protective order-intent lane blocker(s); "
+                        "ledger integrity itself is not the P0"
+                    ),
+                    next_action="Repair the order_intents top blockers instead of treating the verification ledger as broken.",
+                    evidence={
+                        "status": status,
+                        "blocking_observations": blocking,
+                        "blocking_evidence": blocking_evidence[:8],
+                    },
+                )
+            ]
         return [
             _finding(
                 run_id=run_id,
@@ -633,7 +804,7 @@ def _verification_findings(*, run_id: str, loaded: _LoadedJson, path: Path) -> l
                 code="VERIFICATION_LEDGER_BLOCKED",
                 message=f"verification ledger is blocked with {blocking} blocking observation(s)",
                 next_action="Fix the top verification blocking evidence before the next new-risk cycle.",
-                evidence={"status": status, "blocking_observations": blocking, "blocking_evidence": payload.get("blocking_evidence", [])[:8] if isinstance(payload.get("blocking_evidence"), list) else []},
+                evidence={"status": status, "blocking_observations": blocking, "blocking_evidence": blocking_evidence[:8]},
             )
         ]
     return []
