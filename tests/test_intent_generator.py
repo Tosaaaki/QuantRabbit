@@ -1518,7 +1518,7 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE", codes)
         self.assertIn("TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE", codes)
 
-    def test_fresh_entry_requires_positive_reward_asymmetry_for_live_ready(self) -> None:
+    def test_fresh_entry_live_rr_issue_only_blocks_non_positive_reward(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import _fresh_entry_live_reward_risk_issue
 
@@ -1541,7 +1541,8 @@ class IntentGeneratorTest(unittest.TestCase):
             metadata={"position_intent": "NEW"},
         )
 
-        issue = _fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=0.83))
+        self.assertIsNone(_fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=0.83)))
+        issue = _fresh_entry_live_reward_risk_issue(intent, SimpleNamespace(reward_risk=0.0))
         self.assertIsNotNone(issue)
         self.assertEqual(issue["code"], "FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE")
         self.assertEqual(issue["severity"], "BLOCK")
@@ -2439,14 +2440,14 @@ class IntentGeneratorTest(unittest.TestCase):
             market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
             issue_codes = {issue["code"] for issue in market["risk_issues"]}
 
-            self.assertEqual(market["status"], "DRY_RUN_PASSED")
+            self.assertEqual(market["status"], "LIVE_READY")
             self.assertEqual(market["intent"]["metadata"]["geometry_model"], "RANGE_DIRECTIONAL_MARKET")
             self.assertEqual(market["intent"]["metadata"]["regime_state"], "RANGE")
             self.assertEqual(market["intent"]["metadata"]["regime_stop_widen_mult"], 1.0)
             self.assertGreaterEqual(market["intent"]["units"], 2000)
             self.assertLessEqual(market["risk_metrics"]["risk_jpy"], 140.0)
             self.assertNotIn("RANGE_MARKET_NOT_AT_RAIL", issue_codes)
-            self.assertIn("FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE", issue_codes)
+            self.assertNotIn("FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE", issue_codes)
 
     def test_range_direction_conflict_uses_m5_bias_not_aggregate_bias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2476,9 +2477,9 @@ class IntentGeneratorTest(unittest.TestCase):
             issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
             market = next(item for item in payload["results"] if item["lane_id"].endswith(":MARKET"))
 
-            self.assertEqual(market["status"], "DRY_RUN_PASSED")
+            self.assertEqual(market["status"], "LIVE_READY")
             self.assertNotIn("CHART_DIRECTION_CONFLICT", issue_codes)
-            self.assertIn("FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE", issue_codes)
+            self.assertNotIn("FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE", issue_codes)
 
     def test_open_position_with_per_trade_sized_risk_does_not_block_new_entry(self) -> None:
         # AGENT_CONTRACT §3.5 regression: portfolio cap is the WHOLE-DAY risk

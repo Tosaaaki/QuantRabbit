@@ -409,10 +409,30 @@ def _short_term_momentum_class(intent_or_context: dict[str, Any] | None) -> str:
     return "NEUTRAL"
 
 from quant_rabbit.models import BrokerSnapshot, Owner, Side, TradeMethod
+from quant_rabbit.risk import RiskPolicy
 
 
 def _trader_sl_repair_disabled() -> bool:
     return os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
+
+
+def _selection_reward_risk_floor(method: str, metadata: dict[str, Any]) -> float:
+    """Mirror RiskEngine's regime-aware RR floor for lane selection."""
+    policy = RiskPolicy()
+    regime_state = str(metadata.get("regime_state") or "").upper()
+    geometry_model = str(metadata.get("geometry_model") or "").upper()
+    position_intent = str(metadata.get("position_intent") or "NEW").upper()
+    if position_intent == "HEDGE" and bool(metadata.get("hedge_recovery")):
+        return policy.range_min_reward_risk
+    if (
+        "RANGE" in regime_state
+        or "RANGE" in geometry_model
+        or method == TradeMethod.RANGE_ROTATION.value
+    ):
+        return policy.range_min_reward_risk
+    return policy.min_reward_risk
+
+
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_CAMPAIGN_PLAN,
@@ -2797,12 +2817,14 @@ def _technical_consensus_score(
                 f"range LIMIT is anchored to {metadata.get('range_entry_side')} rail "
                 f"{metadata.get('range_support')}–{metadata.get('range_resistance')}"
             )
-        if reward_risk >= 1.2:
-            score += 2.0
+        active_rr_floor = _selection_reward_risk_floor(method, metadata)
+        if reward_risk >= active_rr_floor:
+            score += 2.0 if reward_risk >= RiskPolicy().min_reward_risk else 0.8
             support_ticks += 1
+            rationale.append(f"reward/risk clears regime floor: {reward_risk:.2f}R >= {active_rr_floor:.2f}R")
         else:
             score -= 6.0
-            blockers.append(f"reward/risk below minimum floor: {reward_risk:.2f}R")
+            blockers.append(f"reward/risk below regime floor: {reward_risk:.2f}R < {active_rr_floor:.2f}R")
         if reward_risk >= 2.0:
             score += 2.5
             rationale.append(f"reward/risk geometry supports edge: {reward_risk:.2f}R")

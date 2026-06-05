@@ -227,10 +227,12 @@ FORECAST_CONFIDENCE_TELEMETRY_TOLERANCE = _env_float(
     0.001,
     minimum=0.0,
 )
-# Fresh entries need positive reward asymmetry before LIVE_READY promotion.
-# Range/recovery dry-runs may document sub-default RR, but a new one-way broker
-# entry with reward <= risk is not profit-larger-than-loss discipline.
-FRESH_ENTRY_LIVE_MIN_REWARD_RISK = 1.0
+# Fallback TP construction for fresh entries without a structural HARVEST
+# anchor still asks for at least 1R before expanding the broker TP distance.
+# Live permission itself must come from RiskEngine's regime-derived RR floor;
+# otherwise this intent layer silently reintroduces the fixed-RR veto that
+# range/failure scalps were explicitly designed to avoid.
+FRESH_ENTRY_HARVEST_TP_FALLBACK_MIN_REWARD_RISK = 1.0
 
 
 def _broker_price_tick_pips(pair: str) -> float:
@@ -241,7 +243,7 @@ def _broker_price_tick_pips(pair: str) -> float:
 
 def _fresh_entry_live_floor_distance_pips(pair: str, stop_pips: float) -> float:
     """Minimum TP distance for NEW non-recovery entries to clear live RR."""
-    return (FRESH_ENTRY_LIVE_MIN_REWARD_RISK * stop_pips) + _broker_price_tick_pips(pair)
+    return (FRESH_ENTRY_HARVEST_TP_FALLBACK_MIN_REWARD_RISK * stop_pips) + _broker_price_tick_pips(pair)
 
 
 def _market_derived_reward_risk(chart_context: dict[str, Any] | None) -> tuple[float, list[str]]:
@@ -3472,14 +3474,13 @@ def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None
     if bool(metadata.get("hedge_recovery")):
         return None
     reward_risk = _optional_float(getattr(metrics, "reward_risk", None))
-    if reward_risk is None or reward_risk > FRESH_ENTRY_LIVE_MIN_REWARD_RISK:
+    if reward_risk is None or reward_risk > 0.0:
         return None
     return {
         "code": "FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE",
         "message": (
             f"{intent.pair} {intent.side.value} fresh entry reward/risk {reward_risk:.2f}x "
-            "does not exceed 1.00x; keep as dry-run until TP/entry geometry offers "
-            "positive reward asymmetry."
+            "is not positive; keep as dry-run until TP/entry geometry is reward-side."
         ),
         "severity": "BLOCK",
     }

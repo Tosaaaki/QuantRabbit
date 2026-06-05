@@ -7,7 +7,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side
+from quant_rabbit.models import BrokerOrder, BrokerPosition, BrokerSnapshot, Owner, Quote, Side, TradeMethod
+from quant_rabbit.risk import RiskPolicy
 from quant_rabbit.strategy.trader_brain import (
     ACTION_MONITOR_EXISTING,
     ACTION_NO_TRADE,
@@ -27,6 +28,7 @@ from quant_rabbit.strategy.trader_brain import (
     _narrative_risk_score,
     _parse_chart_story_full,
     _forecast_lane_gate,
+    _selection_reward_risk_floor,
     _short_term_momentum_class,
     _tf_lens_support,
     _tf_strength_multiplier,
@@ -36,6 +38,22 @@ from quant_rabbit.strategy.entry_thesis_ledger import PendingEntryThesis, record
 
 
 class TraderBrainTest(unittest.TestCase):
+    def test_selection_reward_risk_floor_uses_range_policy_floor(self) -> None:
+        policy = RiskPolicy()
+
+        self.assertEqual(
+            _selection_reward_risk_floor(TradeMethod.RANGE_ROTATION.value, {"regime_state": "RANGE"}),
+            policy.range_min_reward_risk,
+        )
+        self.assertEqual(
+            _selection_reward_risk_floor(TradeMethod.BREAKOUT_FAILURE.value, {"geometry_model": "RANGE_DIRECTIONAL_MARKET"}),
+            policy.range_min_reward_risk,
+        )
+        self.assertEqual(
+            _selection_reward_risk_floor(TradeMethod.BREAKOUT_FAILURE.value, {"regime_state": "TREND_UP"}),
+            policy.min_reward_risk,
+        )
+
     def test_jpy_intervention_sizes_down_but_does_not_block(self) -> None:
         # Per AGENT_CONTRACT §6, narrative concerns must size the lane down via
         # size_multiple, not block it in prose. The AUD_JPY lane MUST NOT
