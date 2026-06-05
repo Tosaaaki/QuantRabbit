@@ -86,6 +86,21 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("LIVE_READY_MARKET_RR_BELOW_ONE", codes)
         self.assertEqual(summary.live_ready_lanes, 1)
 
+    def test_lane_only_verification_blockers_do_not_mask_opportunity_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, verification_lane_blockers=True)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.p0_findings, 1)
+        self.assertIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
+        self.assertIn("VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED", codes)
+        self.assertNotIn("VERIFICATION_LEDGER_BLOCKED", codes)
+
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -182,6 +197,7 @@ def _fixtures(
     live_ready_market_rr: float | None = None,
     unrealized_pl_jpy: float = 0.0,
     closed_pls: tuple[float, ...] = (100.0, -250.0, 50.0),
+    verification_lane_blockers: bool = False,
 ) -> dict[str, Path]:
     files = {
         "execution_db": root / "execution_ledger.db",
@@ -268,9 +284,33 @@ def _fixtures(
             }
         )
     )
-    files["verification"].write_text(
-        json.dumps({"status": "OK", "blocking_observations": 0, "blocking_evidence": []})
-    )
+    verification_payload: dict[str, object] = {"status": "OK", "blocking_observations": 0, "blocking_evidence": []}
+    if verification_lane_blockers:
+        verification_payload = {
+            "status": "BLOCKED",
+            "blocking_observations": 1,
+            "blocking_evidence": [
+                {
+                    "source": "order_intents",
+                    "source_path": str(files["intents"]),
+                    "subject_type": "lane",
+                    "subject_id": "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE:LIMIT",
+                    "check_name": "lane_blockers",
+                    "status": "BLOCK",
+                    "severity": "BLOCK",
+                    "evidence": {
+                        "blockers": [
+                            {
+                                "code": "FRESH_ENTRY_REWARD_RISK_NOT_POSITIVE",
+                                "message": "fresh entry reward/risk does not exceed 1.00x",
+                                "severity": "BLOCK",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    files["verification"].write_text(json.dumps(verification_payload))
     files["forecast_history"].write_text(
         json.dumps({"timestamp_utc": _NOW.isoformat(), "cycle_id": "cycle-1", "pair": "EUR_USD", "direction": "UP"})
         + "\n"

@@ -1276,6 +1276,21 @@ def _top_intent_blockers(intents: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _only_order_intent_lane_blockers(blocking_evidence: list[Any]) -> bool:
+    if not blocking_evidence:
+        return False
+    for item in blocking_evidence:
+        if not isinstance(item, dict):
+            return False
+        if str(item.get("source") or "") != "order_intents":
+            return False
+        if str(item.get("check_name") or "") != "lane_blockers":
+            return False
+        if str(item.get("subject_type") or "") != "lane":
+            return False
+    return True
+
+
 def _close_recommendations(
     sidecars: dict[str, tuple[_LoadedJson, Path]],
     active_trade_ids: set[str],
