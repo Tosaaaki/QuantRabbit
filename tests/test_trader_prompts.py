@@ -181,7 +181,42 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("memory health audit stale" in reason for reason in route.reasons))
         self.assertTrue(any("order intents" in reason for reason in route.reasons))
-        self.assertTrue(any("daily target state" in reason for reason in route.reasons))
+        self.assertFalse(any("daily target state" in reason for reason in route.reasons))
+
+    def test_daily_target_refresh_after_memory_health_does_not_force_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            snapshot_ts = base.isoformat()
+            intents_ts = (base + timedelta(minutes=1)).isoformat()
+            memory_ts = (base + timedelta(minutes=2)).isoformat()
+            target_ts = (base + timedelta(minutes=5)).isoformat()
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts
+            snapshot["positions"] = []
+            snapshot["orders"] = []
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts
+            files["intents"].write_text(json.dumps(intents))
+
+            memory = json.loads(files["memory_health"].read_text())
+            memory["generated_at_utc"] = memory_ts
+            files["memory_health"].write_text(json.dumps(memory))
+
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = target_ts
+            target["status"] = "PURSUE_TARGET"
+            target["remaining_target_jpy"] = 1000.0
+            files["target"].write_text(json.dumps(target))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertNotEqual(route.branch, BRANCH_REFRESH)
+        self.assertFalse(any("memory health audit stale" in reason for reason in route.reasons))
 
     def test_stale_trader_overrides_does_not_preempt_position_management(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1186,18 +1186,19 @@ def _memory_health_staleness_reasons(
     """Return refresh reasons when memory-health predates its audited packet.
 
     `memory-health` is a routed evidence gate, not a durable permission token.
-    It must be regenerated after broker truth, target state, or order intents
-    move forward; otherwise a stale PASS can hide fresh telemetry blockers.
+    It must be regenerated after broker truth or order intents move forward;
+    otherwise a stale PASS can hide fresh telemetry blockers. Daily target
+    state is intentionally not a freshness reference here: gateway and target
+    bookkeeping can refresh it after memory-health from the same broker truth,
+    and treating that timestamp as new evidence forces the next cycle back to
+    refresh even when the market packet is already coherent.
     """
     refs: list[tuple[str, datetime]] = []
     account = snapshot.get("account") if isinstance(snapshot.get("account"), dict) else {}
     snapshot_ts = _parse_utc(snapshot.get("fetched_at_utc") or account.get("fetched_at_utc"))
-    target_ts = _parse_utc(target_state.get("generated_at_utc"))
     intents_ts = _parse_utc(intents.get("generated_at_utc"))
     if snapshot_ts is not None:
         refs.append(("broker snapshot", snapshot_ts))
-    if target_ts is not None:
-        refs.append(("daily target state", target_ts))
     if intents_ts is not None:
         refs.append(("order intents", intents_ts))
 
