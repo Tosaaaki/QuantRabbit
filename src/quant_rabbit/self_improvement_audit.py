@@ -254,6 +254,7 @@ class SelfImprovementAuditor:
                 trader_path=trader_decision_path,
                 target_open=target_open,
                 active_trade_ids=active_trade_ids,
+                snapshot_ts=snapshot_ts,
             )
         )
 
@@ -1224,6 +1225,7 @@ def _decision_artifact_findings(
     trader_path: Path,
     target_open: bool,
     active_trade_ids: set[str],
+    snapshot_ts: datetime | None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if gpt_loaded.error is not None:
@@ -1249,6 +1251,29 @@ def _decision_artifact_findings(
             )
         )
     if gpt_loaded.payload is not None:
+        payload = gpt_loaded.payload
+        generated_at = _parse_utc(payload.get("generated_at_utc"))
+        if generated_at is None and isinstance(payload.get("decision"), dict):
+            generated_at = _parse_utc(payload["decision"].get("generated_at_utc"))
+        if snapshot_ts is not None and generated_at is not None and generated_at < snapshot_ts:
+            priority = "P0" if target_open or active_trade_ids else "P1"
+            out.append(
+                _finding(
+                    run_id=run_id,
+                    priority=priority,
+                    layer="decision_history",
+                    code="LATEST_GPT_DECISION_STALE",
+                    message="latest GPT decision receipt predates the current broker snapshot",
+                    next_action=(
+                        "Re-verify or rewrite the GPT decision against the current broker snapshot before "
+                        "trusting WAIT, CLOSE, CANCEL, or TRADE routing."
+                    ),
+                    evidence={
+                        "generated_at_utc": generated_at.isoformat(),
+                        "snapshot_fetched_at_utc": snapshot_ts.isoformat(),
+                    },
+                )
+            )
         issues = gpt_loaded.payload.get("verification_issues")
         if isinstance(issues, list) and issues:
             blocking = [item for item in issues if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"]

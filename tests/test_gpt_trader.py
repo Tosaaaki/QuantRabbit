@@ -238,6 +238,79 @@ class GPTTraderBrainTest(unittest.TestCase):
                 "GBP_JPY position-management chart story",
             )
 
+    def test_rejects_trade_when_self_improvement_profitability_p0_persists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "p0_findings": 1,
+                        "p1_findings": 2,
+                        "p2_findings": 0,
+                        "effect_metrics": {
+                            "closed_trades": 28,
+                            "net_jpy": -6571.91,
+                            "profit_factor": 0.508,
+                            "expectancy_jpy": -234.71,
+                            "avg_win_jpy": 356.47,
+                            "avg_loss_jpy_abs": 1482.76,
+                        },
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "profitability",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 19 consecutive audit run(s)",
+                                "next_action": "Block new-risk confidence until execution_ledger.db worst segments prove repaired close discipline.",
+                                "evidence": {
+                                    "current_streak": 19,
+                                    "system_defect_evidence": {
+                                        "profit_factor": 0.508,
+                                        "expectancy_jpy": -234.71,
+                                        "avg_win_jpy": 356.47,
+                                        "avg_loss_jpy_abs": 1482.76,
+                                        "worst_segments": [
+                                            {
+                                                "pair": "EUR_USD",
+                                                "side": "SHORT",
+                                                "trades": 6,
+                                                "net_jpy": -2977.0,
+                                                "expectancy_jpy": -496.17,
+                                            }
+                                        ],
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:profitability",
+                    "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_PROFITABILITY_BLOCKS_TRADE", codes)
+            packet = payload["input_packet"]["self_improvement_audit"]
+            self.assertEqual(packet["profitability_blockers"][0]["current_streak"], 19)
+            self.assertIn(
+                "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                payload["input_packet"]["allowed_evidence_refs"],
+            )
+
     def test_report_contract_does_not_treat_receipt_close_flag_as_gate_b(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1567,6 +1640,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         attack_advice_path=files["attack_advice"],
         learning_audit_path=files["learning_audit"],
         verification_ledger_path=files["verification_ledger"],
+        self_improvement_audit_path=files["self_improvement_audit"],
         predictive_limits_path=files["predictive_limits"],
         **({"max_lanes": max_lanes} if max_lanes is not None else {}),
     )
@@ -1616,6 +1690,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "attack_advice": root / "attack_advice.json",
         "learning_audit": root / "learning_audit.json",
         "verification_ledger": root / "verification_ledger.json",
+        "self_improvement_audit": root / "self_improvement_audit.json",
         "predictive_limits": root / "predictive_limits.json",
     }
     now = datetime.now(timezone.utc).isoformat()
@@ -1829,6 +1904,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     )
     files["attack_advice"].write_text(json.dumps({}))
     files["learning_audit"].write_text(json.dumps({}))
+    files["self_improvement_audit"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     return files
 

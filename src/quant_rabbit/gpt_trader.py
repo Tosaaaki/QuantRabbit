@@ -396,6 +396,7 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PREDICTIVE_LIMIT_ORDERS,
+    DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_VERIFICATION_LEDGER,
 )
@@ -569,6 +570,7 @@ class GPTTraderBrain:
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
+        self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
         predictive_limits_path: Path = DEFAULT_PREDICTIVE_LIMIT_ORDERS,
         output_path: Path = DEFAULT_GPT_TRADER_DECISION,
         report_path: Path = DEFAULT_GPT_TRADER_DECISION_REPORT,
@@ -592,6 +594,7 @@ class GPTTraderBrain:
         self.attack_advice_path = attack_advice_path
         self.learning_audit_path = learning_audit_path
         self.verification_ledger_path = verification_ledger_path
+        self.self_improvement_audit_path = self_improvement_audit_path
         self.predictive_limits_path = predictive_limits_path
         self.output_path = output_path
         self.report_path = report_path
@@ -640,6 +643,7 @@ class GPTTraderBrain:
         attack_advice = _load_optional_json(self.attack_advice_path)
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
+        self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
@@ -650,6 +654,7 @@ class GPTTraderBrain:
             attack_advice=attack_advice,
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
+            self_improvement_audit=self_improvement_audit,
             predictive_limits=predictive_limits,
             market_status=market_status,
         )
@@ -669,6 +674,7 @@ class GPTTraderBrain:
                 "entry_thesis_blocker_blocks_trade_and_wait": True,
                 "learning_audit_blocks_unsafe_learning_influence": True,
                 "verification_ledger_is_read_only_structured_evidence": True,
+                "self_improvement_profitability_p0_blocks_trade": True,
                 "market_status_is_authoritative_calendar_evidence": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
@@ -677,6 +683,7 @@ class GPTTraderBrain:
             "ai_attack_advice": _attack_advice_packet(attack_advice),
             "learning_audit": _learning_audit_packet(learning_audit),
             "verification_ledger": _verification_ledger_packet(verification_ledger),
+            "self_improvement_audit": _self_improvement_audit_packet(self_improvement_audit),
             "predictive_limits": _predictive_limits_packet(predictive_limits, pairs=pairs),
             "market_status": _market_status_packet(market_status),
             "protection_sidecars": _protection_sidecars_packet(
@@ -743,6 +750,7 @@ class GPTTraderBrain:
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
+                "- A persistent self-improvement profitability P0 blocks new `TRADE` receipts until worst segments prove repaired close discipline or the trader route explicitly justifies the exception.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, or position_thesis no-ledger adverse technical loss with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. `TRADE` must not include `close_trade_ids`; automation may re-enter after a close only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -783,6 +791,7 @@ class DecisionVerifier:
         exposure_blockers = _trade_exposure_blockers(self.packet)
         entry_thesis_blockers = _entry_thesis_sidecar_reasons(self.packet)
         position_close_reasons = _position_close_sidecar_reasons(self.packet)
+        self_improvement_trade_blockers = _self_improvement_trade_blockers(self.packet)
 
         if decision.action == "TRADE":
             if not selected_lane_ids:
@@ -811,6 +820,14 @@ class DecisionVerifier:
                         "ENTRY_THESIS_REPAIR_REQUIRED",
                         "TRADE rejected while active trader position(s) have unverifiable entry thesis: "
                         + "; ".join(entry_thesis_blockers[:3]),
+                    )
+                )
+            if self_improvement_trade_blockers:
+                issues.append(
+                    VerificationIssue(
+                        "SELF_IMPROVEMENT_PROFITABILITY_BLOCKS_TRADE",
+                        "TRADE rejected while self-improvement audit carries persistent profitability P0: "
+                        + "; ".join(self_improvement_trade_blockers[:3]),
                     )
                 )
             issues.extend(_learning_audit_trade_issues(self.packet, selected_lane_ids, decision.evidence_refs))
@@ -1796,6 +1813,7 @@ def _allowed_refs(
     attack_advice: dict[str, Any] | None,
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
+    self_improvement_audit: dict[str, Any] | None,
     predictive_limits: dict[str, Any] | None,
     market_status: dict[str, Any] | None,
 ) -> list[str]:
@@ -1898,6 +1916,14 @@ def _allowed_refs(
                 ref = str(item.get("evidence_ref") or "").strip()
                 if ref:
                     refs.append(ref)
+    if self_improvement_audit:
+        refs.extend(["self_improvement:audit", "self_improvement:profitability"])
+        for finding in self_improvement_audit.get("findings", []) or []:
+            if not isinstance(finding, dict):
+                continue
+            code = str(finding.get("code") or "").strip()
+            if code:
+                refs.append(f"self_improvement:finding:{code}")
     if predictive_limits:
         refs.append("predictive:limits")
         for item in predictive_limits.get("orders", []) or []:
@@ -2072,6 +2098,62 @@ def _verification_rows(rows: object) -> list[dict[str, Any]]:
             )
         )
     return out
+
+
+def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "self_improvement:audit",
+            "status": "missing",
+            "p0_findings": 0,
+            "profitability_blockers": [],
+        }
+    blockers: list[dict[str, Any]] = []
+    for finding in payload.get("findings", []) or []:
+        if not isinstance(finding, dict):
+            continue
+        code = str(finding.get("code") or "")
+        if (
+            str(finding.get("priority") or "").upper() == "P0"
+            and str(finding.get("layer") or "") == "profitability"
+            and code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
+        ):
+            evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+            system_evidence = evidence.get("system_defect_evidence") if isinstance(evidence.get("system_defect_evidence"), dict) else {}
+            blockers.append(
+                {
+                    "evidence_ref": f"self_improvement:finding:{code}",
+                    "code": code,
+                    "message": finding.get("message"),
+                    "next_action": finding.get("next_action"),
+                    "current_streak": evidence.get("current_streak"),
+                    "profit_factor": system_evidence.get("profit_factor"),
+                    "expectancy_jpy": system_evidence.get("expectancy_jpy"),
+                    "avg_win_jpy": system_evidence.get("avg_win_jpy"),
+                    "avg_loss_jpy_abs": system_evidence.get("avg_loss_jpy_abs"),
+                    "worst_segments": list(system_evidence.get("worst_segments", []) or [])[:5],
+                }
+            )
+    return {
+        "evidence_ref": "self_improvement:audit",
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "p0_findings": payload.get("p0_findings"),
+        "p1_findings": payload.get("p1_findings"),
+        "p2_findings": payload.get("p2_findings"),
+        "effect_metrics": _small_dict(
+            payload.get("effect_metrics"),
+            (
+                "closed_trades",
+                "net_jpy",
+                "profit_factor",
+                "expectancy_jpy",
+                "avg_win_jpy",
+                "avg_loss_jpy_abs",
+            ),
+        ),
+        "profitability_blockers": blockers,
+    }
 
 
 def _predictive_limits_packet(payload: dict[str, Any] | None, *, pairs: set[str]) -> dict[str, Any]:
@@ -2476,6 +2558,35 @@ def _learning_audit_trade_issues(
                 )
             )
     return issues
+
+
+def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
+    audit = packet.get("self_improvement_audit")
+    if not isinstance(audit, dict):
+        return []
+    out: list[str] = []
+    for blocker in audit.get("profitability_blockers", []) or []:
+        if not isinstance(blocker, dict):
+            continue
+        code = str(blocker.get("code") or "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED")
+        message = str(blocker.get("message") or "").strip()
+        streak = blocker.get("current_streak")
+        pf = blocker.get("profit_factor")
+        expectancy = blocker.get("expectancy_jpy")
+        avg_loss = blocker.get("avg_loss_jpy_abs")
+        avg_win = blocker.get("avg_win_jpy")
+        details = []
+        if streak is not None:
+            details.append(f"streak={streak}")
+        if pf is not None:
+            details.append(f"PF={pf}")
+        if expectancy is not None:
+            details.append(f"expectancy={expectancy}")
+        if avg_loss is not None and avg_win is not None:
+            details.append(f"avg_loss={avg_loss} vs avg_win={avg_win}")
+        suffix = f" ({', '.join(details)})" if details else ""
+        out.append(f"{code}{suffix}: {message or 'persistent profitability discipline blocks new risk'}")
+    return out
 
 
 def _lane_forecast_direction_issue(lane: dict[str, Any]) -> VerificationIssue | None:

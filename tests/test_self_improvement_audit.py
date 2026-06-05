@@ -220,6 +220,38 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             ["T1"],
         )
 
+    def test_accepted_gpt_decision_predating_snapshot_is_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "WAIT"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("LATEST_GPT_DECISION_STALE", codes)
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P0")
+        self.assertEqual(
+            codes["LATEST_GPT_DECISION_STALE"]["evidence"]["snapshot_fetched_at_utc"],
+            _NOW.isoformat(),
+        )
+
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
