@@ -71,6 +71,19 @@ def _env_float(name: str, default: float, *, minimum: float | None = None) -> fl
     return value
 
 
+def _env_int(name: str, default: int, *, minimum: int | None = None) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    if minimum is not None and value < minimum:
+        return minimum
+    return value
+
+
 GEOMETRY_ATR_MULT = _env_float("QR_GEOMETRY_ATR_MULT", 1.0, minimum=0.5)
 GEOMETRY_SPREAD_FLOOR_MULT = _env_float("QR_GEOMETRY_SPREAD_FLOOR_MULT", 6.0, minimum=5.1)
 GEOMETRY_ATR_TIMEFRAME = "M5"
@@ -481,6 +494,48 @@ FORECAST_WATCH_MIN_CHART_SCORE = _env_float(
     "QR_FORECAST_WATCH_MIN_CHART_SCORE",
     0.65,
     minimum=0.50,
+)
+# Directional forecasts are calibrated as a final pair-level detector, but
+# recent live evidence can show that the final detector is underperforming while
+# specific market-condition detectors (liquidity sweep, squeeze, session timing)
+# are still scoring well in projection_ledger. A near-miss confidence forecast
+# may clear live context only when current, same-cycle projection evidence is
+# auditable and materially better than chance. The confidence shortfall is
+# bounded to 0.10 so this path rescues calibrated near-misses (for example
+# 0.47 vs a 0.55 floor), not genuinely weak predictions.
+FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL = _env_float(
+    "QR_FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL",
+    0.10,
+    minimum=0.0,
+)
+# Directional projection support must beat random direction by at least five
+# points before it can offset pair-forecast calibration. Spread/RR/risk gates
+# still run after this, so this is only permission to avoid a forecast-only veto.
+FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE = _env_float(
+    "QR_FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE",
+    0.55,
+    minimum=0.50,
+)
+# EITHER signals forecast timing/volatility, not side. They can support a raw
+# directional forecast only when their own hit-rate is materially high.
+FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE = _env_float(
+    "QR_FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE",
+    0.70,
+    minimum=0.50,
+)
+# A current projection signal that is itself below 55% confidence is not strong
+# enough to offset a weak final forecast. This floor is detector-confidence, not
+# a profit guarantee; the projection ledger hit-rate floor is checked separately.
+FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE = _env_float(
+    "QR_FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE",
+    0.55,
+    minimum=0.0,
+)
+# Reuse the projection-ledger calibration sample floor unless explicitly raised.
+FORECAST_MARKET_SUPPORT_MIN_SAMPLES = _env_int(
+    "QR_FORECAST_MARKET_SUPPORT_MIN_SAMPLES",
+    _env_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", 10, minimum=1),
+    minimum=1,
 )
 # Forecast-first seeds are allowed only when the chart packet contains at
 # least two independent TF readings with both regime and family-score context.
@@ -1443,15 +1498,21 @@ def _append_forecast_seed_lanes(
         if confidence is None:
             continue
         if confidence < min_confidence:
-            watch_reason = _forecast_watch_candidate_reason(
-                pair,
+            forecast_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
+            if not _forecast_market_support_allows_side(
+                forecast_side,
                 forecast,
-                charts,
-                source_by_pair=source_by_pair,
                 min_confidence=min_confidence,
-            )
-            if watch_reason is None:
-                continue
+            ):
+                watch_reason = _forecast_watch_candidate_reason(
+                    pair,
+                    forecast,
+                    charts,
+                    source_by_pair=source_by_pair,
+                    min_confidence=min_confidence,
+                )
+                if watch_reason is None:
+                    continue
         methods = _forecast_seed_methods(pair, forecast, charts)
         if not methods:
             continue
@@ -1528,18 +1589,29 @@ def _record_forecast_seed_telemetry(
         return
     try:
         from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
-        from quant_rabbit.strategy.projection_ledger import record_directional_forecast
+        from quant_rabbit.strategy.projection_ledger import record_directional_forecast, record_projections
 
         forecast_record = _forecast_with_pair(forecast, pair=pair)
+        regime_label = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
         record_forecast(forecast_record, data_root=data_root, cycle_id=cycle_id)
         record_directional_forecast(
             forecast_record,
             pair=pair,
             current_price=current_price,
             data_root=data_root,
-            regime_at_emission=_forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None,
+            regime_at_emission=regime_label,
             cycle_id=cycle_id,
         )
+        projection_signals = list(getattr(forecast_record, "projection_signals", ()) or ())
+        if projection_signals:
+            record_projections(
+                projection_signals,
+                pair=pair,
+                current_price=current_price,
+                data_root=data_root,
+                regime_at_emission=regime_label,
+                cycle_id=cycle_id,
+            )
     except Exception:
         return
 
@@ -1551,6 +1623,33 @@ class _ForecastPairProxy:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._forecast, name)
+
+
+class _ForecastSeedProxy:
+    def __init__(
+        self,
+        forecast: Any,
+        *,
+        pair: str,
+        market_support: dict[str, Any],
+        projection_signals: tuple[Any, ...],
+    ) -> None:
+        self._forecast = forecast
+        self.pair = pair
+        self.market_support = market_support
+        self.projection_signals = projection_signals
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._forecast, name)
+
+    def to_dict(self) -> dict[str, Any]:
+        to_dict = getattr(self._forecast, "to_dict", None)
+        payload = to_dict() if callable(to_dict) else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        payload.setdefault("pair", self.pair)
+        payload["market_support"] = self.market_support
+        return payload
 
 
 def _forecast_with_pair(forecast: Any, *, pair: str) -> Any:
@@ -1639,6 +1738,7 @@ def _forecast_seed_for_pair(
         hit_rates = compute_hit_rates(ROOT / "data")
     except Exception:
         hit_rates = None
+    regime_label = _forecast_seed_regime_label(raw_chart)
     try:
         forecast = synthesize_forecast(
             pair=pair,
@@ -1651,7 +1751,7 @@ def _forecast_seed_for_pair(
             reversal_long=reversal_long,
             reversal_short=reversal_short,
             hit_rates=hit_rates,
-            regime=_forecast_seed_regime_label(raw_chart),
+            regime=regime_label,
         )
     except Exception:
         return None
@@ -1660,7 +1760,19 @@ def _forecast_seed_for_pair(
         and (_optional_float(getattr(forecast, "confidence", None)) or 0.0) <= 0.0
     ):
         return None
-    return forecast
+    market_support = _forecast_market_support_for_forecast(
+        pair=pair,
+        forecast=forecast,
+        projection_signals=projection_signals,
+        hit_rates=hit_rates,
+        regime=regime_label,
+    )
+    return _ForecastSeedProxy(
+        forecast,
+        pair=pair,
+        market_support=market_support,
+        projection_signals=tuple(projection_signals),
+    )
 
 
 def _forecast_seed_has_rich_chart_context(raw_chart: dict[str, Any]) -> bool:
@@ -1716,6 +1828,154 @@ def _forecast_seed_regime_label(raw_chart: dict[str, Any]) -> str | None:
     if "RANGE" in raw:
         return "RANGE"
     return raw[:20] if raw else None
+
+
+def _forecast_market_support_for_forecast(
+    *,
+    pair: str,
+    forecast: Any,
+    projection_signals: list[Any],
+    hit_rates: dict[str, dict[str, Any]] | None,
+    regime: str | None,
+) -> dict[str, Any]:
+    direction = str(getattr(forecast, "direction", "") or "").upper()
+    raw_confidence = _optional_float(getattr(forecast, "raw_confidence", None))
+    out: dict[str, Any] = {
+        "ok": False,
+        "direction": direction,
+        "aligned_projection_count": 0,
+        "timing_projection_count": 0,
+        "best_hit_rate": None,
+        "best_samples": 0,
+        "reason": "",
+        "signals": [],
+    }
+    if direction not in {"UP", "DOWN"} or not projection_signals or not isinstance(hit_rates, dict):
+        out["reason"] = "no directional audited projection support"
+        return out
+    try:
+        from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
+    except Exception:
+        out["reason"] = "projection calibration unavailable"
+        return out
+
+    aligned: list[dict[str, Any]] = []
+    timing: list[dict[str, Any]] = []
+    considered: list[dict[str, Any]] = []
+    for signal in projection_signals:
+        name = str(getattr(signal, "name", "") or "")
+        signal_direction = str(getattr(signal, "direction", "") or "").upper()
+        if not name or signal_direction not in {direction, "EITHER"}:
+            continue
+        confidence = _optional_float(getattr(signal, "confidence", None)) or 0.0
+        bonus = _optional_float(getattr(signal, "bonus_magnitude", None)) or 0.0
+        if confidence < FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE:
+            continue
+        if signal_direction == "EITHER" and bonus <= 0.0:
+            continue
+        calibration_name = select_calibration_signal_name(
+            name,
+            signal_direction,
+            pair,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+        bucket = _projection_hit_rate_bucket(
+            hit_rates,
+            calibration_name,
+            pair=pair,
+            regime=regime,
+        )
+        if bucket is None:
+            continue
+        hit_rate = _optional_float(bucket.get("hit_rate"))
+        samples = _optional_int(bucket.get("samples"))
+        if hit_rate is None or samples is None:
+            continue
+        item = {
+            "name": name,
+            "calibration_name": calibration_name,
+            "direction": signal_direction,
+            "confidence": round(confidence, 4),
+            "hit_rate": round(hit_rate, 4),
+            "samples": samples,
+            "timeframe": getattr(signal, "timeframe", None),
+            "rationale": str(getattr(signal, "rationale", "") or "")[:180],
+        }
+        considered.append(item)
+        if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+            continue
+        if signal_direction == direction and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+            aligned.append(item)
+        elif signal_direction == "EITHER" and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE:
+            timing.append(item)
+
+    entry_min = _forecast_seed_min_confidence_for_direction(direction)
+    timing_with_raw_direction = bool(timing) and raw_confidence is not None and raw_confidence >= entry_min
+    ok = bool(aligned) or timing_with_raw_direction
+    best = max(aligned + timing, key=lambda item: item["hit_rate"], default=None)
+    out.update(
+        {
+            "ok": ok,
+            "aligned_projection_count": len(aligned),
+            "timing_projection_count": len(timing),
+            "best_hit_rate": best["hit_rate"] if best else None,
+            "best_samples": best["samples"] if best else 0,
+            "signals": (aligned + timing)[:4] if ok else considered[:4],
+        }
+    )
+    if aligned:
+        top = aligned[0]
+        out["reason"] = (
+            f"{top['name']} {top['direction']} hit_rate={top['hit_rate']:.2f} "
+            f"samples={top['samples']} supports weak calibrated forecast"
+        )
+    elif timing_with_raw_direction and timing:
+        top = timing[0]
+        out["reason"] = (
+            f"{top['name']} timing hit_rate={top['hit_rate']:.2f} samples={top['samples']} "
+            f"supports raw forecast confidence {raw_confidence:.2f}"
+        )
+    else:
+        out["reason"] = "no current projection clears audited support floors"
+    return out
+
+
+def _projection_hit_rate_bucket(
+    hit_rates: dict[str, dict[str, Any]],
+    signal_name: str,
+    *,
+    pair: str,
+    regime: str | None,
+) -> dict[str, Any] | None:
+    by_key = hit_rates.get(signal_name)
+    if not isinstance(by_key, dict):
+        return None
+    keys: list[str] = []
+    if regime is not None:
+        keys.append(f"{pair}:{regime}")
+    keys.append(f"{pair}:_all_regimes")
+    if regime is not None:
+        keys.append(f"_all_pairs:{regime}")
+    keys.extend(["_all_pairs:_all_regimes", pair, "_all_pairs"])
+    first_bucket: dict[str, Any] | None = None
+    for key in keys:
+        bucket = by_key.get(key)
+        if isinstance(bucket, dict):
+            if first_bucket is None:
+                first_bucket = bucket
+            samples = _optional_int(bucket.get("samples")) or 0
+            if samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+                return bucket
+    return first_bucket
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        parsed = int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return parsed
 
 
 def _forecast_seed_methods(
@@ -1867,10 +2127,16 @@ def _lane_with_forecast_context(
 
 def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> dict[str, Any]:
     confidence = _optional_float(getattr(forecast, "confidence", None)) or 0.0
+    market_support = _forecast_market_support_payload(getattr(forecast, "market_support", None))
+    component_scores = getattr(forecast, "component_scores", None)
+    if not isinstance(component_scores, dict):
+        component_scores = {}
     return {
         "forecast_cycle_id": cycle_id,
         "forecast_direction": str(getattr(forecast, "direction", "") or ""),
         "forecast_confidence": round(confidence, 4),
+        "forecast_raw_confidence": getattr(forecast, "raw_confidence", None),
+        "forecast_calibration_multiplier": getattr(forecast, "calibration_multiplier", None),
         "forecast_current_price": getattr(forecast, "current_price", None),
         "forecast_target_price": getattr(forecast, "target_price", None),
         "forecast_invalidation_price": getattr(forecast, "invalidation_price", None),
@@ -1878,6 +2144,32 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_rationale": str(getattr(forecast, "rationale_summary", "") or ""),
         "forecast_drivers_for": [str(item) for item in list(getattr(forecast, "drivers_for", ()) or ())[:3]],
         "forecast_drivers_against": [str(item) for item in list(getattr(forecast, "drivers_against", ()) or ())[:3]],
+        "forecast_component_scores": {
+            str(key): round(float(value), 4)
+            for key, value in component_scores.items()
+            if _optional_float(value) is not None
+        },
+        "forecast_market_support": market_support,
+        "forecast_market_support_ok": bool(market_support.get("ok")),
+        "forecast_market_support_reason": market_support.get("reason"),
+    }
+
+
+def _forecast_market_support_payload(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        "ok": bool(value.get("ok")),
+        "direction": str(value.get("direction") or ""),
+        "aligned_projection_count": _optional_int(value.get("aligned_projection_count")) or 0,
+        "timing_projection_count": _optional_int(value.get("timing_projection_count")) or 0,
+        "best_hit_rate": _optional_float(value.get("best_hit_rate")),
+        "best_samples": _optional_int(value.get("best_samples")) or 0,
+        "reason": str(value.get("reason") or ""),
+        "signals": [
+            item for item in list(value.get("signals") or [])[:4]
+            if isinstance(item, dict)
+        ],
     }
 
 
@@ -2233,6 +2525,7 @@ class _TelemetryLiveReadinessCache:
     latest_forecasts_by_pair: dict[str, dict[str, Any]]
     forecasts_by_pair_cycle: dict[tuple[str, str], dict[str, Any]]
     directional_projection_keys: set[tuple[str, str]]
+    projection_signal_keys: set[tuple[str, str, str]]
     expired_pending_projection_count: int
 
 
@@ -2900,6 +3193,8 @@ def _intent_from_lane(
             "forecast_cycle_id": lane.get("forecast_cycle_id"),
             "forecast_direction": lane.get("forecast_direction"),
             "forecast_confidence": lane.get("forecast_confidence"),
+            "forecast_raw_confidence": lane.get("forecast_raw_confidence"),
+            "forecast_calibration_multiplier": lane.get("forecast_calibration_multiplier"),
             "forecast_current_price": lane.get("forecast_current_price"),
             "forecast_target_price": lane.get("forecast_target_price"),
             "forecast_invalidation_price": lane.get("forecast_invalidation_price"),
@@ -2907,6 +3202,10 @@ def _intent_from_lane(
             "forecast_rationale": lane.get("forecast_rationale"),
             "forecast_drivers_for": lane.get("forecast_drivers_for"),
             "forecast_drivers_against": lane.get("forecast_drivers_against"),
+            "forecast_component_scores": lane.get("forecast_component_scores"),
+            "forecast_market_support": lane.get("forecast_market_support"),
+            "forecast_market_support_ok": lane.get("forecast_market_support_ok"),
+            "forecast_market_support_reason": lane.get("forecast_market_support_reason"),
             "mirror_of": lane.get("mirror_of"),
             "target_reward_risk": target_reward_risk,
             "base_target_reward_risk": base_reward_risk,
@@ -3435,6 +3734,8 @@ def _forecast_live_readiness_issue(
     if confidence is None or confidence < min_confidence:
         if recovery_reversal_override:
             return None
+        if _forecast_market_support_override(intent, metadata, min_confidence=min_confidence):
+            return None
         return {
             "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
             "message": (
@@ -3466,6 +3767,12 @@ def _forecast_live_readiness_issue(
 def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) -> dict[str, str] | None:
     if not metadata.get("forecast_watch_only"):
         return None
+    if _forecast_market_support_override(
+        intent,
+        metadata,
+        min_confidence=_forecast_live_min_confidence(metadata),
+    ):
+        return None
     direction = str(metadata.get("forecast_direction") or "").upper() or "UNKNOWN"
     confidence = _optional_float(metadata.get("forecast_confidence"))
     return {
@@ -3478,6 +3785,67 @@ def _forecast_watch_only_issue(intent: OrderIntent, metadata: dict[str, Any]) ->
         ),
         "severity": "WARN",
     }
+
+
+def _forecast_market_support_override(
+    intent: OrderIntent,
+    metadata: dict[str, Any],
+    *,
+    min_confidence: float,
+) -> bool:
+    return _forecast_market_support_allows_side(
+        intent.side.value,
+        metadata,
+        min_confidence=min_confidence,
+    )
+
+
+def _forecast_market_support_allows_side(
+    side: str | None,
+    source: Any,
+    *,
+    min_confidence: float,
+) -> bool:
+    if side not in {Side.LONG.value, Side.SHORT.value}:
+        return False
+    if isinstance(source, dict):
+        direction = str(source.get("forecast_direction") or "").upper()
+        confidence = _optional_float(source.get("forecast_confidence"))
+        raw_confidence = _optional_float(source.get("forecast_raw_confidence"))
+        support = _forecast_market_support_payload(source.get("forecast_market_support"))
+        chart_direction_bias = str(source.get("chart_direction_bias") or "").upper()
+    else:
+        direction = str(getattr(source, "direction", "") or "").upper()
+        confidence = _optional_float(getattr(source, "confidence", None))
+        raw_confidence = _optional_float(getattr(source, "raw_confidence", None))
+        support = _forecast_market_support_payload(getattr(source, "market_support", None))
+        chart_direction_bias = ""
+    expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
+    if expected_side != side:
+        return False
+    if confidence is None:
+        return False
+    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if confidence < support_floor:
+        return False
+    if chart_direction_bias and chart_direction_bias != side:
+        return False
+    if not bool(support.get("ok")):
+        return False
+    samples = _optional_int(support.get("best_samples")) or 0
+    if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+        return False
+    aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
+    timing_count = _optional_int(support.get("timing_projection_count")) or 0
+    hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
+    if aligned_count > 0:
+        return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+    return (
+        timing_count > 0
+        and raw_confidence is not None
+        and raw_confidence >= min_confidence
+        and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+    )
 
 
 def _fresh_entry_live_reward_risk_issue(intent: OrderIntent, metrics: Any | None) -> dict[str, str] | None:
@@ -3755,6 +4123,34 @@ def _telemetry_live_readiness_issues(
                     ),
                 )
             )
+        support_signal_names = _forecast_market_support_signal_names(metadata)
+        if support_signal_names:
+            missing_support = []
+            for signal_name in support_signal_names:
+                support_recorded = (
+                    (intent.pair, cycle_id, signal_name) in cache.projection_signal_keys
+                    if cache is not None
+                    else _projection_signal_recorded(
+                        intent.pair,
+                        cycle_id,
+                        signal_name,
+                        data_root=data_root,
+                    )
+                )
+                if not cycle_id or not support_recorded:
+                    missing_support.append(signal_name)
+            if missing_support:
+                issues.append(
+                    _telemetry_issue(
+                        "TELEMETRY_MARKET_SUPPORT_PROJECTION_REQUIRED_FOR_LIVE",
+                        (
+                            f"{intent.pair} {intent.side.value} uses forecast market support "
+                            f"{', '.join(missing_support[:3])}, but projection_ledger.jsonl has "
+                            f"no matching same-cycle projection row for cycle_id={cycle_id or 'missing'}; "
+                            "the support signal must be logged for future hit/miss calibration before live entry."
+                        ),
+                    )
+                )
 
     expired_pending = (
         cache.expired_pending_projection_count
@@ -3799,13 +4195,17 @@ def _build_telemetry_live_readiness_cache(
             forecasts_by_pair_cycle[(pair, cycle_id)] = item
 
     directional_projection_keys: set[tuple[str, str]] = set()
+    projection_signal_keys: set[tuple[str, str, str]] = set()
     expired_pending = 0
     now = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
     projection_path = data_root / "projection_ledger.jsonl"
     for item in _iter_jsonl_dicts(projection_path):
         pair = str(item.get("pair") or "")
         cycle_id = str(item.get("cycle_id") or "")
-        if pair and cycle_id and str(item.get("signal_name") or "") == "directional_forecast":
+        signal_name = str(item.get("signal_name") or "")
+        if pair and cycle_id and signal_name:
+            projection_signal_keys.add((pair, cycle_id, signal_name))
+        if pair and cycle_id and signal_name == "directional_forecast":
             directional_projection_keys.add((pair, cycle_id))
         if str(item.get("resolution_status") or "").upper() != "PENDING":
             continue
@@ -3822,6 +4222,7 @@ def _build_telemetry_live_readiness_cache(
         latest_forecasts_by_pair=latest_forecasts_by_pair,
         forecasts_by_pair_cycle=forecasts_by_pair_cycle,
         directional_projection_keys=directional_projection_keys,
+        projection_signal_keys=projection_signal_keys,
         expired_pending_projection_count=expired_pending,
     )
 
@@ -3866,6 +4267,34 @@ def _directional_projection_recorded(pair: str, cycle_id: str, *, data_root: Pat
         ):
             return True
     return False
+
+
+def _projection_signal_recorded(pair: str, cycle_id: str, signal_name: str, *, data_root: Path) -> bool:
+    if not cycle_id or not signal_name:
+        return False
+    path = data_root / "projection_ledger.jsonl"
+    for item in _iter_jsonl_dicts(path):
+        if (
+            str(item.get("pair") or "") == pair
+            and str(item.get("cycle_id") or "") == cycle_id
+            and str(item.get("signal_name") or "") == signal_name
+        ):
+            return True
+    return False
+
+
+def _forecast_market_support_signal_names(metadata: dict[str, Any]) -> tuple[str, ...]:
+    support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
+    if not bool(support.get("ok")):
+        return ()
+    names: list[str] = []
+    for item in support.get("signals") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if name:
+            names.append(name)
+    return tuple(dict.fromkeys(names))
 
 
 def _expired_pending_projection_count(*, data_root: Path, validation_time_utc: datetime) -> int:

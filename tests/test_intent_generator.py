@@ -191,6 +191,15 @@ class IntentGeneratorTest(unittest.TestCase):
                 root = Path(tmp)
                 output = root / "intents.json"
                 snapshot = _snapshot(root)
+                projection_signal = SimpleNamespace(
+                    name="bb_squeeze_expansion_imminent",
+                    timeframe="H1",
+                    direction="EITHER",
+                    lead_time_min=300,
+                    confidence=0.74,
+                    bonus_magnitude=8.0,
+                    rationale="H1 squeeze expansion timing",
+                )
                 forecast = SimpleNamespace(
                     pair="EUR_USD",
                     direction="DOWN",
@@ -202,6 +211,7 @@ class IntentGeneratorTest(unittest.TestCase):
                     rationale_summary="DOWN forecast from current tape",
                     drivers_for=("pair_chart SHORT_LEAN",),
                     drivers_against=("range bounce risk",),
+                    projection_signals=(projection_signal,),
                 )
 
                 with (
@@ -228,6 +238,11 @@ class IntentGeneratorTest(unittest.TestCase):
 
                 payload = json.loads(output.read_text())
                 rows = (root / "data" / "forecast_history.jsonl").read_text().splitlines()
+                projection_rows = [
+                    json.loads(line)
+                    for line in (root / "data" / "projection_ledger.jsonl").read_text().splitlines()
+                    if line.strip()
+                ]
         finally:
             if prior_sl is None:
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
@@ -238,6 +253,9 @@ class IntentGeneratorTest(unittest.TestCase):
         latest = json.loads(rows[-1])
         self.assertEqual(latest["pair"], "EUR_USD")
         self.assertTrue(str(latest["cycle_id"]).startswith("pre-entry-forecast-refresh:"))
+        signal_names = {row["signal_name"] for row in projection_rows}
+        self.assertIn("directional_forecast", signal_names)
+        self.assertIn("bb_squeeze_expansion_imminent", signal_names)
 
         short_results = [item for item in payload["results"] if item["intent"]["side"] == "SHORT"]
         issue_codes = {
@@ -915,6 +933,73 @@ class IntentGeneratorTest(unittest.TestCase):
             )
         )
 
+    def test_audited_projection_support_can_clear_near_miss_forecast_floor(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.49,
+                raw_confidence=0.63,
+                calibration_multiplier=0.78,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="UP forecast damped by broad directional calibration",
+                drivers_for=("M5 liquidity sweep low fade",),
+                drivers_against=("directional forecast calibration below entry gate",),
+                component_scores={"UP": 110.2, "DOWN": 49.8, "RANGE": 14.0, "EITHER": 9.5},
+                market_support={
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 1,
+                    "timing_projection_count": 0,
+                    "best_hit_rate": 0.62,
+                    "best_samples": 48,
+                    "reason": "liquidity_sweep_low UP hit_rate=0.62 samples=48 supports weak calibrated forecast",
+                    "signals": [
+                        {
+                            "name": "liquidity_sweep_low",
+                            "direction": "UP",
+                            "confidence": 0.88,
+                            "hit_rate": 0.62,
+                            "samples": 48,
+                        }
+                    ],
+                },
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                summary = IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.72,
+                        short_score=0.28,
+                        dominant_regime="TREND_UP",
+                        m5_regime="TREND_UP",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+        live_ready = [item for item in payload["results"] if item["status"] == "LIVE_READY"]
+
+        self.assertGreater(summary.live_ready, 0)
+        self.assertTrue(live_ready)
+        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
+
     def test_below_entry_forecast_for_missing_strong_chart_pair_becomes_watch_only_lane(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
@@ -1460,6 +1545,7 @@ class IntentGeneratorTest(unittest.TestCase):
             )
 
         self.assertIn(("EUR_USD", "cycle-1"), cache.directional_projection_keys)
+        self.assertIn(("EUR_USD", "cycle-1", "directional_forecast"), cache.projection_signal_keys)
         self.assertEqual(cache.expired_pending_projection_count, 1)
         intent = OrderIntent(
             pair="EUR_USD",
@@ -1517,6 +1603,120 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", codes)
         self.assertNotIn("TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE", codes)
         self.assertIn("TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE", codes)
+
+    def test_market_support_projection_must_be_same_cycle_telemetry(self) -> None:
+        from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import (
+            _build_telemetry_live_readiness_cache,
+            _telemetry_live_readiness_issues,
+        )
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        now = datetime(2026, 6, 5, 3, 10, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            data_root.mkdir()
+            ts = now.isoformat().replace("+00:00", "Z")
+            (data_root / "forecast_history.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": ts,
+                        "cycle_id": "cycle-2",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.49,
+                    }
+                )
+                + "\n"
+            )
+            directional_row = {
+                "timestamp_emitted_utc": ts,
+                "pair": "EUR_USD",
+                "signal_name": "directional_forecast",
+                "direction": "UP",
+                "resolution_window_min": 120,
+                "resolution_status": "PENDING",
+                "cycle_id": "cycle-2",
+            }
+            support_row = {
+                **directional_row,
+                "signal_name": "bb_squeeze_expansion_imminent",
+                "direction": "EITHER",
+            }
+            metadata = {
+                "forecast_direction": "UP",
+                "forecast_confidence": 0.49,
+                "forecast_cycle_id": "cycle-2",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 0,
+                    "timing_projection_count": 1,
+                    "best_hit_rate": 0.92,
+                    "best_samples": 98,
+                    "reason": "bb squeeze timing supports raw forecast",
+                    "signals": [{"name": "bb_squeeze_expansion_imminent", "direction": "EITHER"}],
+                },
+            }
+            intent = OrderIntent(
+                pair="EUR_USD",
+                side=Side.LONG,
+                order_type=OrderType.LIMIT,
+                units=5000,
+                entry=1.1734,
+                tp=1.1762,
+                sl=1.1718,
+                thesis="support telemetry intent",
+                market_context=MarketContext(
+                    regime="TREND_UP",
+                    narrative="",
+                    chart_story="",
+                    method=TradeMethod.BREAKOUT_FAILURE,
+                    invalidation="",
+                ),
+                metadata=metadata,
+            )
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1733, 1.1735, now)},
+            )
+
+            (data_root / "projection_ledger.jsonl").write_text(json.dumps(directional_row) + "\n")
+            missing_cache = _build_telemetry_live_readiness_cache(
+                data_root=data_root,
+                validation_time_utc=now,
+            )
+            missing_codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    intent,
+                    metadata,
+                    snapshot,
+                    now,
+                    cache=missing_cache,
+                )
+            }
+
+            (data_root / "projection_ledger.jsonl").write_text(
+                json.dumps(directional_row) + "\n" + json.dumps(support_row) + "\n"
+            )
+            complete_cache = _build_telemetry_live_readiness_cache(
+                data_root=data_root,
+                validation_time_utc=now,
+            )
+            complete_codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    intent,
+                    metadata,
+                    snapshot,
+                    now,
+                    cache=complete_cache,
+                )
+            }
+
+        self.assertIn("TELEMETRY_MARKET_SUPPORT_PROJECTION_REQUIRED_FOR_LIVE", missing_codes)
+        self.assertNotIn("TELEMETRY_MARKET_SUPPORT_PROJECTION_REQUIRED_FOR_LIVE", complete_codes)
 
     def test_fresh_entry_live_rr_issue_only_blocks_non_positive_reward(self) -> None:
         from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
@@ -1599,6 +1799,80 @@ class IntentGeneratorTest(unittest.TestCase):
         weak_metadata = {**metadata, "forecast_confidence": 0.49}
         weak_issue = _forecast_live_readiness_issue(intent, weak_metadata, TradeMethod.RANGE_ROTATION)
         self.assertEqual(weak_issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+
+    def test_projection_support_does_not_clear_opposing_chart_bias(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _forecast_live_readiness_issue
+
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.49,
+            "forecast_raw_confidence": 0.63,
+            "chart_direction_bias": "SHORT",
+            "forecast_market_support": {
+                "ok": True,
+                "direction": "UP",
+                "aligned_projection_count": 1,
+                "timing_projection_count": 0,
+                "best_hit_rate": 0.62,
+                "best_samples": 48,
+                "reason": "liquidity_sweep_low supports UP",
+            },
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.STOP_ENTRY,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="near-miss forecast with opposing chart bias",
+            market_context=MarketContext(
+                regime="TREND_UP current; TREND_CONTINUATION campaign lane",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        issue = _forecast_live_readiness_issue(intent, metadata, TradeMethod.TREND_CONTINUATION)
+
+        self.assertEqual(issue["code"], "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE")
+
+    def test_projection_support_falls_back_when_pair_bucket_is_thin(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UP", raw_confidence=0.63)
+        signal = SimpleNamespace(
+            name="liquidity_sweep_low",
+            direction="UP",
+            confidence=0.88,
+            bonus_magnitude=12.0,
+            timeframe="M5",
+            rationale="M5 equal-lows sweep target, fade LONG",
+        )
+        hit_rates = {
+            "liquidity_sweep_low": {
+                "EUR_USD:RANGE": {"hit_rate": 1.0, "samples": 2},
+                "_all_pairs:_all_regimes": {"hit_rate": 0.62, "samples": 48},
+            }
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_USD",
+            forecast=forecast,
+            projection_signals=[signal],
+            hit_rates=hit_rates,
+            regime="RANGE",
+        )
+
+        self.assertTrue(support["ok"])
+        self.assertEqual(support["best_samples"], 48)
+        self.assertAlmostEqual(support["best_hit_rate"], 0.62)
 
     def test_projection_expiry_grace_avoids_same_cycle_false_blocker(self) -> None:
         from quant_rabbit.strategy.intent_generator import _expired_pending_projection_count
