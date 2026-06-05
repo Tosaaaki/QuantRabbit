@@ -355,11 +355,14 @@ def _pre_event_digest_is_stale(
             if impact not in _HIGH_IMPACT_TOKENS:
                 continue
             ts = _parse_utc(event.get("timestamp_utc") or event.get("time_utc") or event.get("time") or event.get("timestamp"))
-            if ts is None or not (digest_ts <= ts <= now):
+            if ts is None or ts > now:
                 continue
             title = str(event.get("title") or event.get("event") or "")
             currency = str(event.get("currency") or event.get("country") or "").upper()
-            if _event_mentioned(text_upper, title=title, currency=currency):
+            mentioned = _event_mentioned(text_upper, title=title, currency=currency)
+            if mentioned and digest_ts <= ts:
+                return True
+            if mentioned and _PRE_EVENT_LANGUAGE_RE.search(text) and now - ts <= timedelta(hours=6):
                 return True
 
     issues = payload.get("issues") or []

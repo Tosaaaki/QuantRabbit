@@ -170,6 +170,39 @@ class NewsThemesTest(unittest.TestCase):
         self.assertEqual(themes.biases, {})
         self.assertIn("stale_pre_event_digest", themes.detected_themes)
 
+    def test_post_event_digest_with_pre_event_language_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = _write_digest(
+                root,
+                "# FX News Digest — 2026-06-05 22:17 JST\n"
+                "NFP is the dominant macro event in the next 1-4 hours. USD softer ahead of payrolls.\n",
+            )
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            themes = parse_news_themes(
+                digest,
+                calendar_path=calendar,
+                now_utc=datetime(2026, 6, 5, 13, 30, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(themes.biases, {})
+        self.assertIn("stale_pre_event_digest", themes.detected_themes)
+
     def test_pre_event_digest_still_applies_before_event_release(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
