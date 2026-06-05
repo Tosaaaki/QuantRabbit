@@ -7,7 +7,13 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from quant_rabbit.memory_health import FORECAST_SNAPSHOT_GRACE, MemoryHealthAuditor, STATUS_BLOCKED, STATUS_PASS
+from quant_rabbit.memory_health import (
+    FORECAST_SNAPSHOT_GRACE,
+    PROJECTION_PENDING_EXPIRY_GRACE,
+    MemoryHealthAuditor,
+    STATUS_BLOCKED,
+    STATUS_PASS,
+)
 
 
 class MemoryHealthAuditorTest(unittest.TestCase):
@@ -71,6 +77,35 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.status, STATUS_BLOCKED)
         self.assertEqual(summary.layers["medium_term"], "BLOCK")
         self.assertTrue(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING" for issue in payload["issues"]))
+
+    def test_projection_boundary_grace_does_not_block_same_cycle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            emitted_at = _NOW - timedelta(minutes=30) - PROJECTION_PENDING_EXPIRY_GRACE + timedelta(seconds=1)
+            files["projection_ledger"].write_text(
+                json.dumps(
+                    {
+                        "timestamp_emitted_utc": emitted_at.isoformat(),
+                        "pair": "EUR_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "UP",
+                        "entry_price": 1.17,
+                        "predicted_target_price": 1.18,
+                        "resolution_window_min": 30.0,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "cycle-1",
+                    }
+                )
+                + "\n"
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(payload["metrics"]["projection_ledger"]["expired_pending"], 0)
+        self.assertFalse(any(issue["code"] == "MEDIUM_PROJECTION_LEDGER_EXPIRED_PENDING" for issue in payload["issues"]))
 
     def test_same_cycle_forecast_snapshot_drift_does_not_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

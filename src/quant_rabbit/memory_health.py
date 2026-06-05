@@ -49,6 +49,15 @@ _MEMORY_BLOCKER_TOKENS = (
 FORECAST_SNAPSHOT_GRACE = timedelta(
     seconds=int(os.environ.get("QR_MEMORY_FORECAST_SNAPSHOT_GRACE_SECONDS", "90"))
 )
+# The trader runtime resolves expired projections before intent generation, but
+# intent generation plus sidecar refresh can take long enough for a projection
+# to cross its resolution boundary before memory-health runs. This grace
+# represents that same-cycle orchestration latency, not extra market confidence:
+# materially stale PENDING rows still block routing, while boundary rows wait
+# for the next verify-projections pass instead of starving a current entry.
+PROJECTION_PENDING_EXPIRY_GRACE = timedelta(
+    seconds=int(os.environ.get("QR_MEMORY_PROJECTION_EXPIRY_GRACE_SECONDS", "90"))
+)
 
 
 @dataclass(frozen=True)
@@ -1036,7 +1045,7 @@ def _projection_expired(row: dict[str, Any], *, now: datetime) -> bool:
     window_min = _float_value(row.get("resolution_window_min"))
     if emitted is None or window_min is None or window_min <= 0:
         return True
-    return now >= emitted + timedelta(minutes=window_min)
+    return now >= emitted + timedelta(minutes=window_min) + PROJECTION_PENDING_EXPIRY_GRACE
 
 
 def _projection_key(row: dict[str, Any]) -> tuple[Any, ...] | None:
