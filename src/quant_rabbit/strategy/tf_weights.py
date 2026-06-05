@@ -299,7 +299,7 @@ def _high_impact_news_active(
         currency = str(ev.get("currency") or ev.get("country") or "").upper()
         if pair_currencies and currency and currency not in pair_currencies:
             continue
-        ts_raw = ev.get("time") or ev.get("timestamp") or ev.get("date")
+        ts_raw = ev.get("timestamp_utc") or ev.get("time_utc") or ev.get("time") or ev.get("timestamp") or ev.get("date")
         if not ts_raw:
             continue
         try:

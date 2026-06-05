@@ -195,12 +195,10 @@ def build_calendar_snapshot(
 def _parse_ff_datetime(date_text: str, time_text: str) -> datetime | None:
     """ForexFactory feed publishes dates like 'MM-DD-YYYY' and times like '8:30am'.
 
-    Times are EST/EDT in the public mirror; we treat them as US/Eastern then
-    convert to UTC. To avoid pulling a tz database we approximate with the EST
-    offset published in the feed: the mirror tags items with EST, but in
-    practice they use a stable -5h offset across DST. To handle DST correctly
-    in the future, plug in `zoneinfo` here. For a research feed, an approximate
-    UTC translation is acceptable — the trader treats this as advisory.
+    The public `nfs.faireconomy.media` mirror publishes normalized UTC clock
+    times (for example US NFP appears as 12:30pm, not 8:30am New York time).
+    Keep the parsed clock as UTC so high-impact event windows line up with
+    broker timestamps.
     """
     if not date_text or not time_text:
         return None
@@ -234,11 +232,5 @@ def _parse_ff_datetime(date_text: str, time_text: str) -> datetime | None:
             return None
     if pm:
         hh_i += 12
-    # Treat as US Eastern, convert to UTC. We use a fixed offset of -4h (EDT)
-    # in summer half and -5h (EST) otherwise. The feed's server typically
-    # publishes EDT in May–November.
-    # Approximation: use -4h for months 3..11, -5h otherwise.
-    et_offset = -4 if 3 <= date_part.month <= 11 else -5
     naive = date_part.replace(hour=hh_i, minute=mm_i)
-    utc = naive - timedelta(hours=et_offset)
-    return utc.replace(tzinfo=timezone.utc)
+    return naive.replace(tzinfo=timezone.utc)

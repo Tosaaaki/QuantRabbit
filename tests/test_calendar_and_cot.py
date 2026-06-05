@@ -23,7 +23,7 @@ SAMPLE_FF_XML = b"""<?xml version="1.0" encoding="utf-8"?>
     <title>Non-Farm Employment Change</title>
     <country>USD</country>
     <date>05-09-2026</date>
-    <time>8:30am</time>
+    <time>12:30pm</time>
     <impact>High</impact>
     <forecast>180K</forecast>
     <previous>200K</previous>
@@ -69,9 +69,14 @@ class CalendarParseTest(unittest.TestCase):
         impacts = {e.impact for e in events}
         self.assertSetEqual(impacts, {"High"})
 
+    def test_parse_treats_public_mirror_times_as_utc(self) -> None:
+        events = parse_calendar_xml(SAMPLE_FF_XML)
+        nfp = next(e for e in events if e.title == "Non-Farm Employment Change")
+        self.assertEqual(nfp.timestamp_utc, "2026-05-09T12:30:00+00:00")
+
     def test_pair_window_flag_uses_pre_post_minutes(self) -> None:
         # Pretend "now" is 5 minutes before the NFP event
-        nfp_ts = datetime(2026, 5, 9, 12, 30, tzinfo=timezone.utc)  # 8:30am EDT = 12:30 UTC
+        nfp_ts = datetime(2026, 5, 9, 12, 30, tzinfo=timezone.utc)
         now = nfp_ts.replace(minute=25)  # 5 minutes before
         snap = build_calendar_snapshot(
             pairs=("USD_JPY", "EUR_USD"),
