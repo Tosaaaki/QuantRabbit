@@ -179,9 +179,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-predictive-limits
 # read as bounded carry-forward Gate A evidence when it still marks the same
 # open trader-owned trade REVIEW_EXIT. Fresh thesis_evolution BROKEN /
 # RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, and
-# position_thesis adverse technical loss with multi-TF confirmation are hard
-# standing loss-cut authorization. Softer sidecars still need explicit Gate B
-# before CLOSE, but without Gate B they are advisory for non-CLOSE actions and
+# position_thesis invalidation-hit or structural-break evidence with multi-TF
+# confirmation are hard standing loss-cut authorization. Adverse-entry-buffer
+# only position_thesis evidence is soft and still needs explicit Gate B before
+# CLOSE; without Gate B, soft sidecars are advisory for non-CLOSE actions and
 # must not block separate current LIVE_READY entries on other pairs or horizons.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli thesis-evolution-check
@@ -223,18 +224,18 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 #     authorization. Hard Gate A is M15/H4 close-confirmed BOS/CHOCH against
 #     side, buffered invalidation_price hit with technical confirmation,
 #     fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, structural
-#     position_management REVIEW_EXIT, or position_thesis no-ledger adverse
-#     technical loss with multi-TF confirmation. Softer sidecars (score-only
-#     position_thesis REVIEW_CLOSE, non-structural position_management
-#     REVIEW_EXIT, or forecast_persistence RECOMMEND_CLOSE)
+#     position_management REVIEW_EXIT, or position_thesis invalidation-hit /
+#     structural-break evidence with multi-TF confirmation. Softer sidecars
+#     (adverse-entry-buffer-only or score-only position_thesis REVIEW_CLOSE,
+#     non-structural position_management REVIEW_EXIT, or forecast_persistence RECOMMEND_CLOSE)
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
 # A TRADE receipt must not list close_trade_ids. If the recovery edge is gone,
-# close first, archive that CLOSE receipt, refresh broker truth / intents, and
-# only re-enter on a fresh LIVE_READY lane with a separate verified TRADE
-# receipt. The automation may do that in the same outer cycle after the close
-# is sent/staged, but never in the same receipt / stale broker packet.
+# close first and end that autotrade cycle as close-only. Refresh broker truth /
+# intents on the next scheduled cycle, and only re-enter on a fresh LIVE_READY
+# lane with a separate verified TRADE receipt. The automation must not re-enter
+# in the same outer cycle after the close is sent, staged, or already satisfied.
 # Hard sidecar Gate A or explicit Gate B close evidence is priority work: do
 # not choose TRADE, WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep
 # it. If only soft Gate A exists and explicit Gate B is missing, the sidecar is

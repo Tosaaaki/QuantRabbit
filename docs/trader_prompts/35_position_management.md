@@ -132,10 +132,10 @@ positions.
   the sidecar reason. Stale sidecars are ignored. `thesis_evolution`
   BROKEN / RECOMMEND_CLOSE is hard Gate A and carries standing authorization.
   `position_thesis` REVIEW_CLOSE is also hard only when the sidecar records
-  adverse technical loss or invalidation-hit evidence plus M5/M15/M30/H1
-  technical confirmation. Score-only `position_thesis` REVIEW_CLOSE and
-  `forecast_persistence` RECOMMEND_CLOSE are softer Gate A and still require
-  explicit env/token Gate B.
+  invalidation-hit or structural-break evidence plus M5/M15/M30/H1 technical
+  confirmation. Adverse-entry-buffer-only or score-only `position_thesis`
+  REVIEW_CLOSE and `forecast_persistence` RECOMMEND_CLOSE are softer Gate A
+  and still require explicit env/token Gate B.
 
 Macro shock, large unrealized loss, or margin pressure can strengthen the
 reason to review a thesis, but none of them is a standalone Gate A. Convert the

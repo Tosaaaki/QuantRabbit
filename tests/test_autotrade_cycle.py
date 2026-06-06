@@ -375,7 +375,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(payload["actions"][0]["issues"][0]["code"], "STALE_CLOSE_ALREADY_ABSENT")
             self.assertIn("STALE_CLOSE_SATISFIED", (root / "pe.md").read_text())
 
-    def test_stale_gpt_close_satisfied_continues_to_reentry_pass(self) -> None:
+    def test_stale_gpt_close_satisfied_defers_reentry_pass(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
@@ -440,11 +440,12 @@ class AutoTradeCycleTest(unittest.TestCase):
                 target_summary=None,
             )
 
-            self.assertTrue(cycle.archived)
-            self.assertEqual(cycle.resumed_depth, 1)
-            self.assertEqual(summary.status, "STAGED")
-            self.assertEqual(summary.decision_source, "gpt_close_then_gpt_trader")
+            self.assertFalse(cycle.archived)
+            self.assertIsNone(cycle.resumed_depth)
+            self.assertEqual(summary.status, "POSITION_ACTION_SATISFIED")
+            self.assertEqual(summary.decision_source, "gpt_trader")
             self.assertEqual(summary.position_execution_status, "STALE_CLOSE_SATISFIED")
+            self.assertEqual(summary.gpt_recovery_source, "POST_CLOSE_REENTRY_DEFERRED")
 
     def test_forecast_blocker_is_not_gpt_prefilter_eligible(self) -> None:
         score = LaneScore(
@@ -1825,7 +1826,7 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(client.orders_sent, [])
             self.assertIn("GPT trader", (root / "report.md").read_text())
 
-    def test_gpt_close_can_refresh_and_send_new_trade_same_cycle(self) -> None:
+    def test_gpt_close_defers_fresh_trade_until_next_cycle(self) -> None:
         prior_override = os.environ.get("QR_OPERATOR_CLOSE_OVERRIDE")
         os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
         try:
@@ -1915,20 +1916,18 @@ class AutoTradeCycleTest(unittest.TestCase):
                     max_loss_jpy=1_500,
                 ).run(send=True)
 
-                self.assertEqual(summary.status, "SENT")
-                self.assertEqual(summary.decision_source, "gpt_close_then_gpt_trader")
+                self.assertEqual(summary.status, "POSITION_ACTION_SENT")
+                self.assertEqual(summary.decision_source, "gpt_trader")
                 self.assertEqual(summary.position_execution_status, "SENT")
                 self.assertTrue(summary.position_execution_sent)
-                self.assertEqual(summary.gpt_action, "TRADE")
+                self.assertEqual(summary.gpt_action, "CLOSE")
+                self.assertEqual(summary.gpt_recovery_source, "POST_CLOSE_REENTRY_DEFERRED")
                 self.assertEqual(client.trades_closed, [("close-me", "ALL")])
-                self.assertEqual(len(client.orders_sent), 1)
-                self.assertEqual(summary.selected_lane_id, "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
-                close_archive = json.loads((root / "gpt_decision.close_reentry.json").read_text())
+                self.assertEqual(len(client.orders_sent), 0)
+                self.assertIsNone(summary.selected_lane_id)
+                self.assertFalse((root / "gpt_decision.close_reentry.json").exists())
                 current_receipt = json.loads((root / "gpt_decision.json").read_text())
-                self.assertEqual(close_archive["decision"]["action"], "CLOSE")
-                self.assertEqual(current_receipt["decision"]["action"], "TRADE")
-                refreshed_snapshot = json.loads((root / "snapshot.json").read_text())
-                self.assertEqual(refreshed_snapshot["positions"], [])
+                self.assertEqual(current_receipt["decision"]["action"], "CLOSE")
         finally:
             if prior_override is None:
                 os.environ.pop("QR_OPERATOR_CLOSE_OVERRIDE", None)

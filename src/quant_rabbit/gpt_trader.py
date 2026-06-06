@@ -357,10 +357,11 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
     confirmation. `position_management` can carry the deterministic
     PositionManager REVIEW_EXIT into this GPT CLOSE route; it is hard only when
     its own reasons are structural loss-cut reasons. `position_thesis` may also
-    hard-authorize a legacy/no-ledger trade when it records adverse technical
-    loss plus multi-TF confirmation. Those are the machine-readable "妥当な損切り"
-    paths. Score-only position-thesis, soft position-management, and persistence
-    reviews remain softer and need explicit operator Gate B.
+    hard-authorize a legacy/no-ledger trade, but only when it records a
+    machine-checkable invalidation hit or structural break plus multi-TF
+    confirmation. Score-only, adverse-buffer-only position-thesis, soft
+    position-management, and persistence reviews remain softer and need
+    explicit operator Gate B.
     """
     if rec.get("gate_b_standing_authorized") is True:
         return True
@@ -371,10 +372,23 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
     if source == "position_thesis" and verdict == "REVIEW_CLOSE":
         reason = str(rec.get("reason") or "").lower()
         has_technical_confirmation = "technical invalidation confirmed against" in reason
-        has_adverse_loss_break = "adverse technical loss:" in reason
         has_invalidation_hit = "invalidation hit:" in reason
-        return has_technical_confirmation and (has_adverse_loss_break or has_invalidation_hit)
+        has_structural_break = _position_thesis_structural_break_text(reason)
+        return has_technical_confirmation and (has_invalidation_hit or has_structural_break)
     return False
+
+
+def _position_thesis_structural_break_text(text: str) -> bool:
+    lowered = str(text).lower()
+    return any(
+        token in lowered
+        for token in (
+            "structural",
+            "close-confirmed",
+            "order block",
+            "ob broken",
+        )
+    )
 
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
@@ -490,9 +504,9 @@ class GPTTraderDecision:
     twenty_minute_plan: dict[str, Any] | None = None
     # Operator-directed market close on existing trader-owned positions.
     # Used only with action="CLOSE". A loss-cut and a new entry must still
-    # have separate receipts: automation may resume in the same outer cycle
-    # only after archiving the CLOSE receipt, refreshing broker truth, and
-    # requiring a fresh verified TRADE receipt.
+    # have separate receipts: automation ends the close cycle, then the next
+    # scheduled cycle must refresh broker truth and require a fresh verified
+    # TRADE receipt before any re-entry.
     close_trade_ids: tuple[str, ...] = ()
     strategy_reviews: tuple[dict[str, Any], ...] = ()
     specialist_reviews: tuple[dict[str, Any], ...] = ()
@@ -758,7 +772,7 @@ class GPTTraderBrain:
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
                 "- A persistent self-improvement profitability P0 blocks new `TRADE` receipts until worst segments prove repaired close discipline or the trader route explicitly justifies the exception.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
-                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, or position_thesis no-ledger adverse technical loss with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. `TRADE` must not include `close_trade_ids`; automation may re-enter after a close only by archiving the CLOSE receipt, refreshing broker truth, repricing intents, and requiring a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
+                "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -807,7 +821,7 @@ class DecisionVerifier:
                     VerificationIssue(
                         "CLOSE_REENTRY_SAME_RECEIPT",
                         "TRADE must not include close_trade_ids. Loss-cut first with action=CLOSE, then "
-                        "archive that receipt, rerun broker-snapshot / intents, and re-enter only from a "
+                        "end the close cycle, rerun broker-snapshot / intents on the next scheduled cycle, and re-enter only from a "
                         "separate verified TRADE receipt if a fresh LIVE_READY lane survives.",
                     )
                 )
@@ -1078,7 +1092,7 @@ class DecisionVerifier:
         # A TRADE receipt may not execute close+reentry in one packet,
         # but still validate any supplied close_trade_ids so the report shows
         # every violation instead of hiding bad ids or missing Gate A/B behind
-        # the same-cycle reentry blocker.
+        # the receipt-level reentry blocker.
         if decision.action == "TRADE" and decision.close_trade_ids:
             self._verify_close_trade_ids(decision, issues)
             self._verify_close_discipline(decision, issues)
@@ -2421,8 +2435,8 @@ def _append_position_close_required_issue(
             VerificationIssue(
                 "POSITION_CLOSE_REQUIRED",
                 f"{action} rejected while fresh position sidecar Gate A close evidence exists and close authorization is available. "
-                "Emit action=CLOSE for the named trade(s) first; after the accepted CLOSE receipt is "
-                "sent or staged, refresh broker truth / intents before any separate TRADE receipt: "
+                "Emit action=CLOSE for the named trade(s) first; after the accepted CLOSE receipt is handled, "
+                "end that cycle and refresh broker truth / intents on the next scheduled cycle before any separate TRADE receipt: "
                 f"{reason_text}",
             )
         )

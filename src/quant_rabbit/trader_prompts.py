@@ -674,13 +674,13 @@ def _position_thesis_recommendations(path: Path, fetched_at: datetime) -> list[d
 
 
 def _position_thesis_standing_authorized(item: dict[str, Any], reason_parts: list[str]) -> bool:
-    """Hard no-ledger/adverse-loss evidence from position_thesis.
+    """Hard no-ledger loss-cut evidence from position_thesis.
 
     Plain position_thesis REVIEW_CLOSE remains soft. Standing authorization is
-    only granted when the report carries both an adverse price/buffer break and
-    multi-timeframe technical invalidation confirmation. This covers legacy or
-    no-ledger positions whose original thesis cannot be reconstructed, without
-    turning score-only reviews into automatic loss cuts.
+    only granted when the report carries multi-timeframe technical invalidation
+    plus a machine-checkable invalidation hit or structural break. A generic
+    adverse entry-buffer loss is soft: no-ledger uncertainty should not become
+    automatic market-close permission by itself.
     """
 
     verdict = str(item.get("verdict") or "").upper()
@@ -688,14 +688,25 @@ def _position_thesis_standing_authorized(item: dict[str, Any], reason_parts: lis
         return False
     texts = [str(part).lower() for part in reason_parts if str(part)]
     has_technical_confirmation = any("technical invalidation confirmed against" in part for part in texts)
-    has_adverse_loss_break = any("adverse technical loss:" in part for part in texts)
     has_invalidation_hit = any("invalidation hit:" in part for part in texts)
-    return has_technical_confirmation and (has_adverse_loss_break or has_invalidation_hit)
+    has_structural_break = any(_position_thesis_structural_break_text(part) for part in texts)
+    return has_technical_confirmation and (has_invalidation_hit or has_structural_break)
+
+
+def _position_thesis_structural_break_text(text: str) -> bool:
+    lowered = str(text).lower()
+    return any(
+        token in lowered
+        for token in (
+            "structural",
+            "close-confirmed",
+            "order block",
+            "ob broken",
+        )
+    )
 
 
 def _position_thesis_reason_parts(reason_parts: list[str], *, standing_authorized: bool) -> list[str]:
-    if not standing_authorized:
-        return reason_parts[:3]
     selected: list[str] = []
     for part in reason_parts:
         if len(selected) >= 3:
@@ -707,6 +718,7 @@ def _position_thesis_reason_parts(reason_parts: list[str], *, standing_authorize
             "adverse technical loss:" not in lowered
             and "technical invalidation confirmed against" not in lowered
             and "invalidation hit:" not in lowered
+            and not _position_thesis_structural_break_text(lowered)
         ):
             continue
         if part not in selected:

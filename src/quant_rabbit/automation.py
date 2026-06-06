@@ -2293,12 +2293,13 @@ class AutoTradeCycle:
         campaign_exposure_required: bool = False,
         close_reentry_depth: int = 0,
     ) -> AutoTradeCycleSummary:
-        """After an accepted GPT CLOSE, take a fresh entry pass in-cycle.
+        """After an accepted GPT CLOSE, finish the cycle as close-only.
 
         CLOSE still cannot be bundled into a TRADE receipt. The safe shape is
-        close first, archive that receipt, then restart the cycle logic once so
-        the next entry uses fresh broker truth, freshly-priced intents, and its
-        own verified GPT TRADE receipt.
+        close first, then wait for the next scheduled cycle so any new entry
+        uses a fresh broker snapshot, freshly-priced intents, and its own
+        verified GPT TRADE receipt. Same-cycle re-entry after a realized loss
+        makes recovery behavior chase the just-invalidated context.
         """
         close_status = _position_execution_cycle_status(close_execution, fallback="GPT_CLOSE")
         close_only = AutoTradeCycleSummary(
@@ -2336,23 +2337,10 @@ class AutoTradeCycle:
             or close_execution.status == "STAGED"
             or close_execution.status == "STALE_CLOSE_SATISFIED"
         )
-        if close_reentry_depth >= 1 or not close_satisfied:
-            self._write_report(close_only, generated_at)
-            return close_only
-
-        self._archive_gpt_close_receipt_for_reentry()
-        resumed = self._run(send=send, _close_reentry_depth=close_reentry_depth + 1)
-        resumed_source = resumed.gpt_recovery_source or "FRESH_ENTRY"
-        summary = replace(
-            resumed,
-            decision_source=f"gpt_close_then_{resumed.decision_source}",
-            position_management_action=f"GPT_CLOSE_THEN_{resumed.position_management_action or 'NONE'}",
-            position_execution_status=close_execution.status,
-            position_execution_sent=close_execution.sent,
-            gpt_recovery_source=f"GPT_CLOSE_THEN_{resumed_source}",
-        )
-        self._write_report(summary, generated_at)
-        return summary
+        if close_satisfied and close_only.gpt_recovery_source is None:
+            close_only = replace(close_only, gpt_recovery_source="POST_CLOSE_REENTRY_DEFERRED")
+        self._write_report(close_only, generated_at)
+        return close_only
 
     def _archive_gpt_close_receipt_for_reentry(self) -> None:
         for path in (self.gpt_decision_path, self.gpt_decision_report_path):

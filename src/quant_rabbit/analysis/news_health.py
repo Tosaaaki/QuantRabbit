@@ -617,12 +617,49 @@ def _load_json(path: Path | None) -> dict[str, Any] | None:
 
 
 def _load_toml(path: Path) -> dict[str, Any] | None:
-    if tomllib is None:
-        return None
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
+        text = path.read_text(encoding="utf-8")
+    except OSError:
         return None
+    if tomllib is not None:
+        try:
+            return tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            return None
+    return _load_simple_toml(text)
+
+
+def _load_simple_toml(text: str) -> dict[str, Any] | None:
+    payload: dict[str, Any] = {}
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            return None
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        value = raw_value.strip()
+        if not key:
+            return None
+        if value.startswith('"') and value.endswith('"'):
+            payload[key] = value[1:-1]
+        elif value.startswith("[") and value.endswith("]"):
+            items: list[str] = []
+            inner = value[1:-1].strip()
+            if inner:
+                for part in inner.split(","):
+                    item = part.strip()
+                    if not (item.startswith('"') and item.endswith('"')):
+                        return None
+                    items.append(item[1:-1])
+            payload[key] = items
+        else:
+            try:
+                payload[key] = int(value)
+            except ValueError:
+                return None
+    return payload
 
 
 def _path_mtime(path: Path) -> datetime | None:

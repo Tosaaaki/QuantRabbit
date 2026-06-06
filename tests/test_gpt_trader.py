@@ -2889,10 +2889,10 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(recs[0]["source"], "position_management")
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
-    def test_close_accepted_without_operator_token_when_position_thesis_adverse_technical_loss(self) -> None:
-        # Legacy/no-ledger positions can still be cut without a fresh token when
-        # position_thesis records adverse buffer break plus multi-TF technical
-        # confirmation. This is the live 471414 failure mode.
+    def test_close_rejected_without_operator_token_when_position_thesis_adverse_loss_only(self) -> None:
+        # Legacy/no-ledger adverse-entry-buffer loss is soft. It may be useful
+        # evidence, but without invalidation-hit / structural-break evidence it
+        # must not become standing permission to realize a loss.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
@@ -2906,6 +2906,41 @@ class CloseDisciplineTest(unittest.TestCase):
                 ],
                 context_notes=[
                     "adverse technical loss: no entry thesis; current ask 1.16310 >= entry-buffer 1.15891",
+                    "technical invalidation confirmed against SHORT: H1 RSI=65.3; M15 BOS_UP; M30 MACD+; M5 ST+",
+                ],
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:thesis:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_thesis")
+            self.assertFalse(recs[0]["gate_b_standing_authorized"])
+
+    def test_close_accepted_without_operator_token_when_position_thesis_invalidation_hit(self) -> None:
+        # Position-thesis can still hard-authorize no-ledger loss-cut when the
+        # sidecar records a machine-checkable invalidation hit plus multi-TF
+        # confirmation.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="SHORT", m15_dir="DOWN", h4_dir="DOWN")
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                rationale_lines=[
+                    "patterns +30.0",
+                    "forward-proj +25.0",
+                    "chart-tech -8.0",
+                ],
+                context_notes=[
+                    "invalidation hit: current ask 1.16310 >= invalidation price 1.16290 plus anti-wick buffer",
                     "technical invalidation confirmed against SHORT: H1 RSI=65.3; M15 trend up; M30 MACD+; M5 ST+",
                 ],
             )
