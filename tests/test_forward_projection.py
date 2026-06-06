@@ -710,6 +710,59 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         signal = next(s for s in signals if s.name == "macro_event_nowcast_consumption")
         self.assertEqual(signal.direction, "DOWN")
 
+    def test_pre_event_macro_nowcast_projects_aud_weakness_from_gdp_trade_drag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-03T01:30:00+00:00",
+                                "currency": "AUD",
+                                "impact": "High",
+                                "title": "GDP q/q",
+                                "forecast": "0.5%",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "source": "MacroWire",
+                                "title": "Australia net trade and flat government spending cloud GDP outlook",
+                                "summary": (
+                                    "Net trade will subtract from Q1 GDP as imports surged and "
+                                    "commodity exports fell, with government spending flat."
+                                ),
+                                "published_at_utc": "2026-06-02T02:36:49+00:00",
+                                "currencies": ["AUD"],
+                                "topics": ["growth", "trade"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="AUD_USD",
+                current_price=0.7150,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 2, 3, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "macro_event_nowcast_growth")
+        self.assertEqual(signal.direction, "DOWN")
+
     def test_pre_event_macro_nowcast_ignores_ambiguous_digest_without_currency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -940,6 +940,18 @@ _COMMODITY_SOFT_RE = re.compile(
     r"declined|downside|oil\s+drop|oil\s+falls|crude\s+lower|trade\s+deficit)\b",
     re.IGNORECASE,
 )
+# (a) GDP/trade-drag context where a superficially "strong" word such as
+#     "imports surged" is negative for growth or the currency.
+# (b) The 120-character proximity window keeps the drag verb inside the same
+#     headline sentence/clause without requiring a full NLP dependency parser.
+# (c) Replace with structured macro-component parsing when GDP contribution
+#     data is wired into the news/economic-calendar packet.
+_GROWTH_DRAG_CONTEXT_RE = re.compile(
+    r"\b(net\s+trade|imports?|exports?|government\s+spending|public\s+demand|GDP|growth|outlook)\b"
+    r"[^.]{0,120}\b(subtract(?:s|ed)?|drag(?:s|ged)?|cloud(?:s|ed)?|weigh(?:s|ed)?|"
+    r"flat|fall(?:s|en)?|fell|slow(?:s|ed|ing)?|weaker|below)\b",
+    re.IGNORECASE,
+)
 _RATE_CUT_BETS_FADE_RE = re.compile(
     r"\b(rate\s+)?cut\s+bets?\s+(fade|fades|faded|recede|recedes|receded|"
     r"drop|drops|dropped|fall|falls|fell|ease|eases|eased|trim|trimmed|pared)\b",
@@ -1282,6 +1294,8 @@ def _macro_family_direction_score(text: str, family: _MacroNowcastFamily, weight
             return weight
         if _RATE_CUT_BETS_RISE_RE.search(text) or _RATE_HIKE_BETS_FADE_RE.search(text):
             return -weight
+    if family.name in {"growth", "trade_commodity"} and _GROWTH_DRAG_CONTEXT_RE.search(text):
+        return -weight
     if family.lower_is_better_re is not None and family.lower_is_better_re.search(text):
         return _macro_lower_is_better_score(text, family, weight)
     return _macro_higher_is_better_score(text, family, weight)
