@@ -117,6 +117,54 @@ NEWS_THEME_FOLLOWTHROUGH_MIN_ABS_BIAS = float(os.environ.get("QR_NEWS_THEME_FOLL
 NEWS_THEME_FOLLOWTHROUGH_BONUS = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_BONUS", "10.0"))
 NEWS_THEME_FOLLOWTHROUGH_BASE_CONFIDENCE = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_BASE_CONF", "0.56"))
 NEWS_THEME_FOLLOWTHROUGH_CONFIDENCE_GAIN = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_CONF_GAIN", "0.24"))
+# (a) Pre-release US employment nowcast. NFP is not knowable before BLS prints,
+#     but the trader can score whether same-week labor-market evidence is
+#     leaning toward a USD-positive or USD-negative surprise versus consensus.
+# (b) Five calendar days covers the normal NFP evidence stack (JOLTS/ISM/ADP/
+#     claims/layoffs) without carrying old month-end commentary into a new
+#     event week. News evidence is separately capped to seven days.
+# (c) Replace with a learned per-indicator regression once the projection
+#     ledger has enough `us_employment_nowcast` samples.
+US_EMPLOYMENT_NOWCAST_LOOKAHEAD_MIN = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_LOOKAHEAD_MIN", "7200.0"))
+# (a) Maximum age for labor-market headlines used in the same event-week
+#     nowcast. Public news/RSS items often arrive several days before NFP.
+# (b) Seven days is the release-week envelope, not a trading threshold.
+# (c) Replace with source/event timestamp joins when a structured macro data
+#     provider is wired into the artifact packet.
+US_EMPLOYMENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS = float(
+    os.environ.get("QR_US_EMPLOYMENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS", "168.0")
+)
+# (a) Minimum net evidence score before the nowcast is emitted.
+# (b) One generic headline is not enough; this floor requires either one
+#     primary leading indicator plus direction wording, or several secondary
+#     labor clues in agreement.
+# (c) Replace with forecast-error calibrated posterior odds.
+US_EMPLOYMENT_NOWCAST_MIN_ABS_SCORE = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_MIN_ABS_SCORE", "2.0"))
+# (a) Score at which confidence/bonus saturation begins.
+# (b) Three primary indicators or equivalent secondary agreement is enough to
+#     call the pre-release labor skew strong without letting news dominate all
+#     chart/broker evidence.
+# (c) Replace with a standard-deviation scale after structured samples exist.
+US_EMPLOYMENT_NOWCAST_SCORE_CAP = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_SCORE_CAP", "6.0"))
+# (a) Projection magnitude for a pre-release employment nowcast.
+# (b) Lower than actual-vs-forecast surprise because this is probabilistic
+#     evidence, but large enough to shape forecast direction in ambiguous charts.
+# (c) Replace with realized NFP-week FX response calibration.
+US_EMPLOYMENT_NOWCAST_BONUS = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_BONUS", "12.0"))
+# (a) Confidence mapping for pre-release nowcast evidence.
+# (b) Baseline starts below the same-cycle bootstrap floor; only corroborated
+#     evidence reaches high confidence.
+# (c) Replace with learned hit-rate calibration by event cluster.
+US_EMPLOYMENT_NOWCAST_BASE_CONFIDENCE = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_BASE_CONF", "0.57"))
+US_EMPLOYMENT_NOWCAST_CONFIDENCE_GAIN = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_CONF_GAIN", "0.24"))
+
+# (a) Relative evidence weights inside the NFP nowcast. ADP/nonfarm/payroll
+#     clues are primary; claims/JOLTS/ISM/layoff/wage clues are supporting.
+# (b) These are qualitative information weights, not risk or pip thresholds.
+# (c) Replace each with learned per-indicator coefficients.
+US_EMPLOYMENT_NOWCAST_PRIMARY_WEIGHT = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_PRIMARY_WEIGHT", "2.0"))
+US_EMPLOYMENT_NOWCAST_SECONDARY_WEIGHT = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_SECONDARY_WEIGHT", "1.4"))
+US_EMPLOYMENT_NOWCAST_GENERIC_WEIGHT = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_GENERIC_WEIGHT", "0.8"))
 
 # Cross-asset lag
 CROSS_ASSET_MOVE_THRESHOLD_PCT = float(os.environ.get("QR_CROSS_ASSET_THRESHOLD_PCT", "0.3"))
@@ -511,6 +559,290 @@ def _detect_news_theme_followthrough(
     ]
 
 
+_US_EMPLOYMENT_EVENT_RE = re.compile(
+    r"\b(NFP|NON[-\s]?FARM|PAYROLL|EMPLOYMENT\s+CHANGE|UNEMPLOYMENT\s+RATE|"
+    r"AVERAGE\s+HOURLY\s+EARNINGS)\b",
+    re.IGNORECASE,
+)
+_US_EMPLOYMENT_EVIDENCE_RE = re.compile(
+    r"\b(NFP|NON[-\s]?FARM|PAYROLL|ADP|PRIVATE\s+PAYROLL|JOBLESS|CLAIMS|"
+    r"JOLTS|JOB\s+OPENINGS|ISM|PMI|EMPLOYMENT|UNEMPLOYMENT|LAYOFF|LAYOFFS|"
+    r"JOB\s+CUTS|HIRING|WAGES?|AVERAGE\s+HOURLY\s+EARNINGS|LABO[RU]R\s+MARKET)\b",
+    re.IGNORECASE,
+)
+_US_EMPLOYMENT_STRONG_RE = re.compile(
+    r"\b(beat|beats|above|strong|stronger|robust|resilient|hot|tight|"
+    r"broad[-\s]?based|accelerat(?:e|es|ed|ing)|jump|jumps|jumped|surge|"
+    r"surges|surged|rise|rises|rose|higher|upside|increase|increased|"
+    r"expansion)\b",
+    re.IGNORECASE,
+)
+_US_EMPLOYMENT_SOFT_RE = re.compile(
+    r"\b(miss|misses|below|weak|weaker|soft|softer|cool|cools|cooled|"
+    r"slow|slows|slowed|slowing|crack|cracks|fall|falls|fell|drop|drops|"
+    r"dropped|lower|downside|contraction|decline|declined|cut|cuts|"
+    r"layoff|layoffs)\b",
+    re.IGNORECASE,
+)
+_US_EMPLOYMENT_PRIMARY_RE = re.compile(r"\b(NFP|NON[-\s]?FARM|PAYROLL|ADP|PRIVATE\s+PAYROLL)\b", re.IGNORECASE)
+_US_EMPLOYMENT_CLAIMS_RE = re.compile(r"\b(JOBLESS|CLAIMS|UNEMPLOYMENT\s+INSURANCE)\b", re.IGNORECASE)
+_US_EMPLOYMENT_LOWER_IS_BETTER_RE = re.compile(
+    r"\b(JOBLESS|CLAIMS|UNEMPLOYMENT\s+RATE|LAYOFF|LAYOFFS|JOB\s+CUTS)\b",
+    re.IGNORECASE,
+)
+_US_EMPLOYMENT_SECONDARY_RE = re.compile(
+    r"\b(JOLTS|JOB\s+OPENINGS|ISM|PMI|HIRING|WAGES?|AVERAGE\s+HOURLY\s+EARNINGS|"
+    r"LABO[RU]R\s+MARKET)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_us_employment_nowcast(
+    pair: str,
+    *,
+    calendar_path: Path | None,
+    news_digest_path: Path | None,
+    news_items_path: Path | None,
+    now: Optional[datetime] = None,
+) -> List[ProjectionSignal]:
+    """Pre-release NFP/US employment surprise nowcast from current news evidence."""
+
+    if calendar_path is None or not calendar_path.exists():
+        return []
+    base, quote = _pair_currencies(pair)
+    if "USD" not in {base, quote}:
+        return []
+    now_utc = now or datetime.now(timezone.utc)
+    cluster = _next_us_employment_event_cluster(calendar_path, now_utc)
+    if cluster is None:
+        return []
+    event_time, event_titles = cluster
+    evidence = _us_employment_evidence_from_news_items(
+        news_items_path,
+        now_utc=now_utc,
+        event_time=event_time,
+    )
+    evidence.extend(
+        _us_employment_evidence_from_digest(
+            news_digest_path,
+            now_utc=now_utc,
+            event_time=event_time,
+        )
+    )
+    if not evidence:
+        return []
+    score = sum(item["score"] for item in evidence)
+    if abs(score) < US_EMPLOYMENT_NOWCAST_MIN_ABS_SCORE:
+        return []
+    direction = _currency_strength_to_pair_direction(pair, currency="USD", strength=1 if score > 0 else -1)
+    if direction is None:
+        return []
+    normalized = min(1.0, abs(score) / max(US_EMPLOYMENT_NOWCAST_SCORE_CAP, 1.0))
+    confidence = min(0.88, US_EMPLOYMENT_NOWCAST_BASE_CONFIDENCE + normalized * US_EMPLOYMENT_NOWCAST_CONFIDENCE_GAIN)
+    bonus = US_EMPLOYMENT_NOWCAST_BONUS * normalized
+    lead_min = max(0.0, (event_time - now_utc).total_seconds() / 60.0)
+    side = "LONG" if direction == "UP" else "SHORT"
+    skew = "USD-positive" if score > 0 else "USD-negative"
+    top_evidence = sorted(evidence, key=lambda item: abs(item["score"]), reverse=True)[:3]
+    evidence_text = "; ".join(str(item["reason"])[:90] for item in top_evidence)
+    title_text = ", ".join(event_titles[:3])
+    return [
+        ProjectionSignal(
+            name="us_employment_nowcast",
+            timeframe=None,
+            direction=direction,
+            lead_time_min=lead_min,
+            confidence=confidence,
+            bonus_magnitude=bonus,
+            rationale=(
+                f"{pair} {side} pre-NFP nowcast: {skew} labor evidence score={score:+.1f} "
+                f"before {event_time.isoformat()} ({title_text}); evidence: {evidence_text}"
+            ),
+        )
+    ]
+
+
+def _next_us_employment_event_cluster(calendar_path: Path, now_utc: datetime) -> tuple[datetime, list[str]] | None:
+    try:
+        payload = json.loads(calendar_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    candidates: list[tuple[datetime, str]] = []
+    for event in payload.get("events", []) or []:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("currency") or "").upper() != "USD":
+            continue
+        impact = str(event.get("impact") or "").lower()
+        if "high" not in impact:
+            continue
+        title = str(event.get("title") or event.get("event") or "")
+        if not _US_EMPLOYMENT_EVENT_RE.search(title):
+            continue
+        ts_raw = event.get("timestamp_utc") or event.get("time_utc")
+        if not ts_raw:
+            continue
+        try:
+            event_time = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=timezone.utc)
+        if event_time < now_utc:
+            continue
+        lead_min = (event_time - now_utc).total_seconds() / 60.0
+        if lead_min > US_EMPLOYMENT_NOWCAST_LOOKAHEAD_MIN:
+            continue
+        candidates.append((event_time, title))
+    if not candidates:
+        return None
+    next_time = min(event_time for event_time, _title in candidates)
+    titles = sorted({title for event_time, title in candidates if event_time == next_time})
+    return next_time, titles
+
+
+def _us_employment_evidence_from_news_items(
+    news_items_path: Path | None,
+    *,
+    now_utc: datetime,
+    event_time: datetime,
+) -> list[dict[str, Any]]:
+    if news_items_path is None or not news_items_path.exists():
+        return []
+    try:
+        payload = json.loads(news_items_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        published = _parse_iso_utc(item.get("published_at_utc"))
+        if published is None:
+            continue
+        if published > now_utc or published > event_time:
+            continue
+        age_hours = (now_utc - published).total_seconds() / 3600.0
+        if age_hours > US_EMPLOYMENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS:
+            continue
+        text = " ".join(
+            [
+                str(item.get("title") or ""),
+                str(item.get("summary") or ""),
+                " ".join(str(topic) for topic in item.get("topics", []) or []),
+                " ".join(str(currency) for currency in item.get("currencies", []) or []),
+            ]
+        )
+        scored = _score_us_employment_nowcast_text(text)
+        if scored is None:
+            continue
+        score, reason = scored
+        source = str(item.get("source") or "news")
+        out.append({"score": score, "reason": f"{source}: {reason}"})
+    return out
+
+
+def _us_employment_evidence_from_digest(
+    news_digest_path: Path | None,
+    *,
+    now_utc: datetime,
+    event_time: datetime,
+) -> list[dict[str, Any]]:
+    if news_digest_path is None or not news_digest_path.exists():
+        return []
+    try:
+        text = news_digest_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not _US_EMPLOYMENT_EVIDENCE_RE.search(line):
+            continue
+        scored = _score_us_employment_nowcast_text(line)
+        if scored is None:
+            continue
+        score, reason = scored
+        out.append({"score": score, "reason": f"digest: {reason}"})
+    if not out:
+        return []
+    try:
+        mtime = datetime.fromtimestamp(news_digest_path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return out
+    if mtime > now_utc or mtime > event_time:
+        return []
+    age_hours = (now_utc - mtime).total_seconds() / 3600.0
+    if age_hours > US_EMPLOYMENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS:
+        return []
+    return out
+
+
+def _score_us_employment_nowcast_text(text: str) -> tuple[float, str] | None:
+    if not _US_EMPLOYMENT_EVIDENCE_RE.search(text):
+        return None
+    score = 0.0
+    reasons: list[str] = []
+    if _US_EMPLOYMENT_PRIMARY_RE.search(text):
+        delta = _higher_is_better_labor_score(text, US_EMPLOYMENT_NOWCAST_PRIMARY_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"primary payroll/ADP {'hot' if delta > 0 else 'soft'}")
+    if _US_EMPLOYMENT_CLAIMS_RE.search(text) or _US_EMPLOYMENT_LOWER_IS_BETTER_RE.search(text):
+        delta = _lower_is_better_labor_score(text, US_EMPLOYMENT_NOWCAST_SECONDARY_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"claims/unemployment/layoff {'tight' if delta > 0 else 'soft'}")
+    if _US_EMPLOYMENT_SECONDARY_RE.search(text):
+        delta = _higher_is_better_labor_score(text, US_EMPLOYMENT_NOWCAST_SECONDARY_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"secondary labor {'hot' if delta > 0 else 'soft'}")
+    if score == 0.0:
+        delta = _higher_is_better_labor_score(text, US_EMPLOYMENT_NOWCAST_GENERIC_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"generic labor {'hot' if delta > 0 else 'soft'}")
+    if score == 0.0:
+        return None
+    clipped = re.sub(r"\s+", " ", text).strip()
+    return score, f"{', '.join(reasons)}: {clipped[:120]}"
+
+
+def _higher_is_better_labor_score(text: str, weight: float) -> float:
+    strong = bool(_US_EMPLOYMENT_STRONG_RE.search(text))
+    soft = bool(_US_EMPLOYMENT_SOFT_RE.search(text))
+    if strong and not soft:
+        return weight
+    if soft and not strong:
+        return -weight
+    return 0.0
+
+
+def _lower_is_better_labor_score(text: str, weight: float) -> float:
+    strong = bool(_US_EMPLOYMENT_STRONG_RE.search(text))
+    soft = bool(_US_EMPLOYMENT_SOFT_RE.search(text))
+    if soft and not strong:
+        return weight
+    if strong and not soft:
+        return -weight
+    return 0.0
+
+
+def _parse_iso_utc(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _detect_cross_asset_lag(
     pair: str,
     cross_asset_path: Path,
@@ -624,6 +956,16 @@ def detect_forward_projections(
         out.extend(_detect_news_catalyst(pair, calendar_path, now=now))
         out.extend(_detect_event_surprise(pair, calendar_path, now=now))
     if news_digest_path is not None or news_items_path is not None:
+        if calendar_path is not None:
+            out.extend(
+                _detect_us_employment_nowcast(
+                    pair,
+                    calendar_path=calendar_path,
+                    news_digest_path=news_digest_path,
+                    news_items_path=news_items_path,
+                    now=now,
+                )
+            )
         out.extend(
             _detect_news_theme_followthrough(
                 pair,

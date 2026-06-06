@@ -74,6 +74,31 @@ class NewsSnapshotTest(unittest.TestCase):
         self.assertIn("risk_on", audusd.topics)
         self.assertIn("oil", audusd.topics)
 
+    def test_parse_rss_marks_claims_and_jolts_as_employment_topics(self) -> None:
+        payload = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>FXStreet News</title>
+    <item>
+      <title>US jobless claims rise while JOLTS job openings soften</title>
+      <link>https://www.fxstreet.com/news/us-labor-before-nfp/</link>
+      <description>Claims and job openings point to labor-market risk before payrolls.</description>
+      <pubDate>Thu, 04 Jun 2026 12:45:00 +0000</pubDate>
+      <category>Forex News</category>
+    </item>
+  </channel>
+</rss>
+"""
+
+        snap = build_news_snapshot(
+            now_utc=datetime(2026, 6, 4, 13, 0, tzinfo=timezone.utc),
+            source_payloads={FXSTREET_NEWS_SOURCE: payload},
+            fetch=False,
+        )
+
+        self.assertEqual(len(snap.items), 1)
+        self.assertIn("employment", snap.items[0].topics)
+
     def test_build_snapshot_flags_stale_feed_without_dropping_evidence(self) -> None:
         snap = build_news_snapshot(
             now_utc=datetime(2026, 5, 8, 5, 0, tzinfo=timezone.utc),

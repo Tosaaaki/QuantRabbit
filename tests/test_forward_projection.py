@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from dataclasses import dataclass
@@ -363,6 +364,156 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         long_score, long_reasons = aggregate_projection_score(signals, "LONG")
         self.assertGreater(short_score, 0.0, short_reasons)
         self.assertLess(long_score, 0.0, long_reasons)
+
+    def test_pre_event_us_employment_nowcast_projects_usd_strength(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                                "forecast": "85K",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "title": "ADP private payrolls rise 122K in May, above expectations",
+                                "summary": "Hiring was broad-based and labor market momentum stayed resilient before NFP.",
+                                "published_at_utc": "2026-06-03T12:45:00+00:00",
+                                "currencies": ["USD"],
+                                "topics": ["employment"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "us_employment_nowcast")
+        self.assertEqual(signal.direction, "DOWN")
+        self.assertGreaterEqual(signal.confidence, 0.70)
+        short_score, short_reasons = aggregate_projection_score(signals, "SHORT")
+        long_score, long_reasons = aggregate_projection_score(signals, "LONG")
+        self.assertGreater(short_score, 0.0, short_reasons)
+        self.assertLess(long_score, 0.0, long_reasons)
+
+    def test_pre_event_us_employment_nowcast_projects_usd_weakness_from_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                                "forecast": "165K",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "title": "Initial jobless claims rise above consensus",
+                                "summary": "Weekly claims increase as more workers file for unemployment insurance.",
+                                "published_at_utc": "2026-06-04T12:45:00+00:00",
+                                "currencies": ["USD"],
+                                "topics": ["employment"],
+                            },
+                            {
+                                "title": "Continuing jobless claims rise again",
+                                "summary": "Claims move higher for another week.",
+                                "published_at_utc": "2026-06-04T12:45:00+00:00",
+                                "currencies": ["USD"],
+                                "topics": ["employment"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="USD_JPY",
+                current_price=160.0,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 4, 13, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "us_employment_nowcast")
+        self.assertEqual(signal.direction, "DOWN")
+        short_score, short_reasons = aggregate_projection_score(signals, "SHORT")
+        long_score, long_reasons = aggregate_projection_score(signals, "LONG")
+        self.assertGreater(short_score, 0.0, short_reasons)
+        self.assertLess(long_score, 0.0, long_reasons)
+
+    def test_pre_event_us_employment_nowcast_ignores_future_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                                "forecast": "85K",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            digest = root / "news_digest.md"
+            digest.write_text("- ADP private payrolls rise above expectations; hiring broad-based before NFP.\n")
+            future_mtime = datetime(2026, 6, 6, 0, 0, tzinfo=timezone.utc).timestamp()
+            os.utime(digest, (future_mtime, future_mtime))
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                news_digest_path=digest,
+                now=datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertFalse(any(s.name == "us_employment_nowcast" for s in signals))
 
     def test_predictive_limit_dedupes_same_liquidity_level(self) -> None:
         signals = [
