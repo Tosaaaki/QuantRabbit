@@ -324,6 +324,46 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         event_signal = next(s for s in signals if s.name == "event_surprise_followthrough")
         self.assertEqual(event_signal.direction, "DOWN")
 
+    def test_news_items_feed_directional_followthrough_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = root / "news_digest.md"
+            digest.write_text("")
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "lookback_hours": 24,
+                        "items": [
+                            {
+                                "title": "Euro drops as strong US jobs data lifts Greenback",
+                                "summary": "NFP steamrolls US Dollar bears and sends the US Dollar higher after payrolls.",
+                                "published_at_utc": "2026-06-05T16:50:00+00:00",
+                                "currencies": ["USD"],
+                                "pairs": ["EUR_USD"],
+                                "topics": ["employment"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                news_digest_path=digest,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 5, 17, 0, tzinfo=timezone.utc),
+            )
+
+        news_signal = next(s for s in signals if s.name == "news_theme_followthrough")
+        self.assertEqual(news_signal.direction, "DOWN")
+        short_score, short_reasons = aggregate_projection_score(signals, "SHORT")
+        long_score, long_reasons = aggregate_projection_score(signals, "LONG")
+        self.assertGreater(short_score, 0.0, short_reasons)
+        self.assertLess(long_score, 0.0, long_reasons)
+
     def test_predictive_limit_dedupes_same_liquidity_level(self) -> None:
         signals = [
             _Sig("liquidity_sweep_low", "UP", "M5 equal-lows at 1.09970 (3.0pip down)"),

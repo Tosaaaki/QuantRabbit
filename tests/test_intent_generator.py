@@ -1000,6 +1000,114 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
         self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
 
+    def test_same_cycle_projection_bootstrap_can_clear_near_miss_forecast_floor(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.49,
+                raw_confidence=0.66,
+                calibration_multiplier=0.74,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="UP forecast damped while same-cycle projection is strong",
+                drivers_for=("event surprise follow-through UP",),
+                drivers_against=("directional forecast calibration below entry gate",),
+                component_scores={"UP": 116.0, "DOWN": 44.0, "RANGE": 8.0, "EITHER": 4.0},
+                market_support={
+                    "ok": True,
+                    "direction": "UP",
+                    "aligned_projection_count": 1,
+                    "timing_projection_count": 0,
+                    "best_hit_rate": None,
+                    "best_samples": 0,
+                    "bootstrap_projection_support": True,
+                    "reason": (
+                        "event_surprise_followthrough UP same-cycle bootstrap: "
+                        "signal_conf=0.86, raw_forecast_conf=0.66, calibrated_conf=0.49; "
+                        "ledger samples pending"
+                    ),
+                    "signals": [
+                        {
+                            "name": "event_surprise_followthrough",
+                            "direction": "UP",
+                            "confidence": 0.86,
+                            "samples": 0,
+                            "bootstrap_projection_support": True,
+                        }
+                    ],
+                },
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                summary = IntentGenerator(
+                    campaign_plan=_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.72,
+                        short_score=0.28,
+                        dominant_regime="TREND_UP",
+                        m5_regime="TREND_UP",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        live_ready = [item for item in payload["results"] if item["status"] == "LIVE_READY"]
+        issue_codes = {issue["code"] for item in payload["results"] for issue in item["risk_issues"]}
+
+        self.assertGreater(summary.live_ready, 0)
+        self.assertTrue(live_ready)
+        self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
+        self.assertTrue(
+            all(
+                item["intent"]["metadata"]["forecast_market_support"]["bootstrap_projection_support"]
+                for item in live_ready
+            )
+        )
+
+    def test_same_cycle_projection_bootstrap_is_built_without_ledger_samples(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(
+            direction="DOWN",
+            confidence=0.49,
+            raw_confidence=0.66,
+        )
+        projection_signal = SimpleNamespace(
+            name="event_surprise_followthrough",
+            timeframe=None,
+            direction="DOWN",
+            confidence=0.86,
+            bonus_magnitude=16.0,
+            rationale="USD high-impact payroll beat -> EUR_USD DOWN",
+        )
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_USD",
+            forecast=forecast,
+            projection_signals=[projection_signal],
+            hit_rates=None,
+            regime="TREND",
+        )
+
+        self.assertTrue(support["ok"])
+        self.assertTrue(support["bootstrap_projection_support"])
+        self.assertEqual(support["best_samples"], 0)
+        self.assertIn("ledger samples pending", support["reason"])
+
     def test_below_entry_forecast_for_missing_strong_chart_pair_becomes_watch_only_lane(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:

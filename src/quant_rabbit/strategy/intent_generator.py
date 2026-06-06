@@ -537,6 +537,28 @@ FORECAST_MARKET_SUPPORT_MIN_SAMPLES = _env_int(
     _env_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", 10, minimum=1),
     minimum=1,
 )
+# Same-cycle projection bootstrap for newly added detectors. The normal path
+# requires projection_ledger samples before a near-miss forecast can trade.
+# That is correct for mature detectors, but it creates a cold-start dead zone:
+# a factual macro surprise or other high-confidence projection cannot gather
+# live samples because it is blocked for not already having live samples. This
+# bootstrap is deliberately narrower than the audited path: raw forecast must
+# already clear the live-entry floor, calibrated confidence must be only a
+# near miss (bounded by FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL), and
+# at least one aligned directional projection must be high-confidence. Spread,
+# RR, structure, profile downgrades, telemetry, and gateway checks still run.
+# Replace this with signal-specific Bayesian priors once each new projection
+# has enough event-tagged samples in projection_ledger.
+FORECAST_BOOTSTRAP_RAW_CONFIDENCE_MIN = _env_float(
+    "QR_FORECAST_BOOTSTRAP_RAW_CONFIDENCE_MIN",
+    0.60,
+    minimum=0.50,
+)
+FORECAST_BOOTSTRAP_SIGNAL_CONFIDENCE_MIN = _env_float(
+    "QR_FORECAST_BOOTSTRAP_SIGNAL_CONFIDENCE_MIN",
+    0.70,
+    minimum=0.50,
+)
 # Forecast-first seeds are allowed only when the chart packet contains at
 # least two independent TF readings with both regime and family-score context.
 # A single TF can be enough for a unit fixture, but it is not enough market
@@ -1682,7 +1704,13 @@ def _forecast_seed_for_pair(
         if isinstance(chart_data, dict) and isinstance(chart_data.get("__raw_chart"), dict)
     }
     try:
-        from quant_rabbit.paths import DEFAULT_CALENDAR_SNAPSHOT, DEFAULT_CROSS_ASSET_SNAPSHOT, ROOT
+        from quant_rabbit.paths import (
+            DEFAULT_CALENDAR_SNAPSHOT,
+            DEFAULT_CROSS_ASSET_SNAPSHOT,
+            DEFAULT_NEWS_DIGEST,
+            DEFAULT_NEWS_SNAPSHOT,
+            ROOT,
+        )
         from quant_rabbit.strategy.correlation_predictor import detect_correlation_lag
         from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
         from quant_rabbit.strategy.forward_projection import detect_forward_projections
@@ -1713,6 +1741,8 @@ def _forecast_seed_for_pair(
             pair=pair,
             current_price=current_price,
             calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
+            news_digest_path=DEFAULT_NEWS_DIGEST,
+            news_items_path=DEFAULT_NEWS_SNAPSHOT,
             cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
         )
     except Exception:
@@ -1847,15 +1877,47 @@ def _forecast_market_support_for_forecast(
         "timing_projection_count": 0,
         "best_hit_rate": None,
         "best_samples": 0,
+        "bootstrap_projection_support": False,
         "reason": "",
         "signals": [],
     }
-    if direction not in {"UP", "DOWN"} or not projection_signals or not isinstance(hit_rates, dict):
+    if direction not in {"UP", "DOWN"} or not projection_signals:
+        out["reason"] = "no directional projection support"
+        return out
+
+    bootstrap = _forecast_bootstrap_projection_support(
+        forecast=forecast,
+        direction=direction,
+        projection_signals=projection_signals,
+    )
+    if not isinstance(hit_rates, dict):
+        if bootstrap:
+            out.update(
+                {
+                    "ok": True,
+                    "aligned_projection_count": len(bootstrap),
+                    "bootstrap_projection_support": True,
+                    "reason": bootstrap[0]["reason"],
+                    "signals": bootstrap[:4],
+                }
+            )
+            return out
         out["reason"] = "no directional audited projection support"
         return out
     try:
         from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
     except Exception:
+        if bootstrap:
+            out.update(
+                {
+                    "ok": True,
+                    "aligned_projection_count": len(bootstrap),
+                    "bootstrap_projection_support": True,
+                    "reason": bootstrap[0]["reason"],
+                    "signals": bootstrap[:4],
+                }
+            )
+            return out
         out["reason"] = "projection calibration unavailable"
         return out
 
@@ -1912,16 +1974,17 @@ def _forecast_market_support_for_forecast(
 
     entry_min = _forecast_seed_min_confidence_for_direction(direction)
     timing_with_raw_direction = bool(timing) and raw_confidence is not None and raw_confidence >= entry_min
-    ok = bool(aligned) or timing_with_raw_direction
+    ok = bool(aligned) or timing_with_raw_direction or bool(bootstrap)
     best = max(aligned + timing, key=lambda item: item["hit_rate"], default=None)
     out.update(
         {
             "ok": ok,
-            "aligned_projection_count": len(aligned),
+            "aligned_projection_count": len(aligned) + (len(bootstrap) if not aligned else 0),
             "timing_projection_count": len(timing),
             "best_hit_rate": best["hit_rate"] if best else None,
             "best_samples": best["samples"] if best else 0,
-            "signals": (aligned + timing)[:4] if ok else considered[:4],
+            "bootstrap_projection_support": bool(bootstrap) and not bool(aligned),
+            "signals": (aligned + timing + bootstrap)[:4] if ok else (considered + bootstrap)[:4],
         }
     )
     if aligned:
@@ -1936,9 +1999,62 @@ def _forecast_market_support_for_forecast(
             f"{top['name']} timing hit_rate={top['hit_rate']:.2f} samples={top['samples']} "
             f"supports raw forecast confidence {raw_confidence:.2f}"
         )
+    elif bootstrap:
+        out["reason"] = bootstrap[0]["reason"]
     else:
         out["reason"] = "no current projection clears audited support floors"
     return out
+
+
+def _forecast_bootstrap_projection_support(
+    *,
+    forecast: Any,
+    direction: str,
+    projection_signals: list[Any],
+) -> list[dict[str, Any]]:
+    if direction not in {"UP", "DOWN"}:
+        return []
+    confidence = _optional_float(getattr(forecast, "confidence", None))
+    raw_confidence = _optional_float(getattr(forecast, "raw_confidence", None))
+    if raw_confidence is None:
+        raw_confidence = confidence
+    entry_min = _forecast_seed_min_confidence_for_direction(direction)
+    support_floor = max(0.0, entry_min - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if confidence is None or confidence < support_floor:
+        return []
+    if raw_confidence is None or raw_confidence < max(entry_min, FORECAST_BOOTSTRAP_RAW_CONFIDENCE_MIN):
+        return []
+    out: list[dict[str, Any]] = []
+    for signal in projection_signals:
+        signal_direction = str(getattr(signal, "direction", "") or "").upper()
+        if signal_direction != direction:
+            continue
+        confidence_value = _optional_float(getattr(signal, "confidence", None)) or 0.0
+        bonus = _optional_float(getattr(signal, "bonus_magnitude", None)) or 0.0
+        if confidence_value < FORECAST_BOOTSTRAP_SIGNAL_CONFIDENCE_MIN or bonus <= 0.0:
+            continue
+        name = str(getattr(signal, "name", "") or "")
+        if not name:
+            continue
+        out.append(
+            {
+                "name": name,
+                "calibration_name": name,
+                "direction": signal_direction,
+                "confidence": round(confidence_value, 4),
+                "hit_rate": None,
+                "samples": 0,
+                "bootstrap_projection_support": True,
+                "timeframe": getattr(signal, "timeframe", None),
+                "rationale": str(getattr(signal, "rationale", "") or "")[:180],
+                "reason": (
+                    f"{name} {signal_direction} same-cycle bootstrap: signal_conf={confidence_value:.2f}, "
+                    f"raw_forecast_conf={raw_confidence:.2f}, calibrated_conf={confidence:.2f}; "
+                    "ledger samples pending"
+                ),
+            }
+        )
+    return sorted(out, key=lambda item: item["confidence"], reverse=True)
 
 
 def _projection_hit_rate_bucket(
@@ -2165,6 +2281,7 @@ def _forecast_market_support_payload(value: object) -> dict[str, Any]:
         "timing_projection_count": _optional_int(value.get("timing_projection_count")) or 0,
         "best_hit_rate": _optional_float(value.get("best_hit_rate")),
         "best_samples": _optional_int(value.get("best_samples")) or 0,
+        "bootstrap_projection_support": bool(value.get("bootstrap_projection_support")),
         "reason": str(value.get("reason") or ""),
         "signals": [
             item for item in list(value.get("signals") or [])[:4]
@@ -3832,6 +3949,8 @@ def _forecast_market_support_allows_side(
         return False
     if not bool(support.get("ok")):
         return False
+    if bool(support.get("bootstrap_projection_support")):
+        return True
     samples = _optional_int(support.get("best_samples")) or 0
     if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
         return False

@@ -55,6 +55,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from quant_rabbit.strategy.news_themes import NEWS_MAX_TOTAL_BIAS, parse_news_themes
+
 
 PROJECTION_TOTAL_CAP = float(os.environ.get("QR_PROJECTION_TOTAL_CAP", "25.0"))
 
@@ -102,6 +104,19 @@ EVENT_SURPRISE_BASE_CONFIDENCE = float(os.environ.get("QR_EVENT_SURPRISE_BASE_CO
 # (c) Replace with per-event z-score calibration when historical releases are
 #     labeled in the projection ledger.
 EVENT_SURPRISE_RATIO_CONFIDENCE_GAIN = float(os.environ.get("QR_EVENT_SURPRISE_RATIO_CONFIDENCE_GAIN", "0.32"))
+# (a) Post-release news-theme follow-through. This converts the curated news
+#     digest / news_items packet into a directional forecast component when
+#     calendar actuals are missing or delayed.
+# (b) News parser bias is already bounded by NEWS_MAX_TOTAL_BIAS and never
+#     bypasses spread, RR, chart-structure, profile, or gateway checks; this
+#     projection gives forecast-first lanes a current macro input instead of
+#     only a TraderBrain ranking nudge.
+# (c) Replace the confidence mapping with event/headline hit-rate calibration
+#     once `news_theme_followthrough` has enough projection-ledger samples.
+NEWS_THEME_FOLLOWTHROUGH_MIN_ABS_BIAS = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_MIN_ABS_BIAS", "6.0"))
+NEWS_THEME_FOLLOWTHROUGH_BONUS = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_BONUS", "10.0"))
+NEWS_THEME_FOLLOWTHROUGH_BASE_CONFIDENCE = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_BASE_CONF", "0.56"))
+NEWS_THEME_FOLLOWTHROUGH_CONFIDENCE_GAIN = float(os.environ.get("QR_NEWS_THEME_FOLLOWTHROUGH_CONF_GAIN", "0.24"))
 
 # Cross-asset lag
 CROSS_ASSET_MOVE_THRESHOLD_PCT = float(os.environ.get("QR_CROSS_ASSET_THRESHOLD_PCT", "0.3"))
@@ -451,6 +466,51 @@ def _currency_strength_to_pair_direction(pair: str, *, currency: str, strength: 
     return None
 
 
+def _detect_news_theme_followthrough(
+    pair: str,
+    *,
+    news_digest_path: Path | None,
+    news_items_path: Path | None,
+    calendar_path: Path | None,
+    now: Optional[datetime] = None,
+) -> List[ProjectionSignal]:
+    digest_path = news_digest_path or Path("__missing_news_digest__")
+    if not digest_path.exists() and (news_items_path is None or not news_items_path.exists()):
+        return []
+    now_utc = now or datetime.now(timezone.utc)
+    themes = parse_news_themes(
+        digest_path,
+        calendar_path=calendar_path,
+        news_items_path=news_items_path,
+        now_utc=now_utc,
+    )
+    long_bias = float(themes.biases.get((pair, "LONG"), 0.0))
+    short_bias = float(themes.biases.get((pair, "SHORT"), 0.0))
+    net = long_bias - short_bias
+    if abs(net) < NEWS_THEME_FOLLOWTHROUGH_MIN_ABS_BIAS:
+        return []
+    direction = "UP" if net > 0 else "DOWN"
+    normalized = min(1.0, abs(net) / max(NEWS_MAX_TOTAL_BIAS, 1.0))
+    confidence = min(0.90, NEWS_THEME_FOLLOWTHROUGH_BASE_CONFIDENCE + normalized * NEWS_THEME_FOLLOWTHROUGH_CONFIDENCE_GAIN)
+    bonus = NEWS_THEME_FOLLOWTHROUGH_BONUS * normalized
+    theme_text = ", ".join(themes.detected_themes[:4]) or "news theme"
+    side = "LONG" if direction == "UP" else "SHORT"
+    return [
+        ProjectionSignal(
+            name="news_theme_followthrough",
+            timeframe=None,
+            direction=direction,
+            lead_time_min=0.0,
+            confidence=confidence,
+            bonus_magnitude=bonus,
+            rationale=(
+                f"{pair} {side} news-theme follow-through: net_bias={net:+.1f} "
+                f"(long={long_bias:+.1f}, short={short_bias:+.1f}, themes={theme_text})"
+            ),
+        )
+    ]
+
+
 def _detect_cross_asset_lag(
     pair: str,
     cross_asset_path: Path,
@@ -541,6 +601,8 @@ def detect_forward_projections(
     pair: str,
     current_price: Optional[float] = None,
     calendar_path: Optional[Path] = None,
+    news_digest_path: Optional[Path] = None,
+    news_items_path: Optional[Path] = None,
     cross_asset_path: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> List[ProjectionSignal]:
@@ -561,6 +623,16 @@ def detect_forward_projections(
     if calendar_path is not None:
         out.extend(_detect_news_catalyst(pair, calendar_path, now=now))
         out.extend(_detect_event_surprise(pair, calendar_path, now=now))
+    if news_digest_path is not None or news_items_path is not None:
+        out.extend(
+            _detect_news_theme_followthrough(
+                pair,
+                news_digest_path=news_digest_path,
+                news_items_path=news_items_path,
+                calendar_path=calendar_path,
+                now=now,
+            )
+        )
     if cross_asset_path is not None:
         out.extend(_detect_cross_asset_lag(pair, cross_asset_path, pair_chart))
     out.extend(_detect_session_expansion(now=now))

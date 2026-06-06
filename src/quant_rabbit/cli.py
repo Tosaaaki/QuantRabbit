@@ -2698,6 +2698,8 @@ def main(argv: list[str] | None = None) -> int:
             projections = detect_forward_projections(
                 chart, pair=pair, current_price=mid,
                 calendar_path=Path("data/economic_calendar.json"),
+                news_digest_path=DEFAULT_NEWS_DIGEST,
+                news_items_path=DEFAULT_NEWS_SNAPSHOT,
                 cross_asset_path=Path("data/cross_asset_snapshot.json"),
             )
             # Try both directions for paths (we don't know which the trader will pick)

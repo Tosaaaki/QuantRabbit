@@ -448,6 +448,7 @@ from quant_rabbit.paths import (
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_NEWS_DIGEST,
     DEFAULT_NEWS_SNAPSHOT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
@@ -720,6 +721,8 @@ def _pair_forecast(
             pair=pair,
             current_price=current_price,
             calendar_path=_data_artifact_path(effective_data_root, DEFAULT_CALENDAR_SNAPSHOT),
+            news_digest_path=_logs_artifact_path(effective_data_root, DEFAULT_NEWS_DIGEST),
+            news_items_path=_data_artifact_path(effective_data_root, DEFAULT_NEWS_SNAPSHOT),
             cross_asset_path=_data_artifact_path(effective_data_root, DEFAULT_CROSS_ASSET_SNAPSHOT),
         )
     except Exception:
@@ -797,6 +800,13 @@ def _pair_forecast(
 
 def _data_artifact_path(data_root: Path | None, default_path: Path) -> Path:
     return (data_root / default_path.name) if data_root is not None else default_path
+
+
+def _logs_artifact_path(data_root: Path | None, default_path: Path) -> Path:
+    if data_root is None:
+        return default_path
+    logs_root = data_root.parent / "logs" if data_root.name == "data" else data_root / "logs"
+    return logs_root / default_path.name
 
 
 def _trader_data_root(
@@ -1075,9 +1085,8 @@ class TraderBrain:
         # converts macro themes (USD strong, risk-off, pair-specific
         # bearish/bullish notes) into bounded per-(pair, direction)
         # score biases. Empty when digest is missing or unparseable.
-        logs_root = data_root.parent / "logs" if data_root.name == "data" else data_root / "logs"
         news_themes = parse_news_themes(
-            logs_root / "news_digest.md",
+            _logs_artifact_path(data_root, DEFAULT_NEWS_DIGEST),
             calendar_path=_data_artifact_path(data_root, DEFAULT_CALENDAR_SNAPSHOT),
             news_items_path=_data_artifact_path(data_root, DEFAULT_NEWS_SNAPSHOT),
         )
@@ -1697,6 +1706,8 @@ class TraderBrain:
                 pair=pair,
                 current_price=cur_price_for_proj,
                 calendar_path=_data_artifact_path(effective_data_root, DEFAULT_CALENDAR_SNAPSHOT),
+                news_digest_path=_logs_artifact_path(effective_data_root, DEFAULT_NEWS_DIGEST),
+                news_items_path=_data_artifact_path(effective_data_root, DEFAULT_NEWS_SNAPSHOT),
                 cross_asset_path=_data_artifact_path(effective_data_root, DEFAULT_CROSS_ASSET_SNAPSHOT),
             )
             if _projection_signals:
