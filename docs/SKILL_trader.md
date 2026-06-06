@@ -114,9 +114,11 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli market-context-matrix
 # `data/news_items.json`, `logs/news_digest.md`, and
 # `logs/news_flow_log.md`. The trader cycle must NOT run
 # `news-snapshot` here — that would replace the curated digest with raw
-# RSS output. If the digest goes stale (the routine fails or is paused),
-# `strategy/market_story.py` will surface missing-evidence rationale on
-# lanes but will not crash.
+# RSS output. During the open FX week, `news-health --strict` below fails
+# loud when the digest is stale, raw-RSS-only, missing required sections, or
+# not reflected into `data/market_story_profile.json`. During the weekend
+# guard window it accepts the paused scheduler when the weekend snapshot says
+# `mode=paused`.
 #
 # Reflect the curated news into the live decision artifact before any intent
 # pricing. `logs/news_digest.md` alone is not enough: trader_brain and
@@ -128,6 +130,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories \
   --news-dir logs \
   --profile data/market_story_profile.json \
   --report data/market_story_report.md
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli news-health --strict
 #
 # daily-review: refresh `data/trader_overrides.json` from the last 24h
 # of realized P&L plus structural pair/side underperformance, so

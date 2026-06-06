@@ -23,6 +23,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Verification ledger latest report | `docs/verification_ledger_report.md` |
 | Self-improvement audit JSON | `data/self_improvement_audit.json` |
 | Self-improvement audit latest report | `docs/self_improvement_audit_report.md` |
+| News health audit JSON/report | `data/news_health.json` / `data/news_health_report.md` |
 | Codex scheduled task | `~/.codex/automations/<automation-id>/automation.toml` (Codex Desktop-managed) |
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Weekend task switcher | `scripts/qr_weekend_task_switch.py` / `quant_rabbit.weekend_task_switch` |
@@ -371,6 +372,8 @@ PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar      # ForexFactory
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF leveraged-funds positioning
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter (currently MISSING_OPTION_SKEW_FEED)
 PYTHONPATH=src python3 -m quant_rabbit.cli market-context-matrix  # Advisory pair/side support/reject matrix across all market layers
+PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories --news-dir logs --profile data/market_story_profile.json --report data/market_story_report.md
+PYTHONPATH=src python3 -m quant_rabbit.cli news-health --strict    # Fresh WebSearch news + market-story sync guard after story refresh
 
 # Intent pricing uses the broker snapshot freshness gate. Refresh broker truth
 # again after market-context fetches, otherwise a slow cycle can turn every lane

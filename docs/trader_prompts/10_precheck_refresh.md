@@ -33,9 +33,11 @@ worktree (`/Users/tossaki/App/QuantRabbit-live/`) and writes
 WebSearch-curated trader-perspective content to ignored runtime artifacts:
 `data/news_items.json`, `logs/news_digest.md`, and
 `logs/news_flow_log.md`. **Do not call `news-snapshot` from the trader
-cycle** — that would replace the curated digest with raw RSS output. If
-the digest goes stale (the routine fails or is paused), `market_story.py`
-surfaces missing-evidence rationale on lanes; it does not crash. The
+cycle** — that would replace the curated digest with raw RSS output.
+During the open FX week, `news-health --strict` below fails loud when the
+digest is stale, raw-RSS-only, missing required sections, or not reflected
+into `data/market_story_profile.json`. During the weekend guard window it
+accepts the paused scheduler when the weekend snapshot says `mode=paused`. The
 2026-05-13 incident exposed a stale-live-digest bridge bug; the current
 contract fixes it by making the news routine write directly in the same
 live runtime worktree that the trader reads.
@@ -52,7 +54,15 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories \
   --news-dir logs \
   --profile data/market_story_profile.json \
   --report data/market_story_report.md
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli news-health --strict
 ```
+
+`news-health --strict` is the final guard for the news bridge. During the open
+FX week it blocks stale curated digest files, raw-RSS-only digest output,
+missing required news sections, a paused `qr-news-digest` automation, and a
+`market_story_profile` older than the news artifacts. During the contract
+weekend pause it accepts the paused scheduler when the weekend-state snapshot
+records `mode=paused`.
 
 **daily-review** runs every cycle (idempotent, no network) to refresh
 `data/trader_overrides.json` from execution_ledger.db. trader_brain's

@@ -88,6 +88,16 @@ PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories \
   --report data/market_story_report.md
 ```
 
+6. Audit the full news path. This must return no `BLOCK` before reporting
+   success: the check verifies freshness, required WebSearch digest sections,
+   structured source diversity, qr-news-digest automation state, and that
+   `data/market_story_profile.json` is newer than the news artifacts. Report
+   any `WARN` lines instead of hiding them.
+
+```bash
+PYTHONPATH=src python3 -m quant_rabbit.cli news-health --verify-fetch --strict
+```
+
 ## Notes
 
 - If WebSearch returns no useful results, write a minimal digest noting low news

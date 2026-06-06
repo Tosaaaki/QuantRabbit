@@ -98,6 +98,8 @@ DEFAULT_OPTION_SKEW_REPORT = ROOT / "docs" / "option_skew_report.md"
 DEFAULT_NEWS_SNAPSHOT = ROOT / "data" / "news_items.json"
 DEFAULT_NEWS_DIGEST = ROOT / "logs" / "news_digest.md"
 DEFAULT_NEWS_FLOW_LOG = ROOT / "logs" / "news_flow_log.md"
+DEFAULT_NEWS_HEALTH = ROOT / "data" / "news_health.json"
+DEFAULT_NEWS_HEALTH_REPORT = ROOT / "data" / "news_health_report.md"
 # Append-only audit trail of every autotrade-cycle outcome. Each line is one
 # JSONL event (one cycle) capturing decision, basket, execution result, and
 # resulting trader-owned positions. AGENT_CONTRACT §6 / §11 require this

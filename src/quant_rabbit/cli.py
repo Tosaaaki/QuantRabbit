@@ -117,6 +117,8 @@ from quant_rabbit.paths import (
     DEFAULT_NEWS_SNAPSHOT,
     DEFAULT_NEWS_DIGEST,
     DEFAULT_NEWS_FLOW_LOG,
+    DEFAULT_NEWS_HEALTH,
+    DEFAULT_NEWS_HEALTH_REPORT,
     DEFAULT_OUTCOME_MART,
     DEFAULT_OUTCOME_MART_REPORT,
 )
@@ -759,6 +761,28 @@ def main(argv: list[str] | None = None) -> int:
     p_news.add_argument("--output", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
     p_news.add_argument("--digest", type=Path, default=DEFAULT_NEWS_DIGEST)
     p_news.add_argument("--flow-log", type=Path, default=DEFAULT_NEWS_FLOW_LOG)
+
+    p_news_health = sub.add_parser("news-health", help="Audit freshness, automation state, and market-story sync for news artifacts.")
+    p_news_health.add_argument("--news-items", type=Path, default=DEFAULT_NEWS_SNAPSHOT)
+    p_news_health.add_argument("--digest", type=Path, default=DEFAULT_NEWS_DIGEST)
+    p_news_health.add_argument("--flow-log", type=Path, default=DEFAULT_NEWS_FLOW_LOG)
+    p_news_health.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
+    p_news_health.add_argument("--calendar", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
+    p_news_health.add_argument(
+        "--automation",
+        type=Path,
+        default=Path.home() / ".codex" / "automations" / "qr-news-digest" / "automation.toml",
+    )
+    p_news_health.add_argument(
+        "--weekend-state",
+        type=Path,
+        default=Path.home() / ".codex" / "quant_rabbit_weekend_task_state.json",
+    )
+    p_news_health.add_argument("--output", type=Path, default=DEFAULT_NEWS_HEALTH)
+    p_news_health.add_argument("--report", type=Path, default=DEFAULT_NEWS_HEALTH_REPORT)
+    p_news_health.add_argument("--verify-fetch", action="store_true", help="Run a read-only live fetch probe.")
+    p_news_health.add_argument("--strict", action="store_true", help="Return non-zero when status is BLOCK.")
+    p_news_health.add_argument("--now-utc", default=None, help="Override current UTC timestamp for tests/audits.")
 
     p_prompt = sub.add_parser("trader-prompt-route", help="Route the trader to the minimal prompt branch for current state.")
     p_prompt.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
@@ -1951,6 +1975,49 @@ def main(argv: list[str] | None = None) -> int:
                 sort_keys=True,
             )
         )
+        return 0
+    if args.command == "news-health":
+        from quant_rabbit.analysis.news_health import build_news_health, write_news_health_report
+
+        now_override = None
+        if args.now_utc:
+            try:
+                now_override = datetime.fromisoformat(str(args.now_utc).replace("Z", "+00:00"))
+            except ValueError:
+                print(json.dumps({"error": f"invalid --now-utc: {args.now_utc}"}, ensure_ascii=False), file=sys.stdout)
+                return 2
+        payload = build_news_health(
+            news_items_path=args.news_items,
+            digest_path=args.digest,
+            flow_log_path=args.flow_log,
+            market_story_profile_path=args.market_story_profile,
+            calendar_path=args.calendar,
+            automation_path=args.automation,
+            weekend_state_path=args.weekend_state,
+            now_utc=now_override,
+            verify_fetch=args.verify_fetch,
+        )
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            write_news_health_report(payload, args.report)
+        print(
+            json.dumps(
+                {
+                    "output_path": str(args.output),
+                    "report_path": str(args.report),
+                    "status": payload.get("status"),
+                    "market_window": payload.get("market_window"),
+                    "issues": list(payload.get("issues") or []),
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        if args.strict and payload.get("status") == "BLOCK":
+            return 2
         return 0
     if args.command == "trader-prompt-route":
         try:
