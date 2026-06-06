@@ -370,6 +370,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot        # Pivots, PDH/
 PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar      # ForexFactory High/Medium events + per-pair window
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF leveraged-funds positioning
 PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter (currently MISSING_OPTION_SKEW_FEED)
+PYTHONPATH=src python3 -m quant_rabbit.cli market-context-matrix  # Advisory pair/side support/reject matrix across all market layers
 
 # Intent pricing uses the broker snapshot freshness gate. Refresh broker truth
 # again after market-context fetches, otherwise a slow cycle can turn every lane

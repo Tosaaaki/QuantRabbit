@@ -939,6 +939,9 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(eur["chart"]["views"]["D"]["regime_state"], "RANGE")
             self.assertEqual(eur["flow"]["spread"]["stress_flag"], "NORMAL")
             self.assertEqual(eur["levels"]["pdh"], 1.18)
+            self.assertEqual(eur["matrix"]["LONG"]["evidence_ref"], "matrix:EUR_USD:LONG")
+            self.assertGreaterEqual(eur["matrix"]["LONG"]["support_count"], 1)
+            self.assertIn("matrix:EUR_USD:LONG", payload["input_packet"]["allowed_evidence_refs"])
             self.assertFalse(eur["calendar"]["in_window"])
             self.assertEqual(market_context["currency_strength"]["USD"]["rank"], 2)
             self.assertEqual(market_context["cot"]["USD"]["leveraged_net"], 1234)
@@ -1634,6 +1637,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         flow_path=files["flow"],
         currency_strength_path=files["currency_strength"],
         levels_path=files["levels"],
+        market_context_matrix_path=files["market_context_matrix"],
         calendar_path=files["calendar"],
         cot_path=files["cot"],
         option_skew_path=files["option_skew"],
@@ -1684,6 +1688,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "flow": root / "flow.json",
         "currency_strength": root / "currency_strength.json",
         "levels": root / "levels.json",
+        "market_context_matrix": root / "market_context_matrix.json",
         "calendar": root / "calendar.json",
         "cot": root / "cot.json",
         "option_skew": root / "option_skew.json",
@@ -1859,6 +1864,57 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
                         "round_numbers": [{"price": 1.18, "distance_pips": 8.0}],
                     }
                 ],
+                "issues": [],
+            }
+        )
+    )
+    files["market_context_matrix"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "trade_count_policy": "ADVISORY_ONLY_DOES_NOT_BLOCK_OR_DEMOTE_LANES",
+                "pairs": {
+                    "EUR_USD": {
+                        "LONG": {
+                            "evidence_ref": "matrix:EUR_USD:LONG",
+                            "support_count": 3,
+                            "reject_count": 1,
+                            "warning_count": 1,
+                            "missing_count": 1,
+                            "strongest_support": "EUR_USD chart and strength support LONG",
+                            "strongest_reject": "COT longer-term conflicts LONG",
+                            "supports": [
+                                {
+                                    "code": "BASE_STRENGTH_EXCEEDS_QUOTE",
+                                    "layer": "strength",
+                                    "message": "EUR stronger than USD",
+                                    "evidence_refs": ["strength:EUR", "strength:USD"],
+                                }
+                            ],
+                            "rejects": [],
+                            "warnings": [],
+                        },
+                        "SHORT": {
+                            "evidence_ref": "matrix:EUR_USD:SHORT",
+                            "support_count": 1,
+                            "reject_count": 3,
+                            "warning_count": 1,
+                            "missing_count": 1,
+                            "strongest_support": "COT longer-term aligns SHORT",
+                            "strongest_reject": "EUR_USD chart and strength reject SHORT",
+                            "supports": [],
+                            "rejects": [
+                                {
+                                    "code": "BASE_STRENGTH_EXCEEDS_QUOTE",
+                                    "layer": "strength",
+                                    "message": "EUR stronger than USD",
+                                    "evidence_refs": ["strength:EUR", "strength:USD"],
+                                }
+                            ],
+                            "warnings": [],
+                        },
+                    }
+                },
                 "issues": [],
             }
         )

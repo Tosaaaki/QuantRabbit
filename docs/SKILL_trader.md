@@ -106,6 +106,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli levels-snapshot
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli market-context-matrix
 # News is produced by a separate dedicated routine (`qr-news-digest`,
 # Codex Desktop, hourly). That routine runs in the live runtime worktree
 # at `/Users/tossaki/App/QuantRabbit-live/` and writes WebSearch-curated

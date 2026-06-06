@@ -390,6 +390,7 @@ from quant_rabbit.paths import (
     DEFAULT_GPT_TRADER_DECISION_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEARNING_AUDIT,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MARKET_STATUS,
     DEFAULT_MARKET_STORY_PROFILE,
     DEFAULT_OPTION_SKEW,
@@ -564,6 +565,7 @@ class GPTTraderBrain:
         flow_path: Path = DEFAULT_FLOW_SNAPSHOT,
         currency_strength_path: Path = DEFAULT_CURRENCY_STRENGTH,
         levels_path: Path = DEFAULT_LEVELS_SNAPSHOT,
+        market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
         calendar_path: Path = DEFAULT_CALENDAR_SNAPSHOT,
         cot_path: Path = DEFAULT_COT_SNAPSHOT,
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
@@ -588,6 +590,7 @@ class GPTTraderBrain:
         self.flow_path = flow_path
         self.currency_strength_path = currency_strength_path
         self.levels_path = levels_path
+        self.market_context_matrix_path = market_context_matrix_path
         self.calendar_path = calendar_path
         self.cot_path = cot_path
         self.option_skew_path = option_skew_path
@@ -645,6 +648,7 @@ class GPTTraderBrain:
         verification_ledger = _load_optional_json(self.verification_ledger_path)
         self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
+        market_context_matrix = _load_optional_json(self.market_context_matrix_path)
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
         refs = _allowed_refs(
@@ -657,6 +661,7 @@ class GPTTraderBrain:
             self_improvement_audit=self_improvement_audit,
             predictive_limits=predictive_limits,
             market_status=market_status,
+            market_context_matrix=market_context_matrix,
         )
         return {
             "contract": {
@@ -699,6 +704,7 @@ class GPTTraderBrain:
                 flow_path=self.flow_path,
                 currency_strength_path=self.currency_strength_path,
                 levels_path=self.levels_path,
+                market_context_matrix_path=self.market_context_matrix_path,
                 calendar_path=self.calendar_path,
                 cot_path=self.cot_path,
                 option_skew_path=self.option_skew_path,
@@ -1604,6 +1610,7 @@ def _lane_packet(
         pair = str(intent.get("pair") or "")
         direction = str(intent.get("side") or "")
         context = intent.get("market_context") or {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
         risk_blockers = _block_issues(result.get("risk_issues"))
         strategy_blockers = _block_issues(result.get("strategy_issues"))
         lanes.append(
@@ -1637,6 +1644,18 @@ def _lane_packet(
                 "strategy": _small_dict(strategy_index.get((pair, direction)), ("status", "pretrade_net_jpy", "live_net_jpy", "live_worst_jpy", "required_fix")),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
                 "forecast": _lane_forecast_packet(intent.get("metadata")),
+                "market_context_matrix": _small_dict(
+                    metadata,
+                    (
+                        "market_context_matrix_ref",
+                        "matrix_support_count",
+                        "matrix_reject_count",
+                        "matrix_warning_count",
+                        "matrix_missing_count",
+                        "strongest_matrix_support",
+                        "strongest_matrix_reject",
+                    ),
+                ),
             }
         )
     if max_lanes <= 0 or len(lanes) <= max_lanes:
@@ -1816,6 +1835,7 @@ def _allowed_refs(
     self_improvement_audit: dict[str, Any] | None,
     predictive_limits: dict[str, Any] | None,
     market_status: dict[str, Any] | None,
+    market_context_matrix: dict[str, Any] | None,
 ) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
     # refs than the base broker/target/lane triple — the trader is required to
@@ -1884,6 +1904,14 @@ def _allowed_refs(
                 f"cross:correlations:{pair}",
             ]
         )
+        refs.append(f"matrix:{pair}")
+        side_map = ((market_context_matrix or {}).get("pairs") or {}).get(pair)
+        if isinstance(side_map, dict):
+            for side in ("LONG", "SHORT"):
+                if isinstance(side_map.get(side), dict):
+                    refs.append(str(side_map[side].get("evidence_ref") or f"matrix:{pair}:{side}"))
+        else:
+            refs.extend([f"matrix:{pair}:LONG", f"matrix:{pair}:SHORT"])
     for currency in currencies:
         refs.append(f"cot:{currency}")
         refs.append(f"strength:{currency}")
@@ -2694,6 +2722,7 @@ def _market_context_packet(
     flow_path: Path,
     currency_strength_path: Path,
     levels_path: Path,
+    market_context_matrix_path: Path,
     calendar_path: Path,
     cot_path: Path,
     option_skew_path: Path,
@@ -2704,6 +2733,7 @@ def _market_context_packet(
         "flow": _load_optional_json(flow_path),
         "currency_strength": _load_optional_json(currency_strength_path),
         "levels": _load_optional_json(levels_path),
+        "market_context_matrix": _load_optional_json(market_context_matrix_path),
         "calendar": _load_optional_json(calendar_path),
         "cot": _load_optional_json(cot_path),
         "option_skew": _load_optional_json(option_skew_path),
@@ -2718,6 +2748,7 @@ def _market_context_packet(
             "chart": _chart_summary(artifacts["pair_charts"], pair),
             "flow": _flow_summary(artifacts["flow"], pair),
             "levels": _levels_summary(artifacts["levels"], pair),
+            "matrix": _matrix_pair_summary(artifacts["market_context_matrix"], pair),
             "calendar": _calendar_summary(artifacts["calendar"], pair),
             "option_skew": _option_skew_summary(artifacts["option_skew"], pair),
             "cross_correlations": _cross_correlations(artifacts["cross_asset"], pair),
@@ -2731,6 +2762,7 @@ def _market_context_packet(
     return {
         "pairs": pair_payloads,
         "cross_asset": _cross_asset_summary(artifacts["cross_asset"]),
+        "matrix_issues": _matrix_issues(artifacts["market_context_matrix"]),
         "currency_strength": _currency_strength_summary(artifacts["currency_strength"], currencies),
         "cot": _cot_summary(artifacts["cot"], currencies),
         "issues": issues[:40],
@@ -2833,6 +2865,48 @@ def _levels_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]
             if isinstance(item, dict)
         ],
     }
+
+
+def _matrix_pair_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"status": "missing", "evidence_ref": f"matrix:{pair}"}
+    side_map = ((payload.get("pairs") or {}).get(pair) or {})
+    if not isinstance(side_map, dict):
+        return {"status": "missing_pair", "evidence_ref": f"matrix:{pair}"}
+    out: dict[str, Any] = {"status": "present", "evidence_ref": f"matrix:{pair}"}
+    for side in ("LONG", "SHORT"):
+        reading = side_map.get(side) if isinstance(side_map.get(side), dict) else {}
+        out[side] = {
+            "evidence_ref": reading.get("evidence_ref") or f"matrix:{pair}:{side}",
+            "support_count": reading.get("support_count", 0),
+            "reject_count": reading.get("reject_count", 0),
+            "warning_count": reading.get("warning_count", 0),
+            "missing_count": reading.get("missing_count", 0),
+            "strongest_support": reading.get("strongest_support"),
+            "strongest_reject": reading.get("strongest_reject"),
+            "strongest_warning": reading.get("strongest_warning"),
+            "supports": _compact_observations(reading.get("supports")),
+            "rejects": _compact_observations(reading.get("rejects")),
+            "warnings": _compact_observations(reading.get("warnings")),
+        }
+    return out
+
+
+def _compact_observations(rows: Any, *, limit: int = 3) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        out.append(_small_dict(item, ("code", "layer", "message", "evidence_refs")))
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _matrix_issues(payload: dict[str, Any] | None) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["MISSING_MARKET_CONTEXT_MATRIX_ARTIFACT"]
+    return [str(item) for item in payload.get("issues", [])[:12] if str(item).strip()]
 
 
 def _calendar_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:

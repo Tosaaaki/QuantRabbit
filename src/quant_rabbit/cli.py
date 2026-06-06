@@ -96,6 +96,8 @@ from quant_rabbit.paths import (
     DEFAULT_CURRENCY_STRENGTH_REPORT,
     DEFAULT_LEVELS_SNAPSHOT,
     DEFAULT_LEVELS_REPORT,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
+    DEFAULT_MARKET_CONTEXT_MATRIX_REPORT,
     DEFAULT_LEARNING_AUDIT,
     DEFAULT_LEARNING_AUDIT_REPORT,
     DEFAULT_FORECAST_HISTORY,
@@ -688,6 +690,18 @@ def main(argv: list[str] | None = None) -> int:
     p_levels.add_argument("--output", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
     p_levels.add_argument("--report", type=Path, default=DEFAULT_LEVELS_REPORT)
 
+    p_matrix = sub.add_parser("market-context-matrix", help="Pair/side evidence matrix from chart, macro, flow, levels, calendar, COT, and options artifacts.")
+    p_matrix.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_matrix.add_argument("--cross-asset", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
+    p_matrix.add_argument("--flow", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
+    p_matrix.add_argument("--currency-strength", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
+    p_matrix.add_argument("--levels", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
+    p_matrix.add_argument("--calendar", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
+    p_matrix.add_argument("--cot", type=Path, default=DEFAULT_COT_SNAPSHOT)
+    p_matrix.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
+    p_matrix.add_argument("--output", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
+    p_matrix.add_argument("--report", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX_REPORT)
+
     p_cal = sub.add_parser("economic-calendar", help="ForexFactory weekly XML feed + per-pair event-window flags.")
     p_cal.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_cal.add_argument("--pre-minutes", type=int, default=30)
@@ -755,6 +769,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--flow", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
     p_prompt.add_argument("--currency-strength", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
     p_prompt.add_argument("--levels", type=Path, default=DEFAULT_LEVELS_SNAPSHOT)
+    p_prompt.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_prompt.add_argument("--calendar", type=Path, default=DEFAULT_CALENDAR_SNAPSHOT)
     p_prompt.add_argument("--cot", type=Path, default=DEFAULT_COT_SNAPSHOT)
     p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
@@ -1119,6 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gpt.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_gpt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_gpt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_gpt.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_gpt.add_argument("--decision-response", type=Path, default=None)
     p_gpt.add_argument("--max-lanes", type=int, default=DEFAULT_GPT_MAX_LANES)
     p_gpt.add_argument("--output", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
@@ -1134,6 +1150,7 @@ def main(argv: list[str] | None = None) -> int:
     p_intents.add_argument("--max-loss-pct", type=float, default=None)
     p_intents.add_argument("--risk-equity-jpy", type=float, default=None)
     p_intents.add_argument("--max-candidates", type=int, default=56)
+    p_intents.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_intents.add_argument("--market-story-profile", type=Path, default=DEFAULT_MARKET_STORY_PROFILE)
     p_intents.add_argument("--market-story-report", type=Path, default=DEFAULT_RUNTIME_MARKET_STORY_REPORT)
     p_intents.add_argument("--market-news-dir", type=Path, default=ROOT / "logs")
@@ -1299,6 +1316,7 @@ def main(argv: list[str] | None = None) -> int:
             strategy_profile=args.strategy_profile,
             output_path=args.output,
             report_path=args.report,
+            market_context_matrix_path=args.market_context_matrix,
             max_loss_jpy=_resolve_max_loss_from_args(
                 max_loss_jpy=args.max_loss_jpy,
                 max_loss_pct=args.max_loss_pct,
@@ -1855,6 +1873,47 @@ def main(argv: list[str] | None = None) -> int:
             "pairs": len(snap.pairs), "issues": list(snap.issues),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
+    if args.command == "market-context-matrix":
+        from quant_rabbit.analysis.market_context_matrix import (
+            build_market_context_matrix,
+            write_market_context_matrix_report,
+        )
+
+        payload = build_market_context_matrix(
+            pair_charts_path=args.pair_charts,
+            cross_asset_path=args.cross_asset,
+            flow_path=args.flow,
+            currency_strength_path=args.currency_strength,
+            levels_path=args.levels,
+            calendar_path=args.calendar,
+            cot_path=args.cot,
+            option_skew_path=args.option_skew,
+        )
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        if args.report:
+            write_market_context_matrix_report(payload, args.report)
+        pair_count = len(payload.get("pairs") or {})
+        side_rows = [
+            reading
+            for side_map in (payload.get("pairs") or {}).values()
+            if isinstance(side_map, dict)
+            for reading in side_map.values()
+            if isinstance(reading, dict)
+        ]
+        print(json.dumps({
+            "output_path": str(args.output),
+            "report_path": str(args.report),
+            "pairs": pair_count,
+            "trade_count_policy": payload.get("trade_count_policy"),
+            "supports": sum(int(row.get("support_count") or 0) for row in side_rows),
+            "rejects": sum(int(row.get("reject_count") or 0) for row in side_rows),
+            "warnings": sum(int(row.get("warning_count") or 0) for row in side_rows),
+            "missing": sum(int(row.get("missing_count") or 0) for row in side_rows),
+            "issues": list(payload.get("issues") or [])[:10],
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     if args.command == "news-snapshot":
         from quant_rabbit.analysis.news import (
             DEFAULT_DIGEST_ITEMS,
@@ -1904,6 +1963,7 @@ def main(argv: list[str] | None = None) -> int:
                 flow_path=args.flow,
                 currency_strength_path=args.currency_strength,
                 levels_path=args.levels,
+                market_context_matrix_path=args.market_context_matrix,
                 calendar_path=args.calendar,
                 cot_path=args.cot,
                 option_skew_path=args.option_skew,
@@ -3374,6 +3434,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_state_path=args.target_state,
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,
+                market_context_matrix_path=args.market_context_matrix,
                 output_path=args.output,
                 report_path=args.report,
                 max_lanes=args.max_lanes,

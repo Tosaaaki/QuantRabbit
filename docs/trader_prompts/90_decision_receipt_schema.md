@@ -12,7 +12,7 @@ Write `data/codex_trader_decision_response.json`.
   "thesis": "...",
   "method": "BREAKOUT_FAILURE",
   "narrative": "...",
-  "chart_story": "Cite pair-chart, cross-asset, flow, levels, calendar, COT, option-skew state with numbers.",
+  "chart_story": "Cite pair-chart, market-context-matrix, cross-asset, flow, levels, calendar, COT, option-skew state with numbers.",
   "invalidation": "...",
   "rejected_alternatives": ["..."],
   "risk_notes": ["bounded by per_trade_risk_budget_jpy from data/daily_target_state.json"],

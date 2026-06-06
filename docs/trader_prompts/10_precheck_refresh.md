@@ -24,6 +24,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli levels-snapshot
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cot-snapshot
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli market-context-matrix
 ```
 
 **News is produced out-of-band** by the dedicated `qr-news-digest`

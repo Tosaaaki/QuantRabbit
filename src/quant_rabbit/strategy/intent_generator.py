@@ -14,12 +14,14 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_LEVELS_SNAPSHOT,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_STRATEGY_PROFILE,
     ROOT,
 )
+from quant_rabbit.analysis.market_context_matrix import matrix_summary_for_intent
 from quant_rabbit.risk import (
     DEFAULT_SPECS,
     MIN_PRODUCTION_LOT_UNITS,
@@ -744,6 +746,16 @@ def _load_levels_snapshot(levels_path: Path = DEFAULT_LEVELS_SNAPSHOT) -> dict[s
         return None
     try:
         payload = json.loads(levels_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_market_context_matrix(matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX) -> dict[str, Any] | None:
+    if not matrix_path.exists():
+        return None
+    try:
+        payload = json.loads(matrix_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
@@ -2656,6 +2668,7 @@ class IntentGenerator:
         report_path: Path = DEFAULT_ORDER_INTENT_REPORT,
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         levels_path: Path = DEFAULT_LEVELS_SNAPSHOT,
+        market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
         max_loss_jpy: float | None = None,
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
@@ -2666,6 +2679,7 @@ class IntentGenerator:
         self.report_path = report_path
         self.pair_charts_path = pair_charts_path
         self.levels_path = levels_path
+        self.market_context_matrix_path = market_context_matrix_path
         self.max_loss_jpy = max_loss_jpy
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
@@ -2683,6 +2697,7 @@ class IntentGenerator:
         # fade the box just before expansion.
         pair_charts = _load_pair_charts(self.pair_charts_path)
         levels_snapshot = _load_levels_snapshot(self.levels_path)
+        market_context_matrix = _load_market_context_matrix(self.market_context_matrix_path)
         if snapshot is not None:
             range_seed_count = len(lanes)
             lanes = _append_current_range_phase_lanes(lanes, pair_charts)
@@ -2767,6 +2782,7 @@ class IntentGenerator:
                         portfolio_loss_cap=portfolio_loss_cap,
                         pair_charts=pair_charts,
                         levels_snapshot=levels_snapshot,
+                        market_context_matrix=market_context_matrix,
                         order_type_override=order_type,
                         validation_time_utc=validation_time_utc,
                         telemetry_cache=telemetry_cache,
@@ -2795,6 +2811,7 @@ class IntentGenerator:
         portfolio_loss_cap: float | None = None,
         pair_charts: dict[str, dict[str, Any]] | None = None,
         levels_snapshot: dict[str, Any] | None = None,
+        market_context_matrix: dict[str, Any] | None = None,
         order_type_override: OrderType | None = None,
         validation_time_utc: datetime | None = None,
         telemetry_cache: _TelemetryLiveReadinessCache | None = None,
@@ -2856,6 +2873,7 @@ class IntentGenerator:
             session_bucket=session_bucket,
             chart_context=chart_context,
             pair_chart=pair_chart,
+            market_context_matrix=market_context_matrix,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -3185,6 +3203,7 @@ def _intent_from_lane(
     session_bucket: str | None = None,
     chart_context: dict[str, Any] | None = None,
     pair_chart: dict[str, Any] | None = None,
+    market_context_matrix: dict[str, Any] | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -3279,10 +3298,20 @@ def _intent_from_lane(
         regime_context = f"{method.value} campaign lane"
     location_story = str((chart_context or {}).get("market_location_story") or "")
     lane_story = " | ".join(str(item) for item in lane.get("story_examples", [])[:2])
+    matrix_metadata = matrix_summary_for_intent(market_context_matrix, pair, side.value)
+    matrix_story = ""
+    if matrix_metadata:
+        matrix_story = (
+            f"matrix {matrix_metadata.get('market_context_matrix_ref')}: "
+            f"supports={matrix_metadata.get('matrix_support_count', 0)} "
+            f"rejects={matrix_metadata.get('matrix_reject_count', 0)} "
+            f"warnings={matrix_metadata.get('matrix_warning_count', 0)}; "
+            f"counter={matrix_metadata.get('strongest_matrix_reject') or 'none'}"
+        )
     context = MarketContext(
         regime=regime_context,
         narrative=str(lane.get("reason") or ""),
-        chart_story=" | ".join(item for item in (location_story, lane_story) if item)
+        chart_story=" | ".join(item for item in (location_story, lane_story, matrix_story) if item)
         or "campaign lane requires current chart read",
         method=method,
         invalidation=f"invalid if SL {sl} trades or campaign overlay vetoes the setup",
@@ -3344,6 +3373,7 @@ def _intent_from_lane(
             **position_metadata,
             **geometry_metadata,
             **margin_metadata,
+            **matrix_metadata,
         },
     )
 

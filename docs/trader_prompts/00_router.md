@@ -35,6 +35,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 - `data/flow_snapshot.json`
 - `data/currency_strength.json`
 - `data/levels_snapshot.json`
+- `data/market_context_matrix.json`
 - `data/economic_calendar.json`
 - `data/cot_snapshot.json`
 - `data/option_skew_snapshot.json`

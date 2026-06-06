@@ -90,6 +90,31 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
 
+    def test_market_context_matrix_metadata_is_advisory_on_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                market_context_matrix_path=_market_context_matrix(root),
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(item for item in payload["results"] if item["intent"]["order_type"] == "MARKET")
+            metadata = result["intent"]["metadata"]
+
+            self.assertGreater(summary.generated, 0)
+            self.assertEqual(metadata["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
+            self.assertEqual(metadata["matrix_support_count"], 4)
+            self.assertEqual(metadata["matrix_reject_count"], 1)
+            self.assertIn("matrix matrix:EUR_USD:LONG", result["intent"]["market_context"]["chart_story"])
+
     def test_live_entry_requires_fresh_forecast_when_live_default_active(self) -> None:
         prior = os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE")
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
@@ -3589,6 +3614,42 @@ def _levels_snapshot(root: Path) -> Path:
                         ],
                     }
                 ],
+                "issues": [],
+            }
+        )
+    )
+    return path
+
+
+def _market_context_matrix(root: Path) -> Path:
+    path = root / "market_context_matrix.json"
+    path.write_text(
+        json.dumps(
+            {
+                "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                "trade_count_policy": "ADVISORY_ONLY_DOES_NOT_BLOCK_OR_DEMOTE_LANES",
+                "pairs": {
+                    "EUR_USD": {
+                        "LONG": {
+                            "evidence_ref": "matrix:EUR_USD:LONG",
+                            "support_count": 4,
+                            "reject_count": 1,
+                            "warning_count": 2,
+                            "missing_count": 1,
+                            "strongest_support": "chart and strength align EUR_USD LONG",
+                            "strongest_reject": "COT longer-term conflicts EUR_USD LONG",
+                        },
+                        "SHORT": {
+                            "evidence_ref": "matrix:EUR_USD:SHORT",
+                            "support_count": 1,
+                            "reject_count": 4,
+                            "warning_count": 2,
+                            "missing_count": 1,
+                            "strongest_support": "COT longer-term aligns EUR_USD SHORT",
+                            "strongest_reject": "chart and strength reject EUR_USD SHORT",
+                        },
+                    }
+                },
                 "issues": [],
             }
         )

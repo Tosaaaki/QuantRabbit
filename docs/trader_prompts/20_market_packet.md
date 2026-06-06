@@ -69,6 +69,10 @@
   - Direction against ranking needs explicit `risk_notes`.
 - `data/levels_snapshot.json`
   - TP, SL, and invalidation should reference pivots, PDH/PDL/PDC, session ranges, and round numbers.
+- `data/market_context_matrix.json`
+  - Advisory pair/side matrix joining chart, strength, cross-asset, flow, levels, calendar, COT, and option-skew observations.
+  - It raises certainty by exposing `supports`, `rejects`, `warnings`, and `missing` evidence; it must not create new live blockers or reduce `LIVE_READY` lane count.
+  - TRADE receipts should cite `matrix:<PAIR>:<SIDE>` and carry the strongest reject into the 20-minute counterargument.
 - `data/economic_calendar.json`
   - `pair_windows[].in_window=true` means WAIT unless the receipt explicitly records an override reason.
 - `data/cot_snapshot.json`

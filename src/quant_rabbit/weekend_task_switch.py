@@ -15,7 +15,7 @@ import re
 import sys
 import tempfile
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
 def switch_tasks(action: str, *, dry_run: bool = False, now: datetime | None = None) -> dict[str, Any]:
     specs = _task_specs()
     state_file = _state_file()
-    timestamp = (now or datetime.now(UTC)).replace(microsecond=0).isoformat()
+    timestamp = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat()
     if action == "pause":
         return _pause(specs, state_file=state_file, dry_run=dry_run, timestamp=timestamp)
     if action == "restore":
