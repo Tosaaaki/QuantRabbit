@@ -414,6 +414,7 @@ def _parse_pub_date(value: str) -> datetime | None:
 
 def _extract_markets(title: str, summary: str, categories: Sequence[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
     text = " ".join([title, summary, *categories]).upper()
+    padded_text = f" {text} "
     pairs: set[str] = set()
     for category in categories:
         upper = category.upper()
@@ -461,9 +462,31 @@ def _compact_pair_to_symbol(value: str) -> str | None:
 
 def _extract_topics(title: str, summary: str, categories: Sequence[str]) -> tuple[str, ...]:
     text = " ".join([title, summary, *categories]).upper()
+    padded_text = f" {text} "
     topic_needles: tuple[tuple[str, tuple[str, ...]], ...] = (
-        ("central_bank", ("BOJ", "FOMC", "FED", "ECB", "BOE", "RBA", "RATE DECISION")),
-        ("inflation", ("CPI", "PCE", "INFLATION")),
+        (
+            "central_bank",
+            (
+                "BOJ",
+                "FOMC",
+                "FED",
+                "ECB",
+                "BOE",
+                "RBA",
+                "BOC",
+                "RBNZ",
+                "SNB",
+                "RATE DECISION",
+                "INTEREST RATE",
+                "MONETARY POLICY",
+                "MEETING MINUTES",
+                "HAWKISH",
+                "DOVISH",
+                "RATE CUT",
+                "RATE HIKE",
+            ),
+        ),
+        ("inflation", ("CPI", "PCE", "PPI", "INFLATION", "PRICE INDEX", "PRICES", "WAGES", "EARNINGS")),
         (
             "employment",
             (
@@ -484,15 +507,43 @@ def _extract_topics(title: str, summary: str, categories: Sequence[str]) -> tupl
                 "WAGES",
             ),
         ),
-        ("growth", ("GDP", "PMI", "ISM", "RETAIL SALES")),
+        ("growth", ("GDP", "PMI", "ISM", "INDUSTRIAL PRODUCTION", "DURABLE GOODS", "FACTORY ORDERS")),
+        (
+            "consumption",
+            (
+                "RETAIL SALES",
+                "CONSUMER SENTIMENT",
+                "CONSUMER CONFIDENCE",
+                "PERSONAL INCOME",
+                "PERSONAL SPENDING",
+                "SPENDING",
+            ),
+        ),
         ("intervention", ("INTERVENTION", "RATE CHECK", "MOF")),
-        ("geopolitics", ("WAR", "IRAN", "GEOPOLITICAL", "TARIFF")),
+        ("geopolitics", ("WAR", "IRAN", "GEOPOLITICAL", "TARIFF", "SANCTION", "CEASEFIRE")),
         ("risk_on", ("RISK-ON", "RISK ON", "EQUITIES RALLY", "RECORD HIGH")),
         ("risk_off", ("RISK-OFF", "RISK OFF", "SAFE-HAVEN", "SAFE HAVEN")),
-        ("oil", ("OIL", "WTI", "BRENT")),
+        ("oil", ("OIL", "WTI", "BRENT", "CRUDE")),
+        (
+            "trade",
+            (
+                "TRADE BALANCE",
+                "CURRENT ACCOUNT",
+                "EXPORTS",
+                "IMPORTS",
+                " EXPORT ",
+                " IMPORT ",
+            ),
+        ),
         ("yields", ("YIELD", "TREASURY", "BOND")),
     )
-    topics = [topic for topic, needles in topic_needles if any(needle in text for needle in needles)]
+    topics = []
+    for topic, needles in topic_needles:
+        for needle in needles:
+            haystack = padded_text if needle.startswith(" ") or needle.endswith(" ") else text
+            if needle in haystack:
+                topics.append(topic)
+                break
     return tuple(topics)
 
 

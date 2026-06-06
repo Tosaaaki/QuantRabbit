@@ -165,6 +165,49 @@ US_EMPLOYMENT_NOWCAST_CONFIDENCE_GAIN = float(os.environ.get("QR_US_EMPLOYMENT_N
 US_EMPLOYMENT_NOWCAST_PRIMARY_WEIGHT = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_PRIMARY_WEIGHT", "2.0"))
 US_EMPLOYMENT_NOWCAST_SECONDARY_WEIGHT = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_SECONDARY_WEIGHT", "1.4"))
 US_EMPLOYMENT_NOWCAST_GENERIC_WEIGHT = float(os.environ.get("QR_US_EMPLOYMENT_NOWCAST_GENERIC_WEIGHT", "0.8"))
+# (a) Generic pre-event macro nowcast for scheduled high-impact data and
+#     central-bank events beyond NFP: CPI/PCE/PPI, rate decisions/minutes,
+#     GDP/PMI/ISM, retail, trade/commodity, and non-US employment releases.
+# (b) Five calendar days matches the evidence window used by the NFP nowcast:
+#     it is an event-week information envelope, not a trade or risk threshold.
+# (c) Replace with event-family specific lead windows after projection-ledger
+#     samples show which families need shorter/longer pre-release memory.
+MACRO_EVENT_NOWCAST_LOOKAHEAD_MIN = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_LOOKAHEAD_MIN", "7200.0"))
+# (a) Maximum age for generic pre-event evidence from headlines/digest.
+# (b) Public macro previews and analyst notes are often published several days
+#     before CPI/FOMC/GDP; seven days keeps them in the event week only.
+# (c) Replace with structured source timestamps when vendor macro feeds exist.
+MACRO_EVENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS = float(
+    os.environ.get("QR_MACRO_EVENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS", "168.0")
+)
+# (a) Minimum net evidence before emitting a generic macro nowcast.
+# (b) One weak headline is not enough; it takes a primary event-family clue or
+#     multiple supporting clues in the same direction.
+# (c) Replace with family-specific posterior odds after measured samples exist.
+MACRO_EVENT_NOWCAST_MIN_ABS_SCORE = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_MIN_ABS_SCORE", "2.0"))
+# (a) Score saturation for generic event-family evidence.
+# (b) Three corroborating event-family clues or equivalent is strong enough to
+#     shape forecast direction while staying below broker/risk authority.
+# (c) Replace with learned z-score scaling by event family.
+MACRO_EVENT_NOWCAST_SCORE_CAP = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_SCORE_CAP", "6.0"))
+# (a) Projection magnitude for generic pre-event macro nowcast.
+# (b) Lower than actual-vs-forecast surprise because it is probabilistic, but
+#     high enough to matter when charts are otherwise ambiguous.
+# (c) Replace with family-specific realized response calibration.
+MACRO_EVENT_NOWCAST_BONUS = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_BONUS", "11.0"))
+# (a) Confidence mapping for generic macro nowcast.
+# (b) Baseline stays below live-entry confidence; only corroborated evidence
+#     reaches same-cycle bootstrap territory.
+# (c) Replace with projection-ledger hit-rate calibration by family/currency.
+MACRO_EVENT_NOWCAST_BASE_CONFIDENCE = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_BASE_CONF", "0.56"))
+MACRO_EVENT_NOWCAST_CONFIDENCE_GAIN = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_CONF_GAIN", "0.23"))
+# (a) Evidence weights for generic macro nowcast: direct event-family wording
+#     weighs more than a broad macro/risk adjective.
+# (b) Qualitative information weights, not pip/JPY or risk thresholds.
+# (c) Replace with learned coefficients per event family.
+MACRO_EVENT_NOWCAST_PRIMARY_WEIGHT = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_PRIMARY_WEIGHT", "2.0"))
+MACRO_EVENT_NOWCAST_SECONDARY_WEIGHT = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_SECONDARY_WEIGHT", "1.3"))
+MACRO_EVENT_NOWCAST_GENERIC_WEIGHT = float(os.environ.get("QR_MACRO_EVENT_NOWCAST_GENERIC_WEIGHT", "0.7"))
 
 # Cross-asset lag
 CROSS_ASSET_MOVE_THRESHOLD_PCT = float(os.environ.get("QR_CROSS_ASSET_THRESHOLD_PCT", "0.3"))
@@ -843,6 +886,436 @@ def _parse_iso_utc(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+@dataclass(frozen=True)
+class _MacroNowcastFamily:
+    name: str
+    event_re: re.Pattern[str]
+    evidence_re: re.Pattern[str]
+    primary_re: re.Pattern[str]
+    secondary_re: re.Pattern[str]
+    strong_re: re.Pattern[str]
+    soft_re: re.Pattern[str]
+    lower_is_better_re: re.Pattern[str] | None = None
+
+
+_MACRO_STRONG_RE = re.compile(
+    r"\b(beat|beats|above|strong|stronger|robust|resilient|hot|sticky|"
+    r"hawkish|hike|hikes|hiking|tighten|tightens|tightening|firm|firmer|"
+    r"accelerat(?:e|es|ed|ing)|jump|jumps|jumped|surge|surges|surged|"
+    r"rise|rises|rose|rising|higher|upside|increase|increased|expansion|"
+    r"improve|improves|improved|rebound|rebounds|rebounded|support(?:ed)?|bid)\b",
+    re.IGNORECASE,
+)
+_MACRO_SOFT_RE = re.compile(
+    r"\b(miss|misses|below|weak|weaker|soft|softer|cool|cools|cooled|cooling|"
+    r"dovish|cut|cuts|cutting|easing|ease|eases|lower|fall|falls|fell|"
+    r"drop|drops|dropped|slow|slows|slowed|slowing|contraction|decline|"
+    r"declined|downside|recession|fragile|stall|stalls|stalled|disappoint(?:s|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+_CENTRAL_BANK_STRONG_RE = re.compile(
+    r"\b(beat|beats|above|strong|stronger|robust|resilient|hot|sticky|"
+    r"hawkish|hike|hikes|hiking|tighten|tightens|tightening|firm|firmer|"
+    r"higher|upside|increase|increased|support(?:ed)?|bid|intervention|"
+    r"intervene|rate[\s-]*check|yield\s+rise|yields?\s+higher)\b",
+    re.IGNORECASE,
+)
+_CENTRAL_BANK_SOFT_RE = re.compile(
+    r"\b(miss|misses|below|weak|weaker|soft|softer|cool|cools|cooled|cooling|"
+    r"dovish|cut|cuts|cutting|easing|ease|eases|lower|fall|falls|fell|"
+    r"drop|drops|dropped|slow|slows|slowed|slowing|contraction|decline|"
+    r"declined|downside|pause|pausing|hold(?:ing)?\s+fire|rate\s+cuts?)\b",
+    re.IGNORECASE,
+)
+_COMMODITY_STRONG_RE = re.compile(
+    r"\b(beat|beats|above|strong|stronger|robust|resilient|firm|firmer|"
+    r"jump|jumps|jumped|surge|surges|surged|rise|rises|rose|rising|higher|"
+    r"upside|increase|increased|expansion|improve|improves|improved|"
+    r"oil\s+rally|oil\s+surge|crude\s+higher|trade\s+surplus)\b",
+    re.IGNORECASE,
+)
+_COMMODITY_SOFT_RE = re.compile(
+    r"\b(miss|misses|below|weak|weaker|soft|softer|lower|fall|falls|fell|"
+    r"drop|drops|dropped|slow|slows|slowed|slowing|contraction|decline|"
+    r"declined|downside|oil\s+drop|oil\s+falls|crude\s+lower|trade\s+deficit)\b",
+    re.IGNORECASE,
+)
+_RATE_CUT_BETS_FADE_RE = re.compile(
+    r"\b(rate\s+)?cut\s+bets?\s+(fade|fades|faded|recede|recedes|receded|"
+    r"drop|drops|dropped|fall|falls|fell|ease|eases|eased|trim|trimmed|pared)\b",
+    re.IGNORECASE,
+)
+_RATE_HIKE_BETS_RISE_RE = re.compile(
+    r"\b(rate\s+)?hike\s+bets?\s+(rise|rises|rose|rising|increase|increases|"
+    r"increased|build|builds|built|firm|firms|firmed)\b",
+    re.IGNORECASE,
+)
+_RATE_CUT_BETS_RISE_RE = re.compile(
+    r"\b(rate\s+)?cut\s+bets?\s+(rise|rises|rose|rising|increase|increases|"
+    r"increased|build|builds|built|firm|firms|firmed)\b",
+    re.IGNORECASE,
+)
+_RATE_HIKE_BETS_FADE_RE = re.compile(
+    r"\b(rate\s+)?hike\s+bets?\s+(fade|fades|faded|recede|recedes|receded|"
+    r"drop|drops|dropped|fall|falls|fell|ease|eases|eased|trim|trimmed|pared)\b",
+    re.IGNORECASE,
+)
+
+_MACRO_NOWCAST_FAMILIES: tuple[_MacroNowcastFamily, ...] = (
+    _MacroNowcastFamily(
+        name="inflation",
+        event_re=re.compile(r"\b(CPI|PCE|PPI|INFLATION|PRICE\s+INDEX|PRICES|AVERAGE\s+HOURLY\s+EARNINGS)\b", re.IGNORECASE),
+        evidence_re=re.compile(r"\b(CPI|PCE|PPI|INFLATION|PRICE\s+INDEX|PRICES|WAGES?|EARNINGS|OIL|WTI|BRENT)\b", re.IGNORECASE),
+        primary_re=re.compile(r"\b(CPI|PCE|PPI|INFLATION|PRICE\s+INDEX|PRICES)\b", re.IGNORECASE),
+        secondary_re=re.compile(r"\b(WAGES?|EARNINGS|OIL|WTI|BRENT|EXPECTATIONS?)\b", re.IGNORECASE),
+        strong_re=_MACRO_STRONG_RE,
+        soft_re=_MACRO_SOFT_RE,
+    ),
+    _MacroNowcastFamily(
+        name="central_bank",
+        event_re=re.compile(
+            r"\b(FOMC|FED|ECB|BOJ|BOE|RBA|BOC|RBNZ|SNB|RATE\s+DECISION|INTEREST\s+RATE|"
+            r"REFINANCING\s+RATE|CASH\s+RATE|BANK\s+RATE|MONETARY\s+POLICY|"
+            r"POLICY\s+STATEMENT|MEETING\s+MINUTES|GOV(?:ERNOR)?\s+SPEAKS|"
+            r"CHAIR\s+SPEAKS|PRESS\s+CONFERENCE)\b",
+            re.IGNORECASE,
+        ),
+        evidence_re=re.compile(
+            r"\b(FOMC|FED|ECB|BOJ|BOE|RBA|BOC|RBNZ|SNB|RATE|YIELD|BOND|HAWKISH|DOVISH|"
+            r"CUT|HIKE|TIGHTEN|EASING|INTERVENTION|RATE[\s-]*CHECK|MOF)\b",
+            re.IGNORECASE,
+        ),
+        primary_re=re.compile(r"\b(FOMC|FED|ECB|BOJ|BOE|RBA|BOC|RBNZ|SNB|RATE|HAWKISH|DOVISH|CUT|HIKE)\b", re.IGNORECASE),
+        secondary_re=re.compile(r"\b(YIELD|BOND|TIGHTEN|EASING|INTERVENTION|RATE[\s-]*CHECK|MOF)\b", re.IGNORECASE),
+        strong_re=_CENTRAL_BANK_STRONG_RE,
+        soft_re=_CENTRAL_BANK_SOFT_RE,
+    ),
+    _MacroNowcastFamily(
+        name="growth",
+        event_re=re.compile(r"\b(GDP|PMI|ISM|INDUSTRIAL\s+PRODUCTION|DURABLE\s+GOODS|FACTORY\s+ORDERS)\b", re.IGNORECASE),
+        evidence_re=re.compile(r"\b(GDP|PMI|ISM|GROWTH|INDUSTRIAL\s+PRODUCTION|DURABLE\s+GOODS|FACTORY\s+ORDERS|MANUFACTURING|SERVICES)\b", re.IGNORECASE),
+        primary_re=re.compile(r"\b(GDP|PMI|ISM|INDUSTRIAL\s+PRODUCTION|DURABLE\s+GOODS|FACTORY\s+ORDERS)\b", re.IGNORECASE),
+        secondary_re=re.compile(r"\b(GROWTH|MANUFACTURING|SERVICES|OUTPUT|NEW\s+ORDERS)\b", re.IGNORECASE),
+        strong_re=_MACRO_STRONG_RE,
+        soft_re=_MACRO_SOFT_RE,
+    ),
+    _MacroNowcastFamily(
+        name="consumption",
+        event_re=re.compile(r"\b(RETAIL\s+SALES|CONSUMER\s+SENTIMENT|CONSUMER\s+CONFIDENCE|SPENDING|PERSONAL\s+INCOME|PERSONAL\s+SPENDING)\b", re.IGNORECASE),
+        evidence_re=re.compile(r"\b(RETAIL\s+SALES|CONSUMER|SENTIMENT|CONFIDENCE|SPENDING|PERSONAL\s+INCOME|PERSONAL\s+SPENDING)\b", re.IGNORECASE),
+        primary_re=re.compile(r"\b(RETAIL\s+SALES|CONSUMER\s+SENTIMENT|CONSUMER\s+CONFIDENCE|SPENDING)\b", re.IGNORECASE),
+        secondary_re=re.compile(r"\b(CONSUMER|INCOME|DEMAND|SHOPPERS?)\b", re.IGNORECASE),
+        strong_re=_MACRO_STRONG_RE,
+        soft_re=_MACRO_SOFT_RE,
+    ),
+    _MacroNowcastFamily(
+        name="employment",
+        event_re=re.compile(
+            r"\b(NFP|NON[-\s]?FARM|PAYROLL|EMPLOYMENT\s+CHANGE|UNEMPLOYMENT\s+RATE|"
+            r"JOBLESS|CLAIMS|JOLTS|AVERAGE\s+HOURLY\s+EARNINGS)\b",
+            re.IGNORECASE,
+        ),
+        evidence_re=_US_EMPLOYMENT_EVIDENCE_RE,
+        primary_re=_US_EMPLOYMENT_PRIMARY_RE,
+        secondary_re=_US_EMPLOYMENT_SECONDARY_RE,
+        strong_re=_US_EMPLOYMENT_STRONG_RE,
+        soft_re=_US_EMPLOYMENT_SOFT_RE,
+        lower_is_better_re=_US_EMPLOYMENT_LOWER_IS_BETTER_RE,
+    ),
+    _MacroNowcastFamily(
+        name="trade_commodity",
+        event_re=re.compile(r"\b(TRADE\s+BALANCE|CURRENT\s+ACCOUNT|CRUDE\s+OIL|OIL\s+INVENTORIES|EXPORTS?|IMPORTS?)\b", re.IGNORECASE),
+        evidence_re=re.compile(r"\b(TRADE\s+BALANCE|CURRENT\s+ACCOUNT|CRUDE\s+OIL|OIL|WTI|BRENT|EXPORTS?|IMPORTS?|COMMODITY|COMMODITIES)\b", re.IGNORECASE),
+        primary_re=re.compile(r"\b(TRADE\s+BALANCE|CURRENT\s+ACCOUNT|CRUDE\s+OIL|OIL\s+INVENTORIES|EXPORTS?|IMPORTS?)\b", re.IGNORECASE),
+        secondary_re=re.compile(r"\b(OIL|WTI|BRENT|COMMODITY|COMMODITIES)\b", re.IGNORECASE),
+        strong_re=_COMMODITY_STRONG_RE,
+        soft_re=_COMMODITY_SOFT_RE,
+    ),
+)
+
+_MACRO_CURRENCY_ALIASES: dict[str, tuple[str, ...]] = {
+    "USD": ("USD", "US Dollar", "Greenback", "DXY", "Fed", "FOMC"),
+    "EUR": ("EUR", "Euro", "ECB"),
+    "GBP": ("GBP", "Sterling", "Pound", "Cable", "BOE"),
+    "JPY": ("JPY", "Yen", "BOJ", "MOF"),
+    "AUD": ("AUD", "Aussie", "Australian Dollar", "RBA"),
+    "NZD": ("NZD", "Kiwi", "New Zealand Dollar", "RBNZ"),
+    "CAD": ("CAD", "Loonie", "Canadian Dollar", "BOC"),
+    "CHF": ("CHF", "Swiss Franc", "Swissie", "SNB"),
+}
+
+
+def _detect_macro_event_nowcast(
+    pair: str,
+    *,
+    calendar_path: Path | None,
+    news_digest_path: Path | None,
+    news_items_path: Path | None,
+    now: Optional[datetime] = None,
+) -> List[ProjectionSignal]:
+    if calendar_path is None or not calendar_path.exists():
+        return []
+    base, quote = _pair_currencies(pair)
+    pair_currencies = {base, quote}
+    if not base or not quote:
+        return []
+    now_utc = now or datetime.now(timezone.utc)
+    out: list[ProjectionSignal] = []
+    for cluster in _upcoming_macro_event_clusters(calendar_path, now_utc):
+        currency = str(cluster["currency"])
+        family = cluster["family"]
+        event_time = cluster["event_time"]
+        titles = list(cluster["titles"])
+        if currency not in pair_currencies:
+            continue
+        if currency == "USD" and family.name == "employment" and any(_US_EMPLOYMENT_EVENT_RE.search(t) for t in titles):
+            # The USD employment stack has a dedicated NFP nowcast with labor-
+            # specific ADP/claims/JOLTS treatment; avoid double-counting it.
+            continue
+        evidence = _macro_event_evidence_from_news_items(
+            news_items_path,
+            currency=currency,
+            family=family,
+            now_utc=now_utc,
+            event_time=event_time,
+        )
+        evidence.extend(
+            _macro_event_evidence_from_digest(
+                news_digest_path,
+                currency=currency,
+                family=family,
+                now_utc=now_utc,
+                event_time=event_time,
+            )
+        )
+        if not evidence:
+            continue
+        score = sum(item["score"] for item in evidence)
+        if abs(score) < MACRO_EVENT_NOWCAST_MIN_ABS_SCORE:
+            continue
+        direction = _currency_strength_to_pair_direction(pair, currency=currency, strength=1 if score > 0 else -1)
+        if direction is None:
+            continue
+        normalized = min(1.0, abs(score) / max(MACRO_EVENT_NOWCAST_SCORE_CAP, 1.0))
+        confidence = min(0.87, MACRO_EVENT_NOWCAST_BASE_CONFIDENCE + normalized * MACRO_EVENT_NOWCAST_CONFIDENCE_GAIN)
+        bonus = MACRO_EVENT_NOWCAST_BONUS * normalized
+        lead_min = max(0.0, (event_time - now_utc).total_seconds() / 60.0)
+        side = "LONG" if direction == "UP" else "SHORT"
+        skew = f"{currency}-positive" if score > 0 else f"{currency}-negative"
+        top_evidence = sorted(evidence, key=lambda item: abs(item["score"]), reverse=True)[:3]
+        evidence_text = "; ".join(str(item["reason"])[:90] for item in top_evidence)
+        title_text = ", ".join(titles[:3])
+        out.append(
+            ProjectionSignal(
+                name=f"macro_event_nowcast_{family.name}",
+                timeframe=None,
+                direction=direction,
+                lead_time_min=lead_min,
+                confidence=confidence,
+                bonus_magnitude=bonus,
+                rationale=(
+                    f"{pair} {side} pre-event {family.name} nowcast: {skew} "
+                    f"evidence score={score:+.1f} before {event_time.isoformat()} "
+                    f"({title_text}); evidence: {evidence_text}"
+                ),
+            )
+        )
+    return out
+
+
+def _upcoming_macro_event_clusters(calendar_path: Path, now_utc: datetime) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(calendar_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    clusters: dict[tuple[str, str, datetime], dict[str, Any]] = {}
+    for event in payload.get("events", []) or []:
+        if not isinstance(event, dict):
+            continue
+        currency = str(event.get("currency") or "").upper()
+        if currency not in _MACRO_CURRENCY_ALIASES:
+            continue
+        impact = str(event.get("impact") or "").lower()
+        if "high" not in impact and "medium" not in impact:
+            continue
+        title = str(event.get("title") or event.get("event") or "")
+        family = _macro_family_for_event_title(title)
+        if family is None:
+            continue
+        event_time = _parse_iso_utc(event.get("timestamp_utc") or event.get("time_utc"))
+        if event_time is None or event_time < now_utc:
+            continue
+        lead_min = (event_time - now_utc).total_seconds() / 60.0
+        if lead_min > MACRO_EVENT_NOWCAST_LOOKAHEAD_MIN:
+            continue
+        key = (currency, family.name, event_time)
+        cluster = clusters.setdefault(
+            key,
+            {"currency": currency, "family": family, "event_time": event_time, "titles": []},
+        )
+        if title and title not in cluster["titles"]:
+            cluster["titles"].append(title)
+    return sorted(clusters.values(), key=lambda item: (item["event_time"], item["currency"], item["family"].name))
+
+
+def _macro_family_for_event_title(title: str) -> _MacroNowcastFamily | None:
+    for family in _MACRO_NOWCAST_FAMILIES:
+        if family.event_re.search(title):
+            return family
+    return None
+
+
+def _macro_event_evidence_from_news_items(
+    news_items_path: Path | None,
+    *,
+    currency: str,
+    family: _MacroNowcastFamily,
+    now_utc: datetime,
+    event_time: datetime,
+) -> list[dict[str, Any]]:
+    if news_items_path is None or not news_items_path.exists():
+        return []
+    try:
+        payload = json.loads(news_items_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in payload.get("items", []) or []:
+        if not isinstance(item, dict):
+            continue
+        published = _parse_iso_utc(item.get("published_at_utc"))
+        if published is None or published > now_utc or published > event_time:
+            continue
+        age_hours = (now_utc - published).total_seconds() / 3600.0
+        if age_hours > MACRO_EVENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS:
+            continue
+        text = " ".join(
+            [
+                str(item.get("title") or ""),
+                str(item.get("summary") or ""),
+                " ".join(str(topic) for topic in item.get("topics", []) or []),
+                " ".join(str(ccy) for ccy in item.get("currencies", []) or []),
+                " ".join(str(category) for category in item.get("categories", []) or []),
+            ]
+        )
+        item_currencies = {str(ccy).upper() for ccy in item.get("currencies", []) or []}
+        if currency not in item_currencies and not _macro_text_mentions_currency(text, currency):
+            continue
+        scored = _score_macro_nowcast_text(text, family)
+        if scored is None:
+            continue
+        score, reason = scored
+        source = str(item.get("source") or "news")
+        out.append({"score": score, "reason": f"{source}: {reason}"})
+    return out
+
+
+def _macro_event_evidence_from_digest(
+    news_digest_path: Path | None,
+    *,
+    currency: str,
+    family: _MacroNowcastFamily,
+    now_utc: datetime,
+    event_time: datetime,
+) -> list[dict[str, Any]]:
+    if news_digest_path is None or not news_digest_path.exists():
+        return []
+    try:
+        mtime = datetime.fromtimestamp(news_digest_path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return []
+    if mtime > now_utc or mtime > event_time:
+        return []
+    age_hours = (now_utc - mtime).total_seconds() / 3600.0
+    if age_hours > MACRO_EVENT_NOWCAST_MAX_EVIDENCE_AGE_HOURS:
+        return []
+    try:
+        text = news_digest_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not family.evidence_re.search(line):
+            continue
+        if not _macro_text_mentions_currency(line, currency):
+            continue
+        scored = _score_macro_nowcast_text(line, family)
+        if scored is None:
+            continue
+        score, reason = scored
+        out.append({"score": score, "reason": f"digest: {reason}"})
+    return out
+
+
+def _score_macro_nowcast_text(text: str, family: _MacroNowcastFamily) -> tuple[float, str] | None:
+    if not family.evidence_re.search(text):
+        return None
+    score = 0.0
+    reasons: list[str] = []
+    if family.primary_re.search(text):
+        delta = _macro_family_direction_score(text, family, MACRO_EVENT_NOWCAST_PRIMARY_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"primary {family.name} {'hot' if delta > 0 else 'soft'}")
+    if family.secondary_re.search(text):
+        delta = _macro_family_direction_score(text, family, MACRO_EVENT_NOWCAST_SECONDARY_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"secondary {family.name} {'hot' if delta > 0 else 'soft'}")
+    if score == 0.0:
+        delta = _macro_family_direction_score(text, family, MACRO_EVENT_NOWCAST_GENERIC_WEIGHT)
+        if delta:
+            score += delta
+            reasons.append(f"generic {family.name} {'hot' if delta > 0 else 'soft'}")
+    if score == 0.0:
+        return None
+    clipped = re.sub(r"\s+", " ", text).strip()
+    return score, f"{', '.join(reasons)}: {clipped[:120]}"
+
+
+def _macro_family_direction_score(text: str, family: _MacroNowcastFamily, weight: float) -> float:
+    if family.name == "central_bank":
+        if _RATE_CUT_BETS_FADE_RE.search(text) or _RATE_HIKE_BETS_RISE_RE.search(text):
+            return weight
+        if _RATE_CUT_BETS_RISE_RE.search(text) or _RATE_HIKE_BETS_FADE_RE.search(text):
+            return -weight
+    if family.lower_is_better_re is not None and family.lower_is_better_re.search(text):
+        return _macro_lower_is_better_score(text, family, weight)
+    return _macro_higher_is_better_score(text, family, weight)
+
+
+def _macro_higher_is_better_score(text: str, family: _MacroNowcastFamily, weight: float) -> float:
+    strong = bool(family.strong_re.search(text))
+    soft = bool(family.soft_re.search(text))
+    if strong and not soft:
+        return weight
+    if soft and not strong:
+        return -weight
+    return 0.0
+
+
+def _macro_lower_is_better_score(text: str, family: _MacroNowcastFamily, weight: float) -> float:
+    strong = bool(family.strong_re.search(text))
+    soft = bool(family.soft_re.search(text))
+    if soft and not strong:
+        return weight
+    if strong and not soft:
+        return -weight
+    return 0.0
+
+
+def _macro_text_mentions_currency(text: str, currency: str) -> bool:
+    aliases = _MACRO_CURRENCY_ALIASES.get(currency, ())
+    for alias in aliases:
+        pattern = r"\b" + re.escape(alias).replace(r"\ ", r"\s+") + r"\b"
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+
 def _detect_cross_asset_lag(
     pair: str,
     cross_asset_path: Path,
@@ -959,6 +1432,15 @@ def detect_forward_projections(
         if calendar_path is not None:
             out.extend(
                 _detect_us_employment_nowcast(
+                    pair,
+                    calendar_path=calendar_path,
+                    news_digest_path=news_digest_path,
+                    news_items_path=news_items_path,
+                    now=now,
+                )
+            )
+            out.extend(
+                _detect_macro_event_nowcast(
                     pair,
                     calendar_path=calendar_path,
                     news_digest_path=news_digest_path,

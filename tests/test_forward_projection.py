@@ -515,6 +515,237 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
 
         self.assertFalse(any(s.name == "us_employment_nowcast" for s in signals))
 
+    def test_pre_event_macro_nowcast_projects_usd_strength_from_cpi(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-10T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Core CPI m/m",
+                                "forecast": "0.2%",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "source": "MacroWire",
+                                "title": "US core CPI seen sticky and above consensus",
+                                "summary": "Hot inflation keeps Fed hawkish as yields rise before CPI.",
+                                "published_at_utc": "2026-06-09T12:00:00+00:00",
+                                "currencies": ["USD"],
+                                "topics": ["inflation", "central_bank"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 9, 13, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "macro_event_nowcast_inflation")
+        self.assertEqual(signal.direction, "DOWN")
+        short_score, short_reasons = aggregate_projection_score(signals, "SHORT")
+        long_score, long_reasons = aggregate_projection_score(signals, "LONG")
+        self.assertGreater(short_score, 0.0, short_reasons)
+        self.assertLess(long_score, 0.0, long_reasons)
+
+    def test_pre_event_macro_nowcast_projects_eur_strength_from_ecb_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-11T12:15:00+00:00",
+                                "currency": "EUR",
+                                "impact": "High",
+                                "title": "Main Refinancing Rate",
+                                "forecast": "3.75%",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            digest = root / "news_digest.md"
+            digest.write_text("- EUR / ECB: hawkish rate-hike risk, yields higher before rate decision.\n")
+            mtime = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc).timestamp()
+            os.utime(digest, (mtime, mtime))
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                news_digest_path=digest,
+                now=datetime(2026, 6, 10, 13, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "macro_event_nowcast_central_bank")
+        self.assertEqual(signal.direction, "UP")
+        long_score, long_reasons = aggregate_projection_score(signals, "LONG")
+        short_score, short_reasons = aggregate_projection_score(signals, "SHORT")
+        self.assertGreater(long_score, 0.0, long_reasons)
+        self.assertLess(short_score, 0.0, short_reasons)
+
+    def test_pre_event_macro_nowcast_reads_rate_cut_bets_fade_as_hawkish(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-17T18:00:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "FOMC Statement",
+                                "forecast": None,
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "source": "MacroWire",
+                                "title": "US rate cut bets fade before FOMC",
+                                "summary": "Treasury yields are higher as Fed easing expectations recede.",
+                                "published_at_utc": "2026-06-16T14:00:00+00:00",
+                                "currencies": ["USD"],
+                                "topics": ["central_bank", "yields"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 16, 15, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "macro_event_nowcast_central_bank")
+        self.assertEqual(signal.direction, "DOWN")
+
+    def test_pre_event_macro_nowcast_projects_gbp_weakness_from_retail_sales(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-12T06:00:00+00:00",
+                                "currency": "GBP",
+                                "impact": "Medium",
+                                "title": "Retail Sales m/m",
+                                "forecast": "0.3%",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "items": [
+                            {
+                                "source": "MacroWire",
+                                "title": "Sterling retail sales preview points below consensus",
+                                "summary": "UK consumer spending slows and confidence is weaker before retail sales.",
+                                "published_at_utc": "2026-06-11T08:00:00+00:00",
+                                "currencies": ["GBP"],
+                                "topics": ["consumption"],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="GBP_USD",
+                current_price=1.3400,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now=datetime(2026, 6, 11, 9, 0, tzinfo=timezone.utc),
+            )
+
+        signal = next(s for s in signals if s.name == "macro_event_nowcast_consumption")
+        self.assertEqual(signal.direction, "DOWN")
+
+    def test_pre_event_macro_nowcast_ignores_ambiguous_digest_without_currency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-10T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "CPI m/m",
+                                "forecast": "0.2%",
+                                "actual": None,
+                            }
+                        ]
+                    }
+                )
+            )
+            digest = root / "news_digest.md"
+            digest.write_text("- CPI could be hot and above consensus before release.\n")
+            mtime = datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc).timestamp()
+            os.utime(digest, (mtime, mtime))
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                news_digest_path=digest,
+                now=datetime(2026, 6, 9, 13, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertFalse(any(s.name.startswith("macro_event_nowcast_") for s in signals))
+
     def test_predictive_limit_dedupes_same_liquidity_level(self) -> None:
         signals = [
             _Sig("liquidity_sweep_low", "UP", "M5 equal-lows at 1.09970 (3.0pip down)"),

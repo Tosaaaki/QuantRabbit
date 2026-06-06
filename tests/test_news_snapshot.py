@@ -99,6 +99,59 @@ class NewsSnapshotTest(unittest.TestCase):
         self.assertEqual(len(snap.items), 1)
         self.assertIn("employment", snap.items[0].topics)
 
+    def test_parse_rss_marks_broader_macro_nowcast_topics(self) -> None:
+        payload = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>FXStreet News</title>
+    <item>
+      <title>Fed rate cut bets fade as CPI and retail sales loom</title>
+      <link>https://www.fxstreet.com/news/us-macro-before-cpi/</link>
+      <description>Core PCE, CPI, consumer confidence, WTI crude and trade balance shape the dollar before releases.</description>
+      <pubDate>Tue, 09 Jun 2026 12:45:00 +0000</pubDate>
+      <category>Forex News</category>
+    </item>
+  </channel>
+</rss>
+"""
+
+        snap = build_news_snapshot(
+            now_utc=datetime(2026, 6, 9, 13, 0, tzinfo=timezone.utc),
+            source_payloads={FXSTREET_NEWS_SOURCE: payload},
+            fetch=False,
+        )
+
+        topics = set(snap.items[0].topics)
+        self.assertIn("central_bank", topics)
+        self.assertIn("inflation", topics)
+        self.assertIn("consumption", topics)
+        self.assertIn("oil", topics)
+        self.assertIn("trade", topics)
+
+    def test_parse_rss_does_not_mark_important_as_trade_topic(self) -> None:
+        payload = b"""<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0">
+  <channel>
+    <title>FXStreet News</title>
+    <item>
+      <title>Important Fed decision preview lifts dollar focus</title>
+      <link>https://www.fxstreet.com/news/fed-important-preview/</link>
+      <description>Rate guidance is important for FX, but no external-account data is cited.</description>
+      <pubDate>Tue, 09 Jun 2026 12:45:00 +0000</pubDate>
+      <category>Forex News</category>
+    </item>
+  </channel>
+</rss>
+"""
+
+        snap = build_news_snapshot(
+            now_utc=datetime(2026, 6, 9, 13, 0, tzinfo=timezone.utc),
+            source_payloads={FXSTREET_NEWS_SOURCE: payload},
+            fetch=False,
+        )
+
+        self.assertNotIn("trade", snap.items[0].topics)
+
     def test_build_snapshot_flags_stale_feed_without_dropping_evidence(self) -> None:
         snap = build_news_snapshot(
             now_utc=datetime(2026, 5, 8, 5, 0, tzinfo=timezone.utc),

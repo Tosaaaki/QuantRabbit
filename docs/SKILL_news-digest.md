@@ -16,12 +16,21 @@ OANDA write gateways, print secrets, or write tracked `docs/*_report.md` files.
    - Breaking FX news: `"forex" OR "FX" OR "USD JPY EUR GBP" site:reuters.com OR site:bloomberg.com OR site:forexlive.com latest`
    - Central bank actions: `"Fed" OR "BOJ" OR "ECB" OR "RBA" interest rate policy statement 2026`
    - Economic calendar events today: `economic calendar today "NFP" OR "CPI" OR "GDP" OR "FOMC" OR "BOJ" 2026`
-   - During NFP week, explicitly search and summarize the pre-release labor
-     evidence stack: `ADP employment`, `initial jobless claims`, `JOLTS job
-     openings`, `ISM employment`, `Challenger layoffs`, `average hourly
-     earnings`, and the current `NFP consensus`. The trader uses this as a
-     directional nowcast only; it does not override spread, RR, chart, or
-     gateway checks.
+   - For every high/medium event in the next 48h, explicitly search and
+     summarize the pre-release evidence stack:
+     - Labor: `ADP employment`, `initial jobless claims`, `JOLTS job openings`,
+       `ISM employment`, `Challenger layoffs`, `average hourly earnings`,
+       current `NFP consensus`
+     - Inflation: `CPI`, `core CPI`, `PCE`, `PPI`, `wages`, `oil`, inflation
+       expectations, consensus vs prior
+     - Central banks: `FOMC/ECB/BOJ/BOE/RBA/BOC/RBNZ/SNB`, rate decision,
+       meeting minutes, speeches, `hawkish/dovish`, yields, intervention risk
+     - Growth/consumption: `GDP`, `PMI`, `ISM`, `retail sales`, consumer
+       confidence/sentiment, industrial production, durable goods
+     - Trade/commodity/risk: trade balance, current account, oil/WTI/Brent,
+       tariffs, sanctions, geopolitics, risk-on/off
+     The trader uses this as directional nowcast evidence only; it does not
+     override spread, RR, chart, or gateway checks.
 
 2. Run the API parser. This may fail if a future provider requires keys; continue
    with WebSearch results if it fails.
@@ -55,7 +64,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli news-snapshot
 [Key releases with consensus vs prior]
 
 ## 🧭 Pre-Event Nowcast
-[For NFP/CPI/FOMC: whether leading evidence leans stronger/weaker than consensus, with sources]
+[For every high/medium event in 48h: whether leading evidence leans stronger/weaker than consensus, currency impact, and sources]
 
 ## 🏦 Central Bank Tracker
 [Latest from Fed/BOJ/ECB/RBA — stance, recent statements]
