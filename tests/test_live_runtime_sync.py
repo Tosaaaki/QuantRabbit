@@ -203,6 +203,7 @@ class LiveRuntimeSyncTest(unittest.TestCase):
                 live_only=True,
                 skip_automation_check=False,
                 automation_file=automation_file,
+                weekend_state_file=Path(tmp) / "missing-weekend-state.json",
             )
 
             self.assertEqual(result.returncode, 6)

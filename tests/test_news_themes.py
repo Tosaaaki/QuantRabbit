@@ -92,6 +92,23 @@ class NewsThemesTest(unittest.TestCase):
             self.assertLess(themes.biases[("GBP_USD", "LONG")], 0)
             self.assertLess(themes.biases[("USD_JPY", "LONG")], 0)
 
+    def test_plain_pair_specific_bullets_are_parsed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            content = (
+                "# FX News Digest — 2026-06-06 05:18 JST\n"
+                "## 💱 Pair-Specific Notes\n"
+                "- GBP_USD: momentum remains lower while the USD impulse is intact.\n"
+                "- AUD_USD / NZD_USD: vulnerable if risk appetite softens.\n"
+                "- USD_JPY: intervention risk can cap upside even when USD is broadly firm.\n"
+            )
+            path = _write_digest(Path(tmp), content)
+            themes = parse_news_themes(path)
+
+        self.assertGreater(themes.biases[("GBP_USD", "SHORT")], 0)
+        self.assertLess(themes.biases[("AUD_USD", "LONG")], 0)
+        self.assertLess(themes.biases[("NZD_USD", "LONG")], 0)
+        self.assertLess(themes.biases[("USD_JPY", "LONG")], 0)
+
     def test_risk_off_biases_safe_havens_up(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             content = "Risk-off mode dominating. Sell-off in equities.\n"
@@ -261,6 +278,91 @@ class NewsThemesTest(unittest.TestCase):
 
         self.assertEqual(themes.biases, {})
         self.assertIn("stale_pre_event_digest", themes.detected_themes)
+
+    def test_post_event_news_items_feed_currency_bias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = _write_digest(root, "")
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "lookback_hours": 24,
+                        "items": [
+                            {
+                                "title": "Euro drops as strong US jobs data lifts Greenback",
+                                "summary": "Blowout NFP sends the US Dollar higher.",
+                                "published_at_utc": "2026-06-05T14:20:00+00:00",
+                                "currencies": ["EUR", "USD"],
+                                "pairs": ["EUR_USD"],
+                                "topics": ["employment"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            themes = parse_news_themes(
+                digest,
+                news_items_path=news_items,
+                now_utc=datetime(2026, 6, 5, 15, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertGreater(themes.biases[("EUR_USD", "SHORT")], 0)
+        self.assertLess(themes.biases[("EUR_USD", "LONG")], 0)
+        self.assertIn("news_items:1", themes.detected_themes)
+
+    def test_stale_pre_event_digest_does_not_suppress_post_event_news_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            digest = _write_digest(
+                root,
+                "# FX News Digest — 2026-06-05 21:18 JST\n"
+                "NFP is ahead of the release and USD is lower before payrolls.\n",
+            )
+            calendar = root / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                            }
+                        ]
+                    }
+                )
+            )
+            news_items = root / "news_items.json"
+            news_items.write_text(
+                json.dumps(
+                    {
+                        "lookback_hours": 24,
+                        "items": [
+                            {
+                                "title": "NFP steamrolls US Dollar bears as Greenback rallies",
+                                "summary": "",
+                                "published_at_utc": "2026-06-05T16:50:00+00:00",
+                                "currencies": ["USD"],
+                                "pairs": [],
+                                "topics": ["employment"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            themes = parse_news_themes(
+                digest,
+                calendar_path=calendar,
+                news_items_path=news_items,
+                now_utc=datetime(2026, 6, 5, 17, 0, tzinfo=timezone.utc),
+            )
+
+        self.assertIn("stale_pre_event_digest", themes.detected_themes)
+        self.assertGreater(themes.biases[("EUR_USD", "SHORT")], 0)
 
 
 if __name__ == "__main__":

@@ -101,12 +101,30 @@ _EXPLICIT_LONG_RE = re.compile(
 #   "**GBP_USD, USD_JPY** — Asia open..."  (multi-pair, comma list)
 # The first capture is a comma-separated list of pair tickers; the
 # second is body text (200 chars) we'll scan for bull/bear keywords.
-_PAIR_NOTE_RE = re.compile(
-    r"\*\*([A-Z]{3}_[A-Z]{3}(?:\s*,\s*[A-Z]{3}_[A-Z]{3})*)\*\*\s*[:—\-]?\s*(.{0,250})",
-    re.IGNORECASE | re.DOTALL,
+_PAIR_TOKEN = r"[A-Z]{3}[_/][A-Z]{3}"
+_PAIR_LIST_SEPARATOR = r"(?:,|、|\s+/\s+|\s+\band\b\s+)"
+_PAIR_NOTE_RES = (
+    re.compile(
+        rf"\*\*({_PAIR_TOKEN}(?:\s*{_PAIR_LIST_SEPARATOR}\s*{_PAIR_TOKEN})*)\*\*\s*[:—\-]?\s*(.{{0,250}})",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        rf"(?m)^\s*[-*]\s*({_PAIR_TOKEN}(?:\s*{_PAIR_LIST_SEPARATOR}\s*{_PAIR_TOKEN})*)\s*[:—\-]\s*(.{{0,250}})",
+        re.IGNORECASE,
+    ),
 )
-_BEARISH_RE = re.compile(r"\b(bearish|short|downside|breakdown|sell)\b", re.IGNORECASE)
-_BULLISH_RE = re.compile(r"\b(bullish|long|upside|breakout|buy)\b", re.IGNORECASE)
+_BEARISH_RE = re.compile(
+    r"\b(bearish|short|downside|breakdown|breaks?\s+below|sell|sold|"
+    r"lower|lows?|fragile|vulnerable|falls?|drops?|tumbles?|weak(?:er|ness)?|"
+    r"pullbacks?\s+can\s+be\s+sold)\b",
+    re.IGNORECASE,
+)
+_BULLISH_RE = re.compile(
+    r"\b(bullish|long|upside|breakout|breaks?\s+above|buy|higher|highs?|"
+    r"firm|strong(?:er)?|support(?:ed)?|bid)\b",
+    re.IGNORECASE,
+)
+_UPSIDE_CAP_RE = re.compile(r"\b(cap(?:s|ped|ping)?\s+upside|upside\s+(?:is\s+)?cap(?:ped|s)?)\b", re.IGNORECASE)
 _DIGEST_JST_STAMP_RE = re.compile(r"FX News Digest\s+—\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}):(\d{2})\s+JST")
 _PRE_EVENT_LANGUAGE_RE = re.compile(
     r"\b(ahead\s+of|pre[-\s]?release|next\s+\d+(?:-\d+)?\s+hours?|"
@@ -254,13 +272,11 @@ def _parse_explicit_pair_notes(text: str, biases: Dict[Tuple[str, str], float]) 
     pair gets the SAME bias direction; magnitude unchanged because the
     body sentence applies to all of them).
     """
-    for m in _PAIR_NOTE_RE.finditer(text):
-        pair_list_raw = m.group(1)
-        body = m.group(2)
-        # Strip and split the comma-separated pair list.
-        pairs = [p.strip().upper() for p in pair_list_raw.split(",") if p.strip()]
-        bearish = bool(_BEARISH_RE.search(body))
-        bullish = bool(_BULLISH_RE.search(body))
+    for pair_list_raw, body in _iter_pair_notes(text):
+        pairs = _parse_pair_list(pair_list_raw)
+        upside_capped = bool(_UPSIDE_CAP_RE.search(body))
+        bearish = bool(_BEARISH_RE.search(body)) or upside_capped
+        bullish = bool(_BULLISH_RE.search(body)) and not upside_capped
         if bearish and not bullish:
             for pair in pairs:
                 biases[(pair, "LONG")] = biases.get((pair, "LONG"), 0.0) - NEWS_EXPLICIT_PAIR_BIAS
@@ -271,6 +287,28 @@ def _parse_explicit_pair_notes(text: str, biases: Dict[Tuple[str, str], float]) 
                 biases[(pair, "SHORT")] = biases.get((pair, "SHORT"), 0.0) - NEWS_EXPLICIT_PAIR_BIAS
 
 
+def _iter_pair_notes(text: str) -> list[tuple[str, str]]:
+    notes: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for pattern in _PAIR_NOTE_RES:
+        for match in pattern.finditer(text):
+            item = (match.group(1), match.group(2))
+            if item in seen:
+                continue
+            seen.add(item)
+            notes.append(item)
+    return notes
+
+
+def _parse_pair_list(value: str) -> list[str]:
+    pairs: list[str] = []
+    for match in re.finditer(_PAIR_TOKEN, value.upper()):
+        pair = match.group(0).replace("/", "_")
+        if pair in KNOWN_PAIRS and pair not in pairs:
+            pairs.append(pair)
+    return pairs
+
+
 def _clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -279,20 +317,38 @@ def parse_news_themes(
     digest_path: Path,
     *,
     calendar_path: Path | None = None,
+    news_items_path: Path | None = None,
     now_utc: datetime | None = None,
 ) -> NewsThemes:
     """Parse the news digest into per-(pair, direction) biases."""
-    if not digest_path.exists():
-        return NewsThemes(biases={}, detected_themes=(), source_path=None)
-    try:
-        text = digest_path.read_text(encoding="utf-8")
-    except OSError:
-        return NewsThemes(biases={}, detected_themes=(), source_path=None)
-    if _pre_event_digest_is_stale(text, digest_path, calendar_path=calendar_path, now_utc=now_utc):
-        return NewsThemes(biases={}, detected_themes=("stale_pre_event_digest",), source_path=digest_path)
+    source_path: Path | None = None
+    digest_text = ""
+    themes: list[str] = []
+    if digest_path.exists():
+        source_path = digest_path
+        try:
+            loaded = digest_path.read_text(encoding="utf-8")
+        except OSError:
+            loaded = ""
+        if _pre_event_digest_is_stale(loaded, digest_path, calendar_path=calendar_path, now_utc=now_utc):
+            themes.append("stale_pre_event_digest")
+        else:
+            digest_text = loaded
+    news_items_text, news_item_theme = _load_news_items_theme_text(
+        news_items_path,
+        calendar_path=calendar_path,
+        now_utc=now_utc,
+    )
+    if news_items_text and source_path is None:
+        source_path = news_items_path
+    if news_item_theme:
+        themes.append(news_item_theme)
+
+    text = "\n".join(part for part in (digest_text, news_items_text) if part.strip())
+    if not text.strip():
+        return NewsThemes(biases={}, detected_themes=tuple(themes), source_path=source_path)
 
     biases: Dict[Tuple[str, str], float] = {}
-    themes: list[str] = []
 
     # Currency strength signals first.
     strength = _currency_strength_signals(text)
@@ -319,8 +375,95 @@ def parse_news_themes(
     return NewsThemes(
         biases=biases,
         detected_themes=tuple(themes),
-        source_path=digest_path,
+        source_path=source_path,
     )
+
+
+def _load_news_items_theme_text(
+    news_items_path: Path | None,
+    *,
+    calendar_path: Path | None,
+    now_utc: datetime | None,
+) -> tuple[str, str | None]:
+    if news_items_path is None or not news_items_path.exists():
+        return "", None
+    try:
+        payload = json.loads(news_items_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "", None
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return "", None
+    now = now_utc or datetime.now(timezone.utc)
+    lookback_hours = _optional_float(payload.get("lookback_hours"))
+    cutoff = now - timedelta(hours=lookback_hours) if lookback_hours and lookback_hours > 0 else None
+    lines: list[str] = []
+    used = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        published = _parse_utc(item.get("published_at_utc"))
+        if published is not None:
+            if published > now:
+                continue
+            if cutoff is not None and published < cutoff:
+                continue
+        title = str(item.get("title") or "")
+        summary = str(item.get("summary") or "")
+        categories = " ".join(str(v) for v in item.get("categories") or [] if v)
+        currencies = " ".join(str(v) for v in item.get("currencies") or [] if v)
+        pairs = " ".join(str(v) for v in item.get("pairs") or [] if v)
+        topics = " ".join(str(v) for v in item.get("topics") or [] if v)
+        text = " ".join(part for part in (title, summary, categories, currencies, pairs, topics) if part).strip()
+        if not text:
+            continue
+        if _news_item_is_stale_pre_event(text, published, calendar_path=calendar_path, now_utc=now):
+            continue
+        lines.append(text)
+        used += 1
+    theme = f"news_items:{used}" if used else None
+    return "\n".join(lines), theme
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _news_item_is_stale_pre_event(
+    text: str,
+    published_at: datetime | None,
+    *,
+    calendar_path: Path | None,
+    now_utc: datetime,
+) -> bool:
+    if not text.strip() or calendar_path is None or not calendar_path.exists():
+        return False
+    if not _PRE_EVENT_LANGUAGE_RE.search(text):
+        return False
+    try:
+        payload = json.loads(calendar_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    text_upper = text.upper()
+    for event in payload.get("events") or payload.get("calendar") or []:
+        if not isinstance(event, dict):
+            continue
+        impact = str(event.get("impact") or event.get("importance") or "").upper()
+        if impact not in _HIGH_IMPACT_TOKENS:
+            continue
+        ts = _parse_utc(event.get("timestamp_utc") or event.get("time_utc") or event.get("time") or event.get("timestamp"))
+        if ts is None or ts > now_utc:
+            continue
+        title = str(event.get("title") or event.get("event") or "")
+        currency = str(event.get("currency") or event.get("country") or "").upper()
+        if not _event_mentioned(text_upper, title=title, currency=currency):
+            continue
+        if published_at is None or published_at <= ts or now_utc - ts <= timedelta(hours=6):
+            return True
+    return False
 
 
 def _pre_event_digest_is_stale(

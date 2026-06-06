@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,6 +76,32 @@ LIQUIDITY_SWEEP_MIN_DISTANCE_ATR_MULT = float(os.environ.get("QR_LIQ_SWEEP_MIN_D
 NEWS_LOOKAHEAD_MIN = float(os.environ.get("QR_NEWS_LOOKAHEAD_MIN", "60.0"))  # warn 60 min before
 NEWS_BLOCKED_MIN = float(os.environ.get("QR_NEWS_BLOCKED_MIN", "15.0"))  # hard wait 15 min before
 NEWS_HIGH_IMPACT_PENALTY = float(os.environ.get("QR_NEWS_HIGH_IMPACT_PENALTY", "15.0"))
+# (a) Post-release macro-event follow-through window. After a tier/high-impact
+#     event prints actual-vs-forecast, the first several hours are still the
+#     same repricing regime, not a stale headline.
+# (b) Constant because NFP/CPI/rate-decision reactions routinely drive the
+#     London/NY overlap and settle over roughly 2-4 hours; six hours covers
+#     the full post-release digestion without carrying it into the next day.
+# (c) Replace with per-event projection-ledger calibration once there are
+#     enough event-tagged samples.
+EVENT_SURPRISE_LOOKBACK_MIN = float(os.environ.get("QR_EVENT_SURPRISE_LOOKBACK_MIN", "360.0"))
+# (a) Directional projection magnitude for an actual-vs-forecast surprise.
+# (b) Same order as liquidity/cross-asset projection bonuses: large enough to
+#     alter forecast direction when charts are ambiguous, but still bounded by
+#     PROJECTION_TOTAL_CAP so technical/broker truth can override it.
+# (c) Replace with event-tier calibrated effect sizes after measured samples.
+EVENT_SURPRISE_BONUS = float(os.environ.get("QR_EVENT_SURPRISE_BONUS", "16.0"))
+# (a) Minimum confidence for a high-impact event whose actual differs from
+#     consensus. The sign is factual, but magnitude uncertainty remains.
+# (b) Baseline sits just above the forecast entry floor so a clean surprise can
+#     participate while still needing other market evidence for LIVE_READY.
+# (c) Replace with event-name specific surprise-response calibration.
+EVENT_SURPRISE_BASE_CONFIDENCE = float(os.environ.get("QR_EVENT_SURPRISE_BASE_CONFIDENCE", "0.58"))
+# (a) Additional confidence from surprise size relative to consensus.
+# (b) Ratio-based, not pip/JPY based, so NFP, CPI, PMI, and rates can share it.
+# (c) Replace with per-event z-score calibration when historical releases are
+#     labeled in the projection ledger.
+EVENT_SURPRISE_RATIO_CONFIDENCE_GAIN = float(os.environ.get("QR_EVENT_SURPRISE_RATIO_CONFIDENCE_GAIN", "0.32"))
 
 # Cross-asset lag
 CROSS_ASSET_MOVE_THRESHOLD_PCT = float(os.environ.get("QR_CROSS_ASSET_THRESHOLD_PCT", "0.3"))
@@ -284,6 +311,146 @@ def _detect_news_catalyst(
     return out
 
 
+def _detect_event_surprise(
+    pair: str,
+    calendar_path: Path,
+    now: Optional[datetime] = None,
+) -> List[ProjectionSignal]:
+    """Actual-vs-forecast macro surprise after release.
+
+    Pre-release news is directionless. Post-release actual data is different:
+    if a high-impact event for one leg of the pair prints a measurable
+    surprise, the currency gets a bounded directional follow-through signal.
+    """
+    if not calendar_path.exists():
+        return []
+    now = now or datetime.now(timezone.utc)
+    try:
+        payload = json.loads(calendar_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    events = payload.get("events", []) or []
+    base, quote = _pair_currencies(pair)
+    if not base or not quote:
+        return []
+    out: List[ProjectionSignal] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        ts_raw = event.get("timestamp_utc") or event.get("time_utc")
+        if not ts_raw:
+            continue
+        try:
+            event_time = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(tzinfo=timezone.utc)
+        if event_time > now:
+            continue
+        age_min = (now - event_time).total_seconds() / 60.0
+        if age_min > EVENT_SURPRISE_LOOKBACK_MIN:
+            continue
+        currency = str(event.get("currency") or "").upper()
+        if currency not in (base, quote):
+            continue
+        impact = str(event.get("impact") or "").lower()
+        if "high" not in impact:
+            continue
+        title = str(event.get("title") or event.get("event") or "")
+        actual = _parse_macro_number(event.get("actual"))
+        forecast = _parse_macro_number(event.get("forecast"))
+        if actual is None or forecast is None:
+            continue
+        strength = _event_currency_strength_sign(title=title, actual=actual, forecast=forecast)
+        if strength == 0:
+            continue
+        direction = _currency_strength_to_pair_direction(pair, currency=currency, strength=strength)
+        if direction is None:
+            continue
+        surprise_ratio = abs(actual - forecast) / max(abs(forecast), 1.0)
+        confidence = min(1.0, EVENT_SURPRISE_BASE_CONFIDENCE + min(1.0, surprise_ratio) * EVENT_SURPRISE_RATIO_CONFIDENCE_GAIN)
+        sign = "beat" if strength > 0 else "miss"
+        out.append(ProjectionSignal(
+            name="event_surprise_followthrough",
+            timeframe=None,
+            direction=direction,
+            lead_time_min=0.0,
+            confidence=confidence,
+            bonus_magnitude=EVENT_SURPRISE_BONUS,
+            rationale=(
+                f"{currency} high-impact {title}: actual {event.get('actual')} vs "
+                f"forecast {event.get('forecast')} ({sign}) → {pair} {direction} "
+                f"post-event follow-through, age {age_min:.0f}min"
+            ),
+        ))
+    return out
+
+
+def _parse_macro_number(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = re.search(r"[-+]?\d+(?:,\d{3})*(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        number = float(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
+    suffix = text[match.end():].strip().upper()
+    if suffix.startswith("K"):
+        number *= 1_000.0
+    elif suffix.startswith("M"):
+        number *= 1_000_000.0
+    elif suffix.startswith("B"):
+        number *= 1_000_000_000.0
+    return number
+
+
+def _event_currency_strength_sign(*, title: str, actual: float, forecast: float) -> int:
+    title_upper = title.upper()
+    if actual == forecast:
+        return 0
+    lower_is_better = (
+        "UNEMPLOYMENT" in title_upper
+        or "JOBLESS" in title_upper
+        or "CLAIMS" in title_upper
+    )
+    higher_is_better = any(
+        token in title_upper
+        for token in (
+            "EMPLOYMENT",
+            "NON-FARM",
+            "NONFARM",
+            "PAYROLL",
+            "EARNINGS",
+            "CPI",
+            "PCE",
+            "PMI",
+            "ISM",
+            "GDP",
+            "RETAIL SALES",
+            "INDUSTRIAL PRODUCTION",
+            "PRICES",
+        )
+    )
+    if lower_is_better:
+        return 1 if actual < forecast else -1
+    if higher_is_better:
+        return 1 if actual > forecast else -1
+    return 0
+
+
+def _currency_strength_to_pair_direction(pair: str, *, currency: str, strength: int) -> str | None:
+    base, quote = _pair_currencies(pair)
+    if currency == base:
+        return "UP" if strength > 0 else "DOWN"
+    if currency == quote:
+        return "DOWN" if strength > 0 else "UP"
+    return None
+
+
 def _detect_cross_asset_lag(
     pair: str,
     cross_asset_path: Path,
@@ -393,6 +560,7 @@ def detect_forward_projections(
             out.extend(_detect_liquidity_sweep_target(view, tf, current_price, pip_factor))
     if calendar_path is not None:
         out.extend(_detect_news_catalyst(pair, calendar_path, now=now))
+        out.extend(_detect_event_surprise(pair, calendar_path, now=now))
     if cross_asset_path is not None:
         out.extend(_detect_cross_asset_lag(pair, cross_asset_path, pair_chart))
     out.extend(_detect_session_expansion(now=now))

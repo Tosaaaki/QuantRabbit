@@ -448,6 +448,7 @@ from quant_rabbit.paths import (
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_MARKET_STORY_PROFILE,
+    DEFAULT_NEWS_SNAPSHOT,
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
@@ -1078,6 +1079,7 @@ class TraderBrain:
         news_themes = parse_news_themes(
             logs_root / "news_digest.md",
             calendar_path=_data_artifact_path(data_root, DEFAULT_CALENDAR_SNAPSHOT),
+            news_items_path=_data_artifact_path(data_root, DEFAULT_NEWS_SNAPSHOT),
         )
         positions = len(snapshot.positions)
         orders = len(snapshot.orders)

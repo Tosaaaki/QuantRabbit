@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from quant_rabbit.strategy.forward_projection import (
     ProjectionSignal,
@@ -254,6 +257,72 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
         )
 
         self.assertEqual(orders, [])
+
+    def test_high_impact_actual_beat_projects_currency_followthrough(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            calendar = Path(tmp) / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Non-Farm Employment Change",
+                                "forecast": "85K",
+                                "actual": "172K",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="EUR_USD",
+                current_price=1.1600,
+                calendar_path=calendar,
+                now=datetime(2026, 6, 5, 13, 0, tzinfo=timezone.utc),
+            )
+
+        event_signal = next(s for s in signals if s.name == "event_surprise_followthrough")
+        self.assertEqual(event_signal.direction, "DOWN")
+        short_score, short_reasons = aggregate_projection_score(signals, "SHORT")
+        long_score, long_reasons = aggregate_projection_score(signals, "LONG")
+        self.assertGreater(short_score, 0.0, short_reasons)
+        self.assertLess(long_score, 0.0, long_reasons)
+
+    def test_unemployment_miss_uses_lower_is_better_direction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            calendar = Path(tmp) / "economic_calendar.json"
+            calendar.write_text(
+                json.dumps(
+                    {
+                        "events": [
+                            {
+                                "timestamp_utc": "2026-06-05T12:30:00+00:00",
+                                "currency": "USD",
+                                "impact": "High",
+                                "title": "Unemployment Rate",
+                                "forecast": "4.3%",
+                                "actual": "4.6%",
+                            }
+                        ]
+                    }
+                )
+            )
+
+            signals = detect_forward_projections(
+                {"views": []},
+                pair="USD_JPY",
+                current_price=160.0,
+                calendar_path=calendar,
+                now=datetime(2026, 6, 5, 13, 0, tzinfo=timezone.utc),
+            )
+
+        event_signal = next(s for s in signals if s.name == "event_surprise_followthrough")
+        self.assertEqual(event_signal.direction, "DOWN")
 
     def test_predictive_limit_dedupes_same_liquidity_level(self) -> None:
         signals = [
