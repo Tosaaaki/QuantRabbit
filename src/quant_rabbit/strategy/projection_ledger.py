@@ -8,7 +8,8 @@ to `data/projection_ledger.jsonl` at emission time with:
 - entry_price (current price when prediction was made)
 - predicted_target_price (for liquidity sweep / directional forecast) or None (for EITHER)
 - predicted_invalidation_price for synthesized directional forecasts
-- resolution_window_min = lead_time_min × 2 (give the move 2x slack)
+- resolution_window_min = lead_time_min × 2 (give the move 2x slack), or a
+  minimum immediate-followthrough scoring window when lead_time_min is 0
 - resolution_status = "PENDING" initially
 
 After the resolution window elapses, `verify_pending_projections()`
@@ -64,6 +65,18 @@ CONFIDENCE_DAMPING = float(os.environ.get("QR_PROJECTION_CONFIDENCE_DAMPING", "0
 CONFIDENCE_MAX_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MAX_MULT", "1.5"))
 # Multiplier when a detector has 0% hit-rate
 CONFIDENCE_MIN_MULTIPLIER = float(os.environ.get("QR_PROJECTION_CONFIDENCE_MIN_MULT", "0.2"))
+# (a) Immediate news/event follow-through signals fire after a catalyst is
+#     already in the tape, so their lead time is correctly 0 minutes.
+# (b) They still need a real observation window for calibration; one H1 bar is
+#     the shortest common macro/technical window used by the chart packet and
+#     prevents same-cycle telemetry from becoming instantly expired PENDING.
+# (c) Replace with detector-specific windows once the projection ledger has
+#     enough event/news-theme samples to calibrate post-catalyst half-life.
+IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN = float(
+    os.environ.get("QR_IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN", "60.0")
+)
+if IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN <= 0:
+    raise ValueError("QR_IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN must be positive")
 
 
 @dataclass
@@ -179,16 +192,17 @@ def record_projections(
             )
             if cycle_id and key in seen_keys:
                 continue
+            lead_time_min = float(getattr(s, "lead_time_min", 0))
             entry = LedgerEntry(
                 timestamp_emitted_utc=ts,
                 pair=pair,
                 signal_name=getattr(s, "name", "?"),
                 direction=getattr(s, "direction", "?"),
-                lead_time_min=float(getattr(s, "lead_time_min", 0)),
+                lead_time_min=lead_time_min,
                 confidence=float(getattr(s, "confidence", 0)),
                 entry_price=current_price,
                 predicted_target_price=target_price,
-                resolution_window_min=float(getattr(s, "lead_time_min", 0)) * 2.0,
+                resolution_window_min=_projection_resolution_window_min(lead_time_min),
                 resolution_status="PENDING",
                 pre_emission_range_pips=pre_emission_range_pips,
                 regime_at_emission=regime_at_emission,
@@ -200,6 +214,12 @@ def record_projections(
         f.flush()
         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return written
+
+
+def _projection_resolution_window_min(lead_time_min: float) -> float:
+    if lead_time_min <= 0:
+        return IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN
+    return lead_time_min * 2.0
 
 
 def record_directional_forecast(

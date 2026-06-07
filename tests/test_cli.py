@@ -124,6 +124,65 @@ class CliHelpTest(unittest.TestCase):
         payload = json.loads(stdout.getvalue())
         self.assertIn("qr-missing-gpt-decision-response.json", payload["error"])
 
+    def test_position_management_command_refreshes_sidecar_from_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            pair_charts = root / "pair_charts.json"
+            output = root / "position_management.json"
+            report = root / "position_management.md"
+            fetched_at = datetime(2026, 6, 5, 20, 59, 2, tzinfo=timezone.utc)
+            snapshot.write_text(json.dumps({
+                "fetched_at_utc": fetched_at.isoformat(),
+                "positions": [
+                    {
+                        "trade_id": "t-position",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "units": 1000,
+                        "entry_price": 1.1000,
+                        "take_profit": 1.1020,
+                        "stop_loss": 1.0980,
+                        "unrealized_pl_jpy": 0.0,
+                        "owner": "trader",
+                    }
+                ],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {
+                        "bid": 1.1004,
+                        "ask": 1.1005,
+                        "timestamp_utc": fetched_at.isoformat(),
+                    }
+                },
+                "home_conversions": {"USD": 160.0, "JPY": 1.0},
+            }))
+            pair_charts.write_text(json.dumps({"charts": []}))
+            stdout = io.StringIO()
+
+            with redirect_stdout(stdout):
+                code = main([
+                    "position-management",
+                    "--snapshot",
+                    str(snapshot),
+                    "--pair-charts",
+                    str(pair_charts),
+                    "--output",
+                    str(output),
+                    "--report",
+                    str(report),
+                ])
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertEqual(payload["status"], "OK")
+            self.assertEqual(payload["snapshot_fetched_at_utc"], fetched_at.isoformat())
+            self.assertEqual(payload["position_count"], 1)
+            self.assertTrue(output.exists())
+            self.assertTrue(report.exists())
+            saved = json.loads(output.read_text())
+            self.assertEqual(saved["positions"][0]["trade_id"], "t-position")
+
     def test_gpt_trader_requires_codex_decision_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -854,6 +913,10 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # was producing protected=False for SL-free positions
                     # when invoked outside the autotrade-cycle wrapper.
                     "daily-target-state",
+                    # position-management refreshes the existing-position
+                    # sidecar before GPT/memory-health and must classify
+                    # SL-free TP-only positions under live defaults.
+                    "position-management",
                     # profit-partial-close reads broker truth / pair_charts
                     # and may send risk-reducing profit partial closes.
                     "profit-partial-close",

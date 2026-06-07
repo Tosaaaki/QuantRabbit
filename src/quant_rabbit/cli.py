@@ -79,6 +79,8 @@ from quant_rabbit.paths import (
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_POSITION_EXECUTION,
+    DEFAULT_POSITION_MANAGEMENT,
+    DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_PROFIT_PARTIAL_CLOSE,
     DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT,
     DEFAULT_PROFIT_PARTIAL_CLOSE_STATE,
@@ -566,6 +568,11 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # sees, so the protected flag is computed consistently
         # across both paths.
         "daily-target-state",
+        # Position management is a dry-run sidecar here, but it is part of
+        # existing-exposure live state. It must share the SL-free defaults so
+        # routine refreshes do not turn intentional TP-only positions into
+        # stale repair requirements before GPT verification.
+        "position-management",
         "profit-partial-close",
         # completion-status is an audit command, but it classifies open
         # trader exposure. Under the SL-free runtime, TP-only trader
@@ -1416,6 +1423,16 @@ def main(argv: list[str] | None = None) -> int:
     p_fperst.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_fperst.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_fperst.add_argument("--output", type=Path, default=Path("data/forecast_persistence_report.json"))
+
+    p_pmanage = sub.add_parser(
+        "position-management",
+        help="Refresh PositionManager's read-only sidecar from the latest broker snapshot.",
+    )
+    p_pmanage.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
+    p_pmanage.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_pmanage.add_argument("--trader-decision", type=Path, default=DEFAULT_TRADER_DECISION)
+    p_pmanage.add_argument("--output", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
+    p_pmanage.add_argument("--report", type=Path, default=DEFAULT_POSITION_MANAGEMENT_REPORT)
 
     p_plim = sub.add_parser(
         "generate-predictive-limits",
@@ -3480,6 +3497,39 @@ def main(argv: list[str] | None = None) -> int:
                 for v in verdicts
             ],
             "output_path": str(args.output),
+        }, indent=2, ensure_ascii=False))
+        return 0
+    if args.command == "position-management":
+        from quant_rabbit.strategy.position_manager import PositionManager
+
+        snapshot_payload = json.loads(args.snapshot.read_text()) if args.snapshot.exists() else {}
+        snapshot = _snapshot_from_json(snapshot_payload)
+        decision = PositionManager(
+            trader_decision_path=args.trader_decision,
+            pair_charts_path=args.pair_charts,
+            output_path=args.output,
+            report_path=args.report,
+        ).run(snapshot)
+        print(json.dumps({
+            "status": "OK",
+            "snapshot_fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
+            "action": decision.action,
+            "position_count": len(decision.positions),
+            "positions": [
+                {
+                    "trade_id": position.trade_id,
+                    "pair": position.pair,
+                    "side": position.side,
+                    "owner": position.owner,
+                    "action": position.action,
+                    "unrealized_pl_jpy": position.unrealized_pl_jpy,
+                    "recommended_stop_loss": position.recommended_stop_loss,
+                    "recommended_take_profit": position.recommended_take_profit,
+                }
+                for position in decision.positions
+            ],
+            "output_path": str(args.output),
+            "report_path": str(args.report),
         }, indent=2, ensure_ascii=False))
         return 0
     if args.command == "verify-projections":

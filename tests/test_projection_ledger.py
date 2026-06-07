@@ -13,6 +13,7 @@ from unittest import mock
 from quant_rabbit.strategy.projection_ledger import (
     CONFIDENCE_MAX_MULTIPLIER,
     CONFIDENCE_MIN_MULTIPLIER,
+    IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN,
     LedgerEntry,
     compute_hit_rates,
     confidence_calibration,
@@ -51,6 +52,43 @@ class RecordTest(unittest.TestCase):
             self.assertEqual(entries[0].signal_name, "bb_squeeze")
             self.assertEqual(entries[0].resolution_status, "PENDING")
             self.assertEqual(entries[1].predicted_target_price, 1.17150)
+
+    def test_record_immediate_followthrough_gets_resolution_window(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _expired_pending_projection_count
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime(2026, 6, 7, 14, 29, tzinfo=timezone.utc)
+            sig = _Sig(
+                "news_theme_followthrough",
+                "DOWN",
+                0.0,
+                0.75,
+                10.0,
+                "EUR_USD SHORT news-theme follow-through",
+            )
+            n = record_projections(
+                [sig],
+                pair="EUR_USD",
+                current_price=1.15225,
+                data_root=root,
+                now=now,
+            )
+
+            self.assertEqual(n, 1)
+            entries = load_ledger(root)
+            self.assertEqual(entries[0].lead_time_min, 0.0)
+            self.assertAlmostEqual(
+                entries[0].resolution_window_min,
+                IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN,
+            )
+            self.assertEqual(
+                _expired_pending_projection_count(
+                    data_root=root,
+                    validation_time_utc=now + timedelta(minutes=IMMEDIATE_PROJECTION_RESOLUTION_WINDOW_MIN / 2.0),
+                ),
+                0,
+            )
 
     def test_record_empty_signals(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

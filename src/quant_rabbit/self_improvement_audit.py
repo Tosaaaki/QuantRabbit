@@ -1307,6 +1307,31 @@ def _decision_artifact_findings(
                         )
                     )
                     return out
+                status = str(gpt_loaded.payload.get("status") or "").upper()
+                if status == "REJECTED" and not (action == "CLOSE" and close_ids & active_trade_ids):
+                    out.append(
+                        _finding(
+                            run_id=run_id,
+                            priority="P1",
+                            layer="decision_history",
+                            code="LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS",
+                            message=(
+                                "latest GPT decision was already rejected with blocking verification issue(s); "
+                                "it is not an unconsumed live permission"
+                            ),
+                            next_action=(
+                                "Do not reuse the rejected receipt; write and verify a fresh decision against "
+                                "the current packet."
+                            ),
+                            evidence={
+                                "status": status,
+                                "action": action,
+                                "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                                "active_close_trade_ids": sorted(close_ids & active_trade_ids),
+                            },
+                        )
+                    )
+                    return out
                 out.append(
                     _finding(
                         run_id=run_id,

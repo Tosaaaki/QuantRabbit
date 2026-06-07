@@ -192,6 +192,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-predictive-limits
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli position-thesis-check
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli thesis-evolution-check
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli forecast-persistence-check
+# Refresh PositionManager's read-only sidecar from the latest broker snapshot
+# before memory-health and GPT verification. This sends no orders; live
+# position actions still require the gateway cycle and CLOSE Gate A/B.
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli position-management
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli memory-health
 
 # Re-route after refresh. The refresh branch is not an end state: it must

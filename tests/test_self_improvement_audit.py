@@ -178,6 +178,41 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES", codes)
         self.assertEqual(codes["STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES"]["priority"], "P1")
 
+    def test_rejected_non_close_receipt_blockers_are_not_current_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "decision": {"action": "REQUEST_EVIDENCE", "close_trade_ids": []},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "UNKNOWN_EVIDENCE_REF",
+                                "message": "unknown evidence refs: option:skew:unknown",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES", codes)
+        self.assertIn("LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS", codes)
+        self.assertEqual(codes["LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS"]["priority"], "P1")
+        self.assertEqual(codes["LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS"]["evidence"]["action"], "REQUEST_EVIDENCE")
+
     def test_rejected_close_for_active_trade_remains_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
