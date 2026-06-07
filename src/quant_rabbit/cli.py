@@ -722,7 +722,11 @@ def _auto_refresh_market_evidence_if_required(
         )
         _write_json(DEFAULT_CROSS_ASSET_SNAPSHOT, cross_asset.to_dict())
 
-        flow = build_flow_snapshot(client=client, pairs=pairs)
+        flow = build_flow_snapshot(
+            client=client,
+            pairs=pairs,
+            include_books=os.environ.get("QR_FLOW_INCLUDE_BOOKS", "").strip().lower() in {"1", "true", "yes"},
+        )
         _write_json(DEFAULT_FLOW_SNAPSHOT, flow.to_dict())
 
         strength = build_strength_snapshot(client=client)
@@ -827,10 +831,11 @@ def main(argv: list[str] | None = None) -> int:
     p_cross.add_argument("--output", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
     p_cross.add_argument("--report", type=Path, default=DEFAULT_CROSS_ASSET_REPORT)
 
-    p_flow = sub.add_parser("flow-snapshot", help="OANDA order book + position book + spread time-series per pair.")
+    p_flow = sub.add_parser("flow-snapshot", help="Spread time-series per pair; OANDA books are opt-in.")
     p_flow.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_flow.add_argument("--top-n", type=int, default=5)
     p_flow.add_argument("--spread-lookback-minutes", type=int, default=60)
+    p_flow.add_argument("--include-books", action="store_true", help="Also call OANDA orderBook/positionBook endpoints when the account has book entitlement.")
     p_flow.add_argument("--output", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
     p_flow.add_argument("--report", type=Path, default=DEFAULT_FLOW_REPORT)
 
@@ -1938,6 +1943,7 @@ def main(argv: list[str] | None = None) -> int:
         snap = build_flow_snapshot(
             client=client, pairs=pairs,
             top_n=int(args.top_n), spread_lookback_minutes=int(args.spread_lookback_minutes),
+            include_books=bool(args.include_books),
         )
         payload = snap.to_dict()
         if args.output:
@@ -1945,40 +1951,56 @@ def main(argv: list[str] | None = None) -> int:
             args.output.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
         if args.report:
             lines = [
-                "# Flow Snapshot (OrderBook + PositionBook + Spread)",
+                "# Flow Snapshot (Spread + Optional Books)",
                 "",
                 f"- Generated at UTC: `{snap.generated_at_utc}`",
+                f"- Book fetch enabled: `{snap.book_fetch_enabled}`",
+            ]
+            if snap.book_fetch_reason:
+                lines.append(f"- Book fetch reason: `{snap.book_fetch_reason}`")
+            lines.extend([
                 "",
                 "## Spread State",
                 "",
                 "| Pair | Current(p) | Median(p) | P90(p) | Max(p) | Samples | Stress |",
                 "|---|---|---|---|---|---|---|",
-            ]
+            ])
             for s in snap.spreads:
                 lines.append(f"| `{s.instrument}` | {s.current_pips} | {s.median_pips} | {s.p90_pips} | {s.max_pips} | {s.sample_size} | `{s.stress_flag}` |")
-            lines.extend(["", "## Position Book Top Clusters", ""])
-            position_book_issues = [pb.issue for pb in snap.position_books if pb.issue]
-            unique_position_book_issues = sorted({i for i in position_book_issues if i})
-            if (
-                len(unique_position_book_issues) == 1
-                and len(position_book_issues) == len(snap.position_books)
-            ):
-                lines.append(f"- all pairs issue: {unique_position_book_issues[0]}")
+            if not snap.book_fetch_enabled:
+                lines.extend([
+                    "",
+                    "## Book Data",
+                    "",
+                    "- Disabled by default; enable with `--include-books` only after OANDA book entitlement is confirmed.",
+                ])
             else:
-                for pb in snap.position_books:
-                    if pb.issue:
-                        lines.append(f"- `{pb.instrument}` issue: {pb.issue}")
-                        continue
-                    top_long = ", ".join(f"{b.price}@{b.long_pct:.1f}%" for b in pb.top_long_clusters[:3])
-                    top_short = ", ".join(f"{b.price}@{b.short_pct:.1f}%" for b in pb.top_short_clusters[:3])
-                    lines.append(f"- `{pb.instrument}` price={pb.price} long_total={pb.long_total_pct:.1f}% short_total={pb.short_total_pct:.1f}% top_long=[{top_long}] top_short=[{top_short}]")
+                lines.extend(["", "## Position Book Top Clusters", ""])
+                position_book_issues = [pb.issue for pb in snap.position_books if pb.issue]
+                unique_position_book_issues = sorted({i for i in position_book_issues if i})
+                if (
+                    len(unique_position_book_issues) == 1
+                    and len(position_book_issues) == len(snap.position_books)
+                ):
+                    lines.append(f"- all pairs issue: {unique_position_book_issues[0]}")
+                else:
+                    for pb in snap.position_books:
+                        if pb.issue:
+                            lines.append(f"- `{pb.instrument}` issue: {pb.issue}")
+                            continue
+                        top_long = ", ".join(f"{b.price}@{b.long_pct:.1f}%" for b in pb.top_long_clusters[:3])
+                        top_short = ", ".join(f"{b.price}@{b.short_pct:.1f}%" for b in pb.top_short_clusters[:3])
+                        lines.append(f"- `{pb.instrument}` price={pb.price} long_total={pb.long_total_pct:.1f}% short_total={pb.short_total_pct:.1f}% top_long=[{top_long}] top_short=[{top_short}]")
             if snap.issues:
                 lines.extend(["", "## Issues", ""] + [f"- {i}" for i in snap.issues])
             args.report.parent.mkdir(parents=True, exist_ok=True)
             args.report.write_text("\n".join(lines) + "\n")
         print(json.dumps({
             "output_path": str(args.output), "report_path": str(args.report),
-            "pairs": len(pairs), "issues": list(snap.issues),
+            "pairs": len(pairs),
+            "book_fetch_enabled": snap.book_fetch_enabled,
+            "book_fetch_reason": snap.book_fetch_reason,
+            "issues": list(snap.issues),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "currency-strength":
@@ -2320,10 +2342,15 @@ def main(argv: list[str] | None = None) -> int:
                 "",
                 f"- Generated at UTC: `{snap.generated_at_utc}`",
                 f"- Provider: `{snap.provider}`",
+                f"- Enabled: `{snap.enabled}`",
+            ]
+            if snap.disabled_reason:
+                lines.append(f"- Disabled reason: `{snap.disabled_reason}`")
+            lines.extend([
                 "",
                 "| Pair | Tenor | ATM IV | RR 25Δ | BF 25Δ | Source | Issue |",
                 "|---|---|---|---|---|---|---|",
-            ]
+            ])
             for r in snap.readings:
                 lines.append(f"| `{r.pair}` | `{r.tenor}` | {r.atm_iv} | {r.rr_25d} | {r.bf_25d} | {r.source or ''} | {r.issue or ''} |")
             if snap.issues:
@@ -2332,6 +2359,8 @@ def main(argv: list[str] | None = None) -> int:
             args.report.write_text("\n".join(lines) + "\n")
         print(json.dumps({
             "output_path": str(args.output), "report_path": str(args.report),
+            "enabled": snap.enabled,
+            "disabled_reason": snap.disabled_reason,
             "readings": len(snap.readings), "issues": list(snap.issues),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

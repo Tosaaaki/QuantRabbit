@@ -663,6 +663,7 @@ class GPTTraderBrain:
         self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
         predictive_limits = _load_optional_json(self.predictive_limits_path)
         market_context_matrix = _load_optional_json(self.market_context_matrix_path)
+        option_skew = _load_optional_json(self.option_skew_path)
         pairs = _pairs_from_lanes_and_positions(lanes, snapshot)
         currencies = _currencies_from_pairs(pairs)
         refs = _allowed_refs(
@@ -676,6 +677,7 @@ class GPTTraderBrain:
             predictive_limits=predictive_limits,
             market_status=market_status,
             market_context_matrix=market_context_matrix,
+            option_skew=option_skew,
         )
         return {
             "contract": {
@@ -1850,6 +1852,7 @@ def _allowed_refs(
     predictive_limits: dict[str, Any] | None,
     market_status: dict[str, Any] | None,
     market_context_matrix: dict[str, Any] | None,
+    option_skew: dict[str, Any] | None,
 ) -> list[str]:
     # Per docs/SKILL_trader.md the playbook prescribes a richer set of evidence
     # refs than the base broker/target/lane triple — the trader is required to
@@ -1908,16 +1911,16 @@ def _allowed_refs(
             refs.append(f"chart:{pair}:{tf}")
         for key in structure_keys:
             refs.append(f"chart:{pair}:{key}")
-        refs.extend(
-            [
-                f"flow:{pair}",
-                f"levels:{pair}",
-                f"calendar:{pair}",
-                f"strength:{pair}",
-                f"option:skew:{pair}",
-                f"cross:correlations:{pair}",
-            ]
-        )
+        pair_refs = [
+            f"flow:{pair}",
+            f"levels:{pair}",
+            f"calendar:{pair}",
+            f"strength:{pair}",
+            f"cross:correlations:{pair}",
+        ]
+        if _option_skew_enabled(option_skew):
+            pair_refs.append(f"option:skew:{pair}")
+        refs.extend(pair_refs)
         refs.append(f"matrix:{pair}")
         side_map = ((market_context_matrix or {}).get("pairs") or {}).get(pair)
         if isinstance(side_map, dict):
@@ -1932,7 +1935,9 @@ def _allowed_refs(
         refs.append(f"calendar:{currency}")
     for asset in cross_assets:
         refs.append(f"cross:{asset}")
-    refs.extend(["cross:dxy", "cross:correlations", "option:skew", "option:skew:unknown"])
+    refs.extend(["cross:dxy", "cross:correlations"])
+    if _option_skew_enabled(option_skew):
+        refs.extend(["option:skew", "option:skew:unknown"])
     if attack_advice:
         refs.append("attack:advice")
         for lane_id in attack_advice.get("recommended_now_lane_ids", []) or []:
@@ -1976,6 +1981,14 @@ def _allowed_refs(
             if pair and side:
                 refs.append(f"predictive:limit:{pair}:{side}")
     return sorted(set(refs))
+
+
+def _option_skew_enabled(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("enabled") is False and payload.get("disabled_reason"):
+        return False
+    return bool(payload.get("readings") or payload.get("issues") or payload.get("provider"))
 
 
 def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -2755,7 +2768,7 @@ def _market_context_packet(
     missing = [
         f"MISSING_{name.upper()}_ARTIFACT"
         for name, payload in artifacts.items()
-        if payload is None
+        if payload is None and name != "option_skew"
     ]
     pair_payloads = {
         pair: {
@@ -2936,12 +2949,18 @@ def _calendar_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, An
 
 
 def _option_skew_summary(payload: dict[str, Any] | None, pair: str) -> dict[str, Any]:
+    if isinstance(payload, dict) and payload.get("enabled") is False and payload.get("disabled_reason"):
+        return {
+            "enabled": False,
+            "disabled_reason": payload.get("disabled_reason"),
+            "readings": [],
+        }
     readings = [
         _small_dict(item, ("tenor", "rr_25d", "atm_iv", "bf_25d", "issue"))
         for item in (payload or {}).get("readings", []) or []
         if isinstance(item, dict) and item.get("pair") == pair
     ]
-    return {"readings": readings[:3]}
+    return {"enabled": bool(readings), "readings": readings[:3]}
 
 
 def _cross_asset_summary(payload: dict[str, Any] | None) -> dict[str, Any]:

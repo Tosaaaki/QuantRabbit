@@ -71,6 +71,29 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertIn("MISSING_OPTION_SKEW_FEED", missing_codes)
         self.assertEqual(option_supports, [])
 
+    def test_disabled_option_skew_is_ignored_not_counted_missing(self) -> None:
+        payload = build_market_context_matrix_from_payloads(
+            pair_charts=_pair_charts(),
+            cross_asset={"synthetic_dxy": {"change_pct_24h": 0.0}, "assets": [], "issues": []},
+            flow=_flow(),
+            currency_strength={"scores": [], "issues": []},
+            levels=_levels(),
+            calendar=_calendar(),
+            cot={"reports": [], "issues": []},
+            option_skew={
+                "enabled": False,
+                "disabled_reason": "NO_OPTION_SKEW_PROVIDER",
+                "readings": [],
+                "issues": [],
+            },
+        )
+
+        long = payload["pairs"]["EUR_USD"]["LONG"]
+        missing_codes = {item["code"] for item in long["missing"]}
+
+        self.assertNotIn("MISSING_OPTION_SKEW_PAIR", missing_codes)
+        self.assertNotIn("MISSING_OPTION_SKEW_FEED", missing_codes)
+
     def test_cot_is_longer_term_warning_not_short_term_reject(self) -> None:
         payload = build_market_context_matrix_from_payloads(
             pair_charts=_pair_charts(),

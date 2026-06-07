@@ -18,12 +18,12 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/br
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cross-asset-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot  # spread only; use --include-books only after OANDA book entitlement is confirmed
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli currency-strength
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli levels-snapshot
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli economic-calendar
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cot-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew    # disabled optional artifact until a provider is configured
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli market-context-matrix
 ```
 

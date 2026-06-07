@@ -84,13 +84,12 @@ class StrengthSnapshotTest(unittest.TestCase):
 
 
 class OptionSkewAdapterTest(unittest.TestCase):
-    def test_default_emits_missing_feed_issue(self) -> None:
+    def test_default_disables_unconfigured_optional_feed(self) -> None:
         snap = build_option_skew_snapshot(pairs=("USD_JPY",), tenors=("1W", "1M"))
-        self.assertTrue(any("MISSING_OPTION_SKEW_FEED" in i for i in snap.issues))
-        # All readings carry the missing-feed marker
-        for r in snap.readings:
-            self.assertIsNone(r.atm_iv)
-            self.assertEqual(r.issue, "MISSING_OPTION_SKEW_FEED")
+        self.assertFalse(snap.enabled)
+        self.assertEqual(snap.disabled_reason, "NO_OPTION_SKEW_PROVIDER")
+        self.assertEqual(snap.issues, tuple())
+        self.assertEqual(snap.readings, tuple())
 
 
 if __name__ == "__main__":

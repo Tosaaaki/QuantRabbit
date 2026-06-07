@@ -53,6 +53,7 @@ Write `data/codex_trader_decision_response.json`.
     "attack:advice",
     "attack:lane:<lane_id>"
   ],
+  "evidence_ref_note": "Use option:skew refs only when data/option_skew_snapshot.json has enabled=true; omit them for disabled optional skew artifacts.",
   "strategy_reviews": [
     {
       "lane_id": "desk:PAIR:SIDE:METHOD",

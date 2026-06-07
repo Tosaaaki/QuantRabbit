@@ -593,7 +593,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("UNKNOWN_EVIDENCE_REF", codes)
 
-    def test_accepts_missing_option_skew_evidence_ref(self) -> None:
+    def test_rejects_disabled_option_skew_evidence_ref(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(root)
@@ -603,8 +603,10 @@ class GPTTraderBrainTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "ACCEPTED")
-            self.assertTrue(summary.allowed)
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("UNKNOWN_EVIDENCE_REF", codes)
 
     def test_accepts_extended_pair_chart_timeframe_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1951,10 +1953,11 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         json.dumps(
             {
                 "generated_at_utc": now,
-                "readings": [
-                    {"pair": "EUR_USD", "tenor": "1W", "rr_25d": None, "issue": "MISSING_OPTION_SKEW_FEED"}
-                ],
-                "issues": ["MISSING_OPTION_SKEW_FEED"],
+                "provider": None,
+                "enabled": False,
+                "disabled_reason": "NO_OPTION_SKEW_PROVIDER",
+                "readings": [],
+                "issues": [],
             }
         )
     )

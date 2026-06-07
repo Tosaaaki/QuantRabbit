@@ -62,7 +62,6 @@ def build_market_context_matrix_from_payloads(
             ("levels", levels),
             ("calendar", calendar),
             ("cot", cot),
-            ("option_skew", option_skew),
         )
         if not isinstance(payload, dict)
     ]
@@ -595,9 +594,13 @@ def _apply_cot_layer(
 
 
 def _apply_option_skew_layer(pair_matrix: dict[str, dict[str, Any]], pair: str, option_skew: dict[str, Any] | None) -> None:
+    if not isinstance(option_skew, dict):
+        return
+    if option_skew.get("enabled") is False and option_skew.get("disabled_reason"):
+        return
     readings = [
         item
-        for item in (option_skew or {}).get("readings", []) or []
+        for item in option_skew.get("readings", []) or []
         if isinstance(item, dict) and str(item.get("pair") or "") == pair
     ]
     if not readings:

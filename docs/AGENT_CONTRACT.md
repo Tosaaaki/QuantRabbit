@@ -366,12 +366,12 @@ PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M3
 
 # Market context layers (must be refreshed before every trader cycle)
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot   # DXY synthetic, US bond CFDs, SPX/Gold/Oil/BTC, FX correlations
-PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot          # OANDA OrderBook/PositionBook + spread time series
+PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot          # Spread time series; OANDA books are opt-in with --include-books after entitlement is confirmed
 PYTHONPATH=src python3 -m quant_rabbit.cli currency-strength      # G8 strength meter
 PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot        # Pivots, PDH/PDL/PDC, sessions, round numbers
 PYTHONPATH=src python3 -m quant_rabbit.cli economic-calendar      # ForexFactory High/Medium events + per-pair window
 PYTHONPATH=src python3 -m quant_rabbit.cli cot-snapshot           # CFTC TFF leveraged-funds positioning
-PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter (currently MISSING_OPTION_SKEW_FEED)
+PYTHONPATH=src python3 -m quant_rabbit.cli option-skew            # IV/RR adapter; disabled optional artifact until a real provider is configured
 PYTHONPATH=src python3 -m quant_rabbit.cli market-context-matrix  # Advisory pair/side support/reject matrix across all market layers
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories --news-dir logs --profile data/market_story_profile.json --report data/market_story_report.md
 PYTHONPATH=src python3 -m quant_rabbit.cli news-health --strict    # Fresh WebSearch news + market-story sync guard after story refresh

@@ -80,7 +80,7 @@
 - `data/cot_snapshot.json`
   - Extreme positioning is a warning and must be cited when relevant.
 - `data/option_skew_snapshot.json`
-  - Missing vendor feed is `option:skew:unknown`, not invented option data.
+  - Optional. When no provider is configured, it is a disabled artifact and should not be cited as missing evidence.
 
 ## Evidence Rule
 

@@ -1,4 +1,4 @@
-"""OANDA-native flow snapshot — order book, position book, spread time series.
+"""OANDA-native flow snapshot — spread time series plus optional book data.
 
 OANDA exposes two endpoints that show where retail orders cluster:
 
@@ -10,11 +10,9 @@ OANDA exposes two endpoints that show where retail orders cluster:
 NOTE on access: these endpoints require OANDA account/feed entitlement for
 book data. Many live retail accounts return 401 Invalid authentication for
 them even though `/candles` and `/pricing` work with the same credential.
-When that happens, the module emits one feed-level authorization issue and
-marks each pair's book snapshot unavailable, instead of silently treating the
-absence as "no clusters". Reissuing the same account token is not expected
-to fix this; enable the entitlement/account tier or plug in an alternate
-book feed.
+The production default therefore does not call book endpoints at all. Enable
+book fetch only after the entitlement/account tier is confirmed, or plug in
+an alternate book feed.
 
 We also build a spread time-series proxy from M1 bid/ask candle ranges + the
 latest quote spread, so the trader can see how spread looks vs the recent
@@ -95,6 +93,8 @@ class SpreadStat:
 @dataclass(frozen=True)
 class FlowSnapshot:
     generated_at_utc: str
+    book_fetch_enabled: bool = False
+    book_fetch_reason: str | None = None
     order_books: tuple[BookSnapshot, ...] = field(default_factory=tuple)
     position_books: tuple[BookSnapshot, ...] = field(default_factory=tuple)
     spreads: tuple[SpreadStat, ...] = field(default_factory=tuple)
@@ -103,6 +103,8 @@ class FlowSnapshot:
     def to_dict(self) -> dict[str, object]:
         return {
             "generated_at_utc": self.generated_at_utc,
+            "book_fetch_enabled": self.book_fetch_enabled,
+            "book_fetch_reason": self.book_fetch_reason,
             "order_books": [ob.to_dict() for ob in self.order_books],
             "position_books": [pb.to_dict() for pb in self.position_books],
             "spreads": [s.to_dict() for s in self.spreads],
@@ -116,8 +118,13 @@ def build_flow_snapshot(
     pairs: Sequence[str],
     top_n: int = 5,
     spread_lookback_minutes: int = 60,
+    include_books: bool = False,
 ) -> FlowSnapshot:
-    """Fetch order/position books + recent spread stats for each pair."""
+    """Fetch recent spread stats, and optionally order/position books.
+
+    OANDA book endpoints are disabled by default because unavailable book
+    entitlement returns a persistent 401 and adds latency without evidence.
+    """
 
     issues: list[str] = []
     order_books: list[BookSnapshot] = []
@@ -127,41 +134,42 @@ def build_flow_snapshot(
     position_book_unavailable: str | None = None
 
     for pair in pairs:
-        # Order book
-        if order_book_unavailable is not None:
-            order_books.append(_missing_book_snapshot(pair, "ORDER", order_book_unavailable))
-        else:
-            try:
-                payload = client.get_json(f"/v3/instruments/{pair}/orderBook")
-                order_books.append(_book_from_payload(pair, payload, kind="ORDER", top_n=top_n))
-            except Exception as exc:
-                auth_issue = _book_authorization_issue("ORDERBOOK", exc)
-                if auth_issue is not None:
-                    order_book_unavailable = auth_issue
-                    issues.append(auth_issue)
-                    order_books.append(_missing_book_snapshot(pair, "ORDER", auth_issue))
-                else:
-                    issue = f"MISSING_ORDERBOOK_{pair}: {exc}"
-                    issues.append(issue)
-                    order_books.append(_missing_book_snapshot(pair, "ORDER", issue))
+        if include_books:
+            # Order book
+            if order_book_unavailable is not None:
+                order_books.append(_missing_book_snapshot(pair, "ORDER", order_book_unavailable))
+            else:
+                try:
+                    payload = client.get_json(f"/v3/instruments/{pair}/orderBook")
+                    order_books.append(_book_from_payload(pair, payload, kind="ORDER", top_n=top_n))
+                except Exception as exc:
+                    auth_issue = _book_authorization_issue("ORDERBOOK", exc)
+                    if auth_issue is not None:
+                        order_book_unavailable = auth_issue
+                        issues.append(auth_issue)
+                        order_books.append(_missing_book_snapshot(pair, "ORDER", auth_issue))
+                    else:
+                        issue = f"MISSING_ORDERBOOK_{pair}: {exc}"
+                        issues.append(issue)
+                        order_books.append(_missing_book_snapshot(pair, "ORDER", issue))
 
-        # Position book
-        if position_book_unavailable is not None:
-            position_books.append(_missing_book_snapshot(pair, "POSITION", position_book_unavailable))
-        else:
-            try:
-                payload = client.get_json(f"/v3/instruments/{pair}/positionBook")
-                position_books.append(_book_from_payload(pair, payload, kind="POSITION", top_n=top_n))
-            except Exception as exc:
-                auth_issue = _book_authorization_issue("POSITIONBOOK", exc)
-                if auth_issue is not None:
-                    position_book_unavailable = auth_issue
-                    issues.append(auth_issue)
-                    position_books.append(_missing_book_snapshot(pair, "POSITION", auth_issue))
-                else:
-                    issue = f"MISSING_POSITIONBOOK_{pair}: {exc}"
-                    issues.append(issue)
-                    position_books.append(_missing_book_snapshot(pair, "POSITION", issue))
+            # Position book
+            if position_book_unavailable is not None:
+                position_books.append(_missing_book_snapshot(pair, "POSITION", position_book_unavailable))
+            else:
+                try:
+                    payload = client.get_json(f"/v3/instruments/{pair}/positionBook")
+                    position_books.append(_book_from_payload(pair, payload, kind="POSITION", top_n=top_n))
+                except Exception as exc:
+                    auth_issue = _book_authorization_issue("POSITIONBOOK", exc)
+                    if auth_issue is not None:
+                        position_book_unavailable = auth_issue
+                        issues.append(auth_issue)
+                        position_books.append(_missing_book_snapshot(pair, "POSITION", auth_issue))
+                    else:
+                        issue = f"MISSING_POSITIONBOOK_{pair}: {exc}"
+                        issues.append(issue)
+                        position_books.append(_missing_book_snapshot(pair, "POSITION", issue))
 
         # Spread time-series proxy: pull current quote + M1 candles
         try:
@@ -172,6 +180,8 @@ def build_flow_snapshot(
 
     return FlowSnapshot(
         generated_at_utc=datetime.now(timezone.utc).isoformat(),
+        book_fetch_enabled=include_books,
+        book_fetch_reason=None if include_books else "disabled_by_default_enable_with_include_books",
         order_books=tuple(order_books),
         position_books=tuple(position_books),
         spreads=tuple(spreads),
