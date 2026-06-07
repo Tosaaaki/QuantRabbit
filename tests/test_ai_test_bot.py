@@ -274,6 +274,36 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["managed_net_jpy"], 700.0)
             self.assertEqual(day["selected_buckets"], ["seat_outcomes:EUR_USD:SHORT:MARKET:S_HUNT"])
 
+    def test_execution_ledger_source_uses_original_position_side_without_exit_reason_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            _seed_execution_ledger(ledger)
+
+            AITestBotBacktester(
+                db_path=root / "missing_legacy.db",
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("execution_ledger",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            self.assertEqual(payload["source_tables"], ["execution_ledger"])
+            self.assertEqual(payload["raw_rows"], 2)
+            self.assertEqual(payload["source_contributions"][0]["source_table"], "execution_ledger")
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], ["execution_ledger:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
+            self.assertEqual(day["selected_trades"], 1)
+            self.assertEqual(day["managed_net_jpy"], 150.0)
+            self.assertNotIn("GBP_USD:SHORT", json.dumps(payload))
+            self.assertNotIn("TAKE_PROFIT_ORDER", json.dumps(payload))
+            self.assertIn("exit reason is post-trade evidence", (root / "ai_backtest.md").read_text())
+
 
 def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str, str, str, str, float, str]]) -> None:
     with sqlite3.connect(path) as conn:
@@ -306,6 +336,80 @@ def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             expanded,
+        )
+
+
+def _seed_execution_ledger(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                raw_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_events (
+                event_uid, ts_utc, event_type, trade_id, pair, side, units,
+                realized_pl_jpy, raw_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "fill-1",
+                    "2026-06-01T01:00:00Z",
+                    "ORDER_FILLED",
+                    "trade-1",
+                    "GBP_USD",
+                    "LONG",
+                    1000,
+                    None,
+                    "{}",
+                ),
+                (
+                    "close-1",
+                    "2026-06-01T03:00:00Z",
+                    "TRADE_CLOSED",
+                    "trade-1",
+                    "GBP_USD",
+                    "SHORT",
+                    1000,
+                    100.0,
+                    json.dumps({"reason": "STOP_LOSS_ORDER"}),
+                ),
+                (
+                    "fill-2",
+                    "2026-06-02T01:00:00Z",
+                    "ORDER_FILLED",
+                    "trade-2",
+                    "GBP_USD",
+                    "LONG",
+                    1000,
+                    None,
+                    "{}",
+                ),
+                (
+                    "close-2",
+                    "2026-06-02T03:00:00Z",
+                    "TRADE_CLOSED",
+                    "trade-2",
+                    "GBP_USD",
+                    "SHORT",
+                    1000,
+                    150.0,
+                    json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
+                ),
+            ],
         )
 
 

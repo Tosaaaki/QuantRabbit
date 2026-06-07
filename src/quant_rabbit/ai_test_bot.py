@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from quant_rabbit.paths import (
     DEFAULT_AI_TEST_BOT_BACKTEST,
@@ -32,6 +33,9 @@ DEFAULT_TRAINING_DAYS = 6
 DEFAULT_MIN_TRAIN_TRADES = 10
 DEFAULT_MAX_ACTIVE_BUCKETS = 6
 DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes", "seat_outcomes")
+EXECUTION_LEDGER_SOURCE_TABLE = "execution_ledger"
+DEFAULT_RUNTIME_SOURCE_TABLES = (*DEFAULT_SOURCE_TABLES, EXECUTION_LEDGER_SOURCE_TABLE)
+_JST = ZoneInfo("Asia/Tokyo")
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,7 @@ class AITestBotBacktester:
         min_train_trades: int = DEFAULT_MIN_TRAIN_TRADES,
         max_active_buckets: int = DEFAULT_MAX_ACTIVE_BUCKETS,
         source_tables: tuple[str, ...] = DEFAULT_SOURCE_TABLES,
+        execution_ledger_db_path: Path | None = None,
         dedupe_opportunities: bool = True,
     ) -> None:
         if training_days <= 0:
@@ -155,6 +160,7 @@ class AITestBotBacktester:
         self.min_train_trades = min_train_trades
         self.max_active_buckets = max_active_buckets
         self.source_tables = tuple(source_tables)
+        self.execution_ledger_db_path = execution_ledger_db_path
         self.dedupe_opportunities = dedupe_opportunities
 
     def run(
@@ -202,6 +208,7 @@ class AITestBotBacktester:
             target_jpy=target_jpy,
             max_loss_jpy=cap.loss_cap_jpy,
             top_n=self.max_active_buckets,
+            min_train_trades=self.min_train_trades,
         )
         blockers = tuple(
             _certification_blockers(
@@ -246,6 +253,7 @@ class AITestBotBacktester:
             "live_permission": False,
             "db_path": str(self.db_path),
             "source_tables": list(self.source_tables),
+            "execution_ledger_db": str(self.execution_ledger_db_path) if self.execution_ledger_db_path else None,
             "dedupe_opportunities": self.dedupe_opportunities,
             "raw_rows": len(raw_trades),
             "deduped_rows": len(trades),
@@ -291,44 +299,39 @@ class AITestBotBacktester:
         )
 
     def _load_trades(self) -> Iterable[TestBotTrade]:
-        if not self.db_path.exists():
+        legacy_source_tables = tuple(
+            source for source in self.source_tables if source != EXECUTION_LEDGER_SOURCE_TABLE
+        )
+        if legacy_source_tables and not self.db_path.exists():
             raise FileNotFoundError(f"legacy history DB not found: {self.db_path}")
-        placeholders = ",".join("?" for _ in self.source_tables)
-        query = f"""
-            SELECT source_id, session_date, source_table, pair, direction, execution_style, allocation_band, pl, raw_json
-            FROM legacy_records
-            WHERE source_table IN ({placeholders})
-              AND session_date IS NOT NULL
-              AND pair IS NOT NULL
-              AND direction IS NOT NULL
-              AND pl IS NOT NULL
-            ORDER BY session_date, source_table, pair, direction
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(query, self.source_tables).fetchall()
-        for row in rows:
-            raw = _raw_payload(row["raw_json"])
-            source_table = str(row["source_table"])
-            pair = str(row["pair"])
-            direction = str(row["direction"])
-            match_ids = _matched_trade_ids(raw.get("matched_trade_ids")) if source_table == "seat_outcomes" else ()
-            execution_style, allocation_band = _observable_bucket_fields(
-                source_table=source_table,
-                execution_style=row["execution_style"],
-                allocation_band=row["allocation_band"],
-                raw=raw,
-            )
-            yield TestBotTrade(
-                source_id=str(row["source_id"] or raw.get("id") or ""),
-                session_date=str(row["session_date"]),
-                source_table=source_table,
-                pair=pair,
-                direction=direction,
-                execution_style=execution_style,
-                allocation_band=allocation_band,
-                pl_jpy=float(row["pl"]),
-                opportunity_key=_opportunity_key(
+        if legacy_source_tables:
+            placeholders = ",".join("?" for _ in legacy_source_tables)
+            query = f"""
+                SELECT source_id, session_date, source_table, pair, direction, execution_style, allocation_band, pl, raw_json
+                FROM legacy_records
+                WHERE source_table IN ({placeholders})
+                  AND session_date IS NOT NULL
+                  AND pair IS NOT NULL
+                  AND direction IS NOT NULL
+                  AND pl IS NOT NULL
+                ORDER BY session_date, source_table, pair, direction
+            """
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(query, legacy_source_tables).fetchall()
+            for row in rows:
+                raw = _raw_payload(row["raw_json"])
+                source_table = str(row["source_table"])
+                pair = str(row["pair"])
+                direction = str(row["direction"])
+                match_ids = _matched_trade_ids(raw.get("matched_trade_ids")) if source_table == "seat_outcomes" else ()
+                execution_style, allocation_band = _observable_bucket_fields(
+                    source_table=source_table,
+                    execution_style=row["execution_style"],
+                    allocation_band=row["allocation_band"],
+                    raw=raw,
+                )
+                yield TestBotTrade(
                     source_id=str(row["source_id"] or raw.get("id") or ""),
                     session_date=str(row["session_date"]),
                     source_table=source_table,
@@ -336,11 +339,22 @@ class AITestBotBacktester:
                     direction=direction,
                     execution_style=execution_style,
                     allocation_band=allocation_band,
-                    raw=raw,
-                ),
-                sort_key=_event_sort_key(row["source_id"], raw),
-                match_ids=match_ids,
-            )
+                    pl_jpy=float(row["pl"]),
+                    opportunity_key=_opportunity_key(
+                        source_id=str(row["source_id"] or raw.get("id") or ""),
+                        session_date=str(row["session_date"]),
+                        source_table=source_table,
+                        pair=pair,
+                        direction=direction,
+                        execution_style=execution_style,
+                        allocation_band=allocation_band,
+                        raw=raw,
+                    ),
+                    sort_key=_event_sort_key(row["source_id"], raw),
+                    match_ids=match_ids,
+                )
+        if EXECUTION_LEDGER_SOURCE_TABLE in self.source_tables:
+            yield from _execution_ledger_trades(self.execution_ledger_db_path)
 
     def _write_output(self, payload: dict) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -356,6 +370,7 @@ class AITestBotBacktester:
             f"- Status: `{payload['status']}`",
             f"- Live permission: `{payload['live_permission']}`",
             f"- History DB: `{payload['db_path']}`",
+            f"- Execution ledger DB: `{payload.get('execution_ledger_db') or 'n/a'}`",
             f"- Source tables: `{', '.join(payload['source_tables'])}`",
             f"- Opportunity dedupe: `{payload['dedupe_opportunities']}` "
             f"(raw=`{payload['raw_rows']}`, deduped=`{payload['deduped_rows']}`)",
@@ -379,6 +394,7 @@ class AITestBotBacktester:
             f"- Average selected trade: `{payload['firepower']['avg_selected_trade_jpy']:.1f} JPY`",
             f"- Required trades/day at observed expectancy: `{payload['firepower']['required_trades_per_day_at_observed_expectancy']}`",
             f"- Oracle top-{payload['max_active_buckets']} target-hit days: `{payload['oracle']['top_n_target_hit_days']}`",
+            f"- Train-eligible oracle target-hit days: `{payload['oracle']['train_eligible_all_positive_target_hit_days']}`",
             f"- Oracle all-positive target-hit days: `{payload['oracle']['all_positive_target_hit_days']}`",
             f"- Selected/oracle capture: `{payload['oracle']['selected_vs_top_n_capture_pct']:.1f}%`",
             f"- All-positive oracle ceiling: `{payload['target_ceiling']['best_all_positive_day_coverage_pct']:.1f}%`",
@@ -440,6 +456,7 @@ class AITestBotBacktester:
                 "- This is an offline research bot. It never places or stages broker orders.",
                 "- Bucket selection uses only prior training-window days; validation-day winners cannot select themselves.",
                 "- Seat outcome buckets use only observable setup/orderability/source fields, not future `CAPTURED/FAILED/MISSED` labels.",
+                "- Execution-ledger outcomes use pair/direction only; exit reason is post-trade evidence and is not used as a selection bucket.",
                 "- Opportunity dedupe counts repeated seat receipts as one candidate before training or validation scoring.",
                 "- Losses are capped by the equity-derived per-trade cap; wins are not enlarged.",
                 "- `live_permission=false` means this receipt can support research, not live execution.",
@@ -684,12 +701,22 @@ def _target_ceiling_payload(
     selected_capture = _round((best_selected / best_oracle) * 100.0) if best_oracle > 0 else 0.0
     return {
         "prediction_only_target_possible": int(oracle.get("all_positive_target_hit_days") or 0) > 0,
+        "train_eligible_prediction_target_possible": int(
+            oracle.get("train_eligible_all_positive_target_hit_days") or 0
+        )
+        > 0,
         "top_n_target_possible": int(oracle.get("top_n_target_hit_days") or 0) > 0,
         "best_selected_day_jpy": _round(best_selected),
         "best_top_n_day_jpy": _round(best_top_n),
         "best_all_positive_day_jpy": _round(best_all_positive),
+        "best_train_eligible_all_positive_day_jpy": _round(
+            float(oracle.get("best_train_eligible_all_positive_day_jpy") or 0.0)
+        ),
         "best_all_positive_day_coverage_pct": _round((best_all_positive / target_jpy) * 100.0) if target_jpy else 0.0,
         "oracle_target_gap_jpy": _round(max(target_jpy - best_all_positive, 0.0)),
+        "train_eligible_oracle_target_gap_jpy": _round(
+            max(target_jpy - float(oracle.get("best_train_eligible_all_positive_day_jpy") or 0.0), 0.0)
+        ),
         "selected_best_vs_oracle_best_pct": selected_capture,
     }
 
@@ -707,6 +734,9 @@ def _action_items(
     for item in source_contributions:
         source_table = str(item["source_table"])
         validation_net = float(item["validation_universe_managed_net_jpy"])
+        validation_raw_net = float(item.get("validation_universe_raw_net_jpy") or 0.0)
+        selected_raw_net = float(item.get("selected_raw_net_jpy") or 0.0)
+        selected_managed_net = float(item.get("selected_managed_net_jpy") or 0.0)
         selected = int(item["selected_trades"])
         validation_rows = int(item["validation_universe_trades"])
         if source_table == "seat_outcomes" and validation_rows and selected == 0 and validation_net < 0:
@@ -714,11 +744,39 @@ def _action_items(
                 "seat_outcomes discovery universe is negative and selected no validation trades "
                 f"(net {validation_net:.0f} JPY across {validation_rows} receipts); repair discovery filters before increasing live frequency"
             )
+        if (
+            source_table == EXECUTION_LEDGER_SOURCE_TABLE
+            and validation_rows
+            and validation_raw_net < 0
+            and validation_net > 0
+        ):
+            yield (
+                "execution_ledger is profitable only after applying the hypothetical per-trade loss cap "
+                f"(raw {validation_raw_net:.0f} JPY vs managed {validation_net:.0f} JPY); "
+                "keep close-discipline repairs in force and do not treat old raw losses as fixed evidence"
+            )
+        if (
+            source_table == EXECUTION_LEDGER_SOURCE_TABLE
+            and selected
+            and selected_raw_net < 0
+            and selected_managed_net > 0
+        ):
+            yield (
+                "selected execution-ledger buckets are still raw-negative after real exits "
+                f"(raw {selected_raw_net:.0f} JPY vs managed {selected_managed_net:.0f} JPY); "
+                "improve exit timing before scaling the same live buckets"
+            )
     if target_ceiling.get("prediction_only_target_possible") is False:
         gap = float(target_ceiling.get("oracle_target_gap_jpy") or 0.0)
         yield (
             "archive opportunity ceiling misses 10% target even with an all-positive oracle "
             f"(gap {gap:.0f} JPY); expand verified opportunity universe/receipt coverage before more prediction tuning"
+        )
+    elif target_ceiling.get("train_eligible_prediction_target_possible") is False:
+        gap = float(target_ceiling.get("train_eligible_oracle_target_gap_jpy") or 0.0)
+        yield (
+            "hindsight oracle reaches the 10% target only with validation-day or insufficient-history buckets "
+            f"(train-eligible gap {gap:.0f} JPY); collect or import pre-entry evidence before counting it as predictable"
         )
     required = firepower.get("required_trades_per_day_at_observed_expectancy")
     avg_trades = float(firepower.get("avg_selected_trades_per_day") or 0.0)
@@ -880,45 +938,90 @@ def _oracle_summary(
     target_jpy: float,
     max_loss_jpy: float,
     top_n: int,
+    min_train_trades: int,
 ) -> dict[str, float | int | str | None]:
     selected_by_day = {day.session_date: set(day.selected_buckets) for day in day_results}
     selected_net_by_day = {day.session_date: day.managed_net_jpy for day in day_results}
     top_n_hits = 0
     all_positive_hits = 0
+    train_eligible_top_n_hits = 0
+    train_eligible_all_positive_hits = 0
     top_n_total = 0.0
     all_positive_total = 0.0
+    train_eligible_top_n_total = 0.0
+    train_eligible_all_positive_total = 0.0
     best_top_n = 0.0
     best_top_n_day: str | None = None
     best_all_positive = 0.0
     best_all_positive_day: str | None = None
+    best_train_eligible_top_n = 0.0
+    best_train_eligible_top_n_day: str | None = None
+    best_train_eligible_all_positive = 0.0
+    best_train_eligible_all_positive_day: str | None = None
     selected_total = _round(sum(selected_net_by_day.values()))
     for day in day_results:
         bucket_net = _bucket_net_for_day(trades, day.session_date, max_loss_jpy)
+        train_eligible_buckets = _train_eligible_buckets(
+            trades,
+            day,
+            max_loss_jpy=max_loss_jpy,
+            min_train_trades=min_train_trades,
+        )
+        train_eligible_bucket_net = {
+            bucket: value for bucket, value in bucket_net.items() if bucket in train_eligible_buckets
+        }
         top_n_net = _round(sum(value for _, value in sorted(bucket_net.items(), key=lambda item: item[1], reverse=True)[:top_n]))
         all_positive_net = _round(sum(value for value in bucket_net.values() if value > 0))
+        train_eligible_top_n_net = _round(
+            sum(
+                value
+                for _, value in sorted(train_eligible_bucket_net.items(), key=lambda item: item[1], reverse=True)[:top_n]
+            )
+        )
+        train_eligible_all_positive_net = _round(sum(value for value in train_eligible_bucket_net.values() if value > 0))
         top_n_total += top_n_net
         all_positive_total += all_positive_net
+        train_eligible_top_n_total += train_eligible_top_n_net
+        train_eligible_all_positive_total += train_eligible_all_positive_net
         if top_n_net >= target_jpy:
             top_n_hits += 1
         if all_positive_net >= target_jpy:
             all_positive_hits += 1
+        if train_eligible_top_n_net >= target_jpy:
+            train_eligible_top_n_hits += 1
+        if train_eligible_all_positive_net >= target_jpy:
+            train_eligible_all_positive_hits += 1
         if top_n_net > best_top_n:
             best_top_n = top_n_net
             best_top_n_day = day.session_date
         if all_positive_net > best_all_positive:
             best_all_positive = all_positive_net
             best_all_positive_day = day.session_date
+        if train_eligible_top_n_net > best_train_eligible_top_n:
+            best_train_eligible_top_n = train_eligible_top_n_net
+            best_train_eligible_top_n_day = day.session_date
+        if train_eligible_all_positive_net > best_train_eligible_all_positive:
+            best_train_eligible_all_positive = train_eligible_all_positive_net
+            best_train_eligible_all_positive_day = day.session_date
     positive_top_total = max(top_n_total, 0.0)
     return {
         "top_n": top_n,
         "top_n_target_hit_days": top_n_hits,
         "all_positive_target_hit_days": all_positive_hits,
+        "train_eligible_top_n_target_hit_days": train_eligible_top_n_hits,
+        "train_eligible_all_positive_target_hit_days": train_eligible_all_positive_hits,
         "top_n_total_net_jpy": _round(top_n_total),
         "all_positive_total_net_jpy": _round(all_positive_total),
+        "train_eligible_top_n_total_net_jpy": _round(train_eligible_top_n_total),
+        "train_eligible_all_positive_total_net_jpy": _round(train_eligible_all_positive_total),
         "best_top_n_day": best_top_n_day,
         "best_top_n_day_jpy": _round(best_top_n),
         "best_all_positive_day": best_all_positive_day,
         "best_all_positive_day_jpy": _round(best_all_positive),
+        "best_train_eligible_top_n_day": best_train_eligible_top_n_day,
+        "best_train_eligible_top_n_day_jpy": _round(best_train_eligible_top_n),
+        "best_train_eligible_all_positive_day": best_train_eligible_all_positive_day,
+        "best_train_eligible_all_positive_day_jpy": _round(best_train_eligible_all_positive),
         "selected_vs_top_n_capture_pct": _round((selected_total / positive_top_total) * 100.0) if positive_top_total > 0 else 0.0,
         "validation_days": len(selected_by_day),
     }
@@ -961,6 +1064,154 @@ def _bucket_net_for_day(
             continue
         bucket_net[row.bucket] = _round(bucket_net.get(row.bucket, 0.0) + _capped_pl(row.pl_jpy, max_loss_jpy))
     return bucket_net
+
+
+def _train_eligible_buckets(
+    trades: tuple[TestBotTrade, ...],
+    day: TestBotDay,
+    *,
+    max_loss_jpy: float,
+    min_train_trades: int,
+) -> set[TestBotBucket]:
+    by_bucket: dict[TestBotBucket, list[TestBotTrade]] = {}
+    for row in trades:
+        if not (day.training_start_date <= row.session_date <= day.training_end_date):
+            continue
+        by_bucket.setdefault(row.bucket, []).append(row)
+    eligible: set[TestBotBucket] = set()
+    for bucket, rows in by_bucket.items():
+        if len(rows) < min_train_trades:
+            continue
+        capped_net = _round(sum(_capped_pl(row.pl_jpy, max_loss_jpy) for row in rows))
+        if capped_net > 0:
+            eligible.add(bucket)
+    return eligible
+
+
+def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
+    if db_path is None or not db_path.exists():
+        return
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_events'"
+        ).fetchone()
+        if not exists:
+            return
+        rows = conn.execute(
+            """
+            WITH entries AS (
+                SELECT
+                    trade_id,
+                    CASE
+                        WHEN MAX(units) > 0 THEN 'LONG'
+                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        ELSE NULL
+                    END AS position_side
+                FROM execution_events
+                WHERE event_type = 'ORDER_FILLED'
+                  AND trade_id IS NOT NULL
+                  AND trade_id != ''
+                  AND units IS NOT NULL
+                GROUP BY trade_id
+            )
+            SELECT
+                e.event_uid,
+                e.ts_utc,
+                e.trade_id,
+                e.pair,
+                e.side AS close_side,
+                e.realized_pl_jpy,
+                e.raw_json,
+                entries.position_side
+            FROM execution_events e
+            LEFT JOIN entries ON entries.trade_id = e.trade_id
+            WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+              AND e.ts_utc IS NOT NULL
+              AND e.pair IS NOT NULL
+              AND e.side IS NOT NULL
+              AND e.realized_pl_jpy IS NOT NULL
+            ORDER BY e.ts_utc, e.event_uid
+            """
+        ).fetchall()
+    for row in rows:
+        pair = _norm(row["pair"])
+        direction = _norm(row["position_side"]) or _opposite_side(_norm(row["close_side"]))
+        session_date = _execution_session_date(row["ts_utc"])
+        if not pair or direction not in {"LONG", "SHORT"} or not session_date:
+            continue
+        source_id = str(row["event_uid"] or row["trade_id"] or row["ts_utc"] or "")
+        raw = _raw_payload(row["raw_json"])
+        raw.setdefault("trade_id", str(row["trade_id"] or ""))
+        raw.setdefault("created_at", str(row["ts_utc"] or ""))
+        execution_style = "UNSPECIFIED"
+        allocation_band = "UNSPECIFIED"
+        yield TestBotTrade(
+            source_id=source_id,
+            session_date=session_date,
+            source_table=EXECUTION_LEDGER_SOURCE_TABLE,
+            pair=pair,
+            direction=direction,
+            execution_style=execution_style,
+            allocation_band=allocation_band,
+            pl_jpy=float(row["realized_pl_jpy"]),
+            opportunity_key=_opportunity_key(
+                source_id=source_id,
+                session_date=session_date,
+                source_table=EXECUTION_LEDGER_SOURCE_TABLE,
+                pair=pair,
+                direction=direction,
+                execution_style=execution_style,
+                allocation_band=allocation_band,
+                raw=raw,
+            ),
+            sort_key=str(row["ts_utc"] or source_id),
+        )
+
+
+def _execution_session_date(value: object) -> str:
+    parsed = _parse_utc_timestamp(value)
+    if parsed is not None:
+        return parsed.astimezone(_JST).date().isoformat()
+    text = str(value or "").strip()
+    return text[:10] if len(text) >= 10 else ""
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    plus_pos = text.rfind("+")
+    minus_pos = text.rfind("-", 19)
+    tz_pos = max(plus_pos, minus_pos)
+    if tz_pos > 19:
+        main, suffix = text[:tz_pos], text[tz_pos:]
+    else:
+        main, suffix = text, ""
+    if "." in main:
+        head, frac = main.split(".", 1)
+        main = f"{head}.{frac[:6]}"
+    try:
+        parsed = datetime.fromisoformat(f"{main}{suffix}")
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _norm(value: object) -> str:
+    return str(value or "").strip().upper().replace("/", "_").replace(" ", "_")
+
+
+def _opposite_side(value: str) -> str:
+    if value == "LONG":
+        return "SHORT"
+    if value == "SHORT":
+        return "LONG"
+    return ""
 
 
 def _status(

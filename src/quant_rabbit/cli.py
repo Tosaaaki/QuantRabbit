@@ -14,7 +14,7 @@ from quant_rabbit.ai_test_bot import (
     AITestBotBacktester,
     DEFAULT_MAX_ACTIVE_BUCKETS,
     DEFAULT_MIN_TRAIN_TRADES,
-    DEFAULT_SOURCE_TABLES,
+    DEFAULT_RUNTIME_SOURCE_TABLES,
     DEFAULT_TRAINING_DAYS,
 )
 from quant_rabbit.attack_advisor import AttackAdvisor
@@ -1287,7 +1287,8 @@ def main(argv: list[str] | None = None) -> int:
     p_ai_test.add_argument("--training-days", type=int, default=DEFAULT_TRAINING_DAYS)
     p_ai_test.add_argument("--min-train-trades", type=int, default=DEFAULT_MIN_TRAIN_TRADES)
     p_ai_test.add_argument("--max-active-buckets", type=int, default=DEFAULT_MAX_ACTIVE_BUCKETS)
-    p_ai_test.add_argument("--source-tables", default=",".join(DEFAULT_SOURCE_TABLES))
+    p_ai_test.add_argument("--source-tables", default=",".join(DEFAULT_RUNTIME_SOURCE_TABLES))
+    p_ai_test.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
     p_ai_test.add_argument("--no-dedupe-opportunities", action="store_true")
     p_ai_test.add_argument("--max-validation-days", type=int, default=None)
     p_ai_test.add_argument("--output", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
@@ -2775,6 +2776,7 @@ def main(argv: list[str] | None = None) -> int:
                 min_train_trades=args.min_train_trades,
                 max_active_buckets=args.max_active_buckets,
                 source_tables=source_tables,
+                execution_ledger_db_path=args.execution_ledger_db,
                 dedupe_opportunities=not args.no_dedupe_opportunities,
             ).run(
                 start_balance_jpy=args.start_balance,
