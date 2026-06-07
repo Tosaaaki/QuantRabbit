@@ -136,6 +136,32 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertIn("SHORT_FORECAST_HISTORY_STALE", codes)
         self.assertIn("SHORT_FORECAST_PAIR_STALE", codes)
 
+    def test_stale_required_forecast_does_not_require_projection_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            forecast_ts = _NOW - FORECAST_SNAPSHOT_GRACE - timedelta(seconds=1)
+            files["forecast_history"].write_text(
+                json.dumps(
+                    {
+                        "timestamp_utc": forecast_ts.isoformat(),
+                        "cycle_id": "closed-market-cycle",
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "confidence": 0.8,
+                    }
+                )
+                + "\n"
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        codes = {issue["code"] for issue in payload["issues"] if issue["severity"] == "BLOCK"}
+        self.assertIn("SHORT_FORECAST_PAIR_STALE", codes)
+        self.assertNotIn("MEDIUM_DIRECTIONAL_PROJECTION_MISSING", codes)
+
     def test_stale_blocked_candidate_forecast_does_not_block_memory_health(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -620,6 +620,13 @@ def _audit_projection_ledger(
             continue
         direction = str(forecast.get("direction") or "").upper()
         cycle_id = str(forecast.get("cycle_id") or "")
+        forecast_ts = _parse_utc(forecast.get("timestamp_utc"))
+        if (
+            snapshot_ts is not None
+            and forecast_ts is not None
+            and _forecast_predates_snapshot_beyond_grace(forecast_ts, snapshot_ts)
+        ):
+            continue
         if direction in {"UP", "DOWN"} and cycle_id and (pair, cycle_id) not in directional_keys:
             issues.append(
                 _issue(
