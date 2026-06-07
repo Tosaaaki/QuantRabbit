@@ -165,6 +165,154 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.1)
         self.assertTrue(evidence["worst_buckets"])
 
+    def test_directional_forecast_timeout_dominant_is_p1_calibration_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(2):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT" if idx == 0 else "MISS",
+                        "cycle_id": f"cycle-hitmiss-{idx}",
+                    }
+                )
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 4)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "TIMEOUT",
+                        "cycle_id": f"cycle-timeout-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("DIRECTIONAL_FORECAST_CALIBRATION_TIMEOUT_DOMINANT", codes)
+        evidence = codes["DIRECTIONAL_FORECAST_CALIBRATION_TIMEOUT_DOMINANT"]["evidence"]
+        self.assertEqual(evidence["calibrated_samples"], 2)
+        self.assertEqual(evidence["status_counts"]["TIMEOUT"], 10)
+        self.assertLess(evidence["calibration_coverage"], evidence["min_coverage"])
+
+    def test_order_intents_without_market_context_refs_are_p1_when_matrix_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["market_context_matrix"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "pairs": {"EUR_USD": {"LONG": {"support": []}}},
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_MISSING", codes)
+        finding = codes["ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_MISSING"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["candidate_count"], 1)
+        self.assertEqual(finding["evidence"]["with_context_refs"], 0)
+
+    def test_market_context_ref_on_intent_satisfies_context_evidence_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["market_context_matrix"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "pairs": {"EUR_USD": {"LONG": {"support": []}}},
+                    }
+                )
+            )
+            intents = json.loads(files["intents"].read_text())
+            intents["results"][0]["intent"]["metadata"]["market_context_matrix_ref"] = "matrix:EUR_USD:LONG"
+            files["intents"].write_text(json.dumps(intents))
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_MISSING", codes)
+
+    def test_unattributable_close_gate_ablation_is_p1_assumption_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["ai_backtest"].write_text(
+                json.dumps(
+                    {
+                        "mechanism_ablation": {
+                            "close_gate_ab": {
+                                "status": "MEASURED",
+                                "close_events": 8,
+                                "bot_attributed_close_events": 0,
+                                "gateway_close_sent_events": 0,
+                                "loss_side_market_close_count": 5,
+                                "loss_side_market_close_net_jpy": -1200.0,
+                                "unattributed_loss_side_market_close_count": 5,
+                            }
+                        }
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE", codes)
+        finding = codes["CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["gateway_close_sent_events"], 0)
+
     def test_profitable_backtest_edges_missing_from_coverage_are_p1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -501,10 +649,14 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         str(files["target"]),
                         "--order-intents",
                         str(files["intents"]),
+                        "--market-context-matrix",
+                        str(files["market_context_matrix"]),
                         "--memory-health",
                         str(files["memory"]),
                         "--learning-audit",
                         str(files["learning"]),
+                        "--ai-test-bot-backtest",
+                        str(files["ai_backtest"]),
                         "--verification-ledger",
                         str(files["verification"]),
                         "--forecast-history",
@@ -550,8 +702,10 @@ def _run(files: dict[str, Path], *, now: datetime = _NOW):
         snapshot_path=files["snapshot"],
         target_state_path=files["target"],
         order_intents_path=files["intents"],
+        market_context_matrix_path=files["market_context_matrix"],
         memory_health_path=files["memory"],
         learning_audit_path=files["learning"],
+        ai_test_bot_backtest_path=files["ai_backtest"],
         verification_ledger_path=files["verification"],
         forecast_history_path=files["forecast_history"],
         projection_ledger_path=files["projection_ledger"],
@@ -586,8 +740,10 @@ def _fixtures(
         "snapshot": root / "broker_snapshot.json",
         "target": root / "daily_target_state.json",
         "intents": root / "order_intents.json",
+        "market_context_matrix": root / "market_context_matrix.json",
         "memory": root / "memory_health.json",
         "learning": root / "learning_audit.json",
+        "ai_backtest": root / "ai_test_bot_backtest.json",
         "verification": root / "verification_ledger.json",
         "forecast_history": root / "forecast_history.jsonl",
         "projection_ledger": root / "projection_ledger.jsonl",

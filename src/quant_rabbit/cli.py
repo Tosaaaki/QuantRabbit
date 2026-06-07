@@ -1438,8 +1438,10 @@ def main(argv: list[str] | None = None) -> int:
     p_self_audit.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_self_audit.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_self_audit.add_argument("--order-intents", type=Path, default=DEFAULT_ORDER_INTENTS)
+    p_self_audit.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_self_audit.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
     p_self_audit.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_self_audit.add_argument("--ai-test-bot-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
     p_self_audit.add_argument("--verification-ledger", type=Path, default=DEFAULT_VERIFICATION_LEDGER)
     p_self_audit.add_argument("--forecast-history", type=Path, default=DEFAULT_FORECAST_HISTORY)
     p_self_audit.add_argument("--projection-ledger", type=Path, default=DEFAULT_PROJECTION_LEDGER)
@@ -3190,8 +3192,10 @@ def main(argv: list[str] | None = None) -> int:
                 snapshot_path=args.snapshot,
                 target_state_path=args.target_state,
                 order_intents_path=args.order_intents,
+                market_context_matrix_path=args.market_context_matrix,
                 memory_health_path=args.memory_health,
                 learning_audit_path=args.learning_audit,
+                ai_test_bot_backtest_path=args.ai_test_bot_backtest,
                 verification_ledger_path=args.verification_ledger,
                 forecast_history_path=args.forecast_history,
                 projection_ledger_path=args.projection_ledger,

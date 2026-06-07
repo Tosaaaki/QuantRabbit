@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from quant_rabbit.paths import (
+    DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_DAILY_TARGET_STATE,
@@ -17,6 +18,7 @@ from quant_rabbit.paths import (
     DEFAULT_FORECAST_HISTORY,
     DEFAULT_GPT_TRADER_DECISION,
     DEFAULT_LEARNING_AUDIT,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_MEMORY_HEALTH,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_POSITION_MANAGEMENT,
@@ -77,6 +79,12 @@ FORECAST_CALIBRATION_MIN_SAMPLES = int(
 FORECAST_HIT_RATE_WARN_BELOW = _env_nonnegative_float(
     "QR_SELF_IMPROVEMENT_FORECAST_HIT_RATE_WARN_BELOW", 0.45
 )
+# Audit feedback coverage floor only. Directional calls with mostly TIMEOUT
+# outcomes are not learnable enough to justify stronger forecast confidence.
+FORECAST_CALIBRATION_MIN_COVERAGE = min(
+    1.0,
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_FORECAST_CALIBRATION_MIN_COVERAGE", 0.5),
+)
 
 
 @dataclass(frozen=True)
@@ -120,8 +128,10 @@ class SelfImprovementAuditor:
         snapshot_path: Path = DEFAULT_BROKER_SNAPSHOT,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         order_intents_path: Path = DEFAULT_ORDER_INTENTS,
+        market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
         memory_health_path: Path = DEFAULT_MEMORY_HEALTH,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+        ai_test_bot_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         forecast_history_path: Path = DEFAULT_FORECAST_HISTORY,
         projection_ledger_path: Path = DEFAULT_PROJECTION_LEDGER,
@@ -143,8 +153,10 @@ class SelfImprovementAuditor:
         snapshot_loaded = _read_json(snapshot_path)
         target_loaded = _read_json(target_state_path)
         intents_loaded = _read_json(order_intents_path)
+        market_context_matrix_loaded = _read_json(market_context_matrix_path)
         memory_loaded = _read_json(memory_health_path)
         learning_loaded = _read_json(learning_audit_path)
+        ai_backtest_loaded = _read_json(ai_test_bot_backtest_path)
         verification_loaded = _read_json(verification_ledger_path)
         gpt_loaded = _read_json(gpt_decision_path)
         trader_loaded = _read_json(trader_decision_path)
@@ -253,11 +265,27 @@ class SelfImprovementAuditor:
             )
         )
         findings.extend(
+            _order_intent_context_evidence_findings(
+                run_id=run_id,
+                intents=intents,
+                matrix_loaded=market_context_matrix_loaded,
+                matrix_path=market_context_matrix_path,
+                target_open=target_open,
+            )
+        )
+        findings.extend(
             _coverage_findings(
                 run_id=run_id,
                 loaded=coverage_loaded,
                 path=coverage_optimization_path,
                 target_open=target_open,
+            )
+        )
+        findings.extend(
+            _mechanism_ablation_findings(
+                run_id=run_id,
+                loaded=ai_backtest_loaded,
+                path=ai_test_bot_backtest_path,
             )
         )
         findings.extend(
@@ -302,8 +330,10 @@ class SelfImprovementAuditor:
                 "broker_snapshot": str(snapshot_path),
                 "daily_target_state": str(target_state_path),
                 "order_intents": str(order_intents_path),
+                "market_context_matrix": str(market_context_matrix_path),
                 "memory_health": str(memory_health_path),
                 "learning_audit": str(learning_audit_path),
+                "ai_test_bot_backtest": str(ai_test_bot_backtest_path),
                 "verification_ledger": str(verification_ledger_path),
                 "forecast_history": str(forecast_history_path),
                 "projection_ledger": str(projection_ledger_path),
@@ -336,6 +366,8 @@ class SelfImprovementAuditor:
                 "read_only_live_permission": False,
                 "audit_can_write_history_db": True,
                 "does_not_grant_trade_permission": True,
+                "live_safety_boundaries_are_not_profitability_assumptions": True,
+                "offline_ablation_required_before_relaxing_live_gates": True,
                 "hard_gates_remain": ["RiskEngine", "IntentGenerator telemetry validation", "LiveOrderGateway", "Gate A/Gate B close discipline"],
             },
         }
@@ -1177,6 +1209,33 @@ def _directional_forecast_quality_findings(
             )
         ]
     findings: list[dict[str, Any]] = []
+    calibration_coverage = len(calibrated) / len(directional)
+    timeout_count = int(status_counts.get("TIMEOUT") or 0)
+    if calibration_coverage < FORECAST_CALIBRATION_MIN_COVERAGE and timeout_count >= FORECAST_CALIBRATION_MIN_SAMPLES:
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_CALIBRATION_TIMEOUT_DOMINANT",
+                message=(
+                    f"directional_forecast has only {len(calibrated)}/{len(directional)} "
+                    "HIT/MISS target/invalidation calibration samples; TIMEOUT dominates"
+                ),
+                next_action=(
+                    "Verify projection windows with candle truth quickly enough to resolve HIT/MISS, "
+                    "then recalibrate directional confidence before using forecast strength to expand entries."
+                ),
+                evidence={
+                    "rows": len(directional),
+                    "calibrated_samples": len(calibrated),
+                    "calibration_coverage": round(calibration_coverage, 4),
+                    "min_coverage": FORECAST_CALIBRATION_MIN_COVERAGE,
+                    "status_counts": status_counts,
+                    "examples": [_projection_ref(row) for row in directional[:8]],
+                },
+            )
+        )
     weak_buckets = _directional_forecast_worst_buckets(
         calibrated,
         min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
@@ -1481,6 +1540,134 @@ def _intent_findings(
             )
         )
     return out
+
+
+def _order_intent_context_evidence_findings(
+    *,
+    run_id: str,
+    intents: dict[str, Any],
+    matrix_loaded: _LoadedJson,
+    matrix_path: Path,
+    target_open: bool,
+) -> list[dict[str, Any]]:
+    if not target_open or matrix_loaded.error is not None:
+        return []
+    matrix = matrix_loaded.payload or {}
+    pairs = matrix.get("pairs") if isinstance(matrix.get("pairs"), dict) else {}
+    if not pairs:
+        return []
+    results = [item for item in intents.get("results", []) or [] if isinstance(item, dict)]
+    if not results:
+        return []
+    with_context = [item for item in results if _intent_has_market_context_evidence(item)]
+    if with_context:
+        return []
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P1",
+            layer="opportunity_context",
+            code="ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_MISSING",
+            message=(
+                "order_intents candidates lack market_context_matrix/news/context-asset refs "
+                "while market_context_matrix is available"
+            ),
+            next_action=(
+                "Regenerate generate-intents after market-context-matrix, context-asset, and news refresh "
+                "so live entry_thesis can learn gold/oil/rates/equity/news context; do not treat "
+                "non-FX/news prediction as backtest-certified until refs persist on entry receipts."
+            ),
+            evidence={
+                "matrix_path": str(matrix_path),
+                "matrix_generated_at_utc": matrix.get("generated_at_utc"),
+                "matrix_pairs": len(pairs),
+                "candidate_count": len(results),
+                "with_context_refs": 0,
+                "status_counts": _result_status_counts(results),
+            },
+        )
+    ]
+
+
+def _intent_has_market_context_evidence(result: dict[str, Any]) -> bool:
+    intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+    metadata_sources = []
+    if isinstance(result.get("metadata"), dict):
+        metadata_sources.append(result["metadata"])
+    if isinstance(intent.get("metadata"), dict):
+        metadata_sources.append(intent["metadata"])
+    context_prefixes = ("matrix:", "context_asset:", "news:")
+    for metadata in metadata_sources:
+        for key, value in metadata.items():
+            key_text = str(key)
+            if key_text == "market_context_matrix_ref" and value:
+                return True
+            if key_text.startswith("matrix_") and value not in (None, "", [], {}):
+                return True
+            if key_text in {"context_refs", "context_asset_refs", "news_refs"}:
+                refs = value if isinstance(value, list) else [value]
+                if any(str(ref).startswith(context_prefixes) for ref in refs):
+                    return True
+            if key_text in {"context_asset_symbols", "news_digest_ref"} and value:
+                return True
+    return False
+
+
+def _result_status_counts(results: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in results:
+        status = str(item.get("status") or "UNKNOWN")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _mechanism_ablation_findings(
+    *,
+    run_id: str,
+    loaded: _LoadedJson,
+    path: Path,
+) -> list[dict[str, Any]]:
+    if loaded.error is not None:
+        return []
+    payload = loaded.payload or {}
+    mechanism = payload.get("mechanism_ablation") if isinstance(payload.get("mechanism_ablation"), dict) else {}
+    close_gate = mechanism.get("close_gate_ab") if isinstance(mechanism.get("close_gate_ab"), dict) else {}
+    if not close_gate:
+        return []
+    status = str(close_gate.get("status") or "")
+    close_events = int(_maybe_float(close_gate.get("close_events")) or 0)
+    bot_attributed = int(_maybe_float(close_gate.get("bot_attributed_close_events")) or 0)
+    gateway_sent = int(_maybe_float(close_gate.get("gateway_close_sent_events")) or 0)
+    if status != "MEASURED" or not close_events or (bot_attributed and gateway_sent):
+        return []
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P1",
+            layer="assumption_ablation",
+            code="CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE",
+            message=(
+                "CLOSE Gate A/B performance is not attributable enough to call the gate policy "
+                "verified or disproven"
+            ),
+            next_action=(
+                "Link gateway close receipts to filled trades and ablate hard Gate A, soft Gate A, "
+                "Gate B, and no-gate exit variants offline before relaxing or hardening live close policy."
+            ),
+            evidence={
+                "ai_test_bot_backtest_path": str(path),
+                "status": status,
+                "close_events": close_events,
+                "bot_attributed_close_events": bot_attributed,
+                "gateway_close_sent_events": gateway_sent,
+                "loss_side_market_close_count": int(_maybe_float(close_gate.get("loss_side_market_close_count")) or 0),
+                "loss_side_market_close_net_jpy": _maybe_float(close_gate.get("loss_side_market_close_net_jpy")),
+                "unattributed_loss_side_market_close_count": int(
+                    _maybe_float(close_gate.get("unattributed_loss_side_market_close_count")) or 0
+                ),
+            },
+        )
+    ]
 
 
 def _coverage_findings(
