@@ -2797,6 +2797,7 @@ def main(argv: list[str] | None = None) -> int:
                     "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
                     "target_trades_per_day": summary.target_trades_per_day,
                     "target_trades_per_day_source": summary.target_trades_per_day_source,
+                    "target_trades_per_day_basis_return_pct": summary.target_trades_per_day_basis_return_pct,
                     "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
                     "unprotected_positions": summary.unprotected_positions,
                 },

@@ -68,6 +68,7 @@ class DailyTargetSnapshot:
     daily_risk_pct: float | None
     target_trades_per_day: int
     target_trades_per_day_source: str
+    target_trades_per_day_basis_return_pct: float | None
     per_trade_risk_budget_jpy: float
     open_risk_jpy: float
     remaining_risk_budget_jpy: float
@@ -93,8 +94,16 @@ class DailyTargetSummary:
     remaining_risk_budget_jpy: float
     target_trades_per_day: int
     target_trades_per_day_source: str
+    target_trades_per_day_basis_return_pct: float | None
     per_trade_risk_budget_jpy: float
     unprotected_positions: int
+
+
+@dataclass(frozen=True)
+class _BacktestPace:
+    trades_per_day: int
+    source: str
+    basis_return_pct: float | None
 
 
 class DailyTargetLedger:
@@ -231,9 +240,11 @@ class DailyTargetLedger:
         # state, or the documented policy default (RiskPolicy.target_trades_per_day).
         explicit_pace = _coalesce_int(target_trades_per_day)
         pace_source = "cli" if explicit_pace is not None else ""
+        pace_basis_return_pct: float | None = None
         if explicit_pace is None:
             previous_pace = _coalesce_int(previous.get("target_trades_per_day"))
             previous_pace_source = str(previous.get("target_trades_per_day_source") or "")
+            previous_pace_basis = _coalesce_float(previous.get("target_trades_per_day_basis_return_pct"))
             # Respect a prior CLI-set pace. The operator deliberately chose
             # that pace; the next automation cycle (which calls .run() with
             # no overrides) must not silently revert it via ai_test_bot
@@ -256,15 +267,21 @@ class DailyTargetLedger:
             else:
                 backtest_pace = _pace_from_backtest(self.pace_backtest_path)
                 if backtest_pace is not None:
-                    explicit_pace = max(backtest_pace, previous_pace or 0)
+                    explicit_pace = max(backtest_pace.trades_per_day, previous_pace or 0)
                     pace_source = (
-                        "ai_test_bot_required_trades"
-                        if explicit_pace == backtest_pace
+                        backtest_pace.source
+                        if explicit_pace == backtest_pace.trades_per_day
                         else "previous_state_above_ai_test_bot"
+                    )
+                    pace_basis_return_pct = (
+                        backtest_pace.basis_return_pct
+                        if explicit_pace == backtest_pace.trades_per_day
+                        else previous_pace_basis
                     )
                 elif previous_pace is not None:
                     explicit_pace = previous_pace
                     pace_source = "previous_state"
+                    pace_basis_return_pct = previous_pace_basis
             cap = policy.max_target_trades_per_day
             if (
                 explicit_pace is not None
@@ -398,6 +415,9 @@ class DailyTargetLedger:
             daily_risk_pct=round(active_pct, 4) if active_pct is not None else None,
             target_trades_per_day=explicit_pace,
             target_trades_per_day_source=pace_source,
+            target_trades_per_day_basis_return_pct=round(pace_basis_return_pct, 4)
+            if pace_basis_return_pct is not None
+            else None,
             per_trade_risk_budget_jpy=per_trade_risk_budget,
             open_risk_jpy=open_risk,
             remaining_risk_budget_jpy=remaining_risk_budget,
@@ -423,6 +443,7 @@ class DailyTargetLedger:
             remaining_risk_budget_jpy=state.remaining_risk_budget_jpy,
             target_trades_per_day=state.target_trades_per_day,
             target_trades_per_day_source=state.target_trades_per_day_source,
+            target_trades_per_day_basis_return_pct=state.target_trades_per_day_basis_return_pct,
             per_trade_risk_budget_jpy=state.per_trade_risk_budget_jpy,
             unprotected_positions=state.unprotected_positions,
         )
@@ -457,6 +478,12 @@ class DailyTargetLedger:
             f"- Open risk: `{state.open_risk_jpy:.0f} JPY`",
             f"- Remaining risk budget: `{state.remaining_risk_budget_jpy:.0f} JPY`",
             f"- Target trades per day: `{state.target_trades_per_day}` (`{state.target_trades_per_day_source}`)",
+            "- Target trade pace basis: "
+            + (
+                f"`{state.target_trades_per_day_basis_return_pct:.1f}%`"
+                if state.target_trades_per_day_basis_return_pct is not None
+                else "`n/a`"
+            ),
             f"- Per-trade risk cap: `{state.per_trade_risk_budget_jpy:.0f} JPY`",
             f"- Current equity estimate: `{state.current_equity_jpy:.0f} JPY`",
             "",
@@ -717,7 +744,7 @@ def _coalesce_int(*values: object) -> int | None:
     return None
 
 
-def _pace_from_backtest(path: Path | None) -> int | None:
+def _pace_from_backtest(path: Path | None) -> _BacktestPace | None:
     """Read required daily trade pace from ai-test-bot firepower evidence.
 
     This is the wiring promised in RiskPolicy's documentation: when observed
@@ -733,10 +760,81 @@ def _pace_from_backtest(path: Path | None) -> int | None:
         payload = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    target_band_pace = _pace_from_target_band(payload)
+    if target_band_pace is not None:
+        return target_band_pace
     firepower = payload.get("firepower")
     if not isinstance(firepower, dict):
         return None
-    return _coalesce_int(firepower.get("required_trades_per_day_at_observed_expectancy"))
+    pace = _coalesce_int(firepower.get("required_trades_per_day_at_observed_expectancy"))
+    if pace is None:
+        return None
+    return _BacktestPace(
+        trades_per_day=pace,
+        source="ai_test_bot_required_trades",
+        basis_return_pct=_coalesce_float(payload.get("target_return_pct")),
+    )
+
+
+def _pace_from_target_band(payload: dict[str, Any]) -> _BacktestPace | None:
+    """Prefer the verified 5-10% target band over the 10% firepower fallback.
+
+    The campaign still records 10% as the stretch objective and 5% as the
+    product floor. Pace is different: it should be calibrated to the next
+    measurable band. If selected policy reaches 5% but not 6%, the next loop
+    should size and pace for 6% coverage instead of thinning every order
+    against a currently unreachable 10% firepower number.
+    """
+
+    target_band = payload.get("target_band")
+    if not isinstance(target_band, dict):
+        return None
+    bands = [item for item in target_band.get("bands", []) if isinstance(item, dict)]
+    if not bands:
+        return None
+
+    floor_pct = _coalesce_float(target_band.get("floor_return_pct")) or 5.0
+    stretch_pct = _coalesce_float(target_band.get("stretch_return_pct"))
+    if stretch_pct is None:
+        stretch_pct = _coalesce_float(payload.get("target_return_pct")) or 10.0
+    selected_attainable = _coalesce_float(target_band.get("selected_attainable_return_pct"))
+    if selected_attainable is None:
+        desired_pct = floor_pct
+    elif selected_attainable >= stretch_pct:
+        desired_pct = stretch_pct
+    else:
+        desired_pct = min(stretch_pct, selected_attainable + 1.0)
+
+    chosen = _target_band_for_pct(bands, desired_pct)
+    if chosen is None:
+        return None
+    pace = _coalesce_int(chosen.get("required_trades_per_day_at_observed_expectancy"))
+    basis_pct = _coalesce_float(chosen.get("return_pct"))
+    if pace is None or basis_pct is None:
+        return None
+    return _BacktestPace(
+        trades_per_day=pace,
+        source=f"ai_test_bot_target_band_{_pct_source_token(basis_pct)}pct_required_trades",
+        basis_return_pct=basis_pct,
+    )
+
+
+def _target_band_for_pct(bands: list[dict[str, Any]], desired_pct: float) -> dict[str, Any] | None:
+    parsed: list[tuple[float, dict[str, Any]]] = []
+    for item in bands:
+        pct = _coalesce_float(item.get("return_pct"))
+        if pct is not None:
+            parsed.append((pct, item))
+    if not parsed:
+        return None
+    for pct, item in sorted(parsed, key=lambda row: row[0]):
+        if pct + 1e-9 >= desired_pct:
+            return item
+    return max(parsed, key=lambda row: row[0])[1]
+
+
+def _pct_source_token(value: float) -> str:
+    return f"{value:g}".replace(".", "p")
 
 
 def _coalesce_campaign_day(payload: dict[str, Any]) -> str | None:

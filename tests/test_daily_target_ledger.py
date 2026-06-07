@@ -447,9 +447,11 @@ class DailyTargetLedgerTest(unittest.TestCase):
             )
 
             self.assertEqual(summary.target_trades_per_day, 10)
+            self.assertIsNone(summary.target_trades_per_day_basis_return_pct)
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 400.0)
             payload = json.loads((root / "target.json").read_text())
             self.assertEqual(payload["target_trades_per_day"], 10)
+            self.assertIsNone(payload["target_trades_per_day_basis_return_pct"])
             self.assertAlmostEqual(payload["per_trade_risk_budget_jpy"], 400.0)
             self.assertIn("Per-trade risk cap", (root / "target.md").read_text())
 
@@ -590,6 +592,70 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades")
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 25, places=4)
             self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades")
+
+    def test_target_band_pace_targets_next_attainable_band_before_10pct_firepower(self) -> None:
+        """5-10% adjustment must flow into execution pace, not only reports.
+
+        When the selected policy has reached the 5% floor but not 10%, the
+        next execution loop should tune against the next measurable band
+        (6% here) while preserving the 5% floor. Falling back to the 10%
+        firepower number over-thins per-trade risk before the opportunity
+        universe can actually support that stretch target.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "target_return_pct": 10.0,
+                        "firepower": {
+                            "avg_selected_trades_per_day": 6.0,
+                            "required_trades_per_day_at_observed_expectancy": 80,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": 5.0,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 20,
+                                },
+                                {
+                                    "return_pct": 6.0,
+                                    "required_trades_per_day_at_observed_expectancy": 23,
+                                },
+                                {
+                                    "return_pct": 10.0,
+                                    "required_trades_per_day_at_observed_expectancy": 80,
+                                },
+                            ],
+                        },
+                    }
+                )
+            )
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            ).run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+            )
+            payload = json.loads((root / "target.json").read_text())
+            report = (root / "target.md").read_text()
+
+            self.assertEqual(summary.target_trades_per_day, 23)
+            self.assertEqual(
+                summary.target_trades_per_day_source,
+                "ai_test_bot_target_band_6pct_required_trades",
+            )
+            self.assertEqual(summary.target_trades_per_day_basis_return_pct, 6.0)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 23, places=4)
+            self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
+            self.assertIn("Target trade pace basis: `6.0%`", report)
 
     def test_backtest_required_pace_is_capped_to_policy_ceiling(self) -> None:
         """An absurd ai-test-bot pace must not silently shrink per-trade sizing.
