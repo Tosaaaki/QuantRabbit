@@ -4281,13 +4281,28 @@ def _telemetry_live_readiness_issues(
                 )
             )
     expected_cycle_id = str(metadata.get("forecast_cycle_id") or "")
-    if cache is not None:
+    latest_is_current = False
+    projection_cycle_id = ""
+    quote_fresh, quote_issue = _forecast_telemetry_quote_fresh_for_live(
+        intent.pair,
+        snapshot,
+        validation_time_utc=validation_time_utc,
+    )
+    if not quote_fresh:
+        issues.append(
+            _telemetry_issue(
+                "TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE",
+                quote_issue,
+            )
+        )
+    elif cache is not None:
         latest = cache.latest_forecasts_by_pair.get(intent.pair)
         cycle_matched = (
             cache.forecasts_by_pair_cycle.get((intent.pair, expected_cycle_id))
             if expected_cycle_id
             else None
         )
+        audit_forecast = cycle_matched or latest
     else:
         latest = _latest_forecast_history_for_pair(intent.pair, data_root=data_root)
         cycle_matched = _forecast_history_for_pair_cycle(
@@ -4295,10 +4310,11 @@ def _telemetry_live_readiness_issues(
             expected_cycle_id,
             data_root=data_root,
         ) if expected_cycle_id else None
-    audit_forecast = cycle_matched or latest
-    latest_is_current = False
-    projection_cycle_id = ""
-    if audit_forecast is None:
+        audit_forecast = cycle_matched or latest
+
+    if not quote_fresh:
+        pass
+    elif audit_forecast is None:
         issues.append(
             _telemetry_issue(
                 "TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE",
@@ -4502,6 +4518,48 @@ def _telemetry_live_readiness_issues(
     if execution_issue is not None:
         issues.append(execution_issue)
     return tuple(issues)
+
+
+def _forecast_telemetry_quote_fresh_for_live(
+    pair: str,
+    snapshot: BrokerSnapshot,
+    *,
+    validation_time_utc: datetime,
+) -> tuple[bool, str]:
+    quote = snapshot.quotes.get(pair)
+    snapshot_ts = _ensure_utc(getattr(snapshot, "fetched_at_utc", None))
+    validation_ts = _ensure_utc(validation_time_utc) or snapshot_ts or datetime.now(timezone.utc)
+    if quote is None:
+        return (
+            False,
+            (
+                f"{pair} has no broker quote in the current snapshot; forecast telemetry "
+                "cannot be recorded or matched for live entry until broker truth refreshes."
+            ),
+        )
+    quote_ts = _ensure_utc(getattr(quote, "timestamp_utc", None))
+    if quote_ts is None:
+        return (
+            False,
+            (
+                f"{pair} quote has no timestamp; forecast telemetry cannot prove the "
+                "prediction was made from current tradable price truth."
+            ),
+        )
+    if quote_ts > validation_ts:
+        return True, ""
+    max_age = float(RiskPolicy().max_quote_age_seconds)
+    age = (validation_ts - quote_ts).total_seconds()
+    if age <= max_age:
+        return True, ""
+    return (
+        False,
+        (
+            f"{pair} quote is {age:.0f}s old versus the {max_age:.0f}s live freshness "
+            "contract; skip forecast_history direction/confidence matching because a "
+            "same-cycle forecast cannot be recorded from stale price truth."
+        ),
+    )
 
 
 def _build_telemetry_live_readiness_cache(

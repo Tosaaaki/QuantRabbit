@@ -827,6 +827,8 @@ class AutoTradeCycle:
         pairs = DEFAULT_TRADER_PAIRS
         if self.reuse_market_artifacts:
             snapshot = self._load_snapshot_artifact()
+            if send and self.live_enabled:
+                snapshot = self._refresh_live_position_snapshot(snapshot)
         else:
             snapshot = self._refresh_snapshot(pairs)
         target_summary = self._update_target_state(snapshot)
@@ -1920,6 +1922,12 @@ class AutoTradeCycle:
         self.snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
         return snapshot
 
+    def _refresh_live_position_snapshot(self, snapshot):
+        # `--reuse-market-artifacts` pins the decision packet, but position
+        # management and close execution must still use current broker truth.
+        pairs = _snapshot_refresh_pairs(snapshot) or DEFAULT_TRADER_PAIRS
+        return self.client.snapshot(pairs)
+
     def _verify_projection_preflight(self, snapshot) -> dict[str, Any] | None:
         if os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE", "").strip() not in {
             "1", "true", "TRUE", "yes", "YES",
@@ -2757,6 +2765,7 @@ class AutoTradeCycle:
     def _position_manager(self) -> PositionManager:
         return PositionManager(
             trader_decision_path=self.decision_path,
+            pair_charts_path=self.pair_charts_path,
             output_path=self.position_management_path,
             report_path=self.position_management_report_path,
         )

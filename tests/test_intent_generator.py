@@ -1880,6 +1880,73 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", codes)
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", codes)
 
+    def test_stale_quote_skips_forecast_history_mismatch_checks(self) -> None:
+        from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _telemetry_live_readiness_issues
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+        metadata = {
+            "forecast_direction": "UP",
+            "forecast_confidence": 0.72,
+            "forecast_cycle_id": "fresh-cycle",
+        }
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.MARKET,
+            units=5000,
+            entry=1.1734,
+            tp=1.1762,
+            sl=1.1718,
+            thesis="stale quote intent",
+            market_context=MarketContext(
+                regime="TREND_UP",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.TREND_CONTINUATION,
+                invalidation="",
+            ),
+            metadata=metadata,
+        )
+
+        with patch(
+            "quant_rabbit.strategy.intent_generator._latest_forecast_history_for_pair",
+            side_effect=AssertionError("stale quote should not scan latest forecast_history"),
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._forecast_history_for_pair_cycle",
+            side_effect=AssertionError("stale quote should not scan cycle forecast_history"),
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._expired_pending_projection_count",
+            return_value=0,
+        ), patch(
+            "quant_rabbit.strategy.intent_generator._execution_ledger_sync_live_issue",
+            return_value=None,
+        ):
+            codes = {
+                issue["code"]
+                for issue in _telemetry_live_readiness_issues(
+                    intent,
+                    metadata,
+                    BrokerSnapshot(
+                        fetched_at_utc=now,
+                        quotes={
+                            "EUR_USD": Quote(
+                                "EUR_USD",
+                                1.1733,
+                                1.1735,
+                                now - timedelta(seconds=120),
+                            )
+                        },
+                    ),
+                    now,
+                )
+            }
+
+        self.assertIn("TELEMETRY_FORECAST_QUOTE_STALE_FOR_LIVE", codes)
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_STALE_FOR_LIVE", codes)
+        self.assertNotIn("TELEMETRY_FORECAST_HISTORY_MISMATCH_FOR_LIVE", codes)
+
     def test_telemetry_cache_supplies_forecast_and_projection_checks(self) -> None:
         from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, OrderType, Quote, Side, TradeMethod
         from quant_rabbit.strategy.intent_generator import (
