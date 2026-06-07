@@ -91,6 +91,95 @@ class AutoTradeCycleTest(unittest.TestCase):
 
         self.assertEqual(row["resolution_status"], "HIT")
 
+    def test_projection_preflight_uses_m5_when_m1_window_missing(self) -> None:
+        prior_required = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
+        prior_m1 = os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT")
+        prior_m5 = os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT")
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        os.environ["QR_PROJECTION_VERIFY_M1_COUNT"] = "2"
+        os.environ["QR_PROJECTION_VERIFY_M5_COUNT"] = "2"
+
+        class CandleClient:
+            def __init__(self, emitted_at: datetime) -> None:
+                self.emitted_at = emitted_at
+                self.calls: list[tuple[str, str]] = []
+
+            def get_json(self, _path: str, params: dict[str, str]) -> dict[str, Any]:
+                granularity = params["granularity"]
+                self.calls.append((granularity, params["count"]))
+                if granularity == "M1":
+                    return {"candles": []}
+                return {
+                    "candles": [
+                        {
+                            "time": (self.emitted_at + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+                            "mid": {"o": "1.1000", "h": "1.1012", "l": "1.1001", "c": "1.1008"},
+                            "complete": True,
+                        }
+                    ]
+                }
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir()
+                emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+                (data_root / "projection_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_emitted_utc": emitted.isoformat().replace("+00:00", "Z"),
+                            "pair": "EUR_USD",
+                            "signal_name": "directional_forecast",
+                            "direction": "UP",
+                            "lead_time_min": 5,
+                            "confidence": 0.8,
+                            "entry_price": 1.1000,
+                            "predicted_target_price": 1.1010,
+                            "predicted_invalidation_price": 1.0990,
+                            "resolution_window_min": 10,
+                            "resolution_status": "PENDING",
+                            "cycle_id": "m5-fallback-cycle",
+                        }
+                    )
+                    + "\n"
+                )
+                pair_charts = root / "pair_charts.json"
+                pair_charts.write_text(json.dumps({"charts": []}))
+                now = datetime.now(timezone.utc)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.1004, 1.1006, timestamp_utc=now),
+                    },
+                )
+                client = CandleClient(emitted)
+
+                summary = AutoTradeCycle(
+                    client=client,
+                    intents_path=data_root / "order_intents.json",
+                    pair_charts_path=pair_charts,
+                )._verify_projection_preflight(snapshot)
+
+                row = json.loads((data_root / "projection_ledger.jsonl").read_text())
+        finally:
+            if prior_required is None:
+                os.environ.pop("QR_REQUIRE_TELEMETRY_FOR_LIVE", None)
+            else:
+                os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior_required
+            if prior_m1 is None:
+                os.environ.pop("QR_PROJECTION_VERIFY_M1_COUNT", None)
+            else:
+                os.environ["QR_PROJECTION_VERIFY_M1_COUNT"] = prior_m1
+            if prior_m5 is None:
+                os.environ.pop("QR_PROJECTION_VERIFY_M5_COUNT", None)
+            else:
+                os.environ["QR_PROJECTION_VERIFY_M5_COUNT"] = prior_m5
+
+        self.assertEqual(row["resolution_status"], "HIT")
+        self.assertEqual(client.calls, [("M1", "2"), ("M5", "2")])
+        self.assertEqual(summary["candle_granularity_counts"], {"EUR_USD": {"M1": 0, "M5": 1}})
+
     def test_reuse_market_artifacts_still_resolves_expired_projection_preflight(self) -> None:
         prior = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
         os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"

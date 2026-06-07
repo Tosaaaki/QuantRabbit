@@ -12,9 +12,11 @@ to `data/projection_ledger.jsonl` at emission time with:
 - resolution_status = "PENDING" initially
 
 After the resolution window elapses, `verify_pending_projections()`
-checks each PENDING entry against price truth. Prefer the M1 candle path
+checks each PENDING entry against price truth. Prefer ordered candle truth
 covering the emitted→expiry window, so a target that was reached and then
-mean-reverted is still counted correctly:
+mean-reverted is still counted correctly. M1 is best; coarser M5 fallback is
+acceptable when older M1 truth has rolled out of the broker's recent-candle
+window:
 - "UP" direction → did window high exceed entry by ≥ ATR_pips × 0.5?
 - "DOWN" → did window low go below by ≥ same?
 - "EITHER" → did the window range expand by the same ATR-based threshold?
@@ -49,7 +51,7 @@ import fcntl
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, IO, List, Optional
+from typing import Any, Dict, IO, Iterable, List, Optional
 
 from quant_rabbit.instruments import instrument_pip_factor
 
@@ -434,7 +436,7 @@ def verify_pending(
     *,
     quotes_by_pair: Optional[Dict[str, Dict[str, float]]] = None,
     atr_pips_by_pair: Optional[Dict[str, float]] = None,
-    candles_by_pair: Optional[Dict[str, List[Any]]] = None,
+    candles_by_pair: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, int]:
     path = _ledger_path(data_root)
@@ -459,14 +461,16 @@ def _verify_pending_unlocked(
     *,
     quotes_by_pair: Optional[Dict[str, Dict[str, float]]] = None,
     atr_pips_by_pair: Optional[Dict[str, float]] = None,
-    candles_by_pair: Optional[Dict[str, List[Any]]] = None,
+    candles_by_pair: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None,
     ledger_handle: Optional[IO[str]] = None,
 ) -> Dict[str, int]:
     """Walk PENDING ledger entries; resolve those past their window.
 
-    `candles_by_pair`: {pair: [M1 Candle-like]} is preferred and resolves
-    against the high/low path inside the resolution window.
+    `candles_by_pair`: {pair: [Candle-like]} or
+    {pair: {granularity: [Candle-like]}} is preferred and resolves against the
+    high/low path inside the resolution window. Granularity buckets are tried
+    from finest to coarsest so M5 only fills windows no longer covered by M1.
     `quotes_by_pair`: {pair: {"bid": float, "ask": float}} is a legacy
     fallback when the caller has not supplied historical candle truth.
     `atr_pips_by_pair`: optional per-pair ATR pips for EITHER signal
@@ -500,7 +504,7 @@ def _verify_pending_unlocked(
             if candles_by_pair is not None:
                 e.resolution_status = "TIMEOUT"
                 e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-                e.resolution_evidence = "no M1 candle truth for projection window"
+                e.resolution_evidence = "no candle truth for projection window"
                 counts["TIMEOUT"] += 1
                 continue
             price_path = _quote_point_path(e, quotes_by_pair=quotes_by_pair)
@@ -675,7 +679,7 @@ def _price_path_for_entry(
     *,
     emitted_at: datetime,
     expires_at: datetime,
-    candles_by_pair: Optional[Dict[str, List[Any]]],
+    candles_by_pair: Optional[Dict[str, Any]],
 ) -> Optional[dict[str, float]]:
     if candles_by_pair is None:
         return None
@@ -700,24 +704,49 @@ def _normalised_candle_window(
     *,
     emitted_at: datetime,
     expires_at: datetime,
-    candles_by_pair: Optional[Dict[str, List[Any]]],
+    candles_by_pair: Optional[Dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if candles_by_pair is None:
         return []
-    candles = candles_by_pair.get(entry.pair) or []
-    window = []
-    # M1 candles are timestamped at bar open. Include the candle that overlaps
-    # the emission minute, accepting minute-level precision for verification.
+    # Candles are timestamped at bar open. Include the candle that overlaps
+    # the emission minute; coarser fallback candles are acceptable when older
+    # M1 truth has rolled out of the broker's recent-candle window.
     overlap_start = emitted_at - timedelta(minutes=1)
-    for c in candles:
-        norm = _normalise_candle(c)
-        if norm is None:
-            continue
-        ts = norm["timestamp"]
-        if overlap_start <= ts <= expires_at:
-            window.append(norm)
-    window.sort(key=lambda item: item["timestamp"])
-    return window
+    for _label, candles in _ordered_candle_sets(candles_by_pair.get(entry.pair)):
+        window = []
+        for c in candles:
+            norm = _normalise_candle(c)
+            if norm is None:
+                continue
+            ts = norm["timestamp"]
+            if overlap_start <= ts <= expires_at:
+                window.append(norm)
+        window.sort(key=lambda item: item["timestamp"])
+        if window:
+            return window
+    return []
+
+
+def _ordered_candle_sets(value: Any) -> list[tuple[str, Iterable[Any]]]:
+    if isinstance(value, dict):
+        if any(key in value for key in ("timestamp_utc", "timestamp", "time")):
+            return [("candles", [value])]
+        ordered: list[tuple[str, Iterable[Any]]] = []
+        seen: set[str] = set()
+        for key in ("M1", "M5", "M15", "M30", "H1", "H4", "D"):
+            candles = value.get(key)
+            if candles is None:
+                continue
+            ordered.append((key, candles))
+            seen.add(key)
+        for key in sorted([k for k in value.keys() if str(k) not in seen], key=str):
+            candles = value.get(key)
+            if candles is not None:
+                ordered.append((str(key), candles))
+        return ordered
+    if value is None:
+        return []
+    return [("candles", value)]
 
 
 def _directional_target_invalidation_outcome(
@@ -726,12 +755,12 @@ def _directional_target_invalidation_outcome(
     emitted_at: datetime,
     expires_at: datetime,
     entry_price: float,
-    candles_by_pair: Optional[Dict[str, List[Any]]],
+    candles_by_pair: Optional[Dict[str, Any]],
 ) -> Optional[tuple[str, str]]:
     """Resolve directional forecasts by first target/invalidation touch.
 
     Aggregate high/low verification inflated calibration because a target touch
-    after invalidation still counted as HIT. Ordered M1 candles are the minimum
+    after invalidation still counted as HIT. Ordered candles are the minimum
     truth needed to learn whether the forecast was useful before it was wrong.
     """
     target = entry.predicted_target_price
@@ -772,7 +801,7 @@ def _directional_target_invalidation_outcome(
         if target_touched and invalidation_touched:
             return (
                 "MISS",
-                f"{ts} M1 candle touched target {target:.5f} and invalidation {invalidation:.5f}; "
+                f"{ts} price candle touched target {target:.5f} and invalidation {invalidation:.5f}; "
                 "ordering ambiguous, counted as MISS for calibration",
             )
         if invalidation_touched:

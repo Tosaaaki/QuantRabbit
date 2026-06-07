@@ -494,7 +494,99 @@ class VerifyTest(unittest.TestCase):
             )
 
             self.assertEqual(counts["MISS"], 1)
-            self.assertIn("ordering ambiguous", load_ledger(root)[0].resolution_evidence)
+            evidence = load_ledger(root)[0].resolution_evidence
+            self.assertIn("price candle touched", evidence)
+            self.assertIn("ordering ambiguous", evidence)
+
+    def test_directional_forecast_prefers_m1_over_coarser_ambiguous_fallback(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "UP",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.1020,
+            "invalidation": 1.0990,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": {
+                        "M1": [
+                            {
+                                "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                                "high": 1.1022,
+                                "low": 1.1002,
+                                "close": 1.1018,
+                            }
+                        ],
+                        "M5": [
+                            {
+                                "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                                "high": 1.1024,
+                                "low": 1.0988,
+                                "close": 1.1004,
+                            }
+                        ],
+                    }
+                },
+            )
+
+            self.assertEqual(counts["HIT"], 1)
+            evidence = load_ledger(root)[0].resolution_evidence
+            self.assertIn("target 1.10200 touched before invalidation 1.09900", evidence)
+            self.assertNotIn("ordering ambiguous", evidence)
+
+    def test_directional_forecast_uses_m5_when_m1_window_missing(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "DOWN",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.0980,
+            "invalidation": 1.1010,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": {
+                        "M1": [
+                            {
+                                "timestamp": (emitted + timedelta(minutes=20)).isoformat(),
+                                "high": 1.1012,
+                                "low": 1.0978,
+                                "close": 1.0990,
+                            }
+                        ],
+                        "M5": [
+                            {
+                                "timestamp": (emitted + timedelta(minutes=5)).isoformat(),
+                                "high": 1.1005,
+                                "low": 1.0978,
+                                "close": 1.0986,
+                            }
+                        ],
+                    }
+                },
+            )
+
+            self.assertEqual(counts["HIT"], 1)
+            self.assertIn("target 1.09800 touched before invalidation 1.10100", load_ledger(root)[0].resolution_evidence)
 
     def test_pending_within_window(self) -> None:
         # Emitted just now with 60-min window → still pending

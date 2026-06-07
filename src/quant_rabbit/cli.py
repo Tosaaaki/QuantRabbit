@@ -448,11 +448,13 @@ def _pre_entry_projection_verification_if_required(
                         atr_pips_by_pair[pair] = atr
                         break
 
-        candles_by_pair: dict[str, list[Any]] | None = None
+        candles_by_pair: dict[str, dict[str, list[Any]]] | None = None
         candle_counts: dict[str, int] = {}
+        candle_granularity_counts: dict[str, dict[str, int]] = {}
         candle_errors: dict[str, str] = {}
         m1_count = int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500"))
-        if pending_pairs and m1_count > 0:
+        m5_count = int(os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT", "1500"))
+        if pending_pairs and (m1_count > 0 or m5_count > 0):
             candles_by_pair = {}
             try:
                 client = OandaReadOnlyClient()
@@ -461,13 +463,23 @@ def _pre_entry_projection_verification_if_required(
                 candles_by_pair = None
             else:
                 for pair in sorted(pending_pairs):
-                    try:
-                        candles = list(fetch_candles_via_client(client, pair, "M1", count=m1_count))
-                    except Exception as exc:
-                        candle_errors[pair] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                    pair_candles: dict[str, list[Any]] = {}
+                    per_granularity: dict[str, int] = {}
+                    for granularity, count in (("M1", m1_count), ("M5", m5_count)):
+                        if count <= 0:
+                            continue
+                        try:
+                            candles = list(fetch_candles_via_client(client, pair, granularity, count=count))
+                        except Exception as exc:
+                            candle_errors[f"{pair}:{granularity}"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                            continue
+                        pair_candles[granularity] = candles
+                        per_granularity[granularity] = len(candles)
+                    if not pair_candles:
                         continue
-                    candles_by_pair[pair] = candles
-                    candle_counts[pair] = len(candles)
+                    candles_by_pair[pair] = pair_candles
+                    candle_counts[pair] = sum(per_granularity.values())
+                    candle_granularity_counts[pair] = per_granularity
 
         counts = verify_pending(
             ROOT / "data",
@@ -483,6 +495,7 @@ def _pre_entry_projection_verification_if_required(
         "pending_pairs": len(pending_pairs),
         "resolution_counts": counts,
         "candle_counts": candle_counts,
+        "candle_granularity_counts": candle_granularity_counts,
         "candle_errors": candle_errors,
     }
 
@@ -1402,7 +1415,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_vproj = sub.add_parser(
         "verify-projections",
-        help="Verify pending forward-projection predictions against M1 price truth; resolves HIT/MISS/TIMEOUT.",
+        help="Verify pending forward-projection predictions against candle price truth; resolves HIT/MISS/TIMEOUT.",
     )
     p_vproj.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_vproj.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
@@ -1411,6 +1424,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500")),
         help="Recent M1 candles to fetch per pending pair for path-based verification. Use 0 to fall back to snapshot quotes.",
+    )
+    p_vproj.add_argument(
+        "--m5-count",
+        type=int,
+        default=int(os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT", "1500")),
+        help="Recent M5 candles to fetch per pending pair as older-truth fallback. Use 0 to disable.",
     )
 
     p_tprebal = sub.add_parser(
@@ -3447,8 +3466,9 @@ def main(argv: list[str] | None = None) -> int:
         pending_pairs = sorted({e.pair for e in load_ledger(data_root) if e.resolution_status == "PENDING"})
         candles_by_pair = None
         candle_counts: dict[str, int] = {}
+        candle_granularity_counts: dict[str, dict[str, int]] = {}
         candle_errors: dict[str, str] = {}
-        if pending_pairs and args.m1_count > 0:
+        if pending_pairs and (args.m1_count > 0 or args.m5_count > 0):
             candles_by_pair = {}
             try:
                 client = OandaReadOnlyClient()
@@ -3457,12 +3477,23 @@ def main(argv: list[str] | None = None) -> int:
                 candles_by_pair = None
             else:
                 for pair in pending_pairs:
-                    try:
-                        candles = fetch_candles_via_client(client, pair, "M1", count=int(args.m1_count))
-                        candles_by_pair[pair] = list(candles)
-                        candle_counts[pair] = len(candles)
-                    except Exception as exc:
-                        candle_errors[pair] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                    pair_candles: dict[str, list[Any]] = {}
+                    per_granularity: dict[str, int] = {}
+                    for granularity, count in (("M1", int(args.m1_count)), ("M5", int(args.m5_count))):
+                        if count <= 0:
+                            continue
+                        try:
+                            candles = list(fetch_candles_via_client(client, pair, granularity, count=count))
+                        except Exception as exc:
+                            candle_errors[f"{pair}:{granularity}"] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                            continue
+                        pair_candles[granularity] = candles
+                        per_granularity[granularity] = len(candles)
+                    if not pair_candles:
+                        continue
+                    candles_by_pair[pair] = pair_candles
+                    candle_counts[pair] = sum(per_granularity.values())
+                    candle_granularity_counts[pair] = per_granularity
         counts = verify_pending(
             data_root,
             quotes_by_pair=quotes_by_pair,
@@ -3476,8 +3507,19 @@ def main(argv: list[str] | None = None) -> int:
             "price_truth": {
                 "pending_pairs": pending_pairs,
                 "m1_count_requested": int(args.m1_count),
-                "m1_candles_loaded": candle_counts,
-                "m1_errors": candle_errors,
+                "m5_count_requested": int(args.m5_count),
+                "candle_counts": candle_counts,
+                "candle_granularity_counts": candle_granularity_counts,
+                "m1_candles_loaded": {
+                    pair: counts.get("M1", 0) for pair, counts in candle_granularity_counts.items()
+                },
+                "m5_candles_loaded": {
+                    pair: counts.get("M5", 0) for pair, counts in candle_granularity_counts.items()
+                },
+                "candle_errors": candle_errors,
+                "m1_errors": {
+                    key: value for key, value in candle_errors.items() if key.endswith(":M1") or key == "_client"
+                },
             },
             "hit_rates_by_signal": {
                 sig: {pair: round(d.get("hit_rate", 0), 3) for pair, d in by_pair.items()}
