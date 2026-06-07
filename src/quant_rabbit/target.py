@@ -260,7 +260,11 @@ class DailyTargetLedger:
             # A new day gets a fresh ai-test-bot firepower read when available,
             # otherwise yesterday's CLI pace can silently become a stale fixed
             # risk divisor and violate the no-default-to-yesterday contract.
-            previous_was_cli = previous_pace_source in {"cli", "previous_cli"} and not is_new_campaign_day
+            fresh_backtest_after_previous = _backtest_newer_than_previous_state(self.pace_backtest_path, previous)
+            previous_was_cli = (
+                previous_pace_source == "cli"
+                or (previous_pace_source == "previous_cli" and not fresh_backtest_after_previous)
+            ) and not is_new_campaign_day
             if previous_pace is not None and previous_was_cli:
                 explicit_pace = previous_pace
                 pace_source = "previous_cli"
@@ -776,6 +780,20 @@ def _pace_from_backtest(path: Path | None) -> _BacktestPace | None:
     )
 
 
+def _backtest_newer_than_previous_state(path: Path | None, previous: dict[str, Any]) -> bool:
+    """Return True when a freshly regenerated backtest should refresh carried pace."""
+
+    if path is None or not path.exists():
+        return False
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    backtest_generated = _parse_utc_timestamp(payload.get("generated_at_utc"))
+    previous_generated = _parse_utc_timestamp(previous.get("generated_at_utc"))
+    return backtest_generated is not None and previous_generated is not None and backtest_generated > previous_generated
+
+
 def _pace_from_target_band(payload: dict[str, Any]) -> _BacktestPace | None:
     """Prefer the verified 5-10% target band over the 10% firepower fallback.
 
@@ -848,6 +866,15 @@ def _coalesce_campaign_day(payload: dict[str, Any]) -> str | None:
         except ValueError:
             return None
     return None
+
+
+def _parse_utc_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return _normalize_utc_now(datetime.fromisoformat(value.strip()))
+    except ValueError:
+        return None
 
 
 def _campaign_day_key(value: datetime) -> str:

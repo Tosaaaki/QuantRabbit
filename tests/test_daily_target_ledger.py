@@ -657,6 +657,72 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
             self.assertIn("Target trade pace basis: `6.0%`", report)
 
+    def test_previous_cli_pace_yields_to_fresh_target_band_backtest(self) -> None:
+        """A carried CLI pace must not block a freshly regenerated band pace.
+
+        The first no-override cycle preserves an operator-set CLI pace. After
+        the automation refreshes ai-test-bot in the same campaign, the carried
+        `previous_cli` marker can yield to the fresher 5-10% band evidence.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            state = root / "target.json"
+            ledger = DailyTargetLedger(
+                state_path=state,
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            )
+            ledger.run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+                target_trades_per_day=10,
+            )
+            previous = json.loads(state.read_text())
+            previous["target_trades_per_day_source"] = "previous_cli"
+            previous["generated_at_utc"] = "2026-05-11T10:00:00+00:00"
+            state.write_text(json.dumps(previous))
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-05-11T10:01:00+00:00",
+                        "target_return_pct": 10.0,
+                        "firepower": {
+                            "avg_selected_trades_per_day": 6.0,
+                            "required_trades_per_day_at_observed_expectancy": 80,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": 5.0,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 20,
+                                },
+                                {
+                                    "return_pct": 6.0,
+                                    "required_trades_per_day_at_observed_expectancy": 23,
+                                },
+                            ],
+                        },
+                    }
+                )
+            )
+
+            summary = ledger.run(
+                realized_pl_jpy=0,
+                now_utc=datetime(2026, 5, 11, 12, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.target_trades_per_day, 23)
+            self.assertEqual(
+                summary.target_trades_per_day_source,
+                "ai_test_bot_target_band_6pct_required_trades",
+            )
+            self.assertEqual(summary.target_trades_per_day_basis_return_pct, 6.0)
+
     def test_backtest_required_pace_is_capped_to_policy_ceiling(self) -> None:
         """An absurd ai-test-bot pace must not silently shrink per-trade sizing.
 
