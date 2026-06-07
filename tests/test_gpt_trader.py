@@ -1011,6 +1011,13 @@ class GPTTraderBrainTest(unittest.TestCase):
                                             "EUR_USD LONG current pair forecast is UNCLEAR conf=0.03",
                                             "HARVEST_TP_STRUCTURE_MISSING",
                                         ],
+                                        "strategy_profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                        "strategy_profile_required_fix": "live execution and pretrade feedback are negative",
+                                        "strategy_profile_blocks_live": True,
+                                        "strategy_profile_live_net_jpy": -1200.0,
+                                        "strategy_profile_pretrade_net_jpy": -350.0,
+                                        "strategy_profile_seat_net_jpy": -7000.0,
+                                        "strategy_profile_seat_win_rate_pct": 21.0,
                                         "matrix_ref": "matrix:EUR_USD:LONG",
                                         "matrix_support_count": 0,
                                         "matrix_reject_count": 5,
@@ -1045,6 +1052,9 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")
             edge = bucket["top_edges"][0]
             self.assertEqual(edge["evidence_ref"], "coverage:profitable_bucket:EUR_USD:LONG")
+            self.assertEqual(edge["strategy_profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
+            self.assertTrue(edge["strategy_profile_blocks_live"])
+            self.assertEqual(edge["strategy_profile_live_net_jpy"], -1200.0)
             self.assertEqual(edge["matrix_reject_count"], 5)
             self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to SHORT", edge["matrix_cross_asset_context"])
             self.assertIn("coverage:optimization", payload["input_packet"]["allowed_evidence_refs"])

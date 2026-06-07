@@ -17,6 +17,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_REPLAY_BACKTEST,
+    DEFAULT_STRATEGY_PROFILE,
 )
 
 
@@ -70,6 +71,7 @@ class CoverageOptimizer:
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         replay_path: Path = DEFAULT_REPLAY_BACKTEST,
         ai_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
+        strategy_profile_path: Path = DEFAULT_STRATEGY_PROFILE,
         output_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         report_path: Path = DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
         market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
@@ -78,6 +80,7 @@ class CoverageOptimizer:
         self.target_state_path = target_state_path
         self.replay_path = replay_path
         self.ai_backtest_path = ai_backtest_path
+        self.strategy_profile_path = strategy_profile_path
         self.output_path = output_path
         self.report_path = report_path
         self.market_context_matrix_path = market_context_matrix_path
@@ -89,6 +92,7 @@ class CoverageOptimizer:
         target = _load_json(self.target_state_path)
         replay = _load_json(self.replay_path) if self.replay_path.exists() else {}
         ai_backtest = _load_json(self.ai_backtest_path) if self.ai_backtest_path.exists() else {}
+        strategy_profile = _load_json(self.strategy_profile_path) if self.strategy_profile_path.exists() else {}
         market_context_matrix = _load_json(self.market_context_matrix_path) if self.market_context_matrix_path.exists() else {}
         lanes = tuple(_coverage_lane(item) for item in intents.get("results", []) or [] if _has_intent(item))
         artifact_diagnostics = _artifact_diagnostics(
@@ -96,6 +100,8 @@ class CoverageOptimizer:
             intents_path=self.intents_path,
             ai_backtest=ai_backtest,
             ai_backtest_path=self.ai_backtest_path,
+            strategy_profile=strategy_profile,
+            strategy_profile_path=self.strategy_profile_path,
             market_context_matrix=market_context_matrix,
             market_context_matrix_path=self.market_context_matrix_path,
             now_utc=now_utc,
@@ -263,8 +269,17 @@ class CoverageOptimizer:
                     f"managed_net=`{item.get('managed_net_jpy')}` current_lanes=`{item.get('current_lane_count')}` "
                     f"spread_normalized=`{item.get('spread_normalized_candidate_count')}` "
                     f"no_live_blocker=`{item.get('spread_normalized_no_live_blocker_count')}` "
+                    f"profile=`{item.get('strategy_profile_status')}` "
                     f"matrix_supports=`{item.get('matrix_support_count')}` matrix_rejects=`{item.get('matrix_reject_count')}`"
                 )
+                if item.get("strategy_profile_status"):
+                    lines.append(
+                        "  - strategy profile: "
+                        f"live_net=`{item.get('strategy_profile_live_net_jpy')}` "
+                        f"pretrade_net=`{item.get('strategy_profile_pretrade_net_jpy')}` "
+                        f"seat_net=`{item.get('strategy_profile_seat_net_jpy')}` "
+                        f"fix={item.get('strategy_profile_required_fix') or 'none'}"
+                    )
                 xasset = item.get("matrix_cross_asset_context") if isinstance(item.get("matrix_cross_asset_context"), list) else []
                 if xasset:
                     lines.append(f"  - cross/context assets: {', '.join(str(ref) for ref in xasset[:3])}")
@@ -525,6 +540,8 @@ def _artifact_diagnostics(
     intents_path: Path,
     ai_backtest: dict[str, Any],
     ai_backtest_path: Path,
+    strategy_profile: dict[str, Any],
+    strategy_profile_path: Path,
     market_context_matrix: dict[str, Any],
     market_context_matrix_path: Path,
     now_utc: datetime,
@@ -566,6 +583,8 @@ def _artifact_diagnostics(
         "profitable_bucket_coverage": _profitable_bucket_coverage_summary(
             ai_backtest=ai_backtest,
             ai_backtest_path=ai_backtest_path,
+            strategy_profile=strategy_profile,
+            strategy_profile_path=strategy_profile_path,
             market_context_matrix=market_context_matrix,
             results=results,
         ),
@@ -629,12 +648,15 @@ def _profitable_bucket_coverage_summary(
     *,
     ai_backtest: dict[str, Any],
     ai_backtest_path: Path,
+    strategy_profile: dict[str, Any],
+    strategy_profile_path: Path,
     market_context_matrix: dict[str, Any],
     results: tuple[dict[str, Any], ...],
 ) -> dict[str, Any]:
     edges = _profitable_bucket_edges(ai_backtest)
     if not edges:
         return {}
+    profile_index = _strategy_profile_edge_index(strategy_profile)
     rows_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for result in results:
         intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
@@ -648,6 +670,7 @@ def _profitable_bucket_coverage_summary(
         summary = _profitable_edge_current_summary(
             edge=edge,
             rows=rows,
+            profile_entry=_strategy_profile_edge(profile_index, key),
             matrix_side=_matrix_side_payload(market_context_matrix, key[0], key[1]),
         )
         top_edges.append(summary)
@@ -657,6 +680,8 @@ def _profitable_bucket_coverage_summary(
     ]
     return {
         "ai_backtest_path": str(ai_backtest_path) if ai_backtest_path.exists() else None,
+        "strategy_profile_path": str(strategy_profile_path) if strategy_profile_path.exists() else None,
+        "strategy_profile_missing": not strategy_profile_path.exists(),
         "source_status": str(ai_backtest.get("status") or "UNKNOWN"),
         "live_permission": bool(ai_backtest.get("live_permission") is True),
         "positive_pair_directions": len(edges),
@@ -728,6 +753,7 @@ def _profitable_edge_current_summary(
     *,
     edge: dict[str, Any],
     rows: tuple[dict[str, Any], ...],
+    profile_entry: dict[str, Any],
     matrix_side: dict[str, Any],
 ) -> dict[str, Any]:
     spread_normalized = tuple(result for result in rows if _is_spread_normalized_candidate(result))
@@ -765,7 +791,69 @@ def _profitable_edge_current_summary(
         "spread_normalized_candidate_count": len(spread_normalized),
         "spread_normalized_no_live_blocker_count": len(no_live_blocker),
         "top_blockers": [label for label, _count in blocker_counts.most_common(6)],
+        **_strategy_profile_edge_summary(profile_entry),
         **matrix_summary,
+    }
+
+
+def _strategy_profile_edge_index(profile: dict[str, Any]) -> dict[tuple[str, str], list[dict[str, Any]]]:
+    index: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in profile.get("profiles", []) or []:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "").strip().upper()
+        direction = str(item.get("direction") or "").strip().upper()
+        if not pair or direction not in {"LONG", "SHORT"}:
+            continue
+        index.setdefault((pair, direction), []).append(item)
+    return index
+
+
+def _strategy_profile_edge(
+    index: dict[tuple[str, str], list[dict[str, Any]]],
+    key: tuple[str, str],
+) -> dict[str, Any]:
+    rows = index.get(key) or []
+    if not rows:
+        return {}
+    pair_level = [item for item in rows if not str(item.get("method") or "").strip()]
+    if pair_level:
+        return dict(pair_level[0], profile_count=len(rows))
+    status_rank = {
+        "BLOCK_UNTIL_NEW_EVIDENCE": 0,
+        "WATCH_ONLY": 1,
+        "RISK_REPAIR_CANDIDATE": 2,
+        "MINE_MISSED_EDGE": 3,
+        "CANDIDATE": 4,
+    }
+    chosen = sorted(
+        rows,
+        key=lambda item: status_rank.get(str(item.get("status") or ""), 99),
+    )[0]
+    return dict(chosen, profile_count=len(rows))
+
+
+def _strategy_profile_edge_summary(entry: dict[str, Any]) -> dict[str, Any]:
+    if not entry:
+        return {
+            "strategy_profile_status": None,
+            "strategy_profile_required_fix": None,
+            "strategy_profile_blocks_live": None,
+            "strategy_profile_profile_count": 0,
+        }
+    status = str(entry.get("status") or "WATCH_ONLY")
+    return {
+        "strategy_profile_status": status,
+        "strategy_profile_method": str(entry.get("method") or "") or None,
+        "strategy_profile_required_fix": entry.get("required_fix"),
+        "strategy_profile_blocks_live": status not in {"CANDIDATE"},
+        "strategy_profile_profile_count": int(entry.get("profile_count") or 1),
+        "strategy_profile_pretrade_net_jpy": _optional_float(entry.get("pretrade_net_jpy")),
+        "strategy_profile_live_net_jpy": _optional_float(entry.get("live_net_jpy")),
+        "strategy_profile_live_worst_jpy": _optional_float(entry.get("live_worst_jpy")),
+        "strategy_profile_seat_pl_n": entry.get("seat_pl_n"),
+        "strategy_profile_seat_net_jpy": _optional_float(entry.get("seat_net_jpy")),
+        "strategy_profile_seat_win_rate_pct": _optional_float(entry.get("seat_win_rate_pct")),
     }
 
 

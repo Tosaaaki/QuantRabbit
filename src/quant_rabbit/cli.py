@@ -1262,6 +1262,7 @@ def main(argv: list[str] | None = None) -> int:
     p_coverage.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_coverage.add_argument("--replay", type=Path, default=DEFAULT_REPLAY_BACKTEST)
     p_coverage.add_argument("--ai-backtest", type=Path, default=DEFAULT_AI_TEST_BOT_BACKTEST)
+    p_coverage.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_coverage.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_coverage.add_argument("--output", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_coverage.add_argument("--report", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION_REPORT)
@@ -2790,6 +2791,7 @@ def main(argv: list[str] | None = None) -> int:
             target_state_path=args.target_state,
             replay_path=args.replay,
             ai_backtest_path=args.ai_backtest,
+            strategy_profile_path=args.strategy_profile,
             market_context_matrix_path=args.market_context_matrix,
             output_path=args.output,
             report_path=args.report,

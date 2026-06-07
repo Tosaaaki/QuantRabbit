@@ -416,6 +416,7 @@ class CoverageOptimizerTest(unittest.TestCase):
             intents = root / "intents.json"
             target = root / "target.json"
             ai_backtest = root / "ai_test_bot_backtest.json"
+            strategy_profile = root / "strategy_profile.json"
             matrix = root / "market_context_matrix.json"
             risk_issue = {
                 "severity": "BLOCK",
@@ -471,6 +472,25 @@ class CoverageOptimizerTest(unittest.TestCase):
                 )
             )
             target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            strategy_profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "required_fix": "live execution and pretrade feedback are negative",
+                                "live_net_jpy": -1200.0,
+                                "pretrade_net_jpy": -350.0,
+                                "seat_net_jpy": -7000.0,
+                                "seat_pl_n": 19,
+                                "seat_win_rate_pct": 21.0,
+                            }
+                        ]
+                    }
+                )
+            )
             ai_backtest.write_text(
                 json.dumps(
                     {
@@ -505,6 +525,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 target_state_path=target,
                 replay_path=root / "missing_replay.json",
                 ai_backtest_path=ai_backtest,
+                strategy_profile_path=strategy_profile,
                 market_context_matrix_path=matrix,
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
@@ -517,6 +538,10 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(diagnostics["state_counts"]["SPREAD_NORMALIZED_LIVE_BLOCKED"], 1)
             self.assertEqual(diagnostics["state_counts"]["NO_CURRENT_LANE"], 1)
             eur_edge = diagnostics["top_edges"][0]
+            self.assertEqual(eur_edge["strategy_profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
+            self.assertTrue(eur_edge["strategy_profile_blocks_live"])
+            self.assertEqual(eur_edge["strategy_profile_live_net_jpy"], -1200.0)
+            self.assertEqual(eur_edge["strategy_profile_seat_net_jpy"], -7000.0)
             self.assertEqual(eur_edge["matrix_support_count"], 1)
             self.assertEqual(eur_edge["matrix_reject_count"], 1)
             self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", eur_edge["matrix_cross_asset_context"][0])
@@ -524,6 +549,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 any("repair historical-profitable bucket coverage" in item for item in payload["action_items"])
             )
             self.assertIn("Profitable Bucket Coverage", (root / "coverage.md").read_text())
+            self.assertIn("strategy profile", (root / "coverage.md").read_text())
 
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
