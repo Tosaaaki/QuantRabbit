@@ -201,7 +201,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             day = payload["days"][0]
             self.assertEqual(day["selected_buckets"], ["trades:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
             self.assertEqual(day["managed_net_jpy"], 80.0)
-            self.assertEqual(payload["min_train_win_rate_pct"], 50.0)
+            self.assertEqual(payload["min_train_win_rate_pct"], 55.0)
             self.assertIn("majority capped win rate", (root / "ai_backtest.md").read_text())
 
     def test_applies_equity_loss_cap_to_validation_result(self) -> None:
@@ -332,12 +332,130 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(payload["raw_rows"], 2)
             self.assertEqual(payload["source_contributions"][0]["source_table"], "execution_ledger")
             day = payload["days"][0]
-            self.assertEqual(day["selected_buckets"], ["execution_ledger:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
+            self.assertEqual(day["selected_buckets"], ["execution_ledger:GBP_USD:LONG:TREND_TRADER:TREND_CONTINUATION"])
             self.assertEqual(day["selected_trades"], 1)
             self.assertEqual(day["managed_net_jpy"], 150.0)
             self.assertNotIn("GBP_USD:SHORT", json.dumps(payload))
             self.assertNotIn("TAKE_PROFIT_ORDER", json.dumps(payload))
-            self.assertIn("exit reason is post-trade evidence", (root / "ai_backtest.md").read_text())
+            report = (root / "ai_backtest.md").read_text()
+            self.assertIn("sent gateway entry", report)
+            self.assertIn("exit reason remains post-trade evidence", report)
+
+    def test_execution_ledger_source_ignores_unattributed_manual_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            _seed_execution_ledger(
+                ledger,
+                [
+                    (
+                        "fill-bot-train",
+                        "2026-06-01T01:00:00Z",
+                        "ORDER_FILLED",
+                        "bot-train",
+                        "GBP_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-bot-train",
+                        "2026-06-01T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "bot-train",
+                        "GBP_USD",
+                        "SHORT",
+                        1000,
+                        100.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-manual-train",
+                        "2026-06-01T04:00:00Z",
+                        "ORDER_FILLED",
+                        "manual-train",
+                        "USD_JPY",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-manual-train",
+                        "2026-06-01T05:00:00Z",
+                        "TRADE_CLOSED",
+                        "manual-train",
+                        "USD_JPY",
+                        "SHORT",
+                        1000,
+                        5000.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-bot-validation",
+                        "2026-06-02T01:00:00Z",
+                        "ORDER_FILLED",
+                        "bot-validation",
+                        "GBP_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-bot-validation",
+                        "2026-06-02T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "bot-validation",
+                        "GBP_USD",
+                        "SHORT",
+                        1000,
+                        150.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-manual-validation",
+                        "2026-06-02T04:00:00Z",
+                        "ORDER_FILLED",
+                        "manual-validation",
+                        "USD_JPY",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-manual-validation",
+                        "2026-06-02T05:00:00Z",
+                        "TRADE_CLOSED",
+                        "manual-validation",
+                        "USD_JPY",
+                        "SHORT",
+                        1000,
+                        6000.0,
+                        "{}",
+                    ),
+                ],
+                attributed_trade_ids={"bot-train", "bot-validation"},
+            )
+
+            AITestBotBacktester(
+                db_path=root / "missing_legacy.db",
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("execution_ledger",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            self.assertEqual(payload["raw_rows"], 2)
+            self.assertEqual(payload["days"][0]["selected_buckets"], ["execution_ledger:GBP_USD:LONG:TREND_TRADER:TREND_CONTINUATION"])
+            self.assertNotIn("USD_JPY", json.dumps(payload))
 
     def test_execution_ledger_source_rejects_raw_negative_training_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -473,6 +591,7 @@ def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str
 def _seed_execution_ledger(
     path: Path,
     rows: list[tuple[str, str, str, str, str, str, int | None, float | None, str]] | None = None,
+    attributed_trade_ids: set[str] | None = None,
 ) -> None:
     if rows is None:
         rows = [
@@ -521,6 +640,47 @@ def _seed_execution_ledger(
                 json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
             ),
         ]
+    if attributed_trade_ids is None:
+        attributed_trade_ids = {
+            trade_id
+            for _, _, event_type, trade_id, _, _, _, _, _ in rows
+            if event_type == "ORDER_FILLED"
+        }
+    expanded_rows = []
+    for event_uid, ts_utc, event_type, trade_id, pair, side, units, realized_pl_jpy, raw_json in rows:
+        order_id = f"order-{trade_id}" if event_type == "ORDER_FILLED" else f"close-order-{trade_id}"
+        if event_type == "ORDER_FILLED" and trade_id in attributed_trade_ids:
+            lane_id = f"trend_trader:{pair}:{side}:TREND_CONTINUATION"
+            expanded_rows.append(
+                (
+                    f"gateway-{event_uid}",
+                    ts_utc,
+                    "GATEWAY_ORDER_SENT",
+                    lane_id,
+                    order_id,
+                    trade_id,
+                    pair,
+                    side,
+                    units,
+                    None,
+                    json.dumps({"lane_id": lane_id}),
+                )
+            )
+        expanded_rows.append(
+            (
+                event_uid,
+                ts_utc,
+                event_type,
+                None,
+                order_id,
+                trade_id,
+                pair,
+                side,
+                units,
+                realized_pl_jpy,
+                raw_json,
+            )
+        )
     with sqlite3.connect(path) as conn:
         conn.execute(
             """
@@ -528,6 +688,8 @@ def _seed_execution_ledger(
                 event_uid TEXT,
                 ts_utc TEXT NOT NULL,
                 event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
                 trade_id TEXT,
                 pair TEXT,
                 side TEXT,
@@ -540,12 +702,12 @@ def _seed_execution_ledger(
         conn.executemany(
             """
             INSERT INTO execution_events (
-                event_uid, ts_utc, event_type, trade_id, pair, side, units,
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
                 realized_pl_jpy, raw_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            rows,
+            expanded_rows,
         )
 
 

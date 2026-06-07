@@ -32,11 +32,11 @@ from quant_rabbit.replay import _resolve_replay_loss_cap
 DEFAULT_TRAINING_DAYS = 6
 DEFAULT_MIN_TRAIN_TRADES = 10
 DEFAULT_MAX_ACTIVE_BUCKETS = 6
-# Majority-of-evidence floor for research bucket promotion. This is not a
-# market-price threshold: a bucket that loses more often than it wins in the
-# trailing training window has not earned scaling, even when a few large winners
-# make capped net positive.
-DEFAULT_MIN_TRAIN_WIN_RATE_PCT = 50.0
+# Clear-majority evidence floor for research bucket promotion. This is not a
+# market-price threshold: live-attributed sweeps showed a bare 50/50 boundary
+# still promoted buckets whose capped wins hid raw tail losses, while 55% kept
+# enough coverage and improved PF without over-constricting the opportunity set.
+DEFAULT_MIN_TRAIN_WIN_RATE_PCT = 55.0
 DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes", "seat_outcomes")
 EXECUTION_LEDGER_SOURCE_TABLE = "execution_ledger"
 DEFAULT_RUNTIME_SOURCE_TABLES = (*DEFAULT_SOURCE_TABLES, EXECUTION_LEDGER_SOURCE_TABLE)
@@ -470,7 +470,8 @@ class AITestBotBacktester:
                 "- Bucket selection uses only prior training-window days; validation-day winners cannot select themselves.",
                 "- Buckets must also prove majority capped win rate in the training window before promotion.",
                 "- Seat outcome buckets use only observable setup/orderability/source fields, not future `CAPTURED/FAILED/MISSED` labels.",
-                "- Execution-ledger outcomes use pair/direction only; exit reason is post-trade evidence and is not used as a selection bucket.",
+                "- Execution-ledger outcomes require attribution to a sent gateway entry; manual/tagless or otherwise unattributed closes are ignored.",
+                "- Execution-ledger buckets use gateway lane desk/strategy as pre-entry evidence; exit reason remains post-trade evidence and is not used as a selection bucket.",
                 "- Execution-ledger buckets require raw-positive training net, because hypothetical caps cannot certify old real-exit losses as fixed evidence.",
                 "- Opportunity dedupe counts repeated seat receipts as one candidate before training or validation scoring.",
                 "- Losses are capped by the equity-derived per-trade cap; wins are not enlarged.",
@@ -1152,54 +1153,98 @@ def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
         ).fetchone()
         if not exists:
             return
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
+            if row["name"] is not None
+        }
+        required_columns = {
+            "event_uid",
+            "ts_utc",
+            "event_type",
+            "lane_id",
+            "order_id",
+            "trade_id",
+            "pair",
+            "side",
+            "units",
+            "realized_pl_jpy",
+            "raw_json",
+        }
+        if not required_columns <= columns:
+            return
         rows = conn.execute(
             """
-            WITH entries AS (
+            WITH gateway_entries AS (
                 SELECT
                     trade_id,
+                    order_id,
+                    lane_id
+                FROM execution_events
+                WHERE event_type = 'GATEWAY_ORDER_SENT'
+                  AND lane_id IS NOT NULL
+                  AND lane_id != ''
+            ),
+            entries AS (
+                SELECT
+                    e.trade_id,
+                    MAX(g.lane_id) AS gateway_lane_id,
                     CASE
-                        WHEN MAX(units) > 0 THEN 'LONG'
-                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        WHEN MAX(e.units) > 0 THEN 'LONG'
+                        WHEN MIN(e.units) < 0 THEN 'SHORT'
                         ELSE NULL
                     END AS position_side
-                FROM execution_events
-                WHERE event_type = 'ORDER_FILLED'
-                  AND trade_id IS NOT NULL
-                  AND trade_id != ''
-                  AND units IS NOT NULL
-                GROUP BY trade_id
+                FROM execution_events e
+                LEFT JOIN gateway_entries g
+                  ON (
+                    g.trade_id IS NOT NULL
+                    AND g.trade_id != ''
+                    AND g.trade_id = e.trade_id
+                  )
+                  OR (
+                    g.order_id IS NOT NULL
+                    AND g.order_id != ''
+                    AND g.order_id = e.order_id
+                  )
+                WHERE e.event_type = 'ORDER_FILLED'
+                  AND e.trade_id IS NOT NULL
+                  AND e.trade_id != ''
+                  AND e.units IS NOT NULL
+                GROUP BY e.trade_id
+                HAVING gateway_lane_id IS NOT NULL
+                   AND gateway_lane_id != ''
             )
             SELECT
                 e.event_uid,
                 e.ts_utc,
                 e.trade_id,
                 e.pair,
-                e.side AS close_side,
                 e.realized_pl_jpy,
                 e.raw_json,
-                entries.position_side
+                entries.position_side,
+                entries.gateway_lane_id
             FROM execution_events e
-            LEFT JOIN entries ON entries.trade_id = e.trade_id
+            INNER JOIN entries ON entries.trade_id = e.trade_id
             WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
               AND e.ts_utc IS NOT NULL
               AND e.pair IS NOT NULL
-              AND e.side IS NOT NULL
               AND e.realized_pl_jpy IS NOT NULL
             ORDER BY e.ts_utc, e.event_uid
             """
         ).fetchall()
     for row in rows:
         pair = _norm(row["pair"])
-        direction = _norm(row["position_side"]) or _opposite_side(_norm(row["close_side"]))
+        direction = _norm(row["position_side"])
         session_date = _execution_session_date(row["ts_utc"])
         if not pair or direction not in {"LONG", "SHORT"} or not session_date:
             continue
         source_id = str(row["event_uid"] or row["trade_id"] or row["ts_utc"] or "")
         raw = _raw_payload(row["raw_json"])
         raw.setdefault("trade_id", str(row["trade_id"] or ""))
+        raw.setdefault("gateway_lane_id", str(row["gateway_lane_id"] or ""))
+        raw.setdefault("execution_event_uid", source_id)
         raw.setdefault("created_at", str(row["ts_utc"] or ""))
-        execution_style = "UNSPECIFIED"
-        allocation_band = "UNSPECIFIED"
+        execution_style, allocation_band = _execution_ledger_bucket_fields(row["gateway_lane_id"])
         yield TestBotTrade(
             source_id=source_id,
             session_date=session_date,
@@ -1221,6 +1266,20 @@ def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
             ),
             sort_key=str(row["ts_utc"] or source_id),
         )
+
+
+def _execution_ledger_bucket_fields(lane_id: object) -> tuple[str, str]:
+    parts = [part for part in str(lane_id or "").strip().split(":") if part]
+    if len(parts) >= 4:
+        desk = _lane_bucket_field(parts[0])
+        strategy = _lane_bucket_field("_".join(parts[3:]))
+        return desk, strategy
+    return "UNSPECIFIED", "UNSPECIFIED"
+
+
+def _lane_bucket_field(value: object) -> str:
+    text = _norm(value).replace(":", "_")
+    return text or "UNSPECIFIED"
 
 
 def _execution_session_date(value: object) -> str:
