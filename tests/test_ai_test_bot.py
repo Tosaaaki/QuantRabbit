@@ -10,6 +10,64 @@ from quant_rabbit.ai_test_bot import AITestBotBacktester
 
 
 class AITestBotBacktesterTest(unittest.TestCase):
+    def test_defaults_use_recent_pretrade_evidence_with_high_support_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            rows = []
+            for index in range(12):
+                day = f"2026-04-{1 + (index % 5):02d}"
+                rows.append(
+                    (
+                        "pretrade_outcomes",
+                        day,
+                        "EUR_USD",
+                        "LONG",
+                        100.0,
+                        json.dumps({"id": f"train-{index}", "pretrade_level": "HIGH"}),
+                    )
+                )
+            rows.extend(
+                [
+                    (
+                        "pretrade_outcomes",
+                        "2026-04-06",
+                        "EUR_USD",
+                        "LONG",
+                        150.0,
+                        json.dumps({"id": "validation-1", "pretrade_level": "HIGH"}),
+                    ),
+                    (
+                        "pretrade_outcomes",
+                        "2026-04-06",
+                        "EUR_USD",
+                        "LONG",
+                        200.0,
+                        json.dumps({"id": "validation-2", "pretrade_level": "HIGH"}),
+                    ),
+                ]
+            )
+            _seed_db(db, rows)
+
+            summary = AITestBotBacktester(
+                db_path=db,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+            ).run(start_balance_jpy=10_000.0)
+
+            self.assertEqual(summary.validation_days, 1)
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            self.assertEqual(payload["source_tables"], ["trades", "pretrade_outcomes"])
+            self.assertEqual(payload["training_days"], 5)
+            self.assertEqual(payload["min_train_trades"], 12)
+            day = payload["days"][0]
+            self.assertEqual(
+                day["selected_buckets"],
+                ["pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED"],
+            )
+            self.assertEqual(day["managed_net_jpy"], 350.0)
+
     def test_walk_forward_policy_does_not_select_validation_only_winner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

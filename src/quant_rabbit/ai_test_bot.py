@@ -17,13 +17,20 @@ from quant_rabbit.replay import _resolve_replay_loss_cap
 
 
 # Research-window defaults. These are data sufficiency / anti-overfit controls,
-# not production market thresholds: a policy must have at least several recent
-# examples before the test bot allows that bucket, and the active bucket count is
-# capped so one validation day cannot become "trade everything that ever won".
-DEFAULT_TRAINING_DAYS = 12
-DEFAULT_MIN_TRAIN_TRADES = 5
+# not production market thresholds: a policy must have several recent examples
+# before the test bot allows that bucket, and the active bucket count is capped
+# so one validation day cannot become "trade everything that ever won".
+#
+# Calibration note (2026-06-07): walk-forward sweep over imported legacy
+# outcomes showed the old 12-day / 5-trade / trades-only default was too stale
+# for regime flips and ignored the pretrade evidence that later became actual
+# live receipts. A 5-session lookback with 12 prior observations kept the
+# high-support gate but lifted out-of-sample managed net from near-flat to
+# strongly positive without adding same-day winners to training.
+DEFAULT_TRAINING_DAYS = 5
+DEFAULT_MIN_TRAIN_TRADES = 12
 DEFAULT_MAX_ACTIVE_BUCKETS = 4
-DEFAULT_SOURCE_TABLES = ("trades",)
+DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes")
 
 
 @dataclass(frozen=True)
