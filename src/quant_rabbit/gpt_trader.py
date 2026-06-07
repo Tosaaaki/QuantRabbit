@@ -2063,6 +2063,12 @@ def _allowed_refs(
             lane_id = str(lane.get("lane_id") or "")
             if lane_id:
                 refs.append(f"learning:lane:{lane_id}")
+        effect = learning_audit.get("effect_metrics") if isinstance(learning_audit.get("effect_metrics"), dict) else {}
+        exit_reasons = effect.get("exit_reason_metrics") if isinstance(effect.get("exit_reason_metrics"), dict) else {}
+        for reason in exit_reasons:
+            reason_key = str(reason or "").strip()
+            if reason_key:
+                refs.append(f"learning:exit_reason:{reason_key}")
     if verification_ledger:
         refs.extend(["verification:blockers", "verification:effect:all"])
         for key in ("blocking_evidence", "missing_artifacts", "learning_evidence", "measurements"):
@@ -2165,27 +2171,56 @@ def _learning_audit_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
             }
         )
     effect = payload.get("effect_metrics") if isinstance(payload.get("effect_metrics"), dict) else {}
+    effect_packet = _small_dict(
+        effect,
+        (
+            "closed_trades",
+            "net_jpy",
+            "profit_factor",
+            "expectancy_jpy",
+        ),
+    )
+    exit_reason_metrics = _learning_exit_reason_metrics(effect)
+    if exit_reason_metrics:
+        effect_packet["exit_reason_metrics"] = exit_reason_metrics
     return {
         "evidence_ref": "learning:audit",
         "generated_at_utc": payload.get("generated_at_utc"),
         "status": payload.get("status"),
         "blockers": list(payload.get("blockers", []) or [])[:12],
         "warnings": list(payload.get("warnings", []) or [])[:12],
-        "effect_metrics": _small_dict(
-            effect,
-            (
-                "closed_trades",
-                "net_jpy",
-                "profit_factor",
-                "expectancy_jpy",
-            ),
-        ),
+        "effect_metrics": effect_packet,
         "learning_influence": {
             "influenced_lanes": influence.get("influenced_lanes", 0),
             "total_learning_score_delta": influence.get("total_learning_score_delta", 0.0),
             "lanes": lanes[:20],
         },
     }
+
+
+def _learning_exit_reason_metrics(effect: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    exit_reasons = effect.get("exit_reason_metrics") if isinstance(effect.get("exit_reason_metrics"), dict) else {}
+    rows: list[tuple[float, str, dict[str, Any]]] = []
+    for reason, metrics in exit_reasons.items():
+        reason_key = str(reason or "").strip()
+        if not reason_key or not isinstance(metrics, dict):
+            continue
+        compact = _small_dict(
+            metrics,
+            (
+                "closed_trades",
+                "net_jpy",
+                "gross_profit_jpy",
+                "gross_loss_jpy",
+                "profit_factor",
+                "win_rate",
+                "expectancy_jpy",
+            ),
+        )
+        compact["evidence_ref"] = f"learning:exit_reason:{reason_key}"
+        net = _optional_float(metrics.get("net_jpy"))
+        rows.append((net if net is not None else 0.0, reason_key, compact))
+    return {reason: compact for _net, reason, compact in sorted(rows, key=lambda item: item[0])[:8]}
 
 
 def _verification_ledger_packet(payload: dict[str, Any] | None) -> dict[str, Any]:

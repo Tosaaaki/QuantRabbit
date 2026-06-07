@@ -1057,6 +1057,54 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             self.assertEqual(payload["input_packet"]["learning_audit"]["status"], "LEARNING_AUDIT_WARN")
 
+    def test_input_packet_exposes_learning_exit_reason_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["learning_audit"].write_text(
+                json.dumps(
+                    _learning_audit_payload(
+                        status="LEARNING_AUDIT_WARN",
+                        exit_reason_metrics={
+                            "MARKET_ORDER_TRADE_CLOSE": {
+                                "closed_trades": 10,
+                                "net_jpy": -13314.65,
+                                "gross_profit_jpy": 25.0,
+                                "gross_loss_jpy": -13339.65,
+                                "profit_factor": 0.0019,
+                                "win_rate": 0.1,
+                                "expectancy_jpy": -1331.465,
+                            },
+                            "TAKE_PROFIT_ORDER": {
+                                "closed_trades": 11,
+                                "net_jpy": 4758.54,
+                                "profit_factor": None,
+                                "win_rate": 1.0,
+                                "expectancy_jpy": 432.594,
+                            },
+                        },
+                    )
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].append("learning:exit_reason:MARKET_ORDER_TRADE_CLOSE")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            packet = payload["input_packet"]["learning_audit"]
+            market_close = packet["effect_metrics"]["exit_reason_metrics"]["MARKET_ORDER_TRADE_CLOSE"]
+            self.assertEqual(market_close["evidence_ref"], "learning:exit_reason:MARKET_ORDER_TRADE_CLOSE")
+            self.assertEqual(market_close["closed_trades"], 10)
+            self.assertEqual(market_close["net_jpy"], -13314.65)
+            self.assertIn(
+                "learning:exit_reason:MARKET_ORDER_TRADE_CLOSE",
+                payload["input_packet"]["allowed_evidence_refs"],
+            )
+            self.assertEqual(payload["verification_issues"], [])
+
     def test_rejects_wait_when_attack_advice_recommends_lane_even_with_trader_exposure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2208,6 +2256,7 @@ def _learning_audit_payload(
     status: str,
     lane_id: str = LANE_ID,
     blockers: list[str] | None = None,
+    exit_reason_metrics: dict[str, dict] | None = None,
 ) -> dict:
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -2230,6 +2279,7 @@ def _learning_audit_payload(
             "net_jpy": 1200.0,
             "profit_factor": 1.2,
             "expectancy_jpy": 40.0,
+            "exit_reason_metrics": exit_reason_metrics or {},
         },
     }
 
