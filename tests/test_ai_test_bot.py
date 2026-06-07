@@ -15,8 +15,8 @@ class AITestBotBacktesterTest(unittest.TestCase):
             root = Path(tmp)
             db = root / "legacy.db"
             rows = []
-            for index in range(12):
-                day = f"2026-04-{1 + (index % 5):02d}"
+            for index in range(10):
+                day = f"2026-04-{1 + (index % 6):02d}"
                 rows.append(
                     (
                         "pretrade_outcomes",
@@ -31,7 +31,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
                 [
                     (
                         "pretrade_outcomes",
-                        "2026-04-06",
+                        "2026-04-07",
                         "EUR_USD",
                         "LONG",
                         150.0,
@@ -39,7 +39,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
                     ),
                     (
                         "pretrade_outcomes",
-                        "2026-04-06",
+                        "2026-04-07",
                         "EUR_USD",
                         "LONG",
                         200.0,
@@ -59,8 +59,9 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(summary.validation_days, 1)
             payload = json.loads((root / "ai_backtest.json").read_text())
             self.assertEqual(payload["source_tables"], ["trades", "pretrade_outcomes"])
-            self.assertEqual(payload["training_days"], 5)
-            self.assertEqual(payload["min_train_trades"], 12)
+            self.assertEqual(payload["training_days"], 6)
+            self.assertEqual(payload["min_train_trades"], 10)
+            self.assertEqual(payload["max_active_buckets"], 6)
             day = payload["days"][0]
             self.assertEqual(
                 day["selected_buckets"],
