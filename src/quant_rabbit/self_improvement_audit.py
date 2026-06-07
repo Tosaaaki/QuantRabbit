@@ -1429,6 +1429,13 @@ def _blocked_profitable_bucket_edges(bucket_diag: dict[str, Any]) -> list[dict[s
             "matrix_cross_asset_context": [
                 str(item) for item in (row.get("matrix_cross_asset_context") or [])[:4] if str(item).strip()
             ],
+            "matrix_support_context": [
+                str(item) for item in (row.get("matrix_support_context") or [])[:4] if str(item).strip()
+            ],
+            "matrix_reject_context": [
+                str(item) for item in (row.get("matrix_reject_context") or [])[:4] if str(item).strip()
+            ],
+            "same_side_matrix_context_supported": bool(row.get("same_side_matrix_context_supported")),
         }
         out.append(edge)
     out.sort(
@@ -1442,11 +1449,13 @@ def _blocked_profitable_bucket_edges(bucket_diag: dict[str, Any]) -> list[dict[s
 
 
 def _edge_has_same_side_matrix_support(edge: dict[str, Any]) -> bool:
+    if edge.get("same_side_matrix_context_supported") is True:
+        return True
     support_count = int(edge.get("matrix_support_count") or 0)
     reject_count = int(edge.get("matrix_reject_count") or 0)
-    xasset = edge.get("matrix_cross_asset_context")
-    has_context = isinstance(xasset, list) and bool(xasset)
-    return support_count > 0 and (support_count > reject_count or has_context)
+    support_context = edge.get("matrix_support_context")
+    has_support_context = isinstance(support_context, list) and bool(support_context)
+    return support_count > 0 and support_count > reject_count and has_support_context
 
 
 def _sidecar_findings(

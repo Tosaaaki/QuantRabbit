@@ -212,6 +212,12 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                             "GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to LONG",
                                             "OIL_CONTEXT_TECHNICAL_DIRECTION: WTICO_USD maps to LONG",
                                         ],
+                                        "matrix_support_context": [
+                                            "GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to LONG",
+                                            "OIL_CONTEXT_TECHNICAL_DIRECTION: WTICO_USD maps to LONG",
+                                        ],
+                                        "matrix_reject_context": [],
+                                        "same_side_matrix_context_supported": True,
                                     },
                                     {
                                         "pair": "EUR_USD",

@@ -2093,6 +2093,13 @@ def _allowed_refs(
             direction = str(edge.get("direction") or "")
             if pair and direction:
                 refs.append(f"coverage:profitable_bucket:{pair}:{direction}")
+        for edge in bucket_diag.get("matrix_supported_repair_queue", []) or []:
+            if not isinstance(edge, dict):
+                continue
+            pair = str(edge.get("pair") or "")
+            direction = str(edge.get("direction") or "")
+            if pair and direction:
+                refs.append(f"coverage:profitable_bucket:{pair}:{direction}")
     if learning_audit:
         refs.append("learning:audit")
         influence = learning_audit.get("learning_influence") if isinstance(learning_audit.get("learning_influence"), dict) else {}
@@ -2288,7 +2295,45 @@ def _profitable_bucket_coverage_packet(payload: dict[str, Any]) -> dict[str, Any
         "positive_trade_count": payload.get("positive_trade_count"),
         "state_counts": payload.get("state_counts") if isinstance(payload.get("state_counts"), dict) else {},
         "top_edges": top_edges,
+        "matrix_supported_repair_queue": _matrix_supported_repair_queue_packet(
+            payload.get("matrix_supported_repair_queue")
+            if isinstance(payload.get("matrix_supported_repair_queue"), list)
+            else []
+        ),
     }
+
+
+def _matrix_supported_repair_queue_packet(rows: list[Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        pair = str(item.get("pair") or "")
+        direction = str(item.get("direction") or "")
+        evidence_ref = f"coverage:profitable_bucket:{pair}:{direction}" if pair and direction else None
+        out.append(
+            {
+                "evidence_ref": evidence_ref,
+                "pair": pair,
+                "direction": direction,
+                "coverage_state": item.get("coverage_state"),
+                "managed_net_jpy": item.get("managed_net_jpy"),
+                "top_blockers": [str(value) for value in (item.get("top_blockers") or [])[:4] if str(value).strip()],
+                "strategy_profile_status": item.get("strategy_profile_status"),
+                "matrix_ref": item.get("matrix_ref"),
+                "matrix_support_count": item.get("matrix_support_count"),
+                "matrix_reject_count": item.get("matrix_reject_count"),
+                "matrix_support_layers": [
+                    str(value) for value in (item.get("matrix_support_layers") or [])[:6] if str(value).strip()
+                ],
+                "matrix_support_context": [
+                    str(value) for value in (item.get("matrix_support_context") or [])[:4] if str(value).strip()
+                ],
+            }
+        )
+        if len(out) >= 8:
+            break
+    return out
 
 
 def _learning_audit_packet(payload: dict[str, Any] | None) -> dict[str, Any]:

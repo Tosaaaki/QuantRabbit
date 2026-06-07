@@ -286,6 +286,28 @@ class CoverageOptimizer:
                 if blockers:
                     lines.append(f"  - top blockers: {', '.join(str(blocker) for blocker in blockers[:3])}")
             lines.append("")
+            repair_queue = (
+                bucket_diag.get("matrix_supported_repair_queue")
+                if isinstance(bucket_diag.get("matrix_supported_repair_queue"), list)
+                else []
+            )
+            if repair_queue:
+                lines.extend(["## Matrix-Supported Repair Queue", ""])
+                for item in repair_queue[:8]:
+                    if not isinstance(item, dict):
+                        continue
+                    blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                    contexts = item.get("matrix_support_context") if isinstance(item.get("matrix_support_context"), list) else []
+                    lines.append(
+                        f"- `{item.get('pair')} {item.get('direction')}` state=`{item.get('coverage_state')}` "
+                        f"managed_net=`{item.get('managed_net_jpy')}` supports=`{item.get('matrix_support_count')}` "
+                        f"rejects=`{item.get('matrix_reject_count')}` layers=`{item.get('matrix_support_layers') or []}`"
+                    )
+                    if contexts:
+                        lines.append(f"  - same-side context: {', '.join(str(ref) for ref in contexts[:3])}")
+                    if blockers:
+                        lines.append(f"  - repair blocker: {blockers[0]}")
+                lines.append("")
         lines.extend(
             [
                 "## Blockers",
@@ -478,6 +500,22 @@ def _action_items(
         else {}
     )
     if remaining_target > live_ready_reward and profitable_bucket_diag:
+        repair_queue = profitable_bucket_diag.get("matrix_supported_repair_queue")
+        if isinstance(repair_queue, list) and repair_queue:
+            labels = []
+            for item in repair_queue[:4]:
+                if not isinstance(item, dict):
+                    continue
+                label = f"{item.get('pair')} {item.get('direction')}"
+                blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                if blockers:
+                    label += f" ({blockers[0]})"
+                labels.append(label)
+            if labels:
+                items.append(
+                    "prioritize matrix-supported profitable repairs before broad exploration: "
+                    + "; ".join(labels)
+                )
         blocked_top = profitable_bucket_diag.get("blocked_or_missing_top")
         if isinstance(blocked_top, list) and blocked_top:
             labels = []
@@ -678,6 +716,7 @@ def _profitable_bucket_coverage_summary(
     blocked_or_missing = [
         item for item in top_edges if item.get("coverage_state") != "SPREAD_NORMALIZED_NO_LIVE_BLOCKER"
     ]
+    matrix_supported_repair_queue = _matrix_supported_repair_queue(blocked_or_missing)
     return {
         "ai_backtest_path": str(ai_backtest_path) if ai_backtest_path.exists() else None,
         "strategy_profile_path": str(strategy_profile_path) if strategy_profile_path.exists() else None,
@@ -690,6 +729,7 @@ def _profitable_bucket_coverage_summary(
         "state_counts": dict(state_counts),
         "top_edges": top_edges[:12],
         "blocked_or_missing_top": blocked_or_missing[:8],
+        "matrix_supported_repair_queue": matrix_supported_repair_queue[:8],
     }
 
 
@@ -875,22 +915,40 @@ def _matrix_side_summary(side: dict[str, Any]) -> dict[str, Any]:
             "matrix_strongest_reject": None,
             "matrix_strongest_warning": None,
             "matrix_cross_asset_context": [],
+            "matrix_support_context": [],
+            "matrix_reject_context": [],
+            "matrix_support_layers": [],
+            "matrix_reject_layers": [],
+            "same_side_matrix_context_supported": False,
         }
+    support_context = _matrix_cross_asset_context(side, buckets=("supports",))
+    reject_context = _matrix_cross_asset_context(side, buckets=("rejects",))
+    support_layers = _matrix_layers(side, bucket="supports")
+    reject_layers = _matrix_layers(side, bucket="rejects")
+    support_count = int(side.get("support_count") or 0)
+    reject_count = int(side.get("reject_count") or 0)
     return {
         "matrix_ref": side.get("evidence_ref"),
-        "matrix_support_count": int(side.get("support_count") or 0),
-        "matrix_reject_count": int(side.get("reject_count") or 0),
+        "matrix_support_count": support_count,
+        "matrix_reject_count": reject_count,
         "matrix_warning_count": int(side.get("warning_count") or 0),
         "matrix_strongest_support": side.get("strongest_support"),
         "matrix_strongest_reject": side.get("strongest_reject"),
         "matrix_strongest_warning": side.get("strongest_warning"),
         "matrix_cross_asset_context": _matrix_cross_asset_context(side),
+        "matrix_support_context": support_context,
+        "matrix_reject_context": reject_context,
+        "matrix_support_layers": support_layers,
+        "matrix_reject_layers": reject_layers,
+        "same_side_matrix_context_supported": bool(
+            support_context and support_count > reject_count
+        ),
     }
 
 
-def _matrix_cross_asset_context(side: dict[str, Any]) -> list[str]:
+def _matrix_cross_asset_context(side: dict[str, Any], *, buckets: tuple[str, ...] | None = None) -> list[str]:
     items: list[str] = []
-    for key in ("supports", "rejects", "warnings", "horizon_conflicts"):
+    for key in buckets or ("supports", "rejects", "warnings", "horizon_conflicts"):
         for item in side.get(key, []) or []:
             if not isinstance(item, dict):
                 continue
@@ -906,6 +964,58 @@ def _matrix_cross_asset_context(side: dict[str, Any]) -> list[str]:
             if len(items) >= 6:
                 return items
     return items
+
+
+def _matrix_layers(side: dict[str, Any], *, bucket: str) -> list[str]:
+    layers = {
+        str(item.get("layer") or "").strip()
+        for item in side.get(bucket, []) or []
+        if isinstance(item, dict) and str(item.get("layer") or "").strip()
+    }
+    return sorted(layers)
+
+
+def _matrix_supported_repair_queue(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates = [
+        row
+        for row in rows
+        if bool(row.get("same_side_matrix_context_supported"))
+    ]
+    out: list[dict[str, Any]] = []
+    for row in sorted(
+        candidates,
+        key=lambda item: (
+            -float(item.get("managed_net_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("direction") or ""),
+        ),
+    ):
+        out.append(
+            {
+                "pair": row.get("pair"),
+                "direction": row.get("direction"),
+                "coverage_state": row.get("coverage_state"),
+                "managed_net_jpy": row.get("managed_net_jpy"),
+                "current_lane_count": row.get("current_lane_count"),
+                "spread_normalized_candidate_count": row.get("spread_normalized_candidate_count"),
+                "spread_normalized_no_live_blocker_count": row.get("spread_normalized_no_live_blocker_count"),
+                "top_blockers": [str(item) for item in (row.get("top_blockers") or [])[:4] if str(item).strip()],
+                "strategy_profile_status": row.get("strategy_profile_status"),
+                "strategy_profile_required_fix": row.get("strategy_profile_required_fix"),
+                "matrix_ref": row.get("matrix_ref"),
+                "matrix_support_count": row.get("matrix_support_count"),
+                "matrix_reject_count": row.get("matrix_reject_count"),
+                "matrix_support_layers": row.get("matrix_support_layers") if isinstance(row.get("matrix_support_layers"), list) else [],
+                "matrix_reject_layers": row.get("matrix_reject_layers") if isinstance(row.get("matrix_reject_layers"), list) else [],
+                "matrix_support_context": [
+                    str(item) for item in (row.get("matrix_support_context") or [])[:4] if str(item).strip()
+                ],
+                "matrix_reject_context": [
+                    str(item) for item in (row.get("matrix_reject_context") or [])[:4] if str(item).strip()
+                ],
+            }
+        )
+    return out
 
 
 def _is_spread_normalized_candidate(result: dict[str, Any]) -> bool:

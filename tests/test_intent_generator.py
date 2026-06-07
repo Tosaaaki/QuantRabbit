@@ -113,7 +113,10 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
             self.assertEqual(metadata["matrix_support_count"], 4)
             self.assertEqual(metadata["matrix_reject_count"], 1)
+            self.assertEqual(metadata["matrix_support_layers"], ["context_asset_chart"])
+            self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", metadata["matrix_support_context"][0])
             self.assertIn("matrix matrix:EUR_USD:LONG", result["intent"]["market_context"]["chart_story"])
+            self.assertIn("XAU_USD pressure maps to EUR_USD LONG", result["intent"]["market_context"]["chart_story"])
 
     def test_live_entry_requires_fresh_forecast_when_live_default_active(self) -> None:
         prior = os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE")
@@ -3818,6 +3821,22 @@ def _market_context_matrix(root: Path) -> Path:
                             "missing_count": 1,
                             "strongest_support": "chart and strength align EUR_USD LONG",
                             "strongest_reject": "COT longer-term conflicts EUR_USD LONG",
+                            "supports": [
+                                {
+                                    "code": "GOLD_CONTEXT_TECHNICAL_DIRECTION",
+                                    "layer": "context_asset_chart",
+                                    "message": "XAU_USD pressure maps to EUR_USD LONG",
+                                    "evidence_refs": ["context_asset:XAU_USD"],
+                                }
+                            ],
+                            "rejects": [
+                                {
+                                    "code": "COT_CONFLICT",
+                                    "layer": "cot",
+                                    "message": "COT longer-term conflicts EUR_USD LONG",
+                                    "evidence_refs": ["cot:EUR"],
+                                }
+                            ],
                         },
                         "SHORT": {
                             "evidence_ref": "matrix:EUR_USD:SHORT",

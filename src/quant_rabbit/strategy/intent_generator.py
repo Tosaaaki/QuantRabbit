@@ -3412,11 +3412,17 @@ def _intent_from_lane(
     matrix_metadata = matrix_summary_for_intent(market_context_matrix, pair, side.value)
     matrix_story = ""
     if matrix_metadata:
+        matrix_support_context = matrix_metadata.get("matrix_support_context")
+        if isinstance(matrix_support_context, list) and matrix_support_context:
+            matrix_support = str(matrix_support_context[0])
+        else:
+            matrix_support = str(matrix_metadata.get("strongest_matrix_support") or "none")
         matrix_story = (
             f"matrix {matrix_metadata.get('market_context_matrix_ref')}: "
             f"supports={matrix_metadata.get('matrix_support_count', 0)} "
             f"rejects={matrix_metadata.get('matrix_reject_count', 0)} "
             f"warnings={matrix_metadata.get('matrix_warning_count', 0)}; "
+            f"support={matrix_support}; "
             f"counter={matrix_metadata.get('strongest_matrix_reject') or 'none'}"
         )
     context = MarketContext(

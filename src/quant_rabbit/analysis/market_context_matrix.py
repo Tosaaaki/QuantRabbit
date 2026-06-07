@@ -176,6 +176,10 @@ def matrix_summary_for_intent(matrix: dict[str, Any] | None, pair: str, side: st
         "matrix_missing_count": side_payload.get("missing_count", 0),
         "strongest_matrix_support": side_payload.get("strongest_support"),
         "strongest_matrix_reject": side_payload.get("strongest_reject"),
+        "matrix_support_layers": _layers(side_payload, bucket="supports"),
+        "matrix_reject_layers": _layers(side_payload, bucket="rejects"),
+        "matrix_support_context": _cross_asset_context(side_payload, buckets=("supports",)),
+        "matrix_reject_context": _cross_asset_context(side_payload, buckets=("rejects",)),
     }
 
 
@@ -223,6 +227,38 @@ def _first_message(rows: Any) -> str | None:
     if not isinstance(first, dict):
         return None
     return str(first.get("message") or "") or None
+
+
+def _layers(side_payload: dict[str, Any], *, bucket: str) -> list[str]:
+    rows = side_payload.get(bucket) if isinstance(side_payload.get(bucket), list) else []
+    return sorted(
+        {
+            str(row.get("layer") or "").strip()
+            for row in rows
+            if isinstance(row, dict) and str(row.get("layer") or "").strip()
+        }
+    )
+
+
+def _cross_asset_context(side_payload: dict[str, Any], *, buckets: tuple[str, ...]) -> list[str]:
+    items: list[str] = []
+    for bucket in buckets:
+        rows = side_payload.get(bucket) if isinstance(side_payload.get(bucket), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            layer = str(row.get("layer") or "")
+            refs = [str(ref) for ref in row.get("evidence_refs", []) or []]
+            if layer not in {"cross_asset", "context_asset_chart"} and not any(
+                ref.startswith("context_asset:") or ref.startswith("cross:") for ref in refs
+            ):
+                continue
+            code = str(row.get("code") or layer or "context")
+            message = str(row.get("message") or "").strip()
+            items.append(f"{code}: {message}" if message else code)
+            if len(items) >= 4:
+                return items
+    return items
 
 
 def _add(side_payload: dict[str, Any], bucket: str, *, code: str, layer: str, message: str, refs: Iterable[str]) -> None:

@@ -551,6 +551,130 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertIn("Profitable Bucket Coverage", (root / "coverage.md").read_text())
             self.assertIn("strategy profile", (root / "coverage.md").read_text())
 
+    def test_matrix_supported_profitable_edges_become_repair_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            ai_backtest = root / "ai_test_bot_backtest.json"
+            strategy_profile = root / "strategy_profile.json"
+            matrix = root / "market_context_matrix.json"
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="failure_trader:AUD_JPY:SHORT:BREAKOUT_FAILURE",
+                                pair="AUD_JPY",
+                                side="SHORT",
+                                strategy_issues=[
+                                    {
+                                        "severity": "BLOCK",
+                                        "code": "STRATEGY_NOT_ELIGIBLE",
+                                        "message": "AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE",
+                                    }
+                                ],
+                            )
+                        ]
+                    }
+                )
+            )
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "pairs": {
+                            "AUD_JPY": {
+                                "SHORT": {
+                                    "evidence_ref": "matrix:AUD_JPY:SHORT",
+                                    "support_count": 4,
+                                    "reject_count": 1,
+                                    "warning_count": 0,
+                                    "strongest_support": "risk-off context maps to SHORT",
+                                    "strongest_reject": "spread stressed",
+                                    "supports": [
+                                        {
+                                            "code": "RISK_ASSET_JPY_CROSS_DIRECTION",
+                                            "layer": "cross_asset",
+                                            "message": "SPX down maps AUD_JPY to SHORT",
+                                            "evidence_refs": ["cross:spx"],
+                                        },
+                                        {
+                                            "code": "GOLD_CONTEXT_TECHNICAL_DIRECTION",
+                                            "layer": "context_asset_chart",
+                                            "message": "gold technical pressure maps to SHORT",
+                                            "evidence_refs": ["context_asset:XAU_USD"],
+                                        },
+                                    ],
+                                    "rejects": [
+                                        {
+                                            "code": "SPREAD_STRESSED",
+                                            "layer": "flow",
+                                            "message": "spread stressed",
+                                            "evidence_refs": ["flow:AUD_JPY"],
+                                        }
+                                    ],
+                                }
+                            }
+                        }
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            strategy_profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "AUD_JPY",
+                                "direction": "SHORT",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "required_fix": "require a new vehicle or market-structure proof",
+                            }
+                        ]
+                    }
+                )
+            )
+            ai_backtest.write_text(
+                json.dumps(
+                    {
+                        "status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                        "bucket_contributions": [
+                            {
+                                "bucket": "trades:AUD_JPY:SHORT:UNSPECIFIED:UNSPECIFIED",
+                                "managed_net_jpy": 1200.0,
+                                "raw_net_jpy": 1200.0,
+                                "trades": 12,
+                                "days": 4,
+                            }
+                        ],
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                ai_backtest_path=ai_backtest,
+                strategy_profile_path=strategy_profile,
+                market_context_matrix_path=matrix,
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            bucket = payload["artifact_diagnostics"]["profitable_bucket_coverage"]
+            queue = bucket["matrix_supported_repair_queue"]
+            self.assertEqual(queue[0]["pair"], "AUD_JPY")
+            self.assertEqual(queue[0]["direction"], "SHORT")
+            self.assertEqual(queue[0]["matrix_support_context"][0], "RISK_ASSET_JPY_CROSS_DIRECTION: SPX down maps AUD_JPY to SHORT")
+            self.assertTrue(
+                any("prioritize matrix-supported profitable repairs" in item for item in payload["action_items"])
+            )
+            report = (root / "coverage.md").read_text()
+            self.assertIn("Matrix-Supported Repair Queue", report)
+
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

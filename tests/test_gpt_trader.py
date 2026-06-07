@@ -1029,6 +1029,27 @@ class GPTTraderBrainTest(unittest.TestCase):
                                         ],
                                     }
                                 ],
+                                "matrix_supported_repair_queue": [
+                                    {
+                                        "pair": "AUD_JPY",
+                                        "direction": "SHORT",
+                                        "coverage_state": "SURFACED_BUT_BLOCKED",
+                                        "managed_net_jpy": 6192.92,
+                                        "top_blockers": [
+                                            "AUD_JPY SHORT is BLOCK_UNTIL_NEW_EVIDENCE",
+                                            "forecast confidence below live floor",
+                                        ],
+                                        "strategy_profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                        "matrix_ref": "matrix:AUD_JPY:SHORT",
+                                        "matrix_support_count": 11,
+                                        "matrix_reject_count": 1,
+                                        "matrix_support_layers": ["chart", "cross_asset", "context_asset_chart"],
+                                        "matrix_support_context": [
+                                            "RISK_ASSET_JPY_CROSS_DIRECTION: SPX down maps to SHORT",
+                                            "US10Y_JPY_CROSS_DIRECTION: US10Y down maps to SHORT",
+                                        ],
+                                    }
+                                ],
                             },
                         },
                         "action_items": ["repair historical-profitable bucket coverage before widening discovery"],
@@ -1057,8 +1078,13 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(edge["strategy_profile_live_net_jpy"], -1200.0)
             self.assertEqual(edge["matrix_reject_count"], 5)
             self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to SHORT", edge["matrix_cross_asset_context"])
+            repair_queue = bucket["matrix_supported_repair_queue"]
+            self.assertEqual(repair_queue[0]["evidence_ref"], "coverage:profitable_bucket:AUD_JPY:SHORT")
+            self.assertEqual(repair_queue[0]["matrix_support_count"], 11)
+            self.assertIn("RISK_ASSET_JPY_CROSS_DIRECTION", repair_queue[0]["matrix_support_context"][0])
             self.assertIn("coverage:optimization", payload["input_packet"]["allowed_evidence_refs"])
             self.assertIn("coverage:profitable_bucket:EUR_USD:LONG", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn("coverage:profitable_bucket:AUD_JPY:SHORT", payload["input_packet"]["allowed_evidence_refs"])
 
     def test_accepts_attack_advice_evidence_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

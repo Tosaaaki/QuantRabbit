@@ -156,6 +156,12 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertIn("OIL_CAD_DIRECTION", usdcad_long_warning_codes)
         self.assertEqual(eurusd_gold_context[0]["evidence_refs"], ["context_asset:XAU_USD"])
         self.assertEqual(payload["trade_count_policy"], "ADVISORY_ONLY_DOES_NOT_BLOCK_OR_DEMOTE_LANES")
+        summary = matrix_summary_for_intent(payload, "EUR_USD", "LONG")
+        self.assertIn("context_asset_chart", summary["matrix_support_layers"])
+        self.assertTrue(
+            any("GOLD_CONTEXT_TECHNICAL_DIRECTION" in item for item in summary["matrix_support_context"])
+        )
+        self.assertNotIn("supports", summary)
 
     def test_intent_summary_keeps_matrix_compact(self) -> None:
         payload = build_market_context_matrix_from_payloads(
