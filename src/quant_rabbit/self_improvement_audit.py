@@ -10,6 +10,7 @@ from typing import Any
 
 from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
+    DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_DAILY_TARGET_STATE,
     DEFAULT_ENTRY_THESIS_LEDGER,
     DEFAULT_EXECUTION_LEDGER_DB,
@@ -131,6 +132,7 @@ class SelfImprovementAuditor:
         thesis_evolution_path: Path = Path("data/thesis_evolution_report.json"),
         position_thesis_path: Path = Path("data/position_thesis_report.json"),
         forecast_persistence_path: Path = Path("data/forecast_persistence_report.json"),
+        coverage_optimization_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         window_hours: float = 168.0,
         now: datetime | None = None,
     ) -> SelfImprovementAuditSummary:
@@ -150,6 +152,7 @@ class SelfImprovementAuditor:
         thesis_evolution_loaded = _read_json(thesis_evolution_path)
         position_thesis_loaded = _read_json(position_thesis_path)
         forecast_persistence_loaded = _read_json(forecast_persistence_path)
+        coverage_loaded = _read_json(coverage_optimization_path)
 
         snapshot = snapshot_loaded.payload or {}
         target_state = target_loaded.payload or {}
@@ -242,6 +245,14 @@ class SelfImprovementAuditor:
             )
         )
         findings.extend(
+            _coverage_findings(
+                run_id=run_id,
+                loaded=coverage_loaded,
+                path=coverage_optimization_path,
+                target_open=target_open,
+            )
+        )
+        findings.extend(
             _sidecar_findings(
                 run_id=run_id,
                 snapshot_ts=snapshot_ts,
@@ -295,6 +306,7 @@ class SelfImprovementAuditor:
                 "thesis_evolution": str(thesis_evolution_path),
                 "position_thesis": str(position_thesis_path),
                 "forecast_persistence": str(forecast_persistence_path),
+                "coverage_optimization": str(coverage_optimization_path),
             },
             "runtime": {
                 "target_open": target_open,
@@ -1305,6 +1317,136 @@ def _intent_findings(
             )
         )
     return out
+
+
+def _coverage_findings(
+    *,
+    run_id: str,
+    loaded: _LoadedJson,
+    path: Path,
+    target_open: bool,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not target_open:
+        return out
+    if loaded.error is not None:
+        return out
+    payload = loaded.payload or {}
+    diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
+    bucket_diag = (
+        diagnostics.get("profitable_bucket_coverage")
+        if isinstance(diagnostics.get("profitable_bucket_coverage"), dict)
+        else {}
+    )
+    if not bucket_diag:
+        return out
+    blocked_edges = _blocked_profitable_bucket_edges(bucket_diag)
+    if blocked_edges:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="opportunity",
+                code="PROFITABLE_BACKTEST_EDGE_COVERAGE_GAP",
+                message=(
+                    f"{len(blocked_edges)} profitable backtest edge(s) are missing or blocked "
+                    "in current candidate coverage"
+                ),
+                next_action=(
+                    "Repair the named historical-profitable pair/directions in strategy_profile, "
+                    "candidate generation, or live blockers before widening the discovery universe."
+                ),
+                evidence={
+                    "coverage_path": str(path),
+                    "source_status": bucket_diag.get("source_status"),
+                    "live_permission": bool(bucket_diag.get("live_permission") is True),
+                    "positive_pair_directions": bucket_diag.get("positive_pair_directions"),
+                    "positive_managed_net_jpy": bucket_diag.get("positive_managed_net_jpy"),
+                    "state_counts": bucket_diag.get("state_counts") or {},
+                    "blocked_edges": blocked_edges[:8],
+                },
+            )
+        )
+    context_supported = [
+        edge for edge in blocked_edges
+        if _edge_has_same_side_matrix_support(edge)
+    ]
+    if context_supported:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="opportunity",
+                code="MARKET_CONTEXT_SUPPORTED_EDGE_NOT_ACTIONABLE",
+                message=(
+                    f"{len(context_supported)} blocked profitable edge(s) have same-side "
+                    "market-context matrix support"
+                ),
+                next_action=(
+                    "Use the matrix-supported edges as the next discovery repair queue, but keep "
+                    "forecast confidence, spread, strategy-profile, RiskEngine, and gateway gates intact."
+                ),
+                evidence={
+                    "coverage_path": str(path),
+                    "supported_edges": context_supported[:8],
+                },
+            )
+        )
+    return out
+
+
+def _blocked_profitable_bucket_edges(bucket_diag: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = bucket_diag.get("blocked_or_missing_top")
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        state = str(row.get("coverage_state") or "")
+        if state == "SPREAD_NORMALIZED_NO_LIVE_BLOCKER":
+            continue
+        edge = {
+            "pair": str(row.get("pair") or ""),
+            "direction": str(row.get("direction") or ""),
+            "coverage_state": state,
+            "managed_net_jpy": _maybe_float(row.get("managed_net_jpy")),
+            "raw_net_jpy": _maybe_float(row.get("raw_net_jpy")),
+            "trades": row.get("trades"),
+            "days": row.get("days"),
+            "current_lane_count": row.get("current_lane_count"),
+            "spread_normalized_candidate_count": row.get("spread_normalized_candidate_count"),
+            "spread_normalized_no_live_blocker_count": row.get("spread_normalized_no_live_blocker_count"),
+            "top_blockers": [str(item) for item in (row.get("top_blockers") or [])[:4]],
+            "strategy_profile_status": row.get("strategy_profile_status"),
+            "strategy_profile_required_fix": row.get("strategy_profile_required_fix"),
+            "strategy_profile_blocks_live": row.get("strategy_profile_blocks_live"),
+            "matrix_support_count": int(row.get("matrix_support_count") or 0),
+            "matrix_reject_count": int(row.get("matrix_reject_count") or 0),
+            "matrix_warning_count": int(row.get("matrix_warning_count") or 0),
+            "matrix_strongest_support": row.get("matrix_strongest_support"),
+            "matrix_strongest_reject": row.get("matrix_strongest_reject"),
+            "matrix_cross_asset_context": [
+                str(item) for item in (row.get("matrix_cross_asset_context") or [])[:4] if str(item).strip()
+            ],
+        }
+        out.append(edge)
+    out.sort(
+        key=lambda item: (
+            -float(item.get("managed_net_jpy") or 0.0),
+            str(item.get("pair") or ""),
+            str(item.get("direction") or ""),
+        )
+    )
+    return out
+
+
+def _edge_has_same_side_matrix_support(edge: dict[str, Any]) -> bool:
+    support_count = int(edge.get("matrix_support_count") or 0)
+    reject_count = int(edge.get("matrix_reject_count") or 0)
+    xasset = edge.get("matrix_cross_asset_context")
+    has_context = isinstance(xasset, list) and bool(xasset)
+    return support_count > 0 and (support_count > reject_count or has_context)
 
 
 def _sidecar_findings(

@@ -165,6 +165,81 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertAlmostEqual(evidence["hit_rate"], 0.1)
         self.assertTrue(evidence["worst_buckets"])
 
+    def test_profitable_backtest_edges_missing_from_coverage_are_p1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["coverage"].write_text(
+                json.dumps(
+                    {
+                        "artifact_diagnostics": {
+                            "profitable_bucket_coverage": {
+                                "source_status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                                "live_permission": False,
+                                "positive_pair_directions": 2,
+                                "positive_managed_net_jpy": 1500.0,
+                                "state_counts": {
+                                    "NO_CURRENT_LANE": 1,
+                                    "SPREAD_NORMALIZED_LIVE_BLOCKED": 1,
+                                },
+                                "blocked_or_missing_top": [
+                                    {
+                                        "pair": "USD_CAD",
+                                        "direction": "LONG",
+                                        "coverage_state": "NO_CURRENT_LANE",
+                                        "managed_net_jpy": 900.0,
+                                        "raw_net_jpy": 800.0,
+                                        "trades": 10,
+                                        "days": 3,
+                                        "current_lane_count": 0,
+                                        "spread_normalized_candidate_count": 0,
+                                        "spread_normalized_no_live_blocker_count": 0,
+                                        "top_blockers": [],
+                                        "strategy_profile_status": "MINE_MISSED_EDGE",
+                                        "strategy_profile_required_fix": "candidate not surfaced",
+                                        "strategy_profile_blocks_live": True,
+                                        "matrix_support_count": 8,
+                                        "matrix_reject_count": 1,
+                                        "matrix_warning_count": 2,
+                                        "matrix_strongest_support": "USD_CAD DXY and oil context align LONG",
+                                        "matrix_strongest_reject": "spread stressed",
+                                        "matrix_cross_asset_context": [
+                                            "GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to LONG",
+                                            "OIL_CONTEXT_TECHNICAL_DIRECTION: WTICO_USD maps to LONG",
+                                        ],
+                                    },
+                                    {
+                                        "pair": "EUR_USD",
+                                        "direction": "SHORT",
+                                        "coverage_state": "SPREAD_NORMALIZED_NO_LIVE_BLOCKER",
+                                        "managed_net_jpy": 600.0,
+                                        "current_lane_count": 1,
+                                    },
+                                ],
+                            }
+                        }
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertIn("PROFITABLE_BACKTEST_EDGE_COVERAGE_GAP", codes)
+        self.assertIn("MARKET_CONTEXT_SUPPORTED_EDGE_NOT_ACTIONABLE", codes)
+        gap = codes["PROFITABLE_BACKTEST_EDGE_COVERAGE_GAP"]
+        self.assertEqual(gap["priority"], "P1")
+        self.assertEqual(gap["evidence"]["blocked_edges"][0]["pair"], "USD_CAD")
+        supported = codes["MARKET_CONTEXT_SUPPORTED_EDGE_NOT_ACTIONABLE"]
+        self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", supported["evidence"]["supported_edges"][0]["matrix_cross_asset_context"][0])
+
     def test_lane_only_verification_blockers_do_not_mask_opportunity_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -414,6 +489,8 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                         str(files["position_thesis"]),
                         "--forecast-persistence",
                         str(files["forecast_persistence"]),
+                        "--coverage-optimization",
+                        str(files["coverage"]),
                     ]
                 )
 
@@ -449,6 +526,7 @@ def _run(files: dict[str, Path], *, now: datetime = _NOW):
         thesis_evolution_path=files["thesis_evolution"],
         position_thesis_path=files["position_thesis"],
         forecast_persistence_path=files["forecast_persistence"],
+        coverage_optimization_path=files["coverage"],
         now=now,
     )
 
@@ -484,6 +562,7 @@ def _fixtures(
         "thesis_evolution": root / "thesis_evolution_report.json",
         "position_thesis": root / "position_thesis_report.json",
         "forecast_persistence": root / "forecast_persistence_report.json",
+        "coverage": root / "coverage_optimization.json",
     }
     positions = []
     if active_position:
@@ -607,6 +686,7 @@ def _fixtures(
         ("forecast_persistence", "verdicts"),
     ):
         files[key].write_text(json.dumps({"generated_at_utc": _NOW.isoformat(), list_key: []}))
+    files["coverage"].write_text(json.dumps({"artifact_diagnostics": {}}))
     _write_execution_ledger(files["execution_db"], closed_pls=closed_pls, last_transaction_id="100")
     return files
 

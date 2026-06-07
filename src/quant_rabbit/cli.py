@@ -1341,6 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
     p_self_audit.add_argument("--thesis-evolution", type=Path, default=ROOT / "data" / "thesis_evolution_report.json")
     p_self_audit.add_argument("--position-thesis", type=Path, default=ROOT / "data" / "position_thesis_report.json")
     p_self_audit.add_argument("--forecast-persistence", type=Path, default=ROOT / "data" / "forecast_persistence_report.json")
+    p_self_audit.add_argument("--coverage-optimization", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_self_audit.add_argument("--window-hours", type=float, default=168.0)
 
     p_exec_replay = sub.add_parser("replay-execution", help="Replay live-ready order receipts over a quote path.")
@@ -3072,6 +3073,7 @@ def main(argv: list[str] | None = None) -> int:
                 thesis_evolution_path=args.thesis_evolution,
                 position_thesis_path=args.position_thesis,
                 forecast_persistence_path=args.forecast_persistence,
+                coverage_optimization_path=args.coverage_optimization,
                 window_hours=args.window_hours,
             )
         except (OSError, json.JSONDecodeError, sqlite3.Error, ValueError) as exc:
