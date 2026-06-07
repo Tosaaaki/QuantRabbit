@@ -886,6 +886,90 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
+    def test_entry_thesis_confidence_collapse_routes_loss_to_review_exit(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir(parents=True)
+                (data_root / "entry_thesis_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-06-05T11:19:50Z",
+                            "trade_id": "forecast-collapse",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "entry_price": 1.34702,
+                            "forecast_direction": "UP",
+                            "forecast_confidence": 0.70,
+                            "regime": "TREND_UP",
+                            "invalidation_price": 1.34000,
+                            "target_price": 1.34853,
+                            "key_drivers": ["forecast=UP@conf=0.70"],
+                        }
+                    )
+                    + "\n"
+                )
+                (data_root / "forecast_history.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-06-05T11:30:00Z",
+                            "cycle_id": "position-forecast-refresh:test",
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.20,
+                            "current_price": 1.3460,
+                            "invalidation_price": 1.3452,
+                            "target_price": 1.3470,
+                            "horizon_min": 60,
+                        }
+                    )
+                    + "\n"
+                )
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _entry_invalidation_technical_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="forecast-collapse",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=6000,
+                        entry_price=1.34702,
+                        unrealized_pl_jpy=-620.0,
+                        take_profit=1.34853,
+                        stop_loss=None,
+                    ),
+                    bid=1.34600,
+                    ask=1.34613,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=data_root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_REVIEW_EXIT)
+                self.assertEqual(result.positions[0].action, ACTION_REVIEW_EXIT)
+                report = (root / "pm.md").read_text()
+                self.assertIn("loss-cut: entry thesis confidence collapse", report)
+                self.assertIn("technical invalidation confirmed against LONG", report)
+                self.assertIn("next-generation entry thesis ledger present", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
     def test_sl_free_profitable_macro_reversal_uses_profit_market_take_under_auto_close_kill_switch(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")

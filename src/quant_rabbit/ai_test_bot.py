@@ -40,6 +40,7 @@ DEFAULT_MIN_TRAIN_WIN_RATE_PCT = 55.0
 DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes", "seat_outcomes")
 EXECUTION_LEDGER_SOURCE_TABLE = "execution_ledger"
 DEFAULT_RUNTIME_SOURCE_TABLES = (*DEFAULT_SOURCE_TABLES, EXECUTION_LEDGER_SOURCE_TABLE)
+DEFAULT_TARGET_BAND_RETURN_PCTS = (5.0, 6.0, 7.0, 8.0, 9.0, 10.0)
 _JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -248,12 +249,24 @@ class AITestBotBacktester:
             firepower=firepower,
             oracle=oracle,
         )
+        target_band = _target_band_payload(
+            trades=trades,
+            day_results=day_results,
+            validation_rows=validation_rows,
+            start_balance_jpy=start_balance_jpy,
+            max_loss_jpy=cap.loss_cap_jpy,
+            top_n=self.max_active_buckets,
+            min_train_trades=self.min_train_trades,
+            min_train_win_rate_pct=self.min_train_win_rate_pct,
+            target_return_pct=target_return_pct,
+        )
         action_items = tuple(
             _action_items(
                 blockers=blockers,
                 firepower=firepower,
                 oracle=oracle,
                 target_ceiling=target_ceiling,
+                target_band=target_band,
                 source_contributions=source_contributions,
             )
         )
@@ -285,6 +298,7 @@ class AITestBotBacktester:
             "bucket_contributions": _bucket_contributions(validation_rows, cap.loss_cap_jpy),
             "oracle": oracle,
             "target_ceiling": target_ceiling,
+            "target_band": target_band,
             "missed_best_days": _missed_best_days(
                 trades=trades,
                 day_results=day_results,
@@ -412,9 +426,32 @@ class AITestBotBacktester:
             f"- Selected/oracle capture: `{payload['oracle']['selected_vs_top_n_capture_pct']:.1f}%`",
             f"- All-positive oracle ceiling: `{payload['target_ceiling']['best_all_positive_day_coverage_pct']:.1f}%`",
             "",
-            "## Source Contributions",
+            "## Target Band",
             "",
+            f"- Contract floor: `{payload['target_band']['floor_return_pct']:.1f}%`",
+            f"- Stretch target: `{payload['target_band']['stretch_return_pct']:.1f}%`",
+            f"- Selected-policy attainable: `{_format_optional_pct(payload['target_band']['selected_attainable_return_pct'])}`",
+            f"- Train-eligible oracle attainable: `{_format_optional_pct(payload['target_band']['train_eligible_oracle_attainable_return_pct'])}`",
+            f"- All-positive oracle attainable: `{_format_optional_pct(payload['target_band']['all_positive_oracle_attainable_return_pct'])}`",
+            f"- Status: `{payload['target_band']['status']}`",
         ]
+        for item in payload["target_band"]["bands"]:
+            lines.append(
+                f"- `{item['return_pct']:.1f}%` target=`{item['target_jpy']:.0f}` "
+                f"selected_hits=`{item['selected_target_hit_days']}/{item['validation_days']}` "
+                f"top_n_oracle_hits=`{item['top_n_target_hit_days']}` "
+                f"train_eligible_hits=`{item['train_eligible_all_positive_target_hit_days']}` "
+                f"all_positive_hits=`{item['all_positive_target_hit_days']}` "
+                f"best_selected_coverage=`{item['best_selected_day_coverage_pct']:.1f}%` "
+                f"required_trades_day=`{item['required_trades_per_day_at_observed_expectancy']}`"
+            )
+        lines.extend(
+            [
+                "",
+                "## Source Contributions",
+                "",
+            ]
+        )
         if payload["source_contributions"]:
             for item in payload["source_contributions"]:
                 lines.append(
@@ -747,12 +784,117 @@ def _target_ceiling_payload(
     }
 
 
+def _target_band_payload(
+    *,
+    trades: tuple[TestBotTrade, ...],
+    day_results: tuple[TestBotDay, ...],
+    validation_rows: tuple[TestBotTrade, ...],
+    start_balance_jpy: float,
+    max_loss_jpy: float,
+    top_n: int,
+    min_train_trades: int,
+    min_train_win_rate_pct: float,
+    target_return_pct: float,
+) -> dict[str, object]:
+    bands: list[dict[str, float | int | bool | None]] = []
+    for return_pct in _target_band_percentages(target_return_pct):
+        band_target_jpy = _round(start_balance_jpy * (return_pct / 100.0))
+        selected_hits = sum(1 for day in day_results if day.managed_net_jpy >= band_target_jpy)
+        band_firepower = _firepower_payload(day_results, validation_rows, band_target_jpy, max_loss_jpy)
+        band_oracle = _oracle_summary(
+            trades=trades,
+            day_results=day_results,
+            target_jpy=band_target_jpy,
+            max_loss_jpy=max_loss_jpy,
+            top_n=top_n,
+            min_train_trades=min_train_trades,
+            min_train_win_rate_pct=min_train_win_rate_pct,
+        )
+        band_ceiling = _target_ceiling_payload(
+            target_jpy=band_target_jpy,
+            firepower=band_firepower,
+            oracle=band_oracle,
+        )
+        bands.append(
+            {
+                "return_pct": return_pct,
+                "target_jpy": band_target_jpy,
+                "validation_days": len(day_results),
+                "selected_target_hit_days": selected_hits,
+                "selected_target_hit_rate_pct": _round((selected_hits / len(day_results)) * 100.0)
+                if day_results
+                else 0.0,
+                "best_selected_day_jpy": float(band_firepower["best_selected_day_jpy"] or 0.0),
+                "best_selected_day_coverage_pct": float(band_firepower["best_selected_day_coverage_pct"] or 0.0),
+                "required_trades_per_day_at_observed_expectancy": band_firepower[
+                    "required_trades_per_day_at_observed_expectancy"
+                ],
+                "trade_frequency_multiple_required": band_firepower["trade_frequency_multiple_required"],
+                "top_n_target_hit_days": int(band_oracle["top_n_target_hit_days"] or 0),
+                "all_positive_target_hit_days": int(band_oracle["all_positive_target_hit_days"] or 0),
+                "train_eligible_top_n_target_hit_days": int(
+                    band_oracle["train_eligible_top_n_target_hit_days"] or 0
+                ),
+                "train_eligible_all_positive_target_hit_days": int(
+                    band_oracle["train_eligible_all_positive_target_hit_days"] or 0
+                ),
+                "prediction_only_target_possible": bool(band_ceiling["prediction_only_target_possible"]),
+                "train_eligible_prediction_target_possible": bool(
+                    band_ceiling["train_eligible_prediction_target_possible"]
+                ),
+                "top_n_target_possible": bool(band_ceiling["top_n_target_possible"]),
+                "oracle_target_gap_jpy": float(band_ceiling["oracle_target_gap_jpy"] or 0.0),
+            }
+        )
+    selected_attainable = _max_band_pct(bands, "selected_target_hit_days")
+    top_n_attainable = _max_band_pct(bands, "top_n_target_hit_days")
+    train_eligible_attainable = _max_band_pct(bands, "train_eligible_all_positive_target_hit_days")
+    all_positive_attainable = _max_band_pct(bands, "all_positive_target_hit_days")
+    floor_pct = DEFAULT_TARGET_BAND_RETURN_PCTS[0]
+    stretch_pct = DEFAULT_TARGET_BAND_RETURN_PCTS[-1]
+    if selected_attainable is not None and selected_attainable >= stretch_pct:
+        status = "SELECTED_POLICY_REACHES_STRETCH"
+    elif selected_attainable is not None and selected_attainable >= floor_pct:
+        status = "SELECTED_POLICY_REACHES_FLOOR_BELOW_STRETCH"
+    elif train_eligible_attainable is not None and train_eligible_attainable >= floor_pct:
+        status = "TRAIN_ELIGIBLE_ORACLE_ONLY"
+    elif all_positive_attainable is not None and all_positive_attainable >= floor_pct:
+        status = "HINDSIGHT_ORACLE_ONLY"
+    else:
+        status = "BELOW_CONTRACT_FLOOR"
+    return {
+        "floor_return_pct": floor_pct,
+        "stretch_return_pct": stretch_pct,
+        "status": status,
+        "selected_attainable_return_pct": selected_attainable,
+        "top_n_oracle_attainable_return_pct": top_n_attainable,
+        "train_eligible_oracle_attainable_return_pct": train_eligible_attainable,
+        "all_positive_oracle_attainable_return_pct": all_positive_attainable,
+        "bands": bands,
+    }
+
+
+def _target_band_percentages(target_return_pct: float) -> tuple[float, ...]:
+    values = {round(pct, 4) for pct in DEFAULT_TARGET_BAND_RETURN_PCTS}
+    values.add(round(target_return_pct, 4))
+    return tuple(sorted(values))
+
+
+def _max_band_pct(
+    bands: list[dict[str, float | int | bool | None]],
+    hit_key: str,
+) -> float | None:
+    values = [float(item["return_pct"]) for item in bands if int(item.get(hit_key) or 0) > 0]
+    return max(values) if values else None
+
+
 def _action_items(
     *,
     blockers: tuple[str, ...],
     firepower: dict[str, float | int | None],
     oracle: dict[str, float | int | str | None],
     target_ceiling: dict[str, float | int | bool | None],
+    target_band: dict[str, object],
     source_contributions: list[dict[str, float | int | str]],
 ) -> Iterable[str]:
     if not blockers:
@@ -803,6 +945,20 @@ def _action_items(
         yield (
             "hindsight oracle reaches the 10% target only with validation-day or insufficient-history buckets "
             f"(train-eligible gap {gap:.0f} JPY); collect or import pre-entry evidence before counting it as predictable"
+        )
+    selected_attainable = target_band.get("selected_attainable_return_pct")
+    floor_pct = float(target_band.get("floor_return_pct") or DEFAULT_TARGET_BAND_RETURN_PCTS[0])
+    stretch_pct = float(target_band.get("stretch_return_pct") or DEFAULT_TARGET_BAND_RETURN_PCTS[-1])
+    if selected_attainable is None:
+        yield (
+            f"selected policy has not reached the {floor_pct:.0f}% contract floor in validation; "
+            "prioritize coverage expansion before treating 10% as a calibratable threshold"
+        )
+    elif float(selected_attainable) < stretch_pct:
+        next_pct = min(stretch_pct, float(selected_attainable) + 1.0)
+        yield (
+            f"selected policy currently reaches {float(selected_attainable):.0f}% of the 5-10% band, not 10%; "
+            f"tune the next loop against {next_pct:.0f}% coverage while preserving the {floor_pct:.0f}% floor"
         )
     required = firepower.get("required_trades_per_day_at_observed_expectancy")
     avg_trades = float(firepower.get("avg_selected_trades_per_day") or 0.0)
@@ -1450,6 +1606,12 @@ def _max_drawdown(values: tuple[float, ...]) -> float:
         peak = max(peak, equity)
         drawdown = max(drawdown, peak - equity)
     return _round(drawdown)
+
+
+def _format_optional_pct(value: object) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):.1f}%"
 
 
 def _round(value: float) -> float:

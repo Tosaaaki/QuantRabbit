@@ -303,6 +303,7 @@ class PositionManager:
             quote=quote,
             full_pair_charts=full_pair_charts,
             data_root=self.output_path.parent,
+            latest_forecast=latest_forecast,
         )
 
         # Contradiction-based auto-REVIEW_EXIT was producing churn loops on
@@ -1023,7 +1024,16 @@ def _structural_loss_cut_reason(reasons: tuple[str, ...]) -> bool:
         lowered = text.lower()
         if "entry thesis invalidation hit" in lowered and "technical invalidation confirmed" in lowered:
             return True
+        if "entry thesis confidence collapse" in lowered and "technical invalidation confirmed" in lowered:
+            return True
     return False
+
+
+def _thesis_confidence_collapse_ratio() -> float:
+    try:
+        return max(0.0, min(1.0, float(os.environ.get("QR_THESIS_CONFIDENCE_COLLAPSE_RATIO", "0.50"))))
+    except ValueError:
+        return 0.50
 
 
 def _entry_thesis_invalidation_review(
@@ -1032,11 +1042,12 @@ def _entry_thesis_invalidation_review(
     quote,
     full_pair_charts: dict[str, dict[str, Any]] | None,
     data_root: Path,
+    latest_forecast: dict[str, Any] | None = None,
 ) -> tuple[bool, list[str]]:
     if position.owner != Owner.TRADER or position.unrealized_pl_jpy >= 0:
         return False, []
     thesis = load_entry_thesis(position.trade_id, data_root)
-    if thesis is None or thesis.invalidation_price is None:
+    if thesis is None:
         return False, []
     if quote is None:
         return False, ["entry thesis invalidation check deferred: missing current quote"]
@@ -1044,24 +1055,69 @@ def _entry_thesis_invalidation_review(
     side = position.side.value
     price = quote.bid if side == "LONG" else quote.ask
     label = "bid" if side == "LONG" else "ask"
-    hit_reason = thesis_invalidation_hit_reason(
-        thesis,
-        side=side,
-        current_price=price,
-        price_label=label,
-    )
-    if not hit_reason:
-        return False, []
-
     chart = (full_pair_charts or {}).get(position.pair)
     technical_reason = technical_invalidation_confirmation_reason(chart, side=side)
-    if not technical_reason:
-        return False, [f"{hit_reason}; waiting for chart/technical confirmation"]
+    hit_reason = (
+        thesis_invalidation_hit_reason(
+            thesis,
+            side=side,
+            current_price=price,
+            price_label=label,
+        )
+        if thesis.invalidation_price is not None
+        else None
+    )
+    if hit_reason:
+        if not technical_reason:
+            return False, [f"{hit_reason}; waiting for chart/technical confirmation"]
+        return True, [
+            (
+                "loss-cut: entry thesis invalidation hit: "
+                f"{hit_reason}; {technical_reason} ({position.unrealized_pl_jpy:+.0f} JPY)"
+            )
+        ]
 
-    return True, [
+    collapse_reasons = _entry_thesis_confidence_collapse_review(
+        position=position,
+        thesis_forecast_direction=thesis.forecast_direction,
+        thesis_forecast_confidence=thesis.forecast_confidence,
+        latest_forecast=latest_forecast,
+        technical_reason=technical_reason,
+    )
+    if collapse_reasons:
+        return True, collapse_reasons
+    return False, []
+
+
+def _entry_thesis_confidence_collapse_review(
+    *,
+    position: BrokerPosition,
+    thesis_forecast_direction: str,
+    thesis_forecast_confidence: float,
+    latest_forecast: dict[str, Any] | None,
+    technical_reason: str | None,
+) -> list[str]:
+    if not latest_forecast or not technical_reason:
+        return []
+    aligned_direction = "UP" if position.side == Side.LONG else "DOWN"
+    thesis_direction = str(thesis_forecast_direction or "").upper()
+    latest_direction = str(latest_forecast.get("direction") or "").upper()
+    if thesis_direction != aligned_direction or latest_direction != aligned_direction:
+        return []
+    latest_confidence = _to_float(latest_forecast.get("confidence"))
+    if latest_confidence is None or thesis_forecast_confidence <= 0:
+        return []
+    collapse_ratio = _thesis_confidence_collapse_ratio()
+    collapse_threshold = thesis_forecast_confidence * collapse_ratio
+    if latest_confidence >= collapse_threshold:
+        return []
+    return [
         (
-            "loss-cut: entry thesis invalidation hit: "
-            f"{hit_reason}; {technical_reason} ({position.unrealized_pl_jpy:+.0f} JPY)"
+            "loss-cut: entry thesis confidence collapse: "
+            f"entry {thesis_direction} conf={thesis_forecast_confidence:.2f} → "
+            f"latest {latest_direction} conf={latest_confidence:.2f} "
+            f"(< {collapse_ratio:.2f}× entry); {technical_reason} "
+            f"({position.unrealized_pl_jpy:+.0f} JPY)"
         )
     ]
 

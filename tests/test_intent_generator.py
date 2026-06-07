@@ -1313,6 +1313,92 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["best_samples"], 0)
         self.assertIn("ledger samples pending", support["reason"])
 
+    def test_forecast_seed_uses_supplied_data_root_for_calibration_and_context(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            _forecast_seed_for_pair,
+            _load_pair_charts,
+            _snapshot_from_json,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            (root / "logs").mkdir()
+            charts = _load_pair_charts(
+                _pair_charts_with_direction(
+                    root,
+                    long_score=0.72,
+                    short_score=0.28,
+                    dominant_regime="TREND_UP",
+                    m5_regime="TREND_UP",
+                )
+            )
+            snapshot = _snapshot_from_json(json.loads(_snapshot(root).read_text()))
+            forecast = SimpleNamespace(
+                direction="UP",
+                confidence=0.58,
+                raw_confidence=0.58,
+                current_price=1.17326,
+                target_price=1.1762,
+                invalidation_price=1.1718,
+                horizon_min=60,
+                rationale_summary="UP forecast",
+                drivers_for=(),
+                drivers_against=(),
+                component_scores={"UP": 80.0, "DOWN": 30.0},
+            )
+            projection_signal = SimpleNamespace(
+                name="liquidity_sweep_low",
+                timeframe="M5",
+                direction="UP",
+                confidence=0.86,
+                bonus_magnitude=8.0,
+                rationale="sweep low fade",
+            )
+            hit_rates = {
+                "liquidity_sweep_low_up": {
+                    "EUR_USD:TREND": {"hit_rate": 0.62, "samples": 32},
+                    "EUR_USD:_all_regimes": {"hit_rate": 0.62, "samples": 32},
+                }
+            }
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_has_rich_chart_context",
+                return_value=True,
+            ), patch(
+                "quant_rabbit.strategy.pattern_signals.detect_pattern_signals",
+                return_value=[],
+            ), patch(
+                "quant_rabbit.strategy.forward_projection.detect_forward_projections",
+                return_value=[projection_signal],
+            ) as detect_forward, patch(
+                "quant_rabbit.strategy.correlation_predictor.detect_correlation_lag",
+                return_value=[],
+            ), patch(
+                "quant_rabbit.strategy.path_projection.detect_paths",
+                return_value=[],
+            ), patch(
+                "quant_rabbit.strategy.reversal_signal.detect_reversal",
+                return_value=None,
+            ), patch(
+                "quant_rabbit.strategy.projection_ledger.compute_hit_rates",
+                return_value=hit_rates,
+            ) as compute_hit_rates, patch(
+                "quant_rabbit.strategy.directional_forecaster.synthesize_forecast",
+                return_value=forecast,
+            ):
+                seed = _forecast_seed_for_pair("EUR_USD", charts or {}, snapshot, data_root=data_root)
+
+            self.assertIsNotNone(seed)
+            compute_hit_rates.assert_called_once_with(data_root)
+            kwargs = detect_forward.call_args.kwargs
+            self.assertEqual(kwargs["calendar_path"], data_root / "economic_calendar.json")
+            self.assertEqual(kwargs["news_digest_path"], root / "logs" / "news_digest.md")
+            self.assertEqual(kwargs["news_items_path"], data_root / "news_items.json")
+            self.assertEqual(kwargs["cross_asset_path"], data_root / "cross_asset_snapshot.json")
+            self.assertTrue(seed.market_support["ok"])
+
     def test_event_surprise_forecast_seed_gets_macro_size_up(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"

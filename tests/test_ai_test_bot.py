@@ -127,6 +127,57 @@ class AITestBotBacktesterTest(unittest.TestCase):
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("`seat_outcomes` validation_net=`-100`", report)
 
+    def test_reports_target_band_between_floor_and_stretch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            rows = []
+            for index in range(10):
+                day = f"2026-04-{1 + (index % 6):02d}"
+                rows.append(
+                    (
+                        "pretrade_outcomes",
+                        day,
+                        "EUR_USD",
+                        "LONG",
+                        100.0,
+                        json.dumps({"id": f"train-{index}", "pretrade_level": "HIGH"}),
+                    )
+                )
+            rows.append(
+                (
+                    "pretrade_outcomes",
+                    "2026-04-07",
+                    "EUR_USD",
+                    "LONG",
+                    550.0,
+                    json.dumps({"id": "validation", "pretrade_level": "HIGH"}),
+                )
+            )
+            _seed_db(db, rows)
+
+            AITestBotBacktester(
+                db_path=db,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=1000.0,
+            ).run(start_balance_jpy=10_000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            band = payload["target_band"]
+            self.assertEqual(band["status"], "SELECTED_POLICY_REACHES_FLOOR_BELOW_STRETCH")
+            self.assertEqual(band["selected_attainable_return_pct"], 5.0)
+            by_pct = {item["return_pct"]: item for item in band["bands"]}
+            self.assertEqual(by_pct[5.0]["target_jpy"], 500.0)
+            self.assertEqual(by_pct[5.0]["selected_target_hit_days"], 1)
+            self.assertEqual(by_pct[6.0]["selected_target_hit_days"], 0)
+            self.assertEqual(by_pct[10.0]["required_trades_per_day_at_observed_expectancy"], 2)
+            self.assertTrue(any("selected policy currently reaches 5%" in item for item in payload["action_items"]))
+            report = (root / "ai_backtest.md").read_text()
+            self.assertIn("## Target Band", report)
+            self.assertIn("`5.0%` target=`500` selected_hits=`1/1`", report)
+            self.assertIn("`10.0%` target=`1000` selected_hits=`0/1`", report)
+
     def test_walk_forward_policy_does_not_select_validation_only_winner(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

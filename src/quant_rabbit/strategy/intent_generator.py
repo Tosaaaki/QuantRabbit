@@ -1538,7 +1538,7 @@ def _append_forecast_seed_lanes(
         quote = snapshot.quotes.get(pair)
         if quote is None:
             continue
-        forecast = _forecast_seed_for_pair(pair, charts, snapshot)
+        forecast = _forecast_seed_for_pair(pair, charts, snapshot, data_root=data_root)
         if forecast is None:
             continue
         _record_forecast_seed_telemetry(
@@ -1760,6 +1760,8 @@ def _forecast_seed_for_pair(
     pair: str,
     charts: dict[str, dict[str, Any]],
     snapshot: BrokerSnapshot,
+    *,
+    data_root: Path | None = None,
 ) -> Any | None:
     per_tf = charts.get(pair)
     raw_chart = per_tf.get("__raw_chart") if isinstance(per_tf, dict) else None
@@ -1780,13 +1782,7 @@ def _forecast_seed_for_pair(
         if isinstance(chart_data, dict) and isinstance(chart_data.get("__raw_chart"), dict)
     }
     try:
-        from quant_rabbit.paths import (
-            DEFAULT_CALENDAR_SNAPSHOT,
-            DEFAULT_CROSS_ASSET_SNAPSHOT,
-            DEFAULT_NEWS_DIGEST,
-            DEFAULT_NEWS_SNAPSHOT,
-            ROOT,
-        )
+        from quant_rabbit.paths import ROOT
         from quant_rabbit.strategy.correlation_predictor import detect_correlation_lag
         from quant_rabbit.strategy.directional_forecaster import synthesize_forecast
         from quant_rabbit.strategy.forward_projection import detect_forward_projections
@@ -1801,8 +1797,9 @@ def _forecast_seed_for_pair(
     # the synthesized pair forecast immediately after this helper returns when
     # live telemetry gates are active, so live-readiness validation can audit
     # the same snapshot instead of waiting for TraderBrain's later scoring pass.
-    cot_payload = _load_optional_json(ROOT / "data" / "cot_snapshot.json")
-    option_skew_payload = _load_optional_json(ROOT / "data" / "option_skew_snapshot.json")
+    artifact_root = data_root or (ROOT / "data")
+    cot_payload = _load_optional_json(artifact_root / "cot_snapshot.json")
+    option_skew_payload = _load_optional_json(artifact_root / "option_skew_snapshot.json")
     try:
         pattern_signals = detect_pattern_signals(
             raw_chart,
@@ -1816,10 +1813,10 @@ def _forecast_seed_for_pair(
             raw_chart,
             pair=pair,
             current_price=current_price,
-            calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
-            news_digest_path=DEFAULT_NEWS_DIGEST,
-            news_items_path=DEFAULT_NEWS_SNAPSHOT,
-            cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+            calendar_path=artifact_root / "economic_calendar.json",
+            news_digest_path=_news_digest_path_for_data_root(artifact_root),
+            news_items_path=artifact_root / "news_items.json",
+            cross_asset_path=artifact_root / "cross_asset_snapshot.json",
         )
     except Exception:
         projection_signals = []
@@ -1841,7 +1838,7 @@ def _forecast_seed_for_pair(
     except Exception:
         reversal_short = None
     try:
-        hit_rates = compute_hit_rates(ROOT / "data")
+        hit_rates = compute_hit_rates(artifact_root)
     except Exception:
         hit_rates = None
     regime_label = _forecast_seed_regime_label(raw_chart)
@@ -1905,6 +1902,12 @@ def _load_optional_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
+
+
+def _news_digest_path_for_data_root(data_root: Path) -> Path:
+    if data_root.name == "data":
+        return data_root.parent / "logs" / "news_digest.md"
+    return data_root / "news_digest.md"
 
 
 def _forecast_seed_min_confidence() -> float:
@@ -2733,6 +2736,7 @@ class IntentGenerator:
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         levels_path: Path = DEFAULT_LEVELS_SNAPSHOT,
         market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
+        data_root: Path | None = None,
         max_loss_jpy: float | None = None,
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
@@ -2744,6 +2748,7 @@ class IntentGenerator:
         self.pair_charts_path = pair_charts_path
         self.levels_path = levels_path
         self.market_context_matrix_path = market_context_matrix_path
+        self.data_root = data_root or (ROOT / "data")
         self.max_loss_jpy = max_loss_jpy
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
@@ -2776,7 +2781,7 @@ class IntentGenerator:
                 lanes,
                 pair_charts,
                 snapshot,
-                data_root=ROOT / "data",
+                data_root=self.data_root,
                 forecast_cycle_id=forecast_cycle_id,
             )
             if len(lanes) > forecast_seed_count:
@@ -2827,7 +2832,7 @@ class IntentGenerator:
         portfolio_loss_cap = _daily_risk_budget_from_state()
         telemetry_cache = (
             _build_telemetry_live_readiness_cache(
-                data_root=ROOT / "data",
+                data_root=self.data_root,
                 validation_time_utc=validation_time_utc,
             )
             if snapshot is not None and _require_telemetry_for_live_active()
@@ -2850,6 +2855,7 @@ class IntentGenerator:
                         order_type_override=order_type,
                         validation_time_utc=validation_time_utc,
                         telemetry_cache=telemetry_cache,
+                        data_root=self.data_root,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -2879,6 +2885,7 @@ class IntentGenerator:
         order_type_override: OrderType | None = None,
         validation_time_utc: datetime | None = None,
         telemetry_cache: _TelemetryLiveReadinessCache | None = None,
+        data_root: Path | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -3045,6 +3052,7 @@ class IntentGenerator:
             snapshot,
             validation_time_utc,
             cache=telemetry_cache,
+            data_root=data_root,
         )
         if telemetry_live_issues:
             risk_issues.extend(telemetry_live_issues)
@@ -4249,12 +4257,13 @@ def _telemetry_live_readiness_issues(
     validation_time_utc: datetime,
     *,
     cache: _TelemetryLiveReadinessCache | None = None,
+    data_root: Path | None = None,
 ) -> tuple[dict[str, str], ...]:
     if not _require_telemetry_for_live_active():
         return ()
 
     issues: list[dict[str, str]] = []
-    data_root = ROOT / "data"
+    data_root = data_root or (ROOT / "data")
     direction = str(metadata.get("forecast_direction") or "").upper()
     confidence = _optional_float(metadata.get("forecast_confidence"))
     recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
