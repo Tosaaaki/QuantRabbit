@@ -465,7 +465,7 @@ class AutoTradeCycle:
         position_execution_report_path: Path = DEFAULT_POSITION_EXECUTION_REPORT,
         live_order_output_path: Path = DEFAULT_LIVE_ORDER_REQUEST,
         live_order_report_path: Path = DEFAULT_LIVE_ORDER_STAGE_REPORT,
-        trader_journal_path: Path = DEFAULT_TRADER_JOURNAL,
+        trader_journal_path: Path | None = None,
         execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         execution_ledger_report_path: Path = DEFAULT_EXECUTION_LEDGER_REPORT,
         report_path: Path = DEFAULT_AUTOTRADE_REPORT,
@@ -503,6 +503,8 @@ class AutoTradeCycle:
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
     ) -> None:
+        injected_client = client is not None
+        explicit_trader_journal_path = trader_journal_path is not None
         self.client = client or OandaExecutionClient()
         self.snapshot_path = snapshot_path
         self.intents_path = intents_path
@@ -515,7 +517,8 @@ class AutoTradeCycle:
         self.position_execution_report_path = position_execution_report_path
         self.live_order_output_path = live_order_output_path
         self.live_order_report_path = live_order_report_path
-        self.trader_journal_path = trader_journal_path
+        self.trader_journal_path = trader_journal_path or DEFAULT_TRADER_JOURNAL
+        self._trader_journal_enabled = explicit_trader_journal_path or not injected_client
         self.execution_ledger_db_path = execution_ledger_db_path
         self.execution_ledger_report_path = execution_ledger_report_path
         self.report_path = report_path
@@ -705,6 +708,8 @@ class AutoTradeCycle:
         Best-effort: a journal-write failure must not break the live cycle
         since the broker remains the canonical record either way.
         """
+        if not self._trader_journal_enabled:
+            return
         try:
             entry: dict = {
                 "ts": datetime.now(timezone.utc).isoformat(),

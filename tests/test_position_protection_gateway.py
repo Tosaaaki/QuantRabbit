@@ -5,6 +5,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from quant_rabbit.broker.position_execution import PositionProtectionGateway
 from quant_rabbit.models import BrokerPosition, BrokerSnapshot, Owner, Quote, Side
@@ -96,6 +97,54 @@ class PositionProtectionGatewayTest(unittest.TestCase):
                 report_path=root / "exec.md",
                 live_enabled=True,
             ).run(decision=_decision(ACTION_REVIEW_EXIT, stop=None), snapshot=_snapshot(), send=True)
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.closed, [("1", "ALL")])
+
+    def test_blocks_plain_review_exit_when_auto_close_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {"QR_DISABLE_AUTO_CLOSE": "1"},
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(decision=_decision(ACTION_REVIEW_EXIT, stop=None), snapshot=_snapshot(), send=True)
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(client.closed, [])
+            self.assertIn("REVIEW_EXIT_GATE_AB_REQUIRED", (root / "exec.md").read_text())
+
+    def test_allows_gpt_verified_review_exit_when_auto_close_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {"QR_DISABLE_AUTO_CLOSE": "1"},
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "gpt-close: accepted gpt_trader CLOSE receipt passed Gate A/B; "
+                        "execute only through PositionProtectionGateway",
+                    ),
+                ),
+                snapshot=_snapshot(),
+                send=True,
+            )
 
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
@@ -210,6 +259,7 @@ def _decision(
     *,
     stop: float | None,
     take_profit: float | None = None,
+    reasons: tuple[str, ...] = ("test",),
 ) -> PositionManagementDecision:
     return PositionManagementDecision(
         generated_at_utc="2026-05-01T00:00:00+00:00",
@@ -228,7 +278,7 @@ def _decision(
                 opposite_direction_score=120.0,
                 recommended_stop_loss=stop,
                 recommended_take_profit=take_profit,
-                reasons=("test",),
+                reasons=reasons,
             ),
         ),
     )

@@ -2310,6 +2310,30 @@ class AutoTradeCycleTest(unittest.TestCase):
             ]
             self.assertEqual(len(entries), 2)
 
+    def test_injected_client_does_not_write_default_trader_journal_without_explicit_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            journal_path = root / "should_not_write.jsonl"
+            cycle = AutoTradeCycle(client=object())
+            cycle.trader_journal_path = journal_path
+
+            cycle._append_trader_journal_entry(
+                AutoTradeCycleSummary(
+                    status="NO_ACTION",
+                    report_path=root / "report.md",
+                    snapshot_path=root / "snapshot.json",
+                    intents_path=root / "intents.json",
+                    selected_lane_id=None,
+                    deterministic_lane_id=None,
+                    sent=False,
+                    positions=0,
+                    orders=0,
+                    live_ready=0,
+                )
+            )
+
+            self.assertFalse(journal_path.exists())
+
     def test_cycle_syncs_execution_ledger_around_live_send(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

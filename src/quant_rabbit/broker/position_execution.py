@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -190,6 +191,10 @@ class PositionProtectionGateway:
                     }
                 )
                 return action
+            review_exit_issue = _review_exit_gate_issue(managed)
+            if review_exit_issue:
+                action["issues"].append(review_exit_issue)
+                return action
             action["request"] = {"type": "CLOSE", "trade_id": position.trade_id, "units": "ALL"}
             return action
         # Adaptive TP actions fire a TP-only DEPENDENT_ORDER_REPLACE through the
@@ -312,6 +317,31 @@ def _status(*, actionable: int, blocked: int, sent: int, send: bool) -> str:
 
 def _has_block(action: dict[str, Any]) -> bool:
     return any(issue.get("severity") == "BLOCK" for issue in action.get("issues", []))
+
+
+def _review_exit_gate_issue(managed: ManagedPosition) -> dict[str, str] | None:
+    if not _auto_close_disabled():
+        return None
+    reason_text = " ".join(str(reason) for reason in managed.reasons).lower()
+    if "gpt-close: accepted gpt_trader close receipt passed gate a/b" in reason_text:
+        return None
+    if (
+        "next-generation entry thesis ledger present" in reason_text
+        and "structural loss-cut remains executable" in reason_text
+    ):
+        return None
+    return {
+        "severity": "BLOCK",
+        "code": "REVIEW_EXIT_GATE_AB_REQUIRED",
+        "message": (
+            "QR_DISABLE_AUTO_CLOSE=1 blocks loss-side REVIEW_EXIT unless the action is backed by "
+            "an accepted gpt_trader CLOSE receipt or next-generation structural loss-cut evidence"
+        ),
+    }
+
+
+def _auto_close_disabled() -> bool:
+    return os.environ.get("QR_DISABLE_AUTO_CLOSE", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _stop_update_issue(position: BrokerPosition, new_stop: float, quote: Quote | None) -> dict[str, str] | None:
