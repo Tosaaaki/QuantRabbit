@@ -457,6 +457,7 @@ class AITestBotBacktester:
                 "- Bucket selection uses only prior training-window days; validation-day winners cannot select themselves.",
                 "- Seat outcome buckets use only observable setup/orderability/source fields, not future `CAPTURED/FAILED/MISSED` labels.",
                 "- Execution-ledger outcomes use pair/direction only; exit reason is post-trade evidence and is not used as a selection bucket.",
+                "- Execution-ledger buckets require raw-positive training net, because hypothetical caps cannot certify old real-exit losses as fixed evidence.",
                 "- Opportunity dedupe counts repeated seat receipts as one candidate before training or validation scoring.",
                 "- Losses are capped by the equity-derived per-trade cap; wins are not enlarged.",
                 "- `live_permission=false` means this receipt can support research, not live execution.",
@@ -534,9 +535,9 @@ def _select_buckets(
             continue
         capped = [_capped_pl(row.pl_jpy, max_loss_jpy) for row in rows]
         capped_net = _round(sum(capped))
-        if capped_net <= 0:
-            continue
         train_net = _round(sum(row.pl_jpy for row in rows))
+        if not _training_bucket_is_viable(bucket=bucket, capped_net_jpy=capped_net, raw_net_jpy=train_net):
+            continue
         wins = sum(1 for value in capped if value > 0)
         scores.append(
             BucketScore(
@@ -1083,9 +1084,23 @@ def _train_eligible_buckets(
         if len(rows) < min_train_trades:
             continue
         capped_net = _round(sum(_capped_pl(row.pl_jpy, max_loss_jpy) for row in rows))
-        if capped_net > 0:
+        raw_net = _round(sum(row.pl_jpy for row in rows))
+        if _training_bucket_is_viable(bucket=bucket, capped_net_jpy=capped_net, raw_net_jpy=raw_net):
             eligible.add(bucket)
     return eligible
+
+
+def _training_bucket_is_viable(
+    *,
+    bucket: TestBotBucket,
+    capped_net_jpy: float,
+    raw_net_jpy: float,
+) -> bool:
+    if capped_net_jpy <= 0:
+        return False
+    if bucket.source_table == EXECUTION_LEDGER_SOURCE_TABLE and raw_net_jpy <= 0:
+        return False
+    return True
 
 
 def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:

@@ -304,6 +304,102 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertNotIn("TAKE_PROFIT_ORDER", json.dumps(payload))
             self.assertIn("exit reason is post-trade evidence", (root / "ai_backtest.md").read_text())
 
+    def test_execution_ledger_source_rejects_raw_negative_training_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            _seed_execution_ledger(
+                ledger,
+                [
+                    (
+                        "fill-loss",
+                        "2026-06-01T01:00:00Z",
+                        "ORDER_FILLED",
+                        "trade-loss",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-loss",
+                        "2026-06-01T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "trade-loss",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        -500.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-win",
+                        "2026-06-01T04:00:00Z",
+                        "ORDER_FILLED",
+                        "trade-win",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-win",
+                        "2026-06-01T06:00:00Z",
+                        "TRADE_CLOSED",
+                        "trade-win",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        200.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-validation",
+                        "2026-06-02T01:00:00Z",
+                        "ORDER_FILLED",
+                        "trade-validation",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-validation",
+                        "2026-06-02T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "trade-validation",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        700.0,
+                        "{}",
+                    ),
+                ],
+            )
+
+            AITestBotBacktester(
+                db_path=root / "missing_legacy.db",
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=2,
+                max_active_buckets=1,
+                source_tables=("execution_ledger",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], [])
+            self.assertEqual(day["selected_trades"], 0)
+            self.assertEqual(day["managed_net_jpy"], 0.0)
+            self.assertEqual(payload["oracle"]["best_train_eligible_all_positive_day_jpy"], 0.0)
+            self.assertIn("raw-positive training net", (root / "ai_backtest.md").read_text())
+
 
 def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str, str, str, str, float, str]]) -> None:
     with sqlite3.connect(path) as conn:
@@ -339,7 +435,57 @@ def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str
         )
 
 
-def _seed_execution_ledger(path: Path) -> None:
+def _seed_execution_ledger(
+    path: Path,
+    rows: list[tuple[str, str, str, str, str, str, int | None, float | None, str]] | None = None,
+) -> None:
+    if rows is None:
+        rows = [
+            (
+                "fill-1",
+                "2026-06-01T01:00:00Z",
+                "ORDER_FILLED",
+                "trade-1",
+                "GBP_USD",
+                "LONG",
+                1000,
+                None,
+                "{}",
+            ),
+            (
+                "close-1",
+                "2026-06-01T03:00:00Z",
+                "TRADE_CLOSED",
+                "trade-1",
+                "GBP_USD",
+                "SHORT",
+                1000,
+                100.0,
+                json.dumps({"reason": "STOP_LOSS_ORDER"}),
+            ),
+            (
+                "fill-2",
+                "2026-06-02T01:00:00Z",
+                "ORDER_FILLED",
+                "trade-2",
+                "GBP_USD",
+                "LONG",
+                1000,
+                None,
+                "{}",
+            ),
+            (
+                "close-2",
+                "2026-06-02T03:00:00Z",
+                "TRADE_CLOSED",
+                "trade-2",
+                "GBP_USD",
+                "SHORT",
+                1000,
+                150.0,
+                json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
+            ),
+        ]
     with sqlite3.connect(path) as conn:
         conn.execute(
             """
@@ -364,52 +510,7 @@ def _seed_execution_ledger(path: Path) -> None:
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [
-                (
-                    "fill-1",
-                    "2026-06-01T01:00:00Z",
-                    "ORDER_FILLED",
-                    "trade-1",
-                    "GBP_USD",
-                    "LONG",
-                    1000,
-                    None,
-                    "{}",
-                ),
-                (
-                    "close-1",
-                    "2026-06-01T03:00:00Z",
-                    "TRADE_CLOSED",
-                    "trade-1",
-                    "GBP_USD",
-                    "SHORT",
-                    1000,
-                    100.0,
-                    json.dumps({"reason": "STOP_LOSS_ORDER"}),
-                ),
-                (
-                    "fill-2",
-                    "2026-06-02T01:00:00Z",
-                    "ORDER_FILLED",
-                    "trade-2",
-                    "GBP_USD",
-                    "LONG",
-                    1000,
-                    None,
-                    "{}",
-                ),
-                (
-                    "close-2",
-                    "2026-06-02T03:00:00Z",
-                    "TRADE_CLOSED",
-                    "trade-2",
-                    "GBP_USD",
-                    "SHORT",
-                    1000,
-                    150.0,
-                    json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
-                ),
-            ],
+            rows,
         )
 
 
