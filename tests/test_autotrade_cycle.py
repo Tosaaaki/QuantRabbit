@@ -393,6 +393,105 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(payload["actions"][0]["trade_id"], "471232")
             self.assertIn("CLOSE", (root / "pe.md").read_text())
 
+    def test_accepted_gpt_close_ledger_receipt_survives_position_execution_overwrite(self) -> None:
+        class Client:
+            def __init__(self, snapshot_payload: BrokerSnapshot) -> None:
+                self.snapshot_payload = snapshot_payload
+                self.closed: list[tuple[str, str]] = []
+
+            def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+                return self.snapshot_payload
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
+                self.closed.append((trade_id, units))
+                return {"relatedTransactionIDs": ["20"], "closedTradeID": trade_id}
+
+            def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
+                raise AssertionError("GPT CLOSE must not replace dependent orders")
+
+            def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+                return AccountSummary(
+                    nav_jpy=200_000.0,
+                    balance_jpy=200_000.0,
+                    margin_available_jpy=200_000.0,
+                    last_transaction_id="100",
+                    fetched_at_utc=now_utc or datetime.now(timezone.utc),
+                )
+
+            def transactions_since_id(self, transaction_id: str) -> dict[str, Any]:
+                return {"lastTransactionID": transaction_id, "transactions": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                positions=(
+                    BrokerPosition(
+                        trade_id="471232",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.1729,
+                        unrealized_pl_jpy=-250.0,
+                        take_profit=1.1740,
+                        stop_loss=None,
+                        owner=Owner.TRADER,
+                    ),
+                ),
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1710, 1.1711, timestamp_utc=now)},
+            )
+            ledger_path = root / "execution_ledger.db"
+            cycle = AutoTradeCycle(
+                client=Client(snapshot),
+                live_enabled=True,
+                snapshot_path=root / "broker.json",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                execution_ledger_db_path=ledger_path,
+                execution_ledger_report_path=root / "execution_ledger.md",
+            )
+            summary = GptHandoffSummary(
+                status="ACCEPTED",
+                action="CLOSE",
+                selected_lane_id=None,
+                allowed=True,
+                issues=0,
+                close_trade_ids=("471232",),
+            )
+
+            execution = cycle._close_gpt_trades(summary, snapshot=snapshot, send=True)
+            self.assertEqual(execution.status, "SENT")
+
+            overwritten = {
+                "generated_at_utc": (now + timedelta(minutes=1)).isoformat(),
+                "status": "NO_ACTION",
+                "send_requested": True,
+                "sent": False,
+                "actions": [
+                    {
+                        "trade_id": "471232",
+                        "pair": "EUR_USD",
+                        "owner": "trader",
+                        "management_action": "HOLD_SL_FREE",
+                        "request": None,
+                        "issues": [],
+                        "sent": False,
+                        "response": None,
+                    }
+                ],
+            }
+            (root / "pe.json").write_text(json.dumps(overwritten, indent=2) + "\n")
+            cycle._record_execution_ledger_receipts()
+
+            with sqlite3.connect(ledger_path) as conn:
+                events = conn.execute(
+                    "SELECT event_type, trade_id, exit_reason FROM execution_events ORDER BY rowid"
+                ).fetchall()
+
+        self.assertIn(("GATEWAY_TRADE_CLOSE_SENT", "471232", "GPT_CLOSE"), events)
+        self.assertIn(("GATEWAY_POSITION_NO_ACTION", "471232", "HOLD_SL_FREE"), events)
+
     def test_accepted_gpt_close_uses_refreshed_snapshot_before_send(self) -> None:
         class Client:
             def __init__(self, snapshot_payload: BrokerSnapshot) -> None:

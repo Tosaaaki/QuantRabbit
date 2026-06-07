@@ -627,12 +627,19 @@ class AutoTradeCycle:
     def _record_execution_ledger_receipts(self) -> None:
         if not self._execution_ledger_available():
             return
-        ledger = ExecutionLedger(db_path=self.execution_ledger_db_path, report_path=self.execution_ledger_report_path)
         for kind, path in (
             ("live_order", self.live_order_output_path),
             ("position_execution", self.position_execution_path),
         ):
-            ledger.record_gateway_receipt(kind=kind, receipt_path=path)
+            self._record_execution_ledger_receipt(kind=kind, receipt_path=path)
+
+    def _record_execution_ledger_receipt(self, *, kind: str, receipt_path: Path) -> None:
+        if not self._execution_ledger_available():
+            return
+        ExecutionLedger(
+            db_path=self.execution_ledger_db_path,
+            report_path=self.execution_ledger_report_path,
+        ).record_gateway_receipt(kind=kind, receipt_path=receipt_path)
 
     def _execution_ledger_available(self) -> bool:
         return hasattr(self.client, "account_summary") and hasattr(self.client, "transactions_since_id")
@@ -2479,7 +2486,12 @@ class AutoTradeCycle:
             if all(str(trade_id) not in open_trade_ids for trade_id in gpt_summary.close_trade_ids):
                 return self._write_stale_gpt_close_satisfied(gpt_summary, snapshot=close_snapshot)
         decision = self._gpt_close_position_decision(gpt_summary, snapshot=close_snapshot)
-        return self._position_gateway().run(decision=decision, snapshot=close_snapshot, send=send)
+        execution = self._position_gateway().run(decision=decision, snapshot=close_snapshot, send=send)
+        self._record_execution_ledger_receipt(
+            kind="position_execution",
+            receipt_path=self.position_execution_path,
+        )
+        return execution
 
     def _write_stale_gpt_close_satisfied(
         self,
@@ -2551,6 +2563,10 @@ class AutoTradeCycle:
         )
         self.position_execution_report_path.parent.mkdir(parents=True, exist_ok=True)
         self.position_execution_report_path.write_text("\n".join(lines) + "\n")
+        self._record_execution_ledger_receipt(
+            kind="position_execution",
+            receipt_path=self.position_execution_path,
+        )
         return PositionExecutionSummary(
             status="STALE_CLOSE_SATISFIED",
             output_path=self.position_execution_path,

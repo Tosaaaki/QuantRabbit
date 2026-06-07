@@ -131,6 +131,7 @@ class PositionProtectionGateway:
             "pair": managed.pair,
             "owner": managed.owner,
             "management_action": managed.action,
+            "reasons": list(managed.reasons),
             "request": None,
             "issues": [],
             "sent": False,

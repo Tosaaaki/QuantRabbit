@@ -411,12 +411,21 @@ def _gateway_position_event(action: dict[str, Any], *, payload: dict[str, Any], 
         "sl": _nested_price(order_request, "stopLoss"),
         "realized_pl_jpy": None,
         "financing_jpy": None,
-        "exit_reason": _text(action.get("management_action")),
+        "exit_reason": _gateway_position_exit_reason(action),
         "oanda_transaction_id": None,
         "related_transaction_ids_json": json.dumps(_related_ids(response), sort_keys=True),
         "raw_json": _json(action),
         "inserted_at_utc": now,
     }
+
+
+def _gateway_position_exit_reason(action: dict[str, Any]) -> str | None:
+    management_action = _text(action.get("management_action"))
+    if management_action == "REVIEW_EXIT":
+        reason_text = " ".join(str(reason) for reason in action.get("reasons", []) or []).lower()
+        if "gpt-close: accepted gpt_trader close receipt passed gate a/b" in reason_text:
+            return "GPT_CLOSE"
+    return management_action
 
 
 def _event(
