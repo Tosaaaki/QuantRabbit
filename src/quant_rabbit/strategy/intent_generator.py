@@ -1551,7 +1551,7 @@ def _append_forecast_seed_lanes(
         )
         direction = str(getattr(forecast, "direction", "") or "").upper()
         confidence = _optional_float(getattr(forecast, "confidence", None))
-        if direction in {"UP", "DOWN", "RANGE"} and confidence is not None:
+        if direction and confidence is not None:
             forecasts_by_pair[pair] = forecast
         min_confidence = _forecast_seed_min_confidence_for_direction(direction)
         watch_reason: str | None = None
@@ -3982,6 +3982,16 @@ def _forecast_live_readiness_issue(
     if direction not in {"UP", "DOWN", "RANGE"}:
         if recovery_reversal_override:
             return None
+        if direction:
+            return {
+                "code": "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                "message": (
+                    f"{intent.pair} {intent.side.value} current pair forecast is {direction} "
+                    f"conf={0.0 if confidence is None else confidence:.2f}; fresh entries need "
+                    "an executable UP/DOWN/RANGE prediction before they can become LIVE_READY."
+                ),
+                "severity": "WARN",
+            }
         return {
             "code": "FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
             "message": (
@@ -4205,15 +4215,27 @@ def _telemetry_live_readiness_issues(
     confidence = _optional_float(metadata.get("forecast_confidence"))
     recovery_reversal_override = _reversal_recovery_chart_forecast_override(intent, metadata)
     if direction not in {"UP", "DOWN", "RANGE"} and not recovery_reversal_override:
-        issues.append(
-            _telemetry_issue(
-                "TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
-                (
-                    f"{intent.pair} {intent.side.value} has no executable forecast metadata; "
-                    "telemetry cannot prove what the live entry is predicting."
-                ),
+        if direction:
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} forecast telemetry is {direction}; "
+                        "the forecast trail exists, but it cannot authorize live entry until "
+                        "the current forecast resolves to UP/DOWN/RANGE."
+                    ),
+                )
             )
-        )
+        else:
+            issues.append(
+                _telemetry_issue(
+                    "TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE",
+                    (
+                        f"{intent.pair} {intent.side.value} has no executable forecast metadata; "
+                        "telemetry cannot prove what the live entry is predicting."
+                    ),
+                )
+            )
     expected_cycle_id = str(metadata.get("forecast_cycle_id") or "")
     if cache is not None:
         latest = cache.latest_forecasts_by_pair.get(intent.pair)

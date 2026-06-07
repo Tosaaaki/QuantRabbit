@@ -146,6 +146,70 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertIn("FORECAST_CONTEXT_REQUIRED_FOR_LIVE", issue_codes)
         self.assertTrue(any("no fresh executable pair forecast" in blocker for blocker in blockers))
 
+    def test_unclear_forecast_context_is_attached_without_live_permission(self) -> None:
+        os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="UNCLEAR",
+                confidence=0.11,
+                raw_confidence=0.11,
+                calibration_multiplier=1.0,
+                current_price=1.17326,
+                target_price=None,
+                invalidation_price=None,
+                horizon_min=0,
+                rationale_summary="contested: DOWN=93.3 vs UP=83.3",
+                drivers_for=("pair_chart SHORT_LEAN",),
+                drivers_against=("mean reversion bounce risk",),
+                component_scores={"UP": 83.3, "DOWN": 93.3, "RANGE": 0.0, "EITHER": 0.0},
+            )
+
+            with (
+                patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ),
+            ):
+                IntentGenerator(
+                    campaign_plan=_range_campaign(root, direction="LONG"),
+                    strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                    pair_charts_path=_pair_charts_with_direction(
+                        root,
+                        long_score=0.46,
+                        short_score=0.54,
+                        dominant_regime="RANGE",
+                        m5_regime="RANGE",
+                        m5_long_bias=0.58,
+                        m5_short_bias=0.22,
+                        regime_state="RANGE",
+                    ),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+
+        results = [item for item in payload["results"] if item["intent"] and item["intent"]["pair"] == "EUR_USD"]
+        issue_codes = {issue["code"] for item in results for issue in item["risk_issues"]}
+        blockers = [blocker for item in results for blocker in item["live_blockers"]]
+        metadata = results[0]["intent"]["metadata"]
+
+        self.assertTrue(results)
+        self.assertEqual(metadata["forecast_direction"], "UNCLEAR")
+        self.assertEqual(metadata["forecast_confidence"], 0.11)
+        self.assertIsNotNone(metadata["forecast_cycle_id"])
+        self.assertIn("FORECAST_NOT_EXECUTABLE_FOR_LIVE", issue_codes)
+        self.assertIn("TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE", issue_codes)
+        self.assertNotIn("TELEMETRY_FORECAST_CONTEXT_REQUIRED_FOR_LIVE", issue_codes)
+        self.assertTrue(any("current pair forecast is UNCLEAR" in blocker for blocker in blockers))
+        self.assertFalse(any("no executable forecast metadata" in blocker for blocker in blockers))
+
     def test_live_entry_requires_forecast_telemetry_when_live_default_active(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
