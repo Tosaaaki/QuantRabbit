@@ -39,6 +39,8 @@ from quant_rabbit.models import BrokerSnapshot, MarketContext, OrderIntent, Orde
 from quant_rabbit.outcome_mart import OutcomeMartBuilder
 from quant_rabbit.paths import (
     ROOT,
+    DEFAULT_ADVERSE_PARTIAL_CLOSE,
+    DEFAULT_ADVERSE_PARTIAL_CLOSE_REPORT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
     DEFAULT_AI_ATTACK_ADVICE,
@@ -405,6 +407,69 @@ def _pre_entry_execution_ledger_sync_if_required(
         "events_inserted": summary.events_inserted,
         "last_transaction_id": summary.last_transaction_id,
         "baseline_transaction_id": summary.baseline_transaction_id,
+    }
+
+
+def _partial_close_receipt_actions(
+    results: list[dict[str, Any]],
+    *,
+    management_action: str,
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for result in results:
+        trade_id = str(result.get("trade_id") or "")
+        close_units = result.get("close_units")
+        request = None
+        if trade_id and close_units:
+            request = {
+                "type": "CLOSE",
+                "trade_id": trade_id,
+                "units": str(close_units),
+            }
+        issues = []
+        error = result.get("error")
+        if error:
+            code = str(error).split(":", 1)[0].strip() or "PARTIAL_CLOSE_ERROR"
+            issues.append(
+                {
+                    "severity": "BLOCK",
+                    "code": code,
+                    "message": str(error),
+                }
+            )
+        actions.append(
+            {
+                "trade_id": trade_id,
+                "pair": str(result.get("pair") or ""),
+                "owner": "trader",
+                "management_action": management_action,
+                "request": request,
+                "issues": issues,
+                "sent": bool(result.get("sent")),
+                "response": result.get("response"),
+                "reasons": [str(result.get("rationale") or management_action)],
+            }
+        )
+    return actions
+
+
+def _record_position_execution_receipt(
+    *,
+    output_path: Path,
+    ledger_db_path: Path,
+    ledger_report_path: Path,
+) -> dict[str, Any]:
+    try:
+        summary = ExecutionLedger(
+            db_path=ledger_db_path,
+            report_path=ledger_report_path,
+        ).record_gateway_receipt(kind="position_execution", receipt_path=output_path)
+    except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+        return {"status": "RECORD_FAILED", "error": str(exc)}
+    return {
+        "status": summary.status,
+        "gateway_receipts_inserted": summary.gateway_receipts_inserted,
+        "events_inserted": summary.events_inserted,
     }
 
 
@@ -1519,6 +1584,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_advpart.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_advpart.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_advpart.add_argument("--output", type=Path, default=DEFAULT_ADVERSE_PARTIAL_CLOSE)
+    p_advpart.add_argument("--report", type=Path, default=DEFAULT_ADVERSE_PARTIAL_CLOSE_REPORT)
+    p_advpart.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_advpart.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_advpart.add_argument(
         "--dry-run",
         action="store_true",
@@ -1540,6 +1609,8 @@ def main(argv: list[str] | None = None) -> int:
     p_profitpart.add_argument("--state", type=Path, default=DEFAULT_PROFIT_PARTIAL_CLOSE_STATE)
     p_profitpart.add_argument("--output", type=Path, default=DEFAULT_PROFIT_PARTIAL_CLOSE)
     p_profitpart.add_argument("--report", type=Path, default=DEFAULT_PROFIT_PARTIAL_CLOSE_REPORT)
+    p_profitpart.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
+    p_profitpart.add_argument("--execution-ledger-report", type=Path, default=DEFAULT_EXECUTION_LEDGER_REPORT)
     p_profitpart.add_argument("--send", action="store_true", help="Send partial-close requests to OANDA.")
     p_profitpart.add_argument(
         "--confirm-live",
@@ -3812,17 +3883,75 @@ def main(argv: list[str] | None = None) -> int:
         if live_send and actions:
             client = OandaExecutionClient()
         results = apply_partial_closes(actions, client, dry_run=not live_send)
-        print(json.dumps(
-            {
-                "status": "OK",
-                "dry_run": not live_send,
-                "send": live_send,
-                "actions_count": len(actions),
-                "results": results,
-            },
-            indent=2,
-            ensure_ascii=False,
-        ))
+        sent_count = sum(1 for result in results if result.get("sent"))
+        blocked_count = sum(1 for result in results if result.get("error"))
+        if not actions:
+            status = "NO_ACTION"
+        elif sent_count:
+            status = "SENT" if not blocked_count else "PARTIAL_SENT_WITH_BLOCKS"
+        elif blocked_count:
+            status = "BLOCKED"
+        else:
+            status = "STAGED"
+        payload = {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "dry_run": not live_send,
+            "send": live_send,
+            "send_requested": live_send,
+            "confirm_live": args.confirm_live,
+            "actions_count": len(actions),
+            "sent_count": sent_count,
+            "blocked_count": blocked_count,
+            "results": results,
+            "actions": _partial_close_receipt_actions(
+                results,
+                management_action="ADVERSE_PARTIAL_CLOSE",
+            ),
+        }
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Adverse Partial Close Report",
+            "",
+            f"- Generated at UTC: `{payload['generated_at_utc']}`",
+            f"- Status: `{status}`",
+            f"- Send requested: `{live_send}`",
+            f"- Sent count: `{sent_count}`",
+            "",
+            "## Actions",
+            "",
+        ]
+        if not results:
+            lines.append("- none")
+        for result in results:
+            lines.append(
+                f"- `{result['trade_id']}` `{result['pair']}` `{result['side']}` "
+                f"close=`{result['close_units']}` remain=`{result['remaining_units']}` "
+                f"sent=`{result['sent']}`"
+            )
+            lines.append(f"  - rationale: {result['rationale']}")
+            if result.get("error"):
+                lines.append(f"  - BLOCK: {result['error']}")
+        lines.extend(
+            [
+                "",
+                "## Contract",
+                "",
+                "- Adverse partial close is an operator-gated margin relief path, not an implicit full-close path.",
+                "- Live send requires `--send --confirm-live` and `QR_LIVE_ENABLED=1`.",
+                "- Every result is persisted as a position-execution receipt so market-close outcomes can be attributed.",
+            ]
+        )
+        args.report.write_text("\n".join(lines) + "\n")
+        payload["execution_ledger"] = _record_position_execution_receipt(
+            output_path=args.output,
+            ledger_db_path=args.execution_ledger_db,
+            ledger_report_path=args.execution_ledger_report,
+        )
+        args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
         return 0
     if args.command == "profit-partial-close":
         from quant_rabbit.strategy.profit_partial_close import (
@@ -3905,6 +4034,10 @@ def main(argv: list[str] | None = None) -> int:
             "sent_count": sent_count,
             "blocked_count": blocked_count,
             "results": results,
+            "actions": _partial_close_receipt_actions(
+                results,
+                management_action="PROFIT_PARTIAL_CLOSE",
+            ),
             "state": state,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -3944,6 +4077,12 @@ def main(argv: list[str] | None = None) -> int:
             ]
         )
         args.report.write_text("\n".join(lines) + "\n")
+        payload["execution_ledger"] = _record_position_execution_receipt(
+            output_path=args.output,
+            ledger_db_path=args.execution_ledger_db,
+            ledger_report_path=args.execution_ledger_report,
+        )
+        args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
         return 0 if status not in {"BLOCKED"} else 2
     if args.command == "certify-dry-run":

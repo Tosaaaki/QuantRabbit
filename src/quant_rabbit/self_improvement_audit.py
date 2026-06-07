@@ -210,6 +210,14 @@ class SelfImprovementAuditor:
             )
         )
         findings.extend(
+            _market_close_attribution_findings(
+                run_id=run_id,
+                db_path=self.db_path,
+                window_hours=window_hours,
+                now=clock,
+            )
+        )
+        findings.extend(
             _projection_findings(
                 run_id=run_id,
                 path=projection_ledger_path,
@@ -918,6 +926,162 @@ def _ledger_sync_findings(*, run_id: str, db_path: Path, snapshot: dict[str, Any
             )
         ]
     return []
+
+
+def _market_close_attribution_findings(
+    *,
+    run_id: str,
+    db_path: Path,
+    window_hours: float,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    if not db_path.exists():
+        return []
+    rows: list[sqlite3.Row] = []
+    error: str | None = None
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            columns = _table_columns(conn, "execution_events")
+            required = {
+                "event_uid",
+                "ts_utc",
+                "event_type",
+                "lane_id",
+                "order_id",
+                "trade_id",
+                "pair",
+                "side",
+                "units",
+                "realized_pl_jpy",
+                "exit_reason",
+            }
+            if not required <= columns:
+                return []
+            rows = list(
+                conn.execute(
+                    """
+                    WITH gateway_entries AS (
+                        SELECT
+                            trade_id,
+                            order_id,
+                            lane_id
+                        FROM execution_events
+                        WHERE event_type = 'GATEWAY_ORDER_SENT'
+                          AND lane_id IS NOT NULL
+                          AND lane_id != ''
+                    ),
+                    entries AS (
+                        SELECT
+                            e.trade_id,
+                            COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS gateway_lane_id,
+                            CASE
+                                WHEN MAX(e.units) > 0 THEN 'LONG'
+                                WHEN MIN(e.units) < 0 THEN 'SHORT'
+                                ELSE NULL
+                            END AS position_side
+                        FROM execution_events e
+                        LEFT JOIN gateway_entries g
+                          ON (
+                            g.trade_id IS NOT NULL
+                            AND g.trade_id != ''
+                            AND g.trade_id = e.trade_id
+                          )
+                          OR (
+                            g.order_id IS NOT NULL
+                            AND g.order_id != ''
+                            AND g.order_id = e.order_id
+                          )
+                        WHERE e.event_type = 'ORDER_FILLED'
+                          AND e.trade_id IS NOT NULL
+                          AND e.trade_id != ''
+                          AND e.units IS NOT NULL
+                        GROUP BY e.trade_id
+                        HAVING gateway_lane_id IS NOT NULL
+                           AND gateway_lane_id != ''
+                    )
+                    SELECT
+                        e.event_uid,
+                        e.ts_utc,
+                        e.event_type,
+                        e.trade_id,
+                        e.pair,
+                        e.side,
+                        e.realized_pl_jpy,
+                        e.exit_reason,
+                        entries.gateway_lane_id,
+                        entries.position_side
+                    FROM execution_events e
+                    INNER JOIN entries ON entries.trade_id = e.trade_id
+                    WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+                      AND e.exit_reason = 'MARKET_ORDER_TRADE_CLOSE'
+                      AND e.realized_pl_jpy IS NOT NULL
+                      AND e.trade_id IS NOT NULL
+                      AND e.trade_id != ''
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM execution_events c
+                          WHERE c.event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                            AND c.trade_id = e.trade_id
+                      )
+                    ORDER BY e.ts_utc DESC, e.event_uid DESC
+                    """
+                )
+            )
+    except sqlite3.Error as exc:
+        error = str(exc)
+    if error is not None:
+        return []
+    cutoff = now - timedelta(hours=max(0.0, window_hours))
+    unattributed: list[sqlite3.Row] = []
+    for row in rows:
+        ts = _parse_utc(row["ts_utc"])
+        if ts is None or ts < cutoff:
+            continue
+        value = _maybe_float(row["realized_pl_jpy"])
+        if value is None or value >= 0:
+            continue
+        unattributed.append(row)
+    if not unattributed:
+        return []
+    net = sum(float(_maybe_float(row["realized_pl_jpy"]) or 0.0) for row in unattributed)
+    examples = [
+        {
+            "ts_utc": str(row["ts_utc"] or ""),
+            "event_uid": str(row["event_uid"] or ""),
+            "event_type": str(row["event_type"] or ""),
+            "trade_id": str(row["trade_id"] or ""),
+            "pair": str(row["pair"] or ""),
+            "side": str(row["side"] or row["position_side"] or ""),
+            "original_side": str(row["position_side"] or ""),
+            "gateway_lane_id": str(row["gateway_lane_id"] or ""),
+            "realized_pl_jpy": _maybe_float(row["realized_pl_jpy"]),
+            "exit_reason": str(row["exit_reason"] or ""),
+        }
+        for row in unattributed[:8]
+    ]
+    return [
+        _finding(
+            run_id=run_id,
+            priority="P1",
+            layer="execution_ledger",
+            code="UNATTRIBUTED_MARKET_ORDER_CLOSES",
+            message=(
+                f"{len(unattributed)} negative bot-attributed market close event(s) lack "
+                "a matching gateway close receipt"
+            ),
+            next_action=(
+                "Persist every direct close_trade path as a position-execution receipt, then separate "
+                "manual intervention from strategy/Gate A/B close performance before tuning exits."
+            ),
+            evidence={
+                "window_hours": window_hours,
+                "unattributed_loss_count": len(unattributed),
+                "unattributed_loss_net_jpy": round(net, 4),
+                "examples": examples,
+            },
+        )
+    ]
 
 
 def _projection_findings(
@@ -1706,6 +1870,13 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         "worst_segments": worst_segments[:10],
         "error": error,
     }
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})")}
+    except sqlite3.Error:
+        return set()
 
 
 def _active_trader_positions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:

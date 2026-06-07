@@ -234,6 +234,7 @@ def apply_profit_partial_closes(
             "rationale": action.rationale,
             "sent": False,
             "error": None,
+            "response": None,
         }
         if not send:
             results.append(entry)
@@ -247,8 +248,9 @@ def apply_profit_partial_closes(
             results.append(entry)
             continue
         try:
-            broker_client.close_trade(action.trade_id, units=str(action.close_units))
+            response = broker_client.close_trade(action.trade_id, units=str(action.close_units))
             entry["sent"] = True
+            entry["response"] = response
         except Exception as exc:  # noqa: BLE001
             entry["error"] = str(exc)
         results.append(entry)

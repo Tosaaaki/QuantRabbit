@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -58,6 +59,18 @@ class CliHelpTest(unittest.TestCase):
             ]
         }))
         return snapshot, pair_charts
+
+    def _partial_close_artifact_args(self, root: Path) -> list[str]:
+        return [
+            "--output",
+            str(root / "partial_close.json"),
+            "--report",
+            str(root / "partial_close.md"),
+            "--execution-ledger-db",
+            str(root / "execution_ledger.db"),
+            "--execution-ledger-report",
+            str(root / "execution_ledger.md"),
+        ]
 
     def test_top_level_help_renders_daily_target_percent_text(self) -> None:
         stdout = io.StringIO()
@@ -425,6 +438,7 @@ class CliHelpTest(unittest.TestCase):
                     str(snapshot),
                     "--pair-charts",
                     str(pair_charts),
+                    *self._partial_close_artifact_args(root),
                 ])
 
         self.assertEqual(code, 0)
@@ -448,6 +462,7 @@ class CliHelpTest(unittest.TestCase):
                     str(snapshot),
                     "--pair-charts",
                     str(pair_charts),
+                    *self._partial_close_artifact_args(root),
                     "--send",
                 ])
 
@@ -470,6 +485,7 @@ class CliHelpTest(unittest.TestCase):
                     str(snapshot),
                     "--pair-charts",
                     str(pair_charts),
+                    *self._partial_close_artifact_args(root),
                     "--send",
                     "--confirm-live",
                 ])
@@ -496,16 +512,27 @@ class CliHelpTest(unittest.TestCase):
                     str(snapshot),
                     "--pair-charts",
                     str(pair_charts),
+                    *self._partial_close_artifact_args(root),
                     "--send",
                     "--confirm-live",
                 ])
 
-        self.assertEqual(code, 0)
-        payload = json.loads(stdout.getvalue())
-        self.assertFalse(payload["dry_run"])
-        self.assertTrue(payload["send"])
-        self.assertTrue(payload["results"][0]["sent"])
-        client.close_trade.assert_called_once_with("t-adverse", units="5000")
+            self.assertEqual(code, 0)
+            payload = json.loads(stdout.getvalue())
+            self.assertFalse(payload["dry_run"])
+            self.assertTrue(payload["send"])
+            self.assertTrue(payload["results"][0]["sent"])
+            client.close_trade.assert_called_once_with("t-adverse", units="5000")
+            self.assertEqual(payload["execution_ledger"]["status"], "RECORDED")
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                event = conn.execute(
+                    """
+                    SELECT event_type, exit_reason, trade_id
+                    FROM execution_events
+                    WHERE event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                    """
+                ).fetchone()
+            self.assertEqual(event, ("GATEWAY_TRADE_CLOSE_SENT", "ADVERSE_PARTIAL_CLOSE", "t-adverse"))
 
     def test_generate_intents_refreshes_market_story_when_news_is_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

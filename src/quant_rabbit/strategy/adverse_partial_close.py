@@ -242,13 +242,15 @@ def apply_partial_closes(
             "rationale": a.rationale,
             "sent": False,
             "error": None,
+            "response": None,
         }
         if dry_run:
             results.append(entry)
             continue
         try:
-            broker_client.close_trade(a.trade_id, units=str(a.close_units))
+            response = broker_client.close_trade(a.trade_id, units=str(a.close_units))
             entry["sent"] = True
+            entry["response"] = response
         except Exception as exc:  # noqa: BLE001
             entry["error"] = str(exc)
         results.append(entry)

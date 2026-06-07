@@ -304,6 +304,36 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["evidence"]["current_streak"], 3)
 
+    def test_unattributed_market_order_close_is_p1_execution_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=False)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
+        finding = codes["UNATTRIBUTED_MARKET_ORDER_CLOSES"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["unattributed_loss_count"], 1)
+        self.assertEqual(finding["evidence"]["examples"][0]["trade_id"], "T42")
+
+    def test_gateway_close_receipt_satisfies_market_order_close_attribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=True)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
+
     def test_rejected_close_for_closed_trades_is_not_current_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -724,3 +754,100 @@ def _write_execution_ledger(path: Path, *, closed_pls: tuple[float, ...], last_t
                 """,
                 (f"closed-{idx}", (_NOW - timedelta(hours=idx + 1)).isoformat(), pl),
             )
+
+
+def _write_market_close_attribution_ledger(path: Path, *, include_gateway_close: bool) -> None:
+    if path.exists():
+        path.unlink()
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                exit_reason TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)",
+            ("last_oanda_transaction_id", "100", _NOW.isoformat()),
+        )
+        rows = [
+            (
+                "gw-entry",
+                (_NOW - timedelta(hours=3)).isoformat(),
+                "GATEWAY_ORDER_SENT",
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION:MARKET",
+                "O42",
+                "",
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                None,
+            ),
+            (
+                "fill",
+                (_NOW - timedelta(hours=2, minutes=55)).isoformat(),
+                "ORDER_FILLED",
+                "",
+                "O42",
+                "T42",
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                None,
+            ),
+        ]
+        if include_gateway_close:
+            rows.append(
+                (
+                    "gw-close",
+                    (_NOW - timedelta(hours=1, minutes=5)).isoformat(),
+                    "GATEWAY_TRADE_CLOSE_SENT",
+                    "",
+                    "",
+                    "T42",
+                    "EUR_USD",
+                    "",
+                    None,
+                    None,
+                    "GPT_CLOSE",
+                )
+            )
+        rows.append(
+            (
+                "close",
+                (_NOW - timedelta(hours=1)).isoformat(),
+                "TRADE_CLOSED",
+                "",
+                "C42",
+                "T42",
+                "EUR_USD",
+                "LONG",
+                1000,
+                -500.0,
+                "MARKET_ORDER_TRADE_CLOSE",
+            )
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                pair, side, units, realized_pl_jpy, exit_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
