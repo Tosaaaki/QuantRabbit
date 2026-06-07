@@ -217,6 +217,21 @@ class AITestBotBacktester:
         )
         profit_factor = _profit_factor(gross_profit, gross_loss)
         status = _status(blockers, day_results, profit_factor)
+        summary_payload = _summary_payload(day_results, validation_rows, target_jpy, gross_profit, gross_loss, profit_factor)
+        firepower = _firepower_payload(day_results, validation_rows, target_jpy, cap.loss_cap_jpy)
+        target_ceiling = _target_ceiling_payload(
+            target_jpy=target_jpy,
+            firepower=firepower,
+            oracle=oracle,
+        )
+        action_items = tuple(
+            _action_items(
+                blockers=blockers,
+                firepower=firepower,
+                oracle=oracle,
+                target_ceiling=target_ceiling,
+            )
+        )
         generated_at = datetime.now(timezone.utc).isoformat()
         payload = {
             "generated_at_utc": generated_at,
@@ -237,10 +252,11 @@ class AITestBotBacktester:
             "training_days": self.training_days,
             "min_train_trades": self.min_train_trades,
             "max_active_buckets": self.max_active_buckets,
-            "summary": _summary_payload(day_results, validation_rows, target_jpy, gross_profit, gross_loss, profit_factor),
-            "firepower": _firepower_payload(day_results, validation_rows, target_jpy, cap.loss_cap_jpy),
+            "summary": summary_payload,
+            "firepower": firepower,
             "bucket_contributions": _bucket_contributions(validation_rows, cap.loss_cap_jpy),
             "oracle": oracle,
+            "target_ceiling": target_ceiling,
             "missed_best_days": _missed_best_days(
                 trades=trades,
                 day_results=day_results,
@@ -248,6 +264,7 @@ class AITestBotBacktester:
                 limit=12,
             ),
             "blockers": list(blockers),
+            "action_items": list(action_items),
             "days": [asdict(day) for day in day_results],
         }
         self._write_output(payload)
@@ -356,12 +373,18 @@ class AITestBotBacktester:
             f"- Oracle top-{payload['max_active_buckets']} target-hit days: `{payload['oracle']['top_n_target_hit_days']}`",
             f"- Oracle all-positive target-hit days: `{payload['oracle']['all_positive_target_hit_days']}`",
             f"- Selected/oracle capture: `{payload['oracle']['selected_vs_top_n_capture_pct']:.1f}%`",
+            f"- All-positive oracle ceiling: `{payload['target_ceiling']['best_all_positive_day_coverage_pct']:.1f}%`",
             "",
             "## Blockers",
             "",
         ]
         if payload["blockers"]:
             lines.extend(f"- {item}" for item in payload["blockers"])
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Action Items", ""])
+        if payload["action_items"]:
+            lines.extend(f"- {item}" for item in payload["action_items"])
         else:
             lines.append("- none")
         lines.extend(["", "## Bucket Contributions", ""])
@@ -620,6 +643,63 @@ def _firepower_payload(
         if required_trades is not None and avg_trades_per_day > 0
         else None,
     }
+
+
+def _target_ceiling_payload(
+    *,
+    target_jpy: float,
+    firepower: dict[str, float | int | None],
+    oracle: dict[str, float | int | str | None],
+) -> dict[str, float | int | bool | None]:
+    best_selected = float(firepower.get("best_selected_day_jpy") or 0.0)
+    best_top_n = float(oracle.get("best_top_n_day_jpy") or 0.0)
+    best_all_positive = float(oracle.get("best_all_positive_day_jpy") or 0.0)
+    best_oracle = max(best_top_n, best_all_positive)
+    selected_capture = _round((best_selected / best_oracle) * 100.0) if best_oracle > 0 else 0.0
+    return {
+        "prediction_only_target_possible": int(oracle.get("all_positive_target_hit_days") or 0) > 0,
+        "top_n_target_possible": int(oracle.get("top_n_target_hit_days") or 0) > 0,
+        "best_selected_day_jpy": _round(best_selected),
+        "best_top_n_day_jpy": _round(best_top_n),
+        "best_all_positive_day_jpy": _round(best_all_positive),
+        "best_all_positive_day_coverage_pct": _round((best_all_positive / target_jpy) * 100.0) if target_jpy else 0.0,
+        "oracle_target_gap_jpy": _round(max(target_jpy - best_all_positive, 0.0)),
+        "selected_best_vs_oracle_best_pct": selected_capture,
+    }
+
+
+def _action_items(
+    *,
+    blockers: tuple[str, ...],
+    firepower: dict[str, float | int | None],
+    oracle: dict[str, float | int | str | None],
+    target_ceiling: dict[str, float | int | bool | None],
+) -> Iterable[str]:
+    if not blockers:
+        return
+    if target_ceiling.get("prediction_only_target_possible") is False:
+        gap = float(target_ceiling.get("oracle_target_gap_jpy") or 0.0)
+        yield (
+            "archive opportunity ceiling misses 10% target even with an all-positive oracle "
+            f"(gap {gap:.0f} JPY); expand verified opportunity universe/receipt coverage before more prediction tuning"
+        )
+    required = firepower.get("required_trades_per_day_at_observed_expectancy")
+    avg_trades = float(firepower.get("avg_selected_trades_per_day") or 0.0)
+    if isinstance(required, int) and avg_trades > 0 and required > avg_trades * 3:
+        yield (
+            f"observed expectancy requires about {required} selected trades/day versus {avg_trades:.1f}; "
+            "increase current LIVE_READY opportunity count or per-receipt reward geometry without raising loss caps"
+        )
+    capture = float(oracle.get("selected_vs_top_n_capture_pct") or 0.0)
+    if target_ceiling.get("top_n_target_possible") is True and capture < 70.0:
+        yield (
+            f"selected policy captures only {capture:.1f}% of top-N oracle; improve bucket/context timing selection"
+        )
+    elif capture < 50.0:
+        yield (
+            f"selected policy captures only {capture:.1f}% of top-N oracle, but oracle is also below target; "
+            "treat selection tuning as secondary to coverage expansion"
+        )
 
 
 def _bucket_contributions(

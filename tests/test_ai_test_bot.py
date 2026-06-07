@@ -62,6 +62,10 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(payload["training_days"], 6)
             self.assertEqual(payload["min_train_trades"], 10)
             self.assertEqual(payload["max_active_buckets"], 6)
+            self.assertFalse(payload["target_ceiling"]["prediction_only_target_possible"])
+            self.assertEqual(payload["target_ceiling"]["oracle_target_gap_jpy"], 650.0)
+            self.assertTrue(any("archive opportunity ceiling misses 10% target" in item for item in payload["action_items"]))
+            self.assertIn("All-positive oracle ceiling", (root / "ai_backtest.md").read_text())
             day = payload["days"][0]
             self.assertEqual(
                 day["selected_buckets"],
@@ -106,6 +110,8 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(payload["firepower"]["best_selected_day_jpy"], 90.0)
             self.assertEqual(payload["bucket_contributions"][0]["bucket"], "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED")
             self.assertEqual(payload["oracle"]["top_n_target_hit_days"], 1)
+            self.assertTrue(payload["target_ceiling"]["prediction_only_target_possible"])
+            self.assertEqual(payload["action_items"], [])
             self.assertEqual(payload["missed_best_days"][0]["best_bucket"], "trades:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED")
             self.assertIn("offline research bot", (root / "ai_backtest.md").read_text())
 
