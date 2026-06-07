@@ -31,7 +31,7 @@ from quant_rabbit.replay import _resolve_replay_loss_cap
 DEFAULT_TRAINING_DAYS = 6
 DEFAULT_MIN_TRAIN_TRADES = 10
 DEFAULT_MAX_ACTIVE_BUCKETS = 6
-DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes")
+DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes", "seat_outcomes")
 
 
 @dataclass(frozen=True)
@@ -219,6 +219,12 @@ class AITestBotBacktester:
         status = _status(blockers, day_results, profit_factor)
         summary_payload = _summary_payload(day_results, validation_rows, target_jpy, gross_profit, gross_loss, profit_factor)
         firepower = _firepower_payload(day_results, validation_rows, target_jpy, cap.loss_cap_jpy)
+        source_contributions = _source_contributions(
+            trades=trades,
+            day_results=day_results,
+            validation_rows=validation_rows,
+            max_loss_jpy=cap.loss_cap_jpy,
+        )
         target_ceiling = _target_ceiling_payload(
             target_jpy=target_jpy,
             firepower=firepower,
@@ -230,6 +236,7 @@ class AITestBotBacktester:
                 firepower=firepower,
                 oracle=oracle,
                 target_ceiling=target_ceiling,
+                source_contributions=source_contributions,
             )
         )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -254,6 +261,7 @@ class AITestBotBacktester:
             "max_active_buckets": self.max_active_buckets,
             "summary": summary_payload,
             "firepower": firepower,
+            "source_contributions": source_contributions,
             "bucket_contributions": _bucket_contributions(validation_rows, cap.loss_cap_jpy),
             "oracle": oracle,
             "target_ceiling": target_ceiling,
@@ -375,9 +383,27 @@ class AITestBotBacktester:
             f"- Selected/oracle capture: `{payload['oracle']['selected_vs_top_n_capture_pct']:.1f}%`",
             f"- All-positive oracle ceiling: `{payload['target_ceiling']['best_all_positive_day_coverage_pct']:.1f}%`",
             "",
-            "## Blockers",
+            "## Source Contributions",
             "",
         ]
+        if payload["source_contributions"]:
+            for item in payload["source_contributions"]:
+                lines.append(
+                    f"- `{item['source_table']}` validation_net=`{item['validation_universe_managed_net_jpy']:.0f}` "
+                    f"selected_net=`{item['selected_managed_net_jpy']:.0f}` "
+                    f"validation_rows=`{item['validation_universe_trades']}` selected_rows=`{item['selected_trades']}` "
+                    f"deduped_rows=`{item['deduped_trades']}` days=`{item['validation_universe_days']}` "
+                    f"win_rate=`{item['validation_universe_win_rate_pct']:.1f}%`"
+                )
+        else:
+            lines.append("- none")
+        lines.extend(
+            [
+                "",
+                "## Blockers",
+                "",
+            ]
+        )
         if payload["blockers"]:
             lines.extend(f"- {item}" for item in payload["blockers"])
         else:
@@ -674,9 +700,20 @@ def _action_items(
     firepower: dict[str, float | int | None],
     oracle: dict[str, float | int | str | None],
     target_ceiling: dict[str, float | int | bool | None],
+    source_contributions: list[dict[str, float | int | str]],
 ) -> Iterable[str]:
     if not blockers:
         return
+    for item in source_contributions:
+        source_table = str(item["source_table"])
+        validation_net = float(item["validation_universe_managed_net_jpy"])
+        selected = int(item["selected_trades"])
+        validation_rows = int(item["validation_universe_trades"])
+        if source_table == "seat_outcomes" and validation_rows and selected == 0 and validation_net < 0:
+            yield (
+                "seat_outcomes discovery universe is negative and selected no validation trades "
+                f"(net {validation_net:.0f} JPY across {validation_rows} receipts); repair discovery filters before increasing live frequency"
+            )
     if target_ceiling.get("prediction_only_target_possible") is False:
         gap = float(target_ceiling.get("oracle_target_gap_jpy") or 0.0)
         yield (
@@ -750,6 +787,90 @@ def _bucket_contributions(
             }
         )
     return sorted(rows, key=lambda item: (float(item["managed_net_jpy"]), str(item["bucket"])), reverse=True)
+
+
+def _source_contributions(
+    *,
+    trades: tuple[TestBotTrade, ...],
+    day_results: tuple[TestBotDay, ...],
+    validation_rows: tuple[TestBotTrade, ...],
+    max_loss_jpy: float,
+) -> list[dict[str, float | int | str]]:
+    validation_days = {day.session_date for day in day_results}
+    selected_ids = {id(row) for row in validation_rows}
+    by_source: dict[str, dict[str, object]] = {}
+    for row in trades:
+        item = by_source.setdefault(
+            row.source_table,
+            {
+                "source_table": row.source_table,
+                "deduped_trades": 0,
+                "deduped_days": set(),
+                "deduped_raw_net_jpy": 0.0,
+                "deduped_managed_net_jpy": 0.0,
+                "validation_universe_trades": 0,
+                "validation_universe_days": set(),
+                "validation_universe_wins": 0,
+                "validation_universe_raw_net_jpy": 0.0,
+                "validation_universe_managed_net_jpy": 0.0,
+                "selected_trades": 0,
+                "selected_days": set(),
+                "selected_raw_net_jpy": 0.0,
+                "selected_managed_net_jpy": 0.0,
+            },
+        )
+        capped = _capped_pl(row.pl_jpy, max_loss_jpy)
+        item["deduped_trades"] = int(item["deduped_trades"]) + 1
+        item["deduped_raw_net_jpy"] = _round(float(item["deduped_raw_net_jpy"]) + row.pl_jpy)
+        item["deduped_managed_net_jpy"] = _round(float(item["deduped_managed_net_jpy"]) + capped)
+        deduped_days = item["deduped_days"]
+        if isinstance(deduped_days, set):
+            deduped_days.add(row.session_date)
+        if row.session_date in validation_days:
+            item["validation_universe_trades"] = int(item["validation_universe_trades"]) + 1
+            item["validation_universe_wins"] = int(item["validation_universe_wins"]) + (1 if capped > 0 else 0)
+            item["validation_universe_raw_net_jpy"] = _round(float(item["validation_universe_raw_net_jpy"]) + row.pl_jpy)
+            item["validation_universe_managed_net_jpy"] = _round(
+                float(item["validation_universe_managed_net_jpy"]) + capped
+            )
+            validation_universe_days = item["validation_universe_days"]
+            if isinstance(validation_universe_days, set):
+                validation_universe_days.add(row.session_date)
+        if id(row) in selected_ids:
+            item["selected_trades"] = int(item["selected_trades"]) + 1
+            item["selected_raw_net_jpy"] = _round(float(item["selected_raw_net_jpy"]) + row.pl_jpy)
+            item["selected_managed_net_jpy"] = _round(float(item["selected_managed_net_jpy"]) + capped)
+            selected_days = item["selected_days"]
+            if isinstance(selected_days, set):
+                selected_days.add(row.session_date)
+    rows: list[dict[str, float | int | str]] = []
+    for item in by_source.values():
+        validation_trades = int(item["validation_universe_trades"])
+        validation_wins = int(item["validation_universe_wins"])
+        deduped_days = item["deduped_days"]
+        validation_days_set = item["validation_universe_days"]
+        selected_days_set = item["selected_days"]
+        rows.append(
+            {
+                "source_table": str(item["source_table"]),
+                "deduped_trades": int(item["deduped_trades"]),
+                "deduped_days": len(deduped_days) if isinstance(deduped_days, set) else 0,
+                "deduped_raw_net_jpy": _round(float(item["deduped_raw_net_jpy"])),
+                "deduped_managed_net_jpy": _round(float(item["deduped_managed_net_jpy"])),
+                "validation_universe_trades": validation_trades,
+                "validation_universe_days": len(validation_days_set) if isinstance(validation_days_set, set) else 0,
+                "validation_universe_win_rate_pct": _round((validation_wins / validation_trades) * 100.0)
+                if validation_trades
+                else 0.0,
+                "validation_universe_raw_net_jpy": _round(float(item["validation_universe_raw_net_jpy"])),
+                "validation_universe_managed_net_jpy": _round(float(item["validation_universe_managed_net_jpy"])),
+                "selected_trades": int(item["selected_trades"]),
+                "selected_days": len(selected_days_set) if isinstance(selected_days_set, set) else 0,
+                "selected_raw_net_jpy": _round(float(item["selected_raw_net_jpy"])),
+                "selected_managed_net_jpy": _round(float(item["selected_managed_net_jpy"])),
+            }
+        )
+    return sorted(rows, key=lambda item: str(item["source_table"]))
 
 
 def _oracle_summary(
