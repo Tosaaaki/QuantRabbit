@@ -87,14 +87,24 @@ class PositionProtectionGateway:
             blocked = _has_block(action)
             response = None
             if send and request is not None and not blocked:
-                if request["type"] == "CLOSE":
-                    response = self.client.close_trade(str(request["trade_id"]), str(request.get("units") or "ALL"))
-                elif request["type"] == "DEPENDENT_ORDER_REPLACE":
-                    response = self.client.replace_trade_dependent_orders(
-                        str(request["trade_id"]),
-                        dict(request["order_request"]),
+                try:
+                    if request["type"] == "CLOSE":
+                        response = self.client.close_trade(str(request["trade_id"]), str(request.get("units") or "ALL"))
+                    elif request["type"] == "DEPENDENT_ORDER_REPLACE":
+                        response = self.client.replace_trade_dependent_orders(
+                            str(request["trade_id"]),
+                            dict(request["order_request"]),
+                        )
+                    action["sent"] = True
+                except Exception as exc:  # noqa: BLE001
+                    action["issues"].append(
+                        {
+                            "severity": "BLOCK",
+                            "code": _send_error_code(str(request["type"])),
+                            "message": str(exc),
+                        }
                     )
-                action["sent"] = True
+                    response = {"error": str(exc)}
             responses.append(response)
             action["response"] = response
 
@@ -314,6 +324,14 @@ def _status(*, actionable: int, blocked: int, sent: int, send: bool) -> str:
     if send and blocked:
         return "BLOCKED"
     return "STAGED"
+
+
+def _send_error_code(request_type: str) -> str:
+    if request_type == "CLOSE":
+        return "POSITION_CLOSE_SEND_FAILED"
+    if request_type == "DEPENDENT_ORDER_REPLACE":
+        return "POSITION_PROTECTION_SEND_FAILED"
+    return "POSITION_ACTION_SEND_FAILED"
 
 
 def _has_block(action: dict[str, Any]) -> bool:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -239,6 +240,68 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(client.closed, [])
             self.assertIn("MANUAL_POSITION_CLOSE_FORBIDDEN", (root / "exec.md").read_text())
 
+    def test_successful_close_receipt_survives_later_broker_write_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FailingProtectionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=PositionManagementDecision(
+                    generated_at_utc="2026-05-01T00:00:00+00:00",
+                    action="MIXED",
+                    positions=(
+                        ManagedPosition(
+                            trade_id="1",
+                            pair="EUR_USD",
+                            side="LONG",
+                            units=1000,
+                            action=ACTION_REVIEW_EXIT,
+                            unrealized_pl_jpy=-100.0,
+                            remaining_risk_jpy=100.0,
+                            remaining_reward_jpy=0.0,
+                            same_direction_score=None,
+                            opposite_direction_score=None,
+                            recommended_stop_loss=None,
+                            recommended_take_profit=None,
+                            reasons=("test",),
+                            owner="trader",
+                        ),
+                        ManagedPosition(
+                            trade_id="2",
+                            pair="EUR_USD",
+                            side="LONG",
+                            units=1000,
+                            action=ACTION_REPAIR_TAKE_PROFIT,
+                            unrealized_pl_jpy=80.0,
+                            remaining_risk_jpy=50.0,
+                            remaining_reward_jpy=150.0,
+                            same_direction_score=None,
+                            opposite_direction_score=None,
+                            recommended_stop_loss=None,
+                            recommended_take_profit=1.1760,
+                            reasons=("test",),
+                            owner="trader",
+                        ),
+                    ),
+                ),
+                snapshot=_two_position_snapshot(),
+                send=True,
+            )
+
+            payload = json.loads((root / "exec.json").read_text())
+
+        self.assertEqual(summary.status, "PARTIAL_SENT_WITH_BLOCKS")
+        self.assertTrue(summary.sent)
+        self.assertEqual(client.closed, [("1", "ALL")])
+        self.assertTrue(payload["actions"][0]["sent"])
+        self.assertEqual(payload["actions"][0]["response"]["relatedTransactionIDs"], ["20"])
+        self.assertFalse(payload["actions"][1]["sent"])
+        self.assertEqual(payload["actions"][1]["issues"][0]["code"], "POSITION_PROTECTION_SEND_FAILED")
+
 
 class FakePositionClient:
     def __init__(self) -> None:
@@ -252,6 +315,11 @@ class FakePositionClient:
     def close_trade(self, trade_id: str, units: str = "ALL") -> dict[str, Any]:
         self.closed.append((trade_id, units))
         return {"relatedTransactionIDs": ["20"]}
+
+
+class FailingProtectionClient(FakePositionClient):
+    def replace_trade_dependent_orders(self, trade_id: str, order_request: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("dependent order replace failed")
 
 
 def _decision(
@@ -305,6 +373,38 @@ def _snapshot(
                 take_profit=take_profit,
                 stop_loss=stop_loss,
                 owner=owner,
+            ),
+        ),
+        quotes={"EUR_USD": Quote("EUR_USD", bid=1.1738, ask=1.1739, timestamp_utc=now)},
+    )
+
+
+def _two_position_snapshot() -> BrokerSnapshot:
+    now = datetime.now(timezone.utc)
+    return BrokerSnapshot(
+        fetched_at_utc=now,
+        positions=(
+            BrokerPosition(
+                trade_id="1",
+                pair="EUR_USD",
+                side=Side.LONG,
+                units=1000,
+                entry_price=1.1729,
+                unrealized_pl_jpy=-100.0,
+                take_profit=1.1741,
+                stop_loss=1.1721,
+                owner=Owner.TRADER,
+            ),
+            BrokerPosition(
+                trade_id="2",
+                pair="EUR_USD",
+                side=Side.LONG,
+                units=1000,
+                entry_price=1.1729,
+                unrealized_pl_jpy=80.0,
+                take_profit=1.1741,
+                stop_loss=1.1721,
+                owner=Owner.TRADER,
             ),
         ),
         quotes={"EUR_USD": Quote("EUR_USD", bid=1.1738, ask=1.1739, timestamp_utc=now)},
