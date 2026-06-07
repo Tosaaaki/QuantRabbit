@@ -365,13 +365,13 @@ def _seed_execution_events(path: Path) -> None:
         conn.execute(
             """
             INSERT INTO execution_events(ts_utc, event_type, pair, side, exit_reason, realized_pl_jpy)
-            VALUES ('2026-06-02T23:00:00+00:00', 'TRADE_CLOSED', 'EUR_USD', 'LONG', 'TAKE_PROFIT_ORDER', 150.0)
+            VALUES ('2026-06-02T23:00:00.123456789Z', 'TRADE_CLOSED', 'EUR_USD', 'LONG', 'TAKE_PROFIT_ORDER', 150.0)
             """
         )
         conn.execute(
             """
             INSERT INTO execution_events(ts_utc, event_type, pair, side, exit_reason, realized_pl_jpy)
-            VALUES ('2026-06-02T22:00:00+00:00', 'TRADE_CLOSED', 'EUR_USD', 'SHORT', 'MARKET_ORDER_TRADE_CLOSE', -100.0)
+            VALUES ('2026-06-02T22:00:00.123456789Z', 'TRADE_CLOSED', 'EUR_USD', 'SHORT', 'MARKET_ORDER_TRADE_CLOSE', -100.0)
             """
         )
 

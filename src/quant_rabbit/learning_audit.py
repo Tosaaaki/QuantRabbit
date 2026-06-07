@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,10 @@ from quant_rabbit.paths import (
 
 DEFAULT_MIN_EFFECT_SAMPLE = 30
 DEFAULT_WINDOW_HOURS = 168.0
+# Exit-reason diagnostics should wait for repeated occurrences but must still
+# catch a bad close mechanism before the full learning sample floor is reached.
+# Three observations is an audit repetition floor, not a trading threshold.
+MIN_EXIT_REASON_DIAGNOSTIC_SAMPLE = 3
 
 _INFLUENCE_LIMITS = {
     "ai_backtest_certified_positive_edge": 25.0,
@@ -122,6 +127,7 @@ class LearningAuditor:
         )
         checks.extend(influence_result["checks"])
         checks.extend(_effect_checks(run_id, effect, influence_active=bool(influence_result["influenced_lanes"]), min_effect_sample=min_effect_sample))
+        checks.extend(_exit_reason_checks(run_id, effect))
 
         blockers = [item for item in checks if item["status"] == "BLOCK" or item["severity"] == "BLOCK"]
         warnings = [item for item in checks if item["status"] == "WARN" or item["severity"] == "WARN"]
@@ -311,9 +317,27 @@ class LearningAuditor:
             f"- Profit factor: `{_format_optional(effect.get('profit_factor'))}`",
             f"- Expectancy JPY: `{_format_optional(effect.get('expectancy_jpy'))}`",
             "",
-            "## Blockers",
+            "## Exit Reasons",
             "",
         ]
+        exit_reasons = effect.get("exit_reason_metrics") if isinstance(effect.get("exit_reason_metrics"), dict) else {}
+        if exit_reasons:
+            for reason, metrics in sorted(exit_reasons.items(), key=lambda item: float(item[1].get("net_jpy") or 0.0)):
+                lines.append(
+                    f"- `{reason}` closed=`{int(metrics.get('closed_trades') or 0)}` "
+                    f"net=`{float(metrics.get('net_jpy') or 0.0):.1f}` "
+                    f"pf=`{_format_optional(metrics.get('profit_factor'))}` "
+                    f"expectancy=`{_format_optional(metrics.get('expectancy_jpy'))}`"
+                )
+        else:
+            lines.append("- none")
+        lines.extend(
+            [
+                "",
+                "## Blockers",
+                "",
+            ]
+        )
         lines.extend(f"- {item}" for item in payload["blockers"]) if payload["blockers"] else lines.append("- none")
         lines.extend(["", "## Warnings", ""])
         lines.extend(f"- {item}" for item in payload["warnings"]) if payload["warnings"] else lines.append("- none")
@@ -728,6 +752,30 @@ def _effect_checks(run_id: str, effect: dict[str, Any], *, influence_active: boo
     ]
 
 
+def _exit_reason_checks(run_id: str, effect: dict[str, Any]) -> list[dict[str, Any]]:
+    exit_reasons = effect.get("exit_reason_metrics") if isinstance(effect.get("exit_reason_metrics"), dict) else {}
+    market_close = exit_reasons.get("MARKET_ORDER_TRADE_CLOSE") if isinstance(exit_reasons.get("MARKET_ORDER_TRADE_CLOSE"), dict) else None
+    if not market_close:
+        return []
+    closed = int(market_close.get("closed_trades") or 0)
+    net = _maybe_float(market_close.get("net_jpy")) or 0.0
+    if closed < MIN_EXIT_REASON_DIAGNOSTIC_SAMPLE or net >= 0:
+        return []
+    return [
+        _check(
+            run_id=run_id,
+            source="effect_measurement",
+            check_name="market_order_trade_close_drag",
+            status="WARN",
+            severity="WARN",
+            message="market-order trade closes are negative in the recent effect window; prefer TP/TP-rebalance/profit-side exits unless CLOSE Gate A/B is hard",
+            metric_value=net,
+            metric_unit="JPY",
+            evidence=market_close,
+        )
+    ]
+
+
 def _blocked_influence(run_id: str, lane_id: str, message: str, detail: dict[str, Any]) -> dict[str, Any]:
     return _check(
         run_id=run_id,
@@ -762,24 +810,28 @@ def _outcome_detail_validated(detail: dict[str, Any]) -> bool:
 
 
 def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dict[str, Any]:
-    rows: list[sqlite3.Row] = []
+    rows: list[dict[str, Any]] = []
     if db_path.exists():
         try:
             with sqlite3.connect(db_path) as conn:
                 conn.row_factory = sqlite3.Row
+                columns = _table_columns(conn, "execution_events")
+                exit_reason_select = ", exit_reason" if "exit_reason" in columns else ""
                 rows = list(
-                    conn.execute(
+                    dict(row)
+                    for row in conn.execute(
                         """
-                        SELECT ts_utc, event_type, realized_pl_jpy
+                        SELECT ts_utc, event_type, realized_pl_jpy{exit_reason_select}
                         FROM execution_events
                         WHERE event_type = 'TRADE_CLOSED'
-                        """
+                        """.format(exit_reason_select=exit_reason_select)
                     )
                 )
         except sqlite3.Error:
             rows = []
     cutoff = now - timedelta(hours=max(0.0, window_hours))
     pls: list[float] = []
+    pls_by_exit_reason: dict[str, list[float]] = {}
     for row in rows:
         ts = _parse_time(row["ts_utc"])
         if ts is None or ts < cutoff:
@@ -787,6 +839,8 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         value = _maybe_float(row["realized_pl_jpy"])
         if value is not None:
             pls.append(value)
+            reason = str(row.get("exit_reason") or "UNKNOWN").strip() or "UNKNOWN"
+            pls_by_exit_reason.setdefault(reason, []).append(value)
     gross_profit = sum(value for value in pls if value > 0)
     gross_loss = abs(sum(value for value in pls if value < 0))
     net = sum(pls)
@@ -800,7 +854,35 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         "profit_factor": (gross_profit / gross_loss) if gross_loss > 0 else None,
         "win_rate": (wins / count) if count else None,
         "expectancy_jpy": (net / count) if count else None,
+        "exit_reason_metrics": _exit_reason_metrics(pls_by_exit_reason),
     }
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    try:
+        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table_name})")}
+    except sqlite3.Error:
+        return set()
+
+
+def _exit_reason_metrics(pls_by_exit_reason: dict[str, list[float]]) -> dict[str, dict[str, float | int | None]]:
+    metrics: dict[str, dict[str, float | int | None]] = {}
+    for reason, pls in sorted(pls_by_exit_reason.items()):
+        gross_profit = sum(value for value in pls if value > 0)
+        gross_loss = abs(sum(value for value in pls if value < 0))
+        net = sum(pls)
+        count = len(pls)
+        wins = sum(1 for value in pls if value > 0)
+        metrics[reason] = {
+            "closed_trades": count,
+            "net_jpy": round(net, 4),
+            "gross_profit_jpy": round(gross_profit, 4),
+            "gross_loss_jpy": round(gross_loss, 4),
+            "profit_factor": (gross_profit / gross_loss) if gross_loss > 0 else None,
+            "win_rate": (wins / count) if count else None,
+            "expectancy_jpy": (net / count) if count else None,
+        }
+    return metrics
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -812,7 +894,15 @@ def _parse_time(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return None
+        # OANDA ledger timestamps can carry nanoseconds; Python accepts only
+        # microseconds. Truncate only for audit window math.
+        match = re.match(r"^(.*\.\d{6})\d+([+-]\d{2}:\d{2})$", text)
+        if not match:
+            return None
+        try:
+            parsed = datetime.fromisoformat(match.group(1) + match.group(2))
+        except ValueError:
+            return None
     return _to_utc(parsed)
 
 

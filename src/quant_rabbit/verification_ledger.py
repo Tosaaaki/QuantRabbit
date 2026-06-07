@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -1299,7 +1300,15 @@ def _parse_time(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        return None
+        # OANDA timestamps may carry nanoseconds; verification only needs
+        # microsecond precision for effect-window inclusion.
+        match = re.match(r"^(.*\.\d{6})\d+([+-]\d{2}:\d{2})$", text)
+        if not match:
+            return None
+        try:
+            parsed = datetime.fromisoformat(match.group(1) + match.group(2))
+        except ValueError:
+            return None
     return _to_utc(parsed)
 
 

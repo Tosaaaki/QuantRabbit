@@ -105,6 +105,33 @@ class LearningAuditorTest(unittest.TestCase):
             self.assertEqual(payload["status"], "LEARNING_AUDIT_WARN")
             self.assertEqual(payload["influenced_lanes"], 1)
 
+    def test_warns_when_market_order_trade_closes_drive_recent_loss(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            db = root / "execution_ledger.db"
+            _seed_exit_reason_drag_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_WARN")
+            payload = json.loads((root / "learning_audit.json").read_text())
+            market_close = payload["effect_metrics"]["exit_reason_metrics"]["MARKET_ORDER_TRADE_CLOSE"]
+            self.assertEqual(market_close["closed_trades"], 3)
+            self.assertEqual(market_close["net_jpy"], -600.0)
+            self.assertTrue(any("market-order trade closes are negative" in item for item in payload["warnings"]))
+            self.assertIn("MARKET_ORDER_TRADE_CLOSE", (root / "learning_audit.md").read_text())
+
 
 def _fixtures(root: Path, *, ai_status: str) -> dict[str, Path]:
     files = {
@@ -194,6 +221,27 @@ def _seed_execution_events(path: Path) -> None:
         conn.execute(
             "INSERT INTO execution_events VALUES ('2026-06-02T22:00:00+00:00', 'TRADE_CLOSED', -80.0)"
         )
+
+
+def _seed_exit_reason_drag_events(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                exit_reason TEXT,
+                realized_pl_jpy REAL
+            )
+            """
+        )
+        rows = [
+            ("2026-06-02T23:00:00.123456789Z", "TRADE_CLOSED", "TAKE_PROFIT_ORDER", 150.0),
+            ("2026-06-02T22:30:00.123456789Z", "TRADE_CLOSED", "MARKET_ORDER_TRADE_CLOSE", -100.0),
+            ("2026-06-02T22:00:00.123456789Z", "TRADE_CLOSED", "MARKET_ORDER_TRADE_CLOSE", -200.0),
+            ("2026-06-02T21:30:00.123456789Z", "TRADE_CLOSED", "MARKET_ORDER_TRADE_CLOSE", -300.0),
+        ]
+        conn.executemany("INSERT INTO execution_events VALUES (?, ?, ?, ?)", rows)
 
 
 if __name__ == "__main__":
