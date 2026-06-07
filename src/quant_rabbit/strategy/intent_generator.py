@@ -4492,13 +4492,7 @@ def _build_telemetry_live_readiness_cache(
             directional_projection_keys.add((pair, cycle_id))
         if str(item.get("resolution_status") or "").upper() != "PENDING":
             continue
-        emitted = _parse_telemetry_time(item.get("timestamp_emitted_utc"))
-        window_min = _optional_float(item.get("resolution_window_min"))
-        if emitted is None or window_min is None or window_min <= 0:
-            expired_pending += 1
-            continue
-        expiry_age_seconds = (now - emitted).total_seconds() - (window_min * 60.0)
-        if expiry_age_seconds >= PROJECTION_PENDING_EXPIRY_GRACE_SECONDS:
+        if _pending_projection_is_expired(item, validation_time_utc=now):
             expired_pending += 1
 
     return _TelemetryLiveReadinessCache(
@@ -4587,15 +4581,23 @@ def _expired_pending_projection_count(*, data_root: Path, validation_time_utc: d
     for item in _iter_jsonl_dicts(path):
         if str(item.get("resolution_status") or "").upper() != "PENDING":
             continue
-        emitted = _parse_telemetry_time(item.get("timestamp_emitted_utc"))
-        window_min = _optional_float(item.get("resolution_window_min"))
-        if emitted is None or window_min is None or window_min <= 0:
-            expired += 1
-            continue
-        expiry_age_seconds = (now - emitted).total_seconds() - (window_min * 60.0)
-        if expiry_age_seconds >= PROJECTION_PENDING_EXPIRY_GRACE_SECONDS:
+        if _pending_projection_is_expired(item, validation_time_utc=now):
             expired += 1
     return expired
+
+
+def _pending_projection_is_expired(item: dict[str, Any], *, validation_time_utc: datetime) -> bool:
+    emitted = _parse_telemetry_time(item.get("timestamp_emitted_utc"))
+    now = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
+    if emitted is None:
+        return True
+    if emitted > now:
+        return False
+    window_min = _optional_float(item.get("resolution_window_min"))
+    if window_min is None or window_min <= 0:
+        return True
+    expiry_age_seconds = (now - emitted).total_seconds() - (window_min * 60.0)
+    return expiry_age_seconds >= PROJECTION_PENDING_EXPIRY_GRACE_SECONDS
 
 
 def _execution_ledger_sync_live_issue(snapshot: BrokerSnapshot, *, data_root: Path) -> dict[str, str] | None:

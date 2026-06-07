@@ -2189,6 +2189,41 @@ class IntentGeneratorTest(unittest.TestCase):
                     1,
                 )
 
+    def test_projection_expiry_ignores_rows_emitted_after_validation_time(self) -> None:
+        from quant_rabbit.strategy.intent_generator import (
+            _build_telemetry_live_readiness_cache,
+            _expired_pending_projection_count,
+        )
+
+        validation_time = datetime(2026, 6, 1, 6, 56, 21, tzinfo=timezone.utc)
+        row = {
+            "timestamp_emitted_utc": (validation_time + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
+            "pair": "EUR_USD",
+            "signal_name": "news_theme_followthrough",
+            "direction": "DOWN",
+            "resolution_window_min": 0.0,
+            "resolution_status": "PENDING",
+            "cycle_id": "same-generate-intents-cycle",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            (data_root / "projection_ledger.jsonl").write_text(json.dumps(row) + "\n")
+
+            self.assertEqual(
+                _expired_pending_projection_count(
+                    data_root=data_root,
+                    validation_time_utc=validation_time,
+                ),
+                0,
+            )
+            self.assertEqual(
+                _build_telemetry_live_readiness_cache(
+                    data_root=data_root,
+                    validation_time_utc=validation_time,
+                ).expired_pending_projection_count,
+                0,
+            )
+
     def test_blocks_chart_direction_conflict_before_live_ready(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
