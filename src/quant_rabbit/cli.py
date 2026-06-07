@@ -47,8 +47,12 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_REPORT,
     DEFAULT_COMPLETION_STATUS,
     DEFAULT_COMPLETION_STATUS_REPORT,
+    DEFAULT_BROKER_INSTRUMENTS,
+    DEFAULT_BROKER_INSTRUMENTS_REPORT,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_PAIR_CHARTS_REPORT,
+    DEFAULT_CONTEXT_ASSET_CHARTS,
+    DEFAULT_CONTEXT_ASSET_CHARTS_REPORT,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
     DEFAULT_DAILY_TARGET_REPORT,
@@ -123,7 +127,7 @@ from quant_rabbit.paths import (
     DEFAULT_OUTCOME_MART_REPORT,
 )
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, StaticTraderProvider
-from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS_ARG
+from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS, DEFAULT_TRADER_PAIRS_ARG
 from quant_rabbit.replay import ReplayBacktester
 from quant_rabbit.risk import RiskEngine, RiskPolicy, resolve_max_loss_jpy
 from quant_rabbit.snapshot_json import snapshot_order_raw, snapshot_payload_order_raw
@@ -650,6 +654,8 @@ def _auto_refresh_market_evidence_if_required(
     label: str,
     reuse_market_artifacts: bool = False,
     market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
+    context_asset_charts_path: Path = DEFAULT_CONTEXT_ASSET_CHARTS,
+    broker_instruments_path: Path = DEFAULT_BROKER_INSTRUMENTS,
 ) -> dict[str, Any]:
     """Refresh the full technical/macro packet before runtime lane pricing.
 
@@ -662,6 +668,8 @@ def _auto_refresh_market_evidence_if_required(
         _validate_reusable_market_evidence(
             label=label,
             market_context_matrix_path=market_context_matrix_path,
+            context_asset_charts_path=context_asset_charts_path,
+            broker_instruments_path=broker_instruments_path,
         )
         return {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
     if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip() in {
@@ -682,6 +690,10 @@ def _auto_refresh_market_evidence_if_required(
 
         from quant_rabbit.analysis.calendar import build_calendar_snapshot
         from quant_rabbit.analysis.chart_reader import build_pair_chart
+        from quant_rabbit.analysis.context_assets import (
+            build_context_asset_charts,
+            write_context_asset_charts_report,
+        )
         from quant_rabbit.analysis.cot import build_cot_snapshot
         from quant_rabbit.analysis.cross_asset import (
             DEFAULT_CROSS_ASSET_INSTRUMENTS,
@@ -696,6 +708,14 @@ def _auto_refresh_market_evidence_if_required(
         from quant_rabbit.analysis.options import build_option_skew_snapshot
         from quant_rabbit.analysis.score_momentum import attach_score_momentum
         from quant_rabbit.analysis.strength import build_strength_snapshot
+
+        broker_instruments = _broker_instruments_snapshot(
+            client=client,
+            trader_pairs=pairs,
+            context_assets=DEFAULT_CONTEXT_ASSETS,
+        )
+        _write_json(DEFAULT_BROKER_INSTRUMENTS, broker_instruments)
+        _write_broker_instruments_report(broker_instruments, DEFAULT_BROKER_INSTRUMENTS_REPORT)
 
         generated_at = datetime.now(timezone.utc).isoformat()
         charts = [
@@ -717,6 +737,15 @@ def _auto_refresh_market_evidence_if_required(
             "charts": charts,
         }
         _write_json(DEFAULT_PAIR_CHARTS, pair_payload)
+
+        context_asset_charts = build_context_asset_charts(
+            client=client,
+            instruments=DEFAULT_CONTEXT_ASSETS,
+            timeframes=DEFAULT_PAIR_CHART_TIMEFRAMES,
+            count=candle_count,
+        )
+        _write_json(DEFAULT_CONTEXT_ASSET_CHARTS, context_asset_charts)
+        write_context_asset_charts_report(context_asset_charts, DEFAULT_CONTEXT_ASSET_CHARTS_REPORT)
 
         cross_asset = build_cross_asset_snapshot(
             client=client,
@@ -757,6 +786,7 @@ def _auto_refresh_market_evidence_if_required(
             calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
             cot_path=DEFAULT_COT_SNAPSHOT,
             option_skew_path=DEFAULT_OPTION_SKEW,
+            context_asset_charts_path=DEFAULT_CONTEXT_ASSET_CHARTS,
         )
         _write_json(market_context_matrix_path, matrix)
         write_market_context_matrix_report(matrix, DEFAULT_MARKET_CONTEXT_MATRIX_REPORT)
@@ -773,6 +803,8 @@ def _auto_refresh_market_evidence_if_required(
     issues: list[str] = []
     for payload in (
         cross_asset.to_dict(),
+        context_asset_charts,
+        broker_instruments,
         flow.to_dict(),
         strength.to_dict(),
         levels.to_dict(),
@@ -788,6 +820,9 @@ def _auto_refresh_market_evidence_if_required(
         "pair_charts_generated_at_utc": generated_at,
         "market_context_pairs": len(matrix.get("pairs") or {}),
         "market_context_matrix_path": str(market_context_matrix_path),
+        "context_assets": len(context_asset_charts.get("charts") or []),
+        "context_assets_tradeable": len(broker_instruments.get("context_assets_tradeable") or []),
+        "context_assets_not_tradeable": len(broker_instruments.get("context_assets_not_tradeable") or []),
         "supports": sum(len(row.get("supports") or []) for row in side_rows),
         "rejects": sum(len(row.get("rejects") or []) for row in side_rows),
         "warnings": sum(len(row.get("warnings") or []) for row in side_rows),
@@ -806,6 +841,8 @@ def _validate_reusable_market_evidence(
     *,
     label: str,
     market_context_matrix_path: Path,
+    context_asset_charts_path: Path,
+    broker_instruments_path: Path,
 ) -> None:
     """Refuse reused live artifacts when candidate discovery lacks matrix context."""
 
@@ -828,6 +865,111 @@ def _validate_reusable_market_evidence(
             f"{market_context_matrix_path} has no pair/side matrix rows; refresh market context before "
             "live candidate discovery"
         )
+    required_optional_context = (
+        ("context_asset_charts", context_asset_charts_path, "charts"),
+        ("broker_instruments", broker_instruments_path, "tradeable_instruments"),
+    )
+    for name, path, required_key in required_optional_context:
+        if not path.exists():
+            raise RuntimeError(
+                f"{label} cannot reuse market artifacts: missing required market evidence artifact "
+                f"{name}={path}; run without --reuse-market-artifacts or refresh market context before "
+                "live candidate discovery"
+            )
+        try:
+            context_payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{label} cannot reuse market artifacts: unreadable {name}={path}: {exc}; "
+                "refresh market context before live candidate discovery"
+            ) from exc
+        if not isinstance(context_payload, dict) or not isinstance(context_payload.get(required_key), list):
+            raise RuntimeError(
+                f"{label} cannot reuse market artifacts: {name}={path} has no {required_key} rows; "
+                "refresh market context before live candidate discovery"
+            )
+
+
+def _broker_instruments_snapshot(
+    *,
+    client: OandaReadOnlyClient,
+    trader_pairs: tuple[str, ...],
+    context_assets: tuple[str, ...],
+) -> dict[str, Any]:
+    generated_at = datetime.now(timezone.utc).isoformat()
+    try:
+        instruments = client.account_instruments()
+    except Exception as exc:
+        return {
+            "generated_at_utc": generated_at,
+            "schema_version": 1,
+            "status": "FETCH_FAILED",
+            "tradeability_policy": "BROKER_ACCOUNT_INSTRUMENTS_REQUIRED_FOR_LIVE_TRADE_UNIVERSE",
+            "tradeable_instruments": [],
+            "context_assets_tradeable": [],
+            "context_assets_not_tradeable": list(context_assets),
+            "trader_pairs_missing": [],
+            "specs": {},
+            "issues": [f"BROKER_INSTRUMENTS_FETCH_FAILED:{exc.__class__.__name__}:{exc}"],
+        }
+    specs: dict[str, dict[str, Any]] = {}
+    for item in instruments:
+        name = str(item.get("name") or "").upper()
+        if not name:
+            continue
+        specs[name] = {
+            "type": item.get("type"),
+            "displayPrecision": item.get("displayPrecision"),
+            "pipLocation": item.get("pipLocation"),
+            "tradeUnitsPrecision": item.get("tradeUnitsPrecision"),
+            "minimumTradeSize": item.get("minimumTradeSize"),
+            "marginRate": item.get("marginRate"),
+        }
+    tradeable = sorted(specs)
+    tradeable_set = set(tradeable)
+    return {
+        "generated_at_utc": generated_at,
+        "schema_version": 1,
+        "status": "OK",
+        "tradeability_policy": "BROKER_ACCOUNT_INSTRUMENTS_REQUIRED_FOR_LIVE_TRADE_UNIVERSE",
+        "tradeable_instruments": tradeable,
+        "context_assets_tradeable": [asset for asset in context_assets if asset in tradeable_set],
+        "context_assets_not_tradeable": [asset for asset in context_assets if asset not in tradeable_set],
+        "trader_pairs_missing": [pair for pair in trader_pairs if pair not in tradeable_set],
+        "specs": specs,
+        "issues": [],
+    }
+
+
+def _write_broker_instruments_report(payload: dict[str, Any], report_path: Path) -> None:
+    lines = [
+        "# Broker Instruments",
+        "",
+        f"- Generated at UTC: `{payload.get('generated_at_utc')}`",
+        f"- Status: `{payload.get('status')}`",
+        f"- Tradeability policy: `{payload.get('tradeability_policy')}`",
+        f"- Tradeable instruments: `{len(payload.get('tradeable_instruments') or [])}`",
+        f"- Context assets tradeable: `{len(payload.get('context_assets_tradeable') or [])}`",
+        f"- Context assets not tradeable: `{len(payload.get('context_assets_not_tradeable') or [])}`",
+        "",
+        "## Context Assets",
+        "",
+        "| Instrument | Broker tradeable |",
+        "|---|---|",
+    ]
+    tradeable = set(payload.get("context_assets_tradeable") or [])
+    for asset in [*payload.get("context_assets_tradeable", []), *payload.get("context_assets_not_tradeable", [])]:
+        lines.append(f"| `{asset}` | `{asset in tradeable}` |")
+    missing = [str(item) for item in payload.get("trader_pairs_missing", []) or [] if str(item).strip()]
+    if missing:
+        lines.extend(["", "## Missing Trader Pairs", ""])
+        lines.extend(f"- `{pair}`" for pair in missing)
+    issues = [str(item) for item in payload.get("issues", []) or [] if str(item).strip()]
+    if issues:
+        lines.extend(["", "## Issues", ""])
+        lines.extend(f"- {issue}" for issue in issues[:40])
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text("\n".join(lines) + "\n")
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -885,6 +1027,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_matrix = sub.add_parser("market-context-matrix", help="Pair/side evidence matrix from chart, macro, flow, levels, calendar, COT, and options artifacts.")
     p_matrix.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
+    p_matrix.add_argument("--context-asset-charts", type=Path, default=DEFAULT_CONTEXT_ASSET_CHARTS)
     p_matrix.add_argument("--cross-asset", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
     p_matrix.add_argument("--flow", type=Path, default=DEFAULT_FLOW_SNAPSHOT)
     p_matrix.add_argument("--currency-strength", type=Path, default=DEFAULT_CURRENCY_STRENGTH)
@@ -2130,6 +2273,7 @@ def main(argv: list[str] | None = None) -> int:
             calendar_path=args.calendar,
             cot_path=args.cot,
             option_skew_path=args.option_skew,
+            context_asset_charts_path=args.context_asset_charts,
         )
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

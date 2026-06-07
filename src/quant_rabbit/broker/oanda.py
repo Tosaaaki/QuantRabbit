@@ -84,6 +84,10 @@ class OandaReadOnlyClient:
         payload = self.get_json(f"/v3/accounts/{self.account_id}/summary")
         return _account_summary_from_payload(payload, now_utc=now_utc or datetime.now(timezone.utc))
 
+    def account_instruments(self) -> tuple[dict, ...]:
+        payload = self.get_json(f"/v3/accounts/{self.account_id}/instruments")
+        return tuple(item for item in payload.get("instruments", []) or [] if isinstance(item, dict))
+
     def transactions_since_id(self, transaction_id: str) -> dict:
         return self.get_json(
             f"/v3/accounts/{self.account_id}/transactions/sinceid",

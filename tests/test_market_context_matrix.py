@@ -122,6 +122,7 @@ class MarketContextMatrixTest(unittest.TestCase):
     def test_gold_and_oil_are_cross_asset_context_not_trade_blocks(self) -> None:
         payload = build_market_context_matrix_from_payloads(
             pair_charts=_pair_charts("EUR_USD", "USD_CAD"),
+            context_asset_charts=_context_asset_charts("XAU_USD", "WTICO_USD"),
             cross_asset={
                 "synthetic_dxy": {"change_pct_24h": 0.0},
                 "assets": [
@@ -141,11 +142,19 @@ class MarketContextMatrixTest(unittest.TestCase):
         eurusd_long_codes = {item["code"] for item in payload["pairs"]["EUR_USD"]["LONG"]["supports"]}
         usdcad_short_codes = {item["code"] for item in payload["pairs"]["USD_CAD"]["SHORT"]["supports"]}
         usdcad_long_warning_codes = {item["code"] for item in payload["pairs"]["USD_CAD"]["LONG"]["warnings"]}
+        eurusd_gold_context = [
+            item
+            for item in payload["pairs"]["EUR_USD"]["LONG"]["supports"]
+            if item["code"] == "GOLD_CONTEXT_TECHNICAL_DIRECTION"
+        ]
 
         self.assertIn("GOLD_USD_PRESSURE_DIRECTION", eurusd_long_codes)
+        self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", eurusd_long_codes)
         self.assertIn("GOLD_USD_PRESSURE_DIRECTION", usdcad_short_codes)
         self.assertIn("OIL_CAD_DIRECTION", usdcad_short_codes)
+        self.assertIn("OIL_CONTEXT_TECHNICAL_DIRECTION", usdcad_short_codes)
         self.assertIn("OIL_CAD_DIRECTION", usdcad_long_warning_codes)
+        self.assertEqual(eurusd_gold_context[0]["evidence_refs"], ["context_asset:XAU_USD"])
         self.assertEqual(payload["trade_count_policy"], "ADVISORY_ONLY_DOES_NOT_BLOCK_OR_DEMOTE_LANES")
 
     def test_intent_summary_keeps_matrix_compact(self) -> None:
@@ -192,6 +201,27 @@ def _pair_charts(*pairs: str) -> dict:
             }
             for pair in pairs
         ]
+    }
+
+
+def _context_asset_charts(*assets: str) -> dict:
+    return {
+        "role": "NON_FX_CONTEXT_TECHNICALS_NOT_TRADE_PERMISSION",
+        "charts": [
+            {
+                "pair": asset,
+                "dominant_regime": "TREND_UP",
+                "long_score": 0.8,
+                "short_score": 0.2,
+                "confluence": {
+                    "score_balance": "LONG_LEAN",
+                    "dominant_regime": "TREND_UP",
+                },
+                "views": [],
+            }
+            for asset in assets
+        ],
+        "issues": [],
     }
 
 

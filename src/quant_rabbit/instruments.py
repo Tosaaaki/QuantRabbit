@@ -24,6 +24,23 @@ DEFAULT_TRADER_PAIRS: tuple[str, ...] = (
 
 DEFAULT_TRADER_PAIRS_ARG = ",".join(DEFAULT_TRADER_PAIRS)
 
+# Non-FX market context instruments. These are monitored with the same
+# multi-timeframe technical stack as FX, but they are not automatically tradeable:
+# broker account instruments must explicitly list them before any order path can
+# treat them as candidates.
+DEFAULT_CONTEXT_ASSETS: tuple[str, ...] = (
+    # Equity indices
+    "SPX500_USD", "NAS100_USD", "US30_USD", "JP225_USD", "DE30_EUR", "UK100_GBP",
+    # Bonds
+    "USB02Y_USD", "USB05Y_USD", "USB10Y_USD", "USB30Y_USD",
+    # Commodities
+    "XAU_USD", "XAG_USD", "BCO_USD", "WTICO_USD", "NATGAS_USD",
+    # Crypto
+    "BTC_USD", "ETH_USD",
+)
+
+DEFAULT_CONTEXT_ASSETS_ARG = ",".join(DEFAULT_CONTEXT_ASSETS)
+
 # Broker-spec spread baselines used by RiskEngine's current-spread cap.
 #
 # These are named instrument specs, not strategy geometry. They describe the

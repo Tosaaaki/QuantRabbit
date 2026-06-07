@@ -718,6 +718,31 @@ class CliHelpTest(unittest.TestCase):
                     market_context_matrix_path=matrix,
                 )
 
+    def test_reuse_market_artifacts_requires_context_asset_and_broker_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix = root / "market_context_matrix.json"
+            context_assets = root / "context_asset_charts.json"
+            broker_instruments = root / "broker_instruments.json"
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "pairs": {"EUR_USD": {"LONG": {"evidence_ref": "matrix:EUR_USD:LONG"}}},
+                    }
+                )
+            )
+            context_assets.write_text(json.dumps({"charts": [{"pair": "XAU_USD", "views": []}]}))
+
+            with self.assertRaisesRegex(RuntimeError, "broker_instruments"):
+                _auto_refresh_market_evidence_if_required(
+                    label="autotrade-cycle",
+                    reuse_market_artifacts=True,
+                    market_context_matrix_path=matrix,
+                    context_asset_charts_path=context_assets,
+                    broker_instruments_path=broker_instruments,
+                )
+
 
 class LiveRuntimeBootstrapTest(unittest.TestCase):
     """Coverage for 2026-05-11 cli bootstrap-gate fix.

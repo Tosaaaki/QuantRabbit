@@ -947,6 +947,12 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertFalse(eur["calendar"]["in_window"])
             self.assertEqual(market_context["currency_strength"]["USD"]["rank"], 2)
             self.assertEqual(market_context["cot"]["USD"]["leveraged_net"], 1234)
+            xau = market_context["context_assets"]["assets"]["XAU_USD"]
+            self.assertEqual(xau["chart"]["dominant_regime"], "TREND_DOWN")
+            self.assertFalse(xau["broker_tradeable"])
+            self.assertEqual(market_context["broker_tradeability"]["context_assets_not_tradeable"], ["XAU_USD"])
+            self.assertIn("context_asset:XAU_USD", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn("broker:instruments", payload["input_packet"]["allowed_evidence_refs"])
 
     def test_accepts_attack_advice_evidence_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1635,6 +1641,8 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         output_path=root / "gpt_decision.json",
         report_path=root / "gpt_decision.md",
         pair_charts_path=files["pair_charts"],
+        context_asset_charts_path=files["context_asset_charts"],
+        broker_instruments_path=files["broker_instruments"],
         cross_asset_path=files["cross_asset"],
         flow_path=files["flow"],
         currency_strength_path=files["currency_strength"],
@@ -1686,6 +1694,8 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "target": root / "target.json",
         "market_status": root / "market_status.json",
         "pair_charts": root / "pair_charts.json",
+        "context_asset_charts": root / "context_asset_charts.json",
+        "broker_instruments": root / "broker_instruments.json",
         "cross_asset": root / "cross_asset.json",
         "flow": root / "flow.json",
         "currency_strength": root / "currency_strength.json",
@@ -1806,6 +1816,40 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
                         "views": _chart_views(),
                     }
                 ],
+            }
+        )
+    )
+    files["context_asset_charts"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "role": "NON_FX_CONTEXT_TECHNICALS_NOT_TRADE_PERMISSION",
+                "charts": [
+                    {
+                        "pair": "XAU_USD",
+                        "dominant_regime": "TREND_DOWN",
+                        "chart_story": "XAU_USD trend-down context story",
+                        "long_score": 0.15,
+                        "short_score": 0.85,
+                        "views": _chart_views(),
+                    }
+                ],
+                "issues": [],
+            }
+        )
+    )
+    files["broker_instruments"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "status": "OK",
+                "tradeability_policy": "BROKER_ACCOUNT_INSTRUMENTS_REQUIRED_FOR_LIVE_TRADE_UNIVERSE",
+                "tradeable_instruments": ["EUR_USD"],
+                "context_assets_tradeable": [],
+                "context_assets_not_tradeable": ["XAU_USD"],
+                "trader_pairs_missing": [],
+                "specs": {"EUR_USD": {"type": "CURRENCY"}},
+                "issues": [],
             }
         )
     )

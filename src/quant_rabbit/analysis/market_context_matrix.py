@@ -21,6 +21,7 @@ SIDES = ("LONG", "SHORT")
 def build_market_context_matrix_from_payloads(
     *,
     pair_charts: dict[str, Any] | None = None,
+    context_asset_charts: dict[str, Any] | None = None,
     cross_asset: dict[str, Any] | None = None,
     flow: dict[str, Any] | None = None,
     currency_strength: dict[str, Any] | None = None,
@@ -31,6 +32,7 @@ def build_market_context_matrix_from_payloads(
     generated_at_utc: str | None = None,
 ) -> dict[str, Any]:
     charts = _by_key((pair_charts or {}).get("charts"), "pair")
+    context_charts = _by_key((context_asset_charts or {}).get("charts"), "pair")
     flow_spreads = _by_key((flow or {}).get("spreads"), "instrument")
     flow_order_books = _by_key((flow or {}).get("order_books"), "instrument")
     flow_position_books = _by_key((flow or {}).get("position_books"), "instrument")
@@ -56,6 +58,7 @@ def build_market_context_matrix_from_payloads(
         name
         for name, payload in (
             ("pair_charts", pair_charts),
+            ("context_asset_charts", context_asset_charts),
             ("cross_asset", cross_asset),
             ("flow", flow),
             ("currency_strength", currency_strength),
@@ -73,6 +76,7 @@ def build_market_context_matrix_from_payloads(
         _apply_chart_layer(pair_matrix, pair, charts.get(pair))
         _apply_strength_layer(pair_matrix, pair, base, quote, strength_scores)
         _apply_cross_asset_layer(pair_matrix, pair, base, quote, cross_asset)
+        _apply_context_asset_chart_layer(pair_matrix, pair, base, quote, context_charts)
         _apply_flow_layer(
             pair_matrix,
             pair,
@@ -111,9 +115,11 @@ def build_market_context_matrix(
     calendar_path: Path,
     cot_path: Path,
     option_skew_path: Path,
+    context_asset_charts_path: Path | None = None,
 ) -> dict[str, Any]:
     return build_market_context_matrix_from_payloads(
         pair_charts=_load_optional_json(pair_charts_path),
+        context_asset_charts=_load_optional_json(context_asset_charts_path) if context_asset_charts_path else None,
         cross_asset=_load_optional_json(cross_asset_path),
         flow=_load_optional_json(flow_path),
         currency_strength=_load_optional_json(currency_strength_path),
@@ -451,6 +457,82 @@ def _apply_cross_asset_layer(
         )
 
 
+def _apply_context_asset_chart_layer(
+    pair_matrix: dict[str, dict[str, Any]],
+    pair: str,
+    base: str,
+    quote: str,
+    context_charts: dict[str, dict[str, Any]],
+) -> None:
+    gold_direction = _context_asset_direction(context_charts.get("XAU_USD"))
+    if gold_direction and "USD" in (base, quote):
+        usd_pressure_side = "SHORT" if base == "USD" else "LONG"
+        support_side = usd_pressure_side if gold_direction == "UP" else _opposite_side(usd_pressure_side)
+        _directional(
+            pair_matrix,
+            support_side=support_side,
+            code="GOLD_CONTEXT_TECHNICAL_DIRECTION",
+            layer="context_asset_chart",
+            message=(
+                f"{pair} XAU_USD technical {_context_asset_label(context_charts.get('XAU_USD'))} "
+                f"maps to {support_side} as USD-pressure context"
+            ),
+            refs=["context_asset:XAU_USD"],
+            opposite_bucket="warnings",
+        )
+
+    oil_instrument, oil_direction = _first_context_asset_direction(context_charts, ("WTICO_USD", "BCO_USD"))
+    if oil_instrument and oil_direction and "CAD" in (base, quote):
+        cad_support_side = "LONG" if base == "CAD" else "SHORT"
+        support_side = cad_support_side if oil_direction == "UP" else _opposite_side(cad_support_side)
+        _directional(
+            pair_matrix,
+            support_side=support_side,
+            code="OIL_CONTEXT_TECHNICAL_DIRECTION",
+            layer="context_asset_chart",
+            message=(
+                f"{pair} {oil_instrument} technical {_context_asset_label(context_charts.get(oil_instrument))} "
+                f"maps to {support_side} as CAD commodity context"
+            ),
+            refs=[f"context_asset:{oil_instrument}"],
+            opposite_bucket="warnings",
+        )
+
+    spx_direction = _context_asset_direction(context_charts.get("SPX500_USD"))
+    if spx_direction and "JPY" in (base, quote):
+        jpy_weak_side = "LONG" if quote == "JPY" else "SHORT"
+        support_side = jpy_weak_side if spx_direction == "UP" else _opposite_side(jpy_weak_side)
+        _directional(
+            pair_matrix,
+            support_side=support_side,
+            code="EQUITY_INDEX_CONTEXT_TECHNICAL_DIRECTION",
+            layer="context_asset_chart",
+            message=(
+                f"{pair} SPX500_USD technical {_context_asset_label(context_charts.get('SPX500_USD'))} "
+                f"maps to {support_side} as JPY risk context"
+            ),
+            refs=["context_asset:SPX500_USD"],
+            opposite_bucket="warnings",
+        )
+
+    us10y_direction = _context_asset_direction(context_charts.get("USB10Y_USD"))
+    if us10y_direction and "JPY" in (base, quote):
+        jpy_weak_side = "LONG" if quote == "JPY" else "SHORT"
+        support_side = jpy_weak_side if us10y_direction == "UP" else _opposite_side(jpy_weak_side)
+        _directional(
+            pair_matrix,
+            support_side=support_side,
+            code="US10Y_CONTEXT_TECHNICAL_DIRECTION",
+            layer="context_asset_chart",
+            message=(
+                f"{pair} USB10Y_USD technical {_context_asset_label(context_charts.get('USB10Y_USD'))} "
+                f"maps to {support_side} as yield/JPY context"
+            ),
+            refs=["context_asset:USB10Y_USD"],
+            opposite_bucket="warnings",
+        )
+
+
 def _apply_flow_layer(
     pair_matrix: dict[str, dict[str, Any]],
     pair: str,
@@ -629,6 +711,61 @@ def _apply_option_skew_layer(pair_matrix: dict[str, dict[str, Any]], pair: str, 
         )
     if not usable and not any((item.get("issue") if isinstance(item, dict) else None) for item in readings):
         _missing_both(pair_matrix, code="MISSING_OPTION_SKEW_VALUES", layer="option_skew", message=f"{pair} option skew has no rr_25d values", refs=[f"option:skew:{pair}", "option:skew:unknown"])
+
+
+def _first_context_asset_direction(
+    context_charts: dict[str, dict[str, Any]],
+    instruments: tuple[str, ...],
+) -> tuple[str | None, str | None]:
+    for instrument in instruments:
+        direction = _context_asset_direction(context_charts.get(instrument))
+        if direction:
+            return instrument, direction
+    return None, None
+
+
+def _context_asset_direction(chart: dict[str, Any] | None) -> str | None:
+    if not isinstance(chart, dict):
+        return None
+    confluence = chart.get("confluence") if isinstance(chart.get("confluence"), dict) else {}
+    score_balance = str(confluence.get("score_balance") or "").upper()
+    if score_balance == "LONG_LEAN":
+        return "UP"
+    if score_balance == "SHORT_LEAN":
+        return "DOWN"
+    dominant_regime = str(confluence.get("dominant_regime") or chart.get("dominant_regime") or "").upper()
+    if "TREND_UP" in dominant_regime or "IMPULSE_UP" in dominant_regime:
+        return "UP"
+    if "TREND_DOWN" in dominant_regime or "IMPULSE_DOWN" in dominant_regime:
+        return "DOWN"
+    long_score = _float_or_none(chart.get("long_score"))
+    short_score = _float_or_none(chart.get("short_score"))
+    if long_score is None or short_score is None or long_score == short_score:
+        return None
+    return "UP" if long_score > short_score else "DOWN"
+
+
+def _context_asset_label(chart: dict[str, Any] | None) -> str:
+    if not isinstance(chart, dict):
+        return "missing"
+    confluence = chart.get("confluence") if isinstance(chart.get("confluence"), dict) else {}
+    score_balance = str(confluence.get("score_balance") or "").upper()
+    dominant_regime = str(confluence.get("dominant_regime") or chart.get("dominant_regime") or "").upper()
+    direction = _context_asset_direction(chart) or "UNKNOWN"
+    long_score = _float_or_none(chart.get("long_score"))
+    short_score = _float_or_none(chart.get("short_score"))
+    parts = [f"direction={direction}"]
+    if dominant_regime:
+        parts.append(f"regime={dominant_regime}")
+    if score_balance:
+        parts.append(f"score_balance={score_balance}")
+    if long_score is not None and short_score is not None:
+        parts.append(f"long={long_score:.3f}/short={short_score:.3f}")
+    return " ".join(parts)
+
+
+def _opposite_side(side: str) -> str:
+    return "SHORT" if side == "LONG" else "LONG"
 
 
 def _by_key(rows: Any, key: str) -> dict[str, dict[str, Any]]:

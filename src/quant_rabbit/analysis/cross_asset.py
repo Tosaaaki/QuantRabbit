@@ -31,21 +31,12 @@ from typing import Iterable, Mapping, Sequence
 
 from quant_rabbit.analysis.candles import Candle, fetch_candles_via_client
 from quant_rabbit.broker.oanda import OandaReadOnlyClient
-from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
+from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS, DEFAULT_TRADER_PAIRS
 
 
 # OANDA CFD instruments. Anything not tradable on the account simply errors
 # during fetch; we capture that as a `MISSING_*` issue rather than crashing.
-DEFAULT_CROSS_ASSET_INSTRUMENTS: tuple[str, ...] = (
-    # Equity indices
-    "SPX500_USD", "NAS100_USD", "US30_USD", "JP225_USD", "DE30_EUR", "UK100_GBP",
-    # Bonds (OANDA bond CFDs)
-    "USB02Y_USD", "USB05Y_USD", "USB10Y_USD", "USB30Y_USD",
-    # Commodities
-    "XAU_USD", "XAG_USD", "BCO_USD", "WTICO_USD", "NATGAS_USD",
-    # Crypto
-    "BTC_USD", "ETH_USD",
-)
+DEFAULT_CROSS_ASSET_INSTRUMENTS: tuple[str, ...] = DEFAULT_CONTEXT_ASSETS
 
 DXY_BASKET: tuple[tuple[str, float], ...] = (
     ("EUR_USD", -0.576),

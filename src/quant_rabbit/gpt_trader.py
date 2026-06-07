@@ -393,8 +393,10 @@ def _position_thesis_structural_break_text(text: str) -> bool:
 from quant_rabbit.analysis.chart_reader import DEFAULT_TIMEFRAMES as DEFAULT_PAIR_CHART_TIMEFRAMES
 from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
+    DEFAULT_BROKER_INSTRUMENTS,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_CONTEXT_ASSET_CHARTS,
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
@@ -415,6 +417,7 @@ from quant_rabbit.paths import (
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_VERIFICATION_LEDGER,
 )
+from quant_rabbit.instruments import DEFAULT_CONTEXT_ASSETS
 from quant_rabbit.strategy.entry_thesis_ledger import (
     invalidation_price_hit_reason,
     technical_invalidation_confirmation_reason,
@@ -575,6 +578,8 @@ class GPTTraderBrain:
         market_status_path: Path = DEFAULT_MARKET_STATUS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
+        context_asset_charts_path: Path = DEFAULT_CONTEXT_ASSET_CHARTS,
+        broker_instruments_path: Path = DEFAULT_BROKER_INSTRUMENTS,
         cross_asset_path: Path = DEFAULT_CROSS_ASSET_SNAPSHOT,
         flow_path: Path = DEFAULT_FLOW_SNAPSHOT,
         currency_strength_path: Path = DEFAULT_CURRENCY_STRENGTH,
@@ -600,6 +605,8 @@ class GPTTraderBrain:
         self.market_status_path = market_status_path
         self.target_state_path = target_state_path
         self.pair_charts_path = pair_charts_path
+        self.context_asset_charts_path = context_asset_charts_path
+        self.broker_instruments_path = broker_instruments_path
         self.cross_asset_path = cross_asset_path
         self.flow_path = flow_path
         self.currency_strength_path = currency_strength_path
@@ -716,6 +723,8 @@ class GPTTraderBrain:
                 pairs=pairs,
                 currencies=currencies,
                 pair_charts_path=self.pair_charts_path,
+                context_asset_charts_path=self.context_asset_charts_path,
+                broker_instruments_path=self.broker_instruments_path,
                 cross_asset_path=self.cross_asset_path,
                 flow_path=self.flow_path,
                 currency_strength_path=self.currency_strength_path,
@@ -1936,6 +1945,8 @@ def _allowed_refs(
     for asset in cross_assets:
         refs.append(f"cross:{asset}")
     refs.extend(["cross:dxy", "cross:correlations"])
+    refs.append("broker:instruments")
+    refs.extend(f"context_asset:{asset}" for asset in DEFAULT_CONTEXT_ASSETS)
     if _option_skew_enabled(option_skew):
         refs.extend(["option:skew", "option:skew:unknown"])
     if attack_advice:
@@ -2745,6 +2756,8 @@ def _market_context_packet(
     pairs: tuple[str, ...],
     currencies: tuple[str, ...],
     pair_charts_path: Path,
+    context_asset_charts_path: Path,
+    broker_instruments_path: Path,
     cross_asset_path: Path,
     flow_path: Path,
     currency_strength_path: Path,
@@ -2756,6 +2769,8 @@ def _market_context_packet(
 ) -> dict[str, Any]:
     artifacts = {
         "pair_charts": _load_optional_json(pair_charts_path),
+        "context_asset_charts": _load_optional_json(context_asset_charts_path),
+        "broker_instruments": _load_optional_json(broker_instruments_path),
         "cross_asset": _load_optional_json(cross_asset_path),
         "flow": _load_optional_json(flow_path),
         "currency_strength": _load_optional_json(currency_strength_path),
@@ -2788,11 +2803,68 @@ def _market_context_packet(
             issues.extend(str(issue) for issue in payload.get("issues", [])[:12])
     return {
         "pairs": pair_payloads,
+        "context_assets": _context_asset_charts_summary(
+            artifacts["context_asset_charts"],
+            artifacts["broker_instruments"],
+        ),
+        "broker_tradeability": _broker_tradeability_summary(artifacts["broker_instruments"]),
         "cross_asset": _cross_asset_summary(artifacts["cross_asset"]),
         "matrix_issues": _matrix_issues(artifacts["market_context_matrix"]),
         "currency_strength": _currency_strength_summary(artifacts["currency_strength"], currencies),
         "cot": _cot_summary(artifacts["cot"], currencies),
         "issues": issues[:40],
+    }
+
+
+def _context_asset_charts_summary(
+    payload: dict[str, Any] | None,
+    broker_instruments: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"status": "missing", "assets": {}, "issues": ["MISSING_CONTEXT_ASSET_CHARTS_ARTIFACT"]}
+    tradeable = set()
+    not_tradeable = set()
+    if isinstance(broker_instruments, dict):
+        tradeable = {str(item) for item in broker_instruments.get("context_assets_tradeable", []) or []}
+        not_tradeable = {str(item) for item in broker_instruments.get("context_assets_not_tradeable", []) or []}
+    assets: dict[str, Any] = {}
+    for chart in payload.get("charts", []) or []:
+        if not isinstance(chart, dict):
+            continue
+        instrument = str(chart.get("pair") or "")
+        if not instrument:
+            continue
+        assets[instrument] = {
+            "broker_tradeable": instrument in tradeable,
+            "broker_tradeability": "TRADEABLE" if instrument in tradeable else ("NOT_TRADEABLE" if instrument in not_tradeable else "UNKNOWN"),
+            "evidence_ref": f"context_asset:{instrument}",
+            "chart": _chart_summary(payload, instrument),
+        }
+    return {
+        "status": "present",
+        "role": payload.get("role"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "assets": assets,
+        "issues": [str(issue) for issue in payload.get("issues", [])[:12]],
+    }
+
+
+def _broker_tradeability_summary(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "status": "missing",
+            "evidence_ref": "broker:instruments",
+            "issues": ["MISSING_BROKER_INSTRUMENTS_ARTIFACT"],
+        }
+    return {
+        "status": payload.get("status"),
+        "evidence_ref": "broker:instruments",
+        "tradeability_policy": payload.get("tradeability_policy"),
+        "tradeable_count": len(payload.get("tradeable_instruments") or []),
+        "context_assets_tradeable": list(payload.get("context_assets_tradeable") or []),
+        "context_assets_not_tradeable": list(payload.get("context_assets_not_tradeable") or [])[:24],
+        "trader_pairs_missing": list(payload.get("trader_pairs_missing") or [])[:24],
+        "issues": [str(issue) for issue in payload.get("issues", [])[:12]],
     }
 
 
