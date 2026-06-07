@@ -470,7 +470,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["selected_trades"], 1)
             self.assertEqual(day["managed_net_jpy"], 150.0)
             self.assertNotIn("GBP_USD:SHORT", json.dumps(payload))
-            self.assertNotIn("TAKE_PROFIT_ORDER", json.dumps(payload))
+            self.assertNotIn("TAKE_PROFIT_ORDER", " ".join(day["selected_buckets"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("sent gateway entry", report)
             self.assertIn("exit reason remains post-trade evidence", report)
@@ -772,6 +772,194 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(by_source["execution_ledger"]["validation_universe_trades"], 1)
             self.assertEqual(by_source["execution_ledger"]["selected_trades"], 0)
             self.assertTrue(any("diagnostic-only" in item for item in payload["action_items"]))
+
+    def test_mechanism_ablation_reports_loss_cap_and_close_gate_split(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -500.0),
+                ],
+            )
+            _seed_execution_ledger(
+                ledger,
+                [
+                    (
+                        "fill-market-loss",
+                        "2026-06-01T01:00:00Z",
+                        "ORDER_FILLED",
+                        "market-loss",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-market-loss",
+                        "2026-06-01T02:00:00Z",
+                        "TRADE_CLOSED",
+                        "market-loss",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        -300.0,
+                        json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+                    ),
+                    (
+                        "fill-tp",
+                        "2026-06-01T03:00:00Z",
+                        "ORDER_FILLED",
+                        "tp-win",
+                        "GBP_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-tp",
+                        "2026-06-01T04:00:00Z",
+                        "TRADE_CLOSED",
+                        "tp-win",
+                        "GBP_USD",
+                        "SHORT",
+                        1000,
+                        220.0,
+                        json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
+                    ),
+                    (
+                        "fill-gated-loss",
+                        "2026-06-01T05:00:00Z",
+                        "ORDER_FILLED",
+                        "gated-loss",
+                        "AUD_JPY",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "gateway-close-gated-loss",
+                        "2026-06-01T05:30:00Z",
+                        "GATEWAY_TRADE_CLOSE_SENT",
+                        "gated-loss",
+                        "AUD_JPY",
+                        "LONG",
+                        None,
+                        None,
+                        json.dumps({"management_action": "REVIEW_EXIT"}),
+                    ),
+                    (
+                        "close-gated-loss",
+                        "2026-06-01T06:00:00Z",
+                        "TRADE_CLOSED",
+                        "gated-loss",
+                        "AUD_JPY",
+                        "SHORT",
+                        1000,
+                        -180.0,
+                        json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+                    ),
+                ],
+            )
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            risk_cap = payload["mechanism_ablation"]["risk_engine_loss_cap"]
+            self.assertEqual(risk_cap["raw_selected_net_jpy"], -500.0)
+            self.assertEqual(risk_cap["managed_selected_net_jpy"], -100.0)
+            self.assertEqual(risk_cap["managed_net_minus_raw_net_jpy"], 400.0)
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+            self.assertEqual(close_gate["status"], "MEASURED")
+            self.assertEqual(close_gate["close_events"], 3)
+            self.assertEqual(close_gate["bot_attributed_close_events"], 3)
+            self.assertEqual(close_gate["loss_side_market_close_count"], 2)
+            self.assertEqual(close_gate["loss_side_market_close_net_jpy"], -480.0)
+            self.assertEqual(close_gate["gateway_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["take_profit_close_net_jpy"], 220.0)
+            self.assertTrue(any("RiskEngine loss-cap ablation" in item for item in payload["action_items"]))
+            self.assertTrue(any("CLOSE Gate A-B" in item for item in payload["action_items"]))
+            report = (root / "ai_backtest.md").read_text()
+            self.assertIn("## Mechanism Ablations", report)
+            self.assertIn("CLOSE Gate A/B Diagnostics", report)
+
+    def test_close_gate_diagnostic_reports_unattributable_broker_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -200.0),
+                ],
+            )
+            _seed_execution_ledger(
+                ledger,
+                [
+                    (
+                        "fill-unattributed",
+                        "2026-06-01T01:00:00Z",
+                        "ORDER_FILLED",
+                        "manual-or-missing-receipt",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-unattributed",
+                        "2026-06-01T02:00:00Z",
+                        "TRADE_CLOSED",
+                        "manual-or-missing-receipt",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        -250.0,
+                        json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+                    ),
+                ],
+                attributed_trade_ids=set(),
+            )
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+            self.assertEqual(close_gate["status"], "MEASURED")
+            self.assertEqual(close_gate["close_events"], 1)
+            self.assertEqual(close_gate["bot_attributed_close_events"], 0)
+            self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
+            self.assertTrue(any("zero gateway-attributed entry closes" in item for item in payload["action_items"]))
 
     def test_context_theme_overlay_adds_cross_pair_without_displacing_base_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

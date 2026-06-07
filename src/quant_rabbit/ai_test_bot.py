@@ -261,6 +261,14 @@ class AITestBotBacktester:
         status = _status(blockers, day_results, profit_factor)
         summary_payload = _summary_payload(day_results, validation_rows, target_jpy, gross_profit, gross_loss, profit_factor)
         firepower = _firepower_payload(day_results, validation_rows, target_jpy, cap.loss_cap_jpy)
+        risk_engine_loss_cap = _risk_engine_loss_cap_payload(
+            validation_rows=validation_rows,
+            max_loss_jpy=cap.loss_cap_jpy,
+        )
+        close_gate_ab = _close_gate_ablation_payload(
+            db_path=self.execution_ledger_db_path,
+            max_loss_jpy=cap.loss_cap_jpy,
+        )
         source_contributions = _source_contributions(
             trades=trades,
             day_results=day_results,
@@ -292,6 +300,8 @@ class AITestBotBacktester:
                 target_ceiling=target_ceiling,
                 target_band=target_band,
                 source_contributions=source_contributions,
+                risk_engine_loss_cap=risk_engine_loss_cap,
+                close_gate_ab=close_gate_ab,
             )
         )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -330,6 +340,10 @@ class AITestBotBacktester:
             "context_feature_coverage": _context_feature_coverage(trades),
             "summary": summary_payload,
             "firepower": firepower,
+            "mechanism_ablation": {
+                "risk_engine_loss_cap": risk_engine_loss_cap,
+                "close_gate_ab": close_gate_ab,
+            },
             "source_contributions": source_contributions,
             "bucket_contributions": _bucket_contributions(validation_rows, cap.loss_cap_jpy),
             "oracle": oracle,
@@ -498,6 +512,54 @@ class AITestBotBacktester:
                 f"best_selected_coverage=`{item['best_selected_day_coverage_pct']:.1f}%` "
                 f"required_trades_day=`{item['required_trades_per_day_at_observed_expectancy']}`"
             )
+        mechanism = payload.get("mechanism_ablation") if isinstance(payload.get("mechanism_ablation"), dict) else {}
+        risk_cap = mechanism.get("risk_engine_loss_cap") if isinstance(mechanism.get("risk_engine_loss_cap"), dict) else {}
+        close_gate = mechanism.get("close_gate_ab") if isinstance(mechanism.get("close_gate_ab"), dict) else {}
+        lines.extend(
+            [
+                "",
+                "## Mechanism Ablations",
+                "",
+                "### RiskEngine Loss Cap",
+                "",
+                f"- Scope: `{risk_cap.get('scope', 'n/a')}`",
+                f"- Raw selected net: `{float(risk_cap.get('raw_selected_net_jpy') or 0.0):.0f} JPY`",
+                f"- Managed selected net: `{float(risk_cap.get('managed_selected_net_jpy') or 0.0):.0f} JPY`",
+                f"- Managed-minus-raw effect: `{float(risk_cap.get('managed_net_minus_raw_net_jpy') or 0.0):.0f} JPY`",
+                f"- Raw PF: `{risk_cap.get('raw_profit_factor') if risk_cap.get('raw_profit_factor') is not None else 'n/a'}`",
+                f"- Managed PF: `{risk_cap.get('managed_profit_factor') if risk_cap.get('managed_profit_factor') is not None else 'n/a'}`",
+                f"- Interpretation: `{risk_cap.get('interpretation', 'n/a')}`",
+                "",
+                "### CLOSE Gate A/B Diagnostics",
+                "",
+                f"- Status: `{close_gate.get('status', 'n/a')}`",
+                f"- Reason: `{close_gate.get('reason', '')}`",
+                f"- Close events: `{int(close_gate.get('close_events') or 0)}`",
+                f"- Close net: `{float(close_gate.get('close_net_jpy') or 0.0):.0f} JPY`",
+                f"- Bot-attributed close events: `{int(close_gate.get('bot_attributed_close_events') or 0)}`",
+                f"- Gateway close sent events: `{int(close_gate.get('gateway_close_sent_events') or 0)}`",
+                f"- Loss-side market closes: `{int(close_gate.get('loss_side_market_close_count') or 0)}` "
+                f"net=`{float(close_gate.get('loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
+                f"- Gateway loss-side market closes: `{int(close_gate.get('gateway_loss_side_market_close_count') or 0)}` "
+                f"net=`{float(close_gate.get('gateway_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
+                f"- Unattributed loss-side market closes: `{int(close_gate.get('unattributed_loss_side_market_close_count') or 0)}` "
+                f"net=`{float(close_gate.get('unattributed_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
+                f"- Take-profit closes: `{int(close_gate.get('take_profit_close_count') or 0)}` "
+                f"net=`{float(close_gate.get('take_profit_close_net_jpy') or 0.0):.0f} JPY`",
+            ]
+        )
+        segments = close_gate.get("segments") if isinstance(close_gate.get("segments"), list) else []
+        if segments:
+            lines.append("- Exit segments:")
+            for segment in segments[:8]:
+                if not isinstance(segment, dict):
+                    continue
+                lines.append(
+                    f"  - `{segment.get('event_type')}:{segment.get('exit_reason')}` "
+                    f"count=`{int(segment.get('count') or 0)}` net=`{float(segment.get('net_jpy') or 0.0):.0f}` "
+                    f"bot_attributed=`{int(segment.get('bot_attributed_count') or 0)}` "
+                    f"gateway_close=`{int(segment.get('gateway_close_sent_count') or 0)}`"
+                )
         lines.extend(
             [
                 "",
@@ -902,6 +964,323 @@ def _firepower_payload(
     }
 
 
+def _risk_engine_loss_cap_payload(
+    *,
+    validation_rows: tuple[TestBotTrade, ...],
+    max_loss_jpy: float,
+) -> dict[str, float | int | str | None]:
+    raw_profit = _round(sum(row.pl_jpy for row in validation_rows if row.pl_jpy > 0))
+    raw_loss = abs(_round(sum(row.pl_jpy for row in validation_rows if row.pl_jpy < 0)))
+    managed_values = tuple(_capped_pl(row.pl_jpy, max_loss_jpy) for row in validation_rows)
+    managed_profit = _round(sum(value for value in managed_values if value > 0))
+    managed_loss = abs(_round(sum(value for value in managed_values if value < 0)))
+    raw_net = _round(raw_profit - raw_loss)
+    managed_net = _round(managed_profit - managed_loss)
+    effect = _round(managed_net - raw_net)
+    if effect > 0:
+        interpretation = "LOSS_CAP_HELPED_SELECTED_POLICY"
+    elif effect < 0:
+        interpretation = "LOSS_CAP_REDUCED_SELECTED_POLICY"
+    else:
+        interpretation = "LOSS_CAP_NO_EFFECT_IN_SELECTION"
+    return {
+        "scope": "selected_validation_trades",
+        "selected_trades": len(validation_rows),
+        "loss_cap_jpy": _round(max_loss_jpy),
+        "raw_selected_net_jpy": raw_net,
+        "managed_selected_net_jpy": managed_net,
+        "managed_net_minus_raw_net_jpy": effect,
+        "raw_gross_profit_jpy": raw_profit,
+        "raw_gross_loss_jpy": raw_loss,
+        "managed_gross_profit_jpy": managed_profit,
+        "managed_gross_loss_jpy": managed_loss,
+        "raw_profit_factor": _profit_factor(raw_profit, raw_loss),
+        "managed_profit_factor": _profit_factor(managed_profit, managed_loss),
+        "loss_reduction_jpy": _round(raw_loss - managed_loss),
+        "interpretation": interpretation,
+    }
+
+
+def _close_gate_ablation_payload(
+    *,
+    db_path: Path | None,
+    max_loss_jpy: float,
+) -> dict[str, object]:
+    base: dict[str, object] = {
+        "status": "UNAVAILABLE",
+        "reason": "",
+        "db_path": str(db_path) if db_path else None,
+        "close_events": 0,
+        "close_net_jpy": 0.0,
+        "bot_attributed_close_events": 0,
+        "gateway_order_sent_events": 0,
+        "gateway_close_sent_events": 0,
+        "loss_side_market_close_count": 0,
+        "loss_side_market_close_net_jpy": 0.0,
+        "bot_attributed_loss_side_market_close_count": 0,
+        "bot_attributed_loss_side_market_close_net_jpy": 0.0,
+        "gateway_loss_side_market_close_count": 0,
+        "gateway_loss_side_market_close_net_jpy": 0.0,
+        "unattributed_loss_side_market_close_count": 0,
+        "unattributed_loss_side_market_close_net_jpy": 0.0,
+        "take_profit_close_count": 0,
+        "take_profit_close_net_jpy": 0.0,
+        "segments": [],
+    }
+    if db_path is None:
+        base["reason"] = "execution ledger path was not provided"
+        return base
+    if not db_path.exists():
+        base["reason"] = f"execution ledger not found: {db_path}"
+        return base
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_events'"
+            ).fetchone()
+            if not table:
+                base["reason"] = "execution_events table is missing"
+                return base
+            columns = {
+                str(row["name"])
+                for row in conn.execute("PRAGMA table_info(execution_events)").fetchall()
+                if row["name"] is not None
+            }
+            required = {"event_type", "trade_id", "realized_pl_jpy"}
+            if not required <= columns:
+                base["reason"] = "execution_events lacks close diagnostic columns"
+                return base
+            gateway_order_sent_events = _count_events(conn, "GATEWAY_ORDER_SENT")
+            gateway_close_sent_events = _count_events(conn, "GATEWAY_TRADE_CLOSE_SENT")
+            attributed_trade_ids = _gateway_attributed_entry_trade_ids(conn, columns)
+            gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
+            close_rows = _close_event_rows(conn, columns)
+    except sqlite3.Error as exc:
+        base["reason"] = f"execution ledger unreadable: {exc}"
+        return base
+
+    if not close_rows:
+        base.update(
+            {
+                "status": "NO_CLOSES",
+                "reason": "execution ledger has no closed/reduced trade events",
+                "gateway_order_sent_events": gateway_order_sent_events,
+                "gateway_close_sent_events": gateway_close_sent_events,
+            }
+        )
+        return base
+
+    segments: dict[tuple[str, str], dict[str, object]] = {}
+    close_net = 0.0
+    bot_attributed_count = 0
+    loss_side_market_count = 0
+    loss_side_market_net = 0.0
+    bot_loss_market_count = 0
+    bot_loss_market_net = 0.0
+    gateway_loss_market_count = 0
+    gateway_loss_market_net = 0.0
+    unattributed_loss_market_count = 0
+    unattributed_loss_market_net = 0.0
+    take_profit_count = 0
+    take_profit_net = 0.0
+    for row in close_rows:
+        pl = _maybe_float(row["realized_pl_jpy"])
+        if pl is None:
+            continue
+        close_net += pl
+        trade_id = str(row["trade_id"] or "").strip()
+        exit_reason = _close_exit_reason(row)
+        event_type = _norm(row["event_type"])
+        bot_attributed = trade_id in attributed_trade_ids
+        gateway_close_sent = trade_id in gateway_close_trade_ids
+        if bot_attributed:
+            bot_attributed_count += 1
+        segment = segments.setdefault(
+            (event_type, exit_reason),
+            {
+                "event_type": event_type,
+                "exit_reason": exit_reason,
+                "count": 0,
+                "net_jpy": 0.0,
+                "capped_net_jpy": 0.0,
+                "win_count": 0,
+                "loss_count": 0,
+                "bot_attributed_count": 0,
+                "bot_attributed_net_jpy": 0.0,
+                "gateway_close_sent_count": 0,
+                "gateway_close_sent_net_jpy": 0.0,
+            },
+        )
+        segment["count"] = int(segment["count"]) + 1
+        segment["net_jpy"] = _round(float(segment["net_jpy"]) + pl)
+        segment["capped_net_jpy"] = _round(float(segment["capped_net_jpy"]) + _capped_pl(pl, max_loss_jpy))
+        segment["win_count"] = int(segment["win_count"]) + (1 if pl > 0 else 0)
+        segment["loss_count"] = int(segment["loss_count"]) + (1 if pl < 0 else 0)
+        if bot_attributed:
+            segment["bot_attributed_count"] = int(segment["bot_attributed_count"]) + 1
+            segment["bot_attributed_net_jpy"] = _round(float(segment["bot_attributed_net_jpy"]) + pl)
+        if gateway_close_sent:
+            segment["gateway_close_sent_count"] = int(segment["gateway_close_sent_count"]) + 1
+            segment["gateway_close_sent_net_jpy"] = _round(float(segment["gateway_close_sent_net_jpy"]) + pl)
+        if exit_reason == "TAKE_PROFIT_ORDER":
+            take_profit_count += 1
+            take_profit_net += pl
+        if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and pl < 0:
+            loss_side_market_count += 1
+            loss_side_market_net += pl
+            if bot_attributed:
+                bot_loss_market_count += 1
+                bot_loss_market_net += pl
+            if gateway_close_sent:
+                gateway_loss_market_count += 1
+                gateway_loss_market_net += pl
+            else:
+                unattributed_loss_market_count += 1
+                unattributed_loss_market_net += pl
+    segment_rows = sorted(
+        (
+            {
+                **item,
+                "net_jpy": _round(float(item["net_jpy"])),
+                "capped_net_jpy": _round(float(item["capped_net_jpy"])),
+                "bot_attributed_net_jpy": _round(float(item["bot_attributed_net_jpy"])),
+                "gateway_close_sent_net_jpy": _round(float(item["gateway_close_sent_net_jpy"])),
+            }
+            for item in segments.values()
+        ),
+        key=lambda item: (float(item["net_jpy"]), -int(item["count"])),
+    )
+    base.update(
+        {
+            "status": "MEASURED",
+            "reason": "broker-truth execution ledger close diagnostics; not a live permission override",
+            "close_events": len(close_rows),
+            "close_net_jpy": _round(close_net),
+            "bot_attributed_close_events": bot_attributed_count,
+            "gateway_order_sent_events": gateway_order_sent_events,
+            "gateway_close_sent_events": gateway_close_sent_events,
+            "loss_side_market_close_count": loss_side_market_count,
+            "loss_side_market_close_net_jpy": _round(loss_side_market_net),
+            "bot_attributed_loss_side_market_close_count": bot_loss_market_count,
+            "bot_attributed_loss_side_market_close_net_jpy": _round(bot_loss_market_net),
+            "gateway_loss_side_market_close_count": gateway_loss_market_count,
+            "gateway_loss_side_market_close_net_jpy": _round(gateway_loss_market_net),
+            "unattributed_loss_side_market_close_count": unattributed_loss_market_count,
+            "unattributed_loss_side_market_close_net_jpy": _round(unattributed_loss_market_net),
+            "take_profit_close_count": take_profit_count,
+            "take_profit_close_net_jpy": _round(take_profit_net),
+            "segments": segment_rows,
+        }
+    )
+    return base
+
+
+def _count_events(conn: sqlite3.Connection, event_type: str) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM execution_events WHERE event_type = ?",
+        (event_type,),
+    ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def _event_trade_ids(conn: sqlite3.Connection, event_type: str) -> set[str]:
+    rows = conn.execute(
+        """
+        SELECT trade_id
+        FROM execution_events
+        WHERE event_type = ?
+          AND trade_id IS NOT NULL
+          AND trade_id != ''
+        """,
+        (event_type,),
+    ).fetchall()
+    return {str(row["trade_id"]).strip() for row in rows if str(row["trade_id"] or "").strip()}
+
+
+def _gateway_attributed_entry_trade_ids(conn: sqlite3.Connection, columns: set[str]) -> set[str]:
+    if "order_id" not in columns:
+        return set()
+    lane_expr = "lane_id" if "lane_id" in columns else "NULL AS lane_id"
+    gateway_rows = conn.execute(
+        f"""
+        SELECT trade_id, order_id, {lane_expr}
+        FROM execution_events
+        WHERE event_type = 'GATEWAY_ORDER_SENT'
+        """
+    ).fetchall()
+    gateway_order_ids = {str(row["order_id"]).strip() for row in gateway_rows if str(row["order_id"] or "").strip()}
+    gateway_trade_ids = {str(row["trade_id"]).strip() for row in gateway_rows if str(row["trade_id"] or "").strip()}
+    gateway_lane_trade_ids = {
+        str(row["trade_id"]).strip()
+        for row in gateway_rows
+        if str(row["trade_id"] or "").strip() and str(row["lane_id"] or "").strip()
+    }
+    filled_select = ["trade_id", "order_id"]
+    if "lane_id" in columns:
+        filled_select.append("lane_id")
+    else:
+        filled_select.append("NULL AS lane_id")
+    filled_rows = conn.execute(
+        f"""
+        SELECT {', '.join(filled_select)}
+        FROM execution_events
+        WHERE event_type = 'ORDER_FILLED'
+          AND trade_id IS NOT NULL
+          AND trade_id != ''
+        """
+    ).fetchall()
+    attributed: set[str] = set(gateway_lane_trade_ids)
+    for row in filled_rows:
+        trade_id = str(row["trade_id"] or "").strip()
+        order_id = str(row["order_id"] or "").strip()
+        lane_id = str(row["lane_id"] or "").strip()
+        if not trade_id:
+            continue
+        if trade_id in gateway_trade_ids or order_id in gateway_order_ids or lane_id:
+            attributed.add(trade_id)
+    return attributed
+
+
+def _close_event_rows(conn: sqlite3.Connection, columns: set[str]) -> list[sqlite3.Row]:
+    select_fields = [
+        "event_type",
+        "trade_id",
+        "realized_pl_jpy",
+    ]
+    for column in ("event_uid", "ts_utc", "pair", "side", "units", "order_id", "lane_id", "exit_reason", "raw_json"):
+        if column in columns:
+            select_fields.append(column)
+        else:
+            select_fields.append(f"NULL AS {column}")
+    return list(
+        conn.execute(
+            f"""
+            SELECT {', '.join(select_fields)}
+            FROM execution_events
+            WHERE event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
+              AND realized_pl_jpy IS NOT NULL
+            ORDER BY ts_utc, event_uid
+            """
+        ).fetchall()
+    )
+
+
+def _close_exit_reason(row: sqlite3.Row) -> str:
+    reason = _norm(row["exit_reason"])
+    if reason and reason != "UNSPECIFIED":
+        return reason
+    raw = _raw_payload(row["raw_json"])
+    return _norm(raw.get("reason")) or "UNSPECIFIED"
+
+
+def _maybe_float(value: object) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _target_ceiling_payload(
     *,
     target_jpy: float,
@@ -1073,9 +1452,23 @@ def _action_items(
     target_ceiling: dict[str, float | int | bool | None],
     target_band: dict[str, object],
     source_contributions: list[dict[str, float | int | str]],
+    risk_engine_loss_cap: dict[str, float | int | str | None],
+    close_gate_ab: dict[str, object],
 ) -> Iterable[str]:
     if not blockers:
         return
+    risk_effect = float(risk_engine_loss_cap.get("managed_net_minus_raw_net_jpy") or 0.0)
+    if risk_effect > 0:
+        yield (
+            "RiskEngine loss-cap ablation is currently positive "
+            f"(managed-minus-raw {risk_effect:.0f} JPY); any cap removal/weakening candidate must beat the raw selected baseline, not just move faster"
+        )
+    elif risk_effect < 0:
+        yield (
+            "RiskEngine loss-cap ablation currently suppresses selected-policy net "
+            f"({risk_effect:.0f} JPY); test a replacement cap surface against drawdown before live promotion"
+        )
+    yield from _close_gate_action_items(close_gate_ab)
     for item in source_contributions:
         source_table = str(item["source_table"])
         validation_net = float(item["validation_universe_managed_net_jpy"])
@@ -1170,6 +1563,40 @@ def _action_items(
         "store matrix refs, news refs, and gold/oil/context-asset readings on each live entry receipt before treating "
         "non-FX/news prediction as backtest-certified"
     )
+
+
+def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
+    status = str(payload.get("status") or "")
+    close_events = int(payload.get("close_events") or 0)
+    bot_attributed = int(payload.get("bot_attributed_close_events") or 0)
+    if status == "MEASURED" and close_events and bot_attributed == 0:
+        yield (
+            "execution ledger has broker close outcomes but zero gateway-attributed entry closes; "
+            "broker truth/live gateway/CLOSE Gate A-B ablation is not attributable until GATEWAY_ORDER_SENT receipts link to fills"
+        )
+    unattributed_loss_count = int(payload.get("unattributed_loss_side_market_close_count") or 0)
+    unattributed_loss_net = float(payload.get("unattributed_loss_side_market_close_net_jpy") or 0.0)
+    if unattributed_loss_count:
+        yield (
+            "loss-side market closes lack matching gateway close receipts "
+            f"({unattributed_loss_count} close(s), net {unattributed_loss_net:.0f} JPY); "
+            "separate manual/intervention closes from Gate A-B strategy closes before tuning exit permissions"
+        )
+    gateway_loss_count = int(payload.get("gateway_loss_side_market_close_count") or 0)
+    gateway_loss_net = float(payload.get("gateway_loss_side_market_close_net_jpy") or 0.0)
+    if gateway_loss_count and gateway_loss_net < 0:
+        yield (
+            "CLOSE Gate A-B accepted loss-side market closes are net negative "
+            f"({gateway_loss_count} close(s), {gateway_loss_net:.0f} JPY); "
+            "ablate hard/soft Gate A evidence separately before widening autonomous CLOSE"
+        )
+    market_loss_net = float(payload.get("loss_side_market_close_net_jpy") or 0.0)
+    tp_net = float(payload.get("take_profit_close_net_jpy") or 0.0)
+    if market_loss_net < 0 and tp_net > 0:
+        yield (
+            "exit split shows take-profit closes positive while loss-side market closes are negative; "
+            "focus on CLOSE trigger attribution/timing rather than blanket TP removal"
+        )
 
 
 def _bucket_contributions(
