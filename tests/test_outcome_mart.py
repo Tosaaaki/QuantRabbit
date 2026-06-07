@@ -211,6 +211,30 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             report = (root / "outcome_mart.md").read_text()
             self.assertIn("Context Feature Edges", report)
 
+    def test_execution_ledger_uses_broker_order_lane_when_gateway_receipt_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_empty_history_db(db)
+            _seed_execution_ledger_with_broker_order_lane(ledger)
+
+            summary = OutcomeMartBuilder(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "outcome_mart.json",
+                report_path=root / "outcome_mart.md",
+            ).run()
+
+            payload = json.loads((root / "outcome_mart.json").read_text())
+            edges = {item["key"]: item for item in payload["pair_direction_edges"]}
+            method_edges = {item["key"]: item for item in payload["method_edges"]}
+            self.assertEqual(summary.execution_ledger_outcomes, 1)
+            self.assertEqual(edges["EUR_USD:LONG:ALL:ALL:ALL:ALL"]["execution_ledger_outcome_n"], 1)
+            method_key = "EUR_USD:LONG:TREND_CONTINUATION:ALL:ALL:ALL"
+            self.assertEqual(method_edges[method_key]["execution_ledger_outcome_n"], 1)
+            self.assertEqual(method_edges[method_key]["net_jpy"], 300.0)
+
 
 def _seed_history_db(path: Path) -> None:
     conn = sqlite3.connect(path)
@@ -369,6 +393,7 @@ def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
             ts_utc TEXT NOT NULL,
             event_type TEXT NOT NULL,
             lane_id TEXT,
+            order_id TEXT,
             trade_id TEXT,
             pair TEXT,
             side TEXT,
@@ -381,16 +406,17 @@ def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
     conn.executemany(
         """
         INSERT INTO execution_events (
-            ts_utc, event_type, lane_id, trade_id, pair, side, units,
+            ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
             realized_pl_jpy, raw_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
                 "2026-05-13T00:00:00Z",
                 "ORDER_FILLED",
                 "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+                None,
                 "long-loss",
                 "GBP_USD",
                 "LONG",
@@ -402,6 +428,7 @@ def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
                 "2026-05-13T01:00:00Z",
                 "TRADE_CLOSED",
                 "failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE",
+                None,
                 "long-loss",
                 "GBP_USD",
                 "SHORT",
@@ -413,6 +440,7 @@ def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
                 "2026-05-13T02:00:00Z",
                 "ORDER_FILLED",
                 "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+                None,
                 "short-win",
                 "AUD_JPY",
                 "SHORT",
@@ -424,6 +452,7 @@ def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
                 "2026-05-13T03:00:00Z",
                 "TRADE_REDUCED",
                 "range_trader:AUD_JPY:SHORT:RANGE_ROTATION",
+                None,
                 "short-win",
                 "AUD_JPY",
                 "LONG",
@@ -445,6 +474,7 @@ def _seed_execution_ledger_with_context_features(path: Path) -> None:
             ts_utc TEXT NOT NULL,
             event_type TEXT NOT NULL,
             lane_id TEXT,
+            order_id TEXT,
             trade_id TEXT,
             pair TEXT,
             side TEXT,
@@ -464,16 +494,17 @@ def _seed_execution_ledger_with_context_features(path: Path) -> None:
     conn.executemany(
         """
         INSERT INTO execution_events (
-            ts_utc, event_type, lane_id, trade_id, pair, side, units,
+            ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
             realized_pl_jpy, raw_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
                 "2026-05-14T00:00:00Z",
                 "GATEWAY_ORDER_SENT",
                 "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                None,
                 "ctx-win",
                 "EUR_USD",
                 "LONG",
@@ -495,6 +526,7 @@ def _seed_execution_ledger_with_context_features(path: Path) -> None:
                 "2026-05-14T00:00:00Z",
                 "ORDER_FILLED",
                 "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                None,
                 "ctx-win",
                 "EUR_USD",
                 "LONG",
@@ -506,12 +538,82 @@ def _seed_execution_ledger_with_context_features(path: Path) -> None:
                 "2026-05-14T01:00:00Z",
                 "TRADE_CLOSED",
                 "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                None,
                 "ctx-win",
                 "EUR_USD",
                 "SHORT",
                 1000,
                 700.0,
                 json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _seed_execution_ledger_with_broker_order_lane(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE execution_events (
+            ts_utc TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            lane_id TEXT,
+            order_id TEXT,
+            trade_id TEXT,
+            pair TEXT,
+            side TEXT,
+            units INTEGER,
+            realized_pl_jpy REAL,
+            raw_json TEXT NOT NULL
+        );
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO execution_events (
+            ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
+            realized_pl_jpy, raw_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "2026-05-15T00:00:00Z",
+                "ORDER_ACCEPTED",
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "order-broker",
+                None,
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                json.dumps({"clientExtensions": {"comment": "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION"}}),
+            ),
+            (
+                "2026-05-15T00:00:01Z",
+                "ORDER_FILLED",
+                None,
+                "order-broker",
+                "broker-trade",
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                json.dumps({"reason": "MARKET_ORDER"}),
+            ),
+            (
+                "2026-05-15T00:20:00Z",
+                "TRADE_CLOSED",
+                None,
+                "close-broker",
+                "broker-trade",
+                "EUR_USD",
+                "SHORT",
+                1000,
+                300.0,
+                json.dumps({"reason": "TAKE_PROFIT_ORDER"}),
             ),
         ],
     )

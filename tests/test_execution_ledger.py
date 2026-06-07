@@ -36,6 +36,13 @@ class ExecutionLedgerTest(unittest.TestCase):
                 event_rows = conn.execute(
                     "SELECT event_type, trade_id, realized_pl_jpy, exit_reason, side FROM execution_events ORDER BY event_uid"
                 ).fetchall()
+                accepted_row = conn.execute(
+                    """
+                    SELECT lane_id, client_order_id
+                    FROM execution_events
+                    WHERE event_type = 'ORDER_ACCEPTED'
+                    """
+                ).fetchone()
                 last_id = conn.execute(
                     "SELECT value FROM sync_state WHERE key='last_oanda_transaction_id'"
                 ).fetchone()[0]
@@ -51,6 +58,8 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(close_rows[0][2], 350.0)
             self.assertEqual(close_rows[0][3], "TAKE_PROFIT_ORDER")
             self.assertEqual(close_rows[0][4], "LONG")
+            self.assertEqual(accepted_row[0], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
+            self.assertEqual(accepted_row[1], "qrv1-EURUSD-L-test")
             self.assertEqual(last_id, "104")
 
     def test_records_gateway_receipt_as_append_only_event(self) -> None:
@@ -288,7 +297,11 @@ class FakeTransactionClient:
                     "instrument": "EUR_USD",
                     "units": "1000",
                     "price": "1.17500",
-                    "clientExtensions": {"tag": "trader"},
+                    "clientExtensions": {
+                        "id": "qrv1-EURUSD-L-test",
+                        "tag": "trader",
+                        "comment": "qr-vnext lane=trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                    },
                 },
                 {
                     "id": "102",

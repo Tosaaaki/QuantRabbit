@@ -51,6 +51,11 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(order["price"], "1.17330")
             self.assertEqual(order["takeProfitOnFill"]["price"], "1.17450")
             self.assertEqual(order["stopLossOnFill"]["price"], "1.17250")
+            self.assertTrue(order["clientExtensions"]["id"].startswith("qrv1-EURUSD-L-"))
+            self.assertEqual(order["clientExtensions"]["tag"], "trader")
+            self.assertIn("lane=lane:EUR_USD:LONG", order["clientExtensions"]["comment"])
+            self.assertEqual(order["tradeClientExtensions"]["tag"], "trader")
+            self.assertIn("lane=lane:EUR_USD:LONG", order["tradeClientExtensions"]["comment"])
 
     def test_stages_oanda_market_order_without_entry_price(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

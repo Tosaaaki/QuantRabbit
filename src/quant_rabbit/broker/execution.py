@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import json
 import os
 from dataclasses import asdict, dataclass, replace
@@ -64,6 +65,11 @@ ACTIVE_FX_SESSION_BUCKETS_PER_DAY = 3
 # a shared policy field once SL-free risk accounting is centralized.
 SL_FREE_SYNTHETIC_RISK_PIPS = 30.0
 
+# Broker client-extension IDs are audit identifiers, not market/risk knobs. The
+# prefix lets execution_ledger distinguish QuantRabbit-created orders from
+# manual client IDs while the comment carries the full lane for attribution.
+CLIENT_ORDER_ID_PREFIX = "qrv1"
+
 
 class LiveOrderGateway:
     """Stage or send one OANDA order after the live risk contract passes."""
@@ -121,6 +127,7 @@ class LiveOrderGateway:
 
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
+        intent = _intent_with_gateway_metadata(intent, selected_lane_id)
         requested_units = intent.units
         scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
         if scaled_units is not None:
@@ -464,6 +471,7 @@ class LiveOrderGateway:
     ) -> dict[str, Any]:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
+        intent = _intent_with_gateway_metadata(intent, selected_lane_id)
         requested_units = intent.units
         scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
         if scaled_units is not None:
@@ -1182,8 +1190,8 @@ def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
         "instrument": intent.pair,
         "units": str(signed_units),
         "positionFill": _position_fill(intent),
-        "clientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
-        "tradeClientExtensions": {"tag": Owner.TRADER.value, "comment": _comment(intent)},
+        "clientExtensions": _client_extensions(intent),
+        "tradeClientExtensions": _client_extensions(intent),
     }
     # TP attachment (2026-05-15): `intent.tp` remains the virtual target used
     # by risk validation and reports. Per-intent metadata can omit the broker
@@ -1239,11 +1247,49 @@ def _price(pair: str, value: float) -> str:
     return f"{value:.{precision}f}"
 
 
+def _intent_with_gateway_metadata(intent: OrderIntent, lane_id: str) -> OrderIntent:
+    if not lane_id:
+        return intent
+    metadata = dict(intent.metadata or {})
+    metadata.setdefault("lane_id", lane_id)
+    return replace(intent, metadata=metadata)
+
+
+def _client_extensions(intent: OrderIntent) -> dict[str, str]:
+    return {
+        "id": _client_order_id(intent),
+        "tag": Owner.TRADER.value,
+        "comment": _comment(intent),
+    }
+
+
+def _client_order_id(intent: OrderIntent) -> str:
+    lane_id = _gateway_lane_id(intent)
+    seed = "|".join(
+        (
+            lane_id,
+            intent.pair,
+            intent.side.value,
+            intent.order_type.value,
+            datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+        )
+    )
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:12]
+    return f"{CLIENT_ORDER_ID_PREFIX}-{intent.pair.replace('_', '')}-{intent.side.value[0]}-{digest}"[:128]
+
+
 def _comment(intent: OrderIntent) -> str:
     desk = str(intent.metadata.get("desk") or "vnext")
     role = str(intent.metadata.get("campaign_role") or "")
-    text = f"qr-vnext {desk} {role}".strip()
+    lane_id = _gateway_lane_id(intent)
+    lane_part = f" lane={lane_id}" if lane_id else ""
+    text = f"qr-vnext{lane_part} desk={desk} role={role}".strip()
     return text[:128]
+
+
+def _gateway_lane_id(intent: OrderIntent) -> str:
+    metadata = intent.metadata or {}
+    return str(metadata.get("lane_id") or metadata.get("parent_lane_id") or "").strip()
 
 
 def _intent_from_json(payload: dict[str, Any]) -> OrderIntent:

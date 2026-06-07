@@ -1199,14 +1199,15 @@ def _event_trade_ids(conn: sqlite3.Connection, event_type: str) -> set[str]:
 
 
 def _gateway_attributed_entry_trade_ids(conn: sqlite3.Connection, columns: set[str]) -> set[str]:
-    if "order_id" not in columns:
+    if "order_id" not in columns or "lane_id" not in columns:
         return set()
-    lane_expr = "lane_id" if "lane_id" in columns else "NULL AS lane_id"
     gateway_rows = conn.execute(
-        f"""
-        SELECT trade_id, order_id, {lane_expr}
+        """
+        SELECT trade_id, order_id, lane_id
         FROM execution_events
-        WHERE event_type = 'GATEWAY_ORDER_SENT'
+        WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+          AND lane_id IS NOT NULL
+          AND lane_id != ''
         """
     ).fetchall()
     gateway_order_ids = {str(row["order_id"]).strip() for row in gateway_rows if str(row["order_id"] or "").strip()}
@@ -2014,7 +2015,7 @@ def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
                     order_id,
                     lane_id
                 FROM execution_events
-                WHERE event_type = 'GATEWAY_ORDER_SENT'
+                WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
                   AND lane_id IS NOT NULL
                   AND lane_id != ''
             ),

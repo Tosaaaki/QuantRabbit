@@ -961,6 +961,41 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
             self.assertTrue(any("zero gateway-attributed entry closes" in item for item in payload["action_items"]))
 
+    def test_close_gate_diagnostic_attributes_broker_client_extension_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -200.0),
+                ],
+            )
+            _seed_broker_attributed_ledger(ledger)
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+            self.assertEqual(close_gate["status"], "MEASURED")
+            self.assertEqual(close_gate["close_events"], 1)
+            self.assertEqual(close_gate["bot_attributed_close_events"], 1)
+            self.assertEqual(close_gate["bot_attributed_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
+            self.assertFalse(any("zero gateway-attributed entry closes" in item for item in payload["action_items"]))
+
     def test_context_theme_overlay_adds_cross_pair_without_displacing_base_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1246,6 +1281,81 @@ def _seed_execution_ledger(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             expanded_rows,
+        )
+
+
+def _seed_broker_attributed_ledger(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                exit_reason TEXT,
+                raw_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_events (
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
+                realized_pl_jpy, exit_reason, raw_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "accepted-broker",
+                    "2026-06-01T01:00:00Z",
+                    "ORDER_ACCEPTED",
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                    "order-broker",
+                    None,
+                    "EUR_USD",
+                    "LONG",
+                    1000,
+                    None,
+                    None,
+                    "{}",
+                ),
+                (
+                    "fill-broker",
+                    "2026-06-01T01:01:00Z",
+                    "ORDER_FILLED",
+                    None,
+                    "order-broker",
+                    "broker-trade",
+                    "EUR_USD",
+                    "LONG",
+                    1000,
+                    None,
+                    None,
+                    "{}",
+                ),
+                (
+                    "close-broker",
+                    "2026-06-01T02:00:00Z",
+                    "TRADE_CLOSED",
+                    None,
+                    "close-order-broker",
+                    "broker-trade",
+                    "EUR_USD",
+                    "SHORT",
+                    1000,
+                    -250.0,
+                    "MARKET_ORDER_TRADE_CLOSE",
+                    json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+                ),
+            ],
         )
 
 

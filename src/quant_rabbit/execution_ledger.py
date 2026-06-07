@@ -603,6 +603,21 @@ def _lane_id(
             value = payload.get(key)
             if value:
                 return str(value)
+        lane = _lane_id_from_comment(payload.get("comment"))
+        if lane:
+            return lane
+    return None
+
+
+def _lane_id_from_comment(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for token in text.split():
+        for prefix in ("lane=", "lane_id=", "laneId="):
+            if token.startswith(prefix):
+                lane = token[len(prefix) :].strip()
+                return lane or None
     return None
 
 

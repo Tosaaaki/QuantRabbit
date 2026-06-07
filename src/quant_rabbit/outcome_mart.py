@@ -660,42 +660,57 @@ def _execution_ledger_rows(
             return
         for row in conn.execute(
             """
-            WITH entries AS (
+            WITH gateway_entries AS (
                 SELECT
                     trade_id,
+                    order_id,
+                    lane_id,
+                    raw_json
+                FROM execution_events
+                WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
+                  AND lane_id IS NOT NULL
+                  AND lane_id != ''
+            ),
+            entries AS (
+                SELECT
+                    e.trade_id,
+                    COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS entry_lane_id,
+                    MAX(g.raw_json) AS gateway_raw_json,
                     CASE
-                        WHEN MAX(units) > 0 THEN 'LONG'
-                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        WHEN MAX(e.units) > 0 THEN 'LONG'
+                        WHEN MIN(e.units) < 0 THEN 'SHORT'
                         ELSE NULL
                     END AS position_side
-                FROM execution_events
-                WHERE event_type = 'ORDER_FILLED'
-                  AND trade_id IS NOT NULL
-                  AND trade_id != ''
-                  AND units IS NOT NULL
-                GROUP BY trade_id
-            ),
-            gateway_contexts AS (
-                SELECT trade_id, MAX(raw_json) AS gateway_raw_json
-                FROM execution_events
-                WHERE event_type = 'GATEWAY_ORDER_SENT'
-                  AND trade_id IS NOT NULL
-                  AND trade_id != ''
-                GROUP BY trade_id
+                FROM execution_events e
+                LEFT JOIN gateway_entries g
+                  ON (
+                    g.trade_id IS NOT NULL
+                    AND g.trade_id != ''
+                    AND g.trade_id = e.trade_id
+                  )
+                  OR (
+                    g.order_id IS NOT NULL
+                    AND g.order_id != ''
+                    AND g.order_id = e.order_id
+                  )
+                WHERE e.event_type = 'ORDER_FILLED'
+                  AND e.trade_id IS NOT NULL
+                  AND e.trade_id != ''
+                  AND e.units IS NOT NULL
+                GROUP BY e.trade_id
             )
             SELECT
                 e.ts_utc,
-                e.lane_id,
+                COALESCE(NULLIF(e.lane_id, ''), entries.entry_lane_id) AS lane_id,
                 e.trade_id,
                 e.pair,
                 e.side AS close_side,
                 e.realized_pl_jpy,
                 e.raw_json,
                 entries.position_side,
-                gateway_contexts.gateway_raw_json
+                entries.gateway_raw_json
             FROM execution_events e
             LEFT JOIN entries ON entries.trade_id = e.trade_id
-            LEFT JOIN gateway_contexts ON gateway_contexts.trade_id = e.trade_id
             WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
               AND e.pair IS NOT NULL
               AND e.side IS NOT NULL
