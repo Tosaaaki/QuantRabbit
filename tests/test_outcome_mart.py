@@ -81,6 +81,8 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertGreater(payload["condition_edges"], 0)
             self.assertGreater(payload["condition_rollups"], 0)
             self.assertIn("validated_condition_outcomes", payload)
+            self.assertIn("context_feature_outcomes", payload)
+            self.assertIn("context_feature_coverage_pct", payload)
             self.assertFalse(payload["live_permission"])
 
     def test_restores_archive_conditions_from_text_fields(self) -> None:
@@ -180,6 +182,34 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertEqual(edges["AUD_JPY:SHORT:ALL:ALL:ALL:ALL"]["execution_ledger_outcome_n"], 1)
             self.assertNotIn("GBP_USD:SHORT:ALL:ALL:ALL:ALL", edges)
             self.assertNotIn("AUD_JPY:LONG:ALL:ALL:ALL:ALL", edges)
+
+    def test_execution_ledger_context_features_are_joined_to_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_empty_history_db(db)
+            _seed_execution_ledger_with_context_features(ledger)
+
+            summary = OutcomeMartBuilder(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "outcome_mart.json",
+                report_path=root / "outcome_mart.md",
+            ).run()
+
+            payload = json.loads((root / "outcome_mart.json").read_text())
+            features = {item["key"]: item for item in payload["context_feature_edges"]}
+
+            self.assertEqual(summary.execution_ledger_outcomes, 1)
+            self.assertEqual(payload["source_coverage"]["context_feature_outcomes"], 1)
+            self.assertEqual(payload["source_coverage"]["context_feature_coverage_pct"], 100.0)
+            self.assertEqual(features["matrix_ref:matrix:EUR_USD:LONG"]["net_jpy"], 700.0)
+            self.assertEqual(features["context_asset_ref:context_asset:XAU_USD"]["outcome_n"], 1)
+            self.assertEqual(features["matrix_support_layer:context_asset_chart"]["net_jpy"], 700.0)
+            self.assertEqual(features["news_context:news_theme_followthrough"]["net_jpy"], 700.0)
+            report = (root / "outcome_mart.md").read_text()
+            self.assertIn("Context Feature Edges", report)
 
 
 def _seed_history_db(path: Path) -> None:
@@ -400,6 +430,88 @@ def _seed_execution_ledger_with_close_side_rows(path: Path) -> None:
                 3000,
                 500.0,
                 json.dumps({"reason": "TRADE_CLOSE"}),
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _seed_execution_ledger_with_context_features(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE execution_events (
+            ts_utc TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            lane_id TEXT,
+            trade_id TEXT,
+            pair TEXT,
+            side TEXT,
+            units INTEGER,
+            realized_pl_jpy REAL,
+            raw_json TEXT NOT NULL
+        );
+        """
+    )
+    context_evidence = {
+        "market_context_matrix_ref": "matrix:EUR_USD:LONG",
+        "matrix_support_layers": ["context_asset_chart"],
+        "context_asset_refs": ["context_asset:XAU_USD"],
+        "context_asset_symbols": ["XAU_USD"],
+        "news_context": ["forecast_drivers_for=[\"news_theme_followthrough USD soft\"]"],
+    }
+    conn.executemany(
+        """
+        INSERT INTO execution_events (
+            ts_utc, event_type, lane_id, trade_id, pair, side, units,
+            realized_pl_jpy, raw_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "2026-05-14T00:00:00Z",
+                "GATEWAY_ORDER_SENT",
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "ctx-win",
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                json.dumps(
+                    {
+                        "entry_thesis_record": {
+                            "status": "RECORDED",
+                            "thesis": {
+                                "trade_id": "ctx-win",
+                                "context_evidence": context_evidence,
+                            },
+                        }
+                    }
+                ),
+            ),
+            (
+                "2026-05-14T00:00:00Z",
+                "ORDER_FILLED",
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "ctx-win",
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                json.dumps({"reason": "MARKET_ORDER"}),
+            ),
+            (
+                "2026-05-14T01:00:00Z",
+                "TRADE_CLOSED",
+                "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                "ctx-win",
+                "EUR_USD",
+                "SHORT",
+                1000,
+                700.0,
+                json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
             ),
         ],
     )

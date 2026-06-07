@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,6 +72,11 @@ DEFAULT_THESIS_INVALIDATION_BUFFER_PIPS = 2.0
 TECHNICAL_INVALIDATION_TFS = ("M5", "M15", "M30", "H1")
 UNVERIFIABLE_STATUS = "UNVERIFIABLE"
 REQUIRE_THESIS_REPAIR_VERDICT = "REQUIRE_THESIS_REPAIR"
+_CONTEXT_REF_RE = re.compile(r"\b(?:matrix|context_asset|cross|news|calendar|cot|flow|level|currency_strength):[A-Za-z0-9_./:-]+\b")
+_CONTEXT_ASSET_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,8}_[A-Z]{3}\b")
+_NEWS_CONTEXT_TOKENS = ("news", "headline", "calendar", "macro", "event", "catalyst")
+_CONTEXT_LIST_LIMIT = 8
+_CONTEXT_TEXT_LIMIT = 240
 
 
 def thesis_invalidation_buffer_pips(buffer_pips: Optional[float] = None) -> float:
@@ -299,6 +305,7 @@ class EntryThesis:
     invalidation_price: Optional[float]
     target_price: Optional[float]
     key_drivers: List[str] = field(default_factory=list)
+    context_evidence: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -313,6 +320,7 @@ class EntryThesis:
             "invalidation_price": self.invalidation_price,
             "target_price": self.target_price,
             "key_drivers": self.key_drivers,
+            "context_evidence": self.context_evidence,
         }
 
     @classmethod
@@ -329,6 +337,7 @@ class EntryThesis:
             invalidation_price=d.get("invalidation_price"),
             target_price=d.get("target_price"),
             key_drivers=list(d.get("key_drivers", [])),
+            context_evidence=dict(d.get("context_evidence") or {}) if isinstance(d.get("context_evidence"), dict) else {},
         )
 
 
@@ -346,6 +355,7 @@ class PendingEntryThesis:
     target_price: Optional[float]
     key_drivers: List[str] = field(default_factory=list)
     lane_id: Optional[str] = None
+    context_evidence: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -361,6 +371,7 @@ class PendingEntryThesis:
             "target_price": self.target_price,
             "key_drivers": self.key_drivers,
             "lane_id": self.lane_id,
+            "context_evidence": self.context_evidence,
         }
 
     @classmethod
@@ -378,6 +389,7 @@ class PendingEntryThesis:
             target_price=d.get("target_price"),
             key_drivers=list(d.get("key_drivers", [])),
             lane_id=d.get("lane_id"),
+            context_evidence=dict(d.get("context_evidence") or {}) if isinstance(d.get("context_evidence"), dict) else {},
         )
 
 
@@ -643,6 +655,162 @@ def _build_key_drivers(*, forecast: Dict[str, Any], metadata: Dict[str, Any], th
     return key_drivers[:6]
 
 
+def _context_text(value: Any, *, limit: int = _CONTEXT_TEXT_LIMIT) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text[:limit]
+
+
+def _context_text_list(value: Any, *, limit: int = _CONTEXT_LIST_LIMIT) -> list[str]:
+    if isinstance(value, list):
+        raw_items = value
+    elif isinstance(value, tuple):
+        raw_items = list(value)
+    elif value in (None, ""):
+        raw_items = []
+    else:
+        raw_items = [value]
+    items: list[str] = []
+    for item in raw_items:
+        text = _context_text(item)
+        if text and text not in items:
+            items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _jsonable_context_value(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _jsonable_context_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_context_value(item) for item in value]
+    return str(value)
+
+
+def _context_refs_from_texts(texts: list[str]) -> list[str]:
+    refs: list[str] = []
+    for text in texts:
+        for match in _CONTEXT_REF_RE.findall(text):
+            if match not in refs:
+                refs.append(match)
+    return refs[:_CONTEXT_LIST_LIMIT]
+
+
+def _asset_symbols_from_texts(texts: list[str]) -> list[str]:
+    symbols: list[str] = []
+    for text in texts:
+        for match in _CONTEXT_ASSET_RE.findall(text):
+            if match not in symbols:
+                symbols.append(match)
+    return symbols[:_CONTEXT_LIST_LIMIT]
+
+
+def _market_context_field(intent: Any, name: str) -> str:
+    market_context = getattr(intent, "market_context", None)
+    if market_context is None:
+        return ""
+    return _context_text(getattr(market_context, name, ""))
+
+
+def _news_context_from_metadata(metadata: Dict[str, Any]) -> list[str]:
+    news_context: list[str] = []
+    for key, value in metadata.items():
+        key_text = str(key).lower()
+        value_text = json.dumps(_jsonable_context_value(value), ensure_ascii=False, sort_keys=True)
+        haystack = f"{key_text} {value_text.lower()}"
+        if not any(token in haystack for token in _NEWS_CONTEXT_TOKENS):
+            continue
+        text = _context_text(f"{key}={value_text}")
+        if text and text not in news_context:
+            news_context.append(text)
+        if len(news_context) >= _CONTEXT_LIST_LIMIT:
+            break
+    return news_context
+
+
+def _build_context_evidence(*, intent: Any, metadata: Dict[str, Any], forecast: Dict[str, Any]) -> Dict[str, Any]:
+    """Snapshot advisory context that motivated entry for later P/L attribution."""
+
+    evidence: Dict[str, Any] = {}
+    matrix_ref = _context_text(metadata.get("market_context_matrix_ref"))
+    if matrix_ref:
+        evidence["market_context_matrix_ref"] = matrix_ref
+
+    for key in (
+        "matrix_support_count",
+        "matrix_reject_count",
+        "matrix_warning_count",
+    ):
+        if metadata.get(key) not in (None, ""):
+            evidence[key] = _jsonable_context_value(metadata.get(key))
+
+    for key in (
+        "matrix_support_layers",
+        "matrix_reject_layers",
+        "matrix_warning_layers",
+    ):
+        values = _context_text_list(metadata.get(key))
+        if values:
+            evidence[key] = values
+
+    context_texts: list[str] = []
+    for key in (
+        "matrix_support_context",
+        "matrix_reject_context",
+        "matrix_warning_context",
+    ):
+        values = _context_text_list(metadata.get(key))
+        if values:
+            evidence[key] = values
+            context_texts.extend(values)
+
+    for key in (
+        "strongest_matrix_support",
+        "strongest_matrix_reject",
+        "strongest_matrix_warning",
+    ):
+        text = _context_text(metadata.get(key))
+        if text:
+            evidence[key] = text
+            context_texts.append(text)
+
+    chart_story = _market_context_field(intent, "chart_story")
+    if chart_story:
+        evidence["chart_story_excerpt"] = chart_story
+        context_texts.append(chart_story)
+    for key in ("regime", "method", "session", "event_risk"):
+        text = _market_context_field(intent, key)
+        if text:
+            evidence[f"market_context_{key}"] = text
+
+    news_context = _news_context_from_metadata(metadata)
+    if news_context:
+        evidence["news_context"] = news_context
+        context_texts.extend(news_context)
+
+    forecast_news_context = _news_context_from_metadata(forecast)
+    if forecast_news_context:
+        evidence["forecast_news_context"] = forecast_news_context
+        context_texts.extend(forecast_news_context)
+
+    refs = _context_refs_from_texts(([matrix_ref] if matrix_ref else []) + context_texts)
+    if refs:
+        evidence["evidence_refs"] = refs
+        evidence["context_asset_refs"] = [
+            ref for ref in refs if ref.startswith("context_asset:") or ref.startswith("cross:")
+        ][:_CONTEXT_LIST_LIMIT]
+
+    asset_symbols = _asset_symbols_from_texts(context_texts)
+    if asset_symbols:
+        evidence["context_asset_symbols"] = asset_symbols
+
+    return evidence
+
+
 def _safe_float(value: Any) -> Optional[float]:
     if value in (None, ""):
         return None
@@ -704,6 +872,11 @@ def record_entry_thesis_from_response_result(
                 )
             forecast = load_latest_forecast(pair, data_root) or {}
             metadata = dict(getattr(intent, "metadata", {}) or {})
+            context_evidence = _build_context_evidence(
+                intent=intent,
+                metadata=metadata,
+                forecast=forecast,
+            )
             now = now or datetime.now(timezone.utc)
             pending = PendingEntryThesis(
                 timestamp_utc=now.isoformat().replace("+00:00", "Z"),
@@ -722,6 +895,7 @@ def record_entry_thesis_from_response_result(
                     thesis_text=str(getattr(intent, "thesis", "") or ""),
                 ),
                 lane_id=str(metadata.get("parent_lane_id") or metadata.get("lane_id") or ""),
+                context_evidence=context_evidence,
             )
             record_pending_entry_thesis(
                 pending,
@@ -751,6 +925,11 @@ def record_entry_thesis_from_response_result(
 
         forecast = load_latest_forecast(pair, data_root) or {}
         metadata = dict(getattr(intent, "metadata", {}) or {})
+        context_evidence = _build_context_evidence(
+            intent=intent,
+            metadata=metadata,
+            forecast=forecast,
+        )
 
         regime = forecast.get("regime") or metadata.get("regime_state") or None
 
@@ -774,6 +953,7 @@ def record_entry_thesis_from_response_result(
                 metadata=metadata,
                 thesis_text=str(getattr(intent, "thesis", "") or ""),
             ),
+            context_evidence=context_evidence,
         )
         record_entry_thesis(entry_thesis, data_root)
         loaded = load_entry_thesis(trade_id, data_root)
@@ -850,6 +1030,7 @@ def record_entry_thesis_from_order_fill(
             invalidation_price=pending.invalidation_price,
             target_price=pending.target_price,
             key_drivers=list(pending.key_drivers),
+            context_evidence=dict(pending.context_evidence),
         )
         record_entry_thesis(entry_thesis, data_root)
         return entry_thesis

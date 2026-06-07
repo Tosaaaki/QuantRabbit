@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ NEGATIVE_TAIL_PERCENTILE = 0.25
 # not depend on a display limit.
 REPORT_ROW_LIMIT = 16
 REPORT_MIN_CONDITION_OUTCOMES = 5
+CONTEXT_FEATURE_TEXT_LIMIT = 160
 
 # Offline validation sample size only. This is the minimum number of prior
 # comparable outcomes before the report describes whether a historical
@@ -49,6 +51,9 @@ class OutcomeMartSummary:
     condition_directional_hit_rate_pct: float | None
     method_edges: int
     setup_buckets: int
+    context_feature_edges: int
+    context_feature_outcomes: int
+    context_feature_coverage_pct: float
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,7 @@ class OutcomeRow:
     regime: str
     pl_jpy: float
     observed_at_utc: datetime | None = None
+    context_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -184,6 +190,42 @@ class _ValidationMatchStats:
         }
 
 
+@dataclass
+class _ContextFeatureBucket:
+    feature_type: str
+    feature: str
+    values: list[float] = field(default_factory=list)
+
+    @property
+    def key(self) -> str:
+        return f"{self.feature_type}:{self.feature}"
+
+    def add_outcome(self, value: float) -> None:
+        self.values.append(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        values = sorted(self.values)
+        wins = [value for value in values if value > 0]
+        losses = [value for value in values if value < 0]
+        gross_profit = sum(wins)
+        gross_loss = abs(sum(losses))
+        outcome_n = len(values)
+        return {
+            "key": self.key,
+            "feature_type": self.feature_type,
+            "feature": self.feature,
+            "outcome_n": outcome_n,
+            "win_n": len(wins),
+            "loss_n": len(losses),
+            "win_rate_pct": _round((len(wins) / outcome_n) * 100.0) if outcome_n else None,
+            "net_jpy": _round(sum(values)) if values else 0.0,
+            "avg_jpy": _round(sum(values) / outcome_n) if outcome_n else None,
+            "best_jpy": _round(max(values)) if values else None,
+            "worst_jpy": _round(min(values)) if values else None,
+            "profit_factor": _round(gross_profit / gross_loss) if gross_loss > 0 else (None if gross_profit == 0 else "INF"),
+        }
+
+
 class OutcomeMartBuilder:
     """Build a read-only outcome mart from imported archive and execution truth.
 
@@ -199,11 +241,13 @@ class OutcomeMartBuilder:
         execution_ledger_db_path: Path = DEFAULT_EXECUTION_LEDGER_DB,
         output_path: Path = DEFAULT_OUTCOME_MART,
         report_path: Path = DEFAULT_OUTCOME_MART_REPORT,
+        entry_thesis_ledger_path: Path | None = None,
     ) -> None:
         self.db_path = db_path
         self.execution_ledger_db_path = execution_ledger_db_path
         self.output_path = output_path
         self.report_path = report_path
+        self.entry_thesis_ledger_path = entry_thesis_ledger_path
 
     def run(self) -> OutcomeMartSummary:
         if not self.db_path.exists():
@@ -211,7 +255,19 @@ class OutcomeMartBuilder:
 
         archive_outcomes = tuple(_archive_outcome_rows(self.db_path))
         story_observations = tuple(_story_observation_rows(self.db_path))
-        execution_outcomes = tuple(_execution_ledger_rows(self.execution_ledger_db_path))
+        execution_outcomes = tuple(
+            _execution_ledger_rows(
+                self.execution_ledger_db_path,
+                entry_thesis_ledger_path=self.entry_thesis_ledger_path,
+            )
+        )
+        context_feature_edges = _context_feature_edges(execution_outcomes)
+        context_feature_outcomes = sum(1 for row in execution_outcomes if tuple(_context_features(row.context_evidence)))
+        context_feature_coverage_pct = (
+            _round((context_feature_outcomes / len(execution_outcomes)) * 100.0)
+            if execution_outcomes
+            else 0.0
+        )
 
         method_edges: dict[tuple[str, str, str], _Bucket] = {}
         pair_edges: dict[tuple[str, str], _Bucket] = {}
@@ -298,10 +354,13 @@ class OutcomeMartBuilder:
                 "archive_outcomes": len(archive_outcomes),
                 "execution_ledger_outcomes": len(execution_outcomes),
                 "story_observations": len(story_observations),
+                "context_feature_outcomes": context_feature_outcomes,
+                "context_feature_coverage_pct": context_feature_coverage_pct,
             },
             "condition_edges": _sorted_bucket_dicts(condition_edges.values()),
             "condition_rollups": _sorted_bucket_dicts(condition_rollups.values()),
             "condition_validation": condition_validation,
+            "context_feature_edges": _sorted_context_feature_dicts(context_feature_edges.values()),
             "pair_direction_edges": _sorted_bucket_dicts(pair_edges.values()),
             "method_edges": _sorted_bucket_dicts(method_edges.values()),
             "setup_buckets": _sorted_bucket_dicts(setup_buckets.values()),
@@ -331,6 +390,9 @@ class OutcomeMartBuilder:
             condition_directional_hit_rate_pct=condition_validation["directional_hit_rate_pct"],
             method_edges=len(method_edges),
             setup_buckets=len(setup_buckets),
+            context_feature_edges=len(context_feature_edges),
+            context_feature_outcomes=context_feature_outcomes,
+            context_feature_coverage_pct=context_feature_coverage_pct,
         )
 
     def _write_output(self, payload: dict[str, Any]) -> None:
@@ -350,6 +412,7 @@ class OutcomeMartBuilder:
             f"- Archive outcomes: `{coverage['archive_outcomes']}`",
             f"- Execution ledger outcomes: `{coverage['execution_ledger_outcomes']}`",
             f"- Story observations: `{coverage['story_observations']}`",
+            f"- Context-feature outcomes: `{coverage['context_feature_outcomes']}` (`{coverage['context_feature_coverage_pct']:.1f}%` of execution outcomes)",
             "",
             f"## Winning Conditions (>= {REPORT_MIN_CONDITION_OUTCOMES} outcomes)",
             "",
@@ -502,6 +565,20 @@ class OutcomeMartBuilder:
         lines.extend(
             [
                 "",
+                "## Context Feature Edges",
+                "",
+                "| Feature | Outcomes | Net JPY | Avg JPY | Win % | Worst | Best |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
+        for item in payload["context_feature_edges"][:REPORT_ROW_LIMIT]:
+            lines.append(_context_feature_table_row(item))
+        if not payload["context_feature_edges"]:
+            lines.append("| none | 0 | 0 |  |  |  |  |")
+
+        lines.extend(
+            [
+                "",
                 "## Contract",
                 "",
                 "- This mart is read-only archive condition evidence for ranking and review.",
@@ -509,6 +586,7 @@ class OutcomeMartBuilder:
                 "- Current broker truth, RiskEngine, strategy-profile validation, and gateways remain authoritative.",
                 "- Story observations without P/L increase coverage counts only; they do not create expectancy.",
                 "- Pair/method drilldown is secondary; the primary question is which conditions paid or failed.",
+                "- Context-feature edges are post-trade attribution only; they do not grant live permission or bypass current receipts.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -565,9 +643,14 @@ def _story_observation_rows(db_path: Path) -> Iterator[StoryObservation]:
                 )
 
 
-def _execution_ledger_rows(db_path: Path) -> Iterator[OutcomeRow]:
+def _execution_ledger_rows(
+    db_path: Path,
+    *,
+    entry_thesis_ledger_path: Path | None = None,
+) -> Iterator[OutcomeRow]:
     if not db_path.exists():
         return
+    thesis_context = _load_entry_thesis_context(entry_thesis_ledger_path or db_path.parent / "entry_thesis_ledger.jsonl")
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         exists = conn.execute(
@@ -591,17 +674,28 @@ def _execution_ledger_rows(db_path: Path) -> Iterator[OutcomeRow]:
                   AND trade_id != ''
                   AND units IS NOT NULL
                 GROUP BY trade_id
+            ),
+            gateway_contexts AS (
+                SELECT trade_id, MAX(raw_json) AS gateway_raw_json
+                FROM execution_events
+                WHERE event_type = 'GATEWAY_ORDER_SENT'
+                  AND trade_id IS NOT NULL
+                  AND trade_id != ''
+                GROUP BY trade_id
             )
             SELECT
                 e.ts_utc,
                 e.lane_id,
+                e.trade_id,
                 e.pair,
                 e.side AS close_side,
                 e.realized_pl_jpy,
                 e.raw_json,
-                entries.position_side
+                entries.position_side,
+                gateway_contexts.gateway_raw_json
             FROM execution_events e
             LEFT JOIN entries ON entries.trade_id = e.trade_id
+            LEFT JOIN gateway_contexts ON gateway_contexts.trade_id = e.trade_id
             WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
               AND e.pair IS NOT NULL
               AND e.side IS NOT NULL
@@ -615,6 +709,12 @@ def _execution_ledger_rows(db_path: Path) -> Iterator[OutcomeRow]:
             if not pair or not direction or value is None:
                 continue
             method = _method_from_lane_id(row["lane_id"]) or _method_family(raw)
+            trade_id = str(row["trade_id"] or "")
+            context_evidence = (
+                thesis_context.get(trade_id)
+                or _context_evidence_from_raw(_load_json(row["gateway_raw_json"]))
+                or _context_evidence_from_raw(raw)
+            )
             yield OutcomeRow(
                 source="execution_ledger",
                 pair=pair,
@@ -625,6 +725,7 @@ def _execution_ledger_rows(db_path: Path) -> Iterator[OutcomeRow]:
                 regime=_regime(raw),
                 pl_jpy=value,
                 observed_at_utc=_parse_datetime(row["ts_utc"]),
+                context_evidence=context_evidence,
             )
 
 
@@ -637,6 +738,117 @@ def _story_items(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
                     yield item
 
 
+def _load_entry_thesis_context(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    contexts: dict[str, dict[str, Any]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return contexts
+    for line in lines:
+        payload = _load_json(line)
+        trade_id = str(payload.get("trade_id") or "")
+        context = _context_dict(payload.get("context_evidence"))
+        if trade_id and context:
+            contexts[trade_id] = context
+    return contexts
+
+
+def _context_evidence_from_raw(payload: dict[str, Any]) -> dict[str, Any]:
+    context = _context_dict(payload.get("context_evidence"))
+    if context:
+        return context
+    record = payload.get("entry_thesis_record")
+    if isinstance(record, dict):
+        for key in ("thesis", "pending"):
+            thesis = record.get(key)
+            if isinstance(thesis, dict):
+                context = _context_dict(thesis.get("context_evidence"))
+                if context:
+                    return context
+    return {}
+
+
+def _context_dict(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _context_feature_edges(rows: Iterable[OutcomeRow]) -> dict[tuple[str, str], _ContextFeatureBucket]:
+    buckets: dict[tuple[str, str], _ContextFeatureBucket] = {}
+    for row in rows:
+        for feature_type, feature in _context_features(row.context_evidence):
+            key = (feature_type, feature)
+            bucket = buckets.setdefault(key, _ContextFeatureBucket(feature_type=feature_type, feature=feature))
+            bucket.add_outcome(row.pl_jpy)
+    return buckets
+
+
+def _context_features(evidence: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    if not isinstance(evidence, dict) or not evidence:
+        return ()
+    features: list[tuple[str, str]] = []
+
+    matrix_ref = _context_feature_text(evidence.get("market_context_matrix_ref"))
+    if matrix_ref:
+        features.append(("matrix_ref", matrix_ref))
+
+    for key, feature_type in (
+        ("matrix_support_layers", "matrix_support_layer"),
+        ("matrix_reject_layers", "matrix_reject_layer"),
+        ("matrix_warning_layers", "matrix_warning_layer"),
+    ):
+        for value in _as_context_texts(evidence.get(key)):
+            features.append((feature_type, value))
+
+    for ref in _as_context_texts(evidence.get("context_asset_refs")):
+        if ref.startswith("context_asset:"):
+            features.append(("context_asset_ref", ref))
+        elif ref.startswith("cross:"):
+            features.append(("cross_asset_ref", ref))
+
+    for symbol in _as_context_texts(evidence.get("context_asset_symbols")):
+        features.append(("context_asset", symbol))
+
+    for key in ("news_context", "forecast_news_context"):
+        for value in _as_context_texts(evidence.get(key)):
+            features.append(("news_context", _news_feature(value)))
+
+    return tuple(dict.fromkeys(features))
+
+
+def _as_context_texts(value: Any) -> list[str]:
+    raw_items = value if isinstance(value, list) else [value]
+    out: list[str] = []
+    for item in raw_items:
+        text = _context_feature_text(item)
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _context_feature_text(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text[:CONTEXT_FEATURE_TEXT_LIMIT]
+
+
+def _news_feature(text: str) -> str:
+    normalized = re.sub(r"[^a-z0-9_]+", "_", text.lower())
+    for token in (
+        "news_theme_followthrough",
+        "macro_event",
+        "us_employment",
+        "calendar",
+        "event_risk",
+        "catalyst",
+    ):
+        if token in normalized:
+            return token
+    return text
+
+
 def _sorted_bucket_dicts(values: Iterable[_Bucket]) -> list[dict[str, Any]]:
     rows = [bucket.to_dict() for bucket in values]
     return sorted(rows, key=lambda item: (item["net_jpy"], item["outcome_n"], item["story_observation_n"], item["key"]), reverse=True)
@@ -645,6 +857,11 @@ def _sorted_bucket_dicts(values: Iterable[_Bucket]) -> list[dict[str, Any]]:
 def _sorted_validation_match_dicts(values: Iterable[_ValidationMatchStats]) -> list[dict[str, Any]]:
     rows = [stats.to_dict() for stats in values]
     return sorted(rows, key=lambda item: (abs(item["actual_net_jpy"]), item["outcomes"], item["key"]), reverse=True)
+
+
+def _sorted_context_feature_dicts(values: Iterable[_ContextFeatureBucket]) -> list[dict[str, Any]]:
+    rows = [bucket.to_dict() for bucket in values]
+    return sorted(rows, key=lambda item: (item["net_jpy"], item["outcome_n"], item["key"]), reverse=True)
 
 
 def _edge_table_row(item: dict[str, Any]) -> str:
@@ -664,6 +881,17 @@ def _validation_table_row(item: dict[str, Any]) -> str:
     return (
         f"| `{item['key']}` | {item['predicted_edge']} | {item['outcomes']} | "
         f"{item['actual_net_jpy']:.1f} | {hit_rate} | {win_rate} | {item['match_scope']} |"
+    )
+
+
+def _context_feature_table_row(item: dict[str, Any]) -> str:
+    avg = "" if item["avg_jpy"] is None else f"{item['avg_jpy']:.1f}"
+    win_rate = "" if item["win_rate_pct"] is None else f"{item['win_rate_pct']:.1f}"
+    worst = "" if item["worst_jpy"] is None else f"{item['worst_jpy']:.1f}"
+    best = "" if item["best_jpy"] is None else f"{item['best_jpy']:.1f}"
+    return (
+        f"| `{item['key']}` | {item['outcome_n']} | {item['net_jpy']:.1f} | "
+        f"{avg} | {win_rate} | {worst} | {best} |"
     )
 
 

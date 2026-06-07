@@ -479,8 +479,11 @@ class AITestBotBacktester:
             f"- Contract floor: `{payload['target_band']['floor_return_pct']:.1f}%`",
             f"- Stretch target: `{payload['target_band']['stretch_return_pct']:.1f}%`",
             f"- Selected-policy attainable: `{_format_optional_pct(payload['target_band']['selected_attainable_return_pct'])}`",
+            f"- Selected-policy best return: `{payload['target_band']['selected_best_return_pct']:.2f}%`",
             f"- Train-eligible oracle attainable: `{_format_optional_pct(payload['target_band']['train_eligible_oracle_attainable_return_pct'])}`",
+            f"- Train-eligible oracle best return: `{payload['target_band']['train_eligible_oracle_best_return_pct']:.2f}%`",
             f"- All-positive oracle attainable: `{_format_optional_pct(payload['target_band']['all_positive_oracle_attainable_return_pct'])}`",
+            f"- All-positive oracle best return: `{payload['target_band']['all_positive_oracle_best_return_pct']:.2f}%`",
             f"- Status: `{payload['target_band']['status']}`",
         ]
         for item in payload["target_band"]["bands"]:
@@ -991,6 +994,11 @@ def _target_band_payload(
                     band_ceiling["train_eligible_prediction_target_possible"]
                 ),
                 "top_n_target_possible": bool(band_ceiling["top_n_target_possible"]),
+                "best_top_n_day_jpy": float(band_ceiling["best_top_n_day_jpy"] or 0.0),
+                "best_all_positive_day_jpy": float(band_ceiling["best_all_positive_day_jpy"] or 0.0),
+                "best_train_eligible_all_positive_day_jpy": float(
+                    band_ceiling["best_train_eligible_all_positive_day_jpy"] or 0.0
+                ),
                 "oracle_target_gap_jpy": float(band_ceiling["oracle_target_gap_jpy"] or 0.0),
             }
         )
@@ -1010,6 +1018,13 @@ def _target_band_payload(
         status = "HINDSIGHT_ORACLE_ONLY"
     else:
         status = "BELOW_CONTRACT_FLOOR"
+    best_selected_day_jpy = max((float(item["best_selected_day_jpy"] or 0.0) for item in bands), default=0.0)
+    best_top_n_day_jpy = max((float(item["best_top_n_day_jpy"] or 0.0) for item in bands), default=0.0)
+    best_all_positive_day_jpy = max((float(item["best_all_positive_day_jpy"] or 0.0) for item in bands), default=0.0)
+    best_train_eligible_day_jpy = max(
+        (float(item["best_train_eligible_all_positive_day_jpy"] or 0.0) for item in bands),
+        default=0.0,
+    )
     return {
         "floor_return_pct": floor_pct,
         "stretch_return_pct": stretch_pct,
@@ -1018,6 +1033,18 @@ def _target_band_payload(
         "top_n_oracle_attainable_return_pct": top_n_attainable,
         "train_eligible_oracle_attainable_return_pct": train_eligible_attainable,
         "all_positive_oracle_attainable_return_pct": all_positive_attainable,
+        "selected_best_return_pct": _round((best_selected_day_jpy / start_balance_jpy) * 100.0)
+        if start_balance_jpy
+        else 0.0,
+        "top_n_oracle_best_return_pct": _round((best_top_n_day_jpy / start_balance_jpy) * 100.0)
+        if start_balance_jpy
+        else 0.0,
+        "train_eligible_oracle_best_return_pct": _round((best_train_eligible_day_jpy / start_balance_jpy) * 100.0)
+        if start_balance_jpy
+        else 0.0,
+        "all_positive_oracle_best_return_pct": _round((best_all_positive_day_jpy / start_balance_jpy) * 100.0)
+        if start_balance_jpy
+        else 0.0,
         "bands": bands,
     }
 

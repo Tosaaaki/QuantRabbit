@@ -55,6 +55,18 @@ class _Position:
         self.open_time_utc = open_time_utc
 
 
+class _MarketContext:
+    regime = "TREND_CONTINUATION current"
+    method = "TREND_CONTINUATION"
+    session = "LONDON"
+    event_risk = "calendar:US_NFP"
+    chart_story = (
+        "matrix matrix:EUR_USD:LONG supports=2 rejects=1; "
+        "GOLD_CONTEXT_TECHNICAL_DIRECTION context_asset:XAU_USD maps to EUR_USD LONG; "
+        "OIL_CONTEXT_TECHNICAL_DIRECTION context_asset:WTICO_USD rejects"
+    )
+
+
 def _tech_chart(move: str) -> dict:
     direction = move.upper()
     if direction == "UP":
@@ -170,6 +182,66 @@ class EntryThesisLedgerTest(unittest.TestCase):
             loaded = load_entry_thesis("999999", root)
             self.assertIsNotNone(loaded)
 
+    def test_record_from_send_response_persists_market_context_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "forecast_history.jsonl").write_text(json.dumps({
+                "pair": "EUR_USD",
+                "direction": "UP",
+                "confidence": 0.68,
+                "invalidation_price": 1.091,
+                "target_price": 1.104,
+                "drivers_for": ["news_theme_followthrough USD soft"],
+            }) + "\n")
+
+            class FakeIntent:
+                pair = "EUR_USD"
+                side = _SideEnum("LONG")
+                thesis = "EUR_USD LONG with matrix support"
+                entry = 1.1
+                market_context = _MarketContext()
+                metadata = {
+                    "market_context_matrix_ref": "matrix:EUR_USD:LONG",
+                    "matrix_support_count": 2,
+                    "matrix_reject_count": 1,
+                    "matrix_support_layers": ["context_asset_chart"],
+                    "matrix_reject_layers": ["cross_asset"],
+                    "matrix_support_context": [
+                        "GOLD_CONTEXT_TECHNICAL_DIRECTION context_asset:XAU_USD maps to EUR_USD LONG",
+                    ],
+                    "matrix_reject_context": [
+                        "OIL_CONTEXT_TECHNICAL_DIRECTION context_asset:WTICO_USD rejects EUR_USD LONG",
+                    ],
+                    "forecast_drivers_for": ["news_theme_followthrough USD soft"],
+                }
+
+            response = {
+                "orderFillTransaction": {
+                    "tradeOpened": {"tradeID": "ctx-1"},
+                    "price": 1.1002,
+                }
+            }
+
+            result = record_entry_thesis_from_response_result(
+                response=response,
+                intent=FakeIntent(),
+                data_root=root,
+            )
+
+            self.assertEqual(result.status, "RECORDED")
+            assert result.thesis is not None
+            context = result.thesis.context_evidence
+            self.assertEqual(context["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
+            self.assertEqual(context["matrix_support_count"], 2)
+            self.assertEqual(context["matrix_support_layers"], ["context_asset_chart"])
+            self.assertIn("context_asset:XAU_USD", context["context_asset_refs"])
+            self.assertIn("context_asset:WTICO_USD", context["context_asset_refs"])
+            self.assertIn("XAU_USD", context["context_asset_symbols"])
+            self.assertIn("news_context", context)
+            loaded = load_entry_thesis("ctx-1", root)
+            assert loaded is not None
+            self.assertEqual(loaded.context_evidence["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
+
     def test_record_from_response_no_trade_id_returns_none(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -203,11 +275,17 @@ class EntryThesisLedgerTest(unittest.TestCase):
                 entry = 1.16013
                 tp = 1.1583
                 sl = 1.1641
+                market_context = _MarketContext()
                 metadata = {
                     "desk": "failure_trader",
                     "campaign_role": "FORECAST_FIRST",
                     "regime_state": "FAILURE_RISK",
                     "parent_lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                    "market_context_matrix_ref": "matrix:EUR_USD:SHORT",
+                    "matrix_support_layers": ["context_asset_chart"],
+                    "matrix_support_context": [
+                        "GOLD_CONTEXT_TECHNICAL_DIRECTION context_asset:XAU_USD maps to EUR_USD SHORT",
+                    ],
                 }
 
             response = {
@@ -227,6 +305,8 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertIsNotNone(pending)
             assert pending is not None
             self.assertEqual(pending.forecast_direction, "DOWN")
+            self.assertEqual(pending.context_evidence["market_context_matrix_ref"], "matrix:EUR_USD:SHORT")
+            self.assertIn("context_asset:XAU_USD", pending.context_evidence["context_asset_refs"])
 
             promoted = record_entry_thesis_from_order_fill(
                 transaction={
@@ -252,6 +332,7 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(promoted.side, "SHORT")
             self.assertEqual(promoted.forecast_direction, "DOWN")
             self.assertAlmostEqual(promoted.entry_price, 1.16013)
+            self.assertEqual(promoted.context_evidence["market_context_matrix_ref"], "matrix:EUR_USD:SHORT")
             loaded = load_entry_thesis("471492", root)
             self.assertIsNotNone(loaded)
 

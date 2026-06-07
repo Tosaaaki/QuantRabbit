@@ -167,6 +167,8 @@ class AITestBotBacktesterTest(unittest.TestCase):
             band = payload["target_band"]
             self.assertEqual(band["status"], "SELECTED_POLICY_REACHES_FLOOR_BELOW_STRETCH")
             self.assertEqual(band["selected_attainable_return_pct"], 5.0)
+            self.assertEqual(band["selected_best_return_pct"], 5.5)
+            self.assertEqual(band["all_positive_oracle_best_return_pct"], 5.5)
             by_pct = {item["return_pct"]: item for item in band["bands"]}
             self.assertEqual(by_pct[5.0]["target_jpy"], 500.0)
             self.assertEqual(by_pct[5.0]["selected_target_hit_days"], 1)
@@ -175,6 +177,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertTrue(any("selected policy currently reaches 5%" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("## Target Band", report)
+            self.assertIn("Selected-policy best return: `5.50%`", report)
             self.assertIn("`5.0%` target=`500` selected_hits=`1/1`", report)
             self.assertIn("`10.0%` target=`1000` selected_hits=`0/1`", report)
 
