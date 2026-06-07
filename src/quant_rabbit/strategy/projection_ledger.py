@@ -39,8 +39,9 @@ loop — the layer stops trusting detectors that don't pan out.
 Storage: append-only JSONL so the ledger can be re-played and audited.
 File location: `data/projection_ledger.jsonl` (gitignored).
 
-The verifier is idempotent — running it multiple times only resolves
-new PENDING entries, never re-resolves already-tagged ones.
+The verifier is idempotent for scored outcomes — running it multiple times
+resolves new PENDING entries and may repair truth-missing TIMEOUT entries when
+historical candles become available, but it never re-scores HIT/MISS rows.
 """
 
 from __future__ import annotations
@@ -502,12 +503,15 @@ def _verify_pending_unlocked(
     now: Optional[datetime] = None,
     ledger_handle: Optional[IO[str]] = None,
 ) -> Dict[str, int]:
-    """Walk PENDING ledger entries; resolve those past their window.
+    """Walk unresolved ledger entries; resolve those past their window.
 
     `candles_by_pair`: {pair: [Candle-like]} or
     {pair: {granularity: [Candle-like]}} is preferred and resolves against the
     high/low path inside the resolution window. Granularity buckets are tried
     from finest to coarsest so M5 only fills windows no longer covered by M1.
+    Entries that previously timed out only because quote/candle truth was
+    unavailable are retried when candle truth is supplied; already-scored
+    HIT/MISS entries and closed-market TIMEOUT entries remain immutable.
     `quotes_by_pair`: {pair: {"bid": float, "ask": float}} is a legacy
     fallback when the caller has not supplied historical candle truth.
     `atr_pips_by_pair`: optional per-pair ATR pips for EITHER signal
@@ -524,7 +528,8 @@ def _verify_pending_unlocked(
     atr_pips_by_pair = atr_pips_by_pair or {}
     counts = {"HIT": 0, "MISS": 0, "TIMEOUT": 0, "PENDING": 0}
     for e in entries:
-        if e.resolution_status != "PENDING":
+        retrying_truth_timeout = _retryable_truth_timeout(e) and candles_by_pair is not None
+        if e.resolution_status != "PENDING" and not retrying_truth_timeout:
             continue
         try:
             emitted_at = datetime.fromisoformat(e.timestamp_emitted_utc.replace("Z", "+00:00"))
@@ -546,10 +551,11 @@ def _verify_pending_unlocked(
         price_path = _price_path_for_entry(e, emitted_at=emitted_at, expires_at=expires_at, candles_by_pair=candles_by_pair)
         if price_path is None:
             if candles_by_pair is not None:
-                e.resolution_status = "TIMEOUT"
-                e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
-                e.resolution_evidence = "no candle truth for projection window"
-                counts["TIMEOUT"] += 1
+                if e.resolution_status == "PENDING":
+                    e.resolution_status = "TIMEOUT"
+                    e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+                    e.resolution_evidence = "no candle truth for projection window"
+                    counts["TIMEOUT"] += 1
                 continue
             price_path = _quote_point_path(e, quotes_by_pair=quotes_by_pair)
         if price_path is None:
@@ -716,6 +722,28 @@ def _verify_pending_unlocked(
     else:
         write_ledger(entries, data_root)
     return counts
+
+
+def _retryable_truth_timeout(entry: LedgerEntry) -> bool:
+    if str(entry.resolution_status or "").upper() != "TIMEOUT":
+        return False
+    evidence = str(entry.resolution_evidence or "").lower()
+    return any(
+        marker in evidence
+        for marker in (
+            "no m1 candle truth",
+            "no candle truth",
+            "no quote/candle truth",
+        )
+    )
+
+
+def retryable_truth_timeout_pairs(entries: Iterable[LedgerEntry]) -> set[str]:
+    return {
+        str(getattr(entry, "pair", ""))
+        for entry in entries
+        if str(getattr(entry, "pair", "") or "").strip() and _retryable_truth_timeout(entry)
+    }
 
 
 def _price_path_for_entry(

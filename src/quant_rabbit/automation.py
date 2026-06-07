@@ -1952,7 +1952,11 @@ class AutoTradeCycle:
             return self._projection_preflight_summary
         data_root = self.intents_path.parent
         try:
-            from quant_rabbit.strategy.projection_ledger import load_ledger, verify_pending
+            from quant_rabbit.strategy.projection_ledger import (
+                load_ledger,
+                retryable_truth_timeout_pairs,
+                verify_pending,
+            )
 
             entries = load_ledger(data_root)
             now = getattr(snapshot, "fetched_at_utc", None)
@@ -1977,19 +1981,22 @@ class AutoTradeCycle:
                     continue
                 if (now - emitted_at).total_seconds() / 60.0 >= window_min:
                     expired_pairs.add(entry.pair)
+            retry_timeout_pairs = retryable_truth_timeout_pairs(entries)
             pending_pairs_sorted = sorted(pending_pairs)
             expired_pairs_sorted = sorted(expired_pairs)
+            verification_pairs_sorted = sorted(pending_pairs | retry_timeout_pairs)
         except Exception as exc:
             self._projection_preflight_summary = {
                 "status": "LOAD_FAILED",
                 "error": f"{type(exc).__name__}: {str(exc)[:160]}",
             }
             return self._projection_preflight_summary
-        if not pending_pairs_sorted:
+        if not verification_pairs_sorted:
             self._projection_preflight_summary = {
                 "status": "NO_PENDING",
                 "expired_pending_pairs": 0,
                 "pending_pairs": 0,
+                "retryable_timeout_pairs": 0,
             }
             return self._projection_preflight_summary
         quotes_by_pair: dict[str, dict[str, float]] = {}
@@ -2010,7 +2017,7 @@ class AutoTradeCycle:
                 m1_count = int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500"))
                 m5_count = int(os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT", "1500"))
                 candles_by_pair = {}
-                for pair in pending_pairs_sorted:
+                for pair in verification_pairs_sorted:
                     pair_candles: dict[str, list[Any]] = {}
                     per_granularity: dict[str, int] = {}
                     for granularity, count in (("M1", m1_count), ("M5", m5_count)):
@@ -2056,6 +2063,7 @@ class AutoTradeCycle:
             "status": "OK",
             "expired_pending_pairs": len(expired_pairs_sorted),
             "pending_pairs": len(pending_pairs_sorted),
+            "retryable_timeout_pairs": len(retry_timeout_pairs),
             "resolution_counts": counts,
             "candle_counts": candle_counts,
             "candle_granularity_counts": candle_granularity_counts,

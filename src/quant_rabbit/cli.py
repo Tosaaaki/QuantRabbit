@@ -495,7 +495,11 @@ def _pre_entry_projection_verification_if_required(
         return None
     try:
         from quant_rabbit.analysis.candles import fetch_candles_via_client
-        from quant_rabbit.strategy.projection_ledger import load_ledger, verify_pending
+        from quant_rabbit.strategy.projection_ledger import (
+            load_ledger,
+            retryable_truth_timeout_pairs,
+            verify_pending,
+        )
 
         now = datetime.now(timezone.utc)
         entries = load_ledger(ROOT / "data")
@@ -516,8 +520,14 @@ def _pre_entry_projection_verification_if_required(
                 continue
             if (now - emitted_at).total_seconds() / 60.0 >= window_min and pair:
                 expired_pairs.add(pair)
-        if not expired_pairs:
-            return {"status": "NO_EXPIRED_PENDING", "expired_pending_pairs": 0}
+        retry_timeout_pairs = retryable_truth_timeout_pairs(entries)
+        verification_pairs = pending_pairs | retry_timeout_pairs
+        if not expired_pairs and not retry_timeout_pairs:
+            return {
+                "status": "NO_EXPIRED_PENDING",
+                "expired_pending_pairs": 0,
+                "retryable_timeout_pairs": 0,
+            }
 
         snapshot_payload = json.loads(snapshot_path.read_text())
         quotes_by_pair: dict[str, dict[str, float]] = {}
@@ -557,7 +567,7 @@ def _pre_entry_projection_verification_if_required(
         candle_errors: dict[str, str] = {}
         m1_count = int(os.environ.get("QR_PROJECTION_VERIFY_M1_COUNT", "1500"))
         m5_count = int(os.environ.get("QR_PROJECTION_VERIFY_M5_COUNT", "1500"))
-        if pending_pairs and (m1_count > 0 or m5_count > 0):
+        if verification_pairs and (m1_count > 0 or m5_count > 0):
             candles_by_pair = {}
             try:
                 client = OandaReadOnlyClient()
@@ -565,7 +575,7 @@ def _pre_entry_projection_verification_if_required(
                 candle_errors["_client"] = f"{type(exc).__name__}: {str(exc)[:160]}"
                 candles_by_pair = None
             else:
-                for pair in sorted(pending_pairs):
+                for pair in sorted(verification_pairs):
                     pair_candles: dict[str, list[Any]] = {}
                     per_granularity: dict[str, int] = {}
                     for granularity, count in (("M1", m1_count), ("M5", m5_count)):
@@ -596,6 +606,7 @@ def _pre_entry_projection_verification_if_required(
         "status": "OK",
         "expired_pending_pairs": len(expired_pairs),
         "pending_pairs": len(pending_pairs),
+        "retryable_timeout_pairs": len(retry_timeout_pairs),
         "resolution_counts": counts,
         "candle_counts": candle_counts,
         "candle_granularity_counts": candle_granularity_counts,
@@ -3672,6 +3683,7 @@ def main(argv: list[str] | None = None) -> int:
         from quant_rabbit.strategy.projection_ledger import (
             compute_hit_rates,
             load_ledger,
+            retryable_truth_timeout_pairs,
             verify_pending,
         )
         from quant_rabbit.analysis.candles import fetch_candles_via_client
@@ -3699,12 +3711,15 @@ def main(argv: list[str] | None = None) -> int:
                         if atr:
                             atr_pips_by_pair[pair] = float(atr)
                             break
-        pending_pairs = sorted({e.pair for e in load_ledger(data_root) if e.resolution_status == "PENDING"})
+        ledger_entries = load_ledger(data_root)
+        pending_pairs = sorted({e.pair for e in ledger_entries if e.resolution_status == "PENDING"})
+        retry_timeout_pairs = sorted(retryable_truth_timeout_pairs(ledger_entries))
+        verification_pairs = sorted(set(pending_pairs) | set(retry_timeout_pairs))
         candles_by_pair = None
         candle_counts: dict[str, int] = {}
         candle_granularity_counts: dict[str, dict[str, int]] = {}
         candle_errors: dict[str, str] = {}
-        if pending_pairs and (args.m1_count > 0 or args.m5_count > 0):
+        if verification_pairs and (args.m1_count > 0 or args.m5_count > 0):
             candles_by_pair = {}
             try:
                 client = OandaReadOnlyClient()
@@ -3712,7 +3727,7 @@ def main(argv: list[str] | None = None) -> int:
                 candle_errors["_client"] = f"{type(exc).__name__}: {str(exc)[:160]}"
                 candles_by_pair = None
             else:
-                for pair in pending_pairs:
+                for pair in verification_pairs:
                     pair_candles: dict[str, list[Any]] = {}
                     per_granularity: dict[str, int] = {}
                     for granularity, count in (("M1", int(args.m1_count)), ("M5", int(args.m5_count))):
@@ -3742,6 +3757,7 @@ def main(argv: list[str] | None = None) -> int:
             "resolution_counts": counts,
             "price_truth": {
                 "pending_pairs": pending_pairs,
+                "retryable_timeout_pairs": retry_timeout_pairs,
                 "m1_count_requested": int(args.m1_count),
                 "m5_count_requested": int(args.m5_count),
                 "candle_counts": candle_counts,

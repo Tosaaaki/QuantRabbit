@@ -636,6 +636,91 @@ class VerifyTest(unittest.TestCase):
             self.assertEqual(counts["HIT"], 1)
             self.assertIn("target 1.09800 touched before invalidation 1.10100", load_ledger(root)[0].resolution_evidence)
 
+    def test_truth_missing_timeout_is_retried_with_later_m5_candle_truth(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "DOWN",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.0980,
+            "invalidation": 1.1010,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            entries[0].resolution_status = "TIMEOUT"
+            entries[0].resolution_evidence = "no M1 candle truth for projection window"
+            entries[0].resolved_at_utc = (emitted + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": {
+                        "M1": [],
+                        "M5": [
+                            {
+                                "timestamp": (emitted + timedelta(minutes=5)).isoformat(),
+                                "high": 1.1004,
+                                "low": 1.0978,
+                                "close": 1.0984,
+                            }
+                        ],
+                    }
+                },
+            )
+
+            resolved = load_ledger(root)[0]
+
+        self.assertEqual(counts["HIT"], 1)
+        self.assertEqual(resolved.resolution_status, "HIT")
+        self.assertIn("target 1.09800 touched before invalidation 1.10100", resolved.resolution_evidence)
+
+    def test_closed_market_timeout_is_not_retried(self) -> None:
+        emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+        tmp, root = self._setup({
+            "name": "directional_forecast",
+            "direction": "UP",
+            "lead_time_min": 5,
+            "window": 10,
+            "entry_price": 1.1000,
+            "target": 1.1020,
+            "invalidation": 1.0990,
+        })
+        with tmp:
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+            entries = load_ledger(root)
+            entries[0].timestamp_emitted_utc = emitted.isoformat().replace("+00:00", "Z")
+            entries[0].resolution_status = "TIMEOUT"
+            entries[0].resolution_evidence = "market closed at projection emission; excluded from calibration"
+            entries[0].resolved_at_utc = (emitted + timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+            write_ledger(entries, root)
+
+            counts = verify_pending(
+                root,
+                candles_by_pair={
+                    "EUR_USD": [
+                        {
+                            "timestamp": (emitted + timedelta(minutes=1)).isoformat(),
+                            "high": 1.1025,
+                            "low": 1.1000,
+                            "close": 1.1020,
+                        }
+                    ]
+                },
+            )
+
+            resolved = load_ledger(root)[0]
+
+        self.assertEqual(counts["HIT"], 0)
+        self.assertEqual(counts["MISS"], 0)
+        self.assertEqual(counts["TIMEOUT"], 0)
+        self.assertEqual(resolved.resolution_status, "TIMEOUT")
+        self.assertIn("market closed", resolved.resolution_evidence)
+
     def test_pending_within_window(self) -> None:
         # Emitted just now with 60-min window → still pending
         tmp, root = self._setup({"window": 60}, ts_offset_min=10)

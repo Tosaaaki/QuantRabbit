@@ -1175,6 +1175,69 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         candles_arg = verify_pending.call_args.kwargs["candles_by_pair"]
         self.assertEqual(candles_arg["EUR_USD"]["M5"], [candle])
 
+    def test_generate_intents_preflight_fetches_retryable_truth_timeout_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "snapshot.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "quotes": {
+                            "EUR_USD": {
+                                "bid": 1.1642,
+                                "ask": 1.1643,
+                            }
+                        }
+                    }
+                )
+            )
+            timeout = SimpleNamespace(
+                resolution_status="TIMEOUT",
+                resolution_evidence="no M1 candle truth for projection window",
+                pair="EUR_USD",
+                timestamp_emitted_utc=(datetime.now(timezone.utc) - timedelta(minutes=90))
+                .isoformat()
+                .replace("+00:00", "Z"),
+                resolution_window_min=60.0,
+            )
+            os.environ["QR_PROJECTION_VERIFY_M1_COUNT"] = "0"
+            os.environ["QR_PROJECTION_VERIFY_M5_COUNT"] = "2"
+            candle = SimpleNamespace(
+                timestamp_utc=datetime.now(timezone.utc) - timedelta(minutes=80),
+                high=1.1660,
+                low=1.1630,
+                close=1.1650,
+            )
+            try:
+                with mock.patch("quant_rabbit.cli._running_under_test_harness", return_value=False):
+                    with mock.patch("quant_rabbit.strategy.projection_ledger.load_ledger", return_value=[timeout]):
+                        with mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=object()) as client_cls:
+                            with mock.patch(
+                                "quant_rabbit.analysis.candles.fetch_candles_via_client",
+                                return_value=(candle,),
+                            ) as fetch_candles:
+                                with mock.patch(
+                                    "quant_rabbit.strategy.projection_ledger.verify_pending",
+                                    return_value={"HIT": 1, "MISS": 0, "TIMEOUT": 0, "PENDING": 0},
+                                ) as verify_pending:
+                                    summary = _pre_entry_projection_verification_if_required(
+                                        telemetry_required=True,
+                                        snapshot_path=snapshot,
+                                        pair_charts_path=root / "missing_pair_charts.json",
+                                    )
+            finally:
+                os.environ.pop("QR_PROJECTION_VERIFY_M1_COUNT", None)
+                os.environ.pop("QR_PROJECTION_VERIFY_M5_COUNT", None)
+
+        self.assertEqual(summary["status"], "OK")
+        self.assertEqual(summary["expired_pending_pairs"], 0)
+        self.assertEqual(summary["pending_pairs"], 0)
+        self.assertEqual(summary["retryable_timeout_pairs"], 1)
+        client_cls.assert_called_once()
+        fetch_candles.assert_called_once_with(mock.ANY, "EUR_USD", "M5", count=2)
+        candles_arg = verify_pending.call_args.kwargs["candles_by_pair"]
+        self.assertEqual(candles_arg["EUR_USD"]["M5"], [candle])
+
 
 if __name__ == "__main__":
     unittest.main()
