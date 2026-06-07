@@ -645,6 +645,160 @@ def _refresh_market_story_if_news_is_newer(
     return True
 
 
+def _auto_refresh_market_evidence_if_required(
+    *,
+    label: str,
+    reuse_market_artifacts: bool = False,
+    market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
+) -> dict[str, Any]:
+    """Refresh the full technical/macro packet before runtime lane pricing.
+
+    The playbook has explicit refresh commands, but the live wrapper ultimately
+    invokes `autotrade-cycle`. A direct cycle must not quietly price intents
+    from stale pair charts or a missing market-context matrix.
+    """
+
+    if reuse_market_artifacts:
+        return {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
+    if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip() in {
+        "1",
+        "true",
+        "TRUE",
+        "yes",
+        "YES",
+    }:
+        return {"status": "SKIPPED", "reason": "QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH"}
+    if _running_under_test_harness():
+        return {"status": "SKIPPED", "reason": "test_harness"}
+
+    pairs = tuple(part.strip().upper() for part in DEFAULT_TRADER_PAIRS_ARG.split(",") if part.strip())
+    candle_count = int(os.environ.get("QR_MARKET_EVIDENCE_CANDLE_COUNT", "200") or "200")
+    try:
+        client = OandaReadOnlyClient()
+
+        from quant_rabbit.analysis.calendar import build_calendar_snapshot
+        from quant_rabbit.analysis.chart_reader import build_pair_chart
+        from quant_rabbit.analysis.cot import build_cot_snapshot
+        from quant_rabbit.analysis.cross_asset import (
+            DEFAULT_CROSS_ASSET_INSTRUMENTS,
+            build_cross_asset_snapshot,
+        )
+        from quant_rabbit.analysis.flow import build_flow_snapshot
+        from quant_rabbit.analysis.levels import build_levels_snapshot
+        from quant_rabbit.analysis.market_context_matrix import (
+            build_market_context_matrix,
+            write_market_context_matrix_report,
+        )
+        from quant_rabbit.analysis.options import build_option_skew_snapshot
+        from quant_rabbit.analysis.score_momentum import attach_score_momentum
+        from quant_rabbit.analysis.strength import build_strength_snapshot
+
+        generated_at = datetime.now(timezone.utc).isoformat()
+        charts = [
+            build_pair_chart(pair, client=client, timeframes=DEFAULT_PAIR_CHART_TIMEFRAMES, count=candle_count).to_dict()
+            for pair in pairs
+        ]
+        previous_pair_charts = None
+        if DEFAULT_PAIR_CHARTS.exists():
+            try:
+                previous_pair_charts = json.loads(DEFAULT_PAIR_CHARTS.read_text())
+            except (OSError, json.JSONDecodeError, ValueError):
+                previous_pair_charts = None
+        attach_score_momentum(charts, previous_pair_charts, generated_at)
+        charts.sort(key=lambda c: max(c["long_score"], c["short_score"]), reverse=True)
+        pair_payload = {
+            "generated_at_utc": generated_at,
+            "timeframes": list(DEFAULT_PAIR_CHART_TIMEFRAMES),
+            "candle_count": candle_count,
+            "charts": charts,
+        }
+        _write_json(DEFAULT_PAIR_CHARTS, pair_payload)
+
+        cross_asset = build_cross_asset_snapshot(
+            client=client,
+            instruments=DEFAULT_CROSS_ASSET_INSTRUMENTS,
+            correlation_pairs=pairs,
+            count=candle_count,
+        )
+        _write_json(DEFAULT_CROSS_ASSET_SNAPSHOT, cross_asset.to_dict())
+
+        flow = build_flow_snapshot(client=client, pairs=pairs)
+        _write_json(DEFAULT_FLOW_SNAPSHOT, flow.to_dict())
+
+        strength = build_strength_snapshot(client=client)
+        _write_json(DEFAULT_CURRENCY_STRENGTH, strength.to_dict())
+
+        levels = build_levels_snapshot(client=client, pairs=pairs)
+        _write_json(DEFAULT_LEVELS_SNAPSHOT, levels.to_dict())
+
+        calendar = build_calendar_snapshot(pairs=pairs)
+        _write_json(DEFAULT_CALENDAR_SNAPSHOT, calendar.to_dict())
+
+        cot = build_cot_snapshot(fetch=True)
+        _write_json(DEFAULT_COT_SNAPSHOT, cot.to_dict())
+
+        option_skew = build_option_skew_snapshot(pairs=pairs)
+        _write_json(DEFAULT_OPTION_SKEW, option_skew.to_dict())
+
+        matrix = build_market_context_matrix(
+            pair_charts_path=DEFAULT_PAIR_CHARTS,
+            cross_asset_path=DEFAULT_CROSS_ASSET_SNAPSHOT,
+            flow_path=DEFAULT_FLOW_SNAPSHOT,
+            currency_strength_path=DEFAULT_CURRENCY_STRENGTH,
+            levels_path=DEFAULT_LEVELS_SNAPSHOT,
+            calendar_path=DEFAULT_CALENDAR_SNAPSHOT,
+            cot_path=DEFAULT_COT_SNAPSHOT,
+            option_skew_path=DEFAULT_OPTION_SKEW,
+        )
+        _write_json(market_context_matrix_path, matrix)
+        write_market_context_matrix_report(matrix, DEFAULT_MARKET_CONTEXT_MATRIX_REPORT)
+    except Exception as exc:
+        raise RuntimeError(f"{label} market evidence refresh failed: {exc}") from exc
+
+    side_rows = [
+        reading
+        for side_map in (matrix.get("pairs") or {}).values()
+        if isinstance(side_map, dict)
+        for reading in side_map.values()
+        if isinstance(reading, dict)
+    ]
+    issues: list[str] = []
+    for payload in (
+        cross_asset.to_dict(),
+        flow.to_dict(),
+        strength.to_dict(),
+        levels.to_dict(),
+        calendar.to_dict(),
+        cot.to_dict(),
+        option_skew.to_dict(),
+        matrix,
+    ):
+        issues.extend(str(item) for item in payload.get("issues", []) or [] if str(item).strip())
+    summary = {
+        "status": "REFRESHED",
+        "pairs": len(pairs),
+        "pair_charts_generated_at_utc": generated_at,
+        "market_context_pairs": len(matrix.get("pairs") or {}),
+        "market_context_matrix_path": str(market_context_matrix_path),
+        "supports": sum(len(row.get("supports") or []) for row in side_rows),
+        "rejects": sum(len(row.get("rejects") or []) for row in side_rows),
+        "warnings": sum(len(row.get("warnings") or []) for row in side_rows),
+        "missing": sum(len(row.get("missing") or []) for row in side_rows),
+        "issues": issues[:12],
+    }
+    sys.stderr.write(
+        "[qr-vnext] auto-refreshed market evidence "
+        + json.dumps(summary, ensure_ascii=False, sort_keys=True)
+        + "\n"
+    )
+    return summary
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qr-vnext")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1300,6 +1454,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "generate-intents":
+        market_evidence_refresh = _auto_refresh_market_evidence_if_required(
+            label="generate-intents",
+            reuse_market_artifacts=False,
+            market_context_matrix_path=args.market_context_matrix,
+        )
         if not args.no_refresh_market_story:
             _refresh_market_story_if_news_is_newer(
                 profile_path=args.market_story_profile,
@@ -1360,6 +1519,7 @@ def main(argv: list[str] | None = None) -> int:
                     "execution_ledger_sync": execution_ledger_sync,
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
+                    "market_evidence_refresh": market_evidence_refresh,
                     "projection_verification": projection_verification,
                 },
                 ensure_ascii=False,
@@ -1436,6 +1596,10 @@ def main(argv: list[str] | None = None) -> int:
         # Bootstrap moved to top of main() for all commands; this branch
         # used to call it inline before the move.
         try:
+            _auto_refresh_market_evidence_if_required(
+                label="autotrade-cycle",
+                reuse_market_artifacts=args.reuse_market_artifacts,
+            )
             use_gpt_trader = args.use_gpt_trader or os.environ.get("QR_GPT_TRADER_ENABLED") == "1"
             gpt_provider = _static_gpt_provider(
                 decision_response=args.gpt_decision_response,

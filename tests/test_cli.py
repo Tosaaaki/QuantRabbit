@@ -14,6 +14,7 @@ from unittest import mock
 from quant_rabbit.cli import (
     _LIVE_RUNTIME_COMMANDS,
     _SL_FREE_RUNTIME_DEFAULTS,
+    _auto_refresh_market_evidence_if_required,
     _pre_entry_projection_verification_if_required,
     _refresh_current_forecast_history,
     _snapshot_from_json,
@@ -21,6 +22,7 @@ from quant_rabbit.cli import (
     main,
 )
 from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
+from quant_rabbit.paths import DEFAULT_MARKET_CONTEXT_MATRIX
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
 
@@ -479,7 +481,10 @@ class CliHelpTest(unittest.TestCase):
 
             with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
                 "quant_rabbit.cli._running_under_test_harness", return_value=False
-            ), mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ) as market_refresh, mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
                 "quant_rabbit.cli.ExecutionLedger"
             ) as ledger_cls, mock.patch(
                 "quant_rabbit.strategy.projection_ledger.load_ledger",
@@ -510,9 +515,15 @@ class CliHelpTest(unittest.TestCase):
                 )
 
         self.assertEqual(code, 0)
+        market_refresh.assert_called_once_with(
+            label="generate-intents",
+            reuse_market_artifacts=False,
+            market_context_matrix_path=DEFAULT_MARKET_CONTEXT_MATRIX,
+        )
         client_cls.assert_called_once_with()
         ledger_cls.return_value.sync_oanda_transactions.assert_called_once_with(client_cls.return_value)
         payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["market_evidence_refresh"]["status"], "SKIPPED")
         self.assertEqual(payload["execution_ledger_sync"]["status"], "SYNCED")
         self.assertEqual(payload["execution_ledger_sync"]["last_transaction_id"], "471858")
 
@@ -543,6 +554,9 @@ class CliHelpTest(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
                 "quant_rabbit.cli._running_under_test_harness", return_value=False
             ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ) as market_refresh, mock.patch(
                 "quant_rabbit.strategy.projection_ledger.load_ledger",
                 return_value=[],
             ), mock.patch(
@@ -572,8 +586,14 @@ class CliHelpTest(unittest.TestCase):
                 )
 
         self.assertEqual(code, 0)
+        market_refresh.assert_called_once_with(
+            label="generate-intents",
+            reuse_market_artifacts=False,
+            market_context_matrix_path=DEFAULT_MARKET_CONTEXT_MATRIX,
+        )
         refresh_forecast.assert_not_called()
         payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["market_evidence_refresh"]["status"], "SKIPPED")
         self.assertEqual(payload["forecast_refresh"]["status"], "DELEGATED_TO_INTENT_GENERATOR")
 
     def test_autotrade_gpt_protect_status_exits_zero(self) -> None:
@@ -620,6 +640,60 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "GPT_PROTECT")
+
+    def test_auto_market_evidence_refresh_skips_unittest_harness(self) -> None:
+        result = _auto_refresh_market_evidence_if_required(label="test")
+
+        self.assertEqual(result, {"status": "SKIPPED", "reason": "test_harness"})
+
+    def test_autotrade_reuse_market_artifacts_skips_auto_market_refresh(self) -> None:
+        summary = type(
+            "Summary",
+            (),
+            {
+                "status": "NO_LIVE_READY_INTENT",
+                "report_path": Path("docs/autotrade_cycle_report.md"),
+                "snapshot_path": Path("data/broker_snapshot.json"),
+                "intents_path": Path("data/order_intents.json"),
+                "selected_lane_id": None,
+                "selected_lane_ids": (),
+                "deterministic_lane_id": None,
+                "decision_source": None,
+                "sent": False,
+                "sent_count": 0,
+                "positions": 0,
+                "orders": 0,
+                "live_ready": 0,
+                "receipt_promotions": 0,
+                "canceled_orders": (),
+                "position_management_action": None,
+                "position_execution_status": None,
+                "position_execution_sent": False,
+                "target_status": None,
+                "target_remaining_jpy": None,
+                "target_progress_pct": None,
+                "selected_lane_score": None,
+                "selected_lane_size_multiple": None,
+                "gpt_status": None,
+                "gpt_action": None,
+                "gpt_allowed": None,
+                "gpt_issues": 0,
+                "gpt_error": None,
+            },
+        )()
+        stdout = io.StringIO()
+
+        with (
+            mock.patch("quant_rabbit.cli._auto_refresh_market_evidence_if_required") as refresh,
+            mock.patch("quant_rabbit.cli.AutoTradeCycle") as cycle_cls,
+            redirect_stdout(stdout),
+        ):
+            refresh.return_value = {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
+            cycle_cls.return_value.run.return_value = summary
+            code = main(["autotrade-cycle", "--reuse-market-artifacts"])
+
+        self.assertEqual(code, 0)
+        refresh.assert_called_once_with(label="autotrade-cycle", reuse_market_artifacts=True)
 
 
 class LiveRuntimeBootstrapTest(unittest.TestCase):
