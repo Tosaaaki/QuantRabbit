@@ -262,6 +262,7 @@ def _refresh_current_forecast_history(
             _forecast_seed_for_pair,
             _forecast_seed_regime_label,
             _load_pair_charts,
+            _quote_fresh_for_forecast_seed_telemetry,
             _snapshot_from_json,
         )
         from quant_rabbit.strategy.projection_ledger import (
@@ -317,22 +318,28 @@ def _refresh_current_forecast_history(
             continue
         raw_chart = charts[pair].get("__raw_chart") if isinstance(charts[pair], dict) else None
         regime = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
+        if not projection_market_open:
+            skipped[pair] = "market_closed_at_forecast_emission"
+            continue
+        if not _quote_fresh_for_forecast_seed_telemetry(
+            getattr(quote, "timestamp_utc", None),
+            validation_time_utc=getattr(snapshot, "fetched_at_utc", None),
+        ):
+            skipped[pair] = "stale_quote_for_forecast_telemetry"
+            continue
         record_forecast(forecast, data_root=data_root, cycle_id=cycle_id, now=emission_time)
-        if projection_market_open:
-            try:
-                projection_recorded += record_directional_forecast(
-                    forecast,
-                    pair=pair,
-                    current_price=float(quote.mid),
-                    data_root=data_root,
-                    regime_at_emission=regime,
-                    cycle_id=cycle_id,
-                    now=emission_time,
-                )
-            except Exception as exc:
-                projection_skipped[pair] = f"projection_record_failed:{exc.__class__.__name__}"
-        else:
-            projection_skipped[pair] = "market_closed_at_forecast_emission"
+        try:
+            projection_recorded += record_directional_forecast(
+                forecast,
+                pair=pair,
+                current_price=float(quote.mid),
+                data_root=data_root,
+                regime_at_emission=regime,
+                cycle_id=cycle_id,
+                now=emission_time,
+            )
+        except Exception as exc:
+            projection_skipped[pair] = f"projection_record_failed:{exc.__class__.__name__}"
         recorded[pair] = {
             "direction": getattr(forecast, "direction", "UNCLEAR"),
             "confidence": float(getattr(forecast, "confidence", 0.0) or 0.0),

@@ -267,6 +267,9 @@ class CliHelpTest(unittest.TestCase):
             with mock.patch(
                 "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
                 return_value=forecast,
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.projection_telemetry_market_open",
+                return_value=True,
             ):
                 first = _refresh_current_forecast_history(
                     snapshot_payload=snapshot_payload,
@@ -284,8 +287,8 @@ class CliHelpTest(unittest.TestCase):
                 )
 
             self.assertEqual(first["recorded"], 1)
-            self.assertEqual(first["projection_recorded"], 0)
-            self.assertEqual(first["projection_skipped"]["EUR_USD"], "market_closed_at_forecast_emission")
+            self.assertEqual(first["projection_recorded"], 1)
+            self.assertEqual(first["projection_skipped"], {})
             self.assertEqual(first["forecasts"]["EUR_USD"]["direction"], "UP")
             self.assertEqual(second["recorded"], 0)
             self.assertEqual(second["skipped"]["EUR_USD"], "already_recorded_for_cycle")
@@ -296,6 +299,66 @@ class CliHelpTest(unittest.TestCase):
             self.assertEqual(row["cycle_id"], "test:2026-05-30T00:00:00+00:00:2026-05-30T00:01:00+00:00")
             self.assertEqual(row["timestamp_utc"], "2026-05-30T00:00:00Z")
             self.assertEqual(row["direction"], "UP")
+            self.assertTrue((data_root / "projection_ledger.jsonl").exists())
+
+    def test_refresh_current_forecast_history_skips_closed_market_without_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            pair_charts = root / "pair_charts.json"
+            pair_charts.write_text(json.dumps({
+                "generated_at_utc": "2026-05-30T00:01:00+00:00",
+                "charts": [{"pair": "EUR_USD", "views": []}],
+            }))
+            snapshot_payload = {
+                "fetched_at_utc": "2026-05-30T00:00:00+00:00",
+                "positions": [],
+                "orders": [],
+                "quotes": {
+                    "EUR_USD": {
+                        "bid": 1.1000,
+                        "ask": 1.1002,
+                        "timestamp_utc": "2026-05-30T00:00:00+00:00",
+                    }
+                },
+            }
+            forecast = SimpleNamespace(
+                pair="EUR_USD",
+                direction="UP",
+                confidence=0.72,
+                current_price=1.1001,
+                invalidation_price=1.0990,
+                target_price=1.1020,
+                horizon_min=60,
+                raw_confidence=0.72,
+                calibration_multiplier=1.0,
+                up_score=12.0,
+                down_score=3.0,
+                range_score=0.0,
+                drivers_for=("test up",),
+                drivers_against=(),
+                rationale_summary="UP=12 DOWN=3",
+            )
+
+            with mock.patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ), mock.patch(
+                "quant_rabbit.strategy.projection_ledger.projection_telemetry_market_open",
+                return_value=False,
+            ):
+                first = _refresh_current_forecast_history(
+                    snapshot_payload=snapshot_payload,
+                    pair_charts_path=pair_charts,
+                    pairs=["EUR_USD"],
+                    data_root=data_root,
+                    cycle_source="test",
+                )
+
+            self.assertEqual(first["recorded"], 0)
+            self.assertEqual(first["projection_recorded"], 0)
+            self.assertEqual(first["skipped"]["EUR_USD"], "market_closed_at_forecast_emission")
+            self.assertFalse((data_root / "forecast_history.jsonl").exists())
             self.assertFalse((data_root / "projection_ledger.jsonl").exists())
 
     def test_replay_execution_missing_prices_returns_json_error(self) -> None:
