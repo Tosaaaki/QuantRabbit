@@ -684,6 +684,155 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(payload["oracle"]["best_train_eligible_all_positive_day_jpy"], 0.0)
             self.assertIn("raw-positive training net", (root / "ai_backtest.md").read_text())
 
+    def test_mixed_runtime_keeps_execution_ledger_diagnostic_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", 120.0),
+                ],
+            )
+            _seed_execution_ledger(
+                ledger,
+                [
+                    (
+                        "fill-ledger-train",
+                        "2026-06-01T01:00:00Z",
+                        "ORDER_FILLED",
+                        "ledger-train",
+                        "GBP_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-ledger-train",
+                        "2026-06-01T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "ledger-train",
+                        "GBP_USD",
+                        "SHORT",
+                        1000,
+                        500.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-ledger-validation",
+                        "2026-06-02T01:00:00Z",
+                        "ORDER_FILLED",
+                        "ledger-validation",
+                        "GBP_USD",
+                        "LONG",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-ledger-validation",
+                        "2026-06-02T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "ledger-validation",
+                        "GBP_USD",
+                        "SHORT",
+                        1000,
+                        -700.0,
+                        "{}",
+                    ),
+                ],
+            )
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades", "execution_ledger"),
+            ).run(start_balance_jpy=10_000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            self.assertEqual(payload["execution_ledger_selection"], "diagnostic_only_mixed_sources")
+            self.assertEqual(payload["promotable_source_tables"], ["trades"])
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], ["trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
+            self.assertEqual(day["selected_trades"], 1)
+            self.assertEqual(day["managed_net_jpy"], 120.0)
+            by_source = {item["source_table"]: item for item in payload["source_contributions"]}
+            self.assertEqual(by_source["execution_ledger"]["validation_universe_trades"], 1)
+            self.assertEqual(by_source["execution_ledger"]["selected_trades"], 0)
+            self.assertTrue(any("diagnostic-only" in item for item in payload["action_items"]))
+
+    def test_context_theme_overlay_adds_cross_pair_without_displacing_base_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            rows = [
+                (
+                    "trades",
+                    "2026-04-01",
+                    "EUR_JPY",
+                    "LONG",
+                    10.0,
+                    json.dumps({"id": f"risk-train-{index}"}),
+                )
+                for index in range(20)
+            ]
+            rows.extend(
+                [
+                    (
+                        "trades",
+                        "2026-04-02",
+                        "EUR_JPY",
+                        "LONG",
+                        50.0,
+                        json.dumps({"id": "base-validation"}),
+                    ),
+                    (
+                        "trades",
+                        "2026-04-02",
+                        "GBP_JPY",
+                        "LONG",
+                        70.0,
+                        json.dumps({"id": "theme-validation"}),
+                    ),
+                ]
+            )
+            _seed_db(db, rows)
+
+            AITestBotBacktester(
+                db_path=db,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            day = payload["days"][0]
+            self.assertEqual(
+                day["selected_buckets"],
+                [
+                    "trades:EUR_JPY:LONG:UNSPECIFIED:UNSPECIFIED",
+                    "trades_theme:RISK_ON_JPY_CROSS:LONG:FX_RISK_THEME:ALL",
+                ],
+            )
+            self.assertEqual(day["selected_trades"], 2)
+            self.assertEqual(day["managed_net_jpy"], 120.0)
+            self.assertEqual(payload["context_theme_policy"]["max_active_buckets"], 1)
+            self.assertEqual(payload["context_feature_coverage"]["rows_with_context_theme_buckets"], 22)
+            self.assertIn("Cross-pair context theme buckets", (root / "ai_backtest.md").read_text())
+
 
 def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str, str, str, str, float, str]]) -> None:
     with sqlite3.connect(path) as conn:

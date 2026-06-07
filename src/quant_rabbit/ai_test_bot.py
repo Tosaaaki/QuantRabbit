@@ -41,6 +41,17 @@ DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes", "seat_outcomes")
 EXECUTION_LEDGER_SOURCE_TABLE = "execution_ledger"
 DEFAULT_RUNTIME_SOURCE_TABLES = (*DEFAULT_SOURCE_TABLES, EXECUTION_LEDGER_SOURCE_TABLE)
 DEFAULT_TARGET_BAND_RETURN_PCTS = (5.0, 6.0, 7.0, 8.0, 9.0, 10.0)
+# Cross-pair context overlay controls. These are replay data-sufficiency guards,
+# not market-price thresholds: a generalized theme can light up several pairs,
+# so it needs broader support than a pair bucket and is capped to one active
+# overlay to avoid turning "risk-on" into "trade everything".
+CONTEXT_THEME_SOURCE_TABLE = "trades_theme"
+CONTEXT_THEME_MIN_TRAIN_TRADES = 20
+CONTEXT_THEME_MIN_TRAIN_WIN_RATE_PCT = 60.0
+CONTEXT_THEME_MAX_ACTIVE_BUCKETS = 1
+_FX_CURRENCIES = frozenset({"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"})
+_COMMODITY_LINKED_CURRENCIES = frozenset({"AUD", "CAD", "NZD"})
+_EUROPEAN_RISK_CURRENCIES = frozenset({"EUR", "GBP", "CHF"})
 _JST = ZoneInfo("Asia/Tokyo")
 
 
@@ -71,6 +82,8 @@ class TestBotTrade:
     sort_key: str
     match_ids: tuple[str, ...] = ()
     actual_trade_ids: tuple[str, ...] = ()
+    extra_buckets: tuple[TestBotBucket, ...] = ()
+    context_features: tuple[str, ...] = ()
 
     @property
     def bucket(self) -> TestBotBucket:
@@ -81,6 +94,10 @@ class TestBotTrade:
             execution_style=self.execution_style,
             allocation_band=self.allocation_band,
         )
+
+    @property
+    def buckets(self) -> tuple[TestBotBucket, ...]:
+        return (self.bucket, *self.extra_buckets)
 
 
 @dataclass(frozen=True)
@@ -199,6 +216,7 @@ class AITestBotBacktester:
         target_jpy = round(start_balance_jpy * (target_return_pct / 100.0), 4)
         raw_trades = tuple(self._load_trades())
         trades = _dedupe_opportunities(raw_trades) if self.dedupe_opportunities else raw_trades
+        promotable_source_tables = _promotable_source_tables(self.source_tables)
         days = sorted({trade.session_date for trade in trades})
         day_results = tuple(
             _walk_forward_days(
@@ -210,6 +228,7 @@ class AITestBotBacktester:
                 min_train_trades=self.min_train_trades,
                 min_train_win_rate_pct=self.min_train_win_rate_pct,
                 max_active_buckets=self.max_active_buckets,
+                promotable_source_tables=promotable_source_tables,
                 max_validation_days=max_validation_days,
             )
         )
@@ -222,6 +241,7 @@ class AITestBotBacktester:
             top_n=self.max_active_buckets,
             min_train_trades=self.min_train_trades,
             min_train_win_rate_pct=self.min_train_win_rate_pct,
+            promotable_source_tables=promotable_source_tables,
         )
         blockers = tuple(
             _certification_blockers(
@@ -260,6 +280,7 @@ class AITestBotBacktester:
             min_train_trades=self.min_train_trades,
             min_train_win_rate_pct=self.min_train_win_rate_pct,
             target_return_pct=target_return_pct,
+            promotable_source_tables=promotable_source_tables,
         )
         action_items = tuple(
             _action_items(
@@ -278,6 +299,11 @@ class AITestBotBacktester:
             "live_permission": False,
             "db_path": str(self.db_path),
             "source_tables": list(self.source_tables),
+            "promotable_source_tables": list(promotable_source_tables),
+            "execution_ledger_selection": _execution_ledger_selection_mode(
+                self.source_tables,
+                promotable_source_tables,
+            ),
             "execution_ledger_db": str(self.execution_ledger_db_path) if self.execution_ledger_db_path else None,
             "dedupe_opportunities": self.dedupe_opportunities,
             "raw_rows": len(raw_trades),
@@ -293,6 +319,13 @@ class AITestBotBacktester:
             "min_train_trades": self.min_train_trades,
             "min_train_win_rate_pct": self.min_train_win_rate_pct,
             "max_active_buckets": self.max_active_buckets,
+            "context_theme_policy": {
+                "source_table": CONTEXT_THEME_SOURCE_TABLE,
+                "max_active_buckets": CONTEXT_THEME_MAX_ACTIVE_BUCKETS,
+                "min_train_trades": CONTEXT_THEME_MIN_TRAIN_TRADES,
+                "min_train_win_rate_pct": CONTEXT_THEME_MIN_TRAIN_WIN_RATE_PCT,
+            },
+            "context_feature_coverage": _context_feature_coverage(trades),
             "summary": summary_payload,
             "firepower": firepower,
             "source_contributions": source_contributions,
@@ -304,6 +337,7 @@ class AITestBotBacktester:
                 trades=trades,
                 day_results=day_results,
                 max_loss_jpy=cap.loss_cap_jpy,
+                promotable_source_tables=promotable_source_tables,
                 limit=12,
             ),
             "blockers": list(blockers),
@@ -381,6 +415,12 @@ class AITestBotBacktester:
                     sort_key=_event_sort_key(row["source_id"], raw),
                     match_ids=match_ids,
                     actual_trade_ids=actual_trade_ids,
+                    extra_buckets=_extra_observable_buckets(
+                        source_table=source_table,
+                        pair=pair,
+                        direction=direction,
+                    ),
+                    context_features=_observable_context_features(raw),
                 )
         if EXECUTION_LEDGER_SOURCE_TABLE in self.source_tables:
             yield from _execution_ledger_trades(self.execution_ledger_db_path)
@@ -401,6 +441,8 @@ class AITestBotBacktester:
             f"- History DB: `{payload['db_path']}`",
             f"- Execution ledger DB: `{payload.get('execution_ledger_db') or 'n/a'}`",
             f"- Source tables: `{', '.join(payload['source_tables'])}`",
+            f"- Promotable source tables: `{', '.join(payload['promotable_source_tables'])}`",
+            f"- Execution ledger selection: `{payload['execution_ledger_selection']}`",
             f"- Opportunity dedupe: `{payload['dedupe_opportunities']}` "
             f"(raw=`{payload['raw_rows']}`, deduped=`{payload['deduped_rows']}`)",
             f"- Start balance: `{payload['start_balance_jpy']:.0f} JPY`",
@@ -410,6 +452,9 @@ class AITestBotBacktester:
             f"- Min training trades: `{payload['min_train_trades']}`",
             f"- Min training win rate: `{payload['min_train_win_rate_pct']:.1f}%`",
             f"- Max active buckets: `{payload['max_active_buckets']}`",
+            f"- Context theme overlay: max=`{payload['context_theme_policy']['max_active_buckets']}` "
+            f"min_trades=`{payload['context_theme_policy']['min_train_trades']}` "
+            f"min_win_rate=`{payload['context_theme_policy']['min_train_win_rate_pct']:.1f}%`",
             f"- Validation days: `{summary['validation_days']}`",
             f"- Traded days: `{summary['traded_days']}`",
             f"- Target-hit days: `{summary['target_hit_days']}`",
@@ -448,6 +493,22 @@ class AITestBotBacktester:
                 f"best_selected_coverage=`{item['best_selected_day_coverage_pct']:.1f}%` "
                 f"required_trades_day=`{item['required_trades_per_day_at_observed_expectancy']}`"
             )
+        lines.extend(
+            [
+                "",
+                "## Context Coverage",
+                "",
+                f"- Rows with context features: `{payload['context_feature_coverage']['rows_with_features']}`"
+                f"/`{payload['context_feature_coverage']['rows']}`",
+                f"- Rows with context theme buckets: `{payload['context_feature_coverage']['rows_with_context_theme_buckets']}`",
+            ]
+        )
+        feature_counts = payload["context_feature_coverage"]["feature_counts"]
+        if feature_counts:
+            for feature, count in feature_counts.items():
+                lines.append(f"- `{feature}` rows=`{count}`")
+        else:
+            lines.append("- no machine-readable context fields found")
         lines.extend(
             [
                 "",
@@ -513,6 +574,8 @@ class AITestBotBacktester:
                 "- Execution-ledger outcomes require attribution to a sent gateway entry; manual/tagless or otherwise unattributed closes are ignored.",
                 "- Execution-ledger buckets use gateway lane desk/strategy as pre-entry evidence; exit reason remains post-trade evidence and is not used as a selection bucket.",
                 "- Execution-ledger buckets require raw-positive training net, because hypothetical caps cannot certify old real-exit losses as fixed evidence.",
+                "- In mixed-source runtime backtests, execution-ledger rows stay diagnostic-only until actual exits prove a raw-positive promotable policy.",
+                "- Cross-pair context theme buckets are a strict one-bucket overlay selected only from pre-entry FX exposure, not from validation-day outcomes.",
                 "- Opportunity dedupe counts repeated seat receipts and cross-source same-trade-id rows as one candidate before training or validation scoring.",
                 "- Losses are capped by the equity-derived per-trade cap; wins are not enlarged.",
                 "- `live_permission=false` means this receipt can support research, not live execution.",
@@ -540,6 +603,7 @@ def _walk_forward_days(
     min_train_trades: int,
     min_train_win_rate_pct: float,
     max_active_buckets: int,
+    promotable_source_tables: tuple[str, ...],
     max_validation_days: int | None,
 ) -> Iterable[TestBotDay]:
     emitted = 0
@@ -554,9 +618,16 @@ def _walk_forward_days(
             min_train_trades=min_train_trades,
             min_train_win_rate_pct=min_train_win_rate_pct,
             max_active_buckets=max_active_buckets,
+            promotable_source_tables=promotable_source_tables,
         )
         selected_keys = {score.bucket for score in scores}
-        validation_rows = tuple(row for row in trades if row.session_date == day and row.bucket in selected_keys)
+        validation_rows = tuple(
+            row
+            for row in trades
+            if row.session_date == day
+            and row.source_table in promotable_source_tables
+            and _row_matches_selected_buckets(row, selected_keys)
+        )
         raw_net = _round(sum(row.pl_jpy for row in validation_rows))
         managed_net = _round(sum(_capped_pl(row.pl_jpy, max_loss_jpy) for row in validation_rows))
         yield TestBotDay(
@@ -583,10 +654,41 @@ def _select_buckets(
     min_train_trades: int,
     min_train_win_rate_pct: float,
     max_active_buckets: int,
+    promotable_source_tables: tuple[str, ...],
+) -> tuple[BucketScore, ...]:
+    promotable_rows = tuple(row for row in train_rows if row.source_table in promotable_source_tables)
+    base_scores = _select_bucket_candidates(
+        promotable_rows,
+        bucket_getter=lambda row: (row.bucket,),
+        max_loss_jpy=max_loss_jpy,
+        min_train_trades=min_train_trades,
+        min_train_win_rate_pct=min_train_win_rate_pct,
+        max_active_buckets=max_active_buckets,
+    )
+    context_scores = _select_bucket_candidates(
+        promotable_rows,
+        bucket_getter=lambda row: row.extra_buckets,
+        max_loss_jpy=max_loss_jpy,
+        min_train_trades=CONTEXT_THEME_MIN_TRAIN_TRADES,
+        min_train_win_rate_pct=CONTEXT_THEME_MIN_TRAIN_WIN_RATE_PCT,
+        max_active_buckets=CONTEXT_THEME_MAX_ACTIVE_BUCKETS,
+    )
+    return (*base_scores, *context_scores)
+
+
+def _select_bucket_candidates(
+    train_rows: tuple[TestBotTrade, ...],
+    *,
+    bucket_getter,
+    max_loss_jpy: float,
+    min_train_trades: int,
+    min_train_win_rate_pct: float,
+    max_active_buckets: int,
 ) -> tuple[BucketScore, ...]:
     by_bucket: dict[TestBotBucket, list[TestBotTrade]] = {}
     for row in train_rows:
-        by_bucket.setdefault(row.bucket, []).append(row)
+        for bucket in bucket_getter(row):
+            by_bucket.setdefault(bucket, []).append(row)
     scores: list[BucketScore] = []
     for bucket, rows in by_bucket.items():
         if len(rows) < min_train_trades:
@@ -626,7 +728,16 @@ def _select_buckets(
 
 def _selected_trades_for_day(trades: tuple[TestBotTrade, ...], day: TestBotDay) -> tuple[TestBotTrade, ...]:
     selected = set(day.selected_buckets)
-    return tuple(row for row in trades if row.session_date == day.session_date and row.bucket.label in selected)
+    return tuple(
+        row
+        for row in trades
+        if row.session_date == day.session_date
+        and any(bucket.label in selected for bucket in row.buckets)
+    )
+
+
+def _row_matches_selected_buckets(row: TestBotTrade, selected_buckets: set[TestBotBucket]) -> bool:
+    return any(bucket in selected_buckets for bucket in row.buckets)
 
 
 def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade, ...]:
@@ -830,6 +941,7 @@ def _target_band_payload(
     min_train_trades: int,
     min_train_win_rate_pct: float,
     target_return_pct: float,
+    promotable_source_tables: tuple[str, ...],
 ) -> dict[str, object]:
     bands: list[dict[str, float | int | bool | None]] = []
     for return_pct in _target_band_percentages(target_return_pct):
@@ -844,6 +956,7 @@ def _target_band_payload(
             top_n=top_n,
             min_train_trades=min_train_trades,
             min_train_win_rate_pct=min_train_win_rate_pct,
+            promotable_source_tables=promotable_source_tables,
         )
         band_ceiling = _target_ceiling_payload(
             target_jpy=band_target_jpy,
@@ -950,6 +1063,17 @@ def _action_items(
         if (
             source_table == EXECUTION_LEDGER_SOURCE_TABLE
             and validation_rows
+            and selected == 0
+            and validation_raw_net < 0
+        ):
+            yield (
+                "execution_ledger is raw-negative and remains diagnostic-only in the mixed-source policy "
+                f"(raw {validation_raw_net:.0f} JPY across {validation_rows} closes); "
+                "keep improving actual exit timing before promoting ledger buckets into target pacing"
+            )
+        if (
+            source_table == EXECUTION_LEDGER_SOURCE_TABLE
+            and validation_rows
             and validation_raw_net < 0
             and validation_net > 0
         ):
@@ -1012,6 +1136,11 @@ def _action_items(
             f"selected policy captures only {capture:.1f}% of top-N oracle, but oracle is also below target; "
             "treat selection tuning as secondary to coverage expansion"
         )
+    yield (
+        "legacy rows do not persist market-context-matrix/news/non-FX context as a dense pre-entry feature set; "
+        "store matrix refs, news refs, and gold/oil/context-asset readings on each live entry receipt before treating "
+        "non-FX/news prediction as backtest-certified"
+    )
 
 
 def _bucket_contributions(
@@ -1157,6 +1286,7 @@ def _oracle_summary(
     top_n: int,
     min_train_trades: int,
     min_train_win_rate_pct: float,
+    promotable_source_tables: tuple[str, ...],
 ) -> dict[str, float | int | str | None]:
     selected_by_day = {day.session_date: set(day.selected_buckets) for day in day_results}
     selected_net_by_day = {day.session_date: day.managed_net_jpy for day in day_results}
@@ -1177,14 +1307,21 @@ def _oracle_summary(
     best_train_eligible_all_positive = 0.0
     best_train_eligible_all_positive_day: str | None = None
     selected_total = _round(sum(selected_net_by_day.values()))
+    promotable_sources = set(promotable_source_tables)
     for day in day_results:
-        bucket_net = _bucket_net_for_day(trades, day.session_date, max_loss_jpy)
+        bucket_net = _bucket_net_for_day(
+            trades,
+            day.session_date,
+            max_loss_jpy,
+            promotable_source_tables=promotable_sources,
+        )
         train_eligible_buckets = _train_eligible_buckets(
             trades,
             day,
             max_loss_jpy=max_loss_jpy,
             min_train_trades=min_train_trades,
             min_train_win_rate_pct=min_train_win_rate_pct,
+            promotable_source_tables=promotable_sources,
         )
         train_eligible_bucket_net = {
             bucket: value for bucket, value in bucket_net.items() if bucket in train_eligible_buckets
@@ -1251,11 +1388,18 @@ def _missed_best_days(
     trades: tuple[TestBotTrade, ...],
     day_results: tuple[TestBotDay, ...],
     max_loss_jpy: float,
+    promotable_source_tables: tuple[str, ...],
     limit: int,
 ) -> list[dict[str, float | str]]:
     misses: list[dict[str, float | str]] = []
+    promotable_sources = set(promotable_source_tables)
     for day in day_results:
-        bucket_net = _bucket_net_for_day(trades, day.session_date, max_loss_jpy)
+        bucket_net = _bucket_net_for_day(
+            trades,
+            day.session_date,
+            max_loss_jpy,
+            promotable_source_tables=promotable_sources,
+        )
         if not bucket_net:
             continue
         best_bucket, best_net = max(bucket_net.items(), key=lambda item: item[1])
@@ -1276,10 +1420,13 @@ def _bucket_net_for_day(
     trades: tuple[TestBotTrade, ...],
     session_date: str,
     max_loss_jpy: float,
+    promotable_source_tables: set[str] | None = None,
 ) -> dict[TestBotBucket, float]:
     bucket_net: dict[TestBotBucket, float] = {}
     for row in trades:
         if row.session_date != session_date:
+            continue
+        if promotable_source_tables is not None and row.source_table not in promotable_source_tables:
             continue
         bucket_net[row.bucket] = _round(bucket_net.get(row.bucket, 0.0) + _capped_pl(row.pl_jpy, max_loss_jpy))
     return bucket_net
@@ -1292,10 +1439,13 @@ def _train_eligible_buckets(
     max_loss_jpy: float,
     min_train_trades: int,
     min_train_win_rate_pct: float,
+    promotable_source_tables: set[str],
 ) -> set[TestBotBucket]:
     by_bucket: dict[TestBotBucket, list[TestBotTrade]] = {}
     for row in trades:
         if not (day.training_start_date <= row.session_date <= day.training_end_date):
+            continue
+        if row.source_table not in promotable_source_tables:
             continue
         by_bucket.setdefault(row.bucket, []).append(row)
     eligible: set[TestBotBucket] = set()
@@ -1332,6 +1482,42 @@ def _training_bucket_is_viable(
     if bucket.source_table == EXECUTION_LEDGER_SOURCE_TABLE and raw_net_jpy <= 0:
         return False
     return True
+
+
+def _promotable_source_tables(source_tables: tuple[str, ...]) -> tuple[str, ...]:
+    if EXECUTION_LEDGER_SOURCE_TABLE in source_tables and len(set(source_tables)) > 1:
+        return tuple(source for source in source_tables if source != EXECUTION_LEDGER_SOURCE_TABLE)
+    return source_tables
+
+
+def _execution_ledger_selection_mode(
+    source_tables: tuple[str, ...],
+    promotable_source_tables: tuple[str, ...],
+) -> str:
+    if EXECUTION_LEDGER_SOURCE_TABLE not in source_tables:
+        return "not_requested"
+    if EXECUTION_LEDGER_SOURCE_TABLE in promotable_source_tables:
+        return "promotable_explicit_execution_ledger_only"
+    return "diagnostic_only_mixed_sources"
+
+
+def _context_feature_coverage(trades: tuple[TestBotTrade, ...]) -> dict[str, object]:
+    feature_counts: dict[str, int] = {}
+    rows_with_features = 0
+    rows_with_context_theme_buckets = 0
+    for row in trades:
+        if row.context_features:
+            rows_with_features += 1
+        if row.extra_buckets:
+            rows_with_context_theme_buckets += 1
+        for feature in row.context_features:
+            feature_counts[feature] = feature_counts.get(feature, 0) + 1
+    return {
+        "rows": len(trades),
+        "rows_with_features": rows_with_features,
+        "rows_with_context_theme_buckets": rows_with_context_theme_buckets,
+        "feature_counts": dict(sorted(feature_counts.items())),
+    }
 
 
 def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
@@ -1549,6 +1735,110 @@ def _observable_bucket_fields(
     if source_table == "pretrade_outcomes":
         return _bucket_field(raw.get("pretrade_level") or execution_style), _bucket_field(allocation_band)
     return _bucket_field(execution_style), _bucket_field(allocation_band)
+
+
+def _extra_observable_buckets(
+    *,
+    source_table: str,
+    pair: str,
+    direction: str,
+) -> tuple[TestBotBucket, ...]:
+    if source_table != "trades":
+        return ()
+    split = _split_fx_pair(pair)
+    if split is None or direction not in {"LONG", "SHORT"}:
+        return ()
+    base, _quote = split
+    exposures = dict(_currency_exposures(pair, direction))
+    buckets: list[TestBotBucket] = []
+    if exposures.get("JPY") == "SHORT" and base != "USD":
+        buckets.append(
+            TestBotBucket(
+                CONTEXT_THEME_SOURCE_TABLE,
+                "RISK_ON_JPY_CROSS",
+                "LONG",
+                "FX_RISK_THEME",
+                "ALL",
+            )
+        )
+    if exposures.get("USD") == "SHORT" and base in _COMMODITY_LINKED_CURRENCIES:
+        buckets.append(
+            TestBotBucket(
+                CONTEXT_THEME_SOURCE_TABLE,
+                "COMMODITY_FX_USD_WEAK",
+                "LONG",
+                "FX_RISK_THEME",
+                "ALL",
+            )
+        )
+    if exposures.get("USD") == "SHORT" and base in _EUROPEAN_RISK_CURRENCIES:
+        buckets.append(
+            TestBotBucket(
+                CONTEXT_THEME_SOURCE_TABLE,
+                "EUROPE_FX_USD_WEAK",
+                "LONG",
+                "FX_RISK_THEME",
+                "ALL",
+            )
+        )
+    if exposures.get("USD") == "LONG" and base in (_COMMODITY_LINKED_CURRENCIES | _EUROPEAN_RISK_CURRENCIES):
+        buckets.append(
+            TestBotBucket(
+                CONTEXT_THEME_SOURCE_TABLE,
+                "USD_STRENGTH_AGAINST_RISK",
+                "SHORT",
+                "FX_RISK_THEME",
+                "ALL",
+            )
+        )
+    return tuple(buckets)
+
+
+def _split_fx_pair(pair: str) -> tuple[str, str] | None:
+    parts = _norm(pair).split("_")
+    if len(parts) != 2:
+        return None
+    base, quote = parts
+    if base not in _FX_CURRENCIES or quote not in _FX_CURRENCIES:
+        return None
+    return base, quote
+
+
+def _currency_exposures(pair: str, direction: str) -> tuple[tuple[str, str], ...]:
+    split = _split_fx_pair(pair)
+    side = _norm(direction)
+    if split is None or side not in {"LONG", "SHORT"}:
+        return ()
+    base, quote = split
+    return ((base, side), (quote, _opposite_side(side)))
+
+
+def _observable_context_features(raw: dict[str, object]) -> tuple[str, ...]:
+    features: set[str] = set()
+    if _has_context_value(raw.get("active_headlines")):
+        features.add("news_headlines")
+    for key in ("event_risk", "regime", "m5_trend", "h1_trend", "entry_type", "session_hour"):
+        if _has_context_value(raw.get(key)):
+            features.add(key)
+    for key in ("dxy", "vix"):
+        if _has_context_value(raw.get(key)):
+            features.add(key)
+    if any("matrix" in str(key).lower() for key in raw):
+        features.add("market_context_matrix")
+    if any("context_asset" in str(key).lower() for key in raw):
+        features.add("context_asset")
+    if any(str(key).upper() in {"XAU_USD", "WTICO_USD", "BCO_USD"} for key in raw):
+        features.add("non_fx_asset")
+    return tuple(sorted(features))
+
+
+def _has_context_value(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    text = str(value).strip()
+    return bool(text) and text.upper() not in {"NONE", "NULL", "N/A", "UNSPECIFIED"}
 
 
 def _seat_order_style(raw: dict[str, object]) -> str:
