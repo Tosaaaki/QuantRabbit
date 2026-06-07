@@ -1535,6 +1535,12 @@ def main(argv: list[str] | None = None) -> int:
     p_pmanage.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_pmanage.add_argument("--pair-charts", type=Path, default=DEFAULT_PAIR_CHARTS)
     p_pmanage.add_argument("--trader-decision", type=Path, default=DEFAULT_TRADER_DECISION)
+    p_pmanage.add_argument(
+        "--data-root",
+        type=Path,
+        default=None,
+        help="Directory for entry thesis / forecast ledgers. Defaults to --snapshot parent.",
+    )
     p_pmanage.add_argument("--output", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
     p_pmanage.add_argument("--report", type=Path, default=DEFAULT_POSITION_MANAGEMENT_REPORT)
 
@@ -3622,6 +3628,7 @@ def main(argv: list[str] | None = None) -> int:
             pair_charts_path=args.pair_charts,
             output_path=args.output,
             report_path=args.report,
+            data_root=args.data_root or args.snapshot.parent,
         ).run(snapshot)
         print(json.dumps({
             "status": "OK",

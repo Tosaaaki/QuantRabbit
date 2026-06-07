@@ -189,11 +189,13 @@ class PositionManager:
         pair_charts_path: Path = DEFAULT_PAIR_CHARTS,
         output_path: Path = DEFAULT_POSITION_MANAGEMENT,
         report_path: Path = DEFAULT_POSITION_MANAGEMENT_REPORT,
+        data_root: Path | None = None,
     ) -> None:
         self.trader_decision_path = trader_decision_path
         self.pair_charts_path = pair_charts_path
         self.output_path = output_path
         self.report_path = report_path
+        self.data_root = data_root or output_path.parent
 
     def run(self, snapshot: BrokerSnapshot) -> PositionManagementDecision:
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -217,7 +219,7 @@ class PositionManager:
         # now flow through gpt_trader Gate A/B with operator token.
         if os.environ.get("QR_DISABLE_AUTO_CLOSE", "").strip() in {"1", "true", "TRUE", "yes", "YES"}:
             demoted: list[ManagedPosition] = []
-            data_root = self.output_path.parent
+            data_root = self.data_root
             for m in managed:
                 if m.action == ACTION_REVIEW_EXIT:
                     if _next_generation_structural_auto_close_allowed(m, data_root):
@@ -282,7 +284,7 @@ class PositionManager:
         recommended_stop_loss: float | None = None
         recommended_take_profit: float | None = None
         reasons.extend(_session_protection_notes(position, quote, pair_charts))
-        latest_forecast = _latest_forecast_for_position(position.pair, self.output_path.parent)
+        latest_forecast = _latest_forecast_for_position(position.pair, self.data_root)
         if latest_forecast:
             reasons.append(
                 f"latest forecast {str(latest_forecast.get('direction') or 'UNCLEAR').upper()} "
@@ -302,7 +304,7 @@ class PositionManager:
             position=position,
             quote=quote,
             full_pair_charts=full_pair_charts,
-            data_root=self.output_path.parent,
+            data_root=self.data_root,
             latest_forecast=latest_forecast,
         )
 
