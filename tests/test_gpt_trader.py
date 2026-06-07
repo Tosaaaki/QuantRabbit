@@ -2481,6 +2481,7 @@ def _close_fixtures(
     h4_dir: str = "UP",
     quote_bid: float = 1.176,
     quote_ask: float = 1.1761,
+    unrealized_pl_jpy: float = -800.0,
 ) -> dict[str, Path]:
     """Build minimal fixtures for a CLOSE-discipline test.
 
@@ -2494,7 +2495,7 @@ def _close_fixtures(
         "side": position_side,
         "units": 9000,
         "entry_price": 1.17708 if position_side == "SHORT" else 1.17400,
-        "unrealized_pl_jpy": -800.0,
+        "unrealized_pl_jpy": unrealized_pl_jpy,
         "take_profit": 1.17060 if position_side == "SHORT" else 1.18000,
         "stop_loss": None,
         "owner": "trader",
@@ -2578,6 +2579,40 @@ def _write_fresh_position_thesis_close_recommendation(
             }
         )
     )
+
+
+def _write_same_direction_context_asset_matrix_support(
+    files: dict[str, Path],
+    *,
+    pair: str = "EUR_USD",
+    side: str = "LONG",
+) -> None:
+    side_upper = side.upper()
+    matrix = json.loads(files["market_context_matrix"].read_text())
+    pair_matrix = matrix.setdefault("pairs", {}).setdefault(pair, {})
+    reading = pair_matrix.setdefault(side_upper, {})
+    reading.update(
+        {
+            "evidence_ref": f"matrix:{pair}:{side_upper}",
+            "support_count": 1,
+            "reject_count": 0,
+            "warning_count": 0,
+            "missing_count": 0,
+            "strongest_support": "XAU_USD context asset chart supports the open position side",
+            "strongest_reject": None,
+            "supports": [
+                {
+                    "code": "CONTEXT_ASSET_SUPPORTS_OPEN_SIDE",
+                    "layer": "context_asset_chart",
+                    "message": "XAU_USD chart pressure still supports the open EUR_USD side",
+                    "evidence_refs": ["context_asset:XAU_USD", f"matrix:{pair}:{side_upper}"],
+                }
+            ],
+            "rejects": [],
+            "warnings": [],
+        }
+    )
+    files["market_context_matrix"].write_text(json.dumps(matrix))
 
 
 def _write_fresh_thesis_evolution_close_recommendation(
@@ -2910,6 +2945,61 @@ class CloseDisciplineTest(unittest.TestCase):
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
+    def test_close_rejected_when_soft_sidecar_conflicts_with_same_direction_context_asset_matrix(self) -> None:
+        # A soft position_thesis review plus operator Gate B is still not enough
+        # when the directional market stack still supports the open side. This
+        # pins AGENT_CONTRACT §10: same-direction recovery edge should become
+        # HOLD/reprice/TP rebalance, not GPT-driven loss close.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_same_direction_context_asset_matrix_support(files, side="LONG")
+            _write_fresh_position_thesis_close_recommendation(root, files, side="LONG")
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(
+                ["position:thesis:555", "matrix:EUR_USD:LONG", "context_asset:XAU_USD"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
+
+    def test_profit_side_soft_close_not_blocked_by_same_direction_matrix_support(self) -> None:
+        # The same-direction matrix blocker is for loss-side soft closes. A
+        # profitable operator-authorized close can still pass if Gate A sidecar
+        # evidence is present.
+        _os.environ["QR_OPERATOR_CLOSE_OVERRIDE"] = "1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(
+                root,
+                position_side="LONG",
+                m15_dir="UP",
+                h4_dir="UP",
+                unrealized_pl_jpy=350.0,
+            )
+            _write_same_direction_context_asset_matrix_support(files, side="LONG")
+            _write_fresh_position_thesis_close_recommendation(root, files, side="LONG")
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(
+                ["position:thesis:555", "matrix:EUR_USD:LONG", "context_asset:XAU_USD"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+
     def test_close_rejected_without_operator_token_when_only_soft_position_management_review_exit(self) -> None:
         # PositionManager REVIEW_EXIT is carried into Gate A, but score/advisory
         # reasons are not standing loss-cut authorization.
@@ -3003,6 +3093,42 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertEqual(payload["verification_issues"], [])
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertEqual(recs[0]["source"], "position_thesis")
+            self.assertTrue(recs[0]["gate_b_standing_authorized"])
+
+    def test_hard_close_ignores_same_direction_context_asset_matrix_support(self) -> None:
+        # Hard invalidation evidence is allowed to close even if the advisory
+        # matrix still has stale same-direction support; otherwise a delayed
+        # context-asset artifact could block a deterministic invalidation hit.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_same_direction_context_asset_matrix_support(files, side="LONG")
+            _write_fresh_position_thesis_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                rationale_lines=[
+                    "patterns +30.0",
+                    "forward-proj +25.0",
+                    "chart-tech -8.0",
+                ],
+                context_notes=[
+                    "invalidation hit: current bid 1.16310 <= invalidation price 1.16330 minus anti-wick buffer",
+                    "technical invalidation confirmed against LONG: H1 RSI=34.2; M15 trend down; M30 MACD-; M5 ST-",
+                ],
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].extend(
+                ["position:thesis:555", "matrix:EUR_USD:LONG", "context_asset:XAU_USD"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertTrue(recs[0]["gate_b_standing_authorized"])
 
     def test_close_accepted_without_operator_token_when_position_management_structural_review_exit(self) -> None:

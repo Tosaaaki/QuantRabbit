@@ -122,6 +122,23 @@ _STRUCT_EVENT_RE = re.compile(
 # rather than a JPY/pip literal, so they're §6-compliant.
 CLOSE_DISCIPLINE_TIMEFRAMES: tuple[str, ...] = ("M15", "H4")
 
+# Layers that can represent directional evidence for/against the position
+# thesis. Session safety layers such as flow/calendar are intentionally omitted:
+# a normal spread or quiet event window is useful context, but it does not prove
+# recovery edge for a same-direction position.
+CLOSE_DIRECTIONAL_MATRIX_LAYERS: frozenset[str] = frozenset(
+    {
+        "chart",
+        "strength",
+        "currency_strength",
+        "cross_asset",
+        "context_asset_chart",
+        "levels",
+        "cot",
+        "option_skew",
+    }
+)
+
 
 def _parse_struct_events(
     chart_story: str,
@@ -168,6 +185,62 @@ def _pair_chart(packet: dict[str, Any], pair: str) -> dict[str, Any]:
 def _pair_chart_story(packet: dict[str, Any], pair: str) -> str:
     """Pull the per-pair chart_story string from the verifier packet."""
     return str(_pair_chart(packet, pair).get("chart_story") or "")
+
+
+def _close_same_direction_matrix_support(
+    packet: dict[str, Any],
+    pair: str,
+    side: str,
+) -> tuple[bool, str]:
+    side_upper = str(side or "").upper()
+    if side_upper not in {"LONG", "SHORT"}:
+        return False, ""
+    pair_block = (
+        ((packet.get("market_context") or {}).get("pairs") or {})
+        .get(pair) or {}
+    )
+    matrix = pair_block.get("matrix") if isinstance(pair_block, dict) else None
+    reading = matrix.get(side_upper) if isinstance(matrix, dict) else None
+    if not isinstance(reading, dict):
+        return False, ""
+
+    supports = _directional_matrix_observations(reading.get("supports"))
+    if not supports:
+        return False, ""
+    rejects = _directional_matrix_observations(reading.get("rejects"))
+    if len(rejects) >= len(supports):
+        return False, ""
+
+    support_codes = [
+        str(item.get("code") or item.get("layer") or "directional_support")
+        for item in supports
+    ]
+    refs: list[str] = []
+    for item in supports:
+        for ref in item.get("evidence_refs") or []:
+            text = str(ref).strip()
+            if text and text not in refs:
+                refs.append(text)
+    reading_ref = str(reading.get("evidence_ref") or "").strip()
+    if reading_ref and reading_ref not in refs:
+        refs.insert(0, reading_ref)
+    ref_text = f"; refs={', '.join(refs[:5])}" if refs else ""
+    return (
+        True,
+        f"{pair} {side_upper} still has directional matrix support "
+        f"({', '.join(support_codes[:4])}){ref_text}",
+    )
+
+
+def _directional_matrix_observations(rows: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in rows or []:
+        if not isinstance(item, dict):
+            continue
+        layer = str(item.get("layer") or "").strip()
+        if layer in CLOSE_DIRECTIONAL_MATRIX_LAYERS:
+            out.append(item)
+    return out
 
 
 def _trader_position_lookup(packet: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1315,6 +1388,7 @@ class DecisionVerifier:
         # Hard Gate A also carries the operator's standing authorization for a
         # justified loss-cut; softer Gate A still needs env/token Gate B.
         still_valid: list[str] = []
+        same_direction_supported: list[str] = []
         needs_explicit_gate_b: list[str] = []
         for tid in decision.close_trade_ids:
             pos = position_by_tid.get(str(tid))
@@ -1336,6 +1410,17 @@ class DecisionVerifier:
                     f"{tid} ({pair} {side})"
                 )
             elif not standing_authorized:
+                supported, support_reason = _close_same_direction_matrix_support(
+                    self.packet,
+                    pair,
+                    side,
+                )
+                unrealized_pl_jpy = _optional_float(pos.get("unrealized_pl_jpy"))
+                if supported and (unrealized_pl_jpy is None or unrealized_pl_jpy <= 0):
+                    same_direction_supported.append(
+                        f"{tid} ({support_reason})"
+                    )
+                    continue
                 needs_explicit_gate_b.append(f"{tid} ({pair} {side})")
 
         if still_valid:
@@ -1346,6 +1431,19 @@ class DecisionVerifier:
                     "side on M15/H4, no buffered invalidation_price hit with chart/technical confirmation, and no fresh "
                     "position sidecar REVIEW_CLOSE/RECOMMEND_CLOSE) for: "
                     + ", ".join(still_valid),
+                )
+            )
+
+        if same_direction_supported:
+            issues.append(
+                VerificationIssue(
+                    "CLOSE_SAME_DIRECTION_MARKET_SUPPORT",
+                    "CLOSE rejected: softer close evidence conflicts with "
+                    "same-direction directional market_context_matrix support. "
+                    "Contract §10 requires HOLD/reprice/TP rebalance while the "
+                    "market stack still supports a loss-side open position, "
+                    "unless hard invalidation evidence is present. Blocked for: "
+                    + ", ".join(same_direction_supported),
                 )
             )
 
@@ -1729,6 +1827,7 @@ def _snapshot_packet(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "pair": item.get("pair"),
                 "side": item.get("side"),
                 "units": item.get("units"),
+                "unrealized_pl_jpy": item.get("unrealized_pl_jpy"),
                 "take_profit": item.get("take_profit"),
                 "stop_loss": item.get("stop_loss"),
                 "owner": item.get("owner"),
