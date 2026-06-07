@@ -62,6 +62,30 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertIn("Minimum daily floor", (root / "target.md").read_text())
             self.assertIn("Remaining target", (root / "target.md").read_text())
 
+    def test_accepts_absolute_target_profit_jpy_as_equity_derived_return(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+            ).run(
+                start_balance_jpy=200_000,
+                target_profit_jpy=15_000,
+                realized_pl_jpy=1500,
+                daily_risk_budget_jpy=1000,
+                target_trades_per_day=10,
+            )
+
+            self.assertEqual(summary.target_jpy, 15_000)
+            self.assertEqual(summary.target_profit_jpy, 15_000)
+            self.assertEqual(summary.minimum_target_jpy, 10_000)
+            self.assertEqual(summary.remaining_target_jpy, 13_500)
+            payload = json.loads((root / "target.json").read_text())
+            self.assertEqual(payload["target_profit_jpy"], 15_000)
+            self.assertEqual(payload["target_jpy"], 15_000)
+            self.assertEqual(payload["target_return_pct"], 7.5)
+
     def test_usd_quote_position_risk_uses_snapshot_conversion(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

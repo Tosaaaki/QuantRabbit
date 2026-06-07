@@ -50,6 +50,7 @@ class DailyTargetSnapshot:
     start_balance_jpy: float
     target_return_pct: float
     target_jpy: float
+    target_profit_jpy: float
     minimum_return_pct: float
     minimum_target_jpy: float
     realized_pl_jpy: float
@@ -85,6 +86,7 @@ class DailyTargetSummary:
     report_path: Path
     status: str
     target_jpy: float
+    target_profit_jpy: float
     minimum_target_jpy: float
     progress_jpy: float
     progress_pct: float
@@ -127,6 +129,7 @@ class DailyTargetLedger:
         *,
         start_balance_jpy: float | None = None,
         target_return_pct: float | None = None,
+        target_profit_jpy: float | None = None,
         realized_pl_jpy: float | None = None,
         daily_risk_budget_jpy: float | None = None,
         daily_risk_pct: float | None = None,
@@ -174,7 +177,13 @@ class DailyTargetLedger:
                 "daily target state requires --start-balance, a previous state file, "
                 "or a broker snapshot with account summary on first run"
             )
-        target_pct = _coalesce_float(target_return_pct, previous.get("target_return_pct"), 10.0)
+        explicit_target_profit = _coalesce_float(target_profit_jpy)
+        if explicit_target_profit is not None:
+            if explicit_target_profit <= 0:
+                raise ValueError("daily-target-state --target-profit-jpy must be positive")
+            target_pct = (explicit_target_profit / start_balance) * 100.0
+        else:
+            target_pct = _coalesce_float(target_return_pct, previous.get("target_return_pct"), 10.0)
         if realized_pl_jpy is not None:
             realized = float(realized_pl_jpy)
         elif ledger_realized is not None and (previous_day is None or is_new_campaign_day):
@@ -362,7 +371,12 @@ class DailyTargetLedger:
             1 for position in positions if not position.protected and _counts_against_trader_budget(position)
         )
         progress = round(realized + unrealized, 4)
-        target_jpy = round(start_balance * (target_pct / 100.0), 2)
+        target_jpy = round(
+            explicit_target_profit
+            if explicit_target_profit is not None
+            else start_balance * (target_pct / 100.0),
+            2,
+        )
         # The 10% target remains the campaign objective. The 5% floor is a
         # same-day minimum-progress line requested by the operator; it is
         # derived from the same broker-truth start balance so no JPY literal
@@ -401,6 +415,7 @@ class DailyTargetLedger:
             start_balance_jpy=round(start_balance, 4),
             target_return_pct=round(target_pct, 4),
             target_jpy=target_jpy,
+            target_profit_jpy=target_jpy,
             minimum_return_pct=round(minimum_pct, 4),
             minimum_target_jpy=minimum_target_jpy,
             realized_pl_jpy=round(realized, 4),
@@ -438,6 +453,7 @@ class DailyTargetLedger:
             report_path=self.report_path,
             status=state.status,
             target_jpy=state.target_jpy,
+            target_profit_jpy=state.target_profit_jpy,
             minimum_target_jpy=state.minimum_target_jpy,
             progress_jpy=state.progress_jpy,
             progress_pct=state.progress_pct,

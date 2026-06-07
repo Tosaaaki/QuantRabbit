@@ -44,10 +44,12 @@ DEFAULT_TARGET_BAND_RETURN_PCTS = (5.0, 6.0, 7.0, 8.0, 9.0, 10.0)
 # Cross-pair context overlay controls. These are replay data-sufficiency guards,
 # not market-price thresholds: a generalized theme can light up several pairs,
 # so it needs broader support than a pair bucket and is capped to one active
-# overlay to avoid turning "risk-on" into "trade everything".
+# overlay to avoid turning "risk-on" into "trade everything". 2026-06-08
+# replay sweeps showed the 60% theme floor admitted a few broad-theme losers;
+# 65% kept the same best-day coverage while improving PF and required 5% pace.
 CONTEXT_THEME_SOURCE_TABLE = "trades_theme"
 CONTEXT_THEME_MIN_TRAIN_TRADES = 20
-CONTEXT_THEME_MIN_TRAIN_WIN_RATE_PCT = 60.0
+CONTEXT_THEME_MIN_TRAIN_WIN_RATE_PCT = 65.0
 CONTEXT_THEME_MAX_ACTIVE_BUCKETS = 1
 _FX_CURRENCIES = frozenset({"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"})
 _COMMODITY_LINKED_CURRENCIES = frozenset({"AUD", "CAD", "NZD"})

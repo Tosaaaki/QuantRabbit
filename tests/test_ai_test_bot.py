@@ -833,8 +833,75 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["selected_trades"], 2)
             self.assertEqual(day["managed_net_jpy"], 120.0)
             self.assertEqual(payload["context_theme_policy"]["max_active_buckets"], 1)
+            self.assertEqual(payload["context_theme_policy"]["min_train_win_rate_pct"], 65.0)
             self.assertEqual(payload["context_feature_coverage"]["rows_with_context_theme_buckets"], 22)
             self.assertIn("Cross-pair context theme buckets", (root / "ai_backtest.md").read_text())
+
+    def test_context_theme_overlay_requires_stronger_win_rate_than_pair_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            rows = [
+                (
+                    "trades",
+                    "2026-04-01",
+                    "EUR_JPY",
+                    "LONG",
+                    10.0,
+                    json.dumps({"id": f"risk-win-{index}"}),
+                )
+                for index in range(12)
+            ]
+            rows.extend(
+                (
+                    "trades",
+                    "2026-04-01",
+                    "EUR_JPY",
+                    "LONG",
+                    -5.0,
+                    json.dumps({"id": f"risk-loss-{index}"}),
+                )
+                for index in range(8)
+            )
+            rows.extend(
+                [
+                    (
+                        "trades",
+                        "2026-04-02",
+                        "EUR_JPY",
+                        "LONG",
+                        50.0,
+                        json.dumps({"id": "base-validation"}),
+                    ),
+                    (
+                        "trades",
+                        "2026-04-02",
+                        "GBP_JPY",
+                        "LONG",
+                        70.0,
+                        json.dumps({"id": "theme-validation"}),
+                    ),
+                ]
+            )
+            _seed_db(db, rows)
+
+            AITestBotBacktester(
+                db_path=db,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], ["trades:EUR_JPY:LONG:UNSPECIFIED:UNSPECIFIED"])
+            self.assertEqual(day["selected_trades"], 1)
+            self.assertEqual(day["managed_net_jpy"], 50.0)
+            self.assertEqual(payload["context_theme_policy"]["min_train_win_rate_pct"], 65.0)
 
 
 def _seed_db(path: Path, rows: list[tuple[str, str, str, str, float] | tuple[str, str, str, str, float, str]]) -> None:

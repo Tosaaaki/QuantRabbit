@@ -1303,6 +1303,12 @@ def main(argv: list[str] | None = None) -> int:
     p_target = sub.add_parser("daily-target-state", help="Record daily 10%% target progress from broker truth.")
     p_target.add_argument("--start-balance", type=float, default=None)
     p_target.add_argument("--target-return-pct", type=float, default=None)
+    p_target.add_argument(
+        "--target-profit-jpy",
+        type=float,
+        default=None,
+        help="Absolute JPY profit objective for this campaign day; converted to return %% from broker-truth start equity.",
+    )
     p_target.add_argument("--realized-pl", type=float, default=None)
     p_target.add_argument(
         "--daily-risk-budget",
@@ -2775,6 +2781,7 @@ def main(argv: list[str] | None = None) -> int:
             ).run(
                 start_balance_jpy=args.start_balance,
                 target_return_pct=args.target_return_pct,
+                target_profit_jpy=args.target_profit_jpy,
                 realized_pl_jpy=args.realized_pl,
                 daily_risk_budget_jpy=args.daily_risk_budget,
                 daily_risk_pct=args.daily_risk_pct,
@@ -2791,6 +2798,7 @@ def main(argv: list[str] | None = None) -> int:
                     "report_path": str(summary.report_path),
                     "status": summary.status,
                     "target_jpy": summary.target_jpy,
+                    "target_profit_jpy": summary.target_profit_jpy,
                     "progress_jpy": summary.progress_jpy,
                     "progress_pct": summary.progress_pct,
                     "remaining_target_jpy": summary.remaining_target_jpy,
