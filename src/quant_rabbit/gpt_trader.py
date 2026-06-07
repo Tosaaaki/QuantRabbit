@@ -1764,7 +1764,19 @@ def _lane_packet(
                     campaign_index.get(lane_id) or campaign_index.get(_parent_lane_id(lane_id)),
                     ("adoption", "campaign_role", "required_receipt"),
                 ),
-                "strategy": _small_dict(strategy_index.get((pair, direction)), ("status", "pretrade_net_jpy", "live_net_jpy", "live_worst_jpy", "required_fix")),
+                "strategy": _small_dict(
+                    strategy_index.get((pair, direction)),
+                    (
+                        "status",
+                        "pretrade_net_jpy",
+                        "live_net_jpy",
+                        "live_worst_jpy",
+                        "seat_pl_n",
+                        "seat_net_jpy",
+                        "seat_win_rate_pct",
+                        "required_fix",
+                    ),
+                ),
                 "story": _small_dict(story_index.get(pair), ("methods", "themes", "examples")),
                 "forecast": _lane_forecast_packet(intent.get("metadata")),
                 "market_context_matrix": _small_dict(

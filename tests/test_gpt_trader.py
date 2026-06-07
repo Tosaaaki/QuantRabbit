@@ -117,6 +117,25 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertTrue(payload["input_packet"]["market_status"]["is_fx_open"])
             self.assertIn("market:status", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_input_packet_includes_strategy_seat_pnl_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            strategy = json.loads(files["strategy"].read_text())
+            strategy["profiles"][0]["seat_pl_n"] = 12
+            strategy["profiles"][0]["seat_net_jpy"] = -3000.0
+            strategy["profiles"][0]["seat_win_rate_pct"] = 16.7
+            files["strategy"].write_text(json.dumps(strategy))
+            brain = _brain(root, files, _trade_decision())
+
+            brain.run(snapshot_path=files["snapshot"])
+
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            lane_strategy = payload["input_packet"]["lanes"][0]["strategy"]
+            self.assertEqual(lane_strategy["seat_pl_n"], 12)
+            self.assertEqual(lane_strategy["seat_net_jpy"], -3000.0)
+            self.assertEqual(lane_strategy["seat_win_rate_pct"], 16.7)
+
     def test_input_packet_includes_verification_ledger_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
