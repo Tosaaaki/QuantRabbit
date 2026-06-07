@@ -262,6 +262,16 @@ class RecordTest(unittest.TestCase):
 
 
 class VerifyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._market_open_patch = mock.patch(
+            "quant_rabbit.strategy.projection_ledger.projection_telemetry_market_open",
+            return_value=True,
+        )
+        self._market_open_patch.start()
+
+    def tearDown(self) -> None:
+        self._market_open_patch.stop()
+
     def _setup(self, signal, ts_offset_min=30):
         tmp = tempfile.TemporaryDirectory()
         root = Path(tmp.name)
@@ -635,6 +645,45 @@ class VerifyTest(unittest.TestCase):
                 quotes_by_pair={"EUR_USD": {"bid": 1.0, "ask": 1.0}},
             )
             self.assertEqual(counts["PENDING"], 1)
+
+    def test_closed_market_projection_times_out_without_calibration(self) -> None:
+        self._market_open_patch.stop()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                emitted = datetime(2026, 6, 7, 14, 0, tzinfo=timezone.utc)
+                entry = LedgerEntry(
+                    timestamp_emitted_utc=emitted.isoformat().replace("+00:00", "Z"),
+                    pair="EUR_USD",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.8,
+                    entry_price=1.1700,
+                    predicted_target_price=1.1720,
+                    predicted_invalidation_price=1.1690,
+                    resolution_window_min=60,
+                    resolution_status="PENDING",
+                    cycle_id="closed-market-cycle",
+                )
+                from quant_rabbit.strategy.projection_ledger import write_ledger
+
+                write_ledger([entry], root)
+
+                counts = verify_pending(
+                    root,
+                    now=emitted + timedelta(minutes=10),
+                    quotes_by_pair={"EUR_USD": {"bid": 1.1730, "ask": 1.1732}},
+                    atr_pips_by_pair={"EUR_USD": 10.0},
+                )
+
+                resolved = load_ledger(root)[0]
+        finally:
+            self._market_open_patch.start()
+
+        self.assertEqual(counts["TIMEOUT"], 1)
+        self.assertEqual(resolved.resolution_status, "TIMEOUT")
+        self.assertIn("market closed at projection emission", resolved.resolution_evidence)
 
     def test_verify_pending_preserves_append_started_mid_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

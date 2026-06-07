@@ -1649,11 +1649,18 @@ def _record_forecast_seed_telemetry(
         return
     try:
         from quant_rabbit.strategy.forecast_persistence_tracker import record_forecast
-        from quant_rabbit.strategy.projection_ledger import record_directional_forecast, record_projections
+        from quant_rabbit.strategy.projection_ledger import (
+            projection_telemetry_market_open,
+            record_directional_forecast,
+            record_projections,
+        )
 
         forecast_record = _forecast_with_pair(forecast, pair=pair)
         regime_label = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
-        record_forecast(forecast_record, data_root=data_root, cycle_id=cycle_id)
+        emission_time = _ensure_utc(getattr(quote, "timestamp_utc", None))
+        record_forecast(forecast_record, data_root=data_root, cycle_id=cycle_id, now=emission_time)
+        if not projection_telemetry_market_open(emission_time):
+            return
         record_directional_forecast(
             forecast_record,
             pair=pair,
@@ -1661,6 +1668,7 @@ def _record_forecast_seed_telemetry(
             data_root=data_root,
             regime_at_emission=regime_label,
             cycle_id=cycle_id,
+            now=emission_time,
         )
         projection_signals = list(getattr(forecast_record, "projection_signals", ()) or ())
         if projection_signals:
@@ -1671,6 +1679,7 @@ def _record_forecast_seed_telemetry(
                 data_root=data_root,
                 regime_at_emission=regime_label,
                 cycle_id=cycle_id,
+                now=emission_time,
             )
     except Exception:
         return

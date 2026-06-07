@@ -33,7 +33,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 root = Path(tmp)
                 data_root = root / "data"
                 data_root.mkdir()
-                emitted = datetime.now(timezone.utc) - timedelta(minutes=10)
+                now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+                emitted = now - timedelta(minutes=10)
                 (data_root / "projection_ledger.jsonl").write_text(
                     json.dumps(
                         {
@@ -68,7 +69,6 @@ class AutoTradeCycleTest(unittest.TestCase):
                         }
                     )
                 )
-                now = datetime.now(timezone.utc)
                 snapshot = BrokerSnapshot(
                     fetched_at_utc=now,
                     quotes={
@@ -124,7 +124,8 @@ class AutoTradeCycleTest(unittest.TestCase):
                 root = Path(tmp)
                 data_root = root / "data"
                 data_root.mkdir()
-                emitted = datetime.now(timezone.utc) - timedelta(minutes=30)
+                now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
+                emitted = now - timedelta(minutes=30)
                 (data_root / "projection_ledger.jsonl").write_text(
                     json.dumps(
                         {
@@ -146,7 +147,6 @@ class AutoTradeCycleTest(unittest.TestCase):
                 )
                 pair_charts = root / "pair_charts.json"
                 pair_charts.write_text(json.dumps({"charts": []}))
-                now = datetime.now(timezone.utc)
                 snapshot = BrokerSnapshot(
                     fetched_at_utc=now,
                     quotes={
@@ -186,7 +186,7 @@ class AutoTradeCycleTest(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                now = datetime.now(timezone.utc)
+                now = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
                 emitted = now - timedelta(minutes=10)
                 (root / "projection_ledger.jsonl").write_text(
                     json.dumps(

@@ -1924,7 +1924,13 @@ class AutoTradeCycle:
             from quant_rabbit.strategy.projection_ledger import load_ledger, verify_pending
 
             entries = load_ledger(data_root)
-            now = datetime.now(timezone.utc)
+            now = getattr(snapshot, "fetched_at_utc", None)
+            if not isinstance(now, datetime):
+                now = datetime.now(timezone.utc)
+            elif now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            else:
+                now = now.astimezone(timezone.utc)
             pending_pairs: set[str] = set()
             expired_pairs: set[str] = set()
             for entry in entries:
@@ -2002,6 +2008,7 @@ class AutoTradeCycle:
                 quotes_by_pair=quotes_by_pair,
                 atr_pips_by_pair=atr_pips_by_pair,
                 candles_by_pair=candles_by_pair,
+                now=now,
             )
         except Exception as exc:
             self._projection_preflight_summary = {

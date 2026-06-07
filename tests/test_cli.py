@@ -284,6 +284,8 @@ class CliHelpTest(unittest.TestCase):
                 )
 
             self.assertEqual(first["recorded"], 1)
+            self.assertEqual(first["projection_recorded"], 0)
+            self.assertEqual(first["projection_skipped"]["EUR_USD"], "market_closed_at_forecast_emission")
             self.assertEqual(first["forecasts"]["EUR_USD"]["direction"], "UP")
             self.assertEqual(second["recorded"], 0)
             self.assertEqual(second["skipped"]["EUR_USD"], "already_recorded_for_cycle")
@@ -292,7 +294,9 @@ class CliHelpTest(unittest.TestCase):
             row = json.loads(rows[0])
             self.assertEqual(row["pair"], "EUR_USD")
             self.assertEqual(row["cycle_id"], "test:2026-05-30T00:00:00+00:00:2026-05-30T00:01:00+00:00")
+            self.assertEqual(row["timestamp_utc"], "2026-05-30T00:00:00Z")
             self.assertEqual(row["direction"], "UP")
+            self.assertFalse((data_root / "projection_ledger.jsonl").exists())
 
     def test_replay_execution_missing_prices_returns_json_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

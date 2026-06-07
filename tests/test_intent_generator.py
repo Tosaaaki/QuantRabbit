@@ -282,7 +282,8 @@ class IntentGeneratorTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = root / "intents.json"
-                snapshot = _snapshot(root)
+                open_ts = "2026-06-08T12:00:00+00:00"
+                snapshot = _snapshot(root, fetched_at_utc=open_ts, quote_timestamp_utc=open_ts)
                 projection_signal = SimpleNamespace(
                     name="bb_squeeze_expansion_imminent",
                     timeframe="H1",
@@ -358,6 +359,75 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("TELEMETRY_FORECAST_HISTORY_REQUIRED_FOR_LIVE", issue_codes)
         self.assertNotIn("TELEMETRY_DIRECTIONAL_PROJECTION_REQUIRED_FOR_LIVE", issue_codes)
 
+    def test_generate_intents_skips_projection_telemetry_when_market_closed(self) -> None:
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                closed_ts = "2026-06-07T14:00:00+00:00"
+                snapshot = _snapshot(root, fetched_at_utc=closed_ts, quote_timestamp_utc=closed_ts)
+                projection_signal = SimpleNamespace(
+                    name="bb_squeeze_expansion_imminent",
+                    timeframe="H1",
+                    direction="EITHER",
+                    lead_time_min=300,
+                    confidence=0.74,
+                    bonus_magnitude=8.0,
+                    rationale="H1 squeeze expansion timing",
+                )
+                forecast = SimpleNamespace(
+                    pair="EUR_USD",
+                    direction="DOWN",
+                    confidence=0.91,
+                    current_price=1.17326,
+                    target_price=1.1712,
+                    invalidation_price=1.1742,
+                    horizon_min=60,
+                    rationale_summary="DOWN forecast from closed-market snapshot",
+                    drivers_for=("pair_chart SHORT_LEAN",),
+                    drivers_against=("range bounce risk",),
+                    projection_signals=(projection_signal,),
+                )
+
+                with (
+                    patch("quant_rabbit.strategy.intent_generator.ROOT", root),
+                    patch(
+                        "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                        return_value=forecast,
+                    ),
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.46,
+                            short_score=0.54,
+                            dominant_regime="RANGE",
+                            m5_regime="RANGE",
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=snapshot)
+
+                forecast_rows = (root / "data" / "forecast_history.jsonl").read_text().splitlines()
+                projection_path = root / "data" / "projection_ledger.jsonl"
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        self.assertTrue(forecast_rows)
+        latest = json.loads(forecast_rows[-1])
+        self.assertEqual(latest["pair"], "EUR_USD")
+        self.assertEqual(latest["timestamp_utc"], "2026-06-07T14:00:00Z")
+        self.assertFalse(projection_path.exists())
+
     def test_matching_forecast_telemetry_allows_live_ready(self) -> None:
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
@@ -366,8 +436,14 @@ class IntentGeneratorTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = root / "intents.json"
-                snapshot = _snapshot(root)
-                _write_forecast_telemetry(root, direction="DOWN", confidence=0.91)
+                open_ts = "2026-06-08T12:00:00+00:00"
+                snapshot = _snapshot(root, fetched_at_utc=open_ts, quote_timestamp_utc=open_ts)
+                _write_forecast_telemetry(
+                    root,
+                    direction="DOWN",
+                    confidence=0.91,
+                    timestamp_utc="2026-06-08T12:00:00Z",
+                )
                 forecast = SimpleNamespace(
                     direction="DOWN",
                     confidence=0.91,
@@ -428,7 +504,7 @@ class IntentGeneratorTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = root / "intents.json"
-                fetched_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+                fetched_at = datetime(2026, 6, 8, 12, 5, tzinfo=timezone.utc)
                 snapshot = _snapshot(
                     root,
                     fetched_at_utc=fetched_at.isoformat(),
@@ -567,14 +643,19 @@ class IntentGeneratorTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 output = root / "intents.json"
-                fetched_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+                fetched_at = datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc)
                 quote_at = fetched_at - timedelta(seconds=10)
                 snapshot = _snapshot(
                     root,
                     fetched_at_utc=fetched_at.isoformat(),
                     quote_timestamp_utc=quote_at.isoformat(),
                 )
-                _write_forecast_telemetry(root, direction="DOWN", confidence=0.91)
+                _write_forecast_telemetry(
+                    root,
+                    direction="DOWN",
+                    confidence=0.91,
+                    timestamp_utc=quote_at.isoformat().replace("+00:00", "Z"),
+                )
                 forecast = SimpleNamespace(
                     direction="DOWN",
                     confidence=0.91,
@@ -4048,10 +4129,11 @@ def _write_forecast_telemetry(
     direction: str,
     confidence: float,
     cycle_id: str = "test-cycle",
+    timestamp_utc: str | None = None,
 ) -> None:
     data_root = root / "data"
     data_root.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    ts = timestamp_utc or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     (data_root / "forecast_history.jsonl").write_text(
         json.dumps(
             {

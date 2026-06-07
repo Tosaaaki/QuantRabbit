@@ -215,6 +215,21 @@ def _bootstrap_sl_free_defaults() -> None:
         )
 
 
+def _forecast_emission_time_from_snapshot(snapshot_payload: dict[str, Any]) -> datetime | None:
+    raw = snapshot_payload.get("fetched_at_utc")
+    if raw is None and isinstance(snapshot_payload.get("account"), dict):
+        raw = snapshot_payload["account"].get("fetched_at_utc")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _refresh_current_forecast_history(
     *,
     snapshot_payload: dict[str, Any],
@@ -249,7 +264,10 @@ def _refresh_current_forecast_history(
             _load_pair_charts,
             _snapshot_from_json,
         )
-        from quant_rabbit.strategy.projection_ledger import record_directional_forecast
+        from quant_rabbit.strategy.projection_ledger import (
+            projection_telemetry_market_open,
+            record_directional_forecast,
+        )
     except Exception as exc:
         return {
             "recorded": 0,
@@ -271,6 +289,8 @@ def _refresh_current_forecast_history(
             "skipped": {pair: f"snapshot_parse_failed:{exc.__class__.__name__}" for pair in unique_pairs},
             "cycle_id": None,
         }
+    emission_time = _forecast_emission_time_from_snapshot(snapshot_payload)
+    projection_market_open = projection_telemetry_market_open(emission_time)
     cycle_id = _forecast_refresh_cycle_id(
         snapshot_payload=snapshot_payload,
         pair_charts_payload=pair_charts_payload,
@@ -278,6 +298,8 @@ def _refresh_current_forecast_history(
     )
     recorded: dict[str, dict[str, Any]] = {}
     skipped: dict[str, str] = {}
+    projection_recorded = 0
+    projection_skipped: dict[str, str] = {}
     for pair in unique_pairs:
         if _forecast_history_has_cycle_pair(data_root, pair, cycle_id):
             skipped[pair] = "already_recorded_for_cycle"
@@ -295,26 +317,32 @@ def _refresh_current_forecast_history(
             continue
         raw_chart = charts[pair].get("__raw_chart") if isinstance(charts[pair], dict) else None
         regime = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
-        record_forecast(forecast, data_root=data_root, cycle_id=cycle_id)
-        try:
-            record_directional_forecast(
-                forecast,
-                pair=pair,
-                current_price=float(quote.mid),
-                data_root=data_root,
-                regime_at_emission=regime,
-                cycle_id=cycle_id,
-            )
-        except Exception:
-            pass
+        record_forecast(forecast, data_root=data_root, cycle_id=cycle_id, now=emission_time)
+        if projection_market_open:
+            try:
+                projection_recorded += record_directional_forecast(
+                    forecast,
+                    pair=pair,
+                    current_price=float(quote.mid),
+                    data_root=data_root,
+                    regime_at_emission=regime,
+                    cycle_id=cycle_id,
+                    now=emission_time,
+                )
+            except Exception as exc:
+                projection_skipped[pair] = f"projection_record_failed:{exc.__class__.__name__}"
+        else:
+            projection_skipped[pair] = "market_closed_at_forecast_emission"
         recorded[pair] = {
             "direction": getattr(forecast, "direction", "UNCLEAR"),
             "confidence": float(getattr(forecast, "confidence", 0.0) or 0.0),
         }
     return {
         "recorded": len(recorded),
+        "projection_recorded": projection_recorded,
         "forecasts": recorded,
         "skipped": skipped,
+        "projection_skipped": projection_skipped,
         "cycle_id": cycle_id,
     }
 

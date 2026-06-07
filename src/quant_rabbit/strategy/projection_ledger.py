@@ -400,6 +400,23 @@ def _extract_target_price_from_rationale(rationale: str) -> Optional[float]:
         return None
 
 
+def projection_telemetry_market_open(now: Optional[datetime] = None) -> bool:
+    """Return whether forward-projection telemetry can be calibrated.
+
+    The projection ledger scores future price movement over a resolution window.
+    Forecasts emitted while the FX market is closed do not have a valid tradable
+    observation window, so callers should keep forecast history but skip adding
+    HIT/MISS-calibrated projection rows. On status failures, stay permissive so
+    telemetry collection is not disabled by an auxiliary calendar outage.
+    """
+    try:
+        from quant_rabbit.analysis.market_status import compute_market_status
+
+        return bool(compute_market_status(now).is_fx_open)
+    except Exception:
+        return True
+
+
 def load_ledger(data_root: Path) -> List[LedgerEntry]:
     """Read full ledger into memory. Returns [] when file missing."""
     path = _ledger_path(data_root)
@@ -513,6 +530,13 @@ def _verify_pending_unlocked(
             emitted_at = datetime.fromisoformat(e.timestamp_emitted_utc.replace("Z", "+00:00"))
         except (TypeError, ValueError):
             continue
+        if not projection_telemetry_market_open(emitted_at):
+            e.resolution_status = "TIMEOUT"
+            e.resolved_at_utc = now.isoformat().replace("+00:00", "Z")
+            e.resolution_evidence = "market closed at projection emission; excluded from calibration"
+            counts["TIMEOUT"] += 1
+            continue
+
         elapsed_min = (now - emitted_at).total_seconds() / 60.0
         if elapsed_min < e.resolution_window_min:
             counts["PENDING"] += 1
