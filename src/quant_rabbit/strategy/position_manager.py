@@ -24,7 +24,12 @@ from quant_rabbit.strategy.intent_generator import (
     _market_derived_reward_risk,
     _session_bucket_for,
 )
-from quant_rabbit.strategy.entry_thesis_ledger import load_entry_thesis, load_latest_forecast
+from quant_rabbit.strategy.entry_thesis_ledger import (
+    load_entry_thesis,
+    load_latest_forecast,
+    technical_invalidation_confirmation_reason,
+    thesis_invalidation_hit_reason,
+)
 from quant_rabbit.strategy.price_action import (
     aggregate_price_action_score,
     classify_order_block_proximity,
@@ -293,6 +298,13 @@ class PositionManager:
             position.owner == Owner.TRADER and _trader_sl_repair_disabled()
         )
 
+        entry_invalidation_review, entry_invalidation_reasons = _entry_thesis_invalidation_review(
+            position=position,
+            quote=quote,
+            full_pair_charts=full_pair_charts,
+            data_root=self.output_path.parent,
+        )
+
         # Contradiction-based auto-REVIEW_EXIT was producing churn loops on
         # SL-free trader-owned positions: chart regime flips frequently on M1/M5,
         # so a -500 JPY EUR_USD SHORT got auto-closed and a fresh SHORT was
@@ -312,7 +324,10 @@ class PositionManager:
         )
         if not contradicted and not sl_free_owned:
             contradicted = _chart_regime_contradicted(position, pair_charts)
-        if contradicted:
+        if entry_invalidation_review:
+            reasons.extend(entry_invalidation_reasons)
+            action = ACTION_REVIEW_EXIT
+        elif contradicted:
             if opposite_score is not None and same_score is not None:
                 reasons.append(f"opposite thesis score {opposite_score:.1f} materially exceeds same-direction {same_score:.1f}")
             reasons.append(f"chart regime contradicts {position.side.value} (losing {position.unrealized_pl_jpy:.1f} JPY)")
@@ -1005,7 +1020,50 @@ def _structural_loss_cut_reason(reasons: tuple[str, ...]) -> bool:
             return True
         if "structural OB broken" in text:
             return True
+        lowered = text.lower()
+        if "entry thesis invalidation hit" in lowered and "technical invalidation confirmed" in lowered:
+            return True
     return False
+
+
+def _entry_thesis_invalidation_review(
+    *,
+    position: BrokerPosition,
+    quote,
+    full_pair_charts: dict[str, dict[str, Any]] | None,
+    data_root: Path,
+) -> tuple[bool, list[str]]:
+    if position.owner != Owner.TRADER or position.unrealized_pl_jpy >= 0:
+        return False, []
+    thesis = load_entry_thesis(position.trade_id, data_root)
+    if thesis is None or thesis.invalidation_price is None:
+        return False, []
+    if quote is None:
+        return False, ["entry thesis invalidation check deferred: missing current quote"]
+
+    side = position.side.value
+    price = quote.bid if side == "LONG" else quote.ask
+    label = "bid" if side == "LONG" else "ask"
+    hit_reason = thesis_invalidation_hit_reason(
+        thesis,
+        side=side,
+        current_price=price,
+        price_label=label,
+    )
+    if not hit_reason:
+        return False, []
+
+    chart = (full_pair_charts or {}).get(position.pair)
+    technical_reason = technical_invalidation_confirmation_reason(chart, side=side)
+    if not technical_reason:
+        return False, [f"{hit_reason}; waiting for chart/technical confirmation"]
+
+    return True, [
+        (
+            "loss-cut: entry thesis invalidation hit: "
+            f"{hit_reason}; {technical_reason} ({position.unrealized_pl_jpy:+.0f} JPY)"
+        )
+    ]
 
 
 def _load_scores(path: Path) -> dict[tuple[str, str], float]:

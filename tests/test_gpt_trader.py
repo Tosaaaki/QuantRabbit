@@ -3338,6 +3338,36 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertTrue(recs[0]["gate_b_standing_authorized"])
             self.assertIn("position:management:555", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_close_accepted_without_operator_token_when_position_management_entry_invalidation_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
+            _write_recent_position_management_close_recommendation(
+                root,
+                files,
+                side="LONG",
+                reasons=[
+                    "score context before entry-invalidation review",
+                    (
+                        "loss-cut: entry thesis invalidation hit: current bid 1.34392 <= "
+                        "buffered invalidation 1.34659 (raw 1.34679, buffer 2.0p); "
+                        "technical invalidation confirmed against LONG: H1 BOS_DOWN; H4 BOS_DOWN"
+                    ),
+                ],
+            )
+            decision = _close_decision(trade_ids=["555"])
+            decision["evidence_refs"].append("position:management:555")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            self.assertEqual(payload["verification_issues"], [])
+            recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
+            self.assertEqual(recs[0]["source"], "position_management")
+            self.assertTrue(recs[0]["gate_b_standing_authorized"])
+
     def test_close_accepted_without_operator_token_when_thesis_evolution_is_broken(self) -> None:
         # thesis_evolution BROKEN / RECOMMEND_CLOSE is generated from entry
         # thesis invalidation plus technical confirmation, so it is hard Gate A.

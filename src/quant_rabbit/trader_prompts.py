@@ -809,6 +809,9 @@ def _position_management_standing_authorized(reason_parts: list[str]) -> bool:
             return True
         if "structural OB broken" in text:
             return True
+        lowered = text.lower()
+        if "entry thesis invalidation hit" in lowered and "technical invalidation confirmed" in lowered:
+            return True
     return False
 
 

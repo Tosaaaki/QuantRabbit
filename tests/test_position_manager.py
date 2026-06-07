@@ -818,6 +818,74 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
+    def test_entry_thesis_invalidation_hit_routes_sl_free_loss_to_review_exit(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir(parents=True)
+                (data_root / "entry_thesis_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-06-05T11:19:50Z",
+                            "trade_id": "472071",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "entry_price": 1.34702,
+                            "forecast_direction": "UP",
+                            "forecast_confidence": 0.58,
+                            "regime": "RANGE",
+                            "invalidation_price": 1.34679,
+                            "target_price": 1.34853,
+                            "key_drivers": ["failure_trader:GBP_USD:LONG:BREAKOUT_FAILURE"],
+                        }
+                    )
+                    + "\n"
+                )
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _entry_invalidation_technical_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="472071",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=6000,
+                        entry_price=1.34702,
+                        unrealized_pl_jpy=-2981.9,
+                        take_profit=1.34853,
+                        stop_loss=None,
+                    ),
+                    bid=1.34392,
+                    ask=1.34405,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=data_root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_REVIEW_EXIT)
+                self.assertEqual(result.positions[0].action, ACTION_REVIEW_EXIT)
+                report = (root / "pm.md").read_text()
+                self.assertIn("loss-cut: entry thesis invalidation hit", report)
+                self.assertIn("technical invalidation confirmed against LONG", report)
+                self.assertIn("next-generation entry thesis ledger present", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
     def test_sl_free_profitable_macro_reversal_uses_profit_market_take_under_auto_close_kill_switch(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
@@ -1254,6 +1322,68 @@ def _structural_reversal_pair_charts(root: Path) -> Path:
                                         {"kind": "BOS_DOWN", "close_confirmed": True},
                                     ]
                                 },
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+    )
+    return path
+
+
+def _entry_invalidation_technical_pair_charts(root: Path) -> Path:
+    path = root / "pair_charts_entry_invalidation.json"
+    chart_story = (
+        "M1(TREND_DOWN,ADX=21,ST=-,struct=NONE) "
+        "M5(TREND_DOWN,ADX=22,ST=-,struct=NONE) "
+        "M15(TREND_DOWN,ADX=23,ST=-,struct=NONE) "
+        "M30(TREND_DOWN,ADX=21,ST=-,struct=NONE) "
+        "H1(TREND_DOWN,ADX=20,ST=-,struct=NONE) "
+        "H4(RANGE,ADX=12,ST=-)"
+    )
+    adverse_indicators = {
+        "atr_pips": 1.0,
+        "rsi_14": 39.0,
+        "macd_hist": -0.0001,
+        "supertrend_dir": -1,
+        "ichimoku_cloud_pos": -1,
+        "plus_di_14": 13.0,
+        "minus_di_14": 24.0,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "charts": [
+                    {
+                        "pair": "EUR_USD",
+                        "chart_story": chart_story,
+                        "session": {"current_tag": "LONDON_KILLZONE"},
+                        "views": [
+                            {
+                                "granularity": "M5",
+                                "regime": "TREND_DOWN",
+                                "indicators": dict(adverse_indicators),
+                            },
+                            {
+                                "granularity": "M15",
+                                "regime": "TREND_DOWN",
+                                "indicators": dict(adverse_indicators),
+                            },
+                            {
+                                "granularity": "M30",
+                                "regime": "TREND_DOWN",
+                                "indicators": dict(adverse_indicators),
+                            },
+                            {
+                                "granularity": "H1",
+                                "regime": "TREND_DOWN",
+                                "indicators": dict(adverse_indicators),
+                            },
+                            {
+                                "granularity": "H4",
+                                "regime": "RANGE",
+                                "indicators": {"atr_pips": 8.0},
                             },
                         ],
                     }

@@ -448,6 +448,9 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
         has_invalidation_hit = "invalidation hit:" in reason
         has_structural_break = _position_thesis_structural_break_text(reason)
         return has_technical_confirmation and (has_invalidation_hit or has_structural_break)
+    if source == "position_management" and verdict == "REVIEW_EXIT":
+        reason = str(rec.get("reason") or "").lower()
+        return "entry thesis invalidation hit" in reason and "technical invalidation confirmed" in reason
     return False
 
 
