@@ -416,6 +416,7 @@ class CoverageOptimizerTest(unittest.TestCase):
             intents = root / "intents.json"
             target = root / "target.json"
             ai_backtest = root / "ai_test_bot_backtest.json"
+            matrix = root / "market_context_matrix.json"
             risk_issue = {
                 "severity": "BLOCK",
                 "code": "SPREAD_TOO_WIDE",
@@ -432,6 +433,40 @@ class CoverageOptimizerTest(unittest.TestCase):
                                 live_blocker="EUR_USD LONG current pair forecast is UNCLEAR",
                             )
                         ]
+                    }
+                )
+            )
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "pairs": {
+                            "EUR_USD": {
+                                "LONG": {
+                                    "evidence_ref": "matrix:EUR_USD:LONG",
+                                    "support_count": 1,
+                                    "reject_count": 1,
+                                    "warning_count": 0,
+                                    "strongest_support": "legacy edge still positive",
+                                    "strongest_reject": "XAU_USD maps to SHORT",
+                                    "supports": [
+                                        {
+                                            "code": "CHART_MEAN_REVERSION",
+                                            "layer": "chart",
+                                            "message": "EUR_USD bottom rail",
+                                            "evidence_refs": ["chart:EUR_USD:structure"],
+                                        }
+                                    ],
+                                    "rejects": [
+                                        {
+                                            "code": "GOLD_CONTEXT_TECHNICAL_DIRECTION",
+                                            "layer": "context_asset_chart",
+                                            "message": "EUR_USD XAU_USD technical direction=DOWN maps to SHORT",
+                                            "evidence_refs": ["context_asset:XAU_USD"],
+                                        }
+                                    ],
+                                }
+                            }
+                        }
                     }
                 )
             )
@@ -470,7 +505,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 target_state_path=target,
                 replay_path=root / "missing_replay.json",
                 ai_backtest_path=ai_backtest,
-                market_context_matrix_path=_matrix(root),
+                market_context_matrix_path=matrix,
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -481,6 +516,10 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(diagnostics["positive_managed_net_jpy"], 1500.0)
             self.assertEqual(diagnostics["state_counts"]["SPREAD_NORMALIZED_LIVE_BLOCKED"], 1)
             self.assertEqual(diagnostics["state_counts"]["NO_CURRENT_LANE"], 1)
+            eur_edge = diagnostics["top_edges"][0]
+            self.assertEqual(eur_edge["matrix_support_count"], 1)
+            self.assertEqual(eur_edge["matrix_reject_count"], 1)
+            self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", eur_edge["matrix_cross_asset_context"][0])
             self.assertTrue(
                 any("repair historical-profitable bucket coverage" in item for item in payload["action_items"])
             )

@@ -89,12 +89,14 @@ class CoverageOptimizer:
         target = _load_json(self.target_state_path)
         replay = _load_json(self.replay_path) if self.replay_path.exists() else {}
         ai_backtest = _load_json(self.ai_backtest_path) if self.ai_backtest_path.exists() else {}
+        market_context_matrix = _load_json(self.market_context_matrix_path) if self.market_context_matrix_path.exists() else {}
         lanes = tuple(_coverage_lane(item) for item in intents.get("results", []) or [] if _has_intent(item))
         artifact_diagnostics = _artifact_diagnostics(
             intents=intents,
             intents_path=self.intents_path,
             ai_backtest=ai_backtest,
             ai_backtest_path=self.ai_backtest_path,
+            market_context_matrix=market_context_matrix,
             market_context_matrix_path=self.market_context_matrix_path,
             now_utc=now_utc,
         )
@@ -260,8 +262,12 @@ class CoverageOptimizer:
                     f"- `{item.get('pair')} {item.get('direction')}` state=`{item.get('coverage_state')}` "
                     f"managed_net=`{item.get('managed_net_jpy')}` current_lanes=`{item.get('current_lane_count')}` "
                     f"spread_normalized=`{item.get('spread_normalized_candidate_count')}` "
-                    f"no_live_blocker=`{item.get('spread_normalized_no_live_blocker_count')}`"
+                    f"no_live_blocker=`{item.get('spread_normalized_no_live_blocker_count')}` "
+                    f"matrix_supports=`{item.get('matrix_support_count')}` matrix_rejects=`{item.get('matrix_reject_count')}`"
                 )
+                xasset = item.get("matrix_cross_asset_context") if isinstance(item.get("matrix_cross_asset_context"), list) else []
+                if xasset:
+                    lines.append(f"  - cross/context assets: {', '.join(str(ref) for ref in xasset[:3])}")
                 if blockers:
                     lines.append(f"  - top blockers: {', '.join(str(blocker) for blocker in blockers[:3])}")
             lines.append("")
@@ -519,6 +525,7 @@ def _artifact_diagnostics(
     intents_path: Path,
     ai_backtest: dict[str, Any],
     ai_backtest_path: Path,
+    market_context_matrix: dict[str, Any],
     market_context_matrix_path: Path,
     now_utc: datetime,
 ) -> dict[str, Any]:
@@ -559,6 +566,7 @@ def _artifact_diagnostics(
         "profitable_bucket_coverage": _profitable_bucket_coverage_summary(
             ai_backtest=ai_backtest,
             ai_backtest_path=ai_backtest_path,
+            market_context_matrix=market_context_matrix,
             results=results,
         ),
         **spread_normalized,
@@ -621,6 +629,7 @@ def _profitable_bucket_coverage_summary(
     *,
     ai_backtest: dict[str, Any],
     ai_backtest_path: Path,
+    market_context_matrix: dict[str, Any],
     results: tuple[dict[str, Any], ...],
 ) -> dict[str, Any]:
     edges = _profitable_bucket_edges(ai_backtest)
@@ -636,7 +645,11 @@ def _profitable_bucket_coverage_summary(
     state_counts: Counter[str] = Counter()
     for key, edge in sorted(edges.items(), key=lambda item: float(item[1]["managed_net_jpy"]), reverse=True):
         rows = tuple(rows_by_edge.get(key, ()))
-        summary = _profitable_edge_current_summary(edge=edge, rows=rows)
+        summary = _profitable_edge_current_summary(
+            edge=edge,
+            rows=rows,
+            matrix_side=_matrix_side_payload(market_context_matrix, key[0], key[1]),
+        )
         top_edges.append(summary)
         state_counts[str(summary["coverage_state"])] += 1
     blocked_or_missing = [
@@ -711,7 +724,12 @@ def _bucket_pair_direction(bucket: object) -> tuple[str, str] | None:
     return pair, direction
 
 
-def _profitable_edge_current_summary(*, edge: dict[str, Any], rows: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+def _profitable_edge_current_summary(
+    *,
+    edge: dict[str, Any],
+    rows: tuple[dict[str, Any], ...],
+    matrix_side: dict[str, Any],
+) -> dict[str, Any]:
     spread_normalized = tuple(result for result in rows if _is_spread_normalized_candidate(result))
     no_live_blocker = tuple(result for result in spread_normalized if not _live_blockers(result))
     if no_live_blocker:
@@ -729,6 +747,7 @@ def _profitable_edge_current_summary(*, edge: dict[str, Any], rows: tuple[dict[s
         for blocker in _current_blocker_labels(result)
         if blocker
     )
+    matrix_summary = _matrix_side_summary(matrix_side)
     return {
         "pair": edge["pair"],
         "direction": edge["direction"],
@@ -746,7 +765,59 @@ def _profitable_edge_current_summary(*, edge: dict[str, Any], rows: tuple[dict[s
         "spread_normalized_candidate_count": len(spread_normalized),
         "spread_normalized_no_live_blocker_count": len(no_live_blocker),
         "top_blockers": [label for label, _count in blocker_counts.most_common(6)],
+        **matrix_summary,
     }
+
+
+def _matrix_side_payload(matrix: dict[str, Any], pair: str, direction: str) -> dict[str, Any]:
+    pairs = matrix.get("pairs") if isinstance(matrix.get("pairs"), dict) else {}
+    side_map = pairs.get(pair) if isinstance(pairs.get(pair), dict) else {}
+    side = side_map.get(direction) if isinstance(side_map.get(direction), dict) else {}
+    return side if isinstance(side, dict) else {}
+
+
+def _matrix_side_summary(side: dict[str, Any]) -> dict[str, Any]:
+    if not side:
+        return {
+            "matrix_ref": None,
+            "matrix_support_count": 0,
+            "matrix_reject_count": 0,
+            "matrix_warning_count": 0,
+            "matrix_strongest_support": None,
+            "matrix_strongest_reject": None,
+            "matrix_strongest_warning": None,
+            "matrix_cross_asset_context": [],
+        }
+    return {
+        "matrix_ref": side.get("evidence_ref"),
+        "matrix_support_count": int(side.get("support_count") or 0),
+        "matrix_reject_count": int(side.get("reject_count") or 0),
+        "matrix_warning_count": int(side.get("warning_count") or 0),
+        "matrix_strongest_support": side.get("strongest_support"),
+        "matrix_strongest_reject": side.get("strongest_reject"),
+        "matrix_strongest_warning": side.get("strongest_warning"),
+        "matrix_cross_asset_context": _matrix_cross_asset_context(side),
+    }
+
+
+def _matrix_cross_asset_context(side: dict[str, Any]) -> list[str]:
+    items: list[str] = []
+    for key in ("supports", "rejects", "warnings", "horizon_conflicts"):
+        for item in side.get(key, []) or []:
+            if not isinstance(item, dict):
+                continue
+            layer = str(item.get("layer") or "")
+            refs = [str(ref) for ref in item.get("evidence_refs", []) or []]
+            if layer not in {"cross_asset", "context_asset_chart"} and not any(
+                ref.startswith("context_asset:") or ref.startswith("cross:") for ref in refs
+            ):
+                continue
+            code = str(item.get("code") or layer or "context")
+            message = str(item.get("message") or "").strip()
+            items.append(f"{code}: {message}" if message else code)
+            if len(items) >= 6:
+                return items
+    return items
 
 
 def _is_spread_normalized_candidate(result: dict[str, Any]) -> bool:
