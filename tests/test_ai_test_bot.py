@@ -433,10 +433,10 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(payload["deduped_rows"], 3)
             self.assertEqual(payload["deduped_away_rows"], 3)
             by_source = {item["source_table"]: item for item in payload["source_contributions"]}
-            self.assertEqual(by_source["pretrade_outcomes"]["deduped_trades"], 3)
-            self.assertNotIn("trades", by_source)
+            self.assertEqual(by_source["trades"]["deduped_trades"], 3)
+            self.assertNotIn("pretrade_outcomes", by_source)
             day = payload["days"][0]
-            self.assertEqual(day["selected_buckets"], ["pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED"])
+            self.assertEqual(day["selected_buckets"], ["trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
             self.assertEqual(day["selected_trades"], 1)
             self.assertEqual(day["managed_net_jpy"], 150.0)
 

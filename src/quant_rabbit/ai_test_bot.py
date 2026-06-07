@@ -658,13 +658,15 @@ def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade,
 
 def _best_actual_trade_row(rows: list[TestBotTrade]) -> TestBotTrade:
     # Same broker trade can be imported through multiple archive tables.
-    # Prefer the row with pre-entry evidence so the backtest does not count the
-    # same realized P/L twice while still preserving the most actionable bucket.
+    # Prefer the stable aggregate trade-history bucket for duplicated trade IDs:
+    # pretrade/ledger buckets are useful evidence, but they are currently sparse
+    # enough to fragment walk-forward support and erase otherwise repeatable
+    # pair-direction history.
     priority = {
-        "pretrade_outcomes": 4,
-        EXECUTION_LEDGER_SOURCE_TABLE: 3,
-        "seat_outcomes": 2,
-        "trades": 1,
+        "trades": 4,
+        "pretrade_outcomes": 3,
+        EXECUTION_LEDGER_SOURCE_TABLE: 2,
+        "seat_outcomes": 1,
     }
     return max(
         rows,
