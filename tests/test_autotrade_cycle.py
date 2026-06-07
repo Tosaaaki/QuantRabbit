@@ -9,6 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from quant_rabbit.automation import (
     AutoTradeCycle,
@@ -25,6 +26,103 @@ from quant_rabbit.strategy.trader_brain import ACTION_NO_TRADE, ACTION_SEND_ENTR
 
 
 class AutoTradeCycleTest(unittest.TestCase):
+    def test_target_state_refreshes_ai_backtest_before_pace_recalculation(self) -> None:
+        prior = os.environ.get("QR_REFRESH_AI_BACKTEST_IN_TESTS")
+        os.environ["QR_REFRESH_AI_BACKTEST_IN_TESTS"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                history_db = root / "legacy_history.db"
+                sqlite3.connect(history_db).close()
+                ai_backtest = root / "ai_test_bot_backtest.json"
+                ai_report = root / "ai_test_bot_backtest.md"
+                target_state = root / "target.json"
+                target_state.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": "2026-05-11T12:00:00+00:00",
+                            "campaign_day_jst": "2026-05-11",
+                            "start_balance_jpy": 100_000,
+                            "target_return_pct": 10.0,
+                            "daily_risk_budget_jpy": 2_000,
+                            "target_trades_per_day": 10,
+                            "target_trades_per_day_source": "ai_test_bot_required_trades",
+                            "status": "PURSUE_TARGET",
+                            "remaining_target_jpy": 10_000,
+                        }
+                    )
+                    + "\n"
+                )
+                now = datetime(2026, 5, 11, 12, 5, tzinfo=timezone.utc)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    quotes={},
+                    account=AccountSummary(
+                        nav_jpy=100_000,
+                        balance_jpy=100_000,
+                        unrealized_pl_jpy=0.0,
+                        fetched_at_utc=now,
+                    ),
+                )
+                calls: list[tuple[float, float]] = []
+
+                def fake_backtest_run(self, *, start_balance_jpy: float, target_return_pct: float, max_validation_days=None):
+                    calls.append((start_balance_jpy, target_return_pct))
+                    Path(self.output_path).write_text(
+                        json.dumps(
+                            {
+                                "target_return_pct": 10.0,
+                                "firepower": {
+                                    "required_trades_per_day_at_observed_expectancy": 80,
+                                },
+                                "target_band": {
+                                    "floor_return_pct": 5.0,
+                                    "stretch_return_pct": 10.0,
+                                    "selected_attainable_return_pct": 5.0,
+                                    "bands": [
+                                        {
+                                            "return_pct": 5.0,
+                                            "required_trades_per_day_at_observed_expectancy": 20,
+                                        },
+                                        {
+                                            "return_pct": 6.0,
+                                            "required_trades_per_day_at_observed_expectancy": 23,
+                                        },
+                                    ],
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+                    return object()
+
+                with (
+                    mock.patch("quant_rabbit.automation.DEFAULT_HISTORY_DB", history_db),
+                    mock.patch("quant_rabbit.automation.DEFAULT_AI_TEST_BOT_BACKTEST", ai_backtest),
+                    mock.patch("quant_rabbit.automation.DEFAULT_AI_TEST_BOT_BACKTEST_REPORT", ai_report),
+                    mock.patch("quant_rabbit.automation.AITestBotBacktester.run", fake_backtest_run),
+                ):
+                    summary = AutoTradeCycle(
+                        client=object(),
+                        target_state_path=target_state,
+                        target_report_path=root / "target.md",
+                    )._update_target_state(snapshot)
+
+                payload = json.loads(target_state.read_text())
+                self.assertIsNotNone(summary)
+                self.assertEqual(calls, [(100_000.0, 10.0)])
+                self.assertEqual(payload["target_trades_per_day"], 23)
+                self.assertEqual(
+                    payload["target_trades_per_day_source"],
+                    "ai_test_bot_target_band_6pct_required_trades",
+                )
+                self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
+        finally:
+            if prior is None:
+                os.environ.pop("QR_REFRESH_AI_BACKTEST_IN_TESTS", None)
+            else:
+                os.environ["QR_REFRESH_AI_BACKTEST_IN_TESTS"] = prior
+
     def test_projection_preflight_resolves_expired_pending_before_intents(self) -> None:
         prior = os.environ.get("QR_REQUIRE_TELEMETRY_FOR_LIVE")
         os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"

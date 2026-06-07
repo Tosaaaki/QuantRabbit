@@ -23,6 +23,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
+    DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
@@ -40,6 +41,7 @@ from quant_rabbit.paths import (
     DEFAULT_MARKET_STORY_REPORT,
     DEFAULT_ORDER_INTENT_REPORT,
     DEFAULT_ORDER_INTENTS,
+    DEFAULT_HISTORY_DB,
     DEFAULT_OUTCOME_MART,
     DEFAULT_PAIR_CHARTS,
     DEFAULT_POSITION_EXECUTION,
@@ -57,6 +59,7 @@ from quant_rabbit.paths import (
     DEFAULT_VERIFICATION_LEDGER_REPORT,
     ROOT,
 )
+from quant_rabbit.ai_test_bot import AITestBotBacktester
 from quant_rabbit.gpt_trader import DEFAULT_GPT_MAX_LANES, GPTTraderBrain, TraderModelProvider
 from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 from quant_rabbit.learning_audit import LearningAuditor
@@ -394,6 +397,18 @@ def _pid_is_running(pid: int) -> bool:
     return True
 
 
+def _running_under_test_harness() -> bool:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    if "unittest" in sys.modules and any(
+        name.startswith("unittest.") and name.endswith(("__main__", "main"))
+        for name in sys.modules
+    ):
+        return True
+    argv0 = Path(sys.argv[0]).name if sys.argv else ""
+    return "unittest" in argv0 or "pytest" in argv0
+
+
 @dataclass(frozen=True)
 class AutoTradeCycleSummary:
     status: str
@@ -596,6 +611,7 @@ class AutoTradeCycle:
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
         self._projection_preflight_summary: dict[str, Any] | None = None
+        self._ai_test_bot_backtest_refreshed = False
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
@@ -2110,12 +2126,51 @@ class AutoTradeCycle:
         if not self.target_state_path.exists():
             return None
         report_path = self.target_report_path or DEFAULT_DAILY_TARGET_REPORT
-        return DailyTargetLedger(
+        ledger = DailyTargetLedger(
             state_path=self.target_state_path,
             report_path=report_path,
             pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
             execution_ledger_path=self.execution_ledger_db_path,
-        ).run(snapshot=snapshot)
+        )
+        summary = ledger.run(snapshot=snapshot)
+        if self._refresh_ai_test_bot_backtest_for_target_pace():
+            summary = ledger.run(snapshot=snapshot)
+        return summary
+
+    def _refresh_ai_test_bot_backtest_for_target_pace(self) -> bool:
+        """Refresh target-band evidence before daily target pace is trusted."""
+
+        if self._ai_test_bot_backtest_refreshed:
+            return False
+        if _running_under_test_harness() and os.environ.get("QR_REFRESH_AI_BACKTEST_IN_TESTS") != "1":
+            return False
+        if not DEFAULT_HISTORY_DB.exists():
+            return False
+        if self.target_state_path is None or not self.target_state_path.exists():
+            return False
+        try:
+            target_payload = json.loads(self.target_state_path.read_text())
+            start_balance = float(target_payload.get("start_balance_jpy") or 0.0)
+            target_return_pct = float(target_payload.get("target_return_pct") or 10.0)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise RuntimeError("ai-test-bot backtest refresh requires readable daily target state") from exc
+        if start_balance <= 0:
+            return False
+        try:
+            AITestBotBacktester(
+                db_path=DEFAULT_HISTORY_DB,
+                output_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+                report_path=DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
+                target_state_path=self.target_state_path,
+                execution_ledger_db_path=self.execution_ledger_db_path,
+            ).run(
+                start_balance_jpy=start_balance,
+                target_return_pct=target_return_pct,
+            )
+        except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError("ai-test-bot backtest refresh failed before daily target pacing") from exc
+        self._ai_test_bot_backtest_refreshed = True
+        return True
 
     def _receipt_promoter(self) -> ReceiptPromoter:
         return ReceiptPromoter(
