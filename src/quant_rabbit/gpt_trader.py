@@ -470,6 +470,7 @@ from quant_rabbit.paths import (
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CALENDAR_SNAPSHOT,
     DEFAULT_CONTEXT_ASSET_CHARTS,
+    DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
     DEFAULT_CURRENCY_STRENGTH,
@@ -662,6 +663,7 @@ class GPTTraderBrain:
         cot_path: Path = DEFAULT_COT_SNAPSHOT,
         option_skew_path: Path = DEFAULT_OPTION_SKEW,
         attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
+        coverage_optimization_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
         verification_ledger_path: Path = DEFAULT_VERIFICATION_LEDGER,
         self_improvement_audit_path: Path = DEFAULT_SELF_IMPROVEMENT_AUDIT,
@@ -689,6 +691,7 @@ class GPTTraderBrain:
         self.cot_path = cot_path
         self.option_skew_path = option_skew_path
         self.attack_advice_path = attack_advice_path
+        self.coverage_optimization_path = coverage_optimization_path
         self.learning_audit_path = learning_audit_path
         self.verification_ledger_path = verification_ledger_path
         self.self_improvement_audit_path = self_improvement_audit_path
@@ -738,6 +741,7 @@ class GPTTraderBrain:
         target = _load_json(self.target_state_path) if self.target_state_path.exists() else {}
         lanes = _lane_packet(intents, campaign, strategy, story, max_lanes=self.max_lanes)
         attack_advice = _load_optional_json(self.attack_advice_path)
+        coverage_optimization = _load_optional_json(self.coverage_optimization_path)
         learning_audit = _load_optional_json(self.learning_audit_path)
         verification_ledger = _load_optional_json(self.verification_ledger_path)
         self_improvement_audit = _load_optional_json(self.self_improvement_audit_path)
@@ -751,6 +755,7 @@ class GPTTraderBrain:
             target=target,
             lanes=lanes,
             attack_advice=attack_advice,
+            coverage_optimization=coverage_optimization,
             learning_audit=learning_audit,
             verification_ledger=verification_ledger,
             self_improvement_audit=self_improvement_audit,
@@ -777,11 +782,13 @@ class GPTTraderBrain:
                 "verification_ledger_is_read_only_structured_evidence": True,
                 "self_improvement_profitability_p0_blocks_trade": True,
                 "market_status_is_authoritative_calendar_evidence": True,
+                "coverage_optimization_is_read_only_gap_evidence": True,
             },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
             "ai_attack_advice": _attack_advice_packet(attack_advice),
+            "coverage_optimization": _coverage_optimization_packet(coverage_optimization),
             "learning_audit": _learning_audit_packet(learning_audit),
             "verification_ledger": _verification_ledger_packet(verification_ledger),
             "self_improvement_audit": _self_improvement_audit_packet(self_improvement_audit),
@@ -1966,6 +1973,7 @@ def _allowed_refs(
     target: dict[str, Any],
     lanes: list[dict[str, Any]],
     attack_advice: dict[str, Any] | None,
+    coverage_optimization: dict[str, Any] | None,
     learning_audit: dict[str, Any] | None,
     verification_ledger: dict[str, Any] | None,
     self_improvement_audit: dict[str, Any] | None,
@@ -2066,6 +2074,25 @@ def _allowed_refs(
             refs.append(f"attack:lane:{lane_id}")
         for lane_id in attack_advice.get("watchlist_lane_ids", []) or []:
             refs.append(f"attack:lane:{lane_id}")
+    if coverage_optimization:
+        refs.append("coverage:optimization")
+        diagnostics = (
+            coverage_optimization.get("artifact_diagnostics")
+            if isinstance(coverage_optimization.get("artifact_diagnostics"), dict)
+            else {}
+        )
+        bucket_diag = (
+            diagnostics.get("profitable_bucket_coverage")
+            if isinstance(diagnostics.get("profitable_bucket_coverage"), dict)
+            else {}
+        )
+        for edge in bucket_diag.get("top_edges", []) or []:
+            if not isinstance(edge, dict):
+                continue
+            pair = str(edge.get("pair") or "")
+            direction = str(edge.get("direction") or "")
+            if pair and direction:
+                refs.append(f"coverage:profitable_bucket:{pair}:{direction}")
     if learning_audit:
         refs.append("learning:audit")
         influence = learning_audit.get("learning_influence") if isinstance(learning_audit.get("learning_influence"), dict) else {}
@@ -2153,6 +2180,107 @@ def _attack_advice_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
         "recommended_lane_learning": lane_summaries[:20],
         "learning_influenced_lane_ids": learning_influenced_lane_ids[:20],
         "settings_advice": payload.get("settings_advice") if isinstance(payload.get("settings_advice"), dict) else {},
+    }
+
+
+def _coverage_optimization_packet(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {
+            "evidence_ref": "coverage:optimization",
+            "status": "missing",
+            "live_permission": False,
+            "profitable_bucket_coverage": {},
+            "action_items": [],
+        }
+    diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
+    bucket_diag = (
+        diagnostics.get("profitable_bucket_coverage")
+        if isinstance(diagnostics.get("profitable_bucket_coverage"), dict)
+        else {}
+    )
+    return {
+        "evidence_ref": "coverage:optimization",
+        "status": payload.get("status"),
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "live_permission": False,
+        **_small_dict(
+            payload,
+            (
+                "remaining_target_jpy",
+                "remaining_risk_budget_jpy",
+                "live_ready_reward_jpy",
+                "live_ready_risk_jpy",
+                "potential_reward_jpy",
+                "coverage_pct",
+                "potential_coverage_pct",
+                "sequential_ladder_reward_jpy",
+                "sequential_ladder_steps",
+            ),
+        ),
+        "diagnostics": _small_dict(
+            diagnostics,
+            (
+                "intents_artifact_stale",
+                "all_lanes_spread_blocked",
+                "spread_normalized_candidate_count",
+                "spread_normalized_candidate_reward_jpy",
+                "spread_normalized_no_live_blocker_count",
+                "spread_normalized_no_live_blocker_reward_jpy",
+                "market_context_matrix_missing",
+            ),
+        ),
+        "profitable_bucket_coverage": _profitable_bucket_coverage_packet(bucket_diag),
+        "action_items": [str(item) for item in (payload.get("action_items") or [])[:8] if str(item).strip()],
+    }
+
+
+def _profitable_bucket_coverage_packet(payload: dict[str, Any]) -> dict[str, Any]:
+    if not payload:
+        return {}
+    top_edges: list[dict[str, Any]] = []
+    for edge in payload.get("top_edges", []) or []:
+        if not isinstance(edge, dict):
+            continue
+        pair = str(edge.get("pair") or "")
+        direction = str(edge.get("direction") or "")
+        evidence_ref = f"coverage:profitable_bucket:{pair}:{direction}" if pair and direction else None
+        top_edges.append(
+            {
+                "evidence_ref": evidence_ref,
+                "pair": pair,
+                "direction": direction,
+                "coverage_state": edge.get("coverage_state"),
+                "managed_net_jpy": edge.get("managed_net_jpy"),
+                "raw_net_jpy": edge.get("raw_net_jpy"),
+                "trades": edge.get("trades"),
+                "days": edge.get("days"),
+                "current_lane_count": edge.get("current_lane_count"),
+                "current_status_counts": edge.get("current_status_counts") if isinstance(edge.get("current_status_counts"), dict) else {},
+                "current_best_reward_jpy": edge.get("current_best_reward_jpy"),
+                "spread_normalized_candidate_count": edge.get("spread_normalized_candidate_count"),
+                "spread_normalized_no_live_blocker_count": edge.get("spread_normalized_no_live_blocker_count"),
+                "top_blockers": [str(item) for item in (edge.get("top_blockers") or [])[:5] if str(item).strip()],
+                "matrix_ref": edge.get("matrix_ref"),
+                "matrix_support_count": edge.get("matrix_support_count"),
+                "matrix_reject_count": edge.get("matrix_reject_count"),
+                "matrix_warning_count": edge.get("matrix_warning_count"),
+                "matrix_strongest_support": edge.get("matrix_strongest_support"),
+                "matrix_strongest_reject": edge.get("matrix_strongest_reject"),
+                "matrix_cross_asset_context": [
+                    str(item) for item in (edge.get("matrix_cross_asset_context") or [])[:4] if str(item).strip()
+                ],
+            }
+        )
+        if len(top_edges) >= 12:
+            break
+    return {
+        "source_status": payload.get("source_status"),
+        "live_permission": False,
+        "positive_pair_directions": payload.get("positive_pair_directions"),
+        "positive_managed_net_jpy": payload.get("positive_managed_net_jpy"),
+        "positive_trade_count": payload.get("positive_trade_count"),
+        "state_counts": payload.get("state_counts") if isinstance(payload.get("state_counts"), dict) else {},
+        "top_edges": top_edges,
     }
 
 

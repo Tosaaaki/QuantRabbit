@@ -973,6 +973,83 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertIn("context_asset:XAU_USD", payload["input_packet"]["allowed_evidence_refs"])
             self.assertIn("broker:instruments", payload["input_packet"]["allowed_evidence_refs"])
 
+    def test_packet_includes_coverage_gap_profitable_bucket_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["coverage_optimization"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-07T14:40:00+00:00",
+                        "status": "COVERAGE_GAP",
+                        "remaining_target_jpy": 22977.7,
+                        "live_ready_reward_jpy": 0.0,
+                        "potential_reward_jpy": 0.0,
+                        "coverage_pct": 0.0,
+                        "artifact_diagnostics": {
+                            "spread_normalized_candidate_count": 8,
+                            "spread_normalized_no_live_blocker_count": 2,
+                            "profitable_bucket_coverage": {
+                                "source_status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                                "live_permission": False,
+                                "positive_pair_directions": 8,
+                                "positive_managed_net_jpy": 33312.35,
+                                "positive_trade_count": 221,
+                                "state_counts": {"SURFACED_BUT_BLOCKED": 5},
+                                "top_edges": [
+                                    {
+                                        "pair": "EUR_USD",
+                                        "direction": "LONG",
+                                        "coverage_state": "SURFACED_BUT_BLOCKED",
+                                        "managed_net_jpy": 17650.08,
+                                        "raw_net_jpy": 16098.53,
+                                        "trades": 64,
+                                        "days": 13,
+                                        "current_lane_count": 7,
+                                        "current_best_reward_jpy": 4881.68,
+                                        "top_blockers": [
+                                            "EUR_USD LONG current pair forecast is UNCLEAR conf=0.03",
+                                            "HARVEST_TP_STRUCTURE_MISSING",
+                                        ],
+                                        "matrix_ref": "matrix:EUR_USD:LONG",
+                                        "matrix_support_count": 0,
+                                        "matrix_reject_count": 5,
+                                        "matrix_warning_count": 8,
+                                        "matrix_strongest_reject": "EUR_USD confluence score_balance=SHORT_LEAN",
+                                        "matrix_cross_asset_context": [
+                                            "GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to SHORT",
+                                            "DXY_24H_DIRECTION: synthetic DXY maps to SHORT",
+                                        ],
+                                    }
+                                ],
+                            },
+                        },
+                        "action_items": ["repair historical-profitable bucket coverage before widening discovery"],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                ["coverage:optimization", "coverage:profitable_bucket:EUR_USD:LONG"]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            packet = payload["input_packet"]["coverage_optimization"]
+            self.assertEqual(packet["status"], "COVERAGE_GAP")
+            self.assertFalse(packet["live_permission"])
+            bucket = packet["profitable_bucket_coverage"]
+            self.assertEqual(bucket["source_status"], "RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            edge = bucket["top_edges"][0]
+            self.assertEqual(edge["evidence_ref"], "coverage:profitable_bucket:EUR_USD:LONG")
+            self.assertEqual(edge["matrix_reject_count"], 5)
+            self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU_USD maps to SHORT", edge["matrix_cross_asset_context"])
+            self.assertIn("coverage:optimization", payload["input_packet"]["allowed_evidence_refs"])
+            self.assertIn("coverage:profitable_bucket:EUR_USD:LONG", payload["input_packet"]["allowed_evidence_refs"])
+
     def test_accepts_attack_advice_evidence_refs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1719,6 +1796,7 @@ def _brain(root: Path, files: dict[str, Path], decision: dict, *, max_lanes: int
         cot_path=files["cot"],
         option_skew_path=files["option_skew"],
         attack_advice_path=files["attack_advice"],
+        coverage_optimization_path=files["coverage_optimization"],
         learning_audit_path=files["learning_audit"],
         verification_ledger_path=files["verification_ledger"],
         self_improvement_audit_path=files["self_improvement_audit"],
@@ -1772,6 +1850,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         "cot": root / "cot.json",
         "option_skew": root / "option_skew.json",
         "attack_advice": root / "attack_advice.json",
+        "coverage_optimization": root / "coverage_optimization.json",
         "learning_audit": root / "learning_audit.json",
         "verification_ledger": root / "verification_ledger.json",
         "self_improvement_audit": root / "self_improvement_audit.json",
@@ -2073,6 +2152,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
         )
     )
     files["attack_advice"].write_text(json.dumps({}))
+    files["coverage_optimization"].write_text(json.dumps({"status": "OK"}))
     files["learning_audit"].write_text(json.dumps({}))
     files["self_improvement_audit"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
