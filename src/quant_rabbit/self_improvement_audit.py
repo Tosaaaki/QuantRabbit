@@ -67,6 +67,16 @@ PROFITABILITY_DISCIPLINE_CODES = (
     "SMALL_WIN_LARGE_LOSS_ASYMMETRY",
 )
 
+# Forecast-level calibration is the feedback loop for "why did the final
+# direction call miss?". Ten samples matches the projection-ledger calibration
+# sample floor, and the hit-rate floor is an audit warning, not a trade gate.
+FORECAST_CALIBRATION_MIN_SAMPLES = int(
+    _env_nonnegative_float("QR_SELF_IMPROVEMENT_FORECAST_CALIBRATION_MIN_SAMPLES", 10.0)
+)
+FORECAST_HIT_RATE_WARN_BELOW = _env_nonnegative_float(
+    "QR_SELF_IMPROVEMENT_FORECAST_HIT_RATE_WARN_BELOW", 0.45
+)
+
 
 @dataclass(frozen=True)
 class SelfImprovementAuditSummary:
@@ -945,7 +955,145 @@ def _projection_findings(
                 evidence={"examples": [_projection_ref(row) for row in expired[:8]]},
             )
         )
+    out.extend(_directional_forecast_quality_findings(run_id=run_id, rows=rows))
     return out
+
+
+def _directional_forecast_quality_findings(
+    *,
+    run_id: str,
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    directional = [
+        row for row in rows
+        if str(row.get("signal_name") or "").strip() == "directional_forecast"
+    ]
+    if len(directional) < FORECAST_CALIBRATION_MIN_SAMPLES:
+        return []
+    status_counts: dict[str, int] = {}
+    calibrated: list[dict[str, Any]] = []
+    for row in directional:
+        status = str(row.get("resolution_status") or "PENDING").upper()
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status in {"HIT", "MISS"} and _directional_forecast_has_target_invalidation(row):
+            calibrated.append(row)
+    if not calibrated:
+        return [
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED",
+                message=(
+                    f"directional_forecast has {len(directional)} row(s) but no HIT/MISS "
+                    "target/invalidation calibration samples"
+                ),
+                next_action=(
+                    "Run verify-projections with candle truth soon after each forecast window and keep "
+                    "target/invalidation geometry populated so final direction calls can be learned from."
+                ),
+                evidence={
+                    "rows": len(directional),
+                    "status_counts": status_counts,
+                    "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
+                    "examples": [_projection_ref(row) for row in directional[:8]],
+                },
+            )
+        ]
+    findings: list[dict[str, Any]] = []
+    weak_buckets = _directional_forecast_worst_buckets(
+        calibrated,
+        min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
+        warn_below=FORECAST_HIT_RATE_WARN_BELOW,
+    )
+    if weak_buckets:
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_BUCKET_HIT_RATE_WEAK",
+                message=(
+                    f"{len(weak_buckets)} directional_forecast pair/direction/regime bucket(s) "
+                    f"are below {FORECAST_HIT_RATE_WARN_BELOW:.0%} HIT rate"
+                ),
+                next_action=(
+                    "Dampen or rework the named forecast buckets before treating them as opportunity "
+                    "expansion candidates for the 10% campaign."
+                ),
+                evidence={
+                    "min_samples": FORECAST_CALIBRATION_MIN_SAMPLES,
+                    "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
+                    "weak_buckets": weak_buckets,
+                },
+            )
+        )
+    samples = len(calibrated)
+    hit_count = sum(1 for row in calibrated if str(row.get("resolution_status") or "").upper() == "HIT")
+    hit_rate = hit_count / samples if samples else 0.0
+    if samples >= FORECAST_CALIBRATION_MIN_SAMPLES and hit_rate < FORECAST_HIT_RATE_WARN_BELOW:
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="DIRECTIONAL_FORECAST_HIT_RATE_WEAK",
+                message=(
+                    f"directional_forecast HIT rate is {hit_rate:.1%} "
+                    f"over {samples} calibrated sample(s)"
+                ),
+                next_action=(
+                    "Rank the weakest pair/direction buckets and adjust forecast priors, target geometry, "
+                    "or range-location handling before increasing opportunity frequency."
+                ),
+                evidence={
+                    "samples": samples,
+                    "hit_count": hit_count,
+                    "hit_rate": round(hit_rate, 4),
+                    "warn_below": FORECAST_HIT_RATE_WARN_BELOW,
+                    "worst_buckets": _directional_forecast_worst_buckets(
+                        calibrated,
+                        min_samples=FORECAST_CALIBRATION_MIN_SAMPLES,
+                    )[:8],
+                },
+            )
+        )
+    return findings
+
+
+def _directional_forecast_has_target_invalidation(row: dict[str, Any]) -> bool:
+    return row.get("predicted_target_price") is not None and row.get("predicted_invalidation_price") is not None
+
+
+def _directional_forecast_worst_buckets(
+    rows: list[dict[str, Any]],
+    *,
+    min_samples: int = 1,
+    warn_below: float | None = None,
+) -> list[dict[str, Any]]:
+    buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        pair = str(row.get("pair") or "UNKNOWN")
+        direction = str(row.get("direction") or "UNKNOWN").upper()
+        regime = str(row.get("regime_at_emission") or "UNCLEAR").upper()
+        item = buckets.setdefault(
+            (pair, direction, regime),
+            {"pair": pair, "direction": direction, "regime": regime, "samples": 0, "hits": 0},
+        )
+        item["samples"] = int(item["samples"]) + 1
+        if str(row.get("resolution_status") or "").upper() == "HIT":
+            item["hits"] = int(item["hits"]) + 1
+    ranked: list[dict[str, Any]] = []
+    for item in buckets.values():
+        samples = int(item["samples"])
+        hits = int(item["hits"])
+        hit_rate = hits / samples if samples else 0.0
+        if samples < min_samples:
+            continue
+        if warn_below is not None and hit_rate >= warn_below:
+            continue
+        ranked.append({**item, "hit_rate": round(hit_rate, 4)})
+    return sorted(ranked, key=lambda item: (float(item["hit_rate"]), -int(item["samples"]), str(item["pair"])))[:8]
 
 
 def _entry_thesis_findings(

@@ -86,6 +86,85 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("LIVE_READY_MARKET_RR_BELOW_ONE", codes)
         self.assertEqual(summary.live_ready_lanes, 1)
 
+    def test_directional_forecast_timeout_only_samples_are_p1_learning_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["projection_ledger"].write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "signal_name": "directional_forecast",
+                            "predicted_target_price": 1.1720,
+                            "predicted_invalidation_price": 1.1680,
+                            "resolution_window_min": 60.0,
+                            "resolution_status": "TIMEOUT",
+                            "resolution_evidence": "no candle truth for projection window",
+                            "cycle_id": f"cycle-{idx}",
+                        }
+                    )
+                    for idx in range(10)
+                )
+                + "\n"
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED", codes)
+        self.assertEqual(codes["DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED"]["priority"], "P1")
+        self.assertEqual(codes["DIRECTIONAL_FORECAST_CALIBRATION_UNRESOLVED"]["evidence"]["status_counts"]["TIMEOUT"], 10)
+
+    def test_directional_forecast_low_hit_rate_is_p1_forecast_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            rows = []
+            for idx in range(10):
+                rows.append(
+                    {
+                        "timestamp_emitted_utc": (_NOW - timedelta(hours=idx + 2)).isoformat(),
+                        "pair": "EUR_USD",
+                        "direction": "UP",
+                        "regime_at_emission": "TREND",
+                        "signal_name": "directional_forecast",
+                        "predicted_target_price": 1.1720,
+                        "predicted_invalidation_price": 1.1680,
+                        "resolution_window_min": 60.0,
+                        "resolution_status": "HIT" if idx == 0 else "MISS",
+                        "cycle_id": f"cycle-{idx}",
+                    }
+                )
+            files["projection_ledger"].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("DIRECTIONAL_FORECAST_HIT_RATE_WEAK", codes)
+        evidence = codes["DIRECTIONAL_FORECAST_HIT_RATE_WEAK"]["evidence"]
+        self.assertEqual(evidence["samples"], 10)
+        self.assertAlmostEqual(evidence["hit_rate"], 0.1)
+        self.assertTrue(evidence["worst_buckets"])
+
     def test_lane_only_verification_blockers_do_not_mask_opportunity_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
