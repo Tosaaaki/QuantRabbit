@@ -10,6 +10,7 @@ from typing import Any
 
 from quant_rabbit.analysis.market_status import compute_market_status
 from quant_rabbit.paths import (
+    DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
@@ -68,6 +69,7 @@ class CoverageOptimizer:
         intents_path: Path = DEFAULT_ORDER_INTENTS,
         target_state_path: Path = DEFAULT_DAILY_TARGET_STATE,
         replay_path: Path = DEFAULT_REPLAY_BACKTEST,
+        ai_backtest_path: Path = DEFAULT_AI_TEST_BOT_BACKTEST,
         output_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         report_path: Path = DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
         market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
@@ -75,6 +77,7 @@ class CoverageOptimizer:
         self.intents_path = intents_path
         self.target_state_path = target_state_path
         self.replay_path = replay_path
+        self.ai_backtest_path = ai_backtest_path
         self.output_path = output_path
         self.report_path = report_path
         self.market_context_matrix_path = market_context_matrix_path
@@ -85,10 +88,13 @@ class CoverageOptimizer:
         intents = _load_json(self.intents_path)
         target = _load_json(self.target_state_path)
         replay = _load_json(self.replay_path) if self.replay_path.exists() else {}
+        ai_backtest = _load_json(self.ai_backtest_path) if self.ai_backtest_path.exists() else {}
         lanes = tuple(_coverage_lane(item) for item in intents.get("results", []) or [] if _has_intent(item))
         artifact_diagnostics = _artifact_diagnostics(
             intents=intents,
             intents_path=self.intents_path,
+            ai_backtest=ai_backtest,
+            ai_backtest_path=self.ai_backtest_path,
             market_context_matrix_path=self.market_context_matrix_path,
             now_utc=now_utc,
         )
@@ -149,6 +155,7 @@ class CoverageOptimizer:
             "intents_path": str(self.intents_path),
             "target_state_path": str(self.target_state_path),
             "replay_path": str(self.replay_path) if self.replay_path.exists() else None,
+            "ai_backtest_path": str(self.ai_backtest_path) if self.ai_backtest_path.exists() else None,
             "remaining_target_jpy": remaining_target,
             "remaining_risk_budget_jpy": remaining_risk_budget,
             "live_ready_reward_jpy": live_ready_reward,
@@ -232,6 +239,32 @@ class CoverageOptimizer:
                 "",
             ]
         )
+        bucket_diag = diagnostics.get("profitable_bucket_coverage") if isinstance(diagnostics.get("profitable_bucket_coverage"), dict) else {}
+        if bucket_diag:
+            lines.extend(
+                [
+                    "## Profitable Bucket Coverage",
+                    "",
+                    f"- AI backtest status: `{bucket_diag.get('source_status')}`",
+                    f"- Positive historical pair/directions: `{bucket_diag.get('positive_pair_directions')}`",
+                    f"- Positive managed net: `{bucket_diag.get('positive_managed_net_jpy')}`",
+                    f"- Coverage states: `{bucket_diag.get('state_counts') or {}}`",
+                    "",
+                ]
+            )
+            for item in bucket_diag.get("top_edges", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                lines.append(
+                    f"- `{item.get('pair')} {item.get('direction')}` state=`{item.get('coverage_state')}` "
+                    f"managed_net=`{item.get('managed_net_jpy')}` current_lanes=`{item.get('current_lane_count')}` "
+                    f"spread_normalized=`{item.get('spread_normalized_candidate_count')}` "
+                    f"no_live_blocker=`{item.get('spread_normalized_no_live_blocker_count')}`"
+                )
+                if blockers:
+                    lines.append(f"  - top blockers: {', '.join(str(blocker) for blocker in blockers[:3])}")
+            lines.append("")
         lines.extend(
             [
                 "## Blockers",
@@ -418,6 +451,28 @@ def _action_items(
             reward_gap = remaining_target - live_ready_reward
             avg_reward = _average_reward(lanes) or 1.0
             items.append(f"build at least {math.ceil(reward_gap / avg_reward)} additional live-ready trigger receipts")
+    profitable_bucket_diag = (
+        artifact_diagnostics.get("profitable_bucket_coverage")
+        if isinstance(artifact_diagnostics.get("profitable_bucket_coverage"), dict)
+        else {}
+    )
+    if remaining_target > live_ready_reward and profitable_bucket_diag:
+        blocked_top = profitable_bucket_diag.get("blocked_or_missing_top")
+        if isinstance(blocked_top, list) and blocked_top:
+            labels = []
+            for item in blocked_top[:4]:
+                if not isinstance(item, dict):
+                    continue
+                label = f"{item.get('pair')} {item.get('direction')} {item.get('coverage_state')}"
+                blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                if blockers:
+                    label += f" ({blockers[0]})"
+                labels.append(label)
+            if labels:
+                items.append(
+                    "repair historical-profitable bucket coverage before widening discovery: "
+                    + "; ".join(labels)
+                )
     if potential_reward < remaining_target and not evidence_refresh_required:
         items.append("expand lane generation across timing windows or pairs; current repaired ladder cannot cover target")
     if live_ready_risk > remaining_risk_budget > 0 and float(sequential_ladder.get("reward_jpy") or 0.0) >= remaining_target:
@@ -462,6 +517,8 @@ def _artifact_diagnostics(
     *,
     intents: dict[str, Any],
     intents_path: Path,
+    ai_backtest: dict[str, Any],
+    ai_backtest_path: Path,
     market_context_matrix_path: Path,
     now_utc: datetime,
 ) -> dict[str, Any]:
@@ -499,6 +556,11 @@ def _artifact_diagnostics(
         "status_counts": _status_counts(results),
         "risk_block_issue_counts": risk_block_issue_counts,
         "strategy_block_issue_counts": strategy_block_issue_counts,
+        "profitable_bucket_coverage": _profitable_bucket_coverage_summary(
+            ai_backtest=ai_backtest,
+            ai_backtest_path=ai_backtest_path,
+            results=results,
+        ),
         **spread_normalized,
         "all_lanes_spread_blocked": all_lanes_spread_blocked,
         "market_context_matrix_path": str(market_context_matrix_path),
@@ -519,19 +581,7 @@ def _spread_normalized_candidate_summary(results: tuple[dict[str, Any], ...]) ->
     candidates: list[dict[str, Any]] = []
     no_live_blocker_candidates: list[dict[str, Any]] = []
     for result in results:
-        non_spread_risk_blocks = [
-            issue
-            for issue in result.get("risk_issues", []) or []
-            if isinstance(issue, dict)
-            and issue.get("severity") == "BLOCK"
-            and issue.get("code") != "SPREAD_TOO_WIDE"
-        ]
-        strategy_blocks = [
-            issue
-            for issue in result.get("strategy_issues", []) or []
-            if isinstance(issue, dict) and issue.get("severity") == "BLOCK"
-        ]
-        if non_spread_risk_blocks or strategy_blocks:
+        if not _is_spread_normalized_candidate(result):
             continue
         risk_jpy, reward_jpy, reward_risk = _risk_reward_from_result(result)
         if risk_jpy <= 0 or reward_jpy <= 0:
@@ -565,6 +615,174 @@ def _spread_normalized_candidate_summary(results: tuple[dict[str, Any], ...]) ->
         "spread_normalized_top_candidates": top,
         "spread_normalized_live_blocker_counts": dict(live_blocker_counts.most_common(12)),
     }
+
+
+def _profitable_bucket_coverage_summary(
+    *,
+    ai_backtest: dict[str, Any],
+    ai_backtest_path: Path,
+    results: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    edges = _profitable_bucket_edges(ai_backtest)
+    if not edges:
+        return {}
+    rows_by_edge: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for result in results:
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        key = (str(intent.get("pair") or ""), str(intent.get("side") or ""))
+        if key in edges:
+            rows_by_edge.setdefault(key, []).append(result)
+    top_edges: list[dict[str, Any]] = []
+    state_counts: Counter[str] = Counter()
+    for key, edge in sorted(edges.items(), key=lambda item: float(item[1]["managed_net_jpy"]), reverse=True):
+        rows = tuple(rows_by_edge.get(key, ()))
+        summary = _profitable_edge_current_summary(edge=edge, rows=rows)
+        top_edges.append(summary)
+        state_counts[str(summary["coverage_state"])] += 1
+    blocked_or_missing = [
+        item for item in top_edges if item.get("coverage_state") != "SPREAD_NORMALIZED_NO_LIVE_BLOCKER"
+    ]
+    return {
+        "ai_backtest_path": str(ai_backtest_path) if ai_backtest_path.exists() else None,
+        "source_status": str(ai_backtest.get("status") or "UNKNOWN"),
+        "live_permission": bool(ai_backtest.get("live_permission") is True),
+        "positive_pair_directions": len(edges),
+        "positive_managed_net_jpy": _round(sum(float(item["managed_net_jpy"]) for item in edges.values())),
+        "positive_trade_count": sum(int(item["trades"]) for item in edges.values()),
+        "state_counts": dict(state_counts),
+        "top_edges": top_edges[:12],
+        "blocked_or_missing_top": blocked_or_missing[:8],
+    }
+
+
+def _profitable_bucket_edges(ai_backtest: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    edges: dict[tuple[str, str], dict[str, Any]] = {}
+    if not isinstance(ai_backtest, dict) or not ai_backtest:
+        return edges
+    for item in ai_backtest.get("bucket_contributions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        managed_net = _optional_float(item.get("managed_net_jpy")) or 0.0
+        if managed_net <= 0:
+            continue
+        key = _bucket_pair_direction(item.get("bucket"))
+        if key is None:
+            continue
+        current = edges.setdefault(
+            key,
+            {
+                "pair": key[0],
+                "direction": key[1],
+                "managed_net_jpy": 0.0,
+                "raw_net_jpy": 0.0,
+                "trades": 0,
+                "days": 0,
+                "best_trade_jpy": None,
+                "worst_trade_jpy": None,
+                "buckets": [],
+            },
+        )
+        current["managed_net_jpy"] = _round(float(current["managed_net_jpy"]) + managed_net)
+        current["raw_net_jpy"] = _round(float(current["raw_net_jpy"]) + (_optional_float(item.get("raw_net_jpy")) or 0.0))
+        current["trades"] = int(current["trades"]) + int(item.get("trades") or 0)
+        current["days"] = max(int(current["days"]), int(item.get("days") or 0))
+        best = _optional_float(item.get("best_trade_jpy"))
+        if best is not None:
+            current["best_trade_jpy"] = (
+                best if current["best_trade_jpy"] is None else max(float(current["best_trade_jpy"]), best)
+            )
+        worst = _optional_float(item.get("worst_trade_jpy"))
+        if worst is not None:
+            current["worst_trade_jpy"] = (
+                worst if current["worst_trade_jpy"] is None else min(float(current["worst_trade_jpy"]), worst)
+            )
+        current["buckets"].append(str(item.get("bucket") or ""))
+    return edges
+
+
+def _bucket_pair_direction(bucket: object) -> tuple[str, str] | None:
+    parts = str(bucket or "").split(":")
+    if len(parts) < 3:
+        return None
+    pair = parts[1].strip().upper()
+    direction = parts[2].strip().upper()
+    if not pair or direction not in {"LONG", "SHORT"}:
+        return None
+    return pair, direction
+
+
+def _profitable_edge_current_summary(*, edge: dict[str, Any], rows: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    spread_normalized = tuple(result for result in rows if _is_spread_normalized_candidate(result))
+    no_live_blocker = tuple(result for result in spread_normalized if not _live_blockers(result))
+    if no_live_blocker:
+        state = "SPREAD_NORMALIZED_NO_LIVE_BLOCKER"
+    elif spread_normalized:
+        state = "SPREAD_NORMALIZED_LIVE_BLOCKED"
+    elif rows:
+        state = "SURFACED_BUT_BLOCKED"
+    else:
+        state = "NO_CURRENT_LANE"
+    rewards = [_risk_reward_from_result(result)[1] for result in rows]
+    blocker_counts = Counter(
+        blocker
+        for result in rows
+        for blocker in _current_blocker_labels(result)
+        if blocker
+    )
+    return {
+        "pair": edge["pair"],
+        "direction": edge["direction"],
+        "coverage_state": state,
+        "managed_net_jpy": edge["managed_net_jpy"],
+        "raw_net_jpy": edge["raw_net_jpy"],
+        "trades": edge["trades"],
+        "days": edge["days"],
+        "best_trade_jpy": edge["best_trade_jpy"],
+        "worst_trade_jpy": edge["worst_trade_jpy"],
+        "buckets": edge["buckets"][:4],
+        "current_lane_count": len(rows),
+        "current_status_counts": _status_counts(rows),
+        "current_best_reward_jpy": _round(max(rewards, default=0.0)),
+        "spread_normalized_candidate_count": len(spread_normalized),
+        "spread_normalized_no_live_blocker_count": len(no_live_blocker),
+        "top_blockers": [label for label, _count in blocker_counts.most_common(6)],
+    }
+
+
+def _is_spread_normalized_candidate(result: dict[str, Any]) -> bool:
+    non_spread_risk_blocks = [
+        issue
+        for issue in result.get("risk_issues", []) or []
+        if isinstance(issue, dict)
+        and issue.get("severity") == "BLOCK"
+        and issue.get("code") != "SPREAD_TOO_WIDE"
+    ]
+    strategy_blocks = [
+        issue
+        for issue in result.get("strategy_issues", []) or []
+        if isinstance(issue, dict) and issue.get("severity") == "BLOCK"
+    ]
+    return not non_spread_risk_blocks and not strategy_blocks
+
+
+def _live_blockers(result: dict[str, Any]) -> list[str]:
+    return [str(item) for item in result.get("live_blockers", []) or [] if str(item).strip()]
+
+
+def _current_blocker_labels(result: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for issue in result.get("risk_issues", []) or []:
+        if not isinstance(issue, dict) or issue.get("severity") != "BLOCK":
+            continue
+        code = str(issue.get("code") or issue.get("message") or "risk block")
+        if code != "SPREAD_TOO_WIDE":
+            labels.append(code)
+    for issue in result.get("strategy_issues", []) or []:
+        if not isinstance(issue, dict) or issue.get("severity") != "BLOCK":
+            continue
+        labels.append(str(issue.get("code") or issue.get("message") or "strategy block"))
+    labels.extend(_live_blockers(result))
+    return labels
 
 
 def _parse_iso_datetime(value: object) -> datetime | None:

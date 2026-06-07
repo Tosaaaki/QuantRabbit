@@ -410,6 +410,82 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertTrue(any("repair spread-normalized live blockers" in item for item in payload["action_items"]))
             self.assertIn("Spread-normalized live-blocker counts", (root / "coverage.md").read_text())
 
+    def test_profitable_bucket_coverage_maps_backtest_edges_to_current_blockers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            ai_backtest = root / "ai_test_bot_backtest.json"
+            risk_issue = {
+                "severity": "BLOCK",
+                "code": "SPREAD_TOO_WIDE",
+                "message": "current spread is too wide for live entry",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="range_trader:EUR_USD:LONG:RANGE_ROTATION",
+                                risk_issues=[risk_issue],
+                                live_blocker="EUR_USD LONG current pair forecast is UNCLEAR",
+                            )
+                        ]
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+            ai_backtest.write_text(
+                json.dumps(
+                    {
+                        "status": "RESEARCH_PROFITABLE_NOT_CERTIFIED",
+                        "live_permission": False,
+                        "bucket_contributions": [
+                            {
+                                "bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED",
+                                "managed_net_jpy": 900.0,
+                                "raw_net_jpy": 800.0,
+                                "trades": 10,
+                                "days": 3,
+                                "best_trade_jpy": 300.0,
+                                "worst_trade_jpy": -120.0,
+                            },
+                            {
+                                "bucket": "trades:AUD_JPY:SHORT:UNSPECIFIED:UNSPECIFIED",
+                                "managed_net_jpy": 600.0,
+                                "raw_net_jpy": 500.0,
+                                "trades": 8,
+                                "days": 2,
+                                "best_trade_jpy": 250.0,
+                                "worst_trade_jpy": -90.0,
+                            },
+                        ],
+                    }
+                )
+            )
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                ai_backtest_path=ai_backtest,
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["artifact_diagnostics"]["profitable_bucket_coverage"]
+            self.assertEqual(diagnostics["positive_pair_directions"], 2)
+            self.assertEqual(diagnostics["positive_managed_net_jpy"], 1500.0)
+            self.assertEqual(diagnostics["state_counts"]["SPREAD_NORMALIZED_LIVE_BLOCKED"], 1)
+            self.assertEqual(diagnostics["state_counts"]["NO_CURRENT_LANE"], 1)
+            self.assertTrue(
+                any("repair historical-profitable bucket coverage" in item for item in payload["action_items"])
+            )
+            self.assertIn("Profitable Bucket Coverage", (root / "coverage.md").read_text())
+
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
