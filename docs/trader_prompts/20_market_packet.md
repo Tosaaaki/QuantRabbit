@@ -61,6 +61,8 @@
 - `data/cross_asset_snapshot.json`
   - EUR/USD must cite DXY.
   - JPY pairs must cite DXY and `USB10Y_USD`.
+  - USD pairs should read `XAU_USD` as USD-pressure context.
+  - CAD pairs should read `WTICO_USD` or `BCO_USD` as commodity/CAD context.
   - Correlations are context, not execution permission.
 - `data/flow_snapshot.json`
   - `STRESSED` spread blocks new entry.

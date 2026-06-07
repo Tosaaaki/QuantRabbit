@@ -236,6 +236,10 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # intents on the next scheduled cycle, and only re-enter on a fresh LIVE_READY
 # lane with a separate verified TRADE receipt. The automation must not re-enter
 # in the same outer cycle after the close is sent, staged, or already satisfied.
+# If the same-direction market stack still supports the open position, this is
+# not a CLOSE+re-entry case. Treat it as geometry management: TP rebalance,
+# HOLD, profit-side partial, or a separately risk-bounded ADD lane. Loss-side
+# CLOSE is for broken thesis evidence, not for refreshing a valid ticket.
 # Hard sidecar Gate A or explicit Gate B close evidence is priority work: do
 # not choose TRADE, WAIT, REQUEST_EVIDENCE, PROTECT, or TIGHTEN_SL to sidestep
 # it. If only soft Gate A exists and explicit Gate B is missing, the sidecar is

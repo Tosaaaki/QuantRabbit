@@ -75,6 +75,13 @@ not the objective.
 Do not combine loss-cut and re-entry in one `TRADE` receipt. Close the broken
 position first, refresh broker truth / intents, then re-enter only if the next
 cycle still produces a fresh `LIVE_READY` lane.
+If the same-direction macro / chart / forecast stack still supports the open
+position, do **not** convert that into loss-side `CLOSE` plus same-direction
+re-entry. That is a geometry problem: keep or reprice the runner with dynamic
+TP rebalance, HOLD through the SL-free thesis, take profit-side partials when
+already profitable, or let a separate ADD lane compete under gateway basket
+risk. A loss-side `CLOSE` is for thesis breakdown, not for replacing a valid
+same-direction setup with a fresher entry ticket.
 Fresh hard sidecar Gate A close evidence, or soft sidecar evidence paired with
 explicit Gate B, also blocks `PROTECT` / `TIGHTEN_SL` as a receipt-level escape
 hatch: submit the verified `CLOSE` first. Soft-only evidence without Gate B is

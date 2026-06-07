@@ -96,6 +96,35 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertTrue(cot_warnings)
         self.assertEqual(cot_rejects, [])
 
+    def test_gold_and_oil_are_cross_asset_context_not_trade_blocks(self) -> None:
+        payload = build_market_context_matrix_from_payloads(
+            pair_charts=_pair_charts("EUR_USD", "USD_CAD"),
+            cross_asset={
+                "synthetic_dxy": {"change_pct_24h": 0.0},
+                "assets": [
+                    {"instrument": "XAU_USD", "change_pct_24h": 1.2},
+                    {"instrument": "WTICO_USD", "change_pct_24h": 2.5},
+                ],
+                "issues": [],
+            },
+            flow=_flow(),
+            currency_strength={"scores": [], "issues": []},
+            levels=_levels(),
+            calendar=_calendar(),
+            cot={"reports": [], "issues": []},
+            option_skew={"readings": [], "issues": ["MISSING_OPTION_SKEW_FEED"]},
+        )
+
+        eurusd_long_codes = {item["code"] for item in payload["pairs"]["EUR_USD"]["LONG"]["supports"]}
+        usdcad_short_codes = {item["code"] for item in payload["pairs"]["USD_CAD"]["SHORT"]["supports"]}
+        usdcad_long_warning_codes = {item["code"] for item in payload["pairs"]["USD_CAD"]["LONG"]["warnings"]}
+
+        self.assertIn("GOLD_USD_PRESSURE_DIRECTION", eurusd_long_codes)
+        self.assertIn("GOLD_USD_PRESSURE_DIRECTION", usdcad_short_codes)
+        self.assertIn("OIL_CAD_DIRECTION", usdcad_short_codes)
+        self.assertIn("OIL_CAD_DIRECTION", usdcad_long_warning_codes)
+        self.assertEqual(payload["trade_count_policy"], "ADVISORY_ONLY_DOES_NOT_BLOCK_OR_DEMOTE_LANES")
+
     def test_intent_summary_keeps_matrix_compact(self) -> None:
         payload = build_market_context_matrix_from_payloads(
             pair_charts=_pair_charts(),
@@ -122,11 +151,12 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertNotIn("supports", summary)
 
 
-def _pair_charts() -> dict:
+def _pair_charts(*pairs: str) -> dict:
+    pairs = pairs or ("EUR_USD",)
     return {
         "charts": [
             {
-                "pair": "EUR_USD",
+                "pair": pair,
                 "dominant_regime": "TREND_UP",
                 "long_score": 0.7,
                 "short_score": 0.3,
@@ -137,6 +167,7 @@ def _pair_charts() -> dict:
                 },
                 "views": [],
             }
+            for pair in pairs
         ]
     }
 

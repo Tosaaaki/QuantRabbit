@@ -1350,22 +1350,21 @@ def _detect_cross_asset_lag(
         payload = json.loads(cross_asset_path.read_text())
     except (OSError, json.JSONDecodeError):
         return []
+    dxy_change_pct = _to_float(((payload.get("synthetic_dxy") or {}).get("change_pct_24h")))
     snapshots = payload.get("snapshots") or payload.get("instruments") or []
-    if not snapshots:
-        return []
-    # Find DXY snapshot. Schema varies; try common shapes.
-    dxy_change_pct = None
-    for s in snapshots if isinstance(snapshots, list) else []:
-        name = str(s.get("symbol") or s.get("name") or "").upper()
-        if name not in ("DXY", "US_DOLLAR_INDEX", "DX_F"):
-            continue
-        # change_pct_24h, change_pct_1h, change_pct
-        for key in ("change_pct_1h", "change_pct_4h", "change_pct"):
-            v = _to_float(s.get(key))
-            if v is not None:
-                dxy_change_pct = v
-                break
-        break
+    # Older cross-asset snapshots used a flat instrument list. Keep that parser
+    # only as compatibility; the current snapshot emits `synthetic_dxy`.
+    if dxy_change_pct is None:
+        for s in snapshots if isinstance(snapshots, list) else []:
+            name = str(s.get("symbol") or s.get("name") or "").upper()
+            if name not in ("DXY", "US_DOLLAR_INDEX", "DX_F"):
+                continue
+            for key in ("change_pct_24h", "change_pct_1h", "change_pct_4h", "change_pct"):
+                v = _to_float(s.get(key))
+                if v is not None:
+                    dxy_change_pct = v
+                    break
+            break
     if dxy_change_pct is None:
         return []
     if abs(dxy_change_pct) < CROSS_ASSET_MOVE_THRESHOLD_PCT:

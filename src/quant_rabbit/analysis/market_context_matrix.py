@@ -421,6 +421,35 @@ def _apply_cross_asset_layer(
             refs=["cross:spx"],
             opposite_bucket="warnings",
         )
+    xau = _asset(cross_asset, "XAU_USD")
+    xau_change = _float_or_none((xau or {}).get("change_pct_24h"))
+    if xau_change is not None and "USD" in (base, quote) and xau_change != 0:
+        usd_pressure_side = "SHORT" if base == "USD" else "LONG"
+        support_side = usd_pressure_side if xau_change > 0 else ("SHORT" if usd_pressure_side == "LONG" else "LONG")
+        _directional(
+            pair_matrix,
+            support_side=support_side,
+            code="GOLD_USD_PRESSURE_DIRECTION",
+            layer="cross_asset",
+            message=f"{pair} XAU_USD 24h change {xau_change:.3f}% maps to {support_side} as USD-pressure context",
+            refs=["cross:XAU_USD"],
+            opposite_bucket="warnings",
+        )
+    oil = _asset(cross_asset, "WTICO_USD") or _asset(cross_asset, "BCO_USD")
+    oil_instrument = str((oil or {}).get("instrument") or "WTICO_USD")
+    oil_change = _float_or_none((oil or {}).get("change_pct_24h"))
+    if oil_change is not None and "CAD" in (base, quote) and oil_change != 0:
+        cad_support_side = "LONG" if base == "CAD" else "SHORT"
+        support_side = cad_support_side if oil_change > 0 else ("SHORT" if cad_support_side == "LONG" else "LONG")
+        _directional(
+            pair_matrix,
+            support_side=support_side,
+            code="OIL_CAD_DIRECTION",
+            layer="cross_asset",
+            message=f"{pair} {oil_instrument} 24h change {oil_change:.3f}% maps to {support_side} as CAD commodity context",
+            refs=[f"cross:{oil_instrument}"],
+            opposite_bucket="warnings",
+        )
 
 
 def _apply_flow_layer(

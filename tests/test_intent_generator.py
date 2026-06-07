@@ -1133,6 +1133,87 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["best_samples"], 0)
         self.assertIn("ledger samples pending", support["reason"])
 
+    def test_event_surprise_forecast_seed_gets_macro_size_up(self) -> None:
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                output = root / "intents.json"
+                forecast = SimpleNamespace(
+                    direction="DOWN",
+                    confidence=0.88,
+                    raw_confidence=0.88,
+                    current_price=1.17326,
+                    target_price=1.1682,
+                    invalidation_price=1.1742,
+                    horizon_min=240,
+                    rationale_summary="NFP beat creates USD follow-through",
+                    drivers_for=("event surprise follow-through DOWN",),
+                    drivers_against=(),
+                    component_scores={"UP": 12.0, "DOWN": 95.0, "RANGE": 4.0, "EITHER": 0.0},
+                    market_support={
+                        "ok": True,
+                        "direction": "DOWN",
+                        "aligned_projection_count": 1,
+                        "timing_projection_count": 0,
+                        "best_hit_rate": None,
+                        "best_samples": 0,
+                        "bootstrap_projection_support": True,
+                        "reason": "event_surprise_followthrough DOWN same-cycle bootstrap",
+                        "signals": [
+                            {
+                                "name": "event_surprise_followthrough",
+                                "direction": "DOWN",
+                                "confidence": 0.9,
+                                "samples": 0,
+                                "bootstrap_projection_support": True,
+                            }
+                        ],
+                    },
+                )
+
+                with patch(
+                    "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                    return_value=forecast,
+                ):
+                    IntentGenerator(
+                        campaign_plan=_campaign(root, direction="LONG"),
+                        strategy_profile=_strategy(root, status="CANDIDATE", direction="LONG"),
+                        pair_charts_path=_pair_charts_with_direction(
+                            root,
+                            long_score=0.22,
+                            short_score=0.78,
+                            dominant_regime="TREND_DOWN",
+                            m5_regime="TREND_DOWN",
+                            atr_pips=3.0,
+                        ),
+                        output_path=output,
+                        report_path=root / "intents.md",
+                        max_loss_jpy=500.0,
+                    ).run(snapshot_path=_snapshot(root))
+
+                payload = json.loads(output.read_text())
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        event_items = [
+            item for item in payload["results"]
+            if item["intent"]
+            and item["intent"]["side"] == "SHORT"
+            and item["intent"]["metadata"].get("macro_event_size_up")
+        ]
+        self.assertTrue(event_items)
+        event = event_items[0]
+        metadata = event["intent"]["metadata"]
+        self.assertEqual(metadata["macro_event_signal_name"], "event_surprise_followthrough")
+        self.assertEqual(metadata["max_loss_jpy"], 1500.0)
+        self.assertTrue(metadata["macro_event_loss_budget_target"])
+        self.assertLessEqual(event["risk_metrics"]["risk_jpy"], metadata["max_loss_jpy"])
+
     def test_below_entry_forecast_for_missing_strong_chart_pair_becomes_watch_only_lane(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"
         with tempfile.TemporaryDirectory() as tmp:
@@ -4063,6 +4144,76 @@ class RegimeAwareGeometryHelpersTest(unittest.TestCase):
         self.assertEqual(_regime_stop_widening_multiplier({}), 1.0)
 
 
+class MacroEventSizingPlanTest(unittest.TestCase):
+    def test_same_direction_event_surprise_expands_loss_budget_with_daily_cap(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import _macro_event_sizing_plan
+
+        effective, metadata = _macro_event_sizing_plan(
+            {
+                "forecast_direction": "UP",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "UP",
+                    "signals": [
+                        {
+                            "name": "event_surprise_followthrough",
+                            "direction": "UP",
+                            "confidence": 0.9,
+                        }
+                    ],
+                },
+            },
+            side=Side.LONG,
+            base_max_loss_jpy=100.0,
+            portfolio_loss_cap=400.0,
+            position_metadata={},
+        )
+
+        self.assertEqual(effective, 200.0)
+        self.assertTrue(metadata["macro_event_size_up"])
+        self.assertEqual(metadata["macro_event_signal_name"], "event_surprise_followthrough")
+
+    def test_macro_event_sizing_does_not_expand_hedge_or_opposed_signal(self) -> None:
+        from quant_rabbit.models import Side
+        from quant_rabbit.strategy.intent_generator import _macro_event_sizing_plan
+
+        lane = {
+            "forecast_direction": "DOWN",
+            "forecast_market_support": {
+                "ok": True,
+                "direction": "DOWN",
+                "signals": [
+                    {
+                        "name": "event_surprise_followthrough",
+                        "direction": "DOWN",
+                        "confidence": 0.95,
+                    }
+                ],
+            },
+        }
+
+        hedge_effective, hedge_metadata = _macro_event_sizing_plan(
+            lane,
+            side=Side.SHORT,
+            base_max_loss_jpy=100.0,
+            portfolio_loss_cap=1000.0,
+            position_metadata={"position_intent": "HEDGE"},
+        )
+        opposed_effective, opposed_metadata = _macro_event_sizing_plan(
+            lane,
+            side=Side.LONG,
+            base_max_loss_jpy=100.0,
+            portfolio_loss_cap=1000.0,
+            position_metadata={},
+        )
+
+        self.assertEqual(hedge_effective, 100.0)
+        self.assertEqual(hedge_metadata, {})
+        self.assertEqual(opposed_effective, 100.0)
+        self.assertEqual(opposed_metadata, {})
+
+
 class RangeRewardRiskFloorTest(unittest.TestCase):
     """Risk policy must allow rr < min_reward_risk for RANGE entries.
 
@@ -4580,6 +4731,41 @@ class MinLotFloorIntentTest(unittest.TestCase):
         )
         self.assertGreaterEqual(units, 5000)
         self.assertEqual(units % 1000, 0)
+
+    def test_loss_budget_target_can_exceed_base_units_under_sl_free(self) -> None:
+        import os
+        from quant_rabbit.strategy.intent_generator import _risk_budgeted_units
+
+        prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_nav_pct = os.environ.pop("QR_TRADER_POSITION_NAV_PCT", None)
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            normal_units = _risk_budgeted_units(
+                "EUR_USD",
+                entry=1.17290,
+                sl=1.17490,
+                max_loss_jpy=2000.0,
+                snapshot=self._stub_snapshot(),
+            )
+            event_units = _risk_budgeted_units(
+                "EUR_USD",
+                entry=1.17290,
+                sl=1.17490,
+                max_loss_jpy=2000.0,
+                snapshot=self._stub_snapshot(),
+                loss_budget_target=True,
+            )
+        finally:
+            if prior_sl_free is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
+            if prior_nav_pct is not None:
+                os.environ["QR_TRADER_POSITION_NAV_PCT"] = prior_nav_pct
+
+        self.assertEqual(normal_units, 3000)
+        self.assertGreater(event_units, normal_units)
+        self.assertEqual(event_units % 1000, 0)
 
     def test_test_micro_lot_override_restores_legacy_fallback(self) -> None:
         import os

@@ -104,6 +104,23 @@ class LiquiditySweepDirectionTest(unittest.TestCase):
 
         self.assertFalse(any(s.name == "liquidity_sweep_low" for s in signals), signals)
 
+    def test_current_cross_asset_schema_emits_dxy_lag_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cross_asset_path = Path(tmp) / "cross_asset_snapshot.json"
+            cross_asset_path.write_text(json.dumps({"synthetic_dxy": {"change_pct_24h": 0.6}}))
+
+            signals = detect_forward_projections(
+                None,
+                pair="EUR_USD",
+                current_price=1.1000,
+                cross_asset_path=cross_asset_path,
+                now=_QUIET_SESSION_NOW,
+            )
+
+        signal = next(s for s in signals if s.name == "cross_asset_dxy_lag")
+        self.assertEqual(signal.direction, "DOWN")
+        self.assertIn("DXY moved +0.60%", signal.rationale)
+
     def test_projection_score_prefers_direction_specific_calibration(self) -> None:
         signals = [
             ProjectionSignal(

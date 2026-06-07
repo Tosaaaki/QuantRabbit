@@ -213,6 +213,32 @@ DYNAMIC_RR_SESSION_THIN_PENALTY = float(os.environ.get("QR_DYNAMIC_RR_SESSION_TH
 DYNAMIC_RR_FLOOR = float(os.environ.get("QR_DYNAMIC_RR_FLOOR", "1.5"))
 DYNAMIC_RR_CEILING = float(os.environ.get("QR_DYNAMIC_RR_CEILING", "5.0"))
 
+# High-impact macro follow-through sizing. These constants do not decide
+# direction; they only let a factual post-release event surprise use more of
+# the already equity-derived daily risk budget once the forecast layer has
+# produced same-direction event evidence.
+#
+# (a) Market reality: NFP/CPI/rate-decision beats can move 50-100 pips while a
+#     normal technical scalp cannot. Treating a confirmed surprise like a
+#     routine M5 setup leaves the account under-exposed to the few sessions
+#     that can realistically cover the daily target.
+# (b) Constants rather than derived: these are operator policy caps for the
+#     event campaign. The base loss cap is still equity-derived by
+#     daily_target_state; the daily-budget share prevents one event lane from
+#     consuming the whole day.
+# (c) Replace with event-family calibration once the projection ledger has
+#     enough `event_surprise_followthrough` samples by event name/currency.
+MACRO_EVENT_SIZE_UP_SIGNAL_NAMES = frozenset({"event_surprise_followthrough"})
+MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONFIDENCE = _env_float(
+    "QR_MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONF", 0.80, minimum=0.0
+)
+MACRO_EVENT_RISK_MULTIPLIER = _env_float(
+    "QR_MACRO_EVENT_RISK_MULT", 3.0, minimum=1.0
+)
+MACRO_EVENT_MAX_DAILY_RISK_SHARE = _env_float(
+    "QR_MACRO_EVENT_MAX_DAILY_RISK_SHARE", 0.50, minimum=0.0
+)
+
 # Recovery hedges are exposure management, not permission to auto-flatten the
 # whole trapped leg. Use current directional conviction to choose a tranche size;
 # full same-pair margin-free capacity remains a cap, not the default target.
@@ -2864,6 +2890,7 @@ class IntentGenerator:
             quote,
             snapshot,
             max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
             atr_pips=atr_pips,
             range_indicators=range_indicators,
             order_type_override=order_type_override,
@@ -3188,12 +3215,88 @@ def _lane_forbids_market_chase(lane: dict[str, Any]) -> bool:
     return "no market chase" in receipt
 
 
+def _macro_event_sizing_plan(
+    lane: dict[str, Any],
+    *,
+    side: Side,
+    base_max_loss_jpy: float,
+    portfolio_loss_cap: float | None,
+    position_metadata: dict[str, Any],
+) -> tuple[float, dict[str, Any]]:
+    """Return an event-specific loss cap and audit metadata for the lane.
+
+    Only factual post-release macro surprises can size up. Pre-release nowcasts
+    remain directional evidence but do not get extra risk because the actual
+    release is not known yet.
+    """
+
+    if str(position_metadata.get("position_intent") or "").upper() == "HEDGE":
+        return base_max_loss_jpy, {}
+    signal = _macro_event_size_up_signal(lane, side=side)
+    if signal is None or base_max_loss_jpy <= 0:
+        return base_max_loss_jpy, {}
+
+    scaled_cap = base_max_loss_jpy * MACRO_EVENT_RISK_MULTIPLIER
+    daily_share_cap: float | None = None
+    if (
+        portfolio_loss_cap is not None
+        and portfolio_loss_cap > 0
+        and MACRO_EVENT_MAX_DAILY_RISK_SHARE > 0
+    ):
+        daily_share_cap = portfolio_loss_cap * MACRO_EVENT_MAX_DAILY_RISK_SHARE
+        if daily_share_cap > base_max_loss_jpy:
+            scaled_cap = min(scaled_cap, daily_share_cap)
+        else:
+            scaled_cap = base_max_loss_jpy
+
+    effective_cap = max(base_max_loss_jpy, scaled_cap)
+    if effective_cap <= base_max_loss_jpy:
+        return base_max_loss_jpy, {}
+
+    confidence = _optional_float(signal.get("confidence")) or 0.0
+    return effective_cap, {
+        "macro_event_size_up": True,
+        "macro_event_signal_name": signal.get("name"),
+        "macro_event_signal_direction": signal.get("direction"),
+        "macro_event_signal_confidence": round(confidence, 4),
+        "macro_event_base_max_loss_jpy": round(base_max_loss_jpy, 4),
+        "macro_event_risk_multiplier": MACRO_EVENT_RISK_MULTIPLIER,
+        "macro_event_daily_risk_share_cap_jpy": round(daily_share_cap, 4) if daily_share_cap is not None else None,
+        "macro_event_loss_budget_target": True,
+    }
+
+
+def _macro_event_size_up_signal(lane: dict[str, Any], *, side: Side) -> dict[str, Any] | None:
+    support = lane.get("forecast_market_support")
+    if not isinstance(support, dict) or not bool(support.get("ok")):
+        return None
+    expected_direction = "UP" if side == Side.LONG else "DOWN"
+    support_direction = str(support.get("direction") or "").upper()
+    if support_direction and support_direction != expected_direction:
+        return None
+    for raw in support.get("signals") or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "")
+        if name not in MACRO_EVENT_SIZE_UP_SIGNAL_NAMES:
+            continue
+        direction = str(raw.get("direction") or "").upper()
+        if direction != expected_direction:
+            continue
+        confidence = _optional_float(raw.get("confidence")) or 0.0
+        if confidence < MACRO_EVENT_SIZE_UP_MIN_SIGNAL_CONFIDENCE:
+            continue
+        return raw
+    return None
+
+
 def _intent_from_lane(
     lane: dict[str, Any],
     quote: Quote,
     snapshot: BrokerSnapshot,
     *,
     max_loss_jpy: float,
+    portfolio_loss_cap: float | None = None,
     atr_pips: float | None = None,
     range_indicators: dict[str, Any] | None = None,
     order_type_override: OrderType | None = None,
@@ -3244,6 +3347,13 @@ def _intent_from_lane(
         recovery_metadata = _recovery_hedge_sizing_metadata(side, position_metadata, chart_context, lane)
         position_metadata.update(recovery_metadata)
         recovery_target_units = int(position_metadata.get("hedge_recovery_units") or 0) or None
+    effective_max_loss_jpy, macro_event_sizing_metadata = _macro_event_sizing_plan(
+        lane,
+        side=side,
+        base_max_loss_jpy=max_loss_jpy,
+        portfolio_loss_cap=portfolio_loss_cap,
+        position_metadata=position_metadata,
+    )
     tp, tp_execution_metadata = _take_profit_execution_plan(
         pair=pair,
         side=side,
@@ -3282,11 +3392,12 @@ def _intent_from_lane(
         pair,
         entry,
         sl,
-        max_loss_jpy=max_loss_jpy,
+        max_loss_jpy=effective_max_loss_jpy,
         snapshot=snapshot,
         side=side,
         position_intent=position_intent,
         target_units_override=recovery_target_units,
+        loss_budget_target=bool(macro_event_sizing_metadata.get("macro_event_size_up")),
     )
     margin_metadata = _margin_sizing_metadata(pair, entry, units, snapshot, side=side, position_intent=position_intent)
     thesis = f"{lane['desk']} {pair} {side.value} {method.value} {target_reward_risk:.2f}R: {lane['required_receipt']}"
@@ -3364,10 +3475,11 @@ def _intent_from_lane(
             "evidence_tail_jpy": lane.get("evidence_tail_jpy"),
             "evidence_best_jpy": lane.get("evidence_best_jpy"),
             "sizing_rule": (
-                f"floor units to the largest broker size under the {max_loss_jpy:.0f} JPY loss cap "
+                f"floor units to the largest broker size under the {effective_max_loss_jpy:.0f} JPY loss cap "
                 f"and {RiskPolicy().max_margin_utilization_pct:.1f}% margin utilization cap"
             ),
-            "max_loss_jpy": max_loss_jpy,
+            "max_loss_jpy": effective_max_loss_jpy,
+            **macro_event_sizing_metadata,
             "parent_lane_id": parent_lane_id or _lane_id(lane),
             "order_timing": "NOW_MARKET" if order_type == OrderType.MARKET else "PENDING_TRIGGER",
             **position_metadata,
@@ -5703,6 +5815,7 @@ def _risk_budgeted_units(
     side: Side | None = None,
     position_intent: str | None = None,
     target_units_override: int | None = None,
+    loss_budget_target: bool = False,
 ) -> int:
     pip_factor = PIP_FACTORS[pair]
     stop_pips = abs(entry - sl) * pip_factor
@@ -5735,7 +5848,9 @@ def _risk_budgeted_units(
     # exposure without becoming a new speculative position size.
     sl_free_active = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR", "").strip() in {"1", "true", "TRUE", "yes", "YES"}
     if sl_free_active:
-        if target_units_override is not None and target_units_override > 0:
+        if loss_budget_target:
+            target_units = loss_budget_units
+        elif target_units_override is not None and target_units_override > 0:
             target_units = float(target_units_override)
         elif margin_free_hedge_units >= MIN_PRODUCTION_LOT_UNITS:
             target_units = float(margin_free_hedge_units)
