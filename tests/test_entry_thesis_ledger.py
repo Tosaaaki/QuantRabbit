@@ -212,6 +212,7 @@ class EntryThesisLedgerTest(unittest.TestCase):
                     "matrix_reject_context": [
                         "OIL_CONTEXT_TECHNICAL_DIRECTION context_asset:WTICO_USD rejects EUR_USD LONG",
                     ],
+                    "matrix_context_refs": ["context_asset:XAU_USD", "context_asset:WTICO_USD", "cot:EUR"],
                     "forecast_drivers_for": ["news_theme_followthrough USD soft"],
                 }
 
@@ -234,8 +235,10 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertEqual(context["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
             self.assertEqual(context["matrix_support_count"], 2)
             self.assertEqual(context["matrix_support_layers"], ["context_asset_chart"])
+            self.assertEqual(context["matrix_context_refs"], ["context_asset:XAU_USD", "context_asset:WTICO_USD", "cot:EUR"])
             self.assertIn("context_asset:XAU_USD", context["context_asset_refs"])
             self.assertIn("context_asset:WTICO_USD", context["context_asset_refs"])
+            self.assertIn("cot:EUR", context["evidence_refs"])
             self.assertIn("XAU_USD", context["context_asset_symbols"])
             self.assertIn("news_context", context)
             loaded = load_entry_thesis("ctx-1", root)

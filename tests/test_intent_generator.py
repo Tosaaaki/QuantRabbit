@@ -147,6 +147,9 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["matrix_reject_count"], 1)
             self.assertEqual(metadata["matrix_support_layers"], ["context_asset_chart"])
             self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", metadata["matrix_support_context"][0])
+            self.assertEqual(metadata["matrix_support_refs"], ["context_asset:XAU_USD"])
+            self.assertIn("context_asset:XAU_USD", metadata["matrix_context_refs"])
+            self.assertIn("cot:EUR", metadata["matrix_context_refs"])
             self.assertIn("matrix matrix:EUR_USD:LONG", result["intent"]["market_context"]["chart_story"])
             self.assertIn("XAU_USD pressure maps to EUR_USD LONG", result["intent"]["market_context"]["chart_story"])
 

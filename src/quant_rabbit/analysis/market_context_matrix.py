@@ -16,6 +16,11 @@ from typing import Any, Iterable
 
 
 SIDES = ("LONG", "SHORT")
+# Compact packet limit for advisory evidence refs in intent metadata. This is
+# a payload-size guard, not a market threshold: the full matrix stays in
+# `data/market_context_matrix.json`, while each intent carries the refs needed
+# to attribute later P/L to gold/oil/cross-asset/news context.
+SUMMARY_LIST_LIMIT = 8
 
 
 def build_market_context_matrix_from_payloads(
@@ -176,10 +181,17 @@ def matrix_summary_for_intent(matrix: dict[str, Any] | None, pair: str, side: st
         "matrix_missing_count": side_payload.get("missing_count", 0),
         "strongest_matrix_support": side_payload.get("strongest_support"),
         "strongest_matrix_reject": side_payload.get("strongest_reject"),
+        "strongest_matrix_warning": side_payload.get("strongest_warning"),
         "matrix_support_layers": _layers(side_payload, bucket="supports"),
         "matrix_reject_layers": _layers(side_payload, bucket="rejects"),
+        "matrix_warning_layers": _layers(side_payload, bucket="warnings"),
         "matrix_support_context": _cross_asset_context(side_payload, buckets=("supports",)),
         "matrix_reject_context": _cross_asset_context(side_payload, buckets=("rejects",)),
+        "matrix_warning_context": _cross_asset_context(side_payload, buckets=("warnings",)),
+        "matrix_support_refs": _evidence_refs(side_payload, buckets=("supports",)),
+        "matrix_reject_refs": _evidence_refs(side_payload, buckets=("rejects",)),
+        "matrix_warning_refs": _evidence_refs(side_payload, buckets=("warnings",)),
+        "matrix_context_refs": _evidence_refs(side_payload, buckets=("supports", "rejects", "warnings")),
     }
 
 
@@ -240,6 +252,22 @@ def _layers(side_payload: dict[str, Any], *, bucket: str) -> list[str]:
     )
 
 
+def _evidence_refs(side_payload: dict[str, Any], *, buckets: tuple[str, ...]) -> list[str]:
+    refs: list[str] = []
+    for bucket in buckets:
+        rows = side_payload.get(bucket) if isinstance(side_payload.get(bucket), list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for ref in row.get("evidence_refs", []) or []:
+                text = str(ref).strip()
+                if text and text not in refs:
+                    refs.append(text)
+                if len(refs) >= SUMMARY_LIST_LIMIT:
+                    return refs
+    return refs
+
+
 def _cross_asset_context(side_payload: dict[str, Any], *, buckets: tuple[str, ...]) -> list[str]:
     items: list[str] = []
     for bucket in buckets:
@@ -255,8 +283,9 @@ def _cross_asset_context(side_payload: dict[str, Any], *, buckets: tuple[str, ..
                 continue
             code = str(row.get("code") or layer or "context")
             message = str(row.get("message") or "").strip()
-            items.append(f"{code}: {message}" if message else code)
-            if len(items) >= 4:
+            ref_text = f" refs={','.join(refs[:3])}" if refs else ""
+            items.append(f"{code}: {message}{ref_text}" if message else f"{code}{ref_text}")
+            if len(items) >= SUMMARY_LIST_LIMIT:
                 return items
     return items
 

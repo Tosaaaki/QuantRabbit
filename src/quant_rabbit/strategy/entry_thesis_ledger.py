@@ -757,6 +757,18 @@ def _build_context_evidence(*, intent: Any, metadata: Dict[str, Any], forecast: 
         if values:
             evidence[key] = values
 
+    explicit_context_refs: list[str] = []
+    for key in (
+        "matrix_context_refs",
+        "matrix_support_refs",
+        "matrix_reject_refs",
+        "matrix_warning_refs",
+    ):
+        values = _context_text_list(metadata.get(key))
+        if values:
+            evidence[key] = values
+            explicit_context_refs.extend(values)
+
     context_texts: list[str] = []
     for key in (
         "matrix_support_context",
@@ -797,7 +809,7 @@ def _build_context_evidence(*, intent: Any, metadata: Dict[str, Any], forecast: 
         evidence["forecast_news_context"] = forecast_news_context
         context_texts.extend(forecast_news_context)
 
-    refs = _context_refs_from_texts(([matrix_ref] if matrix_ref else []) + context_texts)
+    refs = _context_refs_from_texts(([matrix_ref] if matrix_ref else []) + explicit_context_refs + context_texts)
     if refs:
         evidence["evidence_refs"] = refs
         evidence["context_asset_refs"] = [

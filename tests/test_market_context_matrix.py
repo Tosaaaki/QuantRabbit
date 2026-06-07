@@ -161,6 +161,8 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertTrue(
             any("GOLD_CONTEXT_TECHNICAL_DIRECTION" in item for item in summary["matrix_support_context"])
         )
+        self.assertIn("cross:XAU_USD", summary["matrix_context_refs"])
+        self.assertIn("context_asset:XAU_USD", summary["matrix_context_refs"])
         self.assertNotIn("supports", summary)
 
     def test_intent_summary_keeps_matrix_compact(self) -> None:
@@ -186,6 +188,7 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertEqual(summary["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
         self.assertIn("matrix_support_count", summary)
         self.assertIn("strongest_matrix_reject", summary)
+        self.assertIn("matrix_context_refs", summary)
         self.assertNotIn("supports", summary)
 
 

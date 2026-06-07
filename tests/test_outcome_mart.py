@@ -206,6 +206,7 @@ class OutcomeMartBuilderTest(unittest.TestCase):
             self.assertEqual(payload["source_coverage"]["context_feature_coverage_pct"], 100.0)
             self.assertEqual(features["matrix_ref:matrix:EUR_USD:LONG"]["net_jpy"], 700.0)
             self.assertEqual(features["context_asset_ref:context_asset:XAU_USD"]["outcome_n"], 1)
+            self.assertEqual(features["cross_asset_ref:cross:XAU_USD"]["outcome_n"], 1)
             self.assertEqual(features["matrix_support_layer:context_asset_chart"]["net_jpy"], 700.0)
             self.assertEqual(features["news_context:news_theme_followthrough"]["net_jpy"], 700.0)
             report = (root / "outcome_mart.md").read_text()
@@ -487,7 +488,7 @@ def _seed_execution_ledger_with_context_features(path: Path) -> None:
     context_evidence = {
         "market_context_matrix_ref": "matrix:EUR_USD:LONG",
         "matrix_support_layers": ["context_asset_chart"],
-        "context_asset_refs": ["context_asset:XAU_USD"],
+        "context_asset_refs": ["context_asset:XAU_USD", "cross:XAU_USD"],
         "context_asset_symbols": ["XAU_USD"],
         "news_context": ["forecast_drivers_for=[\"news_theme_followthrough USD soft\"]"],
     }
