@@ -47,28 +47,112 @@ def _make_db(path: Path, trades: list[dict]) -> None:
         )
         """
     )
+    entry_trade_ids = {
+        t.get("trade_id", f"trade-{i}")
+        for i, t in enumerate(trades)
+        if t.get("event_type", "TRADE_CLOSED") == "ORDER_FILLED"
+    }
+    expanded: list[dict] = []
     for i, t in enumerate(trades):
+        trade_id = t.get("trade_id", f"trade-{i}")
+        event_type = t.get("event_type", "TRADE_CLOSED")
+        lane_id = t.get("lane_id", f"test_lane:{t['pair']}:{_original_side(t['side'])}:TEST")
+        if event_type == "ORDER_FILLED" and t.get("attributed", True):
+            expanded.append(
+                {
+                    "event_uid": f"gateway-{i}",
+                    "ts_utc": t["ts_utc"],
+                    "event_type": "GATEWAY_ORDER_SENT",
+                    "lane_id": lane_id,
+                    "order_id": f"order-{trade_id}",
+                    "trade_id": trade_id,
+                    "pair": t["pair"],
+                    "side": t["side"],
+                    "units": t.get("units"),
+                    "pl": None,
+                }
+            )
+        if event_type in {"TRADE_CLOSED", "TRADE_REDUCED"} and t.get("attributed", True) and trade_id not in entry_trade_ids:
+            original = _original_side(t["side"])
+            expanded.extend(
+                [
+                    {
+                        "event_uid": f"gateway-{i}",
+                        "ts_utc": t["ts_utc"],
+                        "event_type": "GATEWAY_ORDER_SENT",
+                        "lane_id": lane_id,
+                        "order_id": f"order-{trade_id}",
+                        "trade_id": trade_id,
+                        "pair": t["pair"],
+                        "side": original,
+                        "units": _units_for_side(original),
+                        "pl": None,
+                    },
+                    {
+                        "event_uid": f"entry-{i}",
+                        "ts_utc": t["ts_utc"],
+                        "event_type": "ORDER_FILLED",
+                        "lane_id": None,
+                        "order_id": f"order-{trade_id}",
+                        "trade_id": trade_id,
+                        "pair": t["pair"],
+                        "side": original,
+                        "units": _units_for_side(original),
+                        "pl": None,
+                    },
+                ]
+            )
+        expanded.append(
+            {
+                "event_uid": f"uid-{i}",
+                "ts_utc": t["ts_utc"],
+                "event_type": event_type,
+                "lane_id": t.get("lane_id"),
+                "order_id": t.get("order_id", f"order-{trade_id}" if event_type == "ORDER_FILLED" else f"close-{trade_id}"),
+                "trade_id": trade_id,
+                "pair": t["pair"],
+                "side": t["side"],
+                "units": t.get("units"),
+                "pl": t["pl"],
+            }
+        )
+    for row in expanded:
         conn.execute(
             """
             INSERT INTO execution_events
                 (event_uid, ts_utc, source, event_type, trade_id, pair, side,
-                 units, realized_pl_jpy, related_transaction_ids_json, raw_json, inserted_at_utc)
-            VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, '[]', '{}', ?)
+                 lane_id, order_id, units, realized_pl_jpy, related_transaction_ids_json, raw_json, inserted_at_utc)
+            VALUES (?, ?, 'test', ?, ?, ?, ?, ?, ?, ?, ?, '[]', '{}', ?)
             """,
             (
-                f"uid-{i}",
-                t["ts_utc"],
-                t.get("event_type", "TRADE_CLOSED"),
-                t.get("trade_id", f"trade-{i}"),
-                t["pair"],
-                t["side"],
-                t.get("units"),
-                t["pl"],
-                t["ts_utc"],
+                row["event_uid"],
+                row["ts_utc"],
+                row["event_type"],
+                row["trade_id"],
+                row["pair"],
+                row["side"],
+                row.get("lane_id"),
+                row.get("order_id"),
+                row.get("units"),
+                row["pl"],
+                row["ts_utc"],
             ),
         )
     conn.commit()
     conn.close()
+
+
+def _original_side(close_side: str) -> str:
+    side = str(close_side).upper()
+    if side == "LONG":
+        return "SHORT"
+    if side == "SHORT":
+        return "LONG"
+    return side
+
+
+def _units_for_side(side: str) -> int:
+    return 1000 if str(side).upper() == "LONG" else -1000
 
 
 class LaneHistoryLedgerTest(unittest.TestCase):
@@ -248,6 +332,34 @@ class LaneHistoryLedgerTest(unittest.TestCase):
             hist = compute_lane_history(path)
             snap = hist.get(("EUR_USD", "LONG"))
             self.assertIsNotNone(snap)
+            self.assertEqual(snap.sample_size, 1)
+            self.assertAlmostEqual(snap.net_pl_jpy, -500.0)
+
+    def test_ignores_unattributed_manual_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "pl": +22725.0,
+                        "ts_utc": "2026-05-07T22:25:28Z",
+                        "attributed": False,
+                    },
+                    {
+                        "pair": "USD_JPY",
+                        "side": "SHORT",
+                        "pl": -500.0,
+                        "ts_utc": "2026-05-08T01:00:00Z",
+                    },
+                ],
+            )
+
+            hist = compute_lane_history(path)
+
+            snap = hist[("USD_JPY", "LONG")]
             self.assertEqual(snap.sample_size, 1)
             self.assertAlmostEqual(snap.net_pl_jpy, -500.0)
 

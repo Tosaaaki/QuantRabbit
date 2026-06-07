@@ -100,8 +100,8 @@ def _read_recent_closes(
     window_start_utc: datetime,
     window_end_utc: datetime,
 ) -> list[tuple[str, str, float, str | None]]:
-    """Return (pair, original_side, realized_pl_jpy, lane_id) tuples for
-    realized trade outcomes inside the window."""
+    """Return bot-attributed (pair, original_side, realized_pl_jpy, lane_id)
+    tuples for realized trade outcomes inside the window."""
     if not db_path.exists():
         return []
     try:
@@ -112,38 +112,55 @@ def _read_recent_closes(
     try:
         cur = conn.execute(
             """
-            WITH entries AS (
+            WITH gateway_entries AS (
                 SELECT
                     trade_id,
+                    order_id,
+                    lane_id
+                FROM execution_events
+                WHERE event_type = 'GATEWAY_ORDER_SENT'
+                  AND lane_id IS NOT NULL
+                  AND lane_id != ''
+            ),
+            entries AS (
+                SELECT
+                    e.trade_id,
+                    COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS gateway_lane_id,
                     CASE
-                        WHEN MAX(units) > 0 THEN 'LONG'
-                        WHEN MIN(units) < 0 THEN 'SHORT'
+                        WHEN MAX(e.units) > 0 THEN 'LONG'
+                        WHEN MIN(e.units) < 0 THEN 'SHORT'
                         ELSE NULL
                     END AS position_side
-                FROM execution_events
-                WHERE event_type = 'ORDER_FILLED'
-                  AND trade_id IS NOT NULL
-                  AND trade_id != ''
-                  AND units IS NOT NULL
-                GROUP BY trade_id
+                FROM execution_events e
+                LEFT JOIN gateway_entries g
+                  ON (
+                    g.trade_id IS NOT NULL
+                    AND g.trade_id != ''
+                    AND g.trade_id = e.trade_id
+                  )
+                  OR (
+                    g.order_id IS NOT NULL
+                    AND g.order_id != ''
+                    AND g.order_id = e.order_id
+                  )
+                WHERE e.event_type = 'ORDER_FILLED'
+                  AND e.trade_id IS NOT NULL
+                  AND e.trade_id != ''
+                  AND e.units IS NOT NULL
+                GROUP BY e.trade_id
+                HAVING gateway_lane_id IS NOT NULL
+                   AND gateway_lane_id != ''
             ),
             realized AS (
                 SELECT
                     COALESCE(NULLIF(e.trade_id, ''), e.event_uid) AS outcome_id,
                     e.ts_utc,
                     e.pair,
-                    e.lane_id,
-                    COALESCE(
-                        entries.position_side,
-                        CASE
-                            WHEN UPPER(e.side) = 'LONG' THEN 'SHORT'
-                            WHEN UPPER(e.side) = 'SHORT' THEN 'LONG'
-                            ELSE NULL
-                        END
-                    ) AS original_side,
+                    COALESCE(NULLIF(e.lane_id, ''), entries.gateway_lane_id) AS lane_id,
+                    entries.position_side AS original_side,
                     e.realized_pl_jpy
                 FROM execution_events e
-                LEFT JOIN entries ON entries.trade_id = e.trade_id
+                INNER JOIN entries ON entries.trade_id = e.trade_id
                 WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
                   AND e.realized_pl_jpy IS NOT NULL
                   AND e.pair IS NOT NULL
