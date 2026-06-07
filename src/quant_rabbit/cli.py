@@ -659,6 +659,10 @@ def _auto_refresh_market_evidence_if_required(
     """
 
     if reuse_market_artifacts:
+        _validate_reusable_market_evidence(
+            label=label,
+            market_context_matrix_path=market_context_matrix_path,
+        )
         return {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
     if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip() in {
         "1",
@@ -796,6 +800,34 @@ def _auto_refresh_market_evidence_if_required(
         + "\n"
     )
     return summary
+
+
+def _validate_reusable_market_evidence(
+    *,
+    label: str,
+    market_context_matrix_path: Path,
+) -> None:
+    """Refuse reused live artifacts when candidate discovery lacks matrix context."""
+
+    if not market_context_matrix_path.exists():
+        raise RuntimeError(
+            f"{label} cannot reuse market artifacts: missing required market evidence artifact "
+            f"market_context_matrix={market_context_matrix_path}; run without --reuse-market-artifacts "
+            "or refresh market context before live candidate discovery"
+        )
+    try:
+        payload = json.loads(market_context_matrix_path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeError(
+            f"{label} cannot reuse market artifacts: unreadable market_context_matrix="
+            f"{market_context_matrix_path}: {exc}; refresh market context before live candidate discovery"
+        ) from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("pairs"), dict) or not payload["pairs"]:
+        raise RuntimeError(
+            f"{label} cannot reuse market artifacts: market_context_matrix="
+            f"{market_context_matrix_path} has no pair/side matrix rows; refresh market context before "
+            "live candidate discovery"
+        )
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

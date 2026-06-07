@@ -695,6 +695,29 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         refresh.assert_called_once_with(label="autotrade-cycle", reuse_market_artifacts=True)
 
+    def test_reuse_market_artifacts_requires_market_context_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            matrix = Path(tmp) / "missing_market_context_matrix.json"
+
+            with self.assertRaisesRegex(RuntimeError, "missing required market evidence artifact"):
+                _auto_refresh_market_evidence_if_required(
+                    label="autotrade-cycle",
+                    reuse_market_artifacts=True,
+                    market_context_matrix_path=matrix,
+                )
+
+    def test_reuse_market_artifacts_requires_non_empty_market_context_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            matrix = Path(tmp) / "market_context_matrix.json"
+            matrix.write_text(json.dumps({"generated_at_utc": datetime.now(timezone.utc).isoformat(), "pairs": {}}))
+
+            with self.assertRaisesRegex(RuntimeError, "has no pair/side matrix rows"):
+                _auto_refresh_market_evidence_if_required(
+                    label="autotrade-cycle",
+                    reuse_market_artifacts=True,
+                    market_context_matrix_path=matrix,
+                )
+
 
 class LiveRuntimeBootstrapTest(unittest.TestCase):
     """Coverage for 2026-05-11 cli bootstrap-gate fix.
