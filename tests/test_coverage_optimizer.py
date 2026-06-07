@@ -348,10 +348,15 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertTrue(diagnostics["all_lanes_spread_blocked"])
             self.assertTrue(diagnostics["market_context_matrix_missing"])
             self.assertEqual(diagnostics["risk_block_issue_counts"]["SPREAD_TOO_WIDE"], 2)
+            self.assertEqual(diagnostics["spread_normalized_candidate_count"], 2)
+            self.assertEqual(diagnostics["spread_normalized_candidate_reward_jpy"], 314.0)
+            self.assertEqual(diagnostics["spread_normalized_no_live_blocker_count"], 2)
             self.assertTrue(any("order_intents artifact is stale" in item for item in payload["blockers"]))
             self.assertTrue(any("refresh broker-snapshot and generate-intents" in item for item in payload["action_items"]))
+            self.assertTrue(any("spread-normalized candidates" in item for item in payload["action_items"]))
             self.assertFalse(any("build at least" in item for item in payload["action_items"]))
             self.assertIn("Artifact Diagnostics", (root / "coverage.md").read_text())
+            self.assertIn("Spread-normalized candidates", (root / "coverage.md").read_text())
 
     def test_risk_blocker_messages_are_not_duplicated(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -223,6 +223,10 @@ class CoverageOptimizer:
                 f"- Market closed reason: `{market_status.get('closed_reason') or 'none'}`",
                 f"- Matrix missing: `{diagnostics.get('market_context_matrix_missing')}`",
                 f"- All lanes spread-blocked: `{diagnostics.get('all_lanes_spread_blocked')}`",
+                f"- Spread-normalized candidates: `{diagnostics.get('spread_normalized_candidate_count')}` "
+                f"reward=`{diagnostics.get('spread_normalized_candidate_reward_jpy')}`",
+                f"- Spread-normalized no-live-blocker candidates: `{diagnostics.get('spread_normalized_no_live_blocker_count')}` "
+                f"reward=`{diagnostics.get('spread_normalized_no_live_blocker_reward_jpy')}`",
                 f"- Risk block issue counts: `{diagnostics.get('risk_block_issue_counts') or {}}`",
                 "",
             ]
@@ -394,6 +398,14 @@ def _action_items(
     if live_ready_reward < remaining_target:
         if evidence_refresh_required:
             items.append("defer live-ready reward sizing until fresh spreads and quotes separate market-closure noise from true discovery failure")
+            spread_candidates = int(artifact_diagnostics.get("spread_normalized_candidate_count") or 0)
+            spread_reward = float(artifact_diagnostics.get("spread_normalized_candidate_reward_jpy") or 0.0)
+            no_live_blocker_candidates = int(artifact_diagnostics.get("spread_normalized_no_live_blocker_count") or 0)
+            if spread_candidates:
+                items.append(
+                    f"after spread refresh, re-evaluate {spread_candidates} spread-normalized candidates "
+                    f"({spread_reward:.0f} JPY reward; {no_live_blocker_candidates} have no remaining live blockers)"
+                )
         else:
             reward_gap = remaining_target - live_ready_reward
             avg_reward = _average_reward(lanes) or 1.0
@@ -453,6 +465,7 @@ def _artifact_diagnostics(
         intents_age_seconds = _round(max(0.0, (now_utc - parsed_generated_at).total_seconds()))
     risk_block_issue_counts = _issue_code_counts(results, "risk_issues", block_only=True)
     strategy_block_issue_counts = _issue_code_counts(results, "strategy_issues", block_only=True)
+    spread_normalized = _spread_normalized_candidate_summary(results)
     all_lanes_spread_blocked = bool(results) and all(
         _result_has_block_issue_code(result, "risk_issues", "SPREAD_TOO_WIDE") for result in results
     )
@@ -478,6 +491,7 @@ def _artifact_diagnostics(
         "status_counts": _status_counts(results),
         "risk_block_issue_counts": risk_block_issue_counts,
         "strategy_block_issue_counts": strategy_block_issue_counts,
+        **spread_normalized,
         "all_lanes_spread_blocked": all_lanes_spread_blocked,
         "market_context_matrix_path": str(market_context_matrix_path),
         "market_context_matrix_missing": market_context_matrix_missing,
@@ -490,6 +504,49 @@ def _artifact_diagnostics(
             "minutes_to_next_close": market_status.get("minutes_to_next_close"),
         },
         "requires_market_evidence_refresh": requires_market_evidence_refresh,
+    }
+
+
+def _spread_normalized_candidate_summary(results: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    candidates: list[dict[str, Any]] = []
+    no_live_blocker_candidates: list[dict[str, Any]] = []
+    for result in results:
+        non_spread_risk_blocks = [
+            issue
+            for issue in result.get("risk_issues", []) or []
+            if isinstance(issue, dict)
+            and issue.get("severity") == "BLOCK"
+            and issue.get("code") != "SPREAD_TOO_WIDE"
+        ]
+        strategy_blocks = [
+            issue
+            for issue in result.get("strategy_issues", []) or []
+            if isinstance(issue, dict) and issue.get("severity") == "BLOCK"
+        ]
+        if non_spread_risk_blocks or strategy_blocks:
+            continue
+        risk_jpy, reward_jpy, reward_risk = _risk_reward_from_result(result)
+        if risk_jpy <= 0 or reward_jpy <= 0:
+            continue
+        lane = {
+            "lane_id": str(result.get("lane_id") or ""),
+            "reward_jpy": reward_jpy,
+            "risk_jpy": risk_jpy,
+            "reward_risk": reward_risk,
+            "live_blockers": len(result.get("live_blockers", []) or []),
+        }
+        candidates.append(lane)
+        if not result.get("live_blockers"):
+            no_live_blocker_candidates.append(lane)
+    top = sorted(candidates, key=lambda item: float(item["reward_jpy"]), reverse=True)[:8]
+    return {
+        "spread_normalized_candidate_count": len(candidates),
+        "spread_normalized_candidate_reward_jpy": _round(sum(float(item["reward_jpy"]) for item in candidates)),
+        "spread_normalized_no_live_blocker_count": len(no_live_blocker_candidates),
+        "spread_normalized_no_live_blocker_reward_jpy": _round(
+            sum(float(item["reward_jpy"]) for item in no_live_blocker_candidates)
+        ),
+        "spread_normalized_top_lane_ids": [str(item["lane_id"]) for item in top],
     }
 
 
