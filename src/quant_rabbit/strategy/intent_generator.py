@@ -1548,6 +1548,7 @@ def _append_forecast_seed_lanes(
             pair_chart=charts.get(pair),
             data_root=data_root,
             cycle_id=forecast_cycle_id,
+            validation_time_utc=snapshot.fetched_at_utc,
         )
         direction = str(getattr(forecast, "direction", "") or "").upper()
         confidence = _optional_float(getattr(forecast, "confidence", None))
@@ -1639,6 +1640,7 @@ def _record_forecast_seed_telemetry(
     pair_chart: dict[str, Any] | None,
     data_root: Path | None,
     cycle_id: str | None,
+    validation_time_utc: datetime | None = None,
 ) -> None:
     if not _require_telemetry_for_live_active() or data_root is None or not cycle_id:
         return
@@ -1658,6 +1660,11 @@ def _record_forecast_seed_telemetry(
         forecast_record = _forecast_with_pair(forecast, pair=pair)
         regime_label = _forecast_seed_regime_label(raw_chart) if isinstance(raw_chart, dict) else None
         emission_time = _ensure_utc(getattr(quote, "timestamp_utc", None))
+        if not _quote_fresh_for_forecast_seed_telemetry(
+            emission_time,
+            validation_time_utc=validation_time_utc,
+        ):
+            return
         record_forecast(forecast_record, data_root=data_root, cycle_id=cycle_id, now=emission_time)
         if not projection_telemetry_market_open(emission_time):
             return
@@ -1683,6 +1690,28 @@ def _record_forecast_seed_telemetry(
             )
     except Exception:
         return
+
+
+def _quote_fresh_for_forecast_seed_telemetry(
+    emission_time: datetime | None,
+    *,
+    validation_time_utc: datetime | None,
+) -> bool:
+    """Only record forecast telemetry when the price can be live-validated.
+
+    Projection rows are HIT/MISS calibration samples. A stale weekend quote may
+    still have an in-market timestamp, but it is not a tradable observation at
+    the current snapshot time. Reuse RiskPolicy's quote-age contract so the
+    telemetry ledger and live-entry risk gate agree on freshness.
+    """
+    emitted = _ensure_utc(emission_time)
+    if emitted is None:
+        return False
+    validation_time = _ensure_utc(validation_time_utc) or datetime.now(timezone.utc)
+    if emitted > validation_time:
+        return True
+    quote_age = (validation_time - emitted).total_seconds()
+    return quote_age <= RiskPolicy().max_quote_age_seconds
 
 
 class _ForecastPairProxy:

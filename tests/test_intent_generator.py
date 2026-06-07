@@ -90,6 +90,38 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(market["intent"]["metadata"]["parent_lane_id"], "trend_trader:EUR_USD:LONG:TREND_CONTINUATION")
             self.assertEqual(market["intent"]["metadata"]["order_timing"], "NOW_MARKET")
 
+    def test_forecast_seed_telemetry_skips_stale_quote(self) -> None:
+        from quant_rabbit.models import Quote
+        from quant_rabbit.strategy.intent_generator import _record_forecast_seed_telemetry
+
+        os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = "1"
+        validation_time = datetime(2026, 6, 5, 3, 0, tzinfo=timezone.utc)
+        stale_quote_time = validation_time - timedelta(seconds=120)
+        forecast = SimpleNamespace(
+            direction="UP",
+            confidence=0.72,
+            current_price=1.1,
+            target_price=1.105,
+            invalidation_price=1.098,
+            horizon_min=60,
+            projection_signals=(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _record_forecast_seed_telemetry(
+                forecast,
+                pair="EUR_USD",
+                quote=Quote("EUR_USD", 1.0999, 1.1001, stale_quote_time),
+                pair_chart={},
+                data_root=data_root,
+                cycle_id="stale-cycle",
+                validation_time_utc=validation_time,
+            )
+
+            self.assertFalse((data_root / "forecast_history.jsonl").exists())
+            self.assertFalse((data_root / "projection_ledger.jsonl").exists())
+
     def test_market_context_matrix_metadata_is_advisory_on_intent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
