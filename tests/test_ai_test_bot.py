@@ -360,6 +360,86 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["managed_net_jpy"], 700.0)
             self.assertEqual(day["selected_buckets"], ["seat_outcomes:EUR_USD:SHORT:MARKET:S_HUNT"])
 
+    def test_dedupes_same_trade_id_across_pretrade_and_trade_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            _seed_db(
+                db,
+                [
+                    (
+                        "pretrade_outcomes",
+                        "2026-04-01",
+                        "EUR_USD",
+                        "LONG",
+                        100.0,
+                        json.dumps({"trade_id": "train-1", "pretrade_level": "HIGH", "created_at": "2026-04-01 01:00:00"}),
+                    ),
+                    (
+                        "trades",
+                        "2026-04-01",
+                        "EUR_USD",
+                        "LONG",
+                        100.0,
+                        json.dumps({"trade_id": "train-1", "created_at": "2026-04-20 01:00:00"}),
+                    ),
+                    (
+                        "pretrade_outcomes",
+                        "2026-04-01",
+                        "EUR_USD",
+                        "LONG",
+                        120.0,
+                        json.dumps({"trade_id": "train-2", "pretrade_level": "HIGH", "created_at": "2026-04-01 02:00:00"}),
+                    ),
+                    (
+                        "trades",
+                        "2026-04-01",
+                        "EUR_USD",
+                        "LONG",
+                        120.0,
+                        json.dumps({"trade_id": "train-2", "created_at": "2026-04-20 02:00:00"}),
+                    ),
+                    (
+                        "pretrade_outcomes",
+                        "2026-04-02",
+                        "EUR_USD",
+                        "LONG",
+                        150.0,
+                        json.dumps({"trade_id": "validation-1", "pretrade_level": "HIGH", "created_at": "2026-04-02 01:00:00"}),
+                    ),
+                    (
+                        "trades",
+                        "2026-04-02",
+                        "EUR_USD",
+                        "LONG",
+                        150.0,
+                        json.dumps({"trade_id": "validation-1", "created_at": "2026-04-20 03:00:00"}),
+                    ),
+                ],
+            )
+
+            AITestBotBacktester(
+                db_path=db,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=1000.0,
+                training_days=1,
+                min_train_trades=2,
+                max_active_buckets=6,
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            self.assertEqual(payload["raw_rows"], 6)
+            self.assertEqual(payload["deduped_rows"], 3)
+            self.assertEqual(payload["deduped_away_rows"], 3)
+            by_source = {item["source_table"]: item for item in payload["source_contributions"]}
+            self.assertEqual(by_source["pretrade_outcomes"]["deduped_trades"], 3)
+            self.assertNotIn("trades", by_source)
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], ["pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED"])
+            self.assertEqual(day["selected_trades"], 1)
+            self.assertEqual(day["managed_net_jpy"], 150.0)
+
     def test_execution_ledger_source_uses_original_position_side_without_exit_reason_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

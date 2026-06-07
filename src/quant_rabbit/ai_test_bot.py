@@ -70,6 +70,7 @@ class TestBotTrade:
     opportunity_key: str
     sort_key: str
     match_ids: tuple[str, ...] = ()
+    actual_trade_ids: tuple[str, ...] = ()
 
     @property
     def bucket(self) -> TestBotBucket:
@@ -351,6 +352,7 @@ class AITestBotBacktester:
                 pair = str(row["pair"])
                 direction = str(row["direction"])
                 match_ids = _matched_trade_ids(raw.get("matched_trade_ids")) if source_table == "seat_outcomes" else ()
+                actual_trade_ids = _actual_trade_ids(source_table=source_table, raw=raw)
                 execution_style, allocation_band = _observable_bucket_fields(
                     source_table=source_table,
                     execution_style=row["execution_style"],
@@ -378,6 +380,7 @@ class AITestBotBacktester:
                     ),
                     sort_key=_event_sort_key(row["source_id"], raw),
                     match_ids=match_ids,
+                    actual_trade_ids=actual_trade_ids,
                 )
         if EXECUTION_LEDGER_SOURCE_TABLE in self.source_tables:
             yield from _execution_ledger_trades(self.execution_ledger_db_path)
@@ -510,7 +513,7 @@ class AITestBotBacktester:
                 "- Execution-ledger outcomes require attribution to a sent gateway entry; manual/tagless or otherwise unattributed closes are ignored.",
                 "- Execution-ledger buckets use gateway lane desk/strategy as pre-entry evidence; exit reason remains post-trade evidence and is not used as a selection bucket.",
                 "- Execution-ledger buckets require raw-positive training net, because hypothetical caps cannot certify old real-exit losses as fixed evidence.",
-                "- Opportunity dedupe counts repeated seat receipts as one candidate before training or validation scoring.",
+                "- Opportunity dedupe counts repeated seat receipts and cross-source same-trade-id rows as one candidate before training or validation scoring.",
                 "- Losses are capped by the equity-derived per-trade cap; wins are not enlarged.",
                 "- `live_permission=false` means this receipt can support research, not live execution.",
                 "",
@@ -628,12 +631,22 @@ def _selected_trades_for_day(trades: tuple[TestBotTrade, ...], day: TestBotDay) 
 
 def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade, ...]:
     selected: dict[str, TestBotTrade] = {}
+    actual_trade_groups: dict[tuple[str, str, str, str], list[TestBotTrade]] = {}
     seat_matched_groups: dict[tuple[str, str, str, str], list[TestBotTrade]] = {}
     for row in rows:
         if row.source_table == "seat_outcomes" and row.match_ids:
             key = (row.source_table, row.session_date, row.pair, row.direction)
             seat_matched_groups.setdefault(key, []).append(row)
             continue
+        if len(row.actual_trade_ids) == 1:
+            key = (row.session_date, row.pair, row.direction, row.actual_trade_ids[0])
+            actual_trade_groups.setdefault(key, []).append(row)
+            continue
+        current = selected.get(row.opportunity_key)
+        if current is None or _is_newer(row, current):
+            selected[row.opportunity_key] = row
+    for group_rows in actual_trade_groups.values():
+        row = _best_actual_trade_row(group_rows)
         current = selected.get(row.opportunity_key)
         if current is None or _is_newer(row, current):
             selected[row.opportunity_key] = row
@@ -641,6 +654,26 @@ def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade,
         for row in _dedupe_overlapping_seat_matches(group_rows):
             selected[row.opportunity_key] = row
     return tuple(sorted(selected.values(), key=lambda row: (row.session_date, row.source_table, row.pair, row.direction, row.sort_key)))
+
+
+def _best_actual_trade_row(rows: list[TestBotTrade]) -> TestBotTrade:
+    # Same broker trade can be imported through multiple archive tables.
+    # Prefer the row with pre-entry evidence so the backtest does not count the
+    # same realized P/L twice while still preserving the most actionable bucket.
+    priority = {
+        "pretrade_outcomes": 4,
+        EXECUTION_LEDGER_SOURCE_TABLE: 3,
+        "seat_outcomes": 2,
+        "trades": 1,
+    }
+    return max(
+        rows,
+        key=lambda row: (
+            priority.get(row.source_table, 0),
+            row.sort_key,
+            row.source_id,
+        ),
+    )
 
 
 def _dedupe_overlapping_seat_matches(rows: list[TestBotTrade]) -> tuple[TestBotTrade, ...]:
@@ -1421,6 +1454,7 @@ def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
                 raw=raw,
             ),
             sort_key=str(row["ts_utc"] or source_id),
+            actual_trade_ids=_matched_trade_ids(row["trade_id"]),
         )
 
 
@@ -1560,6 +1594,12 @@ def _opportunity_key(
     if trade_id:
         return ":".join((source_table, session_date, pair, direction, trade_id))
     return ":".join((source_table, session_date, pair, direction, execution_style, allocation_band, source_id))
+
+
+def _actual_trade_ids(*, source_table: str, raw: dict[str, object]) -> tuple[str, ...]:
+    if source_table == "seat_outcomes":
+        return _matched_trade_ids(raw.get("matched_trade_ids"))
+    return _matched_trade_ids(raw.get("trade_id"))
 
 
 def _matched_trade_ids(value: object) -> tuple[str, ...]:
