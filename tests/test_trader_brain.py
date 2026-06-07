@@ -1298,6 +1298,35 @@ class TraderBrainTest(unittest.TestCase):
             self.assertIn("current receipt is the authority", " ".join(eur.rationale))
             self.assertGreaterEqual(eur.size_multiple, 1.0)
 
+    def test_negative_seat_pnl_ranks_down_without_blocking_live_ready_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy_path = _eur_strategy(root)
+            payload = json.loads(strategy_path.read_text())
+            payload["profiles"][0]["seat_pl_n"] = 12
+            payload["profiles"][0]["seat_net_jpy"] = -3000.0
+            payload["profiles"][0]["seat_win_rate_pct"] = 16.7
+            strategy_path.write_text(json.dumps(payload))
+            brain = TraderBrain(
+                intents_path=_eur_only_intents(root),
+                campaign_plan_path=_eur_only_campaign(root),
+                strategy_profile_path=strategy_path,
+                market_story_profile_path=_stories(root),
+                target_state_path=root / "missing_target.json",
+                trader_settings_path=root / "settings.json",
+                attack_advice_path=root / "missing_attack_advice.json",
+                pair_charts_path=root / "missing_pair_charts.json",
+                output_path=root / "decision.json",
+                report_path=root / "decision.md",
+            )
+
+            decision = brain.run(_snapshot())
+
+            eur = decision.scores[0]
+            self.assertEqual(eur.action, ACTION_SEND_ENTRY)
+            self.assertFalse(any("negative seat discovery" in item for item in eur.blockers))
+            self.assertIn("negative seat discovery PnL -3000 JPY", " ".join(eur.rationale))
+
     def test_market_lane_requires_trigger_when_history_and_daily_review_are_negative(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

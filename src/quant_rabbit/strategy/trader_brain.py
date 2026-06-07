@@ -2793,6 +2793,8 @@ def _technical_consensus_score(
     seat_discovered = int(strategy.get("seat_discovered") or 0)
     seat_orderable = int(strategy.get("seat_orderable") or 0)
     seat_captured = int(strategy.get("seat_captured") or 0)
+    seat_pl_n = int(strategy.get("seat_pl_n") or 0)
+    seat_net_jpy = float(strategy.get("seat_net_jpy") or 0.0)
     live_worst = _optional_float(strategy.get("live_worst_jpy"))
     required_fix = str(strategy.get("required_fix") or "")
 
@@ -2834,6 +2836,15 @@ def _technical_consensus_score(
                 rationale.append(
                     f"low capture rate={capture_rate:.0%} ({seat_captured}/{seat_discovered}); repair required before live-ready"
                 )
+    if seat_pl_n >= 5 and seat_net_jpy < 0:
+        if loss_cap_jpy and loss_cap_jpy > 0:
+            penalty = _clamp(abs(seat_net_jpy) / loss_cap_jpy * 2.0, 4.0, 18.0)
+        else:
+            penalty = 6.0
+        score -= penalty
+        rationale.append(
+            f"negative seat discovery PnL {seat_net_jpy:.0f} JPY over {seat_pl_n} receipts; rank down until discovery filters improve"
+        )
     if positive_tail_jpy > 0:
         score += 2.0
     if positive_best_jpy > 0:
