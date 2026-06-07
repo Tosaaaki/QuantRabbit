@@ -34,6 +34,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=replay,
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -63,6 +64,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -98,6 +100,8 @@ class CoverageOptimizerTest(unittest.TestCase):
                         str(output),
                         "--report",
                         str(report),
+                        "--market-context-matrix",
+                        str(_matrix(root)),
                     ]
                 )
 
@@ -129,6 +133,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -156,6 +161,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -175,6 +181,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=root / "missing_target.json",
                 replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -219,6 +226,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=replay,
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -259,6 +267,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=replay,
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -285,6 +294,7 @@ class CoverageOptimizerTest(unittest.TestCase):
                 intents_path=intents,
                 target_state_path=target,
                 replay_path=replay,
+                market_context_matrix_path=_matrix(root),
                 output_path=root / "coverage.json",
                 report_path=root / "coverage.md",
             ).run()
@@ -292,6 +302,81 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertEqual(summary.status, "COVERAGE_REQUIRES_REPLAY_EVIDENCE")
             payload = json.loads((root / "coverage.json").read_text())
             self.assertTrue(any("replay evidence" in item for item in payload["blockers"]))
+
+    def test_stale_spread_blocked_intents_require_evidence_refresh_before_strategy_expansion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            risk_issue = {
+                "severity": "BLOCK",
+                "code": "SPREAD_TOO_WIDE",
+                "message": "current spread is too wide for live entry",
+            }
+            intents.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2000-01-01T00:00:00Z",
+                        "results": [
+                            _result("DRY_RUN_BLOCKED", risk_issues=[risk_issue]),
+                            _result(
+                                "DRY_RUN_BLOCKED",
+                                lane_id="failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                                pair="GBP_USD",
+                                side="SHORT",
+                                risk_issues=[risk_issue],
+                            ),
+                        ],
+                    }
+                )
+            )
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+
+            summary = CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=root / "missing_market_context_matrix.json",
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            self.assertEqual(summary.status, "COVERAGE_GAP")
+            payload = json.loads((root / "coverage.json").read_text())
+            diagnostics = payload["artifact_diagnostics"]
+            self.assertTrue(diagnostics["intents_artifact_stale"])
+            self.assertTrue(diagnostics["all_lanes_spread_blocked"])
+            self.assertTrue(diagnostics["market_context_matrix_missing"])
+            self.assertEqual(diagnostics["risk_block_issue_counts"]["SPREAD_TOO_WIDE"], 2)
+            self.assertTrue(any("order_intents artifact is stale" in item for item in payload["blockers"]))
+            self.assertTrue(any("refresh broker-snapshot and generate-intents" in item for item in payload["action_items"]))
+            self.assertFalse(any("build at least" in item for item in payload["action_items"]))
+            self.assertIn("Artifact Diagnostics", (root / "coverage.md").read_text())
+
+    def test_risk_blocker_messages_are_not_duplicated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            risk_issue = {
+                "severity": "BLOCK",
+                "code": "STALE_QUOTE",
+                "message": "quote snapshot is stale",
+            }
+            intents.write_text(json.dumps({"results": [_result("DRY_RUN_BLOCKED", risk_issues=[risk_issue])]}))
+            target.write_text(json.dumps({"status": "PURSUE_TARGET", "remaining_target_jpy": 500.0, "remaining_risk_budget_jpy": 500.0}))
+
+            CoverageOptimizer(
+                intents_path=intents,
+                target_state_path=target,
+                replay_path=root / "missing_replay.json",
+                market_context_matrix_path=_matrix(root),
+                output_path=root / "coverage.json",
+                report_path=root / "coverage.md",
+            ).run()
+
+            payload = json.loads((root / "coverage.json").read_text())
+            self.assertEqual(payload["lanes"][0]["blockers"].count("quote snapshot is stale"), 1)
 
 
 def _result(
@@ -305,6 +390,8 @@ def _result(
     tp: float = 1.1010,
     sl: float = 1.0995,
     live_blocker: str | None = None,
+    risk_issues: list[dict] | None = None,
+    strategy_issues: list[dict] | None = None,
     risk_metrics: dict | None = None,
     include_risk_metrics: bool = True,
 ) -> dict:
@@ -312,8 +399,8 @@ def _result(
         "lane_id": lane_id,
         "status": status,
         "risk_allowed": True,
-        "risk_issues": [],
-        "strategy_issues": [],
+        "risk_issues": risk_issues or [],
+        "strategy_issues": strategy_issues or [],
         "live_blockers": [live_blocker] if live_blocker else [],
         "intent": {
             "pair": pair,
@@ -341,6 +428,12 @@ def _result(
             "spread_pips": 0.8,
         }
     return payload
+
+
+def _matrix(root: Path) -> Path:
+    path = root / "market_context_matrix.json"
+    path.write_text(json.dumps({"generated_at_utc": "2026-06-01T00:00:00+00:00", "rows": []}))
+    return path
 
 
 if __name__ == "__main__":

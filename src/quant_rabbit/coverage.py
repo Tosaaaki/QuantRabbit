@@ -2,18 +2,27 @@ from __future__ import annotations
 
 import json
 import math
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quant_rabbit.analysis.market_status import compute_market_status
 from quant_rabbit.paths import (
     DEFAULT_COVERAGE_OPTIMIZATION,
     DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
+    DEFAULT_MARKET_CONTEXT_MATRIX,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_REPLAY_BACKTEST,
 )
+
+
+# Coverage inputs are current-cycle artifacts. One hour is an operational
+# scheduler freshness boundary, not a market edge or risk threshold; replace it
+# with an explicit cycle id once every artifact carries one.
+COVERAGE_INTENTS_STALE_AFTER_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -61,19 +70,28 @@ class CoverageOptimizer:
         replay_path: Path = DEFAULT_REPLAY_BACKTEST,
         output_path: Path = DEFAULT_COVERAGE_OPTIMIZATION,
         report_path: Path = DEFAULT_COVERAGE_OPTIMIZATION_REPORT,
+        market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
     ) -> None:
         self.intents_path = intents_path
         self.target_state_path = target_state_path
         self.replay_path = replay_path
         self.output_path = output_path
         self.report_path = report_path
+        self.market_context_matrix_path = market_context_matrix_path
 
     def run(self) -> CoverageOptimizationSummary:
-        generated_at = datetime.now(timezone.utc).isoformat()
+        now_utc = datetime.now(timezone.utc)
+        generated_at = now_utc.isoformat()
         intents = _load_json(self.intents_path)
         target = _load_json(self.target_state_path)
         replay = _load_json(self.replay_path) if self.replay_path.exists() else {}
         lanes = tuple(_coverage_lane(item) for item in intents.get("results", []) or [] if _has_intent(item))
+        artifact_diagnostics = _artifact_diagnostics(
+            intents=intents,
+            intents_path=self.intents_path,
+            market_context_matrix_path=self.market_context_matrix_path,
+            now_utc=now_utc,
+        )
         remaining_target = _remaining_target(target)
         remaining_risk_budget = _remaining_risk_budget(target)
         raw_live_ready_lanes = tuple(lane for lane in lanes if lane.counts_live_ready)
@@ -101,6 +119,7 @@ class CoverageOptimizer:
                 sequential_ladder=sequential_ladder,
                 lanes=lanes,
                 replay_gap=replay_gap,
+                artifact_diagnostics=artifact_diagnostics,
             )
         )
         action_items = tuple(
@@ -114,6 +133,7 @@ class CoverageOptimizer:
                 sequential_ladder=sequential_ladder,
                 lanes=lanes,
                 replay_gap=replay_gap,
+                artifact_diagnostics=artifact_diagnostics,
             )
         )
         status = _status(
@@ -148,6 +168,7 @@ class CoverageOptimizer:
             else 100.0,
             "potential_coverage_pct": _round((potential_reward / remaining_target) * 100.0) if remaining_target else 100.0,
             "replay_gap": replay_gap,
+            "artifact_diagnostics": artifact_diagnostics,
             "blockers": list(blockers),
             "action_items": list(action_items),
             "lanes": [asdict(lane) for lane in lanes],
@@ -188,9 +209,30 @@ class CoverageOptimizer:
             f"- Potential reward after promotions: `{payload['potential_reward_jpy']:.0f} JPY` (`{payload['potential_coverage_pct']:.1f}%`)",
             f"- Remaining risk budget: `{payload['remaining_risk_budget_jpy']:.0f} JPY`",
             "",
-            "## Blockers",
+            "## Artifact Diagnostics",
             "",
         ]
+        diagnostics = payload.get("artifact_diagnostics") if isinstance(payload.get("artifact_diagnostics"), dict) else {}
+        market_status = diagnostics.get("current_market_status") if isinstance(diagnostics.get("current_market_status"), dict) else {}
+        lines.extend(
+            [
+                f"- Intent generated at UTC: `{diagnostics.get('intents_generated_at_utc') or 'unknown'}`",
+                f"- Intent age seconds: `{diagnostics.get('intents_age_seconds')}`",
+                f"- Intent stale: `{diagnostics.get('intents_artifact_stale')}`",
+                f"- Current FX open: `{market_status.get('is_fx_open')}`",
+                f"- Market closed reason: `{market_status.get('closed_reason') or 'none'}`",
+                f"- Matrix missing: `{diagnostics.get('market_context_matrix_missing')}`",
+                f"- All lanes spread-blocked: `{diagnostics.get('all_lanes_spread_blocked')}`",
+                f"- Risk block issue counts: `{diagnostics.get('risk_block_issue_counts') or {}}`",
+                "",
+            ]
+        )
+        lines.extend(
+            [
+                "## Blockers",
+                "",
+            ]
+        )
         if payload["blockers"]:
             lines.extend(f"- {item}" for item in payload["blockers"])
         else:
@@ -287,8 +329,18 @@ def _blockers(
     sequential_ladder: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
+    artifact_diagnostics: dict[str, Any],
 ) -> list[str]:
     blockers: list[str] = []
+    if artifact_diagnostics.get("market_context_matrix_missing"):
+        blockers.append("market context matrix artifact is missing; refresh market-context-matrix before judging GPT/intent coverage")
+    if artifact_diagnostics.get("all_lanes_spread_blocked"):
+        market_status = artifact_diagnostics.get("current_market_status")
+        is_fx_open = market_status.get("is_fx_open") if isinstance(market_status, dict) else None
+        if is_fx_open is False:
+            blockers.append("current FX market is closed and all intent lanes are spread-blocked; refresh broker truth after market open before judging strategy coverage")
+        if artifact_diagnostics.get("intents_artifact_stale"):
+            blockers.append("order_intents artifact is stale and all intent lanes are spread-blocked; rerun broker-snapshot/generate-intents before judging strategy coverage")
     if not target:
         blockers.append("daily target state is missing; run daily-target-state or plan-campaign")
     if target.get("status") == "REPAIR_REQUIRED":
@@ -326,23 +378,32 @@ def _action_items(
     sequential_ladder: dict[str, Any],
     lanes: tuple[CoverageLane, ...],
     replay_gap: str | None,
+    artifact_diagnostics: dict[str, Any],
 ) -> list[str]:
     items: list[str] = []
     promotion_candidates = [lane for lane in lanes if lane.counts_after_promotion]
+    evidence_refresh_required = bool(artifact_diagnostics.get("requires_market_evidence_refresh"))
+    if artifact_diagnostics.get("market_context_matrix_missing"):
+        items.append("run market-context-matrix so gold/oil/SPX/DXY/rates/news context reaches coverage and GPT packets")
+    if evidence_refresh_required:
+        items.append("refresh broker-snapshot and generate-intents after the market is tradable; recompute coverage before adding new strategy lanes")
     if duplicate_live_ready_lanes:
         items.append("dedupe same entry/tp/sl receipts before considering multi-entry execution")
     if promotion_candidates:
         items.append(f"promote {len(promotion_candidates)} dry-run receipts only after their strategy blockers clear")
     if live_ready_reward < remaining_target:
-        reward_gap = remaining_target - live_ready_reward
-        avg_reward = _average_reward(lanes) or 1.0
-        items.append(f"build at least {math.ceil(reward_gap / avg_reward)} additional live-ready trigger receipts")
-    if potential_reward < remaining_target:
+        if evidence_refresh_required:
+            items.append("defer live-ready reward sizing until fresh spreads and quotes separate market-closure noise from true discovery failure")
+        else:
+            reward_gap = remaining_target - live_ready_reward
+            avg_reward = _average_reward(lanes) or 1.0
+            items.append(f"build at least {math.ceil(reward_gap / avg_reward)} additional live-ready trigger receipts")
+    if potential_reward < remaining_target and not evidence_refresh_required:
         items.append("expand lane generation across timing windows or pairs; current repaired ladder cannot cover target")
     if live_ready_risk > remaining_risk_budget > 0 and float(sequential_ladder.get("reward_jpy") or 0.0) >= remaining_target:
         items.append("execute coverage as a sequential ladder; do not deploy all live-ready lanes as simultaneous exposure")
     blocked_pairs = sorted({lane.pair for lane in lanes if lane.blockers and not lane.counts_live_ready})
-    if blocked_pairs:
+    if blocked_pairs and not evidence_refresh_required:
         items.append(f"repair blockers for: {', '.join(blocked_pairs[:8])}")
     if replay_gap:
         items.append("rerun replay/backtest after coverage changes and keep gap reasons as product blockers")
@@ -368,11 +429,108 @@ def _status(
     ]
     if live_ready_reward >= remaining_target and not hard:
         return "LIVE_READY_COVERAGE_READY"
+    if _has_market_evidence_gap(hard):
+        return "COVERAGE_GAP"
     if (live_ready_reward >= remaining_target or potential_reward >= remaining_target) and _has_replay_evidence_gap(hard):
         return "COVERAGE_REQUIRES_REPLAY_EVIDENCE"
     if potential_reward >= remaining_target:
         return "COVERAGE_REQUIRES_PROFILE_PROMOTION"
     return "COVERAGE_GAP"
+
+
+def _artifact_diagnostics(
+    *,
+    intents: dict[str, Any],
+    intents_path: Path,
+    market_context_matrix_path: Path,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    results = tuple(item for item in intents.get("results", []) or [] if isinstance(item, dict))
+    intents_generated_at = intents.get("generated_at_utc")
+    parsed_generated_at = _parse_iso_datetime(intents_generated_at)
+    intents_age_seconds = None
+    if parsed_generated_at is not None:
+        intents_age_seconds = _round(max(0.0, (now_utc - parsed_generated_at).total_seconds()))
+    risk_block_issue_counts = _issue_code_counts(results, "risk_issues", block_only=True)
+    strategy_block_issue_counts = _issue_code_counts(results, "strategy_issues", block_only=True)
+    all_lanes_spread_blocked = bool(results) and all(
+        _result_has_block_issue_code(result, "risk_issues", "SPREAD_TOO_WIDE") for result in results
+    )
+    market_status = compute_market_status(now_utc).to_dict()
+    intents_artifact_stale = bool(
+        intents_age_seconds is not None and intents_age_seconds > COVERAGE_INTENTS_STALE_AFTER_SECONDS
+    )
+    market_context_matrix_missing = not market_context_matrix_path.exists()
+    requires_market_evidence_refresh = bool(
+        market_context_matrix_missing
+        or (
+            all_lanes_spread_blocked
+            and (market_status.get("is_fx_open") is False or intents_artifact_stale)
+        )
+    )
+    return {
+        "intents_path": str(intents_path),
+        "intents_generated_at_utc": parsed_generated_at.isoformat() if parsed_generated_at else intents_generated_at,
+        "intents_age_seconds": intents_age_seconds,
+        "intents_artifact_stale": intents_artifact_stale,
+        "intents_stale_after_seconds": COVERAGE_INTENTS_STALE_AFTER_SECONDS,
+        "results_count": len(results),
+        "status_counts": _status_counts(results),
+        "risk_block_issue_counts": risk_block_issue_counts,
+        "strategy_block_issue_counts": strategy_block_issue_counts,
+        "all_lanes_spread_blocked": all_lanes_spread_blocked,
+        "market_context_matrix_path": str(market_context_matrix_path),
+        "market_context_matrix_missing": market_context_matrix_missing,
+        "current_market_status": {
+            "generated_at_utc": market_status.get("generated_at_utc"),
+            "is_fx_open": market_status.get("is_fx_open"),
+            "closed_reason": market_status.get("closed_reason"),
+            "active_sessions": market_status.get("active_sessions") or [],
+            "minutes_to_next_open": market_status.get("minutes_to_next_open"),
+            "minutes_to_next_close": market_status.get("minutes_to_next_close"),
+        },
+        "requires_market_evidence_refresh": requires_market_evidence_refresh,
+    }
+
+
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if value is None or value == "":
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _issue_code_counts(results: tuple[dict[str, Any], ...], key: str, *, block_only: bool) -> dict[str, int]:
+    counter: Counter[str] = Counter()
+    for result in results:
+        for issue in result.get(key, []) or []:
+            if not isinstance(issue, dict):
+                continue
+            if block_only and issue.get("severity") != "BLOCK":
+                continue
+            code = str(issue.get("code") or issue.get("message") or "UNKNOWN")
+            counter[code] += 1
+    return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
+
+
+def _status_counts(results: tuple[dict[str, Any], ...]) -> dict[str, int]:
+    counter: Counter[str] = Counter(str(result.get("status") or "UNKNOWN") for result in results)
+    return dict(sorted(counter.items(), key=lambda item: (-item[1], item[0])))
+
+
+def _result_has_block_issue_code(result: dict[str, Any], key: str, code: str) -> bool:
+    return any(
+        isinstance(issue, dict) and issue.get("severity") == "BLOCK" and issue.get("code") == code
+        for issue in result.get(key, []) or []
+    )
 
 
 def _remaining_target(target: dict[str, Any]) -> float:
@@ -467,6 +625,15 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _has_replay_evidence_gap(blockers: list[str]) -> bool:
     return any(item.startswith("replay evidence covers target") for item in blockers)
+
+
+def _has_market_evidence_gap(blockers: list[str]) -> bool:
+    return any(
+        item.startswith("market context matrix artifact is missing")
+        or item.startswith("current FX market is closed")
+        or item.startswith("order_intents artifact is stale")
+        for item in blockers
+    )
 
 
 def _optional_float(value: object) -> float | None:

@@ -1251,6 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
     p_coverage.add_argument("--intents", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_coverage.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_coverage.add_argument("--replay", type=Path, default=DEFAULT_REPLAY_BACKTEST)
+    p_coverage.add_argument("--market-context-matrix", type=Path, default=DEFAULT_MARKET_CONTEXT_MATRIX)
     p_coverage.add_argument("--output", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION)
     p_coverage.add_argument("--report", type=Path, default=DEFAULT_COVERAGE_OPTIMIZATION_REPORT)
 
@@ -2743,6 +2744,7 @@ def main(argv: list[str] | None = None) -> int:
             intents_path=args.intents,
             target_state_path=args.target_state,
             replay_path=args.replay,
+            market_context_matrix_path=args.market_context_matrix,
             output_path=args.output,
             report_path=args.report,
         ).run()
