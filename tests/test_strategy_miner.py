@@ -99,6 +99,7 @@ class StrategyMinerTest(unittest.TestCase):
             self.assertEqual(statuses["USD_JPY LONG"], "BLOCK_UNTIL_NEW_EVIDENCE")
             self.assertEqual(statuses["AUD_USD LONG"], "MINE_MISSED_EDGE")
             self.assertEqual(profiles["GBP_USD LONG"]["positive_best_jpy"], 1000.0)
+            self.assertEqual(profiles["AUD_USD LONG"]["seat_pl_n"], 0)
             self.assertGreaterEqual(profiles["GBP_USD LONG"]["target_reward_risk"], 1.5)
             self.assertIn("Generated System Rules", report.read_text())
 
@@ -208,6 +209,79 @@ class StrategyMinerTest(unittest.TestCase):
             self.assertEqual(profiles[("AUD_USD", "LONG", None)]["status"], "MINE_MISSED_EDGE")
             self.assertEqual(profiles[("AUD_USD", "LONG", "RANGE_ROTATION")]["status"], "CANDIDATE")
             self.assertEqual(payload["last_receipt_promotion_at_utc"], "2026-06-05T00:00:00+00:00")
+
+    def test_drops_missed_edge_promotion_when_seat_realized_net_is_negative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "history.db"
+            _create_schema(db_path)
+            with sqlite3.connect(db_path) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO legacy_records VALUES
+                    ('pretrade_outcomes', ?, '2026-04-30', 'AUD_JPY', 'LONG', ?, 'MARKET', 'B+', 'edge', ?)
+                    """,
+                    [(str(i), 100.0, json.dumps({"id": i})) for i in range(5)],
+                )
+                conn.execute(
+                    "INSERT INTO live_trade_events VALUES (1, 't', 'CLOSE', 'AUD_JPY', 'LONG', 1000, '100.0', 250.0, 0.8, '1', '', '')"
+                )
+                for i in range(3):
+                    conn.execute(
+                        "INSERT INTO legacy_records VALUES ('seat_outcomes', ?, '2026-04-30', 'AUD_JPY', 'LONG', ?, NULL, NULL, NULL, ?)",
+                        (
+                            f"seat-{i}",
+                            -200.0,
+                            json.dumps(
+                                {
+                                    "id": i,
+                                    "pair": "AUD_JPY",
+                                    "direction": "LONG",
+                                    "discovered": 1,
+                                    "missed": 1,
+                                    "captured": 0,
+                                    "directionally_correct": 1,
+                                }
+                            ),
+                        ),
+                    )
+
+            profile = root / "profile.json"
+            profile.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "AUD_JPY",
+                                "direction": "LONG",
+                                "method": "RANGE_ROTATION",
+                                "status": "CANDIDATE",
+                                "required_fix": "promoted from MINE_MISSED_EDGE by trigger receipt",
+                                "receipt_promotion": {
+                                    "from_status": "MINE_MISSED_EDGE",
+                                    "lane_id": "range_trader:AUD_JPY:LONG:RANGE_ROTATION",
+                                    "method": "RANGE_ROTATION",
+                                    "promoted_at_utc": "2026-06-05T00:00:00+00:00",
+                                    "reason": "missed edge converted into LIMIT trigger receipt",
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = StrategyMiner(db_path, root / "strategy.md", profile, loss_cap_jpy=500).run()
+
+            self.assertEqual(summary.candidates, 1)
+            payload = json.loads(profile.read_text())
+            profiles = {
+                (item["pair"], item["direction"], item.get("method")): item
+                for item in payload["profiles"]
+            }
+            self.assertEqual(profiles[("AUD_JPY", "LONG", None)]["status"], "CANDIDATE")
+            self.assertEqual(profiles[("AUD_JPY", "LONG", None)]["seat_net_jpy"], -600.0)
+            self.assertNotIn(("AUD_JPY", "LONG", "RANGE_ROTATION"), profiles)
+            self.assertNotIn("last_receipt_promotion_at_utc", payload)
 
     def test_drops_receipt_promotion_when_current_history_blocks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

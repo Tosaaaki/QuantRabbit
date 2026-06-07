@@ -34,6 +34,10 @@ class PairDirectionProfile:
     seat_captured: int = 0
     seat_missed: int = 0
     seat_directionally_correct: int = 0
+    seat_pl_n: int = 0
+    seat_net_jpy: float = 0.0
+    seat_avg_jpy: float = 0.0
+    seat_win_rate_pct: float = 0.0
     order_blocked: int = 0
     top_block_reasons: list[str] = field(default_factory=list)
     status: str = "WATCH_ONLY"
@@ -145,7 +149,7 @@ class StrategyMiner:
             item.live_worst_jpy = float(row["worst_jpy"]) if row["worst_jpy"] is not None else None
 
         for row in conn.execute(
-            "SELECT pair, direction, raw_json FROM legacy_records WHERE source_table='seat_outcomes'"
+            "SELECT pair, direction, pl, raw_json FROM legacy_records WHERE source_table='seat_outcomes'"
         ):
             pair = row["pair"]
             direction = row["direction"]
@@ -159,6 +163,16 @@ class StrategyMiner:
             item.seat_captured += int(bool(payload.get("captured")))
             item.seat_missed += int(bool(payload.get("missed")))
             item.seat_directionally_correct += int(bool(payload.get("directionally_correct")))
+            if row["pl"] is not None:
+                seat_pl = float(row["pl"])
+                item.seat_pl_n += 1
+                item.seat_net_jpy = _round(item.seat_net_jpy + seat_pl)
+                item.seat_win_rate_pct = _round(
+                    (((item.seat_win_rate_pct / 100.0) * (item.seat_pl_n - 1)) + (1 if seat_pl > 0 else 0))
+                    / item.seat_pl_n
+                    * 100.0
+                )
+                item.seat_avg_jpy = _round(item.seat_net_jpy / item.seat_pl_n)
 
         block_reasons: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
         for row in conn.execute("SELECT event_type, pair, direction, raw_json FROM jsonl_events"):
@@ -223,6 +237,8 @@ class StrategyMiner:
             base = base_by_pair_direction.get((item.pair, item.direction))
             if base is None or base.status not in {"CANDIDATE", "RISK_REPAIR_CANDIDATE", "MINE_MISSED_EDGE"}:
                 continue
+            if _is_missed_edge_promotion(item) and base.seat_pl_n > 0 and base.seat_net_jpy <= 0:
+                continue
             key = (item.pair, item.direction, item.method)
             if key in seen:
                 continue
@@ -243,12 +259,14 @@ class StrategyMiner:
         positive_pretrade = item.pretrade_n >= 5 and item.pretrade_net_jpy > 0
         positive_live = item.live_n > 0 and item.live_net_jpy > 0
         missed_pressure = item.seat_missed >= 2 and item.seat_directionally_correct > item.seat_captured
+        missed_pressure_profitable = missed_pressure and (item.seat_pl_n == 0 or item.seat_net_jpy > 0)
+        missed_pressure_negative = missed_pressure and item.seat_pl_n > 0 and item.seat_net_jpy <= 0
         cap_text = f"{loss_cap_jpy:.0f} JPY"
         if worst_loss <= -loss_cap_jpy and positive_pretrade and positive_live:
             item.status = "RISK_REPAIR_CANDIDATE"
             item.required_fix = f"edge exists but old sizing broke the loss cap; require <={cap_text} dry-run receipt before live use"
             return
-        if missed_pressure and not (item.live_n >= 3 and item.live_net_jpy < 0 and item.pretrade_net_jpy <= 0):
+        if missed_pressure_profitable and not (item.live_n >= 3 and item.live_net_jpy < 0 and item.pretrade_net_jpy <= 0):
             item.status = "MINE_MISSED_EDGE"
             item.required_fix = "missed seats paid more often than captured; build trigger/pending-entry receipts before live execution"
             if worst_loss <= -loss_cap_jpy:
@@ -265,6 +283,15 @@ class StrategyMiner:
         if positive_pretrade and item.live_net_jpy >= 0:
             item.status = "CANDIDATE"
             item.required_fix = "eligible for dry-run order-intent generation, still behind risk gateway"
+            if missed_pressure_negative:
+                item.required_fix += "; missed-seat promotion disabled because realized seat net is negative"
+            return
+        if missed_pressure_negative:
+            item.status = "WATCH_ONLY"
+            item.required_fix = (
+                "missed seats were directionally correct, but realized seat net is negative; "
+                "repair discovery filters before mining this edge"
+            )
             return
         item.status = "WATCH_ONLY"
         item.required_fix = "insufficient or mixed evidence; can be observed but not promoted to live execution"
@@ -456,13 +483,21 @@ def _load_preservable_receipt_profiles(path: Path) -> list[PairDirectionProfile]
     return preserved
 
 
+def _is_missed_edge_promotion(item: PairDirectionProfile) -> bool:
+    promotion = item.receipt_promotion if isinstance(item.receipt_promotion, dict) else {}
+    from_status = str(promotion.get("from_status") or "").upper()
+    reason = str(promotion.get("reason") or item.required_fix or "").upper()
+    return from_status == "MINE_MISSED_EDGE" or "MISSED_EDGE" in reason or "MISSED EDGE" in reason
+
+
 def _profile_line(item: PairDirectionProfile) -> str:
     worst = "n/a" if item.live_worst_jpy is None else f"{item.live_worst_jpy:.1f}"
     return (
         f"- `{item.key}` status=`{item.status}` pretrade n={item.pretrade_n} "
         f"net={item.pretrade_net_jpy:.1f} avg={item.pretrade_avg_jpy:.1f}; "
         f"live n={item.live_n} net={item.live_net_jpy:.1f} worst={worst}; "
-        f"seats missed/captured={item.seat_missed}/{item.seat_captured}; "
+        f"seats missed/captured={item.seat_missed}/{item.seat_captured} "
+        f"net={item.seat_net_jpy:.1f} n={item.seat_pl_n} win={item.seat_win_rate_pct:.1f}%; "
         f"fix: {item.required_fix}"
     )
 
