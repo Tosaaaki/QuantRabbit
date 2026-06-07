@@ -547,6 +547,50 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(summary3.target_trades_per_day_source, "previous_cli")
             self.assertEqual(payload3["target_trades_per_day_source"], "previous_cli")
 
+    def test_cli_pace_expires_on_new_campaign_day_when_backtest_recommends_pace(self) -> None:
+        """A previous-day CLI pace must not freeze the next campaign day.
+
+        The same-day persistence test protects the operator from automation
+        flipping sizing mid-campaign. On a new campaign day, however, carrying
+        yesterday's CLI pace would bypass fresh ai-test-bot firepower evidence
+        and recreate a fixed divisor.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "firepower": {
+                            "avg_selected_trades_per_day": 12.0,
+                            "required_trades_per_day_at_observed_expectancy": 25,
+                        }
+                    }
+                )
+            )
+            ledger = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            )
+            ledger.run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+                target_trades_per_day=10,
+                now_utc=datetime(2026, 5, 11, 12, tzinfo=timezone.utc),
+            )
+
+            summary = ledger.run(
+                realized_pl_jpy=0,
+                now_utc=datetime(2026, 5, 12, 12, tzinfo=timezone.utc),
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(summary.target_trades_per_day, 25)
+            self.assertEqual(summary.target_trades_per_day_source, "ai_test_bot_required_trades")
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 25, places=4)
+            self.assertEqual(payload["target_trades_per_day_source"], "ai_test_bot_required_trades")
+
     def test_backtest_required_pace_is_capped_to_policy_ceiling(self) -> None:
         """An absurd ai-test-bot pace must not silently shrink per-trade sizing.
 

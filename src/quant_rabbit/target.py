@@ -245,7 +245,11 @@ class DailyTargetLedger:
             # `startswith("cli")` only matches the former, so the protection
             # silently dropped on the next automation cycle and ai_test_bot
             # reclaimed pace=30 (regression seen 2026-05-11 15:46 JST).
-            previous_was_cli = previous_pace_source in {"cli", "previous_cli"}
+            # Preserve operator-explicit pace only within the same campaign day.
+            # A new day gets a fresh ai-test-bot firepower read when available,
+            # otherwise yesterday's CLI pace can silently become a stale fixed
+            # risk divisor and violate the no-default-to-yesterday contract.
+            previous_was_cli = previous_pace_source in {"cli", "previous_cli"} and not is_new_campaign_day
             if previous_pace is not None and previous_was_cli:
                 explicit_pace = previous_pace
                 pace_source = "previous_cli"
