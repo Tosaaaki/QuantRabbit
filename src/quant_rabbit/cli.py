@@ -13,6 +13,7 @@ from quant_rabbit.automation import AutoTradeCycle, DEFAULT_AUTOTRADE_REPORT
 from quant_rabbit.ai_test_bot import (
     AITestBotBacktester,
     DEFAULT_MAX_ACTIVE_BUCKETS,
+    DEFAULT_MIN_TRAIN_WIN_RATE_PCT,
     DEFAULT_MIN_TRAIN_TRADES,
     DEFAULT_RUNTIME_SOURCE_TABLES,
     DEFAULT_TRAINING_DAYS,
@@ -1286,6 +1287,7 @@ def main(argv: list[str] | None = None) -> int:
     p_ai_test.add_argument("--target-state", type=Path, default=DEFAULT_DAILY_TARGET_STATE)
     p_ai_test.add_argument("--training-days", type=int, default=DEFAULT_TRAINING_DAYS)
     p_ai_test.add_argument("--min-train-trades", type=int, default=DEFAULT_MIN_TRAIN_TRADES)
+    p_ai_test.add_argument("--min-train-win-rate-pct", type=float, default=DEFAULT_MIN_TRAIN_WIN_RATE_PCT)
     p_ai_test.add_argument("--max-active-buckets", type=int, default=DEFAULT_MAX_ACTIVE_BUCKETS)
     p_ai_test.add_argument("--source-tables", default=",".join(DEFAULT_RUNTIME_SOURCE_TABLES))
     p_ai_test.add_argument("--execution-ledger-db", type=Path, default=DEFAULT_EXECUTION_LEDGER_DB)
@@ -2774,6 +2776,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_trades_per_day=args.target_trades_per_day,
                 training_days=args.training_days,
                 min_train_trades=args.min_train_trades,
+                min_train_win_rate_pct=args.min_train_win_rate_pct,
                 max_active_buckets=args.max_active_buckets,
                 source_tables=source_tables,
                 execution_ledger_db_path=args.execution_ledger_db,

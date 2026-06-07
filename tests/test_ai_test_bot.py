@@ -169,6 +169,41 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(payload["missed_best_days"][0]["best_bucket"], "trades:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED")
             self.assertIn("offline research bot", (root / "ai_backtest.md").read_text())
 
+    def test_default_policy_rejects_submajority_training_win_rate_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-04-01", "EUR_USD", "LONG", 300.0, json.dumps({"id": "bad-1"})),
+                    ("trades", "2026-04-01", "EUR_USD", "LONG", -50.0, json.dumps({"id": "bad-2"})),
+                    ("trades", "2026-04-01", "EUR_USD", "LONG", -50.0, json.dumps({"id": "bad-3"})),
+                    ("trades", "2026-04-01", "GBP_USD", "LONG", 40.0, json.dumps({"id": "good-1"})),
+                    ("trades", "2026-04-01", "GBP_USD", "LONG", 40.0, json.dumps({"id": "good-2"})),
+                    ("trades", "2026-04-01", "GBP_USD", "LONG", 40.0, json.dumps({"id": "good-3"})),
+                    ("trades", "2026-04-02", "EUR_USD", "LONG", -500.0, json.dumps({"id": "bad-val"})),
+                    ("trades", "2026-04-02", "GBP_USD", "LONG", 80.0, json.dumps({"id": "good-val"})),
+                ],
+            )
+
+            AITestBotBacktester(
+                db_path=db,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=3,
+                max_active_buckets=1,
+            ).run(start_balance_jpy=500.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], ["trades:GBP_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
+            self.assertEqual(day["managed_net_jpy"], 80.0)
+            self.assertEqual(payload["min_train_win_rate_pct"], 50.0)
+            self.assertIn("majority capped win rate", (root / "ai_backtest.md").read_text())
+
     def test_applies_equity_loss_cap_to_validation_result(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -32,6 +32,11 @@ from quant_rabbit.replay import _resolve_replay_loss_cap
 DEFAULT_TRAINING_DAYS = 6
 DEFAULT_MIN_TRAIN_TRADES = 10
 DEFAULT_MAX_ACTIVE_BUCKETS = 6
+# Majority-of-evidence floor for research bucket promotion. This is not a
+# market-price threshold: a bucket that loses more often than it wins in the
+# trailing training window has not earned scaling, even when a few large winners
+# make capped net positive.
+DEFAULT_MIN_TRAIN_WIN_RATE_PCT = 50.0
 DEFAULT_SOURCE_TABLES = ("trades", "pretrade_outcomes", "seat_outcomes")
 EXECUTION_LEDGER_SOURCE_TABLE = "execution_ledger"
 DEFAULT_RUNTIME_SOURCE_TABLES = (*DEFAULT_SOURCE_TABLES, EXECUTION_LEDGER_SOURCE_TABLE)
@@ -136,6 +141,7 @@ class AITestBotBacktester:
         target_trades_per_day: int | None = None,
         training_days: int = DEFAULT_TRAINING_DAYS,
         min_train_trades: int = DEFAULT_MIN_TRAIN_TRADES,
+        min_train_win_rate_pct: float = DEFAULT_MIN_TRAIN_WIN_RATE_PCT,
         max_active_buckets: int = DEFAULT_MAX_ACTIVE_BUCKETS,
         source_tables: tuple[str, ...] = DEFAULT_SOURCE_TABLES,
         execution_ledger_db_path: Path | None = None,
@@ -145,6 +151,8 @@ class AITestBotBacktester:
             raise ValueError("ai-test-bot-backtest --training-days must be positive")
         if min_train_trades <= 0:
             raise ValueError("ai-test-bot-backtest --min-train-trades must be positive")
+        if not 0.0 <= min_train_win_rate_pct <= 100.0:
+            raise ValueError("ai-test-bot-backtest --min-train-win-rate-pct must be between 0 and 100")
         if max_active_buckets <= 0:
             raise ValueError("ai-test-bot-backtest --max-active-buckets must be positive")
         if not source_tables:
@@ -158,6 +166,7 @@ class AITestBotBacktester:
         self.target_trades_per_day = target_trades_per_day
         self.training_days = training_days
         self.min_train_trades = min_train_trades
+        self.min_train_win_rate_pct = float(min_train_win_rate_pct)
         self.max_active_buckets = max_active_buckets
         self.source_tables = tuple(source_tables)
         self.execution_ledger_db_path = execution_ledger_db_path
@@ -197,6 +206,7 @@ class AITestBotBacktester:
                 max_loss_jpy=cap.loss_cap_jpy,
                 training_days=self.training_days,
                 min_train_trades=self.min_train_trades,
+                min_train_win_rate_pct=self.min_train_win_rate_pct,
                 max_active_buckets=self.max_active_buckets,
                 max_validation_days=max_validation_days,
             )
@@ -209,6 +219,7 @@ class AITestBotBacktester:
             max_loss_jpy=cap.loss_cap_jpy,
             top_n=self.max_active_buckets,
             min_train_trades=self.min_train_trades,
+            min_train_win_rate_pct=self.min_train_win_rate_pct,
         )
         blockers = tuple(
             _certification_blockers(
@@ -266,6 +277,7 @@ class AITestBotBacktester:
             "daily_risk_budget_jpy": daily_risk_budget_jpy,
             "training_days": self.training_days,
             "min_train_trades": self.min_train_trades,
+            "min_train_win_rate_pct": self.min_train_win_rate_pct,
             "max_active_buckets": self.max_active_buckets,
             "summary": summary_payload,
             "firepower": firepower,
@@ -379,6 +391,7 @@ class AITestBotBacktester:
             f"- Per-trade loss cap: `{payload['per_trade_loss_cap_jpy']:.0f} JPY` (`{payload['loss_cap_source']}`)",
             f"- Training days: `{payload['training_days']}`",
             f"- Min training trades: `{payload['min_train_trades']}`",
+            f"- Min training win rate: `{payload['min_train_win_rate_pct']:.1f}%`",
             f"- Max active buckets: `{payload['max_active_buckets']}`",
             f"- Validation days: `{summary['validation_days']}`",
             f"- Traded days: `{summary['traded_days']}`",
@@ -455,6 +468,7 @@ class AITestBotBacktester:
                 "",
                 "- This is an offline research bot. It never places or stages broker orders.",
                 "- Bucket selection uses only prior training-window days; validation-day winners cannot select themselves.",
+                "- Buckets must also prove majority capped win rate in the training window before promotion.",
                 "- Seat outcome buckets use only observable setup/orderability/source fields, not future `CAPTURED/FAILED/MISSED` labels.",
                 "- Execution-ledger outcomes use pair/direction only; exit reason is post-trade evidence and is not used as a selection bucket.",
                 "- Execution-ledger buckets require raw-positive training net, because hypothetical caps cannot certify old real-exit losses as fixed evidence.",
@@ -483,6 +497,7 @@ def _walk_forward_days(
     max_loss_jpy: float,
     training_days: int,
     min_train_trades: int,
+    min_train_win_rate_pct: float,
     max_active_buckets: int,
     max_validation_days: int | None,
 ) -> Iterable[TestBotDay]:
@@ -496,6 +511,7 @@ def _walk_forward_days(
             train_rows,
             max_loss_jpy=max_loss_jpy,
             min_train_trades=min_train_trades,
+            min_train_win_rate_pct=min_train_win_rate_pct,
             max_active_buckets=max_active_buckets,
         )
         selected_keys = {score.bucket for score in scores}
@@ -524,6 +540,7 @@ def _select_buckets(
     *,
     max_loss_jpy: float,
     min_train_trades: int,
+    min_train_win_rate_pct: float,
     max_active_buckets: int,
 ) -> tuple[BucketScore, ...]:
     by_bucket: dict[TestBotBucket, list[TestBotTrade]] = {}
@@ -536,9 +553,16 @@ def _select_buckets(
         capped = [_capped_pl(row.pl_jpy, max_loss_jpy) for row in rows]
         capped_net = _round(sum(capped))
         train_net = _round(sum(row.pl_jpy for row in rows))
-        if not _training_bucket_is_viable(bucket=bucket, capped_net_jpy=capped_net, raw_net_jpy=train_net):
-            continue
         wins = sum(1 for value in capped if value > 0)
+        win_rate_pct = _round((wins / len(rows)) * 100.0)
+        if not _training_bucket_is_viable(
+            bucket=bucket,
+            capped_net_jpy=capped_net,
+            raw_net_jpy=train_net,
+            train_win_rate_pct=win_rate_pct,
+            min_train_win_rate_pct=min_train_win_rate_pct,
+        ):
+            continue
         scores.append(
             BucketScore(
                 bucket=bucket,
@@ -546,7 +570,7 @@ def _select_buckets(
                 train_net_jpy=train_net,
                 train_capped_net_jpy=capped_net,
                 train_mean_jpy=_round(capped_net / len(rows)),
-                train_win_rate_pct=_round((wins / len(rows)) * 100.0),
+                train_win_rate_pct=win_rate_pct,
                 train_worst_loss_jpy=min((row.pl_jpy for row in rows), default=None),
             )
         )
@@ -940,6 +964,7 @@ def _oracle_summary(
     max_loss_jpy: float,
     top_n: int,
     min_train_trades: int,
+    min_train_win_rate_pct: float,
 ) -> dict[str, float | int | str | None]:
     selected_by_day = {day.session_date: set(day.selected_buckets) for day in day_results}
     selected_net_by_day = {day.session_date: day.managed_net_jpy for day in day_results}
@@ -967,6 +992,7 @@ def _oracle_summary(
             day,
             max_loss_jpy=max_loss_jpy,
             min_train_trades=min_train_trades,
+            min_train_win_rate_pct=min_train_win_rate_pct,
         )
         train_eligible_bucket_net = {
             bucket: value for bucket, value in bucket_net.items() if bucket in train_eligible_buckets
@@ -1073,6 +1099,7 @@ def _train_eligible_buckets(
     *,
     max_loss_jpy: float,
     min_train_trades: int,
+    min_train_win_rate_pct: float,
 ) -> set[TestBotBucket]:
     by_bucket: dict[TestBotBucket, list[TestBotTrade]] = {}
     for row in trades:
@@ -1085,7 +1112,15 @@ def _train_eligible_buckets(
             continue
         capped_net = _round(sum(_capped_pl(row.pl_jpy, max_loss_jpy) for row in rows))
         raw_net = _round(sum(row.pl_jpy for row in rows))
-        if _training_bucket_is_viable(bucket=bucket, capped_net_jpy=capped_net, raw_net_jpy=raw_net):
+        wins = sum(1 for row in rows if _capped_pl(row.pl_jpy, max_loss_jpy) > 0)
+        win_rate_pct = _round((wins / len(rows)) * 100.0)
+        if _training_bucket_is_viable(
+            bucket=bucket,
+            capped_net_jpy=capped_net,
+            raw_net_jpy=raw_net,
+            train_win_rate_pct=win_rate_pct,
+            min_train_win_rate_pct=min_train_win_rate_pct,
+        ):
             eligible.add(bucket)
     return eligible
 
@@ -1095,8 +1130,12 @@ def _training_bucket_is_viable(
     bucket: TestBotBucket,
     capped_net_jpy: float,
     raw_net_jpy: float,
+    train_win_rate_pct: float,
+    min_train_win_rate_pct: float,
 ) -> bool:
     if capped_net_jpy <= 0:
+        return False
+    if train_win_rate_pct < min_train_win_rate_pct:
         return False
     if bucket.source_table == EXECUTION_LEDGER_SOURCE_TABLE and raw_net_jpy <= 0:
         return False
