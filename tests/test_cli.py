@@ -743,6 +743,54 @@ class CliHelpTest(unittest.TestCase):
                     broker_instruments_path=broker_instruments,
                 )
 
+    def test_context_asset_charts_cli_writes_non_fx_technical_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "context_asset_charts.json"
+            report = root / "context_asset_charts.md"
+            payload = {
+                "generated_at_utc": "2026-06-07T00:00:00+00:00",
+                "role": "NON_FX_CONTEXT_TECHNICALS_NOT_TRADE_PERMISSION",
+                "charts": [{"pair": "XAU_USD", "views": []}],
+                "issues": [],
+            }
+            stdout = io.StringIO()
+            client = object()
+
+            with (
+                mock.patch("quant_rabbit.cli.OandaReadOnlyClient", return_value=client),
+                mock.patch("quant_rabbit.analysis.context_assets.build_context_asset_charts") as build,
+                mock.patch("quant_rabbit.analysis.context_assets.write_context_asset_charts_report") as write_report,
+                redirect_stdout(stdout),
+            ):
+                build.return_value = payload
+                code = main([
+                    "context-asset-charts",
+                    "--instruments",
+                    "XAU_USD,WTICO_USD",
+                    "--timeframes",
+                    "M5,H1",
+                    "--count",
+                    "50",
+                    "--output",
+                    str(output),
+                    "--report",
+                    str(report),
+                ])
+
+            self.assertEqual(code, 0)
+            build.assert_called_once()
+            kwargs = build.call_args.kwargs
+            self.assertIs(kwargs["client"], client)
+            self.assertEqual(kwargs["instruments"], ("XAU_USD", "WTICO_USD"))
+            self.assertEqual(kwargs["timeframes"], ("M5", "H1"))
+            self.assertEqual(kwargs["count"], 50)
+            self.assertEqual(json.loads(output.read_text()), payload)
+            write_report.assert_called_once_with(payload, report)
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["assets"], 1)
+            self.assertEqual(summary["role"], "NON_FX_CONTEXT_TECHNICALS_NOT_TRADE_PERMISSION")
+
 
 class LiveRuntimeBootstrapTest(unittest.TestCase):
     """Coverage for 2026-05-11 cli bootstrap-gate fix.

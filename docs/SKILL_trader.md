@@ -100,6 +100,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli import-legacy
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-strategy
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cross-asset-snapshot
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli context-asset-charts
 # Default flow snapshot reads spread only. OANDA orderBook/positionBook is
 # opt-in via `--include-books` after book entitlement is confirmed.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot

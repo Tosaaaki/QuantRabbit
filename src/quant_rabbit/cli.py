@@ -1018,6 +1018,16 @@ def main(argv: list[str] | None = None) -> int:
     p_cross.add_argument("--output", type=Path, default=DEFAULT_CROSS_ASSET_SNAPSHOT)
     p_cross.add_argument("--report", type=Path, default=DEFAULT_CROSS_ASSET_REPORT)
 
+    p_context_assets = sub.add_parser(
+        "context-asset-charts",
+        help="Multi-timeframe technical charts for non-FX context assets (Gold, Oil, SPX, US yields, BTC).",
+    )
+    p_context_assets.add_argument("--instruments", default="")  # empty -> use defaults
+    p_context_assets.add_argument("--timeframes", default=",".join(DEFAULT_PAIR_CHART_TIMEFRAMES))
+    p_context_assets.add_argument("--count", type=int, default=200)
+    p_context_assets.add_argument("--output", type=Path, default=DEFAULT_CONTEXT_ASSET_CHARTS)
+    p_context_assets.add_argument("--report", type=Path, default=DEFAULT_CONTEXT_ASSET_CHARTS_REPORT)
+
     p_flow = sub.add_parser("flow-snapshot", help="Spread time-series per pair; OANDA books are opt-in.")
     p_flow.add_argument("--pairs", default=DEFAULT_TRADER_PAIRS_ARG)
     p_flow.add_argument("--top-n", type=int, default=5)
@@ -2125,6 +2135,40 @@ def main(argv: list[str] | None = None) -> int:
             "assets_fetched": sum(1 for a in snap.assets if a.fetched),
             "issues": list(snap.issues),
             "synthetic_dxy_last": snap.synthetic_dxy.last_value if snap.synthetic_dxy else None,
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "context-asset-charts":
+        from quant_rabbit.analysis.context_assets import (
+            build_context_asset_charts,
+            write_context_asset_charts_report,
+        )
+        try:
+            client = OandaReadOnlyClient()
+        except RuntimeError as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
+        instruments = (
+            tuple(p.strip().upper() for p in args.instruments.split(",") if p.strip())
+            if args.instruments
+            else DEFAULT_CONTEXT_ASSETS
+        )
+        timeframes = tuple(p.strip().upper() for p in args.timeframes.split(",") if p.strip())
+        payload = build_context_asset_charts(
+            client=client,
+            instruments=instruments,
+            timeframes=timeframes or DEFAULT_PAIR_CHART_TIMEFRAMES,
+            count=int(args.count),
+        )
+        if args.output:
+            _write_json(args.output, payload)
+        if args.report:
+            write_context_asset_charts_report(payload, args.report)
+        print(json.dumps({
+            "output_path": str(args.output),
+            "report_path": str(args.report),
+            "assets": len(payload.get("charts") or []),
+            "issues": list(payload.get("issues") or [])[:10],
+            "role": payload.get("role"),
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "flow-snapshot":

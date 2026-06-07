@@ -366,6 +366,7 @@ PYTHONPATH=src python3 -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M3
 
 # Market context layers (must be refreshed before every trader cycle)
 PYTHONPATH=src python3 -m quant_rabbit.cli cross-asset-snapshot   # DXY synthetic, US bond CFDs, SPX/Gold/Oil/BTC, FX correlations
+PYTHONPATH=src python3 -m quant_rabbit.cli context-asset-charts   # Non-FX technical charts for Gold/Oil/SPX/rates/BTC context, not trade permission
 PYTHONPATH=src python3 -m quant_rabbit.cli flow-snapshot          # Spread time series; OANDA books are opt-in with --include-books after entitlement is confirmed
 PYTHONPATH=src python3 -m quant_rabbit.cli currency-strength      # G8 strength meter
 PYTHONPATH=src python3 -m quant_rabbit.cli levels-snapshot        # Pivots, PDH/PDL/PDC, sessions, round numbers
