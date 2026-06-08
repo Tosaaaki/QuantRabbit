@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quant_rabbit.strategy.intent_generator import IntentGenerator
+from quant_rabbit.strategy.intent_generator import IntentGenerator, _forecast_context_payload
 
 
 class IntentGeneratorTest(unittest.TestCase):
@@ -1207,6 +1207,47 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertTrue(live_ready)
         self.assertNotIn("FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE", issue_codes)
         self.assertTrue(all(item["intent"]["metadata"]["forecast_market_support_ok"] for item in live_ready))
+
+    def test_forecast_context_payload_persists_news_refs(self) -> None:
+        forecast = SimpleNamespace(
+            direction="UP",
+            confidence=0.57,
+            raw_confidence=0.61,
+            calibration_multiplier=0.93,
+            current_price=1.17326,
+            target_price=1.1762,
+            invalidation_price=1.1718,
+            horizon_min=60,
+            rationale_summary="UP forecast has fresh news-theme follow-through",
+            drivers_for=("news_theme_followthrough USD soft",),
+            drivers_against=(),
+            component_scores={"UP": 96.0, "DOWN": 41.0, "RANGE": 8.0, "EITHER": 4.0},
+            market_support={
+                "ok": True,
+                "direction": "UP",
+                "aligned_projection_count": 1,
+                "timing_projection_count": 0,
+                "best_hit_rate": 0.6,
+                "best_samples": 32,
+                "reason": "news_theme_followthrough UP hit_rate=0.60 samples=32 supports forecast",
+                "signals": [
+                    {
+                        "name": "news_theme_followthrough",
+                        "direction": "UP",
+                        "confidence": 0.73,
+                        "hit_rate": 0.6,
+                        "samples": 32,
+                    }
+                ],
+            },
+        )
+
+        metadata = _forecast_context_payload(forecast, cycle_id="cycle-news")
+
+        self.assertEqual(metadata["forecast_cycle_id"], "cycle-news")
+        self.assertEqual(metadata["news_refs"], ["news:digest", "news:items"])
+        self.assertEqual(metadata["news_digest_ref"], "news:digest")
+        self.assertEqual(metadata["news_signal_names"], ["news_theme_followthrough"])
 
     def test_same_cycle_projection_bootstrap_can_clear_near_miss_forecast_floor(self) -> None:
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"

@@ -2326,7 +2326,7 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
     component_scores = getattr(forecast, "component_scores", None)
     if not isinstance(component_scores, dict):
         component_scores = {}
-    return {
+    payload = {
         "forecast_cycle_id": cycle_id,
         "forecast_direction": str(getattr(forecast, "direction", "") or ""),
         "forecast_confidence": round(confidence, 4),
@@ -2347,6 +2347,40 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
         "forecast_market_support": market_support,
         "forecast_market_support_ok": bool(market_support.get("ok")),
         "forecast_market_support_reason": market_support.get("reason"),
+    }
+    payload.update(_forecast_news_ref_metadata(forecast, market_support))
+    return payload
+
+
+def _forecast_news_ref_metadata(forecast: Any, market_support: dict[str, Any]) -> dict[str, Any]:
+    signal_names: list[str] = []
+    for raw in market_support.get("signals") or []:
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            continue
+        name_key = name.lower()
+        if "news" not in name_key and not name_key.startswith(("macro_event_nowcast", "us_employment_nowcast")):
+            continue
+        if name not in signal_names:
+            signal_names.append(name)
+
+    forecast_text = " ".join(
+        [
+            str(getattr(forecast, "rationale_summary", "") or ""),
+            " ".join(str(item) for item in list(getattr(forecast, "drivers_for", ()) or ())[:3]),
+            str(market_support.get("reason") or ""),
+        ]
+    ).lower()
+    if not signal_names and ("news" in forecast_text or "headline" in forecast_text):
+        signal_names.append("forecast_news_context")
+    if not signal_names:
+        return {}
+    return {
+        "news_refs": ["news:digest", "news:items"],
+        "news_digest_ref": "news:digest",
+        "news_signal_names": signal_names[:4],
     }
 
 

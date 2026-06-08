@@ -214,6 +214,9 @@ class EntryThesisLedgerTest(unittest.TestCase):
                     ],
                     "matrix_context_refs": ["context_asset:XAU_USD", "context_asset:WTICO_USD", "cot:EUR"],
                     "forecast_drivers_for": ["news_theme_followthrough USD soft"],
+                    "news_refs": ["news:digest", "news:items"],
+                    "news_digest_ref": "news:digest",
+                    "news_signal_names": ["news_theme_followthrough"],
                 }
 
             response = {
@@ -241,6 +244,8 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertIn("cot:EUR", context["evidence_refs"])
             self.assertIn("XAU_USD", context["context_asset_symbols"])
             self.assertIn("news_context", context)
+            self.assertIn("news:digest", context["evidence_refs"])
+            self.assertIn("news:items", context["evidence_refs"])
             loaded = load_entry_thesis("ctx-1", root)
             assert loaded is not None
             self.assertEqual(loaded.context_evidence["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
