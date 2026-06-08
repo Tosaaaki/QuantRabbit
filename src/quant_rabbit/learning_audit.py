@@ -126,7 +126,14 @@ class LearningAuditor:
             min_effect_sample=min_effect_sample,
         )
         checks.extend(influence_result["checks"])
-        checks.extend(_effect_checks(run_id, effect, influence_active=bool(influence_result["influenced_lanes"]), min_effect_sample=min_effect_sample))
+        checks.extend(
+            _effect_checks(
+                run_id,
+                effect,
+                risk_increasing_influence_active=bool(influence_result["risk_increasing_lanes"]),
+                min_effect_sample=min_effect_sample,
+            )
+        )
         checks.extend(_exit_reason_checks(run_id, effect))
 
         blockers = [item for item in checks if item["status"] == "BLOCK" or item["severity"] == "BLOCK"]
@@ -143,6 +150,7 @@ class LearningAuditor:
             "warnings": [item["message"] for item in warnings],
             "learning_influence": {
                 "influenced_lanes": influence_result["influenced_lanes"],
+                "risk_increasing_lanes": influence_result["risk_increasing_lanes"],
                 "total_learning_score_delta": influence_result["total_learning_score_delta"],
                 "lanes": influence_result["lanes"],
             },
@@ -519,7 +527,13 @@ def _advice_influence_checks(
     min_effect_sample: int,
 ) -> dict[str, Any]:
     if not payload:
-        return {"checks": [], "influenced_lanes": 0, "total_learning_score_delta": 0.0, "lanes": []}
+        return {
+            "checks": [],
+            "influenced_lanes": 0,
+            "risk_increasing_lanes": 0,
+            "total_learning_score_delta": 0.0,
+            "lanes": [],
+        }
     lanes = payload.get("lanes") if isinstance(payload.get("lanes"), list) else []
     recommended_ids = {str(item) for item in payload.get("recommended_now_lane_ids", []) or [] if str(item).strip()}
     recommended = [lane for lane in lanes if isinstance(lane, dict) and str(lane.get("lane_id") or "") in recommended_ids]
@@ -581,6 +595,16 @@ def _advice_influence_checks(
                 )
             )
     if influenced_lanes:
+        risk_increasing_lanes = [
+            lane
+            for lane in influenced_lanes
+            if float(lane.get("learning_score_delta") or 0.0) > 0
+            or any(
+                _maybe_float(detail.get("score_delta")) and float(_maybe_float(detail.get("score_delta")) or 0.0) > 0
+                for detail in lane.get("details", [])
+                if isinstance(detail, dict)
+            )
+        ]
         checks.append(
             _check(
                 run_id=run_id,
@@ -595,6 +619,7 @@ def _advice_influence_checks(
             )
         )
     else:
+        risk_increasing_lanes = []
         checks.append(
             _check(
                 run_id=run_id,
@@ -607,7 +632,10 @@ def _advice_influence_checks(
                 metric_unit="score_delta",
             )
         )
-    if influenced_lanes and int(effect["closed_trades"]) >= min_effect_sample and (float(effect["net_jpy"]) < 0 or (_maybe_float(effect.get("profit_factor")) or 0.0) < 1.0):
+    negative_effect_window = int(effect["closed_trades"]) >= min_effect_sample and (
+        float(effect["net_jpy"]) < 0 or (_maybe_float(effect.get("profit_factor")) or 0.0) < 1.0
+    )
+    if risk_increasing_lanes and negative_effect_window:
         checks.append(
             _check(
                 run_id=run_id,
@@ -615,11 +643,29 @@ def _advice_influence_checks(
                 check_name="learning_influence_recent_outcome",
                 status="BLOCK",
                 severity="BLOCK",
-                message="learning-influenced ranking is active while recent effect window is negative",
+                message="risk-increasing learning influence is active while recent effect window is negative",
+                evidence={**effect, "risk_increasing_lanes": risk_increasing_lanes[:20]},
+            )
+        )
+    elif influenced_lanes and negative_effect_window:
+        checks.append(
+            _check(
+                run_id=run_id,
+                source="effect_measurement",
+                check_name="protective_learning_influence_recent_outcome",
+                status="WARN",
+                severity="WARN",
+                message="only non-positive learning score deltas are active while recent effect window is negative",
                 evidence=effect,
             )
         )
-    return {"checks": checks, "influenced_lanes": len(influenced_lanes), "total_learning_score_delta": round(total_delta, 4), "lanes": influenced_lanes}
+    return {
+        "checks": checks,
+        "influenced_lanes": len(influenced_lanes),
+        "risk_increasing_lanes": len(risk_increasing_lanes),
+        "total_learning_score_delta": round(total_delta, 4),
+        "lanes": influenced_lanes,
+    }
 
 
 def _lane_influence_checks(
@@ -724,7 +770,13 @@ def _lane_influence_checks(
     return checks
 
 
-def _effect_checks(run_id: str, effect: dict[str, Any], *, influence_active: bool, min_effect_sample: int) -> list[dict[str, Any]]:
+def _effect_checks(
+    run_id: str,
+    effect: dict[str, Any],
+    *,
+    risk_increasing_influence_active: bool,
+    min_effect_sample: int,
+) -> list[dict[str, Any]]:
     sample = int(effect["closed_trades"])
     status = "PASS"
     severity = "INFO"
@@ -733,10 +785,12 @@ def _effect_checks(run_id: str, effect: dict[str, Any], *, influence_active: boo
         status = "WARN"
         severity = "WARN"
         message = "effect sample is below stability floor"
-    elif influence_active and (float(effect["net_jpy"]) < 0 or (_maybe_float(effect.get("profit_factor")) or 0.0) < 1.0):
+    elif risk_increasing_influence_active and (
+        float(effect["net_jpy"]) < 0 or (_maybe_float(effect.get("profit_factor")) or 0.0) < 1.0
+    ):
         status = "BLOCK"
         severity = "BLOCK"
-        message = "learning influence is active while recent effect window is negative"
+        message = "risk-increasing learning influence is active while recent effect window is negative"
     return [
         _check(
             run_id=run_id,

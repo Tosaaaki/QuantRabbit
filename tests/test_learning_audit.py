@@ -71,6 +71,59 @@ class LearningAuditorTest(unittest.TestCase):
             payload = json.loads((root / "learning_audit.json").read_text())
             self.assertTrue(any("research AI backtest influence" in item for item in payload["blockers"]))
 
+    def test_blocks_positive_learning_influence_when_recent_effect_is_negative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            db = root / "execution_ledger.db"
+            _seed_negative_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                min_effect_sample=2,
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_BLOCKED")
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertEqual(payload["learning_influence"]["risk_increasing_lanes"], 1)
+            self.assertTrue(any("risk-increasing learning influence" in item for item in payload["blockers"]))
+
+    def test_warns_for_protective_learning_penalty_when_recent_effect_is_negative(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, ai_status="RESEARCH_PROFITABLE_NOT_CERTIFIED")
+            _write_negative_attack_advice(files["ai_attack_advice"])
+            db = root / "execution_ledger.db"
+            _seed_negative_execution_events(db)
+
+            summary = LearningAuditor(
+                db_path=db,
+                output_path=root / "learning_audit.json",
+                report_path=root / "learning_audit.md",
+            ).run(
+                ai_backtest_path=files["ai_backtest"],
+                outcome_mart_path=files["outcome_mart"],
+                post_trade_learning_path=files["post_trade_learning"],
+                ai_attack_advice_path=files["ai_attack_advice"],
+                min_effect_sample=2,
+                now=datetime(2026, 6, 3, 0, 0, tzinfo=timezone.utc),
+            )
+
+            self.assertEqual(summary.status, "LEARNING_AUDIT_WARN")
+            self.assertEqual(summary.blockers, 0)
+            self.assertEqual(summary.total_learning_score_delta, -15.0)
+            payload = json.loads((root / "learning_audit.json").read_text())
+            self.assertEqual(payload["learning_influence"]["risk_increasing_lanes"], 0)
+            self.assertTrue(any("non-positive learning score deltas" in item for item in payload["warnings"]))
+
     def test_cli_runs_learning_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -204,6 +257,37 @@ def _fixtures(root: Path, *, ai_status: str) -> dict[str, Path]:
     return files
 
 
+def _write_negative_attack_advice(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "status": "ATTACK_PARTIAL",
+                "read_only": True,
+                "live_permission": False,
+                "recommended_now_lane_ids": ["lane:EUR_USD:LONG"],
+                "lanes": [
+                    {
+                        "lane_id": "lane:EUR_USD:LONG",
+                        "score": 42.0,
+                        "learning_score_delta": -15.0,
+                        "learning_influences": ["outcome_mart_negative_edge"],
+                        "learning_influence_details": [
+                            {
+                                "source": "outcome_mart",
+                                "influence": "outcome_mart_negative_edge",
+                                "score_delta": -15.0,
+                                "net_jpy": -1200.0,
+                                "outcomes": 8,
+                                "validation_outcomes": 2,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+
 def _seed_execution_events(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute(
@@ -220,6 +304,26 @@ def _seed_execution_events(path: Path) -> None:
         )
         conn.execute(
             "INSERT INTO execution_events VALUES ('2026-06-02T22:00:00+00:00', 'TRADE_CLOSED', -80.0)"
+        )
+
+
+def _seed_negative_execution_events(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                realized_pl_jpy REAL
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO execution_events VALUES (?, ?, ?)",
+            [
+                ("2026-06-02T23:00:00+00:00", "TRADE_CLOSED", -120.0),
+                ("2026-06-02T22:00:00+00:00", "TRADE_CLOSED", 40.0),
+            ],
         )
 
 
