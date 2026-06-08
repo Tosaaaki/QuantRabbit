@@ -264,6 +264,64 @@ class LaneHistoryLedgerTest(unittest.TestCase):
             snap = hist[("EUR_USD", "SHORT")]  # closes were LONG → original SHORT
             self.assertGreater(snap.modifier, +20.0)
 
+    def test_method_specific_history_overrides_pair_direction_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "pl": -2000.0,
+                        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                        "ts_utc": "2026-05-12T00:00:00Z",
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "pl": -1500.0,
+                        "lane_id": "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                        "ts_utc": "2026-05-13T00:00:00Z",
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "pl": +2000.0,
+                        "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+                        "ts_utc": "2026-05-14T00:00:00Z",
+                    },
+                    {
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "pl": +1500.0,
+                        "lane_id": "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+                        "ts_utc": "2026-05-15T00:00:00Z",
+                    },
+                ],
+            )
+
+            hist = compute_lane_history(path)
+            range_delta, range_rationale = lane_history_modifier(
+                hist,
+                "EUR_USD",
+                "SHORT",
+                "RANGE_ROTATION",
+            )
+            trend_delta, trend_rationale = lane_history_modifier(
+                hist,
+                "EUR_USD",
+                "SHORT",
+                "TREND_CONTINUATION",
+            )
+            fallback_delta, _ = lane_history_modifier(hist, "EUR_USD", "SHORT")
+
+        self.assertLess(range_delta, 0.0)
+        self.assertIn("EUR_USD:SHORT:RANGE_ROTATION", range_rationale or "")
+        self.assertGreater(trend_delta, 0.0)
+        self.assertIn("EUR_USD:SHORT:TREND_CONTINUATION", trend_rationale or "")
+        self.assertAlmostEqual(fallback_delta, 0.0)
+
     def test_modifier_bounded_by_max(self) -> None:
         """Even extreme losses cap at ±LANE_HISTORY_MAX_MODIFIER."""
         with tempfile.TemporaryDirectory() as tmp:

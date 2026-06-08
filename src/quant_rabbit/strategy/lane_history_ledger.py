@@ -1,12 +1,14 @@
 """Recent-trade P&L bias modifiers for trader_brain scoring.
 
 Reads `data/execution_ledger.db` (already populated by `execution-ledger-sync`
-each cycle) and computes a per-(pair, direction) bias modifier from the last
-N realized trade outcomes. The modifier is added to lane scores so:
+each cycle) and computes per-(pair, direction) and per-(pair, direction,
+method) bias modifiers from the last N realized trade outcomes. The modifier
+is added to lane scores so:
 
-- Pair × direction with recent realized losses → negative modifier → score downweight
-- Pair × direction with recent realized wins → positive modifier → score upweight
-- Pair × direction with no history → 0 modifier → no change
+- Pair x direction x method with recent realized losses -> negative modifier -> score downweight
+- Pair x direction x method with recent realized wins -> positive modifier -> score upweight
+- Pair x direction with no method-specific history -> pair/direction fallback
+- Pair x direction with no history -> 0 modifier -> no change
 
 This breaks the 2026-05-12/13 pattern where the trader kept entering
 GBP_USD LONG and AUD_JPY SHORT despite consecutive losses on those
@@ -43,18 +45,19 @@ LANE_HISTORY_SATURATION_PL_JPY = float(os.environ.get("QR_LANE_HISTORY_SATURATIO
 
 @dataclass(frozen=True)
 class LaneHistorySnapshot:
-    """Per-(pair, direction) snapshot of recent realized P&L."""
+    """Per-lane-shape snapshot of recent realized P&L."""
 
     pair: str
     direction: str  # "LONG" | "SHORT"
     sample_size: int
     net_pl_jpy: float
     modifier: float  # bounded score delta to add in _score_lane
+    method: str | None = None
 
 
-def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnapshot]:
+def compute_lane_history(db_path: Path) -> Dict[Tuple[str, ...], LaneHistorySnapshot]:
     """Read execution_ledger.db, aggregate the last N realized outcomes per
-    (pair, direction), and emit bias modifiers.
+    (pair, direction) and (pair, direction, method), and emit bias modifiers.
 
     Returns an empty dict on any database error so the trader degrades
     gracefully — never blocks scoring on a missing/locked DB.
@@ -119,6 +122,7 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
                     COALESCE(NULLIF(e.trade_id, ''), e.event_uid) AS outcome_id,
                     e.ts_utc,
                     e.pair,
+                    entries.gateway_lane_id AS lane_id,
                     entries.position_side AS original_side,
                     e.realized_pl_jpy
                 FROM execution_events e
@@ -131,10 +135,11 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
                 pair,
                 original_side,
                 SUM(realized_pl_jpy) AS realized_pl_jpy,
+                lane_id,
                 MAX(ts_utc) AS ts_utc
             FROM realized
             WHERE original_side IS NOT NULL
-            GROUP BY outcome_id, pair, original_side
+            GROUP BY outcome_id, pair, original_side, lane_id
             ORDER BY ts_utc DESC
             LIMIT 500
             """
@@ -145,16 +150,22 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
         return {}
     conn.close()
 
-    grouped: Dict[Tuple[str, str], list] = {}
-    for pair, original_side, pl, ts in rows:
+    grouped: Dict[Tuple[str, ...], list] = {}
+    for pair, original_side, pl, lane_id, ts in rows:
         if pl is None or pair is None or original_side is None:
             continue
-        key = (str(pair), original_side)
-        bucket = grouped.setdefault(key, [])
-        if len(bucket) < LANE_HISTORY_LOOKBACK_TRADES:
-            bucket.append(float(pl))
+        pair_text = str(pair)
+        side_text = str(original_side)
+        keys: list[Tuple[str, ...]] = [(pair_text, side_text)]
+        method = _method_from_lane_id(lane_id)
+        if method:
+            keys.append((pair_text, side_text, method))
+        for key in keys:
+            bucket = grouped.setdefault(key, [])
+            if len(bucket) < LANE_HISTORY_LOOKBACK_TRADES:
+                bucket.append(float(pl))
 
-    snapshots: Dict[Tuple[str, str], LaneHistorySnapshot] = {}
+    snapshots: Dict[Tuple[str, ...], LaneHistorySnapshot] = {}
     for key, pls in grouped.items():
         if not pls:
             continue
@@ -166,27 +177,40 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
             sample_size=len(pls),
             net_pl_jpy=net,
             modifier=modifier,
+            method=key[2] if len(key) >= 3 else None,
         )
     return snapshots
 
 
 def lane_history_modifier(
-    snapshots: Dict[Tuple[str, str], LaneHistorySnapshot],
+    snapshots: Dict[Tuple[str, ...], LaneHistorySnapshot],
     pair: str,
     direction: str,
+    method: str | None = None,
 ) -> tuple[float, str | None]:
-    """Look up a single (pair, direction) modifier and a one-line rationale.
+    """Look up a lane-history modifier and a one-line rationale.
 
     Returns (modifier, rationale) where rationale is None when the lane
     has no history yet (so caller can skip appending a noise line).
     """
-    key = (pair, "LONG" if direction.upper() == "LONG" else "SHORT")
-    snap = snapshots.get(key)
+    side = "LONG" if direction.upper() == "LONG" else "SHORT"
+    method_key = str(method or "").strip().upper()
+    snap = snapshots.get((pair, side, method_key)) if method_key else None
+    if snap is None:
+        snap = snapshots.get((pair, side))
     if snap is None or snap.sample_size == 0:
         return 0.0, None
     sign = "+" if snap.modifier >= 0 else ""
+    method_suffix = f":{snap.method}" if snap.method else ""
     rationale = (
-        f"lane history {pair}:{direction} last {snap.sample_size}t "
+        f"lane history {pair}:{direction}{method_suffix} last {snap.sample_size}t "
         f"net={snap.net_pl_jpy:+.0f}JPY → score {sign}{snap.modifier:.1f}"
     )
     return snap.modifier, rationale
+
+
+def _method_from_lane_id(lane_id: object) -> str | None:
+    parts = [part.strip() for part in str(lane_id or "").split(":") if part.strip()]
+    if len(parts) >= 4:
+        return parts[3].upper()
+    return None

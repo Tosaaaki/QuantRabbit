@@ -2098,22 +2098,49 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         try:
             with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
                 conn.row_factory = sqlite3.Row
-                rows = list(
-                    conn.execute(
-                        """
+                columns = _table_columns(conn, "execution_events")
+                has_trade_id = "trade_id" in columns
+                has_lane_id = "lane_id" in columns
+                if has_trade_id and has_lane_id:
+                    query = """
+                        WITH open_fills AS (
+                            SELECT
+                                trade_id,
+                                MAX(NULLIF(lane_id, '')) AS open_lane_id
+                            FROM execution_events
+                            WHERE event_type = 'ORDER_FILLED'
+                              AND COALESCE(trade_id, '') <> ''
+                            GROUP BY trade_id
+                        )
+                        SELECT
+                            e.ts_utc,
+                            e.pair,
+                            e.side,
+                            e.realized_pl_jpy,
+                            e.trade_id,
+                            e.lane_id,
+                            open_fills.open_lane_id
+                        FROM execution_events e
+                        LEFT JOIN open_fills ON open_fills.trade_id = e.trade_id
+                        WHERE e.event_type = 'TRADE_CLOSED'
+                          AND e.realized_pl_jpy IS NOT NULL
+                    """
+                else:
+                    query = """
                         SELECT ts_utc, pair, side, realized_pl_jpy
                         FROM execution_events
                         WHERE event_type = 'TRADE_CLOSED'
                           AND realized_pl_jpy IS NOT NULL
-                        """
-                    )
+                    """
+                rows = list(
+                    conn.execute(query)
                 )
         except sqlite3.Error as exc:
             error = str(exc)
     else:
         error = "missing"
     pls: list[float] = []
-    segments: dict[tuple[str, str], list[float]] = {}
+    segments: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in rows:
         ts = _parse_utc(row["ts_utc"])
         if ts is None or ts < cutoff:
@@ -2122,8 +2149,16 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         if value is None:
             continue
         pls.append(value)
-        key = (str(row["pair"] or "UNKNOWN"), str(row["side"] or "UNKNOWN"))
-        segments.setdefault(key, []).append(value)
+        lane_id = _row_text(row, "lane_id") or _row_text(row, "open_lane_id")
+        method = _method_from_lane_id(lane_id) or "UNKNOWN"
+        key = (str(row["pair"] or "UNKNOWN"), str(row["side"] or "UNKNOWN"), method)
+        segment = segments.setdefault(key, {"values": [], "lane_ids": set(), "trade_ids": set()})
+        segment["values"].append(value)
+        if lane_id:
+            segment["lane_ids"].add(lane_id)
+        trade_id = _row_text(row, "trade_id")
+        if trade_id:
+            segment["trade_ids"].add(trade_id)
     gross_profit = sum(value for value in pls if value > 0)
     losses = [value for value in pls if value < 0]
     gross_loss_abs = abs(sum(losses))
@@ -2131,8 +2166,17 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
     wins = [value for value in pls if value > 0]
     net = sum(pls)
     worst_segments = [
-        {"pair": pair, "side": side, "trades": len(values), "net_jpy": sum(values), "expectancy_jpy": sum(values) / len(values)}
-        for (pair, side), values in segments.items()
+        {
+            "pair": pair,
+            "side": side,
+            "method": method,
+            "trades": len(segment["values"]),
+            "net_jpy": sum(segment["values"]),
+            "expectancy_jpy": sum(segment["values"]) / len(segment["values"]),
+            "lane_ids": sorted(segment["lane_ids"])[:5],
+            "trade_ids": sorted(segment["trade_ids"])[:10],
+        }
+        for (pair, side, method), segment in segments.items()
     ]
     worst_segments.sort(key=lambda item: float(item["net_jpy"]))
     return {
@@ -2148,6 +2192,23 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         "worst_segments": worst_segments[:10],
         "error": error,
     }
+
+
+def _row_text(row: sqlite3.Row, key: str) -> str | None:
+    if key not in row.keys():
+        return None
+    value = row[key]
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _method_from_lane_id(lane_id: str | None) -> str | None:
+    parts = [part.strip() for part in str(lane_id or "").split(":") if part.strip()]
+    if len(parts) >= 4:
+        return parts[3].upper()
+    return None
 
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:

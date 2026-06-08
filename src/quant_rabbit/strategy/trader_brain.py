@@ -1214,7 +1214,7 @@ class TraderBrain:
         full_pair_charts: dict[str, dict[str, Any]] | None = None,
         snapshot: BrokerSnapshot | None = None,
         attack_ranks: dict[str, int] | None = None,
-        lane_history: dict[tuple[str, str], LaneHistorySnapshot] | None = None,
+        lane_history: dict[tuple[str, ...], LaneHistorySnapshot] | None = None,
         regime_snapshots: dict[str, RegimeSnapshot] | None = None,
         trader_overrides: TraderOverrides | None = None,
         news_themes: NewsThemes | None = None,
@@ -1492,21 +1492,22 @@ class TraderBrain:
         pair_chart_for_reversal = (full_pair_charts or {}).get(pair) if full_pair_charts else None
         _reversal_detected = detect_reversal(pair_chart_for_reversal, direction)
 
-        # Module B: lane history bias — recent (pair, direction) P&L
-        # adjusts score so a losing-streak direction gets downweighted
-        # and a winning-streak direction gets upweighted. Bounded ±25.
+        # Module B: lane history bias — recent (pair, direction, method) P&L
+        # adjusts score so a losing-streak setup gets downweighted and a
+        # winning-streak setup gets upweighted. Falls back to pair/direction
+        # when method-specific evidence is absent. Bounded ±25.
         # SUPPRESSED when reversal_signal fires for the same direction:
         # history is a look-back signal that contradicts a confirmed
         # turn-from-extreme.
         if lane_history and _reversal_detected is None:
-            lh_delta, lh_rationale = lane_history_modifier(lane_history, pair, direction)
+            lh_delta, lh_rationale = lane_history_modifier(lane_history, pair, direction, method)
             if lh_delta != 0.0:
                 score += lh_delta
                 if lh_rationale:
                     rationale.insert(0, lh_rationale)
         elif _reversal_detected is not None and lane_history:
             # Surface the suppression in rationale for audit.
-            lh_delta_check, _ = lane_history_modifier(lane_history, pair, direction)
+            lh_delta_check, _ = lane_history_modifier(lane_history, pair, direction, method)
             if lh_delta_check < 0:
                 rationale.insert(0, f"lane_history {lh_delta_check:+.1f} SUPPRESSED by reversal signal")
 

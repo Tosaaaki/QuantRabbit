@@ -14,6 +14,7 @@ from quant_rabbit.self_improvement_audit import (
     STATUS_ACTION_REQUIRED,
     STATUS_BLOCKED,
     SelfImprovementAuditor,
+    _effect_metrics,
     _projection_expired,
 )
 
@@ -537,6 +538,29 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["evidence"]["current_streak"], 3)
 
+    def test_effect_metrics_attributes_closed_pl_to_opening_lane_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_method_attribution_ledger(db_path)
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        by_method = {
+            (item["pair"], item["side"], item["method"]): item
+            for item in effect["worst_segments"]
+        }
+        rotation = by_method[("EUR_USD", "SHORT", "RANGE_ROTATION")]
+        self.assertEqual(rotation["trades"], 2)
+        self.assertAlmostEqual(rotation["net_jpy"], -700.0)
+        self.assertEqual(
+            rotation["lane_ids"],
+            ["range_trader:EUR_USD:SHORT:RANGE_ROTATION"],
+        )
+        self.assertEqual(rotation["trade_ids"], ["T1", "T2"])
+        trend = by_method[("EUR_USD", "SHORT", "TREND_CONTINUATION")]
+        self.assertEqual(trend["trades"], 1)
+        self.assertAlmostEqual(trend["net_jpy"], 120.0)
+
     def test_unattributed_market_order_close_is_p1_execution_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -995,6 +1019,103 @@ def _write_execution_ledger(path: Path, *, closed_pls: tuple[float, ...], last_t
                 """,
                 (f"closed-{idx}", (_NOW - timedelta(hours=idx + 1)).isoformat(), pl),
             )
+
+
+def _write_method_attribution_ledger(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                realized_pl_jpy REAL
+            );
+            """
+        )
+        rows = [
+            (
+                "fill-range-1",
+                (_NOW - timedelta(hours=6)).isoformat(),
+                "ORDER_FILLED",
+                "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                "O1",
+                "T1",
+                "EUR_USD",
+                "SHORT",
+                0.0,
+            ),
+            (
+                "close-range-1",
+                (_NOW - timedelta(hours=5)).isoformat(),
+                "TRADE_CLOSED",
+                "",
+                "C1",
+                "T1",
+                "EUR_USD",
+                "SHORT",
+                -500.0,
+            ),
+            (
+                "fill-range-2",
+                (_NOW - timedelta(hours=4)).isoformat(),
+                "ORDER_FILLED",
+                "range_trader:EUR_USD:SHORT:RANGE_ROTATION",
+                "O2",
+                "T2",
+                "EUR_USD",
+                "SHORT",
+                0.0,
+            ),
+            (
+                "close-range-2",
+                (_NOW - timedelta(hours=3)).isoformat(),
+                "TRADE_CLOSED",
+                "",
+                "C2",
+                "T2",
+                "EUR_USD",
+                "SHORT",
+                -200.0,
+            ),
+            (
+                "fill-trend",
+                (_NOW - timedelta(hours=2)).isoformat(),
+                "ORDER_FILLED",
+                "trend_trader:EUR_USD:SHORT:TREND_CONTINUATION",
+                "O3",
+                "T3",
+                "EUR_USD",
+                "SHORT",
+                0.0,
+            ),
+            (
+                "close-trend",
+                (_NOW - timedelta(hours=1)).isoformat(),
+                "TRADE_CLOSED",
+                "",
+                "C3",
+                "T3",
+                "EUR_USD",
+                "SHORT",
+                120.0,
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                pair, side, realized_pl_jpy
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
 
 
 def _write_market_close_attribution_ledger(path: Path, *, include_gateway_close: bool) -> None:
