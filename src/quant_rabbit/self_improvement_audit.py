@@ -478,10 +478,18 @@ class SelfImprovementAuditor:
             "",
             f"- Window `{payload['window_hours']}`h: trades `{window['closed_trades']}`, net `{window['net_jpy']:.2f}` JPY, PF `{_fmt_optional(window['profit_factor'])}`, expectancy `{_fmt_optional(window['expectancy_jpy'])}` JPY",
             f"- Last 24h: trades `{last_24h['closed_trades']}`, net `{last_24h['net_jpy']:.2f}` JPY, PF `{_fmt_optional(last_24h['profit_factor'])}`, expectancy `{_fmt_optional(last_24h['expectancy_jpy'])}` JPY",
-            "",
-            "## Findings",
-            "",
         ]
+        market_close_loss = window.get("market_order_trade_close_loss_provenance_metrics")
+        if isinstance(market_close_loss, dict) and market_close_loss:
+            lines.append(
+                f"- Market-order loss close provenance: `{_fmt_close_provenance_metrics(market_close_loss)}`"
+            )
+        market_close_loss_24h = last_24h.get("market_order_trade_close_loss_provenance_metrics")
+        if isinstance(market_close_loss_24h, dict) and market_close_loss_24h:
+            lines.append(
+                f"- Last-24h market-order loss close provenance: `{_fmt_close_provenance_metrics(market_close_loss_24h)}`"
+            )
+        lines.extend(["", "## Findings", ""])
         if payload["findings"]:
             for item in payload["findings"]:
                 lines.append(
@@ -1805,6 +1813,9 @@ def _profitability_findings(
                         "avg_win_jpy": avg_win,
                         "avg_loss_jpy_abs": avg_loss,
                         "worst_segments": effect.get("worst_segments", [])[:5],
+                        "market_order_trade_close_loss_provenance_metrics": effect.get(
+                            "market_order_trade_close_loss_provenance_metrics", {}
+                        ),
                     },
                 },
             )
@@ -2444,6 +2455,9 @@ def _decision_artifact_findings(
 def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dict[str, Any]:
     cutoff = now - timedelta(hours=max(0.0, window_hours))
     rows: list[sqlite3.Row] = []
+    accepted_close_rows: list[sqlite3.Row] = []
+    gateway_close_trade_ids: set[str] = set()
+    gpt_close_trade_ids: set[str] = set()
     error: str | None = None
     if db_path.exists():
         try:
@@ -2452,12 +2466,17 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                 columns = _table_columns(conn, "execution_events")
                 has_trade_id = "trade_id" in columns
                 has_lane_id = "lane_id" in columns
-                if has_trade_id and has_lane_id:
-                    query = """
+                if has_trade_id:
+                    gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
+                    gpt_close_trade_ids = _event_trade_ids(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
+                    accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
+                    lane_select = "e.lane_id AS lane_id" if has_lane_id else "NULL AS lane_id"
+                    open_lane_expr = "MAX(NULLIF(lane_id, ''))" if has_lane_id else "NULL"
+                    query = f"""
                         WITH open_fills AS (
                             SELECT
                                 trade_id,
-                                MAX(NULLIF(lane_id, '')) AS open_lane_id
+                                {open_lane_expr} AS open_lane_id
                             FROM execution_events
                             WHERE event_type = 'ORDER_FILLED'
                               AND COALESCE(trade_id, '') <> ''
@@ -2469,29 +2488,42 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                             e.side,
                             e.realized_pl_jpy,
                             e.trade_id,
-                            e.lane_id,
-                            open_fills.open_lane_id
+                            {lane_select},
+                            open_fills.open_lane_id,
+                            {_sql_column_or_null(columns, "order_id")},
+                            {_sql_column_or_null(columns, "exit_reason")},
+                            {_sql_column_or_null(columns, "raw_json")}
                         FROM execution_events e
                         LEFT JOIN open_fills ON open_fills.trade_id = e.trade_id
                         WHERE e.event_type = 'TRADE_CLOSED'
                           AND e.realized_pl_jpy IS NOT NULL
                     """
                 else:
-                    query = """
-                        SELECT ts_utc, pair, side, realized_pl_jpy
+                    query = f"""
+                        SELECT
+                            ts_utc,
+                            pair,
+                            side,
+                            realized_pl_jpy,
+                            NULL AS trade_id,
+                            NULL AS lane_id,
+                            NULL AS open_lane_id,
+                            {_sql_column_or_null(columns, "order_id", qualifier="")},
+                            {_sql_column_or_null(columns, "exit_reason", qualifier="")},
+                            {_sql_column_or_null(columns, "raw_json", qualifier="")}
                         FROM execution_events
                         WHERE event_type = 'TRADE_CLOSED'
                           AND realized_pl_jpy IS NOT NULL
                     """
-                rows = list(
-                    conn.execute(query)
-                )
+                rows = list(conn.execute(query))
         except sqlite3.Error as exc:
             error = str(exc)
     else:
         error = "missing"
     pls: list[float] = []
     segments: dict[tuple[str, str, str], dict[str, Any]] = {}
+    close_provenance_metrics: dict[str, dict[str, Any]] = {}
+    market_order_trade_close_loss_provenance_metrics: dict[str, dict[str, Any]] = {}
     for row in rows:
         ts = _parse_utc(row["ts_utc"])
         if ts is None or ts < cutoff:
@@ -2503,8 +2535,37 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         lane_id = _row_text(row, "lane_id") or _row_text(row, "open_lane_id")
         method = _method_from_lane_id(lane_id) or "UNKNOWN"
         key = (str(row["pair"] or "UNKNOWN"), str(row["side"] or "UNKNOWN"), method)
-        segment = segments.setdefault(key, {"values": [], "lane_ids": set(), "trade_ids": set()})
+        close_provenance = _close_provenance_for_effect_row(
+            row,
+            accepted_close_rows=accepted_close_rows,
+            gateway_close_trade_ids=gateway_close_trade_ids,
+            gpt_close_trade_ids=gpt_close_trade_ids,
+        )
+        _add_close_provenance_metric(close_provenance_metrics, close_provenance, value)
+        exit_reason = str(_row_text(row, "exit_reason") or "").strip().upper()
+        if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and value < 0:
+            _add_close_provenance_metric(
+                market_order_trade_close_loss_provenance_metrics,
+                close_provenance,
+                value,
+            )
+        segment = segments.setdefault(
+            key,
+            {
+                "values": [],
+                "lane_ids": set(),
+                "trade_ids": set(),
+                "close_provenance_counts": {},
+                "close_provenance_net_jpy": {},
+            },
+        )
         segment["values"].append(value)
+        segment["close_provenance_counts"][close_provenance] = (
+            int(segment["close_provenance_counts"].get(close_provenance, 0)) + 1
+        )
+        segment["close_provenance_net_jpy"][close_provenance] = (
+            float(segment["close_provenance_net_jpy"].get(close_provenance, 0.0)) + value
+        )
         if lane_id:
             segment["lane_ids"].add(lane_id)
         trade_id = _row_text(row, "trade_id")
@@ -2526,10 +2587,20 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
             "expectancy_jpy": sum(segment["values"]) / len(segment["values"]),
             "lane_ids": sorted(segment["lane_ids"])[:5],
             "trade_ids": sorted(segment["trade_ids"])[:10],
+            "close_provenance_counts": dict(sorted(segment["close_provenance_counts"].items())),
+            "close_provenance_net_jpy": dict(sorted(segment["close_provenance_net_jpy"].items())),
         }
         for (pair, side, method), segment in segments.items()
     ]
     worst_segments.sort(key=lambda item: float(item["net_jpy"]))
+    market_close_loss_net = sum(
+        float(item.get("net_jpy") or 0.0)
+        for item in market_order_trade_close_loss_provenance_metrics.values()
+    )
+    market_close_loss_trades = sum(
+        int(item.get("trades") or 0)
+        for item in market_order_trade_close_loss_provenance_metrics.values()
+    )
     return {
         "closed_trades": count,
         "net_jpy": net,
@@ -2541,7 +2612,113 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
         "avg_win_jpy": (sum(wins) / len(wins)) if wins else None,
         "avg_loss_jpy_abs": (abs(sum(losses)) / len(losses)) if losses else None,
         "worst_segments": worst_segments[:10],
+        "close_provenance_metrics": _sorted_close_provenance_metrics(close_provenance_metrics),
+        "market_order_trade_close_loss_trades": market_close_loss_trades,
+        "market_order_trade_close_loss_net_jpy": market_close_loss_net,
+        "market_order_trade_close_loss_provenance_metrics": _sorted_close_provenance_metrics(
+            market_order_trade_close_loss_provenance_metrics
+        ),
         "error": error,
+    }
+
+
+def _sql_column_or_null(columns: set[str], column: str, *, qualifier: str = "e") -> str:
+    if column not in columns:
+        return f"NULL AS {column}"
+    if qualifier:
+        return f"{qualifier}.{column} AS {column}"
+    return column
+
+
+def _event_trade_ids(conn: sqlite3.Connection, event_type: str) -> set[str]:
+    try:
+        return {
+            str(row[0]).strip()
+            for row in conn.execute(
+                """
+                SELECT DISTINCT trade_id
+                FROM execution_events
+                WHERE event_type = ?
+                  AND trade_id IS NOT NULL
+                  AND trade_id != ''
+                """,
+                (event_type,),
+            )
+            if str(row[0]).strip()
+        }
+    except sqlite3.Error:
+        return set()
+
+
+def _close_provenance_for_effect_row(
+    row: sqlite3.Row,
+    *,
+    accepted_close_rows: list[sqlite3.Row],
+    gateway_close_trade_ids: set[str],
+    gpt_close_trade_ids: set[str],
+) -> str:
+    exit_reason = str(_row_text(row, "exit_reason") or "").strip().upper()
+    if exit_reason and exit_reason != "MARKET_ORDER_TRADE_CLOSE":
+        return exit_reason
+    if exit_reason != "MARKET_ORDER_TRADE_CLOSE":
+        return "UNKNOWN_CLOSE_PROVENANCE"
+    trade_id = str(_row_text(row, "trade_id") or "").strip()
+    order_id = str(_row_text(row, "order_id") or "").strip()
+    if trade_id and trade_id in gateway_close_trade_ids:
+        return "GATEWAY_TRADE_CLOSE_SENT"
+    if trade_id and trade_id in gpt_close_trade_ids:
+        return "GATEWAY_GPT_CLOSE_ACCEPTED"
+    sources = _broker_trade_close_accept_sources(
+        accepted_close_rows,
+        trade_id=trade_id,
+        order_id=order_id,
+    )
+    if not sources:
+        return "NO_LOCAL_CLOSE_PROVENANCE"
+    for label in (
+        "LOCAL_LEDGER_LANE_ID",
+        "TRADER_CLIENT_EXTENSION",
+        "NON_TRADER_CLIENT_EXTENSION",
+        "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
+    ):
+        if label in sources:
+            return label
+    return "BROKER_TRADE_CLOSE_ACCEPTED:" + "+".join(sorted(sources))
+
+
+def _add_close_provenance_metric(metrics: dict[str, dict[str, Any]], label: str, value: float) -> None:
+    bucket = metrics.setdefault(
+        label,
+        {
+            "trades": 0,
+            "net_jpy": 0.0,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 0.0,
+            "win_trades": 0,
+            "loss_trades": 0,
+        },
+    )
+    bucket["trades"] = int(bucket["trades"]) + 1
+    bucket["net_jpy"] = float(bucket["net_jpy"]) + value
+    if value > 0:
+        bucket["gross_profit_jpy"] = float(bucket["gross_profit_jpy"]) + value
+        bucket["win_trades"] = int(bucket["win_trades"]) + 1
+    elif value < 0:
+        bucket["gross_loss_jpy"] = float(bucket["gross_loss_jpy"]) + abs(value)
+        bucket["loss_trades"] = int(bucket["loss_trades"]) + 1
+
+
+def _sorted_close_provenance_metrics(metrics: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        label: {
+            "trades": int(values.get("trades") or 0),
+            "net_jpy": float(values.get("net_jpy") or 0.0),
+            "gross_profit_jpy": float(values.get("gross_profit_jpy") or 0.0),
+            "gross_loss_jpy": float(values.get("gross_loss_jpy") or 0.0),
+            "win_trades": int(values.get("win_trades") or 0),
+            "loss_trades": int(values.get("loss_trades") or 0),
+        }
+        for label, values in sorted(metrics.items())
     }
 
 
@@ -2760,6 +2937,17 @@ def _fmt_optional(value: Any) -> str:
     if number is None:
         return "n/a"
     return f"{number:.3f}"
+
+
+def _fmt_close_provenance_metrics(metrics: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for label, raw in sorted(metrics.items()):
+        if not isinstance(raw, dict):
+            continue
+        trades = int(raw.get("trades") or 0)
+        net = _maybe_float(raw.get("net_jpy")) or 0.0
+        parts.append(f"{label}: {trades} trade(s), {net:.1f} JPY")
+    return "; ".join(parts) if parts else "n/a"
 
 
 def _parse_utc(value: Any) -> datetime | None:

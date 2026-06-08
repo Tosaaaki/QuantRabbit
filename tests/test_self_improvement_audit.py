@@ -650,6 +650,68 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(trend["trades"], 1)
         self.assertAlmostEqual(trend["net_jpy"], 120.0)
 
+    def test_effect_metrics_classifies_direct_market_order_loss_close_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_market_close_attribution_ledger(db_path, include_gateway_close=False)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("ALTER TABLE execution_events ADD COLUMN raw_json TEXT")
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "broker-close-accept",
+                        (_NOW - timedelta(hours=1, minutes=10)).isoformat(),
+                        "ORDER_ACCEPTED",
+                        "",
+                        "C42",
+                        "",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        None,
+                        "TRADE_CLOSE",
+                        json.dumps(
+                            {
+                                "id": "C42",
+                                "reason": "TRADE_CLOSE",
+                                "tradeClose": {"tradeID": "T42", "units": "ALL"},
+                            }
+                        ),
+                    ),
+                )
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        market_loss = effect["market_order_trade_close_loss_provenance_metrics"]
+        self.assertEqual(market_loss["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"]["trades"], 1)
+        self.assertAlmostEqual(market_loss["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"]["net_jpy"], -500.0)
+        segment = effect["worst_segments"][0]
+        self.assertEqual(
+            segment["close_provenance_counts"],
+            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
+        )
+        self.assertEqual(
+            segment["close_provenance_net_jpy"],
+            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": -500.0},
+        )
+
+    def test_effect_metrics_classifies_gateway_market_order_loss_close_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_market_close_attribution_ledger(db_path, include_gateway_close=True)
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        market_loss = effect["market_order_trade_close_loss_provenance_metrics"]
+        self.assertEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["trades"], 1)
+        self.assertAlmostEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["net_jpy"], -500.0)
+
     def test_unattributed_market_order_close_is_p1_execution_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
