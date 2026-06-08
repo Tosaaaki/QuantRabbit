@@ -96,6 +96,26 @@ class ChartReaderTest(unittest.TestCase):
         self.assertEqual(reading.lookback_bars, 200)
         self.assertIn("Read=", chart.chart_story)
 
+    def test_extended_confluence_publishes_price_range_bounds(self) -> None:
+        candles_by_tf = {
+            "H1": _series(1.1800, -0.0004, n=80),
+            "H4": _series(1.1900, -0.0003, n=80),
+        }
+
+        chart = build_pair_chart(
+            "EUR_USD",
+            client=None,  # type: ignore[arg-type]
+            timeframes=("H1", "H4"),
+            candles_by_tf=candles_by_tf,
+        )
+
+        self.assertIsNotNone(chart.confluence["price_range_24h_low"])
+        self.assertIsNotNone(chart.confluence["price_range_24h_high"])
+        self.assertLess(chart.confluence["price_range_24h_low"], chart.confluence["price_range_24h_high"])
+        self.assertIsNotNone(chart.confluence["price_range_7d_low"])
+        self.assertIsNotNone(chart.confluence["price_range_7d_high"])
+        self.assertLess(chart.confluence["price_range_7d_low"], chart.confluence["price_range_7d_high"])
+
 
 if __name__ == "__main__":
     unittest.main()

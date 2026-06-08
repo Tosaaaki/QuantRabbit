@@ -946,6 +946,12 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
         "confluence": conf,
         "price_percentile_24h": _optional_float(conf.get("price_percentile_24h")),
         "price_percentile_7d": _optional_float(conf.get("price_percentile_7d")),
+        "price_range_24h_low": _price_range_low(conf, h1_indicators, horizon="24h"),
+        "price_range_24h_high": _price_range_high(conf, h1_indicators, horizon="24h"),
+        "price_range_24h_source": _price_range_source(conf, h1_indicators, horizon="24h"),
+        "price_range_7d_low": _price_range_low(conf, h4_indicators, horizon="7d"),
+        "price_range_7d_high": _price_range_high(conf, h4_indicators, horizon="7d"),
+        "price_range_7d_source": _price_range_source(conf, h4_indicators, horizon="7d"),
         "atr_percentile_24h": _optional_float(conf.get("atr_percentile_24h")),
         "range_24h_sigma_multiple": _optional_float(conf.get("range_24h_sigma_multiple")),
         "tf_agreement_score": _optional_float(conf.get("tf_agreement_score")),
@@ -974,6 +980,32 @@ def _chart_context_for(pair: str, charts: dict[str, dict[str, Any]] | None) -> d
     }
     context.update(_pattern_context_for(per_tf.get("__raw_chart")))
     return context
+
+
+def _price_range_low(conf: dict[str, Any], indicators: dict[str, Any], *, horizon: str) -> float | None:
+    value = _optional_float(conf.get(f"price_range_{horizon}_low"))
+    if value is not None:
+        return value
+    return _optional_float(indicators.get("donchian_low"))
+
+
+def _price_range_high(conf: dict[str, Any], indicators: dict[str, Any], *, horizon: str) -> float | None:
+    value = _optional_float(conf.get(f"price_range_{horizon}_high"))
+    if value is not None:
+        return value
+    return _optional_float(indicators.get("donchian_high"))
+
+
+def _price_range_source(conf: dict[str, Any], indicators: dict[str, Any], *, horizon: str) -> str | None:
+    if _optional_float(conf.get(f"price_range_{horizon}_low")) is not None and _optional_float(
+        conf.get(f"price_range_{horizon}_high")
+    ) is not None:
+        return f"confluence_{horizon}"
+    if _optional_float(indicators.get("donchian_low")) is not None and _optional_float(
+        indicators.get("donchian_high")
+    ) is not None:
+        return "donchian_proxy"
+    return None
 
 
 def _pattern_context_for(raw_chart: Any) -> dict[str, Any]:
@@ -4174,7 +4206,7 @@ def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:
     # blocked; same-direction chasing is the failure mode
     # 2026-05-12T15:33 UTC drove the operator to demand killing.
     sigma_mult = _optional_float(metadata.get("range_24h_sigma_multiple"))
-    ppct_24h = _optional_float(metadata.get("price_percentile_24h"))
+    ppct_24h = _gate_location_percentile(intent, metadata, "24h")
     if sigma_mult is not None and sigma_mult >= EXHAUSTION_RANGE_SIGMA_MULTIPLE:
         chasing = False
         if intent.side == Side.LONG and ppct_24h is not None and ppct_24h >= 0.5:
@@ -4367,14 +4399,16 @@ def _range_rotation_chases_broader_location(intent: OrderIntent, metadata: dict[
 
     M5/M15 can mark a tiny local rail after a large move. That does not make a
     SHORT at the 24h/7d discount a resistance fade, nor a LONG at the premium a
-    support fade. Use the existing midpoint boundary: below half is discount,
-    above half is premium.
+    support fade. For pending LIMIT receipts, evaluate the planned entry price
+    when the chart packet carries entry percentiles; the current price may be
+    extended while the order waits for a valid retest. Use the existing midpoint
+    boundary: below half is discount, above half is premium.
     """
     percentiles = [
         value
         for value in (
-            _optional_float(metadata.get("price_percentile_24h")),
-            _optional_float(metadata.get("price_percentile_7d")),
+            _gate_location_percentile(intent, metadata, "24h"),
+            _gate_location_percentile(intent, metadata, "7d"),
         )
         if value is not None
     ]
@@ -4383,6 +4417,21 @@ def _range_rotation_chases_broader_location(intent: OrderIntent, metadata: dict[
     if intent.side == Side.SHORT:
         return any(value <= BREAKOUT_FAILURE_RETEST_MIDPOINT for value in percentiles)
     return any(value >= BREAKOUT_FAILURE_RETEST_MIDPOINT for value in percentiles)
+
+
+def _gate_location_percentile(intent: OrderIntent, metadata: dict[str, Any], horizon: str) -> float | None:
+    """Return the location percentile a timing gate should evaluate.
+
+    MARKET and STOP_ENTRY entries are evaluated at current location because
+    they chase or trigger through the current move. LIMIT receipts wait for a
+    pullback/retest; when the generator computed an entry percentile, use that
+    planned entry location instead of current price.
+    """
+    if intent.order_type == OrderType.LIMIT and intent.entry is not None:
+        entry_value = _optional_float(metadata.get(f"entry_price_percentile_{horizon}"))
+        if entry_value is not None:
+            return entry_value
+    return _optional_float(metadata.get(f"price_percentile_{horizon}"))
 
 
 def _pattern_reversal_chase_issue(
@@ -6373,9 +6422,11 @@ def _geometry_metadata(
     chart_context: dict[str, Any] | None = None,
     atr_pips: float | None = None,
 ) -> dict[str, Any]:
+    entry_location = _entry_location_percentile_metadata(pair, entry, chart_context)
     if order_type not in {OrderType.LIMIT, OrderType.MARKET} or not range_indicators:
         return {
             "geometry_model": "ATR_SPREAD_STRUCTURE",
+            **entry_location,
             **_structural_stop_metadata(pair, side, entry, sl, chart_indicators),
         }
     pip_factor = PIP_FACTORS[pair]
@@ -6387,7 +6438,7 @@ def _geometry_metadata(
     support = _nearest_below(quote.ask, support_levels)
     resistance = _nearest_above(quote.bid, resistance_levels)
     if support is None or resistance is None:
-        return {"geometry_model": "ATR_SPREAD"}
+        return {"geometry_model": "ATR_SPREAD", **entry_location}
     if side == Side.LONG:
         resistance = _target_resistance(entry, stop_pips, spread_pips, resistance_levels, pip) or resistance
     else:
@@ -6416,7 +6467,31 @@ def _geometry_metadata(
         "range_directional_target_rr_cap": (
             RANGE_DIRECTIONAL_MARKET_TARGET_RR_CAP if model == "RANGE_DIRECTIONAL_MARKET" else None
         ),
+        **entry_location,
     }
+
+
+def _entry_location_percentile_metadata(
+    pair: str,
+    entry: float,
+    chart_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(chart_context, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for horizon in ("24h", "7d"):
+        low = _optional_float(chart_context.get(f"price_range_{horizon}_low"))
+        high = _optional_float(chart_context.get(f"price_range_{horizon}_high"))
+        if low is None or high is None or high <= low:
+            continue
+        percentile = max(0.0, min(1.0, (float(entry) - low) / (high - low)))
+        out[f"entry_price_percentile_{horizon}"] = round(percentile, 4)
+        out[f"entry_price_range_{horizon}_low"] = _round_price(pair, low)
+        out[f"entry_price_range_{horizon}_high"] = _round_price(pair, high)
+        source = _text_or_none(chart_context.get(f"price_range_{horizon}_source"))
+        if source:
+            out[f"entry_price_percentile_{horizon}_source"] = source
+    return out
 
 
 def _structural_stop_metadata(

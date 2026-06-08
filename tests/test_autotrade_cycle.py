@@ -106,6 +106,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                         client=object(),
                         target_state_path=target_state,
                         target_report_path=root / "target.md",
+                        execution_ledger_db_path=root / "execution_ledger.db",
                     )._update_target_state(snapshot)
 
                 payload = json.loads(target_state.read_text())

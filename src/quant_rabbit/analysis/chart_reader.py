@@ -269,8 +269,13 @@ def _build_extended_confluence(
     Keys produced:
       - `price_percentile_24h` (0.0-1.0): where the current close sits
         in the last-24h H1 close distribution.
+      - `price_range_24h_low/high`: the bounds used for the 24h percentile,
+        so pending-entry gates can evaluate the entry price instead of the
+        current price.
       - `price_percentile_7d` (0.0-1.0): same against the last 7d H4
         close distribution (42 H4 bars).
+      - `price_range_7d_low/high`: the close-distribution bounds used for
+        the 7d percentile.
       - `atr_percentile_24h`: H1 atr_pips percentile vs trailing
         distribution (read from the H1 indicators if available).
       - `range_24h_sigma_multiple`: (H1 24h high − H1 24h low) divided
@@ -284,7 +289,11 @@ def _build_extended_confluence(
     """
     out: dict[str, object] = {
         "price_percentile_24h": None,
+        "price_range_24h_low": None,
+        "price_range_24h_high": None,
         "price_percentile_7d": None,
+        "price_range_7d_low": None,
+        "price_range_7d_high": None,
         "atr_percentile_24h": None,
         "range_24h_sigma_multiple": None,
         "tf_agreement_score": None,
@@ -300,6 +309,8 @@ def _build_extended_confluence(
         lo = min(lows)
         hi = max(highs)
         if hi > lo:
+            out["price_range_24h_low"] = round(lo, 5)
+            out["price_range_24h_high"] = round(hi, 5)
             out["price_percentile_24h"] = round(
                 max(0.0, min(1.0, (current - lo) / (hi - lo))), 4
             )
@@ -319,6 +330,8 @@ def _build_extended_confluence(
         lo = min(closes_7d)
         hi = max(closes_7d)
         if hi > lo:
+            out["price_range_7d_low"] = round(lo, 5)
+            out["price_range_7d_high"] = round(hi, 5)
             out["price_percentile_7d"] = round(
                 max(0.0, min(1.0, (current - lo) / (hi - lo))), 4
             )

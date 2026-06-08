@@ -5792,6 +5792,31 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
 
         self.assertEqual(issue["severity"], "BLOCK")
 
+    def test_range_rotation_short_limit_uses_entry_percentile_for_retest(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = self._intent(
+            side="SHORT",
+            sigma_mult=8.5,
+            price_pct_24h=0.09,
+            method="RANGE_ROTATION",
+            order_type="LIMIT",
+            entry=1.16089,
+            metadata_extra={
+                "price_percentile_7d": 0.04,
+                "entry_price_percentile_24h": 0.72,
+                "entry_price_percentile_7d": 0.66,
+                "tf_regime_map": {
+                    "M5": {"nearest_support": 1.15900, "nearest_resistance": 1.16100},
+                    "M15": {"nearest_support": 1.15880, "nearest_resistance": 1.16120},
+                },
+            },
+        )
+        codes = {issue["code"] for issue in _method_context_issues(intent)}
+
+        self.assertNotIn("RANGE_ROTATION_BROADER_LOCATION_CHASE", codes)
+        self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
     def test_range_rotation_long_at_broader_premium_blocks(self) -> None:
         from quant_rabbit.strategy.intent_generator import _method_context_issues
 
@@ -5836,6 +5861,47 @@ class ExhaustionRangeChaseTest(unittest.TestCase):
         codes = {issue["code"] for issue in _method_context_issues(intent)}
 
         self.assertNotIn("EXHAUSTION_RANGE_CHASE", codes)
+
+    def test_geometry_metadata_publishes_limit_entry_percentiles(self) -> None:
+        from quant_rabbit.models import OrderType, Quote, Side
+        from quant_rabbit.strategy.intent_generator import _geometry_metadata
+
+        quote = Quote(
+            pair="EUR_USD",
+            bid=1.15220,
+            ask=1.15228,
+            timestamp_utc=datetime.now(timezone.utc),
+        )
+        metadata = _geometry_metadata(
+            "EUR_USD",
+            Side.SHORT,
+            OrderType.LIMIT,
+            quote,
+            entry=1.16000,
+            tp=1.15400,
+            sl=1.16200,
+            range_indicators={
+                "donchian_low": 1.15000,
+                "donchian_high": 1.16100,
+            },
+            chart_indicators={
+                "donchian_low": 1.15000,
+                "donchian_high": 1.16100,
+            },
+            chart_context={
+                "price_range_24h_low": 1.15000,
+                "price_range_24h_high": 1.17000,
+                "price_range_24h_source": "confluence_24h",
+                "price_range_7d_low": 1.14000,
+                "price_range_7d_high": 1.18000,
+                "price_range_7d_source": "confluence_7d",
+            },
+            atr_pips=8.0,
+        )
+
+        self.assertEqual(metadata["entry_price_percentile_24h"], 0.5)
+        self.assertEqual(metadata["entry_price_percentile_7d"], 0.5)
+        self.assertEqual(metadata["entry_price_percentile_24h_source"], "confluence_24h")
 
 
 class BreakoutFailureStopChaseTest(unittest.TestCase):
