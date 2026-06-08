@@ -174,11 +174,19 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(by_pct[5.0]["selected_target_hit_days"], 1)
             self.assertEqual(by_pct[6.0]["selected_target_hit_days"], 0)
             self.assertEqual(by_pct[10.0]["required_trades_per_day_at_observed_expectancy"], 2)
+            sizing = payload["mechanism_ablation"]["target_sizing"]
+            self.assertEqual(sizing["status"], "FLOOR_ALREADY_HIT")
+            sizing_by_pct = {item["return_pct"]: item for item in sizing["bands"]}
+            self.assertEqual(sizing_by_pct[5.0]["status"], "ALREADY_HIT")
+            self.assertAlmostEqual(sizing_by_pct[10.0]["required_size_multiplier"], 1.8182)
+            self.assertEqual(sizing_by_pct[10.0]["status"], "MATERIAL_SIZE_UP_REQUIRED")
             self.assertTrue(any("selected policy currently reaches 5%" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("## Target Band", report)
+            self.assertIn("### Target-Aware Sizing Diagnostics", report)
             self.assertIn("Selected-policy best return: `5.50%`", report)
             self.assertIn("`5.0%` target=`500` selected_hits=`1/1`", report)
+            self.assertIn("`10.0%` target=`1000` required_size_multiplier=`1.8182`", report)
             self.assertIn("`10.0%` target=`1000` selected_hits=`0/1`", report)
 
     def test_walk_forward_policy_does_not_select_validation_only_winner(self) -> None:

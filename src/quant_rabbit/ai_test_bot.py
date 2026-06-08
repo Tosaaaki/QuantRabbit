@@ -265,6 +265,12 @@ class AITestBotBacktester:
             validation_rows=validation_rows,
             max_loss_jpy=cap.loss_cap_jpy,
         )
+        target_sizing = _target_sizing_ablation_payload(
+            day_results=day_results,
+            start_balance_jpy=start_balance_jpy,
+            max_loss_jpy=cap.loss_cap_jpy,
+            target_return_pct=target_return_pct,
+        )
         close_gate_ab = _close_gate_ablation_payload(
             db_path=self.execution_ledger_db_path,
             max_loss_jpy=cap.loss_cap_jpy,
@@ -301,6 +307,7 @@ class AITestBotBacktester:
                 target_band=target_band,
                 source_contributions=source_contributions,
                 risk_engine_loss_cap=risk_engine_loss_cap,
+                target_sizing=target_sizing,
                 close_gate_ab=close_gate_ab,
             )
         )
@@ -342,6 +349,7 @@ class AITestBotBacktester:
             "firepower": firepower,
             "mechanism_ablation": {
                 "risk_engine_loss_cap": risk_engine_loss_cap,
+                "target_sizing": target_sizing,
                 "close_gate_ab": close_gate_ab,
             },
             "source_contributions": source_contributions,
@@ -514,6 +522,7 @@ class AITestBotBacktester:
             )
         mechanism = payload.get("mechanism_ablation") if isinstance(payload.get("mechanism_ablation"), dict) else {}
         risk_cap = mechanism.get("risk_engine_loss_cap") if isinstance(mechanism.get("risk_engine_loss_cap"), dict) else {}
+        target_sizing = mechanism.get("target_sizing") if isinstance(mechanism.get("target_sizing"), dict) else {}
         close_gate = mechanism.get("close_gate_ab") if isinstance(mechanism.get("close_gate_ab"), dict) else {}
         lines.extend(
             [
@@ -529,6 +538,30 @@ class AITestBotBacktester:
                 f"- Raw PF: `{risk_cap.get('raw_profit_factor') if risk_cap.get('raw_profit_factor') is not None else 'n/a'}`",
                 f"- Managed PF: `{risk_cap.get('managed_profit_factor') if risk_cap.get('managed_profit_factor') is not None else 'n/a'}`",
                 f"- Interpretation: `{risk_cap.get('interpretation', 'n/a')}`",
+                "",
+                "### Target-Aware Sizing Diagnostics",
+                "",
+                f"- Status: `{target_sizing.get('status', 'n/a')}`",
+                f"- Diagnostic only: `{target_sizing.get('diagnostic_only', True)}`",
+                f"- Best selected day: `{float(target_sizing.get('best_selected_day_jpy') or 0.0):.0f} JPY` "
+                f"(`{target_sizing.get('best_selected_day') or 'n/a'}`)",
+            ]
+        )
+        sizing_bands = target_sizing.get("bands") if isinstance(target_sizing.get("bands"), list) else []
+        for item in sizing_bands:
+            if not isinstance(item, dict):
+                continue
+            multiplier = item.get("required_size_multiplier")
+            multiplier_text = f"{float(multiplier):.4f}" if multiplier is not None else "n/a"
+            loss_cap = item.get("scaled_loss_cap_jpy")
+            loss_cap_text = f"{float(loss_cap):.0f}" if loss_cap is not None else "n/a"
+            lines.append(
+                f"- `{float(item.get('return_pct') or 0.0):.1f}%` target=`{float(item.get('target_jpy') or 0.0):.0f}` "
+                f"required_size_multiplier=`{multiplier_text}` scaled_loss_cap=`{loss_cap_text}` "
+                f"status=`{item.get('status', 'n/a')}`"
+            )
+        lines.extend(
+            [
                 "",
                 "### CLOSE Gate A/B Diagnostics",
                 "",
@@ -1001,6 +1034,71 @@ def _risk_engine_loss_cap_payload(
     }
 
 
+def _target_sizing_ablation_payload(
+    *,
+    day_results: tuple[TestBotDay, ...],
+    start_balance_jpy: float,
+    max_loss_jpy: float,
+    target_return_pct: float,
+) -> dict[str, object]:
+    best_day = max(day_results, key=lambda item: item.managed_net_jpy, default=None)
+    best_day_net = float(best_day.managed_net_jpy) if best_day is not None else 0.0
+    bands: list[dict[str, object]] = []
+    for return_pct in _target_band_percentages(target_return_pct):
+        target_jpy = _round(start_balance_jpy * (return_pct / 100.0))
+        already_hit_days = sum(1 for day in day_results if day.managed_net_jpy >= target_jpy)
+        multiplier = round(target_jpy / best_day_net, 4) if best_day_net > 0 else None
+        scaled_loss_cap = _round(max_loss_jpy * float(multiplier)) if multiplier is not None else None
+        if already_hit_days > 0:
+            status = "ALREADY_HIT"
+        elif multiplier is None:
+            status = "NO_SELECTED_PROFIT"
+        elif float(multiplier) <= 1.1:
+            status = "NEAR_MISS_SIZE_TEST"
+        elif float(multiplier) <= 1.5:
+            status = "MODERATE_SIZE_UP_REQUIRED"
+        else:
+            status = "MATERIAL_SIZE_UP_REQUIRED"
+        bands.append(
+            {
+                "return_pct": return_pct,
+                "target_jpy": target_jpy,
+                "already_hit_days": already_hit_days,
+                "required_size_multiplier": multiplier,
+                "scaled_loss_cap_jpy": scaled_loss_cap,
+                "status": status,
+            }
+        )
+    floor_band = next((item for item in bands if float(item["return_pct"]) == DEFAULT_TARGET_BAND_RETURN_PCTS[0]), None)
+    stretch_band = next((item for item in bands if float(item["return_pct"]) == DEFAULT_TARGET_BAND_RETURN_PCTS[-1]), None)
+    return {
+        "status": _target_sizing_status(floor_band=floor_band, stretch_band=stretch_band),
+        "diagnostic_only": True,
+        "best_selected_day": best_day.session_date if best_day is not None else None,
+        "best_selected_day_jpy": _round(best_day_net),
+        "selected_best_return_pct": _round((best_day_net / start_balance_jpy) * 100.0)
+        if start_balance_jpy
+        else 0.0,
+        "bands": bands,
+    }
+
+
+def _target_sizing_status(*, floor_band: dict[str, object] | None, stretch_band: dict[str, object] | None) -> str:
+    floor_status = str((floor_band or {}).get("status") or "")
+    stretch_status = str((stretch_band or {}).get("status") or "")
+    if stretch_status == "ALREADY_HIT":
+        return "STRETCH_ALREADY_HIT"
+    if floor_status == "ALREADY_HIT":
+        return "FLOOR_ALREADY_HIT"
+    if floor_status == "NEAR_MISS_SIZE_TEST":
+        return "FLOOR_NEAR_MISS_SIZE_TEST"
+    if floor_status == "MODERATE_SIZE_UP_REQUIRED":
+        return "FLOOR_MODERATE_SIZE_UP_REQUIRED"
+    if floor_status == "MATERIAL_SIZE_UP_REQUIRED":
+        return "FLOOR_MATERIAL_SIZE_UP_REQUIRED"
+    return floor_status or "UNAVAILABLE"
+
+
 def _close_gate_ablation_payload(
     *,
     db_path: Path | None,
@@ -1454,6 +1552,7 @@ def _action_items(
     target_band: dict[str, object],
     source_contributions: list[dict[str, float | int | str]],
     risk_engine_loss_cap: dict[str, float | int | str | None],
+    target_sizing: dict[str, object],
     close_gate_ab: dict[str, object],
 ) -> Iterable[str]:
     if not blockers:
@@ -1469,6 +1568,7 @@ def _action_items(
             "RiskEngine loss-cap ablation currently suppresses selected-policy net "
             f"({risk_effect:.0f} JPY); test a replacement cap surface against drawdown before live promotion"
         )
+    yield from _target_sizing_action_items(target_sizing)
     yield from _close_gate_action_items(close_gate_ab)
     for item in source_contributions:
         source_table = str(item["source_table"])
@@ -1564,6 +1664,30 @@ def _action_items(
         "store matrix refs, news refs, and gold/oil/context-asset readings on each live entry receipt before treating "
         "non-FX/news prediction as backtest-certified"
     )
+
+
+def _target_sizing_action_items(payload: dict[str, object]) -> Iterable[str]:
+    bands = payload.get("bands") if isinstance(payload.get("bands"), list) else []
+    by_pct = {
+        float(item.get("return_pct")): item
+        for item in bands
+        if isinstance(item, dict) and item.get("return_pct") is not None
+    }
+    floor = by_pct.get(DEFAULT_TARGET_BAND_RETURN_PCTS[0])
+    stretch = by_pct.get(DEFAULT_TARGET_BAND_RETURN_PCTS[-1])
+    if isinstance(floor, dict) and floor.get("status") in {"NEAR_MISS_SIZE_TEST", "MODERATE_SIZE_UP_REQUIRED"}:
+        multiplier = float(floor.get("required_size_multiplier") or 0.0)
+        scaled_cap = float(floor.get("scaled_loss_cap_jpy") or 0.0)
+        yield (
+            f"5% floor is a target-aware sizing candidate: selected best day needs {multiplier:.2f}x size "
+            f"(scaled per-trade cap about {scaled_cap:.0f} JPY); verify with margin/drawdown replay before live sizing"
+        )
+    if isinstance(stretch, dict) and stretch.get("status") == "MATERIAL_SIZE_UP_REQUIRED":
+        multiplier = float(stretch.get("required_size_multiplier") or 0.0)
+        yield (
+            f"10% stretch cannot be treated as a small sizing tweak; selected best day needs {multiplier:.2f}x size, "
+            "so coverage/reward geometry must improve before real-time target-chasing is credible"
+        )
 
 
 def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
