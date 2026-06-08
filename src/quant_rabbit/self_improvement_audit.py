@@ -986,6 +986,7 @@ def _market_close_attribution_findings(
         return []
     rows: list[sqlite3.Row] = []
     accepted_close_rows: list[sqlite3.Row] = []
+    stale_close_satisfied_trade_ids: set[str] = set()
     error: str | None = None
     try:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
@@ -1091,6 +1092,7 @@ def _market_close_attribution_findings(
                 )
             )
             accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
+            stale_close_satisfied_trade_ids = _stale_gpt_close_satisfied_trade_ids(conn, columns)
     except sqlite3.Error as exc:
         error = str(exc)
     if error is not None:
@@ -1104,6 +1106,10 @@ def _market_close_attribution_findings(
     gpt_accept_broker_accept_count = 0
     gpt_accept_broker_source_counts: dict[str, int] = {}
     gpt_accept_broker_sources_by_trade: dict[str, list[str]] = {}
+    stale_close_satisfied: list[sqlite3.Row] = []
+    stale_close_broker_accept_count = 0
+    stale_close_broker_source_counts: dict[str, int] = {}
+    stale_close_broker_sources_by_trade: dict[str, list[str]] = {}
     for row in rows:
         ts = _parse_utc(row["ts_utc"])
         if ts is None or ts < cutoff:
@@ -1130,6 +1136,16 @@ def _market_close_attribution_findings(
                 gpt_accept_broker_sources_by_trade[trade_id] = sorted(sources)
                 for source in sources:
                     gpt_accept_broker_source_counts[source] = gpt_accept_broker_source_counts.get(source, 0) + 1
+            continue
+        if trade_id and trade_id in stale_close_satisfied_trade_ids:
+            stale_close_satisfied.append(row)
+            if sources:
+                stale_close_broker_accept_count += 1
+                stale_close_broker_sources_by_trade[trade_id] = sorted(sources)
+                for source in sources:
+                    stale_close_broker_source_counts[source] = (
+                        stale_close_broker_source_counts.get(source, 0) + 1
+                    )
             continue
         unattributed.append(row)
         if sources:
@@ -1180,6 +1196,52 @@ def _market_close_attribution_findings(
                             ),
                         }
                         for row in gpt_accepted_without_position_gateway[:8]
+                    ],
+                },
+            )
+        )
+    if stale_close_satisfied:
+        stale_net = sum(float(_maybe_float(row["realized_pl_jpy"]) or 0.0) for row in stale_close_satisfied)
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="execution_ledger",
+                code="STALE_GPT_CLOSE_SATISFIED_AFTER_BROKER_CLOSE",
+                message=(
+                    f"{len(stale_close_satisfied)} negative bot-attributed market close event(s) "
+                    "were later recorded as STALE_CLOSE_ALREADY_ABSENT GPT_CLOSE receipts"
+                ),
+                next_action=(
+                    "Keep these separate from sent gateway closes: broker truth already removed the trade before "
+                    "PositionProtectionGateway could send, so tune stale decision/receipt freshness without treating "
+                    "the broker close as a verified Gate A/B close."
+                ),
+                evidence={
+                    "window_hours": window_hours,
+                    "stale_gpt_close_satisfied_count": len(stale_close_satisfied),
+                    "stale_gpt_close_satisfied_net_jpy": round(stale_net, 4),
+                    "broker_trade_close_accept_count": stale_close_broker_accept_count,
+                    "broker_trade_close_accept_source_counts": stale_close_broker_source_counts,
+                    "examples": [
+                        {
+                            "ts_utc": str(row["ts_utc"] or ""),
+                            "event_uid": str(row["event_uid"] or ""),
+                            "event_type": str(row["event_type"] or ""),
+                            "trade_id": str(row["trade_id"] or ""),
+                            "close_order_id": str(row["order_id"] or ""),
+                            "pair": str(row["pair"] or ""),
+                            "side": str(row["side"] or row["position_side"] or ""),
+                            "original_side": str(row["position_side"] or ""),
+                            "gateway_lane_id": str(row["gateway_lane_id"] or ""),
+                            "realized_pl_jpy": _maybe_float(row["realized_pl_jpy"]),
+                            "exit_reason": str(row["exit_reason"] or ""),
+                            "broker_trade_close_accept_sources": stale_close_broker_sources_by_trade.get(
+                                str(row["trade_id"] or "").strip(),
+                                [],
+                            ),
+                        }
+                        for row in stale_close_satisfied[:8]
                     ],
                 },
             )
@@ -2462,6 +2524,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
     gateway_close_trade_ids: set[str] = set()
     reconciled_close_trade_ids: set[str] = set()
     gpt_close_trade_ids: set[str] = set()
+    stale_close_satisfied_trade_ids: set[str] = set()
     error: str | None = None
     if db_path.exists():
         try:
@@ -2474,6 +2537,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                     gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
                     reconciled_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_RECONCILED")
                     gpt_close_trade_ids = _event_trade_ids(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
+                    stale_close_satisfied_trade_ids = _stale_gpt_close_satisfied_trade_ids(conn, columns)
                     accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
                     lane_select = "e.lane_id AS lane_id" if has_lane_id else "NULL AS lane_id"
                     open_lane_expr = "MAX(NULLIF(lane_id, ''))" if has_lane_id else "NULL"
@@ -2546,6 +2610,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
             gateway_close_trade_ids=gateway_close_trade_ids,
             reconciled_close_trade_ids=reconciled_close_trade_ids,
             gpt_close_trade_ids=gpt_close_trade_ids,
+            stale_close_satisfied_trade_ids=stale_close_satisfied_trade_ids,
         )
         _add_close_provenance_metric(close_provenance_metrics, close_provenance, value)
         exit_reason = str(_row_text(row, "exit_reason") or "").strip().upper()
@@ -2656,6 +2721,44 @@ def _event_trade_ids(conn: sqlite3.Connection, event_type: str) -> set[str]:
         return set()
 
 
+def _stale_gpt_close_satisfied_trade_ids(conn: sqlite3.Connection, columns: set[str]) -> set[str]:
+    if "trade_id" not in columns:
+        return set()
+    select_fields = ["trade_id"]
+    for column in ("exit_reason", "raw_json"):
+        select_fields.append(column if column in columns else f"NULL AS {column}")
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT {', '.join(select_fields)}
+            FROM execution_events
+            WHERE event_type = 'GATEWAY_POSITION_NO_ACTION'
+              AND trade_id IS NOT NULL
+              AND trade_id != ''
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return set()
+    out: set[str] = set()
+    for row in rows:
+        trade_id = str(row["trade_id"] or "").strip()
+        if not trade_id:
+            continue
+        raw = _json_payload(row["raw_json"])
+        management_action = str(raw.get("management_action") or "").strip().upper()
+        exit_reason = str(row["exit_reason"] or "").strip().upper()
+        if management_action != "GPT_CLOSE" and exit_reason != "GPT_CLOSE":
+            continue
+        issue_codes = {
+            str(item.get("code") or "").strip().upper()
+            for item in raw.get("issues", []) or []
+            if isinstance(item, dict)
+        }
+        if "STALE_CLOSE_ALREADY_ABSENT" in issue_codes:
+            out.add(trade_id)
+    return out
+
+
 def _close_provenance_for_effect_row(
     row: sqlite3.Row,
     *,
@@ -2663,6 +2766,7 @@ def _close_provenance_for_effect_row(
     gateway_close_trade_ids: set[str],
     reconciled_close_trade_ids: set[str],
     gpt_close_trade_ids: set[str],
+    stale_close_satisfied_trade_ids: set[str],
 ) -> str:
     exit_reason = str(_row_text(row, "exit_reason") or "").strip().upper()
     if exit_reason and exit_reason != "MARKET_ORDER_TRADE_CLOSE":
@@ -2675,6 +2779,8 @@ def _close_provenance_for_effect_row(
         return "GATEWAY_TRADE_CLOSE_SENT"
     if trade_id and trade_id in reconciled_close_trade_ids:
         return "GATEWAY_TRADE_CLOSE_RECONCILED"
+    if trade_id and trade_id in stale_close_satisfied_trade_ids:
+        return "STALE_GPT_CLOSE_SATISFIED"
     if trade_id and trade_id in gpt_close_trade_ids:
         return "GATEWAY_GPT_CLOSE_ACCEPTED"
     sources = _broker_trade_close_accept_sources(

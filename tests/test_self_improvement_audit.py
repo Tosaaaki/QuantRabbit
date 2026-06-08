@@ -701,6 +701,24 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": -500.0},
         )
 
+    def test_effect_metrics_classifies_stale_gpt_close_satisfied_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_market_close_attribution_ledger(db_path, include_gateway_close=False)
+            with sqlite3.connect(db_path) as conn:
+                _add_raw_json_column(conn)
+                _insert_broker_trade_close_accept(conn)
+                _insert_stale_gpt_close_satisfied(conn)
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        market_loss = effect["market_order_trade_close_loss_provenance_metrics"]
+        self.assertEqual(market_loss["STALE_GPT_CLOSE_SATISFIED"]["trades"], 1)
+        self.assertAlmostEqual(market_loss["STALE_GPT_CLOSE_SATISFIED"]["net_jpy"], -500.0)
+        self.assertNotIn("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", market_loss)
+        segment = effect["worst_segments"][0]
+        self.assertEqual(segment["close_provenance_counts"], {"STALE_GPT_CLOSE_SATISFIED": 1})
+
     def test_effect_metrics_classifies_gateway_market_order_loss_close_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
@@ -727,6 +745,27 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         finding = codes["UNATTRIBUTED_MARKET_ORDER_CLOSES"]
         self.assertEqual(finding["priority"], "P1")
         self.assertEqual(finding["evidence"]["unattributed_loss_count"], 1)
+        self.assertEqual(finding["evidence"]["examples"][0]["trade_id"], "T42")
+
+    def test_stale_gpt_close_satisfied_is_separate_from_unattributed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=False)
+            with sqlite3.connect(files["execution_db"]) as conn:
+                _add_raw_json_column(conn)
+                _insert_broker_trade_close_accept(conn)
+                _insert_stale_gpt_close_satisfied(conn)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
+        finding = codes["STALE_GPT_CLOSE_SATISFIED_AFTER_BROKER_CLOSE"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["stale_gpt_close_satisfied_count"], 1)
         self.assertEqual(finding["evidence"]["examples"][0]["trade_id"], "T42")
 
     def test_unattributed_market_order_close_reports_broker_accept_source(self) -> None:
@@ -1527,3 +1566,91 @@ def _write_market_close_attribution_ledger(
             """,
             rows,
         )
+
+
+def _add_raw_json_column(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("ALTER TABLE execution_events ADD COLUMN raw_json TEXT")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
+
+
+def _insert_broker_trade_close_accept(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str = "T42",
+    order_id: str = "C42",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO execution_events(
+            event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+            pair, side, units, realized_pl_jpy, exit_reason, raw_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"broker-close-accept-{trade_id}",
+            (_NOW - timedelta(hours=1, minutes=10)).isoformat(),
+            "ORDER_ACCEPTED",
+            "",
+            order_id,
+            "",
+            "EUR_USD",
+            "SHORT",
+            1000,
+            None,
+            "TRADE_CLOSE",
+            json.dumps(
+                {
+                    "id": order_id,
+                    "reason": "TRADE_CLOSE",
+                    "tradeClose": {"tradeID": trade_id, "units": "ALL"},
+                }
+            ),
+        ),
+    )
+
+
+def _insert_stale_gpt_close_satisfied(
+    conn: sqlite3.Connection,
+    *,
+    trade_id: str = "T42",
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO execution_events(
+            event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+            pair, side, units, realized_pl_jpy, exit_reason, raw_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            f"stale-gpt-close-satisfied-{trade_id}",
+            (_NOW - timedelta(minutes=55)).isoformat(),
+            "GATEWAY_POSITION_NO_ACTION",
+            "",
+            "",
+            trade_id,
+            "EUR_USD",
+            "",
+            None,
+            None,
+            "GPT_CLOSE",
+            json.dumps(
+                {
+                    "management_action": "GPT_CLOSE",
+                    "sent": False,
+                    "request": None,
+                    "issues": [
+                        {
+                            "severity": "INFO",
+                            "code": "STALE_CLOSE_ALREADY_ABSENT",
+                            "message": "accepted CLOSE receipt named a trade id that is already absent",
+                        }
+                    ],
+                }
+            ),
+        ),
+    )
