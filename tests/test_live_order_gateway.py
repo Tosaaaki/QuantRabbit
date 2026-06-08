@@ -160,6 +160,53 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(client.orders, [])
             self.assertIn("LIVE_CONFIRMATION_REQUIRED", (root / "report.md").read_text())
 
+    def test_live_send_retries_stale_quote_before_blocking(self) -> None:
+        prior_attempts = os.environ.get("QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS")
+        prior_sleep = os.environ.get("QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS")
+        os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS"] = "2"
+        os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS"] = "0"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                stale = now - timedelta(seconds=45)
+                client = SequenceExecutionClient(
+                    (
+                        _gateway_snapshot(fetched_at=now, eur_usd_quote_time=stale),
+                        _gateway_snapshot(fetched_at=now, eur_usd_quote_time=now),
+                    )
+                )
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run(
+                    intents_path=_intents(root),
+                    lane_id="lane:EUR_USD:LONG",
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
+                self.assertGreaterEqual(len(client.snapshot_calls), 2)
+                payload = json.loads((root / "request.json").read_text())
+                self.assertEqual(payload["quote_refresh_attempts"], 1)
+                self.assertNotIn("STALE_QUOTE", {issue["code"] for issue in payload["risk_issues"]})
+        finally:
+            if prior_attempts is None:
+                os.environ.pop("QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS", None)
+            else:
+                os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS"] = prior_attempts
+            if prior_sleep is None:
+                os.environ.pop("QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS", None)
+            else:
+                os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS"] = prior_sleep
+
     def test_self_improvement_p0_blocks_live_order_staging(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -806,6 +853,53 @@ class LiveOrderGatewayTest(unittest.TestCase):
             payload = json.loads((root / "request.json").read_text())
             self.assertNotIn("OPEN_POSITION_EXISTS", {issue["code"] for issue in payload["risk_issues"]})
 
+    def test_batch_send_retries_stale_quote_before_blocking(self) -> None:
+        prior_attempts = os.environ.get("QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS")
+        prior_sleep = os.environ.get("QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS")
+        os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS"] = "2"
+        os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS"] = "0"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                stale = now - timedelta(seconds=45)
+                client = SequenceExecutionClient(
+                    (
+                        _gateway_snapshot(fetched_at=now, eur_usd_quote_time=now),
+                        _gateway_snapshot(fetched_at=now, eur_usd_quote_time=stale),
+                        _gateway_snapshot(fetched_at=now, eur_usd_quote_time=now),
+                    )
+                )
+
+                summary = LiveOrderGateway(
+                    client=client,
+                    strategy_profile=_profile(root),
+                    output_path=root / "request.json",
+                    report_path=root / "report.md",
+                    live_enabled=True,
+                ).run_batch(
+                    intents_path=_intents(root),
+                    lane_ids=("lane:EUR_USD:LONG",),
+                    send=True,
+                    confirm_live=True,
+                )
+
+                self.assertEqual(summary.status, "SENT")
+                self.assertTrue(summary.sent)
+                self.assertEqual(len(client.orders), 1)
+                payload = json.loads((root / "request.json").read_text())
+                self.assertEqual(payload["orders"][0]["quote_refresh_attempts"], 1)
+                self.assertNotIn("STALE_QUOTE", {issue["code"] for issue in payload["risk_issues"]})
+        finally:
+            if prior_attempts is None:
+                os.environ.pop("QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS", None)
+            else:
+                os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS"] = prior_attempts
+            if prior_sleep is None:
+                os.environ.pop("QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS", None)
+            else:
+                os.environ["QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS"] = prior_sleep
+
     def test_batch_position_cap_scales_with_target_trades_per_day(self) -> None:
         execution_module._target_trades_per_day_from_state = lambda path=None: 30
         prior_pair_cap = os.environ.get("QR_MAX_SAME_PAIR_TRADER_POSITIONS")
@@ -1086,6 +1180,18 @@ class FakeExecutionClient:
         return {"orderCreateTransaction": {"id": "1"}, "relatedTransactionIDs": ["1"]}
 
 
+class SequenceExecutionClient(FakeExecutionClient):
+    def __init__(self, snapshots: tuple[BrokerSnapshot, ...]) -> None:
+        self.snapshots = snapshots
+        self.snapshot_calls: list[tuple[str, ...]] = []
+        self.orders: list[dict[str, Any]] = []
+
+    def snapshot(self, pairs: tuple[str, ...]) -> BrokerSnapshot:
+        self.snapshot_calls.append(tuple(pairs))
+        index = min(len(self.snapshot_calls) - 1, len(self.snapshots) - 1)
+        return self.snapshots[index]
+
+
 class MutatingExecutionClient(FakeExecutionClient):
     def __init__(self, *, margin_used_jpy: float) -> None:
         super().__init__()
@@ -1139,6 +1245,26 @@ class MutatingExecutionClient(FakeExecutionClient):
             ),
         )
         return response
+
+
+def _gateway_snapshot(*, fetched_at: datetime, eur_usd_quote_time: datetime) -> BrokerSnapshot:
+    return BrokerSnapshot(
+        fetched_at_utc=fetched_at,
+        positions=(),
+        orders=(),
+        quotes={
+            "EUR_USD": Quote("EUR_USD", bid=1.17298, ask=1.17306, timestamp_utc=eur_usd_quote_time),
+            "USD_JPY": Quote("USD_JPY", bid=157.0, ask=157.01, timestamp_utc=fetched_at),
+        },
+        account=AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            margin_used_jpy=0.0,
+            margin_available_jpy=200_000.0,
+            fetched_at_utc=fetched_at,
+        ),
+        home_conversions={"USD": 157.0},
+    )
 
 
 def _profile(root: Path, *, direction: str = "LONG") -> Path:

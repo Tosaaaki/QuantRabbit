@@ -4,6 +4,7 @@ import math
 import hashlib
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -138,7 +139,6 @@ class LiveOrderGateway:
         scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
-        snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, intent))
         portfolio_position_cap = _portfolio_position_cap_from_state()
         default_max_loss_jpy = _per_trade_risk_from_state()
         if default_max_loss_jpy is None:
@@ -162,15 +162,15 @@ class LiveOrderGateway:
             else _daily_risk_budget_from_state(DEFAULT_DAILY_TARGET_STATE)
         )
         validate_live_enabled = self.live_enabled if send else True
-        risk = RiskEngine(
-            policy=RiskPolicy(
-                allow_protected_trader_position_adds=True,
-                max_loss_jpy=max_loss_jpy,
-                max_portfolio_positions=portfolio_position_cap,
-                max_portfolio_loss_jpy=portfolio_loss_cap,
-            ),
-            live_enabled=validate_live_enabled,
-        ).validate(intent, snapshot, for_live_send=True)
+        snapshot, risk, quote_refresh_attempts = self._snapshot_and_validate_intent(
+            snapshot_pairs=_snapshot_pairs(intents_payload, intent),
+            intent=intent,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=False,
+            portfolio_position_cap=portfolio_position_cap,
+        )
         strategy_issues = tuple(
             issue.__dict__ for issue in StrategyProfile.load(self.strategy_profile).validate(intent, for_live_send=True)
         )
@@ -266,6 +266,7 @@ class LiveOrderGateway:
                 "orders": len(snapshot.orders),
                 "quotes": len(snapshot.quotes),
             },
+            "quote_refresh_attempts": quote_refresh_attempts,
             "size_multiple": size_multiple,
             "requested_units": requested_units,
             "scaled_units": scaled_units,
@@ -495,13 +496,12 @@ class LiveOrderGateway:
         scaled_units, scale_issues = _scaled_units(intent.units, size_multiple)
         if scaled_units is not None:
             intent = replace(intent, units=scaled_units)
-        snapshot = self.client.snapshot(_snapshot_pairs(intents_payload, intent))
         max_loss_jpy = self._resolve_gateway_max_loss_jpy()
         portfolio_loss_cap = self._resolve_portfolio_loss_cap_jpy()
         validate_live_enabled = self.live_enabled if send else True
-        risk = self._validate_intent(
+        snapshot, risk, quote_refresh_attempts = self._snapshot_and_validate_intent(
+            snapshot_pairs=_snapshot_pairs(intents_payload, intent),
             intent=intent,
-            snapshot=snapshot,
             max_loss_jpy=max_loss_jpy,
             portfolio_loss_cap=portfolio_loss_cap,
             validate_live_enabled=validate_live_enabled,
@@ -641,6 +641,7 @@ class LiveOrderGateway:
                 "orders": len(snapshot.orders),
                 "quotes": len(snapshot.quotes),
             },
+            "quote_refresh_attempts": quote_refresh_attempts,
             "size_multiple": size_multiple,
             "requested_units": requested_units,
             "scaled_units": intent.units,
@@ -691,6 +692,50 @@ class LiveOrderGateway:
             live_enabled=validate_live_enabled,
         ).validate(intent, snapshot, for_live_send=True)
 
+    def _snapshot_and_validate_intent(
+        self,
+        *,
+        snapshot_pairs: tuple[str, ...],
+        intent: OrderIntent,
+        max_loss_jpy: float,
+        portfolio_loss_cap: float | None,
+        validate_live_enabled: bool,
+        allow_basket_pending: bool,
+        portfolio_position_cap: int,
+    ):
+        snapshot = self.client.snapshot(snapshot_pairs)
+        risk = self._validate_intent(
+            intent=intent,
+            snapshot=snapshot,
+            max_loss_jpy=max_loss_jpy,
+            portfolio_loss_cap=portfolio_loss_cap,
+            validate_live_enabled=validate_live_enabled,
+            allow_basket_pending=allow_basket_pending,
+            portfolio_position_cap=portfolio_position_cap,
+        )
+        refresh_attempts = 0
+        if not _risk_has_blocking_stale_quote(risk):
+            return snapshot, risk, refresh_attempts
+
+        retry_sleep_seconds = _gateway_stale_quote_retry_sleep_seconds()
+        for _ in range(_gateway_stale_quote_retry_attempts()):
+            if retry_sleep_seconds > 0:
+                time.sleep(retry_sleep_seconds)
+            snapshot = self.client.snapshot(snapshot_pairs)
+            risk = self._validate_intent(
+                intent=intent,
+                snapshot=snapshot,
+                max_loss_jpy=max_loss_jpy,
+                portfolio_loss_cap=portfolio_loss_cap,
+                validate_live_enabled=validate_live_enabled,
+                allow_basket_pending=allow_basket_pending,
+                portfolio_position_cap=portfolio_position_cap,
+            )
+            refresh_attempts += 1
+            if not _risk_has_blocking_stale_quote(risk):
+                break
+        return snapshot, risk, refresh_attempts
+
     def _write_result(self, result: dict[str, Any]) -> None:
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
         self.output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -708,6 +753,7 @@ class LiveOrderGateway:
             f"- Send requested: `{result.get('send_requested')}`",
             f"- Sent: `{result.get('sent')}`",
             f"- Sent count: `{result.get('sent_count', 1 if result.get('sent') else 0)}`",
+            f"- Quote refresh attempts: `{result.get('quote_refresh_attempts', 0)}`",
             f"- Portfolio position cap: `{result.get('portfolio_position_cap')}`",
             "",
             "## Order Request",
@@ -721,6 +767,7 @@ class LiveOrderGateway:
                 lines.append(f"- `{lane_id}` status=`{item.get('status')}` sent=`{item.get('sent')}`")
                 if not order:
                     continue
+                lines.append(f"  - quote_refresh_attempts=`{item.get('quote_refresh_attempts', 0)}`")
                 lines.append(f"  - `{order['instrument']}` `{order['type']}` units=`{order['units']}`")
                 if "price" in order:
                     lines.append(f"  - price: `{order['price']}`")
@@ -1191,6 +1238,39 @@ def _send_guard_issues(*, send: bool, confirm_live: bool, lane_id: str | None) -
     if send and not lane_id:
         issues.append(RiskIssue("LANE_ID_REQUIRED_FOR_SEND", "live send requires an explicit --lane-id"))
     return [issue.__dict__ for issue in issues]
+
+
+def _risk_has_blocking_stale_quote(risk: Any) -> bool:
+    for issue in getattr(risk, "issues", ()) or ():
+        if str(getattr(issue, "severity", "")).upper() != "BLOCK":
+            continue
+        if str(getattr(issue, "code", "")).upper() in {"STALE_QUOTE", "STALE_CONVERSION_QUOTE"}:
+            return True
+    return False
+
+
+def _gateway_stale_quote_retry_attempts() -> int:
+    return _bounded_env_int("QR_GATEWAY_STALE_QUOTE_RETRY_ATTEMPTS", default=3, minimum=0, maximum=10)
+
+
+def _gateway_stale_quote_retry_sleep_seconds() -> float:
+    return _bounded_env_float("QR_GATEWAY_STALE_QUOTE_RETRY_SLEEP_SECONDS", default=5.0, minimum=0.0, maximum=30.0)
+
+
+def _bounded_env_int(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(float(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _bounded_env_float(name: str, *, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
 
 def _intent_status_issues(selected: dict[str, Any]) -> list[dict[str, str]]:
