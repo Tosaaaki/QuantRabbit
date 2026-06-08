@@ -3342,6 +3342,116 @@ class AutoTradeCycleTest(unittest.TestCase):
                 else:
                     os.environ["QR_REQUIRE_TELEMETRY_FOR_LIVE"] = prior_telemetry
 
+    def test_reused_verified_gpt_close_reaches_position_gateway(self) -> None:
+        # The verifier-to-gateway bridge must cover accepted CLOSE receipts,
+        # not just TRADE. Otherwise hard Gate A exits are repeatedly reported
+        # as accepted but never reach PositionProtectionGateway, blocking fresh
+        # entries behind the still-open position.
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                now = datetime.now(timezone.utc)
+                target_state = _open_target_state(root)
+                snapshot = BrokerSnapshot(
+                    fetched_at_utc=now,
+                    positions=(
+                        BrokerPosition(
+                            trade_id="close-me",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=1000,
+                            entry_price=1.1740,
+                            unrealized_pl_jpy=-120.0,
+                            take_profit=1.1760,
+                            stop_loss=None,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    quotes={
+                        "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                        "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                    },
+                    account=AccountSummary(
+                        nav_jpy=400_000,
+                        balance_jpy=400_000,
+                        margin_available_jpy=400_000,
+                        fetched_at_utc=now,
+                    ),
+                )
+                snapshot_path = root / "snapshot.json"
+                snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+                intents_path = root / "intents.json"
+                _write_no_live_ready_intents(intents_path)
+                pair_charts_path = root / "pair_charts.json"
+                pair_charts_path.write_text(json.dumps({"charts": []}) + "\n")
+                response_path = root / "codex_trader_decision_response.json"
+                close_decision = _gpt_close_decision(["close-me"])
+                response_path.write_text(json.dumps(close_decision) + "\n")
+                gpt_decision_path = root / "gpt_decision.json"
+                gpt_decision_path.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": now.isoformat(),
+                            "status": "ACCEPTED",
+                            "decision": close_decision,
+                            "verification_issues": [],
+                        }
+                    )
+                    + "\n"
+                )
+                os.utime(snapshot_path, (100.0, 100.0))
+                os.utime(intents_path, (100.0, 100.0))
+                os.utime(response_path, (101.0, 101.0))
+                os.utime(gpt_decision_path, (102.0, 102.0))
+                client = FakeCycleClient(snapshot)
+
+                summary = AutoTradeCycle(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    gpt_decision_path=gpt_decision_path,
+                    gpt_decision_report_path=root / "gpt_decision.md",
+                    gpt_attack_advice_path=root / "attack_missing.json",
+                    position_management_path=root / "pm.json",
+                    position_management_report_path=root / "pm.md",
+                    position_execution_path=root / "pe.json",
+                    position_execution_report_path=root / "pe.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "report.md",
+                    campaign_plan_path=_campaign(root),
+                    pair_charts_path=pair_charts_path,
+                    strategy_profile_path=_candidate_profile(root),
+                    market_story_profile_path=_stories(root),
+                    receipt_promotion_report_path=root / "promotion.md",
+                    target_state_path=target_state,
+                    target_report_path=root / "target.md",
+                    gpt_target_state_path=target_state,
+                    use_gpt_trader=True,
+                    gpt_provider=StaticTraderProvider(close_decision, source_path=response_path),
+                    reuse_market_artifacts=True,
+                    refresh_market_story=False,
+                    live_enabled=True,
+                ).run(send=True)
+        finally:
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+
+        self.assertEqual(summary.status, "POSITION_ACTION_SENT")
+        self.assertEqual(summary.decision_source, "gpt_trader")
+        self.assertEqual(summary.gpt_status, "ACCEPTED")
+        self.assertEqual(summary.gpt_action, "CLOSE")
+        self.assertEqual(summary.position_execution_status, "SENT")
+        self.assertEqual(client.trades_closed, [("close-me", "ALL")])
+        self.assertEqual(client.orders_sent, [])
+
     def test_gpt_decision_response_older_than_snapshot_requires_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

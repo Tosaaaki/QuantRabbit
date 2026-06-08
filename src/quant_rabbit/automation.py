@@ -88,6 +88,7 @@ from quant_rabbit.verification_ledger import VerificationLedger
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
+ACCEPTED_GPT_GATEWAY_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE"})
 
 # C-4 margin-aware basket truncation (2026-05-12, repaired 2026-05-15).
 # The basket builder stops adding fresh-entry lanes once cumulative
@@ -2567,15 +2568,18 @@ class AutoTradeCycle:
             )
 
     def _load_reusable_verified_gpt_handoff(self) -> GptHandoffSummary | None:
-        """Reuse a just-accepted TRADE verification for a pinned handoff packet.
+        """Reuse a just-accepted gateway verification for a pinned packet.
 
         `autotrade-cycle --reuse-market-artifacts` is the verifier-to-gateway
-        bridge. Once `gpt-trader-decision` has accepted an external TRADE
+        bridge. Once `gpt-trader-decision` has accepted an external gateway
         response, rerunning the verifier against a newer broker snapshot can
         reject the same receipt as stale even though the live gateway will
         fetch fresh broker truth before staging/sending. Reuse is therefore
         allowed only for the same external receipt, the same order-intent
-        packet, and a still-present LIVE_READY lane.
+        packet for TRADE receipts, and a still-present LIVE_READY lane for any
+        selected fresh-entry lane. CLOSE / CANCEL_PENDING / protection actions
+        do not select order-intent lanes, but they still need the same source
+        receipt and an unconsumed accepted verifier output.
         """
 
         if not self.reuse_market_artifacts or not self.use_gpt_trader:
@@ -2596,11 +2600,14 @@ class AutoTradeCycle:
         if verified_payload.get("status") != "ACCEPTED":
             return None
         decision = verified_payload.get("decision")
-        if not isinstance(decision, dict) or str(decision.get("action") or "") != "TRADE":
+        if not isinstance(decision, dict):
+            return None
+        action = str(decision.get("action") or "").upper()
+        if action not in ACCEPTED_GPT_GATEWAY_ACTIONS:
             return None
         if not self._verified_gpt_decision_matches_source(decision, source_payload):
             return None
-        if not self._verified_gpt_order_intents_still_match(verified_payload, decision):
+        if action == "TRADE" and not self._verified_gpt_order_intents_still_match(verified_payload, decision):
             return None
         selected_lane_id = str(decision.get("selected_lane_id") or "") or None
         selected_lane_ids = self._string_tuple(decision.get("selected_lane_ids"))
@@ -2608,7 +2615,7 @@ class AutoTradeCycle:
         close_trade_ids = self._string_tuple(decision.get("close_trade_ids"))
         return GptHandoffSummary(
             status="ACCEPTED",
-            action="TRADE",
+            action=action,
             selected_lane_id=selected_lane_id,
             allowed=True,
             issues=len(verified_payload.get("verification_issues") or []),
