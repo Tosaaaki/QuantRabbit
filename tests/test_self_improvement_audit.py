@@ -709,6 +709,24 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED", codes)
         self.assertNotIn("VERIFICATION_LEDGER_BLOCKED", codes)
 
+    def test_pending_entry_downgrades_no_live_ready_hole_from_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, pending_entry=True)
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertEqual(codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["priority"], "P1")
+        self.assertEqual(
+            codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["evidence"]["trader_pending_entry_orders"][0]["order_id"],
+            "P1",
+        )
+        self.assertEqual(payload["runtime"]["open_trader_pending_entries"], 1)
+
     def test_no_live_ready_evidence_names_dry_run_passed_live_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1518,6 +1536,7 @@ def _fixtures(
     unrealized_pl_jpy: float = 0.0,
     closed_pls: tuple[float, ...] = (100.0, -250.0, 50.0),
     verification_lane_blockers: bool = False,
+    pending_entry: bool = False,
 ) -> dict[str, Path]:
     files = {
         "execution_db": root / "execution_ledger.db",
@@ -1557,6 +1576,20 @@ def _fixtures(
                 "unrealized_pl_jpy": -120.0,
             }
         )
+    orders = []
+    if pending_entry:
+        orders.append(
+            {
+                "order_id": "P1",
+                "pair": "EUR_USD",
+                "order_type": "STOP",
+                "state": "PENDING",
+                "units": 1000,
+                "price": 1.171,
+                "owner": "trader",
+                "trade_id": None,
+            }
+        )
     files["snapshot"].write_text(
         json.dumps(
             {
@@ -1567,7 +1600,7 @@ def _fixtures(
                     "unrealized_pl_jpy": unrealized_pl_jpy,
                 },
                 "positions": positions,
-                "orders": [],
+                "orders": orders,
                 "quotes": {"EUR_USD": {"bid": 1.1701, "ask": 1.1702, "timestamp_utc": _NOW.isoformat()}},
             }
         )

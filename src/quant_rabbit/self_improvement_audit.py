@@ -179,6 +179,7 @@ class SelfImprovementAuditor:
         target_open = _target_open(target_state)
         live_ready = _live_ready_results(intents)
         active_positions = _active_trader_positions(snapshot)
+        pending_entry_orders = _trader_pending_entry_orders(snapshot)
         active_trade_ids = {str(item.get("trade_id") or "") for item in active_positions if item.get("trade_id")}
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         effect_24h = _effect_metrics(self.db_path, window_hours=24.0, now=clock)
@@ -276,6 +277,7 @@ class SelfImprovementAuditor:
                 target_open=target_open,
                 live_ready=live_ready,
                 active_positions=active_positions,
+                pending_entry_orders=pending_entry_orders,
             )
         )
         findings.extend(
@@ -326,6 +328,7 @@ class SelfImprovementAuditor:
                 target_open=target_open,
                 active_trade_ids=active_trade_ids,
                 live_ready_lanes=len(live_ready),
+                pending_entry_orders=len(pending_entry_orders),
                 snapshot_ts=snapshot_ts,
             )
         )
@@ -365,6 +368,7 @@ class SelfImprovementAuditor:
                 "target_open": target_open,
                 "snapshot_fetched_at_utc": snapshot_ts.isoformat() if snapshot_ts else None,
                 "open_trader_positions": len(active_positions),
+                "open_trader_pending_entries": len(pending_entry_orders),
                 "live_ready_lanes": len(live_ready),
                 "gpt_status": (gpt_loaded.payload or {}).get("status"),
                 "gpt_action": ((gpt_loaded.payload or {}).get("decision") or {}).get("action")
@@ -479,6 +483,7 @@ class SelfImprovementAuditor:
             "",
             f"- Target open: `{runtime['target_open']}`",
             f"- Open trader positions: `{runtime['open_trader_positions']}`",
+            f"- Open trader pending entries: `{runtime.get('open_trader_pending_entries', 0)}`",
             f"- LIVE_READY lanes: `{runtime['live_ready_lanes']}`",
             f"- GPT status/action: `{runtime['gpt_status']}` / `{runtime['gpt_action']}`",
             "",
@@ -2131,19 +2136,22 @@ def _intent_findings(
     target_open: bool,
     live_ready: list[dict[str, Any]],
     active_positions: list[dict[str, Any]],
+    pending_entry_orders: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if target_open and not live_ready:
+        entry_path_occupied = bool(active_positions or pending_entry_orders)
         out.append(
             _finding(
                 run_id=run_id,
-                priority="P0" if not active_positions else "P1",
+                priority="P0" if not entry_path_occupied else "P1",
                 layer="opportunity",
                 code="TARGET_OPEN_NO_LIVE_READY_LANES",
                 message="daily target is open but order_intents has no LIVE_READY lanes",
                 next_action="Refresh market context and inspect top live blockers instead of ending flat without a named gate.",
                 evidence={
                     "active_trader_positions": len(active_positions),
+                    "trader_pending_entry_orders": _pending_entry_evidence(pending_entry_orders),
                     "status_counts": _intent_status_counts(intents),
                     "top_blockers": _top_intent_blockers(intents),
                     "dry_run_passed_live_readiness_blockers": _top_intent_live_readiness_blockers(
@@ -2694,6 +2702,7 @@ def _decision_artifact_findings(
     target_open: bool,
     active_trade_ids: set[str],
     live_ready_lanes: int,
+    pending_entry_orders: int,
     snapshot_ts: datetime | None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -2755,7 +2764,11 @@ def _decision_artifact_findings(
             and not rejected_inert_receipt
             and not stale_close_for_closed_trades
         ):
-            priority = "P0" if active_trade_ids or (target_open and live_ready_lanes <= 0) else "P1"
+            priority = (
+                "P0"
+                if active_trade_ids or (target_open and live_ready_lanes <= 0 and pending_entry_orders <= 0)
+                else "P1"
+            )
             out.append(
                 _finding(
                     run_id=run_id,
@@ -2771,6 +2784,7 @@ def _decision_artifact_findings(
                         "generated_at_utc": generated_at.isoformat(),
                         "snapshot_fetched_at_utc": snapshot_ts.isoformat(),
                         "live_ready_lanes": live_ready_lanes,
+                        "pending_entry_orders": pending_entry_orders,
                     },
                 )
             )
@@ -3193,6 +3207,40 @@ def _active_trader_positions(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         if trade_id:
             out.append(item)
     return out
+
+
+def _trader_pending_entry_orders(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    entry_order_types = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
+    for item in snapshot.get("orders", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("owner") or "").lower() != "trader":
+            continue
+        if item.get("trade_id"):
+            continue
+        if str(item.get("state") or "").upper() not in {"PENDING", "OPEN"}:
+            continue
+        if str(item.get("order_type") or "").upper() not in entry_order_types:
+            continue
+        out.append(item)
+    return out
+
+
+def _pending_entry_evidence(orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for order in orders:
+        evidence.append(
+            {
+                "order_id": order.get("order_id"),
+                "pair": order.get("pair"),
+                "order_type": order.get("order_type"),
+                "units": order.get("units"),
+                "price": order.get("price"),
+                "state": order.get("state"),
+            }
+        )
+    return evidence
 
 
 def _live_ready_results(intents: dict[str, Any]) -> list[dict[str, Any]]:
