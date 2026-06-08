@@ -328,6 +328,45 @@ class ExecutionLedgerTest(unittest.TestCase):
                 ],
             )
 
+    def test_trade_close_order_acceptance_records_closed_trade_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(FakeTradeCloseAcceptClient(), since_transaction_id="500")
+
+            self.assertEqual(summary.status, "SYNCED")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    """
+                    SELECT event_type, order_id, trade_id, exit_reason, related_transaction_ids_json
+                    FROM execution_events
+                    WHERE event_type='ORDER_ACCEPTED'
+                    """
+                ).fetchone()
+            self.assertEqual(row[0], "ORDER_ACCEPTED")
+            self.assertEqual(row[1], "501")
+            self.assertEqual(row[2], "T501")
+            self.assertEqual(row[3], "TRADE_CLOSE")
+            self.assertIn("T501", json.loads(row[4]))
+
+    def test_init_backfills_existing_trade_close_order_trade_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger.sync_oanda_transactions(FakeTradeCloseAcceptClient(), since_transaction_id="500")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                conn.execute("UPDATE execution_events SET trade_id = NULL WHERE event_type='ORDER_ACCEPTED'")
+                conn.commit()
+
+            ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    "SELECT trade_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
+                ).fetchone()
+            self.assertEqual(row[0], "T501")
+
 
 class FakeTransactionClient:
     def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
@@ -533,6 +572,33 @@ class FakeProtectionClient:
                     "tradeID": "300",
                     "price": "1.16100",
                     "reason": "ON_FILL",
+                },
+            ],
+        }
+
+
+class FakeTradeCloseAcceptClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="500",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "501",
+            "transactions": [
+                {
+                    "id": "501",
+                    "time": "2026-06-05T16:06:46.688940451Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "EUR_JPY",
+                    "units": "-2700",
+                    "reason": "TRADE_CLOSE",
+                    "positionFill": "REDUCE_ONLY",
+                    "tradeClose": {"tradeID": "T501", "units": "ALL"},
                 },
             ],
         }

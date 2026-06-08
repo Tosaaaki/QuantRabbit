@@ -977,6 +977,7 @@ def _market_close_attribution_findings(
     if not db_path.exists():
         return []
     rows: list[sqlite3.Row] = []
+    accepted_close_rows: list[sqlite3.Row] = []
     error: str | None = None
     try:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
@@ -1044,6 +1045,7 @@ def _market_close_attribution_findings(
                         e.ts_utc,
                         e.event_type,
                         e.trade_id,
+                        e.order_id,
                         e.pair,
                         e.side,
                         e.realized_pl_jpy,
@@ -1067,12 +1069,16 @@ def _market_close_attribution_findings(
                     """
                 )
             )
+            accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
     except sqlite3.Error as exc:
         error = str(exc)
     if error is not None:
         return []
     cutoff = now - timedelta(hours=max(0.0, window_hours))
     unattributed: list[sqlite3.Row] = []
+    broker_accept_count = 0
+    broker_accept_source_counts: dict[str, int] = {}
+    broker_accept_sources_by_trade: dict[str, list[str]] = {}
     for row in rows:
         ts = _parse_utc(row["ts_utc"])
         if ts is None or ts < cutoff:
@@ -1081,6 +1087,18 @@ def _market_close_attribution_findings(
         if value is None or value >= 0:
             continue
         unattributed.append(row)
+        trade_id = str(row["trade_id"] or "").strip()
+        order_id = str(row["order_id"] or "").strip()
+        sources = _broker_trade_close_accept_sources(
+            accepted_close_rows,
+            trade_id=trade_id,
+            order_id=order_id,
+        )
+        if sources:
+            broker_accept_count += 1
+            broker_accept_sources_by_trade[trade_id] = sorted(sources)
+            for source in sources:
+                broker_accept_source_counts[source] = broker_accept_source_counts.get(source, 0) + 1
     if not unattributed:
         return []
     net = sum(float(_maybe_float(row["realized_pl_jpy"]) or 0.0) for row in unattributed)
@@ -1090,15 +1108,30 @@ def _market_close_attribution_findings(
             "event_uid": str(row["event_uid"] or ""),
             "event_type": str(row["event_type"] or ""),
             "trade_id": str(row["trade_id"] or ""),
+            "close_order_id": str(row["order_id"] or ""),
             "pair": str(row["pair"] or ""),
             "side": str(row["side"] or row["position_side"] or ""),
             "original_side": str(row["position_side"] or ""),
             "gateway_lane_id": str(row["gateway_lane_id"] or ""),
             "realized_pl_jpy": _maybe_float(row["realized_pl_jpy"]),
             "exit_reason": str(row["exit_reason"] or ""),
+            "broker_trade_close_accept_sources": broker_accept_sources_by_trade.get(
+                str(row["trade_id"] or "").strip(),
+                [],
+            ),
         }
         for row in unattributed[:8]
     ]
+    if broker_accept_count:
+        next_action = (
+            "Persist local position-execution receipts or client-extension source tags for broker-accepted "
+            "TRADE_CLOSE orders, then separate GPT/Gate A-B closes from operator/manual closes before tuning exits."
+        )
+    else:
+        next_action = (
+            "Reconcile broker close provenance for these market-close outcomes, then persist every direct close_trade "
+            "path as a position-execution receipt before tuning exits."
+        )
     return [
         _finding(
             run_id=run_id,
@@ -1109,18 +1142,103 @@ def _market_close_attribution_findings(
                 f"{len(unattributed)} negative bot-attributed market close event(s) lack "
                 "a matching gateway close receipt"
             ),
-            next_action=(
-                "Persist every direct close_trade path as a position-execution receipt, then separate "
-                "manual intervention from strategy/Gate A/B close performance before tuning exits."
-            ),
+            next_action=next_action,
             evidence={
                 "window_hours": window_hours,
                 "unattributed_loss_count": len(unattributed),
                 "unattributed_loss_net_jpy": round(net, 4),
+                "broker_trade_close_accept_count": broker_accept_count,
+                "broker_trade_close_accept_source_counts": broker_accept_source_counts,
                 "examples": examples,
             },
         )
     ]
+
+
+def _broker_trade_close_accept_rows(conn: sqlite3.Connection, columns: set[str]) -> list[sqlite3.Row]:
+    select_fields = []
+    for column in ("trade_id", "order_id", "lane_id", "exit_reason", "raw_json"):
+        if column in columns:
+            select_fields.append(column)
+        else:
+            select_fields.append(f"NULL AS {column}")
+    return list(
+        conn.execute(
+            f"""
+            SELECT {', '.join(select_fields)}
+            FROM execution_events
+            WHERE event_type = 'ORDER_ACCEPTED'
+            """
+        ).fetchall()
+    )
+
+
+def _broker_trade_close_accept_sources(
+    rows: list[sqlite3.Row],
+    *,
+    trade_id: str,
+    order_id: str,
+) -> set[str]:
+    sources: set[str] = set()
+    for row in rows:
+        raw = _json_payload(row["raw_json"])
+        raw_reason = str(raw.get("reason") or "").strip().upper()
+        reason = str(row["exit_reason"] or raw_reason or "").strip().upper()
+        trade_close = raw.get("tradeClose") if isinstance(raw.get("tradeClose"), dict) else {}
+        close_trade_id = _trade_close_trade_id(trade_close)
+        row_trade_id = str(row["trade_id"] or "").strip()
+        row_order_id = str(row["order_id"] or "").strip()
+        if reason != "TRADE_CLOSE" and not close_trade_id:
+            continue
+        if not (
+            (trade_id and trade_id in {row_trade_id, close_trade_id})
+            or (order_id and order_id == row_order_id)
+        ):
+            continue
+        sources.add(_broker_trade_close_accept_source(row, raw))
+    return sources
+
+
+def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, Any]) -> str:
+    try:
+        lane_id = str(row["lane_id"] or "").strip()
+    except (KeyError, IndexError):
+        lane_id = ""
+    if lane_id:
+        return "LOCAL_LEDGER_LANE_ID"
+    client_sources = []
+    for key in ("clientExtensions", "tradeClientExtensions"):
+        value = raw.get(key)
+        if isinstance(value, dict):
+            client_sources.append(value)
+    haystack = json.dumps(client_sources, ensure_ascii=False, sort_keys=True).lower()
+    if "qrv1" in haystack or "qr-vnext" in haystack or '"tag": "trader"' in haystack:
+        return "TRADER_CLIENT_EXTENSION"
+    if client_sources:
+        return "NON_TRADER_CLIENT_EXTENSION"
+    return "UNLABELED_BROKER_TRADE_CLOSE"
+
+
+def _trade_close_trade_id(trade_close: Any) -> str:
+    if not isinstance(trade_close, dict):
+        return ""
+    for key in ("tradeID", "trade_id", "id"):
+        value = trade_close.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return ""
+
+
+def _json_payload(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if raw is None:
+        return {}
+    try:
+        parsed = json.loads(str(raw))
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _forecast_history_findings(

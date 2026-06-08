@@ -197,6 +197,7 @@ class ExecutionLedger:
                 """
             )
             _backfill_legacy_lane_ids(conn)
+            _backfill_legacy_trade_close_ids(conn)
 
     def _write_report(self, summary: ExecutionLedgerSummary) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -449,7 +450,7 @@ def _event(
         transaction.get("tradeClientExtensions") if isinstance(transaction.get("tradeClientExtensions"), dict) else {}
     )
     nested_extensions = _nested_trade_extensions(transaction)
-    raw_trade_id = trade_id or transaction.get("tradeID")
+    raw_trade_id = trade_id or transaction.get("tradeID") or _trade_close_trade_id(transaction)
     pair = _text(transaction.get("instrument"))
     event_side = side if side is not None else _side_from_units(signed_units)
     lane_id = _lane_id(
@@ -610,6 +611,36 @@ def _backfill_legacy_lane_ids(conn: sqlite3.Connection) -> int:
     return updated
 
 
+def _backfill_legacy_trade_close_ids(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_uid, raw_json
+        FROM execution_events
+        WHERE source = 'oanda'
+          AND event_type = 'ORDER_ACCEPTED'
+          AND exit_reason = 'TRADE_CLOSE'
+          AND (trade_id IS NULL OR trade_id = '')
+        """
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        try:
+            transaction = json.loads(str(row["raw_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(transaction, dict):
+            continue
+        trade_id = _trade_close_trade_id(transaction)
+        if not trade_id:
+            continue
+        cur = conn.execute(
+            "UPDATE execution_events SET trade_id = ? WHERE event_uid = ? AND (trade_id IS NULL OR trade_id = '')",
+            (trade_id, row["event_uid"]),
+        )
+        updated += cur.rowcount
+    return updated
+
+
 def _get_state(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
     return str(row["value"]) if row else None
@@ -628,6 +659,17 @@ def _set_state(conn: sqlite3.Connection, key: str, value: str, now: str) -> None
 
 def _order_uid_tail(transaction: dict[str, Any]) -> str:
     return str(transaction.get("orderID") or transaction.get("id") or transaction.get("clientOrderID") or "")
+
+
+def _trade_close_trade_id(transaction: dict[str, Any]) -> str | None:
+    trade_close = transaction.get("tradeClose")
+    if not isinstance(trade_close, dict):
+        return None
+    for key in ("tradeID", "trade_id", "id"):
+        value = trade_close.get(key)
+        if value is not None and str(value).strip():
+            return str(value)
+    return None
 
 
 def _response_order_id(response: dict[str, Any]) -> str | None:
@@ -729,6 +771,11 @@ def _related_ids(payload: dict[str, Any]) -> list[str]:
         value = payload.get(key)
         if value is not None:
             related.append(str(value))
+    trade_close = payload.get("tradeClose")
+    if isinstance(trade_close, dict):
+        trade_id = _trade_close_trade_id(payload)
+        if trade_id is not None:
+            related.append(trade_id)
     return related
 
 

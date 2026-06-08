@@ -649,6 +649,60 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["evidence"]["unattributed_loss_count"], 1)
         self.assertEqual(finding["evidence"]["examples"][0]["trade_id"], "T42")
 
+    def test_unattributed_market_order_close_reports_broker_accept_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=False)
+            with sqlite3.connect(files["execution_db"]) as conn:
+                conn.execute("ALTER TABLE execution_events ADD COLUMN raw_json TEXT")
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "broker-close-accept",
+                        (_NOW - timedelta(hours=1, minutes=10)).isoformat(),
+                        "ORDER_ACCEPTED",
+                        "",
+                        "C42",
+                        "",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        None,
+                        "TRADE_CLOSE",
+                        json.dumps(
+                            {
+                                "id": "C42",
+                                "type": "MARKET_ORDER",
+                                "reason": "TRADE_CLOSE",
+                                "tradeClose": {"tradeID": "T42", "units": "ALL"},
+                            }
+                        ),
+                    ),
+                )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        finding = codes["UNATTRIBUTED_MARKET_ORDER_CLOSES"]
+        self.assertEqual(finding["evidence"]["broker_trade_close_accept_count"], 1)
+        self.assertEqual(
+            finding["evidence"]["broker_trade_close_accept_source_counts"],
+            {"UNLABELED_BROKER_TRADE_CLOSE": 1},
+        )
+        self.assertEqual(
+            finding["evidence"]["examples"][0]["broker_trade_close_accept_sources"],
+            ["UNLABELED_BROKER_TRADE_CLOSE"],
+        )
+
     def test_gateway_close_receipt_satisfies_market_order_close_attribution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
