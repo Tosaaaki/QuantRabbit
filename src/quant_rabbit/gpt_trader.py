@@ -788,6 +788,14 @@ class GPTTraderBrain:
                 "market_status_is_authoritative_calendar_evidence": True,
                 "coverage_optimization_is_read_only_gap_evidence": True,
             },
+            "artifact_timestamps": {
+                "order_intents_generated_at_utc": intents.get("generated_at_utc"),
+                "market_context_matrix_generated_at_utc": (
+                    market_context_matrix.get("generated_at_utc")
+                    if isinstance(market_context_matrix, dict)
+                    else None
+                ),
+            },
             "broker_snapshot": _snapshot_packet(snapshot),
             "daily_target": _target_packet(target),
             "lanes": lanes,
@@ -1210,16 +1218,40 @@ class DecisionVerifier:
             return
         broker = self.packet.get("broker_snapshot", {})
         snapshot_ts = _parse_utc(broker.get("fetched_at_utc") if isinstance(broker, dict) else None)
-        if snapshot_ts is None:
-            return
-        if decision_ts < snapshot_ts:
-            issues.append(
-                VerificationIssue(
-                    "STALE_DECISION_RECEIPT",
-                    "decision receipt predates the broker snapshot used for verification; refresh the "
-                    "decision after current broker truth, position sidecars, and order intents are rebuilt",
-                )
+        freshness_checks = [
+            (
+                snapshot_ts,
+                "broker snapshot",
+                "current broker truth, position sidecars, and order intents are rebuilt",
             )
+        ]
+        artifact_timestamps = self.packet.get("artifact_timestamps")
+        if isinstance(artifact_timestamps, dict):
+            freshness_checks.extend(
+                [
+                    (
+                        _parse_utc(artifact_timestamps.get("order_intents_generated_at_utc")),
+                        "order intents",
+                        "current order intents are rebuilt from the latest market packet",
+                    ),
+                    (
+                        _parse_utc(artifact_timestamps.get("market_context_matrix_generated_at_utc")),
+                        "market_context_matrix",
+                        "current market_context_matrix is reflected into the order intents and decision receipt",
+                    ),
+                ]
+            )
+        for artifact_ts, label, refresh_hint in freshness_checks:
+            if artifact_ts is None:
+                continue
+            if decision_ts < artifact_ts:
+                issues.append(
+                    VerificationIssue(
+                        "STALE_DECISION_RECEIPT",
+                        f"decision receipt predates the {label} used for verification; refresh the "
+                        f"decision after {refresh_hint}",
+                    )
+                )
 
     def _verify_cancel_order_ids(
         self,

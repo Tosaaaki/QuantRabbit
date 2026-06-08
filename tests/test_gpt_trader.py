@@ -52,6 +52,58 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("STALE_DECISION_RECEIPT", codes)
 
+    def test_rejects_trade_receipt_that_predates_order_intents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            decision_ts = snapshot_ts + timedelta(seconds=1)
+            intents_ts = snapshot_ts + timedelta(seconds=2)
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = intents_ts.isoformat()
+            files["intents"].write_text(json.dumps(intents))
+            decision = _trade_decision()
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            stale_messages = [
+                issue["message"]
+                for issue in payload["verification_issues"]
+                if issue["code"] == "STALE_DECISION_RECEIPT"
+            ]
+            self.assertTrue(any("order intents" in message for message in stale_messages))
+
+    def test_rejects_trade_receipt_that_predates_market_context_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot_ts = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            decision_ts = snapshot_ts + timedelta(seconds=1)
+            matrix_ts = snapshot_ts + timedelta(seconds=2)
+            matrix = json.loads(files["market_context_matrix"].read_text())
+            matrix["generated_at_utc"] = matrix_ts.isoformat()
+            files["market_context_matrix"].write_text(json.dumps(matrix))
+            decision = _trade_decision()
+            decision["generated_at_utc"] = decision_ts.isoformat()
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            stale_messages = [
+                issue["message"]
+                for issue in payload["verification_issues"]
+                if issue["code"] == "STALE_DECISION_RECEIPT"
+            ]
+            self.assertTrue(any("market_context_matrix" in message for message in stale_messages))
+
     def test_rejects_trade_without_twenty_minute_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
