@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -354,6 +354,7 @@ class AITestBotBacktester:
             },
             "source_contributions": source_contributions,
             "bucket_contributions": _bucket_contributions(validation_rows, cap.loss_cap_jpy),
+            "evidence_bucket_contributions": _evidence_bucket_contributions(validation_rows, cap.loss_cap_jpy),
             "oracle": oracle,
             "target_ceiling": target_ceiling,
             "target_band": target_band,
@@ -653,6 +654,19 @@ class AITestBotBacktester:
                 )
         else:
             lines.append("- none")
+        evidence_buckets = payload.get("evidence_bucket_contributions")
+        lines.extend(["", "## Evidence Bucket Attributions", ""])
+        if isinstance(evidence_buckets, list) and evidence_buckets:
+            for item in evidence_buckets[:12]:
+                if not isinstance(item, dict):
+                    continue
+                lines.append(
+                    f"- `{item['bucket']}` net=`{item['managed_net_jpy']:.0f}` raw=`{item['raw_net_jpy']:.0f}` "
+                    f"trades=`{item['trades']}` days=`{item['days']}` win_rate=`{item['win_rate_pct']:.1f}%` "
+                    f"worst=`{item['worst_trade_jpy']:.0f}` best=`{item['best_trade_jpy']:.0f}`"
+                )
+        else:
+            lines.append("- none")
         lines.extend(["", "## Missed Best Buckets", ""])
         if payload["missed_best_days"]:
             for item in payload["missed_best_days"]:
@@ -767,13 +781,17 @@ def _select_buckets(
     )
     context_scores = _select_bucket_candidates(
         promotable_rows,
-        bucket_getter=lambda row: row.extra_buckets,
+        bucket_getter=_context_theme_buckets,
         max_loss_jpy=max_loss_jpy,
         min_train_trades=CONTEXT_THEME_MIN_TRAIN_TRADES,
         min_train_win_rate_pct=CONTEXT_THEME_MIN_TRAIN_WIN_RATE_PCT,
         max_active_buckets=CONTEXT_THEME_MAX_ACTIVE_BUCKETS,
     )
     return (*base_scores, *context_scores)
+
+
+def _context_theme_buckets(row: TestBotTrade) -> tuple[TestBotBucket, ...]:
+    return tuple(bucket for bucket in row.extra_buckets if bucket.source_table == CONTEXT_THEME_SOURCE_TABLE)
 
 
 def _select_bucket_candidates(
@@ -832,12 +850,16 @@ def _selected_trades_for_day(trades: tuple[TestBotTrade, ...], day: TestBotDay) 
         row
         for row in trades
         if row.session_date == day.session_date
-        and any(bucket.label in selected for bucket in row.buckets)
+        and any(bucket.label in selected for bucket in _selection_buckets_for_row(row))
     )
 
 
 def _row_matches_selected_buckets(row: TestBotTrade, selected_buckets: set[TestBotBucket]) -> bool:
-    return any(bucket in selected_buckets for bucket in row.buckets)
+    return any(bucket in selected_buckets for bucket in _selection_buckets_for_row(row))
+
+
+def _selection_buckets_for_row(row: TestBotTrade) -> tuple[TestBotBucket, ...]:
+    return (row.bucket, *_context_theme_buckets(row))
 
 
 def _dedupe_opportunities(rows: tuple[TestBotTrade, ...]) -> tuple[TestBotTrade, ...]:
@@ -879,7 +901,7 @@ def _best_actual_trade_row(rows: list[TestBotTrade]) -> TestBotTrade:
         EXECUTION_LEDGER_SOURCE_TABLE: 2,
         "seat_outcomes": 1,
     }
-    return max(
+    base = max(
         rows,
         key=lambda row: (
             priority.get(row.source_table, 0),
@@ -887,6 +909,30 @@ def _best_actual_trade_row(rows: list[TestBotTrade]) -> TestBotTrade:
             row.source_id,
         ),
     )
+    return _merge_deduped_evidence_buckets(base, rows)
+
+
+def _merge_deduped_evidence_buckets(base: TestBotTrade, rows: list[TestBotTrade]) -> TestBotTrade:
+    """Keep one P/L row while preserving pre-entry evidence buckets.
+
+    Dedupe must prevent the same broker trade from counting twice, but it must
+    not erase the observable pretrade bucket that would have selected the
+    trade before entry. The aggregate `trades` row remains the P/L owner; the
+    merged buckets are selection/evidence aliases only.
+    """
+
+    buckets: list[TestBotBucket] = list(base.extra_buckets)
+    features: set[str] = set(base.context_features)
+    for row in rows:
+        if row is base:
+            continue
+        for bucket in (row.bucket, *row.extra_buckets):
+            if bucket != base.bucket and bucket not in buckets:
+                buckets.append(bucket)
+        features.update(row.context_features)
+    if tuple(buckets) == base.extra_buckets and tuple(sorted(features)) == base.context_features:
+        return base
+    return replace(base, extra_buckets=tuple(buckets), context_features=tuple(sorted(features)))
 
 
 def _dedupe_overlapping_seat_matches(rows: list[TestBotTrade]) -> tuple[TestBotTrade, ...]:
@@ -1728,33 +1774,58 @@ def _bucket_contributions(
     validation_rows: tuple[TestBotTrade, ...],
     max_loss_jpy: float,
 ) -> list[dict[str, float | int | str]]:
+    return _bucket_contribution_rows(
+        validation_rows,
+        max_loss_jpy=max_loss_jpy,
+        bucket_getter=lambda row: (row.bucket,),
+    )
+
+
+def _evidence_bucket_contributions(
+    validation_rows: tuple[TestBotTrade, ...],
+    max_loss_jpy: float,
+) -> list[dict[str, float | int | str]]:
+    return _bucket_contribution_rows(
+        validation_rows,
+        max_loss_jpy=max_loss_jpy,
+        bucket_getter=lambda row: row.buckets,
+    )
+
+
+def _bucket_contribution_rows(
+    validation_rows: tuple[TestBotTrade, ...],
+    *,
+    max_loss_jpy: float,
+    bucket_getter,
+) -> list[dict[str, float | int | str]]:
     by_bucket: dict[TestBotBucket, dict[str, object]] = {}
     for row in validation_rows:
-        item = by_bucket.setdefault(
-            row.bucket,
-            {
-                "bucket": row.bucket.label,
-                "trades": 0,
-                "wins": 0,
-                "managed_net_jpy": 0.0,
-                "raw_net_jpy": 0.0,
-                "days": set(),
-                "worst_trade_jpy": None,
-                "best_trade_jpy": None,
-            },
-        )
         capped = _capped_pl(row.pl_jpy, max_loss_jpy)
-        item["trades"] = int(item["trades"]) + 1
-        item["wins"] = int(item["wins"]) + (1 if capped > 0 else 0)
-        item["managed_net_jpy"] = _round(float(item["managed_net_jpy"]) + capped)
-        item["raw_net_jpy"] = _round(float(item["raw_net_jpy"]) + row.pl_jpy)
-        days = item["days"]
-        if isinstance(days, set):
-            days.add(row.session_date)
-        worst = item["worst_trade_jpy"]
-        best = item["best_trade_jpy"]
-        item["worst_trade_jpy"] = row.pl_jpy if worst is None else min(float(worst), row.pl_jpy)
-        item["best_trade_jpy"] = row.pl_jpy if best is None else max(float(best), row.pl_jpy)
+        for bucket in bucket_getter(row):
+            item = by_bucket.setdefault(
+                bucket,
+                {
+                    "bucket": bucket.label,
+                    "trades": 0,
+                    "wins": 0,
+                    "managed_net_jpy": 0.0,
+                    "raw_net_jpy": 0.0,
+                    "days": set(),
+                    "worst_trade_jpy": None,
+                    "best_trade_jpy": None,
+                },
+            )
+            item["trades"] = int(item["trades"]) + 1
+            item["wins"] = int(item["wins"]) + (1 if capped > 0 else 0)
+            item["managed_net_jpy"] = _round(float(item["managed_net_jpy"]) + capped)
+            item["raw_net_jpy"] = _round(float(item["raw_net_jpy"]) + row.pl_jpy)
+            days = item["days"]
+            if isinstance(days, set):
+                days.add(row.session_date)
+            worst = item["worst_trade_jpy"]
+            best = item["best_trade_jpy"]
+            item["worst_trade_jpy"] = row.pl_jpy if worst is None else min(float(worst), row.pl_jpy)
+            item["best_trade_jpy"] = row.pl_jpy if best is None else max(float(best), row.pl_jpy)
     rows: list[dict[str, float | int | str]] = []
     for item in by_bucket.values():
         trades = int(item["trades"])

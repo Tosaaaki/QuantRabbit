@@ -516,6 +516,24 @@ class CoverageOptimizerTest(unittest.TestCase):
                                 "worst_trade_jpy": -90.0,
                             },
                         ],
+                        "evidence_bucket_contributions": [
+                            {
+                                "bucket": "pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED",
+                                "managed_net_jpy": 850.0,
+                                "raw_net_jpy": 850.0,
+                                "trades": 5,
+                                "days": 2,
+                                "win_rate_pct": 80.0,
+                            },
+                            {
+                                "bucket": "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED",
+                                "managed_net_jpy": 900.0,
+                                "raw_net_jpy": 800.0,
+                                "trades": 10,
+                                "days": 3,
+                                "win_rate_pct": 70.0,
+                            },
+                        ],
                     }
                 )
             )
@@ -535,6 +553,12 @@ class CoverageOptimizerTest(unittest.TestCase):
             diagnostics = payload["artifact_diagnostics"]["profitable_bucket_coverage"]
             self.assertEqual(diagnostics["positive_pair_directions"], 2)
             self.assertEqual(diagnostics["positive_managed_net_jpy"], 1500.0)
+            self.assertTrue(diagnostics["discovery_evidence_not_summed"])
+            self.assertEqual(diagnostics["discovery_evidence_count"], 1)
+            self.assertEqual(
+                diagnostics["discovery_evidence_edges"][0]["bucket"],
+                "pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED",
+            )
             self.assertEqual(diagnostics["state_counts"]["SPREAD_NORMALIZED_LIVE_BLOCKED"], 1)
             self.assertEqual(diagnostics["state_counts"]["NO_CURRENT_LANE"], 1)
             eur_edge = diagnostics["top_edges"][0]
@@ -548,7 +572,11 @@ class CoverageOptimizerTest(unittest.TestCase):
             self.assertTrue(
                 any("repair historical-profitable bucket coverage" in item for item in payload["action_items"])
             )
+            self.assertTrue(
+                any("promote advisory discovery evidence into primary selection tests" in item for item in payload["action_items"])
+            )
             self.assertIn("Profitable Bucket Coverage", (root / "coverage.md").read_text())
+            self.assertIn("Discovery Evidence Edges", (root / "coverage.md").read_text())
             self.assertIn("strategy profile", (root / "coverage.md").read_text())
 
     def test_matrix_supported_profitable_edges_become_repair_queue(self) -> None:

@@ -25,6 +25,7 @@ from quant_rabbit.paths import (
 # scheduler freshness boundary, not a market edge or risk threshold; replace it
 # with an explicit cycle id once every artifact carries one.
 COVERAGE_INTENTS_STALE_AFTER_SECONDS = 3600.0
+DISCOVERY_EVIDENCE_SOURCE_TABLES = frozenset({"pretrade_outcomes", "seat_outcomes"})
 
 
 @dataclass(frozen=True)
@@ -286,6 +287,30 @@ class CoverageOptimizer:
                 if blockers:
                     lines.append(f"  - top blockers: {', '.join(str(blocker) for blocker in blockers[:3])}")
             lines.append("")
+            discovery_edges = (
+                bucket_diag.get("discovery_evidence_edges")
+                if isinstance(bucket_diag.get("discovery_evidence_edges"), list)
+                else []
+            )
+            if discovery_edges:
+                lines.extend(
+                    [
+                        "## Discovery Evidence Edges",
+                        "",
+                        f"- Advisory, not summed into primary historical P/L: `{bucket_diag.get('discovery_evidence_not_summed')}`",
+                        "",
+                    ]
+                )
+                for item in discovery_edges[:8]:
+                    if not isinstance(item, dict):
+                        continue
+                    lines.append(
+                        f"- `{item.get('bucket')}` net=`{item.get('managed_net_jpy')}` "
+                        f"trades=`{item.get('trades')}` win_rate=`{item.get('win_rate_pct')}` "
+                        f"coverage=`{item.get('coverage_state')}` "
+                        f"matrix_supports=`{item.get('matrix_support_count')}` matrix_rejects=`{item.get('matrix_reject_count')}`"
+                    )
+                lines.append("")
             repair_queue = (
                 bucket_diag.get("matrix_supported_repair_queue")
                 if isinstance(bucket_diag.get("matrix_supported_repair_queue"), list)
@@ -532,6 +557,20 @@ def _action_items(
                     "repair historical-profitable bucket coverage before widening discovery: "
                     + "; ".join(labels)
                 )
+        discovery_edges = profitable_bucket_diag.get("discovery_evidence_edges")
+        if isinstance(discovery_edges, list) and discovery_edges:
+            labels = []
+            for item in discovery_edges[:4]:
+                if not isinstance(item, dict):
+                    continue
+                labels.append(
+                    f"{item.get('bucket')} net={float(item.get('managed_net_jpy') or 0.0):.0f}"
+                )
+            if labels:
+                items.append(
+                    "promote advisory discovery evidence into primary selection tests before live sizing: "
+                    + "; ".join(labels)
+                )
     if potential_reward < remaining_target and not evidence_refresh_required:
         items.append("expand lane generation across timing windows or pairs; current repaired ladder cannot cover target")
     if live_ready_risk > remaining_risk_budget > 0 and float(sequential_ladder.get("reward_jpy") or 0.0) >= remaining_target:
@@ -717,6 +756,12 @@ def _profitable_bucket_coverage_summary(
         item for item in top_edges if item.get("coverage_state") != "SPREAD_NORMALIZED_NO_LIVE_BLOCKER"
     ]
     matrix_supported_repair_queue = _matrix_supported_repair_queue(blocked_or_missing)
+    summaries_by_key = {
+        (str(item.get("pair") or ""), str(item.get("direction") or "")): item
+        for item in top_edges
+        if isinstance(item, dict)
+    }
+    discovery_evidence_edges = _discovery_evidence_edges(ai_backtest, summaries_by_key)
     return {
         "ai_backtest_path": str(ai_backtest_path) if ai_backtest_path.exists() else None,
         "strategy_profile_path": str(strategy_profile_path) if strategy_profile_path.exists() else None,
@@ -730,6 +775,9 @@ def _profitable_bucket_coverage_summary(
         "top_edges": top_edges[:12],
         "blocked_or_missing_top": blocked_or_missing[:8],
         "matrix_supported_repair_queue": matrix_supported_repair_queue[:8],
+        "discovery_evidence_edges": discovery_evidence_edges[:8],
+        "discovery_evidence_count": len(discovery_evidence_edges),
+        "discovery_evidence_not_summed": True,
     }
 
 
@@ -776,6 +824,61 @@ def _profitable_bucket_edges(ai_backtest: dict[str, Any]) -> dict[tuple[str, str
             )
         current["buckets"].append(str(item.get("bucket") or ""))
     return edges
+
+
+def _discovery_evidence_edges(
+    ai_backtest: dict[str, Any],
+    summaries_by_key: dict[tuple[str, str], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    edges: list[dict[str, Any]] = []
+    if not isinstance(ai_backtest, dict) or not ai_backtest:
+        return edges
+    for item in ai_backtest.get("evidence_bucket_contributions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("bucket") or "")
+        parts = label.split(":")
+        if len(parts) < 3 or parts[0] not in DISCOVERY_EVIDENCE_SOURCE_TABLES:
+            continue
+        managed_net = _optional_float(item.get("managed_net_jpy")) or 0.0
+        if managed_net <= 0:
+            continue
+        key = _bucket_pair_direction(label)
+        if key is None:
+            continue
+        current = summaries_by_key.get(key, {})
+        edges.append(
+            {
+                "bucket": label,
+                "source_table": parts[0],
+                "pair": key[0],
+                "direction": key[1],
+                "managed_net_jpy": _round(managed_net),
+                "raw_net_jpy": _round(_optional_float(item.get("raw_net_jpy")) or 0.0),
+                "trades": int(item.get("trades") or 0),
+                "days": int(item.get("days") or 0),
+                "win_rate_pct": _round(_optional_float(item.get("win_rate_pct")) or 0.0),
+                "coverage_state": current.get("coverage_state"),
+                "current_lane_count": current.get("current_lane_count"),
+                "top_blockers": current.get("top_blockers") if isinstance(current.get("top_blockers"), list) else [],
+                "matrix_support_count": current.get("matrix_support_count"),
+                "matrix_reject_count": current.get("matrix_reject_count"),
+                "matrix_support_context": current.get("matrix_support_context")
+                if isinstance(current.get("matrix_support_context"), list)
+                else [],
+                "matrix_reject_context": current.get("matrix_reject_context")
+                if isinstance(current.get("matrix_reject_context"), list)
+                else [],
+            }
+        )
+    return sorted(
+        edges,
+        key=lambda item: (
+            -float(item.get("managed_net_jpy") or 0.0),
+            -float(item.get("win_rate_pct") or 0.0),
+            str(item.get("bucket") or ""),
+        ),
+    )
 
 
 def _bucket_pair_direction(bucket: object) -> tuple[str, str] | None:

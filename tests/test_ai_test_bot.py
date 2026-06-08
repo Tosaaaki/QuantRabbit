@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from quant_rabbit.ai_test_bot import AITestBotBacktester
+from quant_rabbit.ai_test_bot import AITestBotBacktester, TestBotBucket, TestBotTrade, _row_matches_selected_buckets
 
 
 class AITestBotBacktesterTest(unittest.TestCase):
@@ -224,7 +224,8 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertNotIn("GBP_USD", " ".join(day["selected_buckets"]))
             self.assertFalse(payload["live_permission"])
             self.assertEqual(payload["firepower"]["best_selected_day_jpy"], 90.0)
-            self.assertEqual(payload["bucket_contributions"][0]["bucket"], "trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED")
+            contribution_buckets = {item["bucket"] for item in payload["bucket_contributions"]}
+            self.assertIn("trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED", contribution_buckets)
             self.assertEqual(payload["oracle"]["top_n_target_hit_days"], 1)
             self.assertTrue(payload["target_ceiling"]["prediction_only_target_possible"])
             self.assertEqual(payload["action_items"], [])
@@ -371,7 +372,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["managed_net_jpy"], 700.0)
             self.assertEqual(day["selected_buckets"], ["seat_outcomes:EUR_USD:SHORT:MARKET:S_HUNT"])
 
-    def test_dedupes_same_trade_id_across_pretrade_and_trade_sources(self) -> None:
+    def test_dedupes_same_trade_id_but_keeps_pretrade_bucket_as_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db = root / "legacy.db"
@@ -450,6 +451,45 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(day["selected_buckets"], ["trades:EUR_USD:LONG:UNSPECIFIED:UNSPECIFIED"])
             self.assertEqual(day["selected_trades"], 1)
             self.assertEqual(day["managed_net_jpy"], 150.0)
+            self.assertNotIn(
+                "pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED",
+                {item["bucket"] for item in payload["bucket_contributions"]},
+            )
+            bucket_labels = {item["bucket"] for item in payload["evidence_bucket_contributions"]}
+            self.assertIn("pretrade_outcomes:EUR_USD:LONG:HIGH:UNSPECIFIED", bucket_labels)
+
+    def test_evidence_alias_does_not_become_selection_bucket(self) -> None:
+        pretrade_bucket = TestBotBucket(
+            source_table="pretrade_outcomes",
+            pair="EUR_USD",
+            direction="LONG",
+            execution_style="HIGH",
+            allocation_band="UNSPECIFIED",
+        )
+        context_bucket = TestBotBucket(
+            source_table="trades_theme",
+            pair="EUROPE_FX_USD_WEAK",
+            direction="LONG",
+            execution_style="FX_RISK_THEME",
+            allocation_band="ALL",
+        )
+        row = TestBotTrade(
+            source_id="trade-1",
+            session_date="2026-04-02",
+            source_table="trades",
+            pair="EUR_USD",
+            direction="LONG",
+            execution_style="UNSPECIFIED",
+            allocation_band="UNSPECIFIED",
+            pl_jpy=150.0,
+            opportunity_key="trade-1",
+            sort_key="trade-1",
+            extra_buckets=(pretrade_bucket, context_bucket),
+        )
+
+        self.assertTrue(_row_matches_selected_buckets(row, {row.bucket}))
+        self.assertTrue(_row_matches_selected_buckets(row, {context_bucket}))
+        self.assertFalse(_row_matches_selected_buckets(row, {pretrade_bucket}))
 
     def test_execution_ledger_source_uses_original_position_side_without_exit_reason_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
