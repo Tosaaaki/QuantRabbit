@@ -680,6 +680,79 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(payload["execution_ledger_sync"]["status"], "SYNCED")
         self.assertEqual(payload["execution_ledger_sync"]["last_transaction_id"], "471858")
 
+    def test_generate_intents_refreshes_snapshot_after_market_evidence_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "data" / "broker_snapshot.json"
+            snapshot.parent.mkdir()
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": "2026-06-02T01:00:00+00:00",
+                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                    }
+                )
+            )
+            summary = SimpleNamespace(
+                output_path=root / "data" / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=0,
+                generated=0,
+                needs_snapshot=False,
+                dry_run_passed=0,
+                live_ready=0,
+            )
+            fresh_at = datetime(2026, 6, 2, 1, 5, tzinfo=timezone.utc)
+            fresh_snapshot = BrokerSnapshot(
+                fetched_at_utc=fresh_at,
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
+            )
+            stdout = io.StringIO()
+
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+                "quant_rabbit.cli._running_under_test_harness", return_value=False
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "REFRESHED", "pairs": 28},
+            ) as market_refresh, mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
+                "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+                return_value=None,
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+                return_value=None,
+            ), mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                client_cls.return_value.snapshot.return_value = fresh_snapshot
+                generator_cls.return_value.run.return_value = summary
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(snapshot),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--no-refresh-market-story",
+                    ]
+                )
+                refreshed = json.loads(snapshot.read_text())
+
+        self.assertEqual(code, 0)
+        market_refresh.assert_called_once_with(
+            label="generate-intents",
+            reuse_market_artifacts=False,
+            market_context_matrix_path=DEFAULT_MARKET_CONTEXT_MATRIX,
+        )
+        client_cls.return_value.snapshot.assert_called_once_with(("EUR_USD",))
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["snapshot_refresh"]["status"], "REFRESHED")
+        self.assertEqual(refreshed["fetched_at_utc"], fresh_at.isoformat())
+        self.assertEqual(refreshed["quotes"]["EUR_USD"]["bid"], 1.1002)
+
     def test_generate_intents_delegates_pre_entry_forecast_to_intent_generator(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

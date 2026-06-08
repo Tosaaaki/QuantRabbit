@@ -410,6 +410,56 @@ def _pre_entry_execution_ledger_sync_if_required(
     }
 
 
+def _refresh_snapshot_after_market_evidence_if_required(
+    *,
+    market_evidence_refresh: dict[str, Any] | None,
+    snapshot_path: Path | None,
+) -> dict[str, Any] | None:
+    """Refresh broker truth after slow market-context fetches.
+
+    Market evidence refresh can spend minutes fetching charts/news/context.
+    Pricing intents against the pre-refresh snapshot then makes forecast
+    telemetry stale as soon as memory-health compares it to broker truth.
+    """
+    if (market_evidence_refresh or {}).get("status") != "REFRESHED":
+        return None
+    if _running_under_test_harness() and os.environ.get("QR_LIVE_ENABLED") != "1":
+        return None
+    if snapshot_path is None:
+        return None
+    pairs: tuple[str, ...] = tuple(
+        part.strip().upper()
+        for part in DEFAULT_TRADER_PAIRS_ARG.split(",")
+        if part.strip()
+    )
+    try:
+        if snapshot_path.exists():
+            payload = json.loads(snapshot_path.read_text())
+            snapshot_pairs = tuple(
+                str(pair).strip().upper()
+                for pair in (payload.get("quotes") or {})
+                if str(pair).strip()
+            )
+            if snapshot_pairs:
+                pairs = snapshot_pairs
+        snapshot = OandaReadOnlyClient().snapshot(pairs)
+        snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+    except (RuntimeError, OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "SNAPSHOT_REFRESH_FAILED",
+            "error": str(exc),
+        }
+    return {
+        "status": "REFRESHED",
+        "snapshot_path": str(snapshot_path),
+        "fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
+        "positions": len(snapshot.positions),
+        "orders": len(snapshot.orders),
+        "quotes": len(snapshot.quotes),
+    }
+
+
 def _partial_close_receipt_actions(
     results: list[dict[str, Any]],
     *,
@@ -1824,6 +1874,10 @@ def main(argv: list[str] | None = None) -> int:
             reuse_market_artifacts=False,
             market_context_matrix_path=args.market_context_matrix,
         )
+        snapshot_refresh = _refresh_snapshot_after_market_evidence_if_required(
+            market_evidence_refresh=market_evidence_refresh,
+            snapshot_path=args.snapshot,
+        )
         if not args.no_refresh_market_story:
             _refresh_market_story_if_news_is_newer(
                 profile_path=args.market_story_profile,
@@ -1885,6 +1939,7 @@ def main(argv: list[str] | None = None) -> int:
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
                     "market_evidence_refresh": market_evidence_refresh,
+                    "snapshot_refresh": snapshot_refresh,
                     "projection_verification": projection_verification,
                 },
                 ensure_ascii=False,
