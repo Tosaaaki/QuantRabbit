@@ -69,7 +69,7 @@
 
 CLOSE is for genuine thesis breakdown, **not** for risk-budget overshoot. Under
 SL-free the per-trade risk number is advisory; market structure is authoritative.
-A justified loss-cut is allowed when hard Gate A proves the thesis is broken,
+A justified loss-cut is required when hard Gate A proves the thesis is broken,
 or when softer Gate A is paired with explicit Gate B; holding a broken thesis is
 not the objective.
 Do not combine loss-cut and re-entry in one `TRADE` receipt. Close the broken
@@ -84,10 +84,11 @@ risk. A loss-side `CLOSE` is for thesis breakdown, not for replacing a valid
 same-direction setup with a fresher entry ticket.
 Fresh hard sidecar Gate A close evidence, or soft sidecar evidence paired with
 explicit Gate B, also blocks `PROTECT` / `TIGHTEN_SL` as a receipt-level escape
-hatch: submit the verified `CLOSE` first. Soft-only evidence without Gate B is
-advisory for non-CLOSE actions; keep TP/profit management active and do not use
-it as a blanket reason to stop separate current `LIVE_READY` entries on other
-pairs or horizons. If choosing `CLOSE` from soft evidence, surface
+hatch: write one current `CLOSE` receipt and submit the verified `CLOSE` first.
+Soft-only evidence without Gate B is advisory for non-CLOSE actions; keep
+TP/profit management active and do not use it as a blanket reason to stop
+separate current `LIVE_READY` entries on other pairs or horizons. If choosing
+`CLOSE` from soft evidence, surface
 `CLOSE_OPERATOR_AUTH_REQUIRED` unless Gate B is present.
 
 `TAKE_PROFIT_MARKET` is not this loss-side CLOSE path. Use it only for

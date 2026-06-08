@@ -210,6 +210,40 @@ def route_trader_prompts(
     )
     live_ready_lanes = _live_ready_lane_ids(intents)
     pending_entry_reasons = _pending_entry_order_reasons(snapshot)
+
+    accepted_gateway_state = _current_accepted_gpt_action_pending_gateway(
+        decision_response_path=decision_response_path,
+        snapshot_path=snapshot_path,
+        intents_path=intents_path,
+        gpt_decision_path=gpt_decision_path,
+        live_order_path=live_order_path,
+        position_execution_path=position_execution_path,
+        autotrade_report_path=autotrade_report_path,
+    )
+    if accepted_gateway_state is not None and accepted_gateway_state.pending:
+        return _build_route(
+            BRANCH_VERIFY,
+            accepted_gateway_state.reasons,
+            include_content=include_content,
+        )
+
+    decision_state = _decision_receipt_state(
+        decision_response_path=decision_response_path,
+        snapshot_path=snapshot_path,
+        intents_path=intents_path,
+        gpt_decision_path=gpt_decision_path,
+        live_order_path=live_order_path,
+        position_execution_path=position_execution_path,
+        autotrade_report_path=autotrade_report_path,
+    )
+    if decision_state.pending:
+        return _build_route(
+            BRANCH_VERIFY,
+            decision_state.reasons,
+            include_content=include_content,
+        )
+    carry_reasons = decision_state.reasons
+
     close_review_reasons = _position_close_recommendation_reasons(
         snapshot,
         snapshot_path=snapshot_path,
@@ -234,28 +268,13 @@ def route_trader_prompts(
         return _build_route(
             BRANCH_POSITION,
             (
+                *carry_reasons,
                 *position_sidecar_reasons,
                 *position_reasons,
                 *tp_rebalance_reasons,
                 *close_review_reasons,
                 *entry_thesis_block_reasons,
             ),
-            include_content=include_content,
-        )
-
-    accepted_gateway_state = _current_accepted_gpt_action_pending_gateway(
-        decision_response_path=decision_response_path,
-        snapshot_path=snapshot_path,
-        intents_path=intents_path,
-        gpt_decision_path=gpt_decision_path,
-        live_order_path=live_order_path,
-        position_execution_path=position_execution_path,
-        autotrade_report_path=autotrade_report_path,
-    )
-    if accepted_gateway_state is not None and accepted_gateway_state.pending:
-        return _build_route(
-            BRANCH_VERIFY,
-            accepted_gateway_state.reasons,
             include_content=include_content,
         )
 
@@ -288,26 +307,9 @@ def route_trader_prompts(
     if evidence_refresh_reasons:
         return _build_route(
             BRANCH_REFRESH,
-            evidence_refresh_reasons,
+            (*carry_reasons, *evidence_refresh_reasons),
             include_content=include_content,
         )
-
-    decision_state = _decision_receipt_state(
-        decision_response_path=decision_response_path,
-        snapshot_path=snapshot_path,
-        intents_path=intents_path,
-        gpt_decision_path=gpt_decision_path,
-        live_order_path=live_order_path,
-        position_execution_path=position_execution_path,
-        autotrade_report_path=autotrade_report_path,
-    )
-    if decision_state.pending:
-        return _build_route(
-            BRANCH_VERIFY,
-            decision_state.reasons,
-            include_content=include_content,
-        )
-    carry_reasons = decision_state.reasons
 
     if _target_open(target_state) and live_ready_lanes:
         return _build_route(

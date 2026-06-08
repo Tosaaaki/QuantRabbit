@@ -1314,6 +1314,115 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_VERIFY)
         self.assertTrue(any(path.endswith("40_verify_execute.md") for path in _read_paths(route)))
 
+    def test_current_close_decision_response_preempts_position_sidecar_refresh(self) -> None:
+        # Once a current CLOSE receipt exists, the next step is verifier ->
+        # gateway. Re-running position sidecars in between can make the receipt
+        # stale and leave broken positions blocking entries.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "9001",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "owner": "trader",
+                        "entry_price": 1.17,
+                        "take_profit": 1.172,
+                        "stop_loss": 1.168,
+                        "unrealized_pl_jpy": -120.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = (base + timedelta(minutes=1)).isoformat()
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["position_management"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": base.isoformat(),
+                        "snapshot_fetched_at_utc": base.isoformat(),
+                        "action": "HOLD_PROTECTED",
+                        "positions": [
+                            {
+                                "trade_id": "9001",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "action": "HOLD_PROTECTED",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CLOSE", "close_trade_ids": ["9001"]}))
+            _set_mtime(files["snapshot"], 100.0)
+            _set_mtime(files["intents"], 100.0)
+            _set_mtime(files["position_management"], 100.0)
+            _set_mtime(decision_response, 101.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_VERIFY)
+        self.assertIn("unconsumed decision response exists", route.reasons[0])
+
+    def test_stale_decision_response_reason_is_preserved_in_position_branch(self) -> None:
+        # Regression for the live -74,162 JPY close loop: a stale CLOSE receipt
+        # must remain visible even when active exposure correctly routes to
+        # position_management first.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "9001",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "owner": "trader",
+                        "entry_price": 1.17,
+                        "take_profit": 1.172,
+                        "stop_loss": 1.168,
+                        "unrealized_pl_jpy": -120.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = (base + timedelta(minutes=1)).isoformat()
+            files["snapshot"].write_text(json.dumps(snapshot))
+            files["position_management"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": base.isoformat(),
+                        "snapshot_fetched_at_utc": base.isoformat(),
+                        "action": "HOLD_PROTECTED",
+                        "positions": [
+                            {
+                                "trade_id": "9001",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "action": "HOLD_PROTECTED",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CLOSE", "close_trade_ids": ["9001"]}))
+            _set_mtime(decision_response, 99.0)
+            _set_mtime(files["snapshot"], 100.0)
+            _set_mtime(files["intents"], 100.0)
+            _set_mtime(files["position_management"], 100.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("predates refreshed broker snapshot" in reason for reason in route.reasons))
+        self.assertTrue(any("position_management sidecar stale" in reason for reason in route.reasons))
+
     def test_routes_rejected_decision_response_back_to_entry_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

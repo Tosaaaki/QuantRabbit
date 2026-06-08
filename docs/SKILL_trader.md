@@ -220,9 +220,9 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 # fresh entry in that same cycle.
 #
 # CLOSE discipline (AGENT_CONTRACT §10, feedback_no_unilateral_close.md):
-# Never autonomously emit CLOSE — the trader cannot decide on its own to close
-# trader-owned positions. A CLOSE receipt requires Gate A plus the applicable
-# Gate B path:
+# Do not emit CLOSE from loss size, margin pressure, fear, or stale prose. A
+# CLOSE receipt is required when current machine-checkable evidence satisfies
+# Gate A plus the applicable Gate B path:
 #   - Gate A: market evidence — pair_charts shows BOS/CHOCH against the
 #     position side on M15 or H4, OR `invalidation_price` + `invalidation_tf`
 #     in the receipt with broker truth confirming the level has traded, OR a
@@ -240,11 +240,12 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 #     require `QR_OPERATOR_CLOSE_OVERRIDE=1` in the operator shell, OR a fresh
 #     `data/.operator_close_token` file. The receipt field
 #     `operator_close_authorized: true` is advisory audit text only.
-# A TRADE receipt must not list close_trade_ids. If the recovery edge is gone,
-# close first and end that autotrade cycle as close-only. Refresh broker truth /
-# intents on the next scheduled cycle, and only re-enter on a fresh LIVE_READY
-# lane with a separate verified TRADE receipt. The automation must not re-enter
-# in the same outer cycle after the close is sent, staged, or already satisfied.
+# A TRADE receipt must not list close_trade_ids. If hard Gate A or explicit
+# Gate B close evidence is present, write one current CLOSE receipt first and
+# end that autotrade cycle as close-only. Refresh broker truth / intents on the
+# next scheduled cycle, and only re-enter on a fresh LIVE_READY lane with a
+# separate verified TRADE receipt. The automation must not re-enter in the same
+# outer cycle after the close is sent, staged, or already satisfied.
 # If the same-direction market stack still supports the open position, this is
 # not a CLOSE+re-entry case. Treat it as geometry management: TP rebalance,
 # HOLD, profit-side partial, or a separately risk-bounded ADD lane. Loss-side
