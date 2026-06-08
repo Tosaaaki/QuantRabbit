@@ -600,6 +600,53 @@ class CliHelpTest(unittest.TestCase):
             max_candidates=56,
         )
 
+    def test_generate_intents_uses_default_broker_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = root / "data" / "broker_snapshot.json"
+            snapshot.parent.mkdir()
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": "2026-06-02T01:00:00+00:00",
+                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                    }
+                )
+            )
+            summary = SimpleNamespace(
+                output_path=root / "data" / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=1,
+                generated=1,
+                needs_snapshot=False,
+                dry_run_passed=1,
+                live_ready=0,
+            )
+            stdout = io.StringIO()
+
+            with mock.patch("quant_rabbit.cli.DEFAULT_BROKER_SNAPSHOT", snapshot), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ), mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                generator_cls.return_value.run.return_value = summary
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        generator_cls.return_value.run.assert_called_once_with(snapshot_path=snapshot, max_candidates=56)
+
     def test_generate_intents_syncs_execution_ledger_before_live_telemetry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

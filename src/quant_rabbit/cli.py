@@ -1773,7 +1773,7 @@ def main(argv: list[str] | None = None) -> int:
     p_intents = sub.add_parser("generate-intents", help="Generate dry-run order intents from campaign lanes.")
     p_intents.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_intents.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
-    p_intents.add_argument("--snapshot", type=Path)
+    p_intents.add_argument("--snapshot", type=Path, default=DEFAULT_BROKER_SNAPSHOT)
     p_intents.add_argument("--output", type=Path, default=DEFAULT_ORDER_INTENTS)
     p_intents.add_argument("--report", type=Path, default=DEFAULT_ORDER_INTENT_REPORT)
     p_intents.add_argument("--max-loss-jpy", type=float, default=None)
