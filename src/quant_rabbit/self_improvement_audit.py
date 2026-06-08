@@ -2906,11 +2906,31 @@ def _top_intent_blockers(intents: dict[str, Any]) -> list[dict[str, Any]]:
     for result in intents.get("results", []) or []:
         if not isinstance(result, dict):
             continue
-        for key in ("risk_issues", "strategy_issues", "live_blockers"):
+        seen: set[str] = set()
+        for key in ("risk_issues", "live_strategy_issues"):
             for raw in result.get(key) or []:
+                if isinstance(raw, dict) and str(raw.get("severity") or "").upper() != "BLOCK":
+                    continue
                 text = _issue_text(raw)
-                if text:
+                if text and text not in seen:
+                    seen.add(text)
                     counts[text] = counts.get(text, 0) + 1
+        # Backward-compatible fallback for artifacts generated before
+        # `live_strategy_issues` existed. Dry-run strategy WARNs are not live
+        # blockers, so count only structured BLOCK entries here.
+        if "live_strategy_issues" not in result:
+            for raw in result.get("strategy_issues") or []:
+                if isinstance(raw, dict) and str(raw.get("severity") or "").upper() != "BLOCK":
+                    continue
+                text = _issue_text(raw)
+                if text and text not in seen:
+                    seen.add(text)
+                    counts[text] = counts.get(text, 0) + 1
+        for raw in result.get("live_blockers") or []:
+            text = _issue_text(raw)
+            if text and text not in seen:
+                seen.add(text)
+                counts[text] = counts.get(text, 0) + 1
     return [
         {"message": message, "count": count}
         for message, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:8]

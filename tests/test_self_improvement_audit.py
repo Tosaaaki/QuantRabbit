@@ -16,6 +16,7 @@ from quant_rabbit.self_improvement_audit import (
     SelfImprovementAuditor,
     _effect_metrics,
     _projection_expired,
+    _top_intent_blockers,
 )
 
 
@@ -29,6 +30,53 @@ class SelfImprovementAuditorTest(unittest.TestCase):
 
         row["timestamp_emitted_utc"] = (_NOW - timedelta(minutes=36)).isoformat()
         self.assertTrue(_projection_expired(row, now=_NOW))
+
+    def test_top_intent_blockers_ignore_dry_run_strategy_warnings(self) -> None:
+        blockers = _top_intent_blockers(
+            {
+                "results": [
+                    {
+                        "lane_id": "trend_trader:EUR_AUD:LONG:TREND_CONTINUATION",
+                        "status": "LIVE_READY",
+                        "risk_issues": [],
+                        "strategy_issues": [
+                            {
+                                "code": "STRATEGY_PROFILE_MISSING",
+                                "message": "forecast-seeded advisory profile warning",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_strategy_issues": [
+                            {
+                                "code": "STRATEGY_PROFILE_MISSING",
+                                "message": "forecast-seeded advisory profile warning",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_blockers": [],
+                    },
+                    {
+                        "lane_id": "failure_trader:EUR_USD:SHORT:BREAKOUT_FAILURE",
+                        "status": "DRY_RUN_BLOCKED",
+                        "risk_issues": [
+                            {
+                                "code": "REWARD_RISK_TOO_LOW",
+                                "message": "reward/risk below floor",
+                                "severity": "BLOCK",
+                            }
+                        ],
+                        "strategy_issues": [],
+                        "live_strategy_issues": [],
+                        "live_blockers": ["EUR_USD SHORT forecast confidence below live floor"],
+                    },
+                ]
+            }
+        )
+
+        messages = {item["message"] for item in blockers}
+        self.assertNotIn("STRATEGY_PROFILE_MISSING", messages)
+        self.assertIn("REWARD_RISK_TOO_LOW", messages)
+        self.assertIn("EUR_USD SHORT forecast confidence below live floor", messages)
 
     def test_blocks_missing_memory_projection_and_entry_thesis_holes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -966,6 +966,17 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertNotIn("LIVE_READY", statuses)
         self.assertIn("DRY_RUN_PASSED", statuses)
         self.assertTrue(any("WATCH_ONLY" in blocker for blocker in blockers))
+        live_strategy_issues = [
+            issue
+            for item in payload["results"]
+            for issue in item["live_strategy_issues"]
+        ]
+        self.assertTrue(
+            any(
+                issue["code"] == "STRATEGY_NOT_ELIGIBLE" and issue["severity"] == "BLOCK"
+                for issue in live_strategy_issues
+            )
+        )
 
     def test_forecast_seed_pending_trigger_can_repair_watch_only_profile_under_sl_free(self) -> None:
         prior = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
@@ -1025,6 +1036,12 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertTrue(trigger["intent"]["metadata"]["forecast_seed"])
         self.assertEqual(trigger["status"], "LIVE_READY")
         self.assertEqual(trigger["live_blockers"], [])
+        self.assertTrue(
+            any(
+                issue["code"] == "STRATEGY_NOT_ELIGIBLE" and issue["severity"] == "WARN"
+                for issue in trigger["live_strategy_issues"]
+            )
+        )
         self.assertEqual(market["status"], "DRY_RUN_PASSED")
         self.assertTrue(any("WATCH_ONLY" in blocker for blocker in market["live_blockers"]))
 

@@ -3190,6 +3190,7 @@ class GeneratedIntent:
     risk_allowed: bool | None
     risk_issues: tuple[dict[str, Any], ...]
     strategy_issues: tuple[dict[str, Any], ...]
+    live_strategy_issues: tuple[dict[str, Any], ...]
     live_blockers: tuple[str, ...]
     note: str
 
@@ -3399,6 +3400,7 @@ class IntentGenerator:
                 risk_allowed=None,
                 risk_issues=(),
                 strategy_issues=(),
+                live_strategy_issues=(),
                 live_blockers=("broker snapshot is required to price entry/TP/SL",),
                 note="Run broker-snapshot to a JSON file, then rerun generate-intents with --snapshot.",
             )
@@ -3412,6 +3414,7 @@ class IntentGenerator:
                 risk_allowed=False,
                 risk_issues=({"code": "MISSING_QUOTE", "message": f"missing quote for {pair}", "severity": "BLOCK"},),
                 strategy_issues=(),
+                live_strategy_issues=(),
                 live_blockers=(f"snapshot has no quote for {pair}",),
                 note="Cannot build priced intent without a live quote.",
             )
@@ -3570,6 +3573,7 @@ class IntentGenerator:
             risk_allowed=risk_allowed,
             risk_issues=risk_issues,
             strategy_issues=strategy_issues,
+            live_strategy_issues=live_strategy_issues,
             live_blockers=live_blockers,
             note="Dry-run geometry built from current snapshot; live use still requires fresh snapshot at send time.",
         )
@@ -3654,6 +3658,8 @@ class IntentGenerator:
                 lines.append(f"  - risk {issue['severity']}: {issue['code']} {issue['message']}")
             for issue in item.strategy_issues:
                 lines.append(f"  - strategy {issue['severity']}: {issue['code']} {issue['message']}")
+            for issue in item.live_strategy_issues:
+                lines.append(f"  - live strategy {issue['severity']}: {issue['code']} {issue['message']}")
             for blocker in item.live_blockers:
                 lines.append(f"  - live blocker: {blocker}")
         lines.extend(

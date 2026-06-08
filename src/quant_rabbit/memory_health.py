@@ -912,7 +912,8 @@ def _audit_intent_memory_blockers(
         if not isinstance(result, dict):
             continue
         result_memory_blockers: list[str] = []
-        for container_name in ("risk_issues", "strategy_issues"):
+        structured_blockers: set[str] = set()
+        for container_name in ("risk_issues", "strategy_issues", "live_strategy_issues"):
             for item in result.get(container_name) or []:
                 text = _issue_text(item).upper()
                 if not any(token in text for token in _MEMORY_BLOCKER_TOKENS):
@@ -923,14 +924,23 @@ def _audit_intent_memory_blockers(
                 if isinstance(item, dict) and str(item.get("severity") or "").upper() != "BLOCK":
                     advisory_memory_blockers += 1
                     continue
-                result_memory_blockers.append(_issue_text(item))
+                issue_text = _issue_text(item)
+                structured_blockers.add(issue_text)
+                if isinstance(item, dict):
+                    message = str(item.get("message") or "")
+                    if message:
+                        structured_blockers.add(message)
+                result_memory_blockers.append(issue_text)
         for item in result.get("live_blockers") or []:
-            text = _issue_text(item).upper()
+            issue_text = _issue_text(item)
+            text = issue_text.upper()
             if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
+                if issue_text in structured_blockers:
+                    continue
                 if _is_quote_freshness_blocker(item):
                     advisory_memory_blockers += 1
                     continue
-                result_memory_blockers.append(_issue_text(item))
+                result_memory_blockers.append(issue_text)
         if result_memory_blockers:
             if live_ready_pairs or str(result.get("status") or "") == "LIVE_READY":
                 advisory_memory_blockers += len(result_memory_blockers)
