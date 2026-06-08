@@ -1559,7 +1559,39 @@ def _order_intent_context_evidence_findings(
     results = [item for item in intents.get("results", []) or [] if isinstance(item, dict)]
     if not results:
         return []
+    intents_generated_at = _parse_utc(intents.get("generated_at_utc"))
+    matrix_generated_at = _parse_utc(matrix.get("generated_at_utc"))
     with_context = [item for item in results if _intent_has_market_context_evidence(item)]
+    if (
+        intents_generated_at is not None
+        and matrix_generated_at is not None
+        and intents_generated_at < matrix_generated_at
+    ):
+        return [
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="opportunity_context",
+                code="ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_STALE",
+                message=(
+                    "order_intents were generated before the current market_context_matrix, so current "
+                    "gold/oil/rates/equity/news context cannot be attributed to these candidates"
+                ),
+                next_action=(
+                    "Regenerate generate-intents after the latest market-context-matrix, context-asset, and news "
+                    "artifacts; do not judge non-FX/news effect from stale candidates."
+                ),
+                evidence={
+                    "matrix_path": str(matrix_path),
+                    "intents_generated_at_utc": intents_generated_at.isoformat(),
+                    "matrix_generated_at_utc": matrix_generated_at.isoformat(),
+                    "matrix_pairs": len(pairs),
+                    "candidate_count": len(results),
+                    "with_context_refs": len(with_context),
+                    "status_counts": _result_status_counts(results),
+                },
+            )
+        ]
     if with_context:
         return []
     return [

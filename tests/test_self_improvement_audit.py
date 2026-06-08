@@ -276,6 +276,40 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(summary.p0_findings, 0)
         self.assertNotIn("ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_MISSING", codes)
 
+    def test_order_intents_predating_matrix_are_stale_context_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["market_context_matrix"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": _NOW.isoformat(),
+                        "pairs": {"EUR_USD": {"LONG": {"support": []}}},
+                    }
+                )
+            )
+            intents = json.loads(files["intents"].read_text())
+            intents["generated_at_utc"] = (_NOW - timedelta(hours=1)).isoformat()
+            intents["results"][0]["intent"]["metadata"]["market_context_matrix_ref"] = "matrix:EUR_USD:LONG"
+            files["intents"].write_text(json.dumps(intents))
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_STALE", codes)
+        self.assertNotIn("ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_MISSING", codes)
+        finding = codes["ORDER_INTENTS_MARKET_CONTEXT_EVIDENCE_STALE"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["candidate_count"], 1)
+        self.assertEqual(finding["evidence"]["with_context_refs"], 1)
+
     def test_unattributable_close_gate_ablation_is_p1_assumption_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
