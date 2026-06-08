@@ -681,6 +681,77 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 6.0)
             self.assertIn("Target trade pace basis: `6.0%`", report)
 
+    def test_target_sizing_near_miss_can_reduce_pace_for_floor_attempt(self) -> None:
+        """A verified 5% near miss should size from target_sizing, not 10% firepower.
+
+        This is still bounded by the same daily risk budget: lowering the pace
+        from the capped required-trades number raises the per-trade slice only
+        enough to test the measured floor near miss.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "target_return_pct": 10.0,
+                        "daily_risk_budget_jpy": 4000.0,
+                        "firepower": {
+                            "avg_selected_trades_per_day": 6.0,
+                            "required_trades_per_day_at_observed_expectancy": 80,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": None,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 52,
+                                },
+                                {
+                                    "return_pct": 10.0,
+                                    "required_trades_per_day_at_observed_expectancy": 80,
+                                },
+                            ],
+                        },
+                        "mechanism_ablation": {
+                            "target_sizing": {
+                                "status": "FLOOR_NEAR_MISS_SIZE_TEST",
+                                "bands": [
+                                    {
+                                        "return_pct": 5.0,
+                                        "required_size_multiplier": 1.0314,
+                                        "scaled_loss_cap_jpy": 140.0,
+                                        "status": "NEAR_MISS_SIZE_TEST",
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                )
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            ).run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(summary.target_trades_per_day, 28)
+            self.assertEqual(
+                summary.target_trades_per_day_source,
+                "ai_test_bot_target_sizing_5pct_near_miss",
+            )
+            self.assertEqual(summary.target_trades_per_day_basis_return_pct, 5.0)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 28, places=4)
+            self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 5.0)
+
     def test_previous_cli_pace_yields_to_fresh_target_band_backtest(self) -> None:
         """A carried CLI pace must not block a freshly regenerated band pace.
 

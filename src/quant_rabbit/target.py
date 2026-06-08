@@ -280,7 +280,12 @@ class DailyTargetLedger:
             else:
                 backtest_pace = _pace_from_backtest(self.pace_backtest_path)
                 if backtest_pace is not None:
-                    explicit_pace = max(backtest_pace.trades_per_day, previous_pace or 0)
+                    target_sizing_pace = backtest_pace.source.startswith("ai_test_bot_target_sizing_")
+                    explicit_pace = (
+                        backtest_pace.trades_per_day
+                        if target_sizing_pace
+                        else max(backtest_pace.trades_per_day, previous_pace or 0)
+                    )
                     pace_source = (
                         backtest_pace.source
                         if explicit_pace == backtest_pace.trades_per_day
@@ -780,6 +785,9 @@ def _pace_from_backtest(path: Path | None) -> _BacktestPace | None:
         payload = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    target_sizing_pace = _pace_from_target_sizing(payload)
+    if target_sizing_pace is not None:
+        return target_sizing_pace
     target_band_pace = _pace_from_target_band(payload)
     if target_band_pace is not None:
         return target_band_pace
@@ -850,6 +858,48 @@ def _pace_from_target_band(payload: dict[str, Any]) -> _BacktestPace | None:
         trades_per_day=pace,
         source=f"ai_test_bot_target_band_{_pct_source_token(basis_pct)}pct_required_trades",
         basis_return_pct=basis_pct,
+    )
+
+
+def _pace_from_target_sizing(payload: dict[str, Any]) -> _BacktestPace | None:
+    target_band = payload.get("target_band")
+    if isinstance(target_band, dict) and _coalesce_float(target_band.get("selected_attainable_return_pct")) is not None:
+        return None
+    mechanism = payload.get("mechanism_ablation")
+    if not isinstance(mechanism, dict):
+        return None
+    sizing = mechanism.get("target_sizing")
+    if not isinstance(sizing, dict):
+        return None
+    if str(sizing.get("status") or "") != "FLOOR_NEAR_MISS_SIZE_TEST":
+        return None
+    bands = [item for item in sizing.get("bands", []) if isinstance(item, dict)]
+    floor_pct = _coalesce_float((target_band or {}).get("floor_return_pct")) if isinstance(target_band, dict) else None
+    if floor_pct is None:
+        floor_pct = 5.0
+    floor = _target_band_for_pct(bands, floor_pct)
+    if floor is None or str(floor.get("status") or "") != "NEAR_MISS_SIZE_TEST":
+        return None
+    multiplier = _coalesce_float(floor.get("required_size_multiplier"))
+    scaled_loss_cap = _coalesce_float(floor.get("scaled_loss_cap_jpy"))
+    daily_risk_budget = _coalesce_float(payload.get("daily_risk_budget_jpy"))
+    if (
+        multiplier is None
+        or multiplier <= 1.0
+        or multiplier > 1.1
+        or scaled_loss_cap is None
+        or scaled_loss_cap <= 0
+        or daily_risk_budget is None
+        or daily_risk_budget <= 0
+    ):
+        return None
+    pace = int(daily_risk_budget // scaled_loss_cap)
+    if pace <= 0:
+        return None
+    return _BacktestPace(
+        trades_per_day=pace,
+        source=f"ai_test_bot_target_sizing_{_pct_source_token(floor_pct)}pct_near_miss",
+        basis_return_pct=floor_pct,
     )
 
 
