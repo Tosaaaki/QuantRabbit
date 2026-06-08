@@ -1924,7 +1924,16 @@ def _intent_findings(
                 code="TARGET_OPEN_NO_LIVE_READY_LANES",
                 message="daily target is open but order_intents has no LIVE_READY lanes",
                 next_action="Refresh market context and inspect top live blockers instead of ending flat without a named gate.",
-                evidence={"active_trader_positions": len(active_positions), "top_blockers": _top_intent_blockers(intents)},
+                evidence={
+                    "active_trader_positions": len(active_positions),
+                    "status_counts": _intent_status_counts(intents),
+                    "top_blockers": _top_intent_blockers(intents),
+                    "dry_run_passed_live_readiness_blockers": _top_intent_live_readiness_blockers(
+                        intents,
+                        statuses={"DRY_RUN_PASSED"},
+                    ),
+                    "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
+                },
             )
         )
     low_rr: list[dict[str, Any]] = []
@@ -2901,6 +2910,16 @@ def _live_ready_results(intents: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _intent_status_counts(intents: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "UNKNOWN").upper()
+        counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _top_intent_blockers(intents: dict[str, Any]) -> list[dict[str, Any]]:
     counts: dict[str, int] = {}
     for result in intents.get("results", []) or []:
@@ -2935,6 +2954,97 @@ def _top_intent_blockers(intents: dict[str, Any]) -> list[dict[str, Any]]:
         {"message": message, "count": count}
         for message, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:8]
     ]
+
+
+_LIVE_READINESS_WARN_CODES = {
+    "CHART_DIRECTION_CONFLICT",
+    "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+    "FORECAST_WATCH_ONLY",
+}
+
+
+def _top_intent_live_readiness_blockers(
+    intents: dict[str, Any],
+    *,
+    statuses: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    status_filter = {item.upper() for item in statuses} if statuses is not None else None
+    counts: dict[str, int] = {}
+    examples: dict[str, list[str]] = {}
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        status = str(result.get("status") or "").upper()
+        if status == "LIVE_READY":
+            continue
+        if status_filter is not None and status not in status_filter:
+            continue
+
+        seen: set[str] = set()
+        structured_issue_seen = False
+        for raw in result.get("risk_issues") or []:
+            if not _risk_issue_blocks_live_readiness(raw):
+                continue
+            structured_issue_seen = (
+                _count_live_readiness_issue(counts, examples, seen, raw, result) or structured_issue_seen
+            )
+        for raw in result.get("live_strategy_issues") or []:
+            if not _strategy_issue_blocks_live_readiness(raw):
+                continue
+            structured_issue_seen = (
+                _count_live_readiness_issue(counts, examples, seen, raw, result) or structured_issue_seen
+            )
+        if "live_strategy_issues" not in result:
+            for raw in result.get("strategy_issues") or []:
+                if isinstance(raw, dict) and str(raw.get("severity") or "").upper() != "BLOCK":
+                    continue
+                structured_issue_seen = (
+                    _count_live_readiness_issue(counts, examples, seen, raw, result) or structured_issue_seen
+                )
+        if not structured_issue_seen:
+            for raw in result.get("live_blockers") or []:
+                _count_live_readiness_issue(counts, examples, seen, raw, result)
+
+    return [
+        {"message": message, "count": count, "example_lanes": examples.get(message, [])[:3]}
+        for message, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+    ]
+
+
+def _risk_issue_blocks_live_readiness(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return bool(str(raw).strip())
+    severity = str(raw.get("severity") or "").upper()
+    if severity == "BLOCK":
+        return True
+    if severity != "WARN":
+        return False
+    code = str(raw.get("code") or "").upper()
+    return code.endswith("_FOR_LIVE") or code in _LIVE_READINESS_WARN_CODES
+
+
+def _strategy_issue_blocks_live_readiness(raw: Any) -> bool:
+    if not isinstance(raw, dict):
+        return bool(str(raw).strip())
+    return str(raw.get("severity") or "").upper() in {"BLOCK", "WARN"}
+
+
+def _count_live_readiness_issue(
+    counts: dict[str, int],
+    examples: dict[str, list[str]],
+    seen: set[str],
+    raw: Any,
+    result: dict[str, Any],
+) -> bool:
+    text = _issue_text(raw)
+    if not text or text in seen:
+        return False
+    seen.add(text)
+    counts[text] = counts.get(text, 0) + 1
+    lane_id = str(result.get("lane_id") or "")
+    if lane_id and lane_id not in examples.setdefault(text, []):
+        examples[text].append(lane_id)
+    return True
 
 
 def _only_order_intent_lane_blockers(blocking_evidence: list[Any]) -> bool:

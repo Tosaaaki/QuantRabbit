@@ -17,6 +17,7 @@ from quant_rabbit.self_improvement_audit import (
     _effect_metrics,
     _projection_expired,
     _top_intent_blockers,
+    _top_intent_live_readiness_blockers,
 )
 
 
@@ -77,6 +78,74 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertNotIn("STRATEGY_PROFILE_MISSING", messages)
         self.assertIn("REWARD_RISK_TOO_LOW", messages)
         self.assertIn("EUR_USD SHORT forecast confidence below live floor", messages)
+
+    def test_live_readiness_blockers_include_warn_live_gates_for_dry_run_passed(self) -> None:
+        blockers = _top_intent_live_readiness_blockers(
+            {
+                "results": [
+                    {
+                        "lane_id": "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                        "status": "DRY_RUN_PASSED",
+                        "risk_issues": [
+                            {
+                                "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                "message": "forecast confidence below live floor",
+                                "severity": "WARN",
+                            },
+                            {
+                                "code": "SPREAD_ADVISORY",
+                                "message": "spread is elevated but still below block floor",
+                                "severity": "WARN",
+                            },
+                        ],
+                        "strategy_issues": [
+                            {
+                                "code": "STRATEGY_PROFILE_MISSING",
+                                "message": "dry-run advisory profile warning",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_strategy_issues": [
+                            {
+                                "code": "STRATEGY_NOT_ELIGIBLE",
+                                "message": "strategy profile is not live eligible",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_blockers": [],
+                    },
+                    {
+                        "lane_id": "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                        "status": "DRY_RUN_PASSED",
+                        "risk_issues": [],
+                        "strategy_issues": [],
+                        "live_strategy_issues": [],
+                        "live_blockers": ["legacy live blocker fallback"],
+                    },
+                    {
+                        "lane_id": "range_trader:EUR_CHF:SHORT:RANGE_ROTATION",
+                        "status": "LIVE_READY",
+                        "risk_issues": [
+                            {
+                                "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                "message": "live-ready advisory must not be counted",
+                                "severity": "WARN",
+                            }
+                        ],
+                        "live_strategy_issues": [],
+                        "live_blockers": [],
+                    },
+                ]
+            },
+            statuses={"DRY_RUN_PASSED"},
+        )
+
+        messages = {item["message"]: item for item in blockers}
+        self.assertEqual(messages["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
+        self.assertEqual(messages["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
+        self.assertEqual(messages["legacy live blocker fallback"]["count"], 1)
+        self.assertNotIn("SPREAD_ADVISORY", messages)
+        self.assertNotIn("STRATEGY_PROFILE_MISSING", messages)
 
     def test_blocks_missing_memory_projection_and_entry_thesis_holes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -631,6 +700,57 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("TARGET_OPEN_NO_LIVE_READY_LANES", codes)
         self.assertIn("VERIFICATION_LEDGER_LANE_BLOCKERS_RECORDED", codes)
         self.assertNotIn("VERIFICATION_LEDGER_BLOCKED", codes)
+
+    def test_no_live_ready_evidence_names_dry_run_passed_live_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT",
+                                "status": "DRY_RUN_PASSED",
+                                "risk_issues": [
+                                    {
+                                        "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+                                        "message": "forecast confidence below live floor",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_PROFILE_MISSING",
+                                        "message": "dry-run advisory profile warning",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "live_strategy_issues": [
+                                    {
+                                        "code": "STRATEGY_NOT_ELIGIBLE",
+                                        "message": "strategy profile is not live eligible",
+                                        "severity": "WARN",
+                                    }
+                                ],
+                                "live_blockers": [],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        evidence = codes["TARGET_OPEN_NO_LIVE_READY_LANES"]["evidence"]
+        dry_run_blockers = {item["message"]: item for item in evidence["dry_run_passed_live_readiness_blockers"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(evidence["status_counts"]["DRY_RUN_PASSED"], 1)
+        self.assertEqual(dry_run_blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
+        self.assertEqual(dry_run_blockers["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
+        self.assertNotIn("STRATEGY_PROFILE_MISSING", dry_run_blockers)
 
     def test_lane_only_verification_blockers_are_not_p0_with_live_ready_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
