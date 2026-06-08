@@ -1883,12 +1883,15 @@ class AutoTradeCycle:
         target_status = None
         target_remaining_jpy = None
         target_progress_pct = None
+        snapshot = None
         try:
             snapshot = self._load_snapshot_artifact()
             positions = len(snapshot.positions)
             orders = len(snapshot.orders)
         except (OSError, ValueError, json.JSONDecodeError):
             pass
+        if snapshot is not None:
+            self._verify_projection_preflight(snapshot)
         try:
             intent_summary = self._load_intent_summary_artifact()
             live_ready = intent_summary.live_ready

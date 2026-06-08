@@ -31,7 +31,11 @@ from quant_rabbit.risk import (
     resolve_max_loss_jpy,
 )
 from quant_rabbit.risk import DEFAULT_SPECS, estimate_required_margin_jpy, margin_budget_jpy
-from quant_rabbit.strategy.intent_generator import _daily_risk_budget_from_state, _per_trade_risk_from_state
+from quant_rabbit.strategy.intent_generator import (
+    _daily_risk_budget_from_state,
+    _expired_pending_projection_count,
+    _per_trade_risk_from_state,
+)
 from quant_rabbit.strategy.profile import StrategyProfile
 
 
@@ -170,11 +174,17 @@ class LiveOrderGateway:
         )
         risk_issues = [issue.__dict__ for issue in risk.issues]
         intent_status_issues = _intent_status_issues(selected)
+        projection_expiry_issues = _projection_expiry_status_issues(
+            selected=selected,
+            intents_path=intents_path,
+            validation_time_utc=datetime.now(timezone.utc),
+        )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
             or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
+            or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -234,6 +244,7 @@ class LiveOrderGateway:
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
+                *projection_expiry_issues,
                 *send_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -381,6 +392,7 @@ class LiveOrderGateway:
                 cumulative_margin_jpy=validation_cumulative_margin_jpy,
                 seen_geometry=seen_geometry,
                 portfolio_position_cap=portfolio_position_cap,
+                intents_path=intents_path,
             )
             order_results.append(item_result)
             batch_risk_issues += len(item_result["risk_issues"])
@@ -469,6 +481,7 @@ class LiveOrderGateway:
         cumulative_margin_jpy: float = 0.0,
         seen_geometry: set[tuple[object, ...]] | None = None,
         portfolio_position_cap: int | None = None,
+        intents_path: Path = DEFAULT_ORDER_INTENTS,
     ) -> dict[str, Any]:
         selected_lane_id = str(selected.get("lane_id") or "")
         intent = _intent_from_json(selected["intent"])
@@ -538,11 +551,17 @@ class LiveOrderGateway:
                 )
             )
         intent_status_issues = _intent_status_issues(selected)
+        projection_expiry_issues = _projection_expiry_status_issues(
+            selected=selected,
+            intents_path=intents_path,
+            validation_time_utc=datetime.now(timezone.utc),
+        )
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
             or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
+            or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -597,6 +616,7 @@ class LiveOrderGateway:
             "risk_issues": [
                 *risk_issues,
                 *intent_status_issues,
+                *projection_expiry_issues,
                 *send_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -1173,6 +1193,31 @@ def _intent_status_issues(selected: dict[str, Any]) -> list[dict[str, str]]:
         RiskIssue(
             "INTENT_NOT_LIVE_READY",
             f"stage-live-order requires a LIVE_READY receipt, got {status or 'missing'}",
+        ).__dict__
+    ]
+
+
+def _projection_expiry_status_issues(
+    *,
+    selected: dict[str, Any],
+    intents_path: Path,
+    validation_time_utc: datetime,
+) -> list[dict[str, str]]:
+    if str(selected.get("status") or "") != "LIVE_READY":
+        return []
+    expired = _expired_pending_projection_count(
+        data_root=intents_path.parent,
+        validation_time_utc=validation_time_utc,
+    )
+    if expired <= 0:
+        return []
+    return [
+        RiskIssue(
+            "TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE",
+            (
+                f"projection_ledger.jsonl has {expired} expired PENDING projection(s); "
+                "rerun verify-projections before staging or sending new live exposure."
+            ),
         ).__dict__
     ]
 

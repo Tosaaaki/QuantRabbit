@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -783,6 +783,91 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(client.orders, [])
             payload = json.loads((root / "request.json").read_text())
             self.assertIn("INTENT_NOT_LIVE_READY", {issue["code"] for issue in payload["risk_issues"]})
+
+    def test_expired_projection_pending_blocks_stale_live_ready_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            emitted = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat().replace("+00:00", "Z")
+            (root / "projection_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_emitted_utc": emitted,
+                        "pair": "EUR_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "UP",
+                        "resolution_window_min": 30,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "expired-cycle",
+                    }
+                )
+                + "\n"
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run(
+                intents_path=_intents(root),
+                lane_id="lane:EUR_USD:LONG",
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertIn(
+                "TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE",
+                {issue["code"] for issue in payload["risk_issues"]},
+            )
+
+    def test_expired_projection_pending_blocks_batch_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            emitted = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat().replace("+00:00", "Z")
+            (root / "projection_ledger.jsonl").write_text(
+                json.dumps(
+                    {
+                        "timestamp_emitted_utc": emitted,
+                        "pair": "EUR_USD",
+                        "signal_name": "directional_forecast",
+                        "direction": "UP",
+                        "resolution_window_min": 30,
+                        "resolution_status": "PENDING",
+                        "cycle_id": "expired-cycle",
+                    }
+                )
+                + "\n"
+            )
+
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                live_enabled=True,
+            ).run_batch(
+                intents_path=_intents(root, order_type="MARKET"),
+                lane_ids=("lane:EUR_USD:LONG",),
+                send=True,
+                confirm_live=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            self.assertEqual(payload["blocked_count"], 1)
+            self.assertIn(
+                "TELEMETRY_PROJECTION_PENDING_EXPIRED_FOR_LIVE",
+                {issue["code"] for issue in payload["risk_issues"]},
+            )
 
     def test_invalid_pending_entry_writes_blocked_receipt_instead_of_raising(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
