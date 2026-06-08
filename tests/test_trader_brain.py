@@ -22,6 +22,7 @@ from quant_rabbit.strategy.trader_brain import (
     LaneScore,
     TraderBrain,
     _contaminated_pending_order_ids,
+    _forecast_market_support_allows_low_confidence_live_ready,
     _micro_structure_alignment_score,
     _micro_structure_direction,
     _mtf_confluence_score,
@@ -1460,6 +1461,57 @@ class ForecastLaneGateTest(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertIn("opposes SHORT", reason)
+
+    def test_market_support_allows_near_miss_directional_forecast(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.47,
+                "forecast_raw_confidence": 0.64,
+                "chart_direction_bias": "SHORT",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "DOWN",
+                    "bootstrap_projection_support": True,
+                    "aligned_projection_count": 3,
+                    "best_hit_rate": 0.94,
+                    "best_samples": 100,
+                },
+            }
+        }
+
+        self.assertTrue(
+            _forecast_market_support_allows_low_confidence_live_ready(
+                intent,
+                side="SHORT",
+                forecast=self._forecast("DOWN", confidence=0.47),
+                min_confidence=0.55,
+            )
+        )
+
+    def test_market_support_rejects_genuine_weak_directional_forecast(self) -> None:
+        intent = {
+            "metadata": {
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.36,
+                "forecast_raw_confidence": 0.64,
+                "chart_direction_bias": "SHORT",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "DOWN",
+                    "bootstrap_projection_support": True,
+                },
+            }
+        }
+
+        self.assertFalse(
+            _forecast_market_support_allows_low_confidence_live_ready(
+                intent,
+                side="SHORT",
+                forecast=self._forecast("DOWN", confidence=0.36),
+                min_confidence=0.55,
+            )
+        )
 
 
 def _snapshot(*, orders=(), positions=()) -> BrokerSnapshot:
