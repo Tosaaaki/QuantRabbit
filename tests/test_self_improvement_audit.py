@@ -1031,6 +1031,41 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["trades"], 1)
         self.assertAlmostEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["net_jpy"], -500.0)
 
+    def test_effect_metrics_matches_gateway_market_order_loss_close_by_order_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "execution_ledger.db"
+            _write_market_close_attribution_ledger(db_path, include_gateway_close=False)
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "gw-close-order-only",
+                        (_NOW - timedelta(hours=1, minutes=5)).isoformat(),
+                        "GATEWAY_TRADE_CLOSE_SENT",
+                        "",
+                        "C42",
+                        "",
+                        "EUR_USD",
+                        "",
+                        None,
+                        None,
+                        "REVIEW_EXIT",
+                    ),
+                )
+
+            effect = _effect_metrics(db_path, window_hours=168.0, now=_NOW)
+
+        market_loss = effect["market_order_trade_close_loss_provenance_metrics"]
+        self.assertEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["trades"], 1)
+        self.assertAlmostEqual(market_loss["GATEWAY_TRADE_CLOSE_SENT"]["net_jpy"], -500.0)
+        self.assertNotIn("NO_LOCAL_CLOSE_PROVENANCE", market_loss)
+
     def test_unattributed_market_order_close_is_p1_execution_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
