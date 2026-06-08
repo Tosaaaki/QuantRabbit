@@ -535,6 +535,34 @@ def _record_position_execution_receipt(
     }
 
 
+def _sync_execution_ledger_if_available(
+    broker_client: Any,
+    *,
+    ledger_db_path: Path,
+    ledger_report_path: Path,
+) -> dict[str, Any]:
+    if broker_client is None:
+        return {"status": "SKIPPED", "reason": "no broker client"}
+    if not (hasattr(broker_client, "account_summary") and hasattr(broker_client, "transactions_since_id")):
+        return {"status": "SKIPPED", "reason": "broker client lacks transaction sync"}
+    try:
+        summary = ExecutionLedger(
+            db_path=ledger_db_path,
+            report_path=ledger_report_path,
+        ).sync_oanda_transactions(broker_client)
+    except (OSError, sqlite3.Error, json.JSONDecodeError, ValueError, RuntimeError) as exc:
+        return {"status": "SYNC_FAILED", "error": str(exc)}
+    return {
+        "status": summary.status,
+        "transactions_seen": summary.transactions_seen,
+        "transactions_inserted": summary.transactions_inserted,
+        "events_inserted": summary.events_inserted,
+        "reconciled_gateway_events_inserted": summary.reconciled_gateway_events_inserted,
+        "baseline_transaction_id": summary.baseline_transaction_id,
+        "last_transaction_id": summary.last_transaction_id,
+    }
+
+
 def _pre_entry_projection_verification_if_required(
     *,
     telemetry_required: bool,
@@ -4021,6 +4049,15 @@ def main(argv: list[str] | None = None) -> int:
         client = None
         if live_send and actions:
             client = OandaExecutionClient()
+        ledger_pre_sync = (
+            _sync_execution_ledger_if_available(
+                client,
+                ledger_db_path=args.execution_ledger_db,
+                ledger_report_path=args.execution_ledger_report,
+            )
+            if live_send and actions
+            else {"status": "SKIPPED", "reason": "no live close send"}
+        )
         results = apply_partial_closes(actions, client, dry_run=not live_send)
         sent_count = sum(1 for result in results if result.get("sent"))
         blocked_count = sum(1 for result in results if result.get("error"))
@@ -4047,6 +4084,7 @@ def main(argv: list[str] | None = None) -> int:
                 results,
                 management_action="ADVERSE_PARTIAL_CLOSE",
             ),
+            "execution_ledger_pre_sync": ledger_pre_sync,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
@@ -4088,6 +4126,15 @@ def main(argv: list[str] | None = None) -> int:
             output_path=args.output,
             ledger_db_path=args.execution_ledger_db,
             ledger_report_path=args.execution_ledger_report,
+        )
+        payload["execution_ledger_post_sync"] = (
+            _sync_execution_ledger_if_available(
+                client,
+                ledger_db_path=args.execution_ledger_db,
+                ledger_report_path=args.execution_ledger_report,
+            )
+            if sent_count
+            else {"status": "SKIPPED", "reason": "no close sent"}
         )
         args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
@@ -4144,6 +4191,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         live_enabled = os.environ.get("QR_LIVE_ENABLED") == "1"
         client = OandaExecutionClient() if args.send and actions and live_enabled and args.confirm_live else None
+        ledger_pre_sync = (
+            _sync_execution_ledger_if_available(
+                client,
+                ledger_db_path=args.execution_ledger_db,
+                ledger_report_path=args.execution_ledger_report,
+            )
+            if args.send and actions
+            else {"status": "SKIPPED", "reason": "no live close send"}
+        )
         results = apply_profit_partial_closes(
             actions,
             client,
@@ -4178,6 +4234,7 @@ def main(argv: list[str] | None = None) -> int:
                 management_action="PROFIT_PARTIAL_CLOSE",
             ),
             "state": state,
+            "execution_ledger_pre_sync": ledger_pre_sync,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
@@ -4220,6 +4277,15 @@ def main(argv: list[str] | None = None) -> int:
             output_path=args.output,
             ledger_db_path=args.execution_ledger_db,
             ledger_report_path=args.execution_ledger_report,
+        )
+        payload["execution_ledger_post_sync"] = (
+            _sync_execution_ledger_if_available(
+                client,
+                ledger_db_path=args.execution_ledger_db,
+                ledger_report_path=args.execution_ledger_report,
+            )
+            if sent_count
+            else {"status": "SKIPPED", "reason": "no close sent"}
         )
         args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
         print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))

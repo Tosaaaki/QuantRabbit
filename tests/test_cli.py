@@ -22,7 +22,7 @@ from quant_rabbit.cli import (
     _snapshot_to_json,
     main,
 )
-from quant_rabbit.models import BrokerOrder, BrokerSnapshot, Owner, Quote
+from quant_rabbit.models import AccountSummary, BrokerOrder, BrokerSnapshot, Owner, Quote
 from quant_rabbit.paths import DEFAULT_MARKET_CONTEXT_MATRIX
 from quant_rabbit.strategy.intent_generator import _snapshot_from_json as _intent_snapshot_from_json
 
@@ -533,6 +533,117 @@ class CliHelpTest(unittest.TestCase):
                     """
                 ).fetchone()
             self.assertEqual(event, ("GATEWAY_TRADE_CLOSE_SENT", "ADVERSE_PARTIAL_CLOSE", "t-adverse"))
+
+    def test_adverse_partial_close_send_syncs_broker_close_outcome(self) -> None:
+        class SyncingCloseClient:
+            def __init__(self) -> None:
+                self.close_calls: list[tuple[str, str]] = []
+                self.sync_calls: list[str] = []
+
+            def account_summary(self, *, now_utc=None) -> AccountSummary:
+                return AccountSummary(nav_jpy=100000.0, balance_jpy=100000.0, last_transaction_id="100")
+
+            def close_trade(self, trade_id: str, units: str = "ALL") -> dict:
+                self.close_calls.append((trade_id, units))
+                return {
+                    "orderCreateTransaction": {
+                        "id": "101",
+                        "reason": "TRADE_CLOSE",
+                        "tradeClose": {"tradeID": trade_id, "units": units},
+                    },
+                    "orderFillTransaction": {
+                        "id": "102",
+                        "type": "ORDER_FILL",
+                        "orderID": "101",
+                        "instrument": "EUR_USD",
+                        "units": "-5000",
+                        "reason": "MARKET_ORDER_TRADE_CLOSE",
+                        "tradesClosed": [
+                            {
+                                "tradeID": trade_id,
+                                "units": "5000",
+                                "price": "1.19500",
+                                "realizedPL": "-500.0",
+                            }
+                        ],
+                    },
+                    "relatedTransactionIDs": ["101", "102"],
+                }
+
+            def transactions_since_id(self, transaction_id: str) -> dict:
+                self.sync_calls.append(transaction_id)
+                if transaction_id != "100":
+                    return {"transactions": [], "lastTransactionID": transaction_id}
+                return {
+                    "lastTransactionID": "102",
+                    "transactions": [
+                        {
+                            "id": "101",
+                            "type": "MARKET_ORDER",
+                            "time": "2026-06-08T00:00:01Z",
+                            "reason": "TRADE_CLOSE",
+                            "tradeClose": {"tradeID": "t-adverse", "units": "5000"},
+                        },
+                        {
+                            "id": "102",
+                            "type": "ORDER_FILL",
+                            "time": "2026-06-08T00:00:02Z",
+                            "orderID": "101",
+                            "instrument": "EUR_USD",
+                            "units": "-5000",
+                            "reason": "MARKET_ORDER_TRADE_CLOSE",
+                            "tradesClosed": [
+                                {
+                                    "tradeID": "t-adverse",
+                                    "units": "5000",
+                                    "price": "1.19500",
+                                    "realizedPL": "-500.0",
+                                }
+                            ],
+                        },
+                    ],
+                }
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {
+            "QR_DISABLE_ADVERSE_PARTIAL_CLOSE": "",
+            "QR_LIVE_ENABLED": "1",
+        }, clear=False):
+            root = Path(tmp)
+            snapshot, pair_charts = self._adverse_partial_close_files(root)
+            stdout = io.StringIO()
+            client = SyncingCloseClient()
+
+            with mock.patch("quant_rabbit.cli.OandaExecutionClient", return_value=client), redirect_stdout(stdout):
+                code = main([
+                    "adverse-partial-close",
+                    "--snapshot",
+                    str(snapshot),
+                    "--pair-charts",
+                    str(pair_charts),
+                    *self._partial_close_artifact_args(root),
+                    "--send",
+                    "--confirm-live",
+                ])
+
+            with sqlite3.connect(root / "execution_ledger.db") as conn:
+                rows = conn.execute(
+                    """
+                    SELECT event_type, exit_reason, trade_id, order_id, realized_pl_jpy
+                    FROM execution_events
+                    WHERE event_type IN ('GATEWAY_TRADE_CLOSE_SENT', 'ORDER_ACCEPTED', 'TRADE_CLOSED')
+                    ORDER BY event_type
+                    """
+                ).fetchall()
+
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["execution_ledger_pre_sync"]["status"], "BASELINED")
+        self.assertEqual(payload["execution_ledger_post_sync"]["status"], "SYNCED")
+        self.assertEqual(client.close_calls, [("t-adverse", "5000")])
+        self.assertEqual(client.sync_calls, ["100"])
+        self.assertIn(("GATEWAY_TRADE_CLOSE_SENT", "ADVERSE_PARTIAL_CLOSE", "t-adverse", "101", None), rows)
+        self.assertIn(("ORDER_ACCEPTED", "TRADE_CLOSE", "t-adverse", "101", None), rows)
+        self.assertIn(("TRADE_CLOSED", "MARKET_ORDER_TRADE_CLOSE", "t-adverse", "101", -500.0), rows)
 
     def test_generate_intents_refreshes_market_story_when_news_is_newer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
