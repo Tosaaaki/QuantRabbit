@@ -52,6 +52,21 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("STALE_DECISION_RECEIPT", codes)
 
+    def test_rejects_trade_receipt_without_generated_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision = _trade_decision()
+            decision.pop("generated_at_utc")
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "REJECTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("MISSING_DECISION_TIMESTAMP", codes)
+
     def test_rejects_trade_receipt_that_predates_order_intents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2553,6 +2568,7 @@ def _result(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> di
 
 def _trade_decision(*, lane_id: str = LANE_ID, method: str = "TREND_CONTINUATION") -> dict:
     return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "action": "TRADE",
         "selected_lane_id": lane_id,
         "confidence": "HIGH",
@@ -2696,6 +2712,7 @@ def _specialist_review(
 
 def _request_evidence_decision() -> dict:
     return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "action": "REQUEST_EVIDENCE",
         "selected_lane_id": None,
         "confidence": "HIGH",
@@ -2714,6 +2731,7 @@ def _request_evidence_decision() -> dict:
 
 def _wait_decision() -> dict:
     return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "action": "WAIT",
         "selected_lane_id": None,
         "confidence": "MEDIUM",
@@ -2769,6 +2787,7 @@ def _tighten_sl_decision() -> dict:
 
 def _cancel_pending_decision(*, cancel_order_ids: list[str] | None = None) -> dict:
     return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "action": "CANCEL_PENDING",
         "selected_lane_id": None,
         "cancel_order_ids": cancel_order_ids or [],
@@ -2843,6 +2862,7 @@ def _close_decision(
 ) -> dict:
     """Decision payload for action=CLOSE with the new discipline fields."""
     decision = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "action": "CLOSE",
         "selected_lane_id": None,
         "selected_lane_ids": [],

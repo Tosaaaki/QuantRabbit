@@ -1206,6 +1206,12 @@ class DecisionVerifier:
 
     def _verify_decision_freshness(self, decision: GPTTraderDecision, issues: list[VerificationIssue]) -> None:
         if not decision.generated_at_utc:
+            issues.append(
+                VerificationIssue(
+                    "MISSING_DECISION_TIMESTAMP",
+                    "decision receipt must include generated_at_utc so broker-snapshot and market-packet freshness can be verified",
+                )
+            )
             return
         decision_ts = _parse_utc(decision.generated_at_utc)
         if decision_ts is None:
@@ -1601,6 +1607,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": [
+        "generated_at_utc",
         "action",
         "selected_lane_id",
         "confidence",
@@ -1616,6 +1623,7 @@ GPT_TRADER_SCHEMA: dict[str, Any] = {
         "twenty_minute_plan",
     ],
     "properties": {
+        "generated_at_utc": {"type": "string"},
         "action": {"type": "string", "enum": list(ALLOWED_ACTIONS)},
         "selected_lane_id": {"type": ["string", "null"]},
         "selected_lane_ids": {"type": "array", "items": {"type": "string"}},

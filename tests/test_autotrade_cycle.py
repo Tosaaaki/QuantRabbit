@@ -4479,6 +4479,7 @@ def _gpt_trade_decision(
     direction: str = "LONG",
 ) -> dict:
     return {
+        "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
         "action": "TRADE",
         "selected_lane_id": lane_id,
         "confidence": "HIGH",
@@ -4534,6 +4535,7 @@ def _gpt_twenty_minute_plan(*, lane_ids: list[str] | None = None, pair: str = "E
 
 def _gpt_close_decision(trade_ids: list[str]) -> dict:
     return {
+        "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
         "action": "CLOSE",
         "selected_lane_id": None,
         "selected_lane_ids": [],
@@ -4621,6 +4623,7 @@ def _write_learning_audit_artifacts(root: Path, *, attack_advice_path: Path, lan
 
 def _gpt_wait_decision() -> dict:
     return {
+        "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
         "action": "WAIT",
         "selected_lane_id": None,
         "confidence": "MEDIUM",
@@ -4651,6 +4654,7 @@ def _gpt_wait_decision() -> dict:
 
 def _gpt_cancel_pending_decision(cancel_order_ids: list[str]) -> dict:
     return {
+        "generated_at_utc": (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
         "action": "CANCEL_PENDING",
         "selected_lane_id": None,
         "cancel_order_ids": cancel_order_ids,

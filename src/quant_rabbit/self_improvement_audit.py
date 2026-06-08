@@ -325,6 +325,7 @@ class SelfImprovementAuditor:
                 trader_path=trader_decision_path,
                 target_open=target_open,
                 active_trade_ids=active_trade_ids,
+                live_ready_lanes=len(live_ready),
                 snapshot_ts=snapshot_ts,
             )
         )
@@ -2692,6 +2693,7 @@ def _decision_artifact_findings(
     trader_path: Path,
     target_open: bool,
     active_trade_ids: set[str],
+    live_ready_lanes: int,
     snapshot_ts: datetime | None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -2753,7 +2755,7 @@ def _decision_artifact_findings(
             and not rejected_inert_receipt
             and not stale_close_for_closed_trades
         ):
-            priority = "P0" if target_open or active_trade_ids else "P1"
+            priority = "P0" if active_trade_ids or (target_open and live_ready_lanes <= 0) else "P1"
             out.append(
                 _finding(
                     run_id=run_id,
@@ -2768,6 +2770,7 @@ def _decision_artifact_findings(
                     evidence={
                         "generated_at_utc": generated_at.isoformat(),
                         "snapshot_fetched_at_utc": snapshot_ts.isoformat(),
+                        "live_ready_lanes": live_ready_lanes,
                     },
                 )
             )

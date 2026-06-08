@@ -4,6 +4,7 @@ Write `data/codex_trader_decision_response.json`.
 
 ```json
 {
+  "generated_at_utc": "2026-06-08T12:32:26Z",
   "action": "TRADE",
   "selected_lane_id": "desk:PAIR:SIDE:METHOD",
   "selected_lane_ids": ["desk:PAIR:SIDE:METHOD", "desk:PAIR:SIDE:METHOD:MARKET"],
@@ -93,6 +94,7 @@ Write `data/codex_trader_decision_response.json`.
 ## Verifier Rejection Triggers
 
 - Unknown evidence refs.
+- Missing or unparseable `generated_at_utc`.
 - `TRADE` without current `LIVE_READY` selected lane(s).
 - `TRADE` with `close_trade_ids`.
 - `TRADE` or `CANCEL_PENDING` names unknown, manual, or non-pending order ids in `cancel_order_ids`.
