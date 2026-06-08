@@ -1383,7 +1383,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             _NOW.isoformat(),
         )
 
-    def test_stale_gpt_decision_remains_p0_when_live_ready_entry_needs_fresh_decision(self) -> None:
+    def test_stale_gpt_decision_is_not_p0_when_live_ready_entry_needs_fresh_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -1407,9 +1407,9 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             payload = json.loads(files["output"].read_text())
 
         codes = {item["code"]: item for item in payload["findings"]}
-        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertEqual(summary.status, STATUS_ACTION_REQUIRED)
         self.assertIn("LATEST_GPT_DECISION_STALE", codes)
-        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P0")
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P1")
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["live_ready_lanes"], 1)
 
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
