@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -3444,12 +3444,13 @@ class IntentGenerator:
             market_context_matrix=market_context_matrix,
             data_root=data_root,
         )
+        risk_policy = RiskPolicy(
+            block_new_entries_with_pending_entry_orders=False,
+            allow_protected_trader_position_adds=True,
+            max_portfolio_loss_jpy=portfolio_loss_cap,
+        )
         risk = RiskEngine(
-            policy=RiskPolicy(
-                block_new_entries_with_pending_entry_orders=False,
-                allow_protected_trader_position_adds=True,
-                max_portfolio_loss_jpy=portfolio_loss_cap,
-            ),
+            policy=risk_policy,
             validation_time_utc=validation_time_utc,
         ).validate(
             intent,
@@ -3558,6 +3559,16 @@ class IntentGenerator:
         if fresh_rr_issue is not None:
             risk_issues.append(fresh_rr_issue)
             live_blockers = (*live_blockers, fresh_rr_issue["message"])
+        live_risk = RiskEngine(
+            policy=_live_send_preview_policy(risk_policy),
+            live_enabled=True,
+            validation_time_utc=validation_time_utc,
+        ).validate(intent, snapshot, for_live_send=True)
+        risk_issues, live_blockers = _merge_live_send_preview_blockers(
+            risk_issues,
+            live_blockers,
+            live_risk.issues,
+        )
         risk_issues = tuple(risk_issues)
         if risk_allowed and not live_blockers:
             status = "LIVE_READY"
@@ -3673,6 +3684,51 @@ class IntentGenerator:
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
+
+
+def _live_send_preview_policy(policy: RiskPolicy) -> RiskPolicy:
+    """Return the send-gateway risk contract without the external live flag.
+
+    Intent generation is still a dry-run layer, but `LIVE_READY` must not name
+    lanes that the gateway will deterministically block for the same snapshot.
+    The preview keeps the execution-risk checks and suppresses only
+    LIVE_DISABLED, which is controlled by the operator outside lane quality.
+    """
+    return replace(policy, require_live_enabled_for_send=False)
+
+
+def _merge_live_send_preview_blockers(
+    risk_issues: list[dict[str, Any]],
+    live_blockers: tuple[str, ...],
+    live_issues: tuple[Any, ...],
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+    blockers = list(live_blockers)
+    seen_blockers = set(blockers)
+
+    for issue in live_issues:
+        if getattr(issue, "severity", None) != "BLOCK":
+            continue
+        code = str(getattr(issue, "code", "") or "")
+        if code == "LIVE_DISABLED":
+            continue
+        message = str(getattr(issue, "message", "") or "")
+        match = next(
+            (
+                existing
+                for existing in risk_issues
+                if existing.get("code") == code and existing.get("message") == message
+            ),
+            None,
+        )
+        if match is None:
+            risk_issues.append({"code": code, "message": message, "severity": "BLOCK"})
+        else:
+            match["severity"] = "BLOCK"
+        if message and message not in seen_blockers:
+            blockers.append(message)
+            seen_blockers.add(message)
+
+    return risk_issues, tuple(blockers)
 
 
 def _lane_can_attempt(lane: dict[str, Any]) -> bool:

@@ -2845,6 +2845,72 @@ class IntentGeneratorTest(unittest.TestCase):
             "news_theme_followthrough",
         )
 
+    def test_unselected_range_projection_conflict_prevents_live_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output = root / "intents.json"
+            forecast = SimpleNamespace(
+                direction="RANGE",
+                confidence=0.59,
+                raw_confidence=0.65,
+                calibration_multiplier=0.9,
+                current_price=1.17326,
+                target_price=1.1748,
+                invalidation_price=1.1710,
+                horizon_min=60,
+                rationale_summary="range rotation, but audited projection points lower",
+                drivers_for=("range box intact",),
+                drivers_against=("news followthrough lower",),
+                market_support={
+                    "ok": False,
+                    "direction": "RANGE",
+                    "reason": "RANGE forecast left a directional projection unselected",
+                    "unselected_projection_count": 1,
+                    "best_unselected_hit_rate": 0.56,
+                    "best_unselected_samples": 27,
+                    "unselected_signals": [
+                        {
+                            "name": "news_theme_followthrough",
+                            "direction": "DOWN",
+                            "confidence": 0.741,
+                            "hit_rate": 0.56,
+                            "samples": 27,
+                        }
+                    ],
+                },
+            )
+
+            with patch(
+                "quant_rabbit.strategy.intent_generator._forecast_seed_for_pair",
+                return_value=forecast,
+            ):
+                summary = IntentGenerator(
+                    campaign_plan=_range_campaign(root),
+                    strategy_profile=_strategy(root, status="CANDIDATE"),
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            range_limit = next(
+                item
+                for item in payload["results"]
+                if item["lane_id"] == "range_trader:EUR_USD:LONG:RANGE_ROTATION"
+                and item["intent"]["order_type"] == "LIMIT"
+            )
+            issue = next(
+                issue
+                for issue in range_limit["risk_issues"]
+                if issue["code"] == "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT"
+            )
+
+            self.assertEqual(summary.live_ready, 0)
+            self.assertEqual(range_limit["status"], "DRY_RUN_PASSED")
+            self.assertEqual(issue["severity"], "BLOCK")
+            self.assertTrue(range_limit["live_blockers"])
+
     def test_projection_expiry_grace_avoids_same_cycle_false_blocker(self) -> None:
         from quant_rabbit.strategy.intent_generator import _expired_pending_projection_count
 
