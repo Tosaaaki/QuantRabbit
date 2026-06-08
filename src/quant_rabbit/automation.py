@@ -50,6 +50,7 @@ from quant_rabbit.paths import (
     DEFAULT_POSITION_MANAGEMENT_REPORT,
     DEFAULT_POST_TRADE_LEARNING,
     DEFAULT_RECEIPT_PROMOTION_REPORT,
+    DEFAULT_SELF_IMPROVEMENT_AUDIT,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_DECISION,
     DEFAULT_TRADER_DECISION_REPORT,
@@ -501,6 +502,7 @@ class AutoTradeCycle:
         gpt_learning_audit_path: Path | None = None,
         gpt_learning_audit_report_path: Path | None = None,
         gpt_learning_audit_db_path: Path | None = None,
+        gpt_self_improvement_audit_path: Path | None = None,
         gpt_verification_ledger_path: Path | None = None,
         gpt_verification_ledger_report_path: Path | None = None,
         gpt_market_status_path: Path | None = None,
@@ -565,6 +567,11 @@ class AutoTradeCycle:
             explicit=gpt_learning_audit_db_path,
             gpt_decision_path=gpt_decision_path,
             default_path=DEFAULT_EXECUTION_LEDGER_DB,
+        )
+        self.gpt_self_improvement_audit_path = _gpt_sidecar_path(
+            explicit=gpt_self_improvement_audit_path,
+            gpt_decision_path=gpt_decision_path,
+            default_path=DEFAULT_SELF_IMPROVEMENT_AUDIT,
         )
         self.gpt_verification_ledger_path = _gpt_sidecar_path(
             explicit=gpt_verification_ledger_path,
@@ -2705,6 +2712,7 @@ class AutoTradeCycle:
             pair_charts_path=self.pair_charts_path,
             attack_advice_path=self.gpt_attack_advice_path,
             learning_audit_path=self.gpt_learning_audit_path,
+            self_improvement_audit_path=self.gpt_self_improvement_audit_path,
             verification_ledger_path=self.gpt_verification_ledger_path,
             output_path=self.gpt_decision_path,
             report_path=self.gpt_decision_report_path,

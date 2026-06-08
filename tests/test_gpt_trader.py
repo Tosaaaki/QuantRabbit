@@ -322,7 +322,7 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertEqual(summary.status, "REJECTED")
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
-            self.assertIn("SELF_IMPROVEMENT_PROFITABILITY_BLOCKS_TRADE", codes)
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
             packet = payload["input_packet"]["self_improvement_audit"]
             self.assertEqual(packet["profitability_blockers"][0]["current_streak"], 19)
             self.assertIn(
@@ -887,6 +887,8 @@ class GPTTraderBrainTest(unittest.TestCase):
                         str(files["target"]),
                         "--attack-advice",
                         str(files["attack_advice"]),
+                        "--self-improvement-audit",
+                        str(files["self_improvement_audit"]),
                         "--decision-response",
                         str(decision_response),
                         "--output",
@@ -1298,6 +1300,43 @@ class GPTTraderBrainTest(unittest.TestCase):
             self.assertNotIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
             packet = payload["input_packet"]["self_improvement_audit"]
             self.assertEqual(packet["profitability_blockers"][0]["current_streak"], 19)
+
+    def test_wait_is_allowed_when_self_improvement_projection_p0_blocks_attack_advice_trade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            files["self_improvement_audit"].write_text(json.dumps(_self_improvement_projection_p0()))
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "attack:advice",
+                    f"attack:lane:{LANE_ID}",
+                    "self_improvement:audit",
+                    "self_improvement:profitability",
+                    "self_improvement:finding:PROJECTION_LEDGER_EXPIRED_PENDING",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertNotIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+            packet = payload["input_packet"]["self_improvement_audit"]
+            self.assertEqual(packet["p0_blockers"][0]["code"], "PROJECTION_LEDGER_EXPIRED_PENDING")
 
     def test_wait_with_soft_close_sidecar_still_must_trade_attack_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2272,6 +2311,42 @@ def _self_improvement_profitability_p0() -> dict:
                             }
                         ],
                     },
+                },
+            }
+        ],
+    }
+
+
+def _self_improvement_projection_p0() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "SELF_IMPROVEMENT_BLOCKED",
+        "p0_findings": 1,
+        "p1_findings": 1,
+        "p2_findings": 0,
+        "effect_metrics": {
+            "closed_trades": 29,
+            "net_jpy": -6138.23,
+            "profit_factor": 0.54,
+            "expectancy_jpy": -211.66,
+        },
+        "findings": [
+            {
+                "priority": "P0",
+                "layer": "forecast",
+                "code": "PROJECTION_LEDGER_EXPIRED_PENDING",
+                "message": "projection ledger has 49 expired PENDING projection(s)",
+                "next_action": "Run verify-projections and learn from HIT/MISS/TIMEOUT before new risk.",
+                "evidence": {
+                    "count": 49,
+                    "examples": [
+                        {
+                            "pair": "AUD_CAD",
+                            "signal_name": "directional_forecast",
+                            "timestamp_emitted_utc": "2026-06-08T00:41:09.769570Z",
+                            "resolution_window_min": 180.0,
+                        }
+                    ],
                 },
             }
         ],

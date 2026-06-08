@@ -783,7 +783,7 @@ class GPTTraderBrain:
                 "entry_thesis_blocker_blocks_trade_and_wait": True,
                 "learning_audit_blocks_unsafe_learning_influence": True,
                 "verification_ledger_is_read_only_structured_evidence": True,
-                "self_improvement_profitability_p0_blocks_trade": True,
+                "self_improvement_p0_blocks_trade": True,
                 "market_status_is_authoritative_calendar_evidence": True,
                 "coverage_optimization_is_read_only_gap_evidence": True,
             },
@@ -864,7 +864,7 @@ class GPTTraderBrain:
                 "- `market_status` is deterministic calendar/session evidence only; broker truth still decides prices, positions, and tradability.",
                 "- A deterministic `tp-rebalance` sidecar requirement makes WAIT / REQUEST_EVIDENCE invalid until the sidecar is run.",
                 "- A deterministic entry-thesis blocker makes TRADE / WAIT invalid until the unverifiable active position is repaired or reviewed.",
-                "- A persistent self-improvement profitability P0 blocks new `TRADE` receipts until worst segments prove repaired close discipline or the trader route explicitly justifies the exception.",
+                "- Any self-improvement P0 blocks new `TRADE` receipts until the named blocker is repaired or the trader route explicitly justifies the exception.",
                 "- Evidence refs must come from the input packet; invented refs reject the decision.",
                 "- `CLOSE` requires Gate A plus the applicable Gate B. Hard Gate A (M15/H4 close-confirmed BOS/CHOCH against side, buffered invalidation_price hit with technical confirmation, fresh thesis_evolution BROKEN/RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, or position_thesis invalidation-hit/structural-break evidence with multi-TF confirmation) carries standing loss-cut authorization. Softer Gate A still needs `QR_OPERATOR_CLOSE_OVERRIDE=1` or a fresh `data/.operator_close_token` when the trader chooses CLOSE, but soft-only close evidence does not block TP-managed positions from taking separate current LIVE_READY entries. If the same-direction market stack still supports the open position, treat it as TP rebalance / HOLD / profit-side partial / ADD geometry, not loss-side CLOSE plus same-direction re-entry. `TRADE` must not include `close_trade_ids`; automation ends the close cycle, then the next scheduled cycle must refresh broker truth, reprice intents, and require a separate verified `TRADE` receipt. The receipt's `operator_close_authorized` field is advisory only. See AGENT_CONTRACT §10.",
             ]
@@ -939,8 +939,8 @@ class DecisionVerifier:
             if self_improvement_trade_blockers:
                 issues.append(
                     VerificationIssue(
-                        "SELF_IMPROVEMENT_PROFITABILITY_BLOCKS_TRADE",
-                        "TRADE rejected while self-improvement audit carries persistent profitability P0: "
+                        "SELF_IMPROVEMENT_P0_BLOCKS_TRADE",
+                        "TRADE rejected while self-improvement audit carries P0 blocker(s): "
                         + "; ".join(self_improvement_trade_blockers[:3]),
                     )
                 )
@@ -2503,18 +2503,32 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
             "evidence_ref": "self_improvement:audit",
             "status": "missing",
             "p0_findings": 0,
+            "p0_blockers": [],
             "profitability_blockers": [],
         }
     blockers: list[dict[str, Any]] = []
+    p0_blockers: list[dict[str, Any]] = []
     for finding in payload.get("findings", []) or []:
         if not isinstance(finding, dict):
             continue
         code = str(finding.get("code") or "")
-        if (
-            str(finding.get("priority") or "").upper() == "P0"
-            and str(finding.get("layer") or "") == "profitability"
-            and code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"
-        ):
+        priority = str(finding.get("priority") or "").upper()
+        layer = str(finding.get("layer") or "")
+        evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+        if priority == "P0":
+            p0_blockers.append(
+                {
+                    "evidence_ref": f"self_improvement:finding:{code}",
+                    "code": code,
+                    "layer": layer,
+                    "message": finding.get("message"),
+                    "next_action": finding.get("next_action"),
+                    "current_streak": evidence.get("current_streak"),
+                    "count": evidence.get("count"),
+                    "examples": list(evidence.get("examples", []) or [])[:3],
+                }
+            )
+        if priority == "P0" and layer == "profitability" and code == "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
             evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
             system_evidence = evidence.get("system_defect_evidence") if isinstance(evidence.get("system_defect_evidence"), dict) else {}
             blockers.append(
@@ -2549,6 +2563,7 @@ def _self_improvement_audit_packet(payload: dict[str, Any] | None) -> dict[str, 
                 "avg_loss_jpy_abs",
             ),
         ),
+        "p0_blockers": p0_blockers,
         "profitability_blockers": blockers,
     }
 
@@ -2962,19 +2977,26 @@ def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
     if not isinstance(audit, dict):
         return []
     out: list[str] = []
-    for blocker in audit.get("profitability_blockers", []) or []:
+    blockers = audit.get("p0_blockers", []) or audit.get("profitability_blockers", []) or []
+    for blocker in blockers:
         if not isinstance(blocker, dict):
             continue
-        code = str(blocker.get("code") or "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED")
+        code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
+        layer = str(blocker.get("layer") or "").strip()
         message = str(blocker.get("message") or "").strip()
         streak = blocker.get("current_streak")
         pf = blocker.get("profit_factor")
         expectancy = blocker.get("expectancy_jpy")
         avg_loss = blocker.get("avg_loss_jpy_abs")
         avg_win = blocker.get("avg_win_jpy")
+        count = blocker.get("count")
         details = []
+        if layer:
+            details.append(f"layer={layer}")
         if streak is not None:
             details.append(f"streak={streak}")
+        if count is not None:
+            details.append(f"count={count}")
         if pf is not None:
             details.append(f"PF={pf}")
         if expectancy is not None:
@@ -2982,7 +3004,7 @@ def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
         if avg_loss is not None and avg_win is not None:
             details.append(f"avg_loss={avg_loss} vs avg_win={avg_win}")
         suffix = f" ({', '.join(details)})" if details else ""
-        out.append(f"{code}{suffix}: {message or 'persistent profitability discipline blocks new risk'}")
+        out.append(f"{code}{suffix}: {message or 'self-improvement P0 blocks new risk'}")
     return out
 
 
