@@ -595,6 +595,7 @@ class AITestBotBacktester:
                 f"- Broker accepted without gateway close receipt: `{int(close_gate.get('broker_accepted_without_gateway_loss_side_market_close_count') or 0)}` "
                 f"net=`{float(close_gate.get('broker_accepted_without_gateway_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
                 f"- Broker accepted without gateway sources: `{json.dumps(close_gate.get('broker_accepted_without_gateway_loss_side_market_close_source_counts') or {}, sort_keys=True)}`",
+                f"- Broker accepted without gateway evidence: `{json.dumps(close_gate.get('broker_accepted_without_gateway_loss_side_market_close_evidence_counts') or {}, sort_keys=True)}`",
                 f"- No close-order provenance loss-side market closes: `{int(close_gate.get('unattributed_loss_side_market_close_count') or 0)}` "
                 f"net=`{float(close_gate.get('unattributed_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
                 f"- Take-profit closes: `{int(close_gate.get('take_profit_close_count') or 0)}` "
@@ -1270,6 +1271,7 @@ def _close_gate_ablation_payload(
         "broker_accepted_without_gateway_loss_side_market_close_count": 0,
         "broker_accepted_without_gateway_loss_side_market_close_net_jpy": 0.0,
         "broker_accepted_without_gateway_loss_side_market_close_source_counts": {},
+        "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": {},
         "unattributed_loss_side_market_close_count": 0,
         "unattributed_loss_side_market_close_net_jpy": 0.0,
         "take_profit_close_count": 0,
@@ -1391,6 +1393,7 @@ def _close_gate_ablation_payload(
     broker_without_gateway_loss_market_count = 0
     broker_without_gateway_loss_market_net = 0.0
     broker_without_gateway_loss_market_source_counts: dict[str, int] = {}
+    broker_without_gateway_loss_market_evidence_counts: dict[str, int] = {}
     unattributed_loss_market_count = 0
     unattributed_loss_market_net = 0.0
     take_profit_count = 0
@@ -1432,6 +1435,10 @@ def _close_gate_ablation_payload(
             if "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in broker_trade_close_sources:
                 broker_trade_close_sources.discard("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE")
             broker_trade_close_sources.add("GATEWAY_GPT_CLOSE_ACCEPTED")
+        broker_trade_close_evidence = _broker_trade_close_evidence_for_close(
+            broker_trade_close_sources,
+            gateway_close_attributed=gateway_close_attributed,
+        )
         close_order_provenance = gateway_close_attributed or gateway_gpt_close_accepted or broker_trade_close_accepted
         close_source = _primary_close_source(
             exit_reason=exit_reason,
@@ -1545,6 +1552,7 @@ def _close_gate_ablation_payload(
                     "broker_trade_close_accepted_count": 0,
                     "broker_accepted_without_gateway_count": 0,
                     "broker_accepted_without_gateway_source_counts": {},
+                    "broker_accepted_without_gateway_evidence_counts": {},
                     "no_close_order_provenance_count": 0,
                     "bot_attributed_count": 0,
                 },
@@ -1575,6 +1583,10 @@ def _close_gate_ablation_payload(
                 if isinstance(daily_sources, dict):
                     for source in broker_trade_close_sources:
                         daily_sources[source] = int(daily_sources.get(source) or 0) + 1
+                daily_evidence = daily["broker_accepted_without_gateway_evidence_counts"]
+                if isinstance(daily_evidence, dict):
+                    for evidence in broker_trade_close_evidence:
+                        daily_evidence[evidence] = int(daily_evidence.get(evidence) or 0) + 1
             if not close_order_provenance:
                 daily["no_close_order_provenance_count"] = int(daily["no_close_order_provenance_count"]) + 1
             if bot_attributed:
@@ -1596,6 +1608,7 @@ def _close_gate_ablation_payload(
                     "stale_gpt_close_satisfied": stale_gpt_close_satisfied,
                     "broker_trade_close_accepted": broker_trade_close_accepted,
                     "broker_trade_close_sources": sorted(broker_trade_close_sources),
+                    "broker_trade_close_evidence": sorted(broker_trade_close_evidence),
                     "close_source": close_source,
                     "close_order_provenance": close_order_provenance,
                 }
@@ -1632,6 +1645,10 @@ def _close_gate_ablation_payload(
                 for source in broker_trade_close_sources:
                     broker_without_gateway_loss_market_source_counts[source] = (
                         broker_without_gateway_loss_market_source_counts.get(source, 0) + 1
+                    )
+                for evidence in broker_trade_close_evidence:
+                    broker_without_gateway_loss_market_evidence_counts[evidence] = (
+                        broker_without_gateway_loss_market_evidence_counts.get(evidence, 0) + 1
                     )
             if not close_order_provenance:
                 unattributed_loss_market_count += 1
@@ -1729,6 +1746,9 @@ def _close_gate_ablation_payload(
             ),
             "broker_accepted_without_gateway_loss_side_market_close_source_counts": (
                 broker_without_gateway_loss_market_source_counts
+            ),
+            "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": (
+                broker_without_gateway_loss_market_evidence_counts
             ),
             "unattributed_loss_side_market_close_count": unattributed_loss_market_count,
             "unattributed_loss_side_market_close_net_jpy": _round(unattributed_loss_market_net),
@@ -2100,6 +2120,27 @@ def _broker_trade_close_sources_for_close(
     if not sources and (has_trade or has_order):
         sources.add("BROKER_TRADE_CLOSE_SOURCE_UNKNOWN")
     return sources
+
+
+def _broker_trade_close_evidence_for_close(
+    sources: set[str],
+    *,
+    gateway_close_attributed: bool,
+) -> set[str]:
+    evidence: set[str] = set()
+    if not gateway_close_attributed:
+        evidence.add("NO_LOCAL_GATEWAY_CLOSE_RECEIPT")
+    if "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in sources:
+        evidence.add("NO_CLIENT_EXTENSION")
+    if "TRADER_CLIENT_EXTENSION" in sources:
+        evidence.add("TRADER_CLIENT_EXTENSION")
+    if "NON_TRADER_CLIENT_EXTENSION" in sources:
+        evidence.add("NON_TRADER_CLIENT_EXTENSION")
+    if "LOCAL_LEDGER_LANE_ID" in sources:
+        evidence.add("LOCAL_LEDGER_LANE_ID")
+    if "BROKER_TRADE_CLOSE_SOURCE_UNKNOWN" in sources:
+        evidence.add("BROKER_TRADE_CLOSE_SOURCE_UNKNOWN")
+    return evidence
 
 
 def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, object]) -> str:
@@ -2540,13 +2581,17 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
     )
     if broker_without_gateway_loss_count:
         source_counts = payload.get("broker_accepted_without_gateway_loss_side_market_close_source_counts")
+        evidence_counts = payload.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts")
         source_suffix = ""
         if isinstance(source_counts, dict) and source_counts:
             source_suffix = f" sources={json.dumps(source_counts, sort_keys=True)};"
+        evidence_suffix = ""
+        if isinstance(evidence_counts, dict) and evidence_counts:
+            evidence_suffix = f" evidence={json.dumps(evidence_counts, sort_keys=True)};"
         yield (
             "broker accepted TRADE_CLOSE orders exist without matching local GATEWAY_TRADE_CLOSE_SENT receipts "
             f"({broker_without_gateway_loss_count} loss-side close(s), net {broker_without_gateway_loss_net:.0f} JPY);"
-            f"{source_suffix} "
+            f"{source_suffix}{evidence_suffix} "
             "tag whether these were GPT/gateway, operator, or broker-sync-only closes before changing CLOSE Gate A-B policy"
         )
         if (

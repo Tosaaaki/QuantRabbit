@@ -1043,6 +1043,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
                         "broker_trade_close_accepted_count": 0,
                         "broker_accepted_without_gateway_count": 0,
                         "broker_accepted_without_gateway_source_counts": {},
+                        "broker_accepted_without_gateway_evidence_counts": {},
                         "no_close_order_provenance_count": 1,
                         "bot_attributed_count": 2,
                     }
@@ -1205,19 +1206,29 @@ class AITestBotBacktesterTest(unittest.TestCase):
                 close_gate["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
                 {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
             )
+            self.assertEqual(
+                close_gate["broker_accepted_without_gateway_loss_side_market_close_evidence_counts"],
+                {"NO_CLIENT_EXTENSION": 1, "NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 1},
+            )
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 0)
             example = close_gate["loss_side_market_close_examples"][0]
             self.assertFalse(example["gateway_close_sent"])
             self.assertTrue(example["broker_trade_close_accepted"])
             self.assertEqual(example["broker_trade_close_sources"], ["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"])
+            self.assertEqual(
+                example["broker_trade_close_evidence"],
+                ["NO_CLIENT_EXTENSION", "NO_LOCAL_GATEWAY_CLOSE_RECEIPT"],
+            )
             self.assertTrue(example["close_order_provenance"])
             self.assertTrue(any("broker accepted TRADE_CLOSE orders exist" in item for item in payload["action_items"]))
+            self.assertTrue(any("NO_LOCAL_GATEWAY_CLOSE_RECEIPT" in item for item in payload["action_items"]))
             self.assertTrue(any("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in item for item in payload["action_items"]))
             self.assertTrue(any("direct/manual broker TRADE_CLOSE" in item for item in payload["action_items"]))
             self.assertTrue(any("worst close-source segment" in item for item in payload["action_items"]))
             self.assertFalse(any("lack both gateway close receipts" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", report)
+            self.assertIn("NO_LOCAL_GATEWAY_CLOSE_RECEIPT", report)
             self.assertIn("Close source segments", report)
 
     def test_close_gate_diagnostic_classifies_gpt_accepted_close_without_position_receipt(self) -> None:
