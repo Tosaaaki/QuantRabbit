@@ -347,6 +347,7 @@ def _review_exit_gate_issue(managed: ManagedPosition) -> dict[str, str] | None:
     if (
         "next-generation entry thesis ledger present" in reason_text
         and "structural loss-cut remains executable" in reason_text
+        and _structural_auto_close_enabled()
     ):
         return None
     return {
@@ -354,13 +355,17 @@ def _review_exit_gate_issue(managed: ManagedPosition) -> dict[str, str] | None:
         "code": "REVIEW_EXIT_GATE_AB_REQUIRED",
         "message": (
             "QR_DISABLE_AUTO_CLOSE=1 blocks loss-side REVIEW_EXIT unless the action is backed by "
-            "an accepted gpt_trader CLOSE receipt or next-generation structural loss-cut evidence"
+            "an accepted gpt_trader CLOSE receipt or QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1 explicit opt-in"
         ),
     }
 
 
 def _auto_close_disabled() -> bool:
     return os.environ.get("QR_DISABLE_AUTO_CLOSE", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _structural_auto_close_enabled() -> bool:
+    return os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _stop_update_issue(position: BrokerPosition, new_stop: float, quote: Quote | None) -> dict[str, str] | None:

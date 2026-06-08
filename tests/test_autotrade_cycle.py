@@ -2332,8 +2332,10 @@ class AutoTradeCycleTest(unittest.TestCase):
     def test_reuse_market_artifacts_refreshes_positions_before_management(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
         os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = "1"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -2440,6 +2442,10 @@ class AutoTradeCycleTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
 
     def test_gpt_handoff_runs_learning_audit_before_decision_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

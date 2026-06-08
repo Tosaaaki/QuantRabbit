@@ -740,7 +740,7 @@ class PositionManagerTest(unittest.TestCase):
                 self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
                 report = (root / "pm.md").read_text()
                 self.assertIn("loss-cut: macro REVERSED", report)
-                self.assertIn("legacy/no-ledger", report)
+                self.assertIn("QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1", report)
         finally:
             if prior_close is None:
                 os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
@@ -751,11 +751,86 @@ class PositionManagerTest(unittest.TestCase):
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
 
-    def test_auto_close_kill_switch_allows_next_generation_structural_exit(self) -> None:
+    def test_auto_close_kill_switch_holds_next_generation_structural_exit_by_default(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
         os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir(parents=True)
+                (data_root / "entry_thesis_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-05-15T06:00:00Z",
+                            "trade_id": "future-1",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "entry_price": 1.2000,
+                            "forecast_direction": "LONG",
+                            "forecast_confidence": 0.72,
+                            "regime": "TREND_UP",
+                            "invalidation_price": 1.1984,
+                            "target_price": 1.2020,
+                            "key_drivers": ["test"],
+                        }
+                    )
+                    + "\n"
+                )
+                decision = _decision(root, long_score=160, short_score=120)
+                pair_charts = _structural_reversal_pair_charts(root)
+                snapshot = _snapshot(
+                    BrokerPosition(
+                        trade_id="future-1",
+                        pair="EUR_USD",
+                        side=Side.LONG,
+                        units=1000,
+                        entry_price=1.2000,
+                        unrealized_pl_jpy=-250,
+                        take_profit=1.2020,
+                        stop_loss=None,
+                    ),
+                    bid=1.1980,
+                    ask=1.1981,
+                )
+
+                result = PositionManager(
+                    trader_decision_path=decision,
+                    pair_charts_path=pair_charts,
+                    output_path=data_root / "pm.json",
+                    report_path=root / "pm.md",
+                ).run(snapshot)
+
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+                report = (root / "pm.md").read_text()
+                self.assertIn("loss-cut: macro REVERSED", report)
+                self.assertIn("QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1", report)
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
+
+    def test_auto_close_kill_switch_allows_next_generation_structural_exit_with_explicit_opt_in(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = "1"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -817,12 +892,18 @@ class PositionManagerTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
 
     def test_entry_thesis_invalidation_hit_routes_sl_free_loss_to_review_exit(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
         os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = "1"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -885,12 +966,18 @@ class PositionManagerTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
 
     def test_entry_thesis_confidence_collapse_routes_loss_to_review_exit(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
         os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = "1"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -969,12 +1056,18 @@ class PositionManagerTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
 
     def test_entry_thesis_data_root_is_independent_from_output_path(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
         prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
         os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
         os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = "1"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -1037,6 +1130,10 @@ class PositionManagerTest(unittest.TestCase):
                 os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
             else:
                 os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
 
     def test_sl_free_profitable_macro_reversal_uses_profit_market_take_under_auto_close_kill_switch(self) -> None:
         prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")

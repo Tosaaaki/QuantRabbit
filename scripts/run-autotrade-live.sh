@@ -65,9 +65,9 @@ export QR_TRADER_POSITION_NAV_PCT="${QR_TRADER_POSITION_NAV_PCT:-30}"
 # is unset. Kept for backward compat with smoke scripts that pin units.
 export QR_TRADER_BASE_UNITS="${QR_TRADER_BASE_UNITS:-3000}"
 # Deterministic REVIEW_EXIT is advisory by default in SL-free live mode.
-# Legacy/no-ledger closes still need gpt_trader Gate A/B; next-generation
-# trader entries with an entry thesis ledger may execute only hard structural
-# loss-cut exits.
+# Loss-side closes still need gpt_trader Gate A/B unless the operator
+# explicitly opts into structural deterministic auto-close with
+# QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1.
 export QR_DISABLE_AUTO_CLOSE="${QR_DISABLE_AUTO_CLOSE:-1}"
 # Fresh live entries require a current executable pair forecast. Campaign
 # pressure cannot turn a stale/no-forecast lane into a broker-fillable order.

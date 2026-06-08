@@ -222,7 +222,7 @@ class PositionManager:
             data_root = self.data_root
             for m in managed:
                 if m.action == ACTION_REVIEW_EXIT:
-                    if _next_generation_structural_auto_close_allowed(m, data_root):
+                    if _structural_auto_close_enabled() and _next_generation_structural_auto_close_allowed(m, data_root):
                         new_reasons = tuple(list(m.reasons) + [
                             "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
                         ])
@@ -241,7 +241,7 @@ class PositionManager:
                         ))
                         continue
                     new_reasons = tuple(list(m.reasons) + [
-                        "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; legacy/no-ledger close must go through gpt_trader Gate A/B",
+                        "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; loss-side close must go through gpt_trader Gate A/B unless QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1 is explicitly set",
                     ])
                     demoted.append(ManagedPosition(
                         trade_id=m.trade_id, pair=m.pair, side=m.side,
@@ -564,7 +564,7 @@ class PositionManager:
                 "- SL-free break-even/profit-lock is allowed only after executable profit clears M5 ATR/spread micro-noise.",
                 "- Profit-only TAKE_PROFIT_MARKET is separate from loss-side REVIEW_EXIT Gate A/B discipline.",
                 "- A materially stronger opposite thesis triggers exit review; the gateway still prevents fresh stacking.",
-                "- With QR_DISABLE_AUTO_CLOSE=1, legacy/no-ledger REVIEW_EXIT stays advisory; ledger-backed trader positions can execute structural loss-cut exits, and legacy/no-ledger trader positions may still close through GPT Gate A+B.",
+                "- With QR_DISABLE_AUTO_CLOSE=1, deterministic REVIEW_EXIT stays advisory unless QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1 explicitly opts into structural auto-close; GPT CLOSE Gate A+B remains executable.",
             ]
         )
         self.report_path.write_text("\n".join(lines) + "\n")
@@ -998,12 +998,11 @@ def _adaptive_tp_action(
 def _next_generation_structural_auto_close_allowed(m: ManagedPosition, data_root: Path) -> bool:
     """Allow auto-close only for post-change entries with hard structural evidence.
 
-    `QR_DISABLE_AUTO_CLOSE=1` remains the default safety brake. The
-    2026-05-28 operator clarification allows justified loss-cuts, but does
-    not allow deterministic auto-close on legacy/no-ledger positions. The
-    entry-thesis ledger is the generation marker because it is written only
-    when this runtime opens a new trade. No ledger, no automatic loss close;
-    legacy/no-ledger trader positions still require GPT CLOSE Gate A+B.
+    `QR_DISABLE_AUTO_CLOSE=1` remains the default safety brake. Structural
+    deterministic loss-cuts require the explicit operator/runtime opt-in
+    `QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1`; otherwise loss-side closes must flow
+    through GPT CLOSE Gate A/B. The entry-thesis ledger is only a generation
+    marker, not sufficient live permission by itself.
     """
     if m.action != ACTION_REVIEW_EXIT:
         return False
@@ -1012,6 +1011,10 @@ def _next_generation_structural_auto_close_allowed(m: ManagedPosition, data_root
     if not _structural_loss_cut_reason(m.reasons):
         return False
     return load_entry_thesis(m.trade_id, data_root) is not None
+
+
+def _structural_auto_close_enabled() -> bool:
+    return os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _structural_loss_cut_reason(reasons: tuple[str, ...]) -> bool:

@@ -150,6 +150,69 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
 
+    def test_blocks_structural_review_exit_without_explicit_opt_in_when_auto_close_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "QR_DISABLE_AUTO_CLOSE": "1",
+                "QR_ALLOW_STRUCTURAL_AUTO_CLOSE": "",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
+                    ),
+                ),
+                snapshot=_snapshot(unrealized_pl_jpy=-90.0),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(client.closed, [])
+            self.assertIn("QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1", (root / "exec.md").read_text())
+
+    def test_allows_structural_review_exit_with_explicit_opt_in_when_auto_close_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "QR_DISABLE_AUTO_CLOSE": "1",
+                "QR_ALLOW_STRUCTURAL_AUTO_CLOSE": "1",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
+                    ),
+                ),
+                snapshot=_snapshot(unrealized_pl_jpy=-90.0),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "SENT")
+            self.assertEqual(client.closed, [("1", "ALL")])
+
     def test_closes_profitable_position_with_take_profit_market_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
