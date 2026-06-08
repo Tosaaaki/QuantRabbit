@@ -1938,6 +1938,9 @@ def _intent_findings(
                         intents,
                         statuses={"DRY_RUN_PASSED"},
                     ),
+                    "dry_run_passed_forecast_gate_diagnostics": _dry_run_passed_forecast_gate_diagnostics(
+                        intents
+                    ),
                     "non_live_ready_live_readiness_blockers": _top_intent_live_readiness_blockers(intents),
                 },
             )
@@ -3038,6 +3041,14 @@ _LIVE_READINESS_WARN_CODES = {
     "FORECAST_WATCH_ONLY",
 }
 
+_FORECAST_LIVE_GATE_CODES = {
+    "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
+    "FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+    "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+    "FORECAST_WATCH_ONLY",
+    "TELEMETRY_FORECAST_NOT_EXECUTABLE_FOR_LIVE",
+}
+
 
 def _top_intent_live_readiness_blockers(
     intents: dict[str, Any],
@@ -3085,6 +3096,91 @@ def _top_intent_live_readiness_blockers(
         {"message": message, "count": count, "example_lanes": examples.get(message, [])[:3]}
         for message, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]
     ]
+
+
+def _dry_run_passed_forecast_gate_diagnostics(
+    intents: dict[str, Any],
+    *,
+    limit: int = 8,
+) -> dict[str, Any]:
+    lanes: list[dict[str, Any]] = []
+    reason_counts: dict[str, int] = {}
+    for result in intents.get("results", []) or []:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get("status") or "").upper() != "DRY_RUN_PASSED":
+            continue
+
+        risk_issue_codes = _issue_codes(result.get("risk_issues"))
+        live_blocker_text = " ".join(
+            _issue_text(raw).upper() for raw in result.get("live_blockers") or []
+        )
+        if not risk_issue_codes.intersection(_FORECAST_LIVE_GATE_CODES) and "FORECAST" not in live_blocker_text:
+            continue
+
+        intent = result.get("intent") if isinstance(result.get("intent"), dict) else {}
+        metadata = intent.get("metadata") if isinstance(intent.get("metadata"), dict) else {}
+        support = metadata.get("forecast_market_support")
+        support = support if isinstance(support, dict) else {}
+        support_reason = str(support.get("reason") or "NO_FORECAST_MARKET_SUPPORT_REASON")
+        reason_counts[support_reason] = reason_counts.get(support_reason, 0) + 1
+
+        signals = support.get("signals") if isinstance(support.get("signals"), list) else []
+        top_signal = next((item for item in signals if isinstance(item, dict)), {})
+        lanes.append(
+            {
+                "lane_id": str(result.get("lane_id") or ""),
+                "side": str(intent.get("side") or ""),
+                "order_type": str(intent.get("order_type") or ""),
+                "forecast_direction": str(metadata.get("forecast_direction") or ""),
+                "forecast_confidence": _maybe_float(metadata.get("forecast_confidence")),
+                "forecast_raw_confidence": _maybe_float(metadata.get("forecast_raw_confidence")),
+                "chart_direction_bias": str(metadata.get("chart_direction_bias") or ""),
+                "forecast_market_support_ok": bool(support.get("ok")),
+                "forecast_market_support_reason": support_reason,
+                "forecast_market_support_best_hit_rate": _maybe_float(support.get("best_hit_rate")),
+                "forecast_market_support_best_samples": _maybe_int(support.get("best_samples")),
+                "forecast_market_support_aligned_projection_count": _maybe_int(
+                    support.get("aligned_projection_count")
+                ),
+                "forecast_market_support_timing_projection_count": _maybe_int(
+                    support.get("timing_projection_count")
+                ),
+                "forecast_market_support_unselected_reason": str(support.get("unselected_reason") or ""),
+                "forecast_market_support_top_signal": {
+                    "name": str(top_signal.get("name") or ""),
+                    "direction": str(top_signal.get("direction") or ""),
+                    "confidence": _maybe_float(top_signal.get("confidence")),
+                    "hit_rate": _maybe_float(top_signal.get("hit_rate")),
+                    "samples": _maybe_int(top_signal.get("samples")),
+                    "timeframe": str(top_signal.get("timeframe") or ""),
+                },
+                "risk_issue_codes": sorted(risk_issue_codes),
+                "live_strategy_issue_codes": sorted(_issue_codes(result.get("live_strategy_issues"))),
+            }
+        )
+
+    return {
+        "reason_counts": [
+            {"reason": reason, "count": count}
+            for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        ],
+        "lanes": lanes[:limit],
+    }
+
+
+def _issue_codes(items: Any) -> set[str]:
+    codes: set[str] = set()
+    for raw in items or []:
+        if isinstance(raw, dict):
+            code = str(raw.get("code") or "").upper()
+            if code:
+                codes.add(code)
+                continue
+        text = _issue_text(raw).strip().upper()
+        if text:
+            codes.add(text)
+    return codes
 
 
 def _risk_issue_blocks_live_readiness(raw: Any) -> bool:
@@ -3268,6 +3364,15 @@ def _maybe_float(value: Any) -> float | None:
         if value is None:
             return None
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _maybe_int(value: Any) -> int | None:
+    try:
+        if value is None:
+            return None
+        return int(value)
     except (TypeError, ValueError):
         return None
 

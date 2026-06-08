@@ -720,6 +720,39 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                             {
                                 "lane_id": "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT",
                                 "status": "DRY_RUN_PASSED",
+                                "intent": {
+                                    "side": "SHORT",
+                                    "order_type": "LIMIT",
+                                    "metadata": {
+                                        "forecast_direction": "DOWN",
+                                        "forecast_confidence": 0.311,
+                                        "forecast_raw_confidence": 0.5244919527711897,
+                                        "chart_direction_bias": "LONG",
+                                        "forecast_market_support": {
+                                            "aligned_projection_count": 1,
+                                            "best_hit_rate": 0.82,
+                                            "best_samples": 100,
+                                            "direction": "DOWN",
+                                            "ok": True,
+                                            "reason": (
+                                                "liquidity_sweep_high DOWN hit_rate=0.82 "
+                                                "samples=100 supports weak calibrated forecast"
+                                            ),
+                                            "signals": [
+                                                {
+                                                    "confidence": 0.9922,
+                                                    "direction": "DOWN",
+                                                    "hit_rate": 0.82,
+                                                    "name": "liquidity_sweep_high",
+                                                    "samples": 100,
+                                                    "timeframe": "M15",
+                                                }
+                                            ],
+                                            "timing_projection_count": 0,
+                                            "unselected_reason": "",
+                                        },
+                                    },
+                                },
                                 "risk_issues": [
                                     {
                                         "code": "FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE",
@@ -759,6 +792,16 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(dry_run_blockers["FORECAST_CONFIDENCE_REQUIRED_FOR_LIVE"]["count"], 1)
         self.assertEqual(dry_run_blockers["STRATEGY_NOT_ELIGIBLE"]["count"], 1)
         self.assertNotIn("STRATEGY_PROFILE_MISSING", dry_run_blockers)
+        forecast_diagnostics = evidence["dry_run_passed_forecast_gate_diagnostics"]
+        self.assertEqual(forecast_diagnostics["reason_counts"][0]["count"], 1)
+        self.assertIn("liquidity_sweep_high DOWN", forecast_diagnostics["reason_counts"][0]["reason"])
+        lane_diagnostic = forecast_diagnostics["lanes"][0]
+        self.assertEqual(lane_diagnostic["lane_id"], "failure_trader:AUD_CAD:SHORT:BREAKOUT_FAILURE:LIMIT")
+        self.assertEqual(lane_diagnostic["chart_direction_bias"], "LONG")
+        self.assertEqual(lane_diagnostic["forecast_confidence"], 0.311)
+        self.assertTrue(lane_diagnostic["forecast_market_support_ok"])
+        self.assertEqual(lane_diagnostic["forecast_market_support_best_hit_rate"], 0.82)
+        self.assertEqual(lane_diagnostic["forecast_market_support_top_signal"]["name"], "liquidity_sweep_high")
 
     def test_lane_only_verification_blockers_are_not_p0_with_live_ready_lane(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
