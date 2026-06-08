@@ -230,6 +230,13 @@ class SelfImprovementAuditor:
             )
         )
         findings.extend(
+            _forecast_history_findings(
+                run_id=run_id,
+                path=forecast_history_path,
+                target_open=target_open,
+            )
+        )
+        findings.extend(
             _projection_findings(
                 run_id=run_id,
                 path=projection_ledger_path,
@@ -1116,6 +1123,138 @@ def _market_close_attribution_findings(
     ]
 
 
+def _forecast_history_findings(
+    *,
+    run_id: str,
+    path: Path,
+    target_open: bool,
+) -> list[dict[str, Any]]:
+    rows, malformed, error = _read_jsonl(path)
+    out: list[dict[str, Any]] = []
+    if error is not None:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1" if target_open else "P2",
+                layer="forecast",
+                code="FORECAST_HISTORY_UNREADABLE",
+                message=f"forecast history is unreadable: {path}: {error}",
+                next_action="Repair forecast_history.jsonl before using forecast before/after metrics or forecast-derived live confidence.",
+            )
+        )
+        return out
+    if malformed:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="FORECAST_HISTORY_MALFORMED_ROWS",
+                message=f"forecast history has {malformed} malformed row(s)",
+                next_action="Repair malformed forecast history rows so forecast quality is measured on a stable sample.",
+                evidence={"malformed_rows": malformed},
+            )
+        )
+    if target_open and not rows:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="FORECAST_HISTORY_EMPTY",
+                message="target is open but forecast_history has no rows",
+                next_action="Record forecast_history before generating live candidates; otherwise prediction accuracy cannot be learned.",
+            )
+        )
+        return out
+
+    cycle_pair_counts: dict[tuple[str, str], int] = {}
+    no_cycle_clusters: dict[tuple[str, str, str], int] = {}
+    direction_counts: dict[str, int] = {}
+    pair_counts: dict[str, int] = {}
+    with_cycle = 0
+    no_cycle = 0
+    for row in rows:
+        pair = str(row.get("pair") or "UNKNOWN")
+        direction = str(row.get("direction") or "UNKNOWN").upper()
+        cycle_id = str(row.get("cycle_id") or "").strip()
+        direction_counts[direction] = direction_counts.get(direction, 0) + 1
+        pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        if cycle_id:
+            with_cycle += 1
+            key = (cycle_id, pair)
+            cycle_pair_counts[key] = cycle_pair_counts.get(key, 0) + 1
+        else:
+            no_cycle += 1
+            second = str(row.get("timestamp_utc") or "").split(".", maxsplit=1)[0]
+            key = (pair, second, direction)
+            no_cycle_clusters[key] = no_cycle_clusters.get(key, 0) + 1
+
+    duplicate_cycle_pairs = [
+        {"cycle_id": cycle_id, "pair": pair, "count": count}
+        for (cycle_id, pair), count in cycle_pair_counts.items()
+        if count > 1
+    ]
+    duplicate_cycle_pairs.sort(key=lambda item: (-int(item["count"]), str(item["pair"]), str(item["cycle_id"])))
+    if duplicate_cycle_pairs:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="forecast",
+                code="FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR",
+                message=(
+                    f"forecast_history has {len(duplicate_cycle_pairs)} duplicate cycle_id/pair group(s); "
+                    "forecast quality and projection learning can be double-counted"
+                ),
+                next_action=(
+                    "Fix forecast recording/dedupe so one cycle contributes one forecast row per pair before "
+                    "treating before/after forecast improvement as reliable."
+                ),
+                evidence={
+                    "rows": len(rows),
+                    "with_cycle": with_cycle,
+                    "no_cycle": no_cycle,
+                    "duplicate_cycle_pair_groups": len(duplicate_cycle_pairs),
+                    "examples": duplicate_cycle_pairs[:8],
+                    "direction_counts": dict(sorted(direction_counts.items())),
+                    "top_pairs": _top_count_items(pair_counts, limit=8),
+                },
+            )
+        )
+
+    phantom_clusters = [
+        {"pair": pair, "timestamp_second": second, "direction": direction, "count": count}
+        for (pair, second, direction), count in no_cycle_clusters.items()
+        if count >= 3
+    ]
+    phantom_clusters.sort(key=lambda item: (-int(item["count"]), str(item["pair"]), str(item["timestamp_second"])))
+    if phantom_clusters:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P2",
+                layer="forecast",
+                code="FORECAST_HISTORY_LEGACY_PHANTOM_CLUSTERS",
+                message=(
+                    f"forecast_history has {len(phantom_clusters)} old no-cycle same-second cluster(s); "
+                    "legacy forecast evaluation must dedupe them"
+                ),
+                next_action=(
+                    "Keep legacy no-cycle rows deduped by pair/second/direction/confidence/target/invalidation "
+                    "when measuring forecast improvement."
+                ),
+                evidence={
+                    "rows": len(rows),
+                    "no_cycle": no_cycle,
+                    "phantom_clusters": len(phantom_clusters),
+                    "examples": phantom_clusters[:8],
+                },
+            )
+        )
+    return out
+
+
 def _projection_findings(
     *,
     run_id: str,
@@ -1651,6 +1790,13 @@ def _result_status_counts(results: list[dict[str, Any]]) -> dict[str, int]:
         status = str(item.get("status") or "UNKNOWN")
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+def _top_count_items(counts: dict[str, int], *, limit: int) -> list[dict[str, Any]]:
+    return [
+        {"key": key, "count": count}
+        for key, count in sorted(counts.items(), key=lambda item: (-int(item[1]), str(item[0])))[:limit]
+    ]
 
 
 def _mechanism_ablation_findings(

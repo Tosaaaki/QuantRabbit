@@ -1322,7 +1322,7 @@ class GPTTraderBrainTest(unittest.TestCase):
                     "attack:advice",
                     f"attack:lane:{LANE_ID}",
                     "self_improvement:audit",
-                    "self_improvement:profitability",
+                    "self_improvement:forecast",
                     "self_improvement:finding:PROJECTION_LEDGER_EXPIRED_PENDING",
                 ]
             )

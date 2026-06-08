@@ -249,6 +249,77 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["evidence"]["candidate_count"], 1)
         self.assertEqual(finding["evidence"]["with_context_refs"], 0)
 
+    def test_forecast_history_duplicate_cycle_pair_is_p1_measurement_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["forecast_history"].write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "timestamp_utc": (_NOW + timedelta(seconds=idx)).isoformat(),
+                            "cycle_id": "cycle-dup",
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.62,
+                        }
+                    )
+                    for idx in range(2)
+                )
+                + "\n"
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR", codes)
+        finding = codes["FORECAST_HISTORY_DUPLICATE_CYCLE_PAIR"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["duplicate_cycle_pair_groups"], 1)
+        self.assertEqual(finding["evidence"]["examples"][0]["pair"], "EUR_USD")
+        self.assertEqual(finding["evidence"]["examples"][0]["count"], 2)
+
+    def test_legacy_forecast_history_phantom_clusters_are_p2_dedupe_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["forecast_history"].write_text(
+                "\n".join(
+                    json.dumps(
+                        {
+                            "timestamp_utc": _NOW.isoformat(),
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.62,
+                        }
+                    )
+                    for _idx in range(3)
+                )
+                + "\n"
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("FORECAST_HISTORY_LEGACY_PHANTOM_CLUSTERS", codes)
+        finding = codes["FORECAST_HISTORY_LEGACY_PHANTOM_CLUSTERS"]
+        self.assertEqual(finding["priority"], "P2")
+        self.assertEqual(finding["evidence"]["phantom_clusters"], 1)
+
     def test_market_context_ref_on_intent_satisfies_context_evidence_audit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

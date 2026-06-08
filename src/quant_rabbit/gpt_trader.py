@@ -2135,6 +2135,9 @@ def _allowed_refs(
         for finding in self_improvement_audit.get("findings", []) or []:
             if not isinstance(finding, dict):
                 continue
+            layer = str(finding.get("layer") or "").strip()
+            if layer:
+                refs.append(f"self_improvement:{layer}")
             code = str(finding.get("code") or "").strip()
             if code:
                 refs.append(f"self_improvement:finding:{code}")
