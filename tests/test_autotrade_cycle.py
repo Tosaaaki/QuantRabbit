@@ -2447,6 +2447,123 @@ class AutoTradeCycleTest(unittest.TestCase):
             else:
                 os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
 
+    def test_reuse_market_artifacts_keeps_structural_close_advisory_without_opt_in(self) -> None:
+        prior_close = os.environ.get("QR_DISABLE_AUTO_CLOSE")
+        prior_sl = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+        prior_struct = os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE")
+        os.environ["QR_DISABLE_AUTO_CLOSE"] = "1"
+        os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+        os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                data_root = root / "data"
+                data_root.mkdir()
+                now = datetime(2026, 6, 5, 16, 0, tzinfo=timezone.utc)
+                stale_snapshot = BrokerSnapshot(
+                    fetched_at_utc=now - timedelta(minutes=20),
+                    positions=(
+                        BrokerPosition(
+                            trade_id="472071",
+                            pair="EUR_USD",
+                            side=Side.LONG,
+                            units=6000,
+                            entry_price=1.34702,
+                            unrealized_pl_jpy=-50.0,
+                            take_profit=1.34853,
+                            stop_loss=None,
+                            owner=Owner.TRADER,
+                        ),
+                    ),
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.34710, 1.34720, timestamp_utc=now - timedelta(minutes=20))},
+                )
+                fresh_snapshot = replace(
+                    stale_snapshot,
+                    fetched_at_utc=now,
+                    positions=(replace(stale_snapshot.positions[0], unrealized_pl_jpy=-2981.9),),
+                    quotes={"EUR_USD": Quote("EUR_USD", 1.34392, 1.34405, timestamp_utc=now)},
+                )
+                snapshot_path = root / "broker_snapshot.json"
+                snapshot_path.write_text(_snapshot_to_json(stale_snapshot) + "\n")
+                intents_path = root / "order_intents.json"
+                intents_path.write_text(json.dumps({"results": []}) + "\n")
+                (data_root / "entry_thesis_ledger.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "timestamp_utc": "2026-06-05T11:19:50Z",
+                            "trade_id": "472071",
+                            "pair": "EUR_USD",
+                            "side": "LONG",
+                            "entry_price": 1.34702,
+                            "forecast_direction": "UP",
+                            "forecast_confidence": 0.58,
+                            "regime": "RANGE",
+                            "invalidation_price": 1.34679,
+                            "target_price": 1.34853,
+                            "key_drivers": ["failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"],
+                        }
+                    )
+                    + "\n"
+                )
+                pair_charts_path = _entry_invalidation_pair_charts(root)
+                client = FakeCycleClient(fresh_snapshot)
+
+                class CycleWithStaticBrain(AutoTradeCycle):
+                    def _brain(self):  # type: ignore[override]
+                        class Brain:
+                            def run(self, snapshot: BrokerSnapshot) -> TraderDecision:
+                                (root / "decision.json").write_text(json.dumps({"scores": []}) + "\n")
+                                return TraderDecision(
+                                    action=ACTION_NO_TRADE,
+                                    selected_lane_id=None,
+                                    generated_at_utc=now.isoformat(),
+                                    reason="no entry while position management handles invalidation",
+                                    scores=(),
+                                    positions=len(snapshot.positions),
+                                    orders=len(snapshot.orders),
+                                )
+
+                        return Brain()
+
+                summary = CycleWithStaticBrain(
+                    client=client,
+                    snapshot_path=snapshot_path,
+                    intents_path=intents_path,
+                    intent_report_path=root / "intents.md",
+                    decision_path=root / "decision.json",
+                    decision_report_path=root / "decision.md",
+                    position_management_path=data_root / "position_management.json",
+                    position_management_report_path=root / "position_management.md",
+                    position_execution_path=root / "position_execution.json",
+                    position_execution_report_path=root / "position_execution.md",
+                    live_order_output_path=root / "live_order.json",
+                    live_order_report_path=root / "live_order.md",
+                    report_path=root / "autotrade.md",
+                    pair_charts_path=pair_charts_path,
+                    target_state_path=None,
+                    refresh_market_story=False,
+                    reuse_market_artifacts=True,
+                    live_enabled=True,
+                ).run(send=True)
+
+                self.assertEqual(summary.position_management_action, "HOLD_PROTECTED")
+                self.assertEqual(summary.position_execution_status, "NO_ACTION")
+                self.assertEqual(client.trades_closed, [])
+                self.assertIn("QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1", (root / "position_management.md").read_text())
+        finally:
+            if prior_close is None:
+                os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_DISABLE_AUTO_CLOSE"] = prior_close
+            if prior_sl is None:
+                os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+            else:
+                os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl
+            if prior_struct is None:
+                os.environ.pop("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", None)
+            else:
+                os.environ["QR_ALLOW_STRUCTURAL_AUTO_CLOSE"] = prior_struct
+
     def test_gpt_handoff_runs_learning_audit_before_decision_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
