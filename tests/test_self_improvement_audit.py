@@ -50,6 +50,24 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             self.assertEqual(run_count, 1)
             self.assertEqual(finding_count, summary.findings)
 
+    def test_missing_entry_thesis_ledger_without_open_trades_is_not_a_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["entry_thesis"].unlink()
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        self.assertNotIn("ENTRY_THESIS_LEDGER_UNREADABLE", codes)
+        self.assertEqual(summary.p0_findings, 0)
+
     def test_history_dedupes_identical_retry_inside_operational_window(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

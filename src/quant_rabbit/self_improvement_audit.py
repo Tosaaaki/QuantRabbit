@@ -1671,11 +1671,12 @@ def _entry_thesis_findings(
 ) -> list[dict[str, Any]]:
     rows, malformed, error = _read_jsonl(path)
     if error is not None:
-        priority = "P0" if active_trade_ids else "P1"
+        if not active_trade_ids:
+            return []
         return [
             _finding(
                 run_id=run_id,
-                priority=priority,
+                priority="P0",
                 layer="position_memory",
                 code="ENTRY_THESIS_LEDGER_UNREADABLE",
                 message=f"entry thesis ledger is unreadable: {path}: {error}",
