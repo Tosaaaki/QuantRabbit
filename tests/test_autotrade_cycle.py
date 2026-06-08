@@ -631,10 +631,27 @@ class AutoTradeCycleTest(unittest.TestCase):
                 quotes={"EUR_USD": Quote("EUR_USD", 1.1710, 1.1711, timestamp_utc=now)},
             )
             ledger_path = root / "execution_ledger.db"
+            gpt_decision_path = root / "gpt_decision.json"
+            gpt_decision_path.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CLOSE",
+                            "selected_lane_id": None,
+                            "close_trade_ids": ["471232"],
+                        },
+                        "verification_issues": [],
+                    }
+                )
+                + "\n"
+            )
             cycle = AutoTradeCycle(
                 client=Client(snapshot),
                 live_enabled=True,
                 snapshot_path=root / "broker.json",
+                gpt_decision_path=gpt_decision_path,
                 position_execution_path=root / "pe.json",
                 position_execution_report_path=root / "pe.md",
                 execution_ledger_db_path=ledger_path,
@@ -679,6 +696,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                 ).fetchall()
 
         self.assertIn(("GATEWAY_TRADE_CLOSE_SENT", "471232", "GPT_CLOSE"), events)
+        self.assertIn(("GATEWAY_GPT_CLOSE_ACCEPTED", "471232", "GPT_CLOSE_ACCEPTED"), events)
         self.assertIn(("GATEWAY_POSITION_NO_ACTION", "471232", "HOLD_SL_FREE"), events)
 
     def test_accepted_gpt_close_uses_refreshed_snapshot_before_send(self) -> None:

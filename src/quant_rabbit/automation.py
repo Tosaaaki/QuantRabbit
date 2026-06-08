@@ -2554,6 +2554,10 @@ class AutoTradeCycle:
                 f"close_trade_ids={list(gpt_summary.close_trade_ids)}\n"
             )
             return no_action
+        self._record_execution_ledger_receipt(
+            kind="gpt_decision",
+            receipt_path=self.gpt_decision_path,
+        )
         close_snapshot = snapshot
         if send and self.live_enabled:
             close_snapshot = self._refresh_snapshot(_snapshot_refresh_pairs(snapshot))

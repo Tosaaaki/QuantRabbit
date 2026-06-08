@@ -716,6 +716,46 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(summary.p0_findings, 0)
         self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
 
+    def test_accepted_gpt_close_without_position_gateway_is_separate_from_unattributed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(files["execution_db"], include_gateway_close=False)
+            with sqlite3.connect(files["execution_db"]) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "gpt-close-accepted",
+                        (_NOW - timedelta(hours=1, minutes=10)).isoformat(),
+                        "GATEWAY_GPT_CLOSE_ACCEPTED",
+                        "",
+                        "",
+                        "T42",
+                        "EUR_USD",
+                        "",
+                        None,
+                        None,
+                        "GPT_CLOSE_ACCEPTED",
+                    ),
+                )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
+        finding = codes["ACCEPTED_GPT_CLOSE_WITHOUT_POSITION_GATEWAY_RECEIPT"]
+        self.assertEqual(finding["priority"], "P1")
+        self.assertEqual(finding["evidence"]["accepted_gpt_close_without_position_gateway_count"], 1)
+        self.assertEqual(finding["evidence"]["examples"][0]["trade_id"], "T42")
+
     def test_rejected_close_for_closed_trades_is_not_current_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -220,6 +220,45 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(row[0:5], ("GATEWAY_TRADE_CLOSE_SENT", "900", "T-100", "EUR_USD", "REVIEW_EXIT"))
             self.assertEqual(json.loads(row[5]), ["900", "901"])
 
+    def test_records_accepted_gpt_close_receipt_for_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "gpt_trader_decision.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CLOSE",
+                            "selected_lane_id": None,
+                            "close_trade_ids": ["T-100", "T-200"],
+                        },
+                        "verification_issues": [],
+                    }
+                )
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.record_gateway_receipt(kind="gpt_decision", receipt_path=receipt)
+
+            self.assertEqual(summary.events_inserted, 2)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                rows = conn.execute(
+                    """
+                    SELECT event_type, trade_id, exit_reason
+                    FROM execution_events
+                    ORDER BY trade_id
+                    """
+                ).fetchall()
+            self.assertEqual(
+                rows,
+                [
+                    ("GATEWAY_GPT_CLOSE_ACCEPTED", "T-100", "GPT_CLOSE_ACCEPTED"),
+                    ("GATEWAY_GPT_CLOSE_ACCEPTED", "T-200", "GPT_CLOSE_ACCEPTED"),
+                ],
+            )
+
     def test_init_backfills_gateway_position_order_id_from_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

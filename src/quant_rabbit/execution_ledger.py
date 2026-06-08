@@ -321,6 +321,8 @@ def _events_from_gateway_receipt(kind: str, payload: dict[str, Any], now: str) -
             for index, action in enumerate(payload.get("actions", []) or [])
             if isinstance(action, dict)
         ]
+    if kind == "gpt_decision":
+        return _gateway_gpt_close_events(payload, now=now)
     return []
 
 
@@ -429,6 +431,53 @@ def _gateway_position_exit_reason(action: dict[str, Any]) -> str | None:
         if "gpt-close: accepted gpt_trader close receipt passed gate a/b" in reason_text:
             return "GPT_CLOSE"
     return management_action
+
+
+def _gateway_gpt_close_events(payload: dict[str, Any], *, now: str) -> list[dict[str, Any]]:
+    status = str(payload.get("status") or "").upper()
+    decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else payload
+    action = str(decision.get("action") or "").upper() if isinstance(decision, dict) else ""
+    if status != "ACCEPTED" or action != "CLOSE":
+        return []
+    close_trade_ids = decision.get("close_trade_ids") if isinstance(decision.get("close_trade_ids"), list) else []
+    ts = str(payload.get("generated_at_utc") or now)
+    raw = {
+        "generated_at_utc": payload.get("generated_at_utc"),
+        "status": payload.get("status"),
+        "decision": decision,
+        "verification_issues": payload.get("verification_issues") or [],
+    }
+    events: list[dict[str, Any]] = []
+    for index, trade_id_value in enumerate(close_trade_ids):
+        trade_id = str(trade_id_value or "").strip()
+        if not trade_id:
+            continue
+        events.append(
+            {
+                "event_uid": f"gateway:gpt_decision:{ts}:{index}:GATEWAY_GPT_CLOSE_ACCEPTED:{trade_id}",
+                "ts_utc": ts,
+                "source": "gateway",
+                "event_type": "GATEWAY_GPT_CLOSE_ACCEPTED",
+                "lane_id": _text(decision.get("selected_lane_id")),
+                "order_id": None,
+                "trade_id": trade_id,
+                "client_order_id": None,
+                "pair": None,
+                "side": None,
+                "units": None,
+                "price": None,
+                "tp": None,
+                "sl": None,
+                "realized_pl_jpy": None,
+                "financing_jpy": None,
+                "exit_reason": "GPT_CLOSE_ACCEPTED",
+                "oanda_transaction_id": None,
+                "related_transaction_ids_json": "[]",
+                "raw_json": _json(raw),
+                "inserted_at_utc": now,
+            }
+        )
+    return events
 
 
 def _event(

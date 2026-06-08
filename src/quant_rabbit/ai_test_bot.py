@@ -1301,9 +1301,11 @@ def _close_gate_ablation_payload(
                 return base
             gateway_order_sent_events = _count_events(conn, "GATEWAY_ORDER_SENT")
             gateway_close_sent_events = _count_events(conn, "GATEWAY_TRADE_CLOSE_SENT")
+            gateway_gpt_close_accepted_events = _count_events(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
             attributed_trade_ids = _gateway_attributed_entry_trade_ids(conn, columns)
             gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
             gateway_close_order_ids = _event_order_ids(conn, "GATEWAY_TRADE_CLOSE_SENT", columns)
+            gateway_gpt_close_accepted_trade_ids = _event_trade_ids(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
             gateway_close_reasons_by_trade_id = _event_trade_id_reasons(
                 conn,
                 "GATEWAY_TRADE_CLOSE_SENT",
@@ -1328,6 +1330,7 @@ def _close_gate_ablation_payload(
                 "reason": "execution ledger has no closed/reduced trade events",
                 "gateway_order_sent_events": gateway_order_sent_events,
                 "gateway_close_sent_events": gateway_close_sent_events,
+                "gateway_gpt_close_accepted_events": gateway_gpt_close_accepted_events,
                 "broker_trade_close_accept_events": broker_close_accept["events"],
                 "broker_trade_close_accept_trade_ids": len(broker_close_accept["trade_ids"]),
                 "broker_trade_close_accept_order_ids": len(broker_close_accept["order_ids"]),
@@ -1348,6 +1351,8 @@ def _close_gate_ablation_payload(
     gateway_loss_market_net = 0.0
     gateway_gpt_loss_market_count = 0
     gateway_gpt_loss_market_net = 0.0
+    gateway_gpt_accepted_without_sent_loss_market_count = 0
+    gateway_gpt_accepted_without_sent_loss_market_net = 0.0
     stale_gpt_satisfied_loss_market_count = 0
     stale_gpt_satisfied_loss_market_net = 0.0
     gateway_review_exit_loss_market_count = 0
@@ -1380,6 +1385,7 @@ def _close_gate_ablation_payload(
         gateway_close_reasons = set(gateway_close_reasons_by_trade_id.get(trade_id, set()))
         gateway_close_reasons.update(gateway_close_reasons_by_order_id.get(order_id, set()))
         gateway_gpt_close = "GPT_CLOSE" in gateway_close_reasons
+        gateway_gpt_close_accepted = trade_id in gateway_gpt_close_accepted_trade_ids
         gateway_review_exit = "REVIEW_EXIT" in gateway_close_reasons and not gateway_gpt_close
         gateway_other_close = gateway_close_sent and not gateway_gpt_close and not gateway_review_exit
         stale_gpt_close_satisfied = trade_id in stale_close_satisfied_trade_ids
@@ -1391,11 +1397,17 @@ def _close_gate_ablation_payload(
             trade_id=trade_id,
             order_id=order_id,
         )
-        close_order_provenance = gateway_close_sent or broker_trade_close_accepted
+        if gateway_gpt_close_accepted and broker_trade_close_accepted:
+            broker_trade_close_sources = set(broker_trade_close_sources)
+            if "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in broker_trade_close_sources:
+                broker_trade_close_sources.discard("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE")
+            broker_trade_close_sources.add("GATEWAY_GPT_CLOSE_ACCEPTED")
+        close_order_provenance = gateway_close_sent or gateway_gpt_close_accepted or broker_trade_close_accepted
         close_source = _primary_close_source(
             exit_reason=exit_reason,
             gateway_close_sent=gateway_close_sent,
             gateway_close_reasons=gateway_close_reasons,
+            gateway_gpt_close_accepted=gateway_gpt_close_accepted,
             broker_trade_close_accepted=broker_trade_close_accepted,
             broker_trade_close_sources=broker_trade_close_sources,
             stale_gpt_close_satisfied=stale_gpt_close_satisfied,
@@ -1426,6 +1438,8 @@ def _close_gate_ablation_payload(
                 "gateway_close_sent_net_jpy": 0.0,
                 "gateway_gpt_close_count": 0,
                 "gateway_gpt_close_net_jpy": 0.0,
+                "gateway_gpt_close_accepted_count": 0,
+                "gateway_gpt_close_accepted_net_jpy": 0.0,
                 "gateway_review_exit_count": 0,
                 "gateway_review_exit_net_jpy": 0.0,
                 "gateway_other_close_count": 0,
@@ -1449,6 +1463,11 @@ def _close_gate_ablation_payload(
         if gateway_gpt_close:
             segment["gateway_gpt_close_count"] = int(segment["gateway_gpt_close_count"]) + 1
             segment["gateway_gpt_close_net_jpy"] = _round(float(segment["gateway_gpt_close_net_jpy"]) + pl)
+        if gateway_gpt_close_accepted:
+            segment["gateway_gpt_close_accepted_count"] = int(segment["gateway_gpt_close_accepted_count"]) + 1
+            segment["gateway_gpt_close_accepted_net_jpy"] = _round(
+                float(segment["gateway_gpt_close_accepted_net_jpy"]) + pl
+            )
         if gateway_review_exit:
             segment["gateway_review_exit_count"] = int(segment["gateway_review_exit_count"]) + 1
             segment["gateway_review_exit_net_jpy"] = _round(float(segment["gateway_review_exit_net_jpy"]) + pl)
@@ -1480,6 +1499,7 @@ def _close_gate_ablation_payload(
                     "net_jpy": 0.0,
                     "gateway_close_sent_count": 0,
                     "gateway_gpt_close_count": 0,
+                    "gateway_gpt_close_accepted_count": 0,
                     "gateway_review_exit_count": 0,
                     "gateway_other_close_count": 0,
                     "stale_gpt_close_satisfied_count": 0,
@@ -1496,6 +1516,8 @@ def _close_gate_ablation_payload(
                 daily["gateway_close_sent_count"] = int(daily["gateway_close_sent_count"]) + 1
             if gateway_gpt_close:
                 daily["gateway_gpt_close_count"] = int(daily["gateway_gpt_close_count"]) + 1
+            if gateway_gpt_close_accepted:
+                daily["gateway_gpt_close_accepted_count"] = int(daily["gateway_gpt_close_accepted_count"]) + 1
             if gateway_review_exit:
                 daily["gateway_review_exit_count"] = int(daily["gateway_review_exit_count"]) + 1
             if gateway_other_close:
@@ -1528,6 +1550,7 @@ def _close_gate_ablation_payload(
                     "bot_attributed": bot_attributed,
                     "gateway_close_sent": gateway_close_sent,
                     "gateway_close_reasons": sorted(gateway_close_reasons),
+                    "gateway_gpt_close_accepted": gateway_gpt_close_accepted,
                     "stale_gpt_close_satisfied": stale_gpt_close_satisfied,
                     "broker_trade_close_accepted": broker_trade_close_accepted,
                     "broker_trade_close_sources": sorted(broker_trade_close_sources),
@@ -1544,6 +1567,9 @@ def _close_gate_ablation_payload(
             if gateway_gpt_close:
                 gateway_gpt_loss_market_count += 1
                 gateway_gpt_loss_market_net += pl
+            if gateway_gpt_close_accepted and not gateway_close_sent:
+                gateway_gpt_accepted_without_sent_loss_market_count += 1
+                gateway_gpt_accepted_without_sent_loss_market_net += pl
             if stale_gpt_close_satisfied:
                 stale_gpt_satisfied_loss_market_count += 1
                 stale_gpt_satisfied_loss_market_net += pl
@@ -1577,6 +1603,9 @@ def _close_gate_ablation_payload(
                 "bot_attributed_net_jpy": _round(float(item["bot_attributed_net_jpy"])),
                 "gateway_close_sent_net_jpy": _round(float(item["gateway_close_sent_net_jpy"])),
                 "gateway_gpt_close_net_jpy": _round(float(item["gateway_gpt_close_net_jpy"])),
+                "gateway_gpt_close_accepted_net_jpy": _round(
+                    float(item["gateway_gpt_close_accepted_net_jpy"])
+                ),
                 "gateway_review_exit_net_jpy": _round(float(item["gateway_review_exit_net_jpy"])),
                 "gateway_other_close_net_jpy": _round(float(item["gateway_other_close_net_jpy"])),
                 "broker_trade_close_accepted_net_jpy": _round(
@@ -1618,6 +1647,7 @@ def _close_gate_ablation_payload(
             "bot_attributed_close_events": bot_attributed_count,
             "gateway_order_sent_events": gateway_order_sent_events,
             "gateway_close_sent_events": gateway_close_sent_events,
+            "gateway_gpt_close_accepted_events": gateway_gpt_close_accepted_events,
             "broker_trade_close_accept_events": broker_close_accept["events"],
             "broker_trade_close_accept_trade_ids": len(broker_close_accept["trade_ids"]),
             "broker_trade_close_accept_order_ids": len(broker_close_accept["order_ids"]),
@@ -1630,6 +1660,12 @@ def _close_gate_ablation_payload(
             "gateway_loss_side_market_close_net_jpy": _round(gateway_loss_market_net),
             "gateway_gpt_close_loss_side_market_close_count": gateway_gpt_loss_market_count,
             "gateway_gpt_close_loss_side_market_close_net_jpy": _round(gateway_gpt_loss_market_net),
+            "gateway_gpt_close_accepted_without_sent_loss_side_market_close_count": (
+                gateway_gpt_accepted_without_sent_loss_market_count
+            ),
+            "gateway_gpt_close_accepted_without_sent_loss_side_market_close_net_jpy": _round(
+                gateway_gpt_accepted_without_sent_loss_market_net
+            ),
             "stale_gpt_close_satisfied_loss_side_market_close_count": stale_gpt_satisfied_loss_market_count,
             "stale_gpt_close_satisfied_loss_side_market_close_net_jpy": _round(
                 stale_gpt_satisfied_loss_market_net
@@ -1682,6 +1718,7 @@ def _primary_close_source(
     exit_reason: str,
     gateway_close_sent: bool,
     gateway_close_reasons: set[str],
+    gateway_gpt_close_accepted: bool,
     broker_trade_close_accepted: bool,
     broker_trade_close_sources: set[str],
     stale_gpt_close_satisfied: bool,
@@ -1696,6 +1733,8 @@ def _primary_close_source(
         return f"GATEWAY:{reason or 'CLOSE'}"
     if stale_gpt_close_satisfied:
         return "GATEWAY:STALE_GPT_CLOSE_SATISFIED"
+    if gateway_gpt_close_accepted:
+        return "GATEWAY:GPT_CLOSE_ACCEPTED_NO_POSITION_RECEIPT"
     if broker_trade_close_accepted:
         source = next((item for item in sorted(broker_trade_close_sources) if item), "")
         return f"BROKER_ACCEPT:{source or 'UNKNOWN'}"
@@ -2456,6 +2495,19 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
                 f"({direct_count} close(s)); treat them as external/direct exit drag, not as proof that "
                 "news weighting or autonomous Gate A-B should be relaxed"
             )
+    gpt_accepted_without_gateway_loss_count = int(
+        payload.get("gateway_gpt_close_accepted_without_sent_loss_side_market_close_count") or 0
+    )
+    gpt_accepted_without_gateway_loss_net = float(
+        payload.get("gateway_gpt_close_accepted_without_sent_loss_side_market_close_net_jpy") or 0.0
+    )
+    if gpt_accepted_without_gateway_loss_count:
+        yield (
+            "GPT CLOSE accepted receipts exist without matching local position-gateway SENT receipts "
+            f"({gpt_accepted_without_gateway_loss_count} loss-side close(s), net "
+            f"{gpt_accepted_without_gateway_loss_net:.0f} JPY); repair close receipt persistence before "
+            "judging Gate A/B profitability"
+        )
     source_segments = payload.get("close_source_segments")
     if isinstance(source_segments, list):
         negative_segments = [

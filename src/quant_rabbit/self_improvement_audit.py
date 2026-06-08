@@ -1051,7 +1051,17 @@ def _market_close_attribution_findings(
                         e.realized_pl_jpy,
                         e.exit_reason,
                         entries.gateway_lane_id,
-                        entries.position_side
+                        entries.position_side,
+                        CASE
+                            WHEN EXISTS (
+                                SELECT 1
+                                FROM execution_events c
+                                WHERE c.event_type = 'GATEWAY_GPT_CLOSE_ACCEPTED'
+                                  AND c.trade_id = e.trade_id
+                            )
+                            THEN 1
+                            ELSE 0
+                        END AS gpt_close_accepted
                     FROM execution_events e
                     INNER JOIN entries ON entries.trade_id = e.trade_id
                     WHERE e.event_type IN ('TRADE_CLOSED', 'TRADE_REDUCED')
@@ -1076,9 +1086,13 @@ def _market_close_attribution_findings(
         return []
     cutoff = now - timedelta(hours=max(0.0, window_hours))
     unattributed: list[sqlite3.Row] = []
+    gpt_accepted_without_position_gateway: list[sqlite3.Row] = []
     broker_accept_count = 0
     broker_accept_source_counts: dict[str, int] = {}
     broker_accept_sources_by_trade: dict[str, list[str]] = {}
+    gpt_accept_broker_accept_count = 0
+    gpt_accept_broker_source_counts: dict[str, int] = {}
+    gpt_accept_broker_sources_by_trade: dict[str, list[str]] = {}
     for row in rows:
         ts = _parse_utc(row["ts_utc"])
         if ts is None or ts < cutoff:
@@ -1086,7 +1100,6 @@ def _market_close_attribution_findings(
         value = _maybe_float(row["realized_pl_jpy"])
         if value is None or value >= 0:
             continue
-        unattributed.append(row)
         trade_id = str(row["trade_id"] or "").strip()
         order_id = str(row["order_id"] or "").strip()
         sources = _broker_trade_close_accept_sources(
@@ -1094,13 +1107,74 @@ def _market_close_attribution_findings(
             trade_id=trade_id,
             order_id=order_id,
         )
+        if int(row["gpt_close_accepted"] or 0):
+            if sources:
+                sources = set(sources)
+                if "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in sources:
+                    sources.discard("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE")
+                sources.add("GATEWAY_GPT_CLOSE_ACCEPTED")
+            gpt_accepted_without_position_gateway.append(row)
+            if sources:
+                gpt_accept_broker_accept_count += 1
+                gpt_accept_broker_sources_by_trade[trade_id] = sorted(sources)
+                for source in sources:
+                    gpt_accept_broker_source_counts[source] = gpt_accept_broker_source_counts.get(source, 0) + 1
+            continue
+        unattributed.append(row)
         if sources:
             broker_accept_count += 1
             broker_accept_sources_by_trade[trade_id] = sorted(sources)
             for source in sources:
                 broker_accept_source_counts[source] = broker_accept_source_counts.get(source, 0) + 1
+    findings: list[dict[str, Any]] = []
+    if gpt_accepted_without_position_gateway:
+        gpt_net = sum(float(_maybe_float(row["realized_pl_jpy"]) or 0.0) for row in gpt_accepted_without_position_gateway)
+        findings.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="execution_ledger",
+                code="ACCEPTED_GPT_CLOSE_WITHOUT_POSITION_GATEWAY_RECEIPT",
+                message=(
+                    f"{len(gpt_accepted_without_position_gateway)} negative bot-attributed market close event(s) "
+                    "have an accepted GPT close receipt but lack a matching position-gateway close-sent receipt"
+                ),
+                next_action=(
+                    "Trace why accepted GPT CLOSE receipts did not persist a matching position_execution "
+                    "GATEWAY_TRADE_CLOSE_SENT receipt, then keep these separate from direct/manual closes when "
+                    "tuning CLOSE Gate A/B."
+                ),
+                evidence={
+                    "window_hours": window_hours,
+                    "accepted_gpt_close_without_position_gateway_count": len(gpt_accepted_without_position_gateway),
+                    "accepted_gpt_close_without_position_gateway_net_jpy": round(gpt_net, 4),
+                    "broker_trade_close_accept_count": gpt_accept_broker_accept_count,
+                    "broker_trade_close_accept_source_counts": gpt_accept_broker_source_counts,
+                    "examples": [
+                        {
+                            "ts_utc": str(row["ts_utc"] or ""),
+                            "event_uid": str(row["event_uid"] or ""),
+                            "event_type": str(row["event_type"] or ""),
+                            "trade_id": str(row["trade_id"] or ""),
+                            "close_order_id": str(row["order_id"] or ""),
+                            "pair": str(row["pair"] or ""),
+                            "side": str(row["side"] or row["position_side"] or ""),
+                            "original_side": str(row["position_side"] or ""),
+                            "gateway_lane_id": str(row["gateway_lane_id"] or ""),
+                            "realized_pl_jpy": _maybe_float(row["realized_pl_jpy"]),
+                            "exit_reason": str(row["exit_reason"] or ""),
+                            "broker_trade_close_accept_sources": gpt_accept_broker_sources_by_trade.get(
+                                str(row["trade_id"] or "").strip(),
+                                [],
+                            ),
+                        }
+                        for row in gpt_accepted_without_position_gateway[:8]
+                    ],
+                },
+            )
+        )
     if not unattributed:
-        return []
+        return findings
     net = sum(float(_maybe_float(row["realized_pl_jpy"]) or 0.0) for row in unattributed)
     examples = [
         {
@@ -1132,7 +1206,7 @@ def _market_close_attribution_findings(
             "Reconcile broker close provenance for these market-close outcomes, then persist every direct close_trade "
             "path as a position-execution receipt before tuning exits."
         )
-    return [
+    findings.append(
         _finding(
             run_id=run_id,
             priority="P1",
@@ -1152,7 +1226,8 @@ def _market_close_attribution_findings(
                 "examples": examples,
             },
         )
-    ]
+    )
+    return findings
 
 
 def _broker_trade_close_accept_rows(conn: sqlite3.Connection, columns: set[str]) -> list[sqlite3.Row]:
@@ -1946,6 +2021,9 @@ def _mechanism_ablation_findings(
     gateway_review_loss = int(_maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0)
     gateway_review_loss_net = _maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")) or 0.0
     gateway_gpt_loss = int(_maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0)
+    gateway_gpt_accepted_without_sent_loss = int(
+        _maybe_float(close_gate.get("gateway_gpt_close_accepted_without_sent_loss_side_market_close_count")) or 0
+    )
     if status != "MEASURED" or not close_events:
         return []
     if (
@@ -1965,6 +2043,11 @@ def _mechanism_ablation_findings(
                 "Broker accepted TRADE_CLOSE loss events look direct/manual: no local gateway receipt or trader "
                 "client extension identified. Treat them as external/direct exit drag, persist explicit close "
                 "source tags, and do not use them as Gate A/B or news-weight evidence."
+            )
+        elif broker_without_gateway_sources.get("GATEWAY_GPT_CLOSE_ACCEPTED"):
+            next_action = (
+                "Accepted GPT CLOSE loss events are missing matching position_execution SENT receipts. Repair "
+                "close receipt persistence and then ablate Gate A/B only on fully attributable GPT-close fills."
             )
         else:
             next_action = (
@@ -2000,6 +2083,9 @@ def _mechanism_ablation_findings(
                 "gateway_close_sent_events": gateway_sent,
                 "broker_trade_close_accept_events": broker_accept,
                 "gateway_gpt_close_loss_side_market_close_count": gateway_gpt_loss,
+                "gateway_gpt_close_accepted_without_sent_loss_side_market_close_count": (
+                    gateway_gpt_accepted_without_sent_loss
+                ),
                 "gateway_review_exit_loss_side_market_close_count": gateway_review_loss,
                 "gateway_review_exit_loss_side_market_close_net_jpy": gateway_review_loss_net,
                 "loss_side_market_close_count": int(_maybe_float(close_gate.get("loss_side_market_close_count")) or 0),
