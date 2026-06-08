@@ -1013,11 +1013,27 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["gateway_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["take_profit_close_net_jpy"], 220.0)
+            self.assertEqual(
+                close_gate["loss_side_market_close_daily"],
+                [
+                    {
+                        "day": "2026-06-01",
+                        "count": 2,
+                        "net_jpy": -480.0,
+                        "gateway_close_sent_count": 1,
+                        "bot_attributed_count": 2,
+                    }
+                ],
+            )
+            self.assertEqual(close_gate["loss_side_market_close_examples"][0]["trade_id"], "market-loss")
+            self.assertEqual(close_gate["loss_side_market_close_examples"][0]["pl_jpy"], -300.0)
+            self.assertFalse(close_gate["loss_side_market_close_examples"][0]["gateway_close_sent"])
             self.assertTrue(any("RiskEngine loss-cap ablation" in item for item in payload["action_items"]))
             self.assertTrue(any("CLOSE Gate A-B" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("## Mechanism Ablations", report)
             self.assertIn("CLOSE Gate A/B Diagnostics", report)
+            self.assertIn("Worst loss-side market close examples", report)
 
     def test_close_gate_diagnostic_reports_unattributable_broker_closes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -594,6 +594,37 @@ class AITestBotBacktester:
                     f"bot_attributed=`{int(segment.get('bot_attributed_count') or 0)}` "
                     f"gateway_close=`{int(segment.get('gateway_close_sent_count') or 0)}`"
                 )
+        daily_close_losses = (
+            close_gate.get("loss_side_market_close_daily")
+            if isinstance(close_gate.get("loss_side_market_close_daily"), list)
+            else []
+        )
+        if daily_close_losses:
+            lines.append("- Loss-side market close daily:")
+            for item in daily_close_losses[:8]:
+                if not isinstance(item, dict):
+                    continue
+                lines.append(
+                    f"  - `{item.get('day')}` count=`{int(item.get('count') or 0)}` "
+                    f"net=`{float(item.get('net_jpy') or 0.0):.0f}` "
+                    f"gateway_close=`{int(item.get('gateway_close_sent_count') or 0)}` "
+                    f"bot_attributed=`{int(item.get('bot_attributed_count') or 0)}`"
+                )
+        close_examples = (
+            close_gate.get("loss_side_market_close_examples")
+            if isinstance(close_gate.get("loss_side_market_close_examples"), list)
+            else []
+        )
+        if close_examples:
+            lines.append("- Worst loss-side market close examples:")
+            for item in close_examples[:8]:
+                if not isinstance(item, dict):
+                    continue
+                lines.append(
+                    f"  - `{item.get('ts_utc')}` `{item.get('pair')} {item.get('side')}` "
+                    f"trade=`{item.get('trade_id')}` pl=`{float(item.get('pl_jpy') or 0.0):.0f}` "
+                    f"gateway_close=`{item.get('gateway_close_sent')}` bot_attributed=`{item.get('bot_attributed')}`"
+                )
         lines.extend(
             [
                 "",
@@ -1169,6 +1200,8 @@ def _close_gate_ablation_payload(
         "unattributed_loss_side_market_close_net_jpy": 0.0,
         "take_profit_close_count": 0,
         "take_profit_close_net_jpy": 0.0,
+        "loss_side_market_close_daily": [],
+        "loss_side_market_close_examples": [],
         "segments": [],
     }
     if db_path is None:
@@ -1228,6 +1261,8 @@ def _close_gate_ablation_payload(
     unattributed_loss_market_net = 0.0
     take_profit_count = 0
     take_profit_net = 0.0
+    loss_market_examples: list[dict[str, object]] = []
+    loss_market_daily: dict[str, dict[str, object]] = {}
     for row in close_rows:
         pl = _maybe_float(row["realized_pl_jpy"])
         if pl is None:
@@ -1273,6 +1308,37 @@ def _close_gate_ablation_payload(
         if exit_reason == "MARKET_ORDER_TRADE_CLOSE" and pl < 0:
             loss_side_market_count += 1
             loss_side_market_net += pl
+            ts_utc = str(row["ts_utc"] or "")
+            day_key = ts_utc[:10] or "UNKNOWN"
+            daily = loss_market_daily.setdefault(
+                day_key,
+                {
+                    "day": day_key,
+                    "count": 0,
+                    "net_jpy": 0.0,
+                    "gateway_close_sent_count": 0,
+                    "bot_attributed_count": 0,
+                },
+            )
+            daily["count"] = int(daily["count"]) + 1
+            daily["net_jpy"] = _round(float(daily["net_jpy"]) + pl)
+            if gateway_close_sent:
+                daily["gateway_close_sent_count"] = int(daily["gateway_close_sent_count"]) + 1
+            if bot_attributed:
+                daily["bot_attributed_count"] = int(daily["bot_attributed_count"]) + 1
+            loss_market_examples.append(
+                {
+                    "ts_utc": ts_utc,
+                    "pair": str(row["pair"] or ""),
+                    "side": str(row["side"] or ""),
+                    "trade_id": trade_id,
+                    "lane_id": str(row["lane_id"] or ""),
+                    "order_id": str(row["order_id"] or ""),
+                    "pl_jpy": _round(pl),
+                    "bot_attributed": bot_attributed,
+                    "gateway_close_sent": gateway_close_sent,
+                }
+            )
             if bot_attributed:
                 bot_loss_market_count += 1
                 bot_loss_market_net += pl
@@ -1295,6 +1361,21 @@ def _close_gate_ablation_payload(
         ),
         key=lambda item: (float(item["net_jpy"]), -int(item["count"])),
     )
+    loss_market_daily_rows = sorted(
+        (
+            {
+                **item,
+                "net_jpy": _round(float(item["net_jpy"])),
+            }
+            for item in loss_market_daily.values()
+        ),
+        key=lambda item: str(item["day"]),
+        reverse=True,
+    )
+    loss_market_example_rows = sorted(
+        loss_market_examples,
+        key=lambda item: float(item.get("pl_jpy") or 0.0),
+    )[:8]
     base.update(
         {
             "status": "MEASURED",
@@ -1314,6 +1395,8 @@ def _close_gate_ablation_payload(
             "unattributed_loss_side_market_close_net_jpy": _round(unattributed_loss_market_net),
             "take_profit_close_count": take_profit_count,
             "take_profit_close_net_jpy": _round(take_profit_net),
+            "loss_side_market_close_daily": loss_market_daily_rows,
+            "loss_side_market_close_examples": loss_market_example_rows,
             "segments": segment_rows,
         }
     )
