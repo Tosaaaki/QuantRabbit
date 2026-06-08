@@ -886,6 +886,30 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             {"NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 2, "NO_CLIENT_EXTENSION": 2},
         )
 
+    def test_direct_manual_close_dominated_repaired_profitability_does_not_escalate_to_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_direct_manual_close_recovery_ledger(files["execution_db"])
+
+            first = _run(files, now=_NOW)
+            second = _run(files, now=_NOW + timedelta(minutes=3))
+            third = _run(files, now=_NOW + timedelta(minutes=6))
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(first.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(second.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(third.status, STATUS_ACTION_REQUIRED)
+        self.assertIn("NEGATIVE_RECENT_EXPECTANCY", codes)
+        self.assertIn("SMALL_WIN_LARGE_LOSS_ASYMMETRY", codes)
+        self.assertIn("DIRECT_OR_MANUAL_CLOSE_DOMINATED_PROFITABILITY_DRAG", codes)
+        self.assertNotIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
+        repair = codes["DIRECT_OR_MANUAL_CLOSE_DOMINATED_PROFITABILITY_DRAG"]["evidence"]
+        self.assertEqual(repair["non_gateway_close_drag_metric"]["net_jpy"], -700.0)
+        self.assertEqual(repair["net_without_non_gateway_close_drag_jpy"], 150.0)
+        self.assertEqual(repair["last_24h_non_gateway_market_close_loss_trades"], 0)
+
     def test_effect_metrics_attributes_closed_pl_to_opening_lane_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "execution_ledger.db"
@@ -1645,6 +1669,137 @@ def _write_execution_ledger(path: Path, *, closed_pls: tuple[float, ...], last_t
                 """,
                 (f"closed-{idx}", (_NOW - timedelta(hours=idx + 1)).isoformat(), pl),
             )
+
+
+def _write_direct_manual_close_recovery_ledger(path: Path) -> None:
+    if path.exists():
+        path.unlink()
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at_utc TEXT NOT NULL);
+            CREATE TABLE execution_events (
+                event_uid TEXT PRIMARY KEY,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                exit_reason TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO sync_state(key, value, updated_at_utc) VALUES (?, ?, ?)",
+            ("last_oanda_transaction_id", "100", _NOW.isoformat()),
+        )
+        rows = [
+            (
+                "fill-old-direct",
+                (_NOW - timedelta(hours=49)).isoformat(),
+                "ORDER_FILLED",
+                "failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE",
+                "O-old",
+                "T-old",
+                "EUR_USD",
+                "LONG",
+                1000,
+                None,
+                None,
+            ),
+            (
+                "close-old-direct",
+                (_NOW - timedelta(hours=48)).isoformat(),
+                "TRADE_CLOSED",
+                "",
+                "C-old",
+                "T-old",
+                "EUR_USD",
+                "LONG",
+                1000,
+                -700.0,
+                "MARKET_ORDER_TRADE_CLOSE",
+            ),
+            (
+                "fill-gateway-loss",
+                (_NOW - timedelta(hours=3)).isoformat(),
+                "ORDER_FILLED",
+                "failure_trader:USD_CAD:LONG:BREAKOUT_FAILURE",
+                "O-gw",
+                "T-gw",
+                "USD_CAD",
+                "LONG",
+                1000,
+                None,
+                None,
+            ),
+            (
+                "gateway-close-sent",
+                (_NOW - timedelta(hours=2, minutes=5)).isoformat(),
+                "GATEWAY_TRADE_CLOSE_SENT",
+                "",
+                "",
+                "T-gw",
+                "USD_CAD",
+                "",
+                None,
+                None,
+                "GPT_CLOSE",
+            ),
+            (
+                "close-gateway-loss",
+                (_NOW - timedelta(hours=2)).isoformat(),
+                "TRADE_CLOSED",
+                "",
+                "C-gw",
+                "T-gw",
+                "USD_CAD",
+                "LONG",
+                1000,
+                -50.0,
+                "MARKET_ORDER_TRADE_CLOSE",
+            ),
+            (
+                "close-tp-1",
+                (_NOW - timedelta(hours=1)).isoformat(),
+                "TRADE_CLOSED",
+                "range_trader:EUR_CHF:LONG:RANGE_ROTATION",
+                "TP-1",
+                "T-tp-1",
+                "EUR_CHF",
+                "LONG",
+                1000,
+                100.0,
+                "TAKE_PROFIT_ORDER",
+            ),
+            (
+                "close-tp-2",
+                (_NOW - timedelta(minutes=30)).isoformat(),
+                "TRADE_CLOSED",
+                "range_trader:EUR_GBP:SHORT:RANGE_ROTATION",
+                "TP-2",
+                "T-tp-2",
+                "EUR_GBP",
+                "SHORT",
+                1000,
+                100.0,
+                "TAKE_PROFIT_ORDER",
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO execution_events(
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                pair, side, units, realized_pl_jpy, exit_reason
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
 
 
 def _write_method_attribution_ledger(path: Path) -> None:

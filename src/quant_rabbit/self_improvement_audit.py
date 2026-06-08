@@ -70,6 +70,11 @@ PROFITABILITY_DISCIPLINE_CODES = (
     "SMALL_WIN_LARGE_LOSS_ASYMMETRY",
 )
 
+NON_GATEWAY_CLOSE_DRAG_PROVENANCES = (
+    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE",
+    "NO_LOCAL_CLOSE_PROVENANCE",
+)
+
 # Forecast-level calibration is the feedback loop for "why did the final
 # direction call miss?". Ten samples matches the projection-ledger calibration
 # sample floor, and the hit-rate floor is an audit warning, not a trade gate.
@@ -1930,9 +1935,29 @@ def _profitability_findings(
         net < 0 or (expectancy is not None and expectancy < 0) or (pf is not None and pf < 1.0)
     )
     current_discipline_streak = previous_discipline_streak + 1
+    direct_close_repair = _direct_or_manual_close_repair_evidence(effect, effect_24h)
+    if has_negative_expectancy and has_loss_asymmetry and direct_close_repair:
+        out.append(
+            _finding(
+                run_id=run_id,
+                priority="P1",
+                layer="profitability",
+                code="DIRECT_OR_MANUAL_CLOSE_DOMINATED_PROFITABILITY_DRAG",
+                message=(
+                    "historical profitability drag is dominated by non-gateway broker close losses, "
+                    "while the last-24h gateway-controllable window is positive"
+                ),
+                next_action=(
+                    "Keep auditing non-gateway close provenance, but do not let repaired non-gateway "
+                    "history by itself block fresh risk."
+                ),
+                evidence=direct_close_repair,
+            )
+        )
     if (
         has_negative_expectancy
         and has_loss_asymmetry
+        and not direct_close_repair
         and current_discipline_streak >= max(1, PERSISTENT_PROFITABILITY_STREAK_MIN)
     ):
         system_defect_evidence = {
@@ -1991,6 +2016,111 @@ def _profitability_findings(
             )
         )
     return out
+
+
+def _direct_or_manual_close_repair_evidence(
+    effect: dict[str, Any],
+    effect_24h: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Identify repaired profitability drag caused by non-gateway close provenance.
+
+    The 24h window already exists in this audit as the operational recovery
+    check. This helper does not create trade permission; it prevents old
+    direct/manual broker closes from remaining a P0 once removing that
+    non-gateway provenance makes the current audit window non-negative and the
+    last-24h gateway-controllable result is positive.
+    """
+    direct_metric = _combined_close_provenance_metric(
+        effect,
+        NON_GATEWAY_CLOSE_DRAG_PROVENANCES,
+    )
+    direct_net = _maybe_float(direct_metric.get("net_jpy"))
+    direct_loss_trades = int(direct_metric.get("loss_trades") or 0)
+    if direct_net is None or direct_net >= 0.0 or direct_loss_trades <= 0:
+        return None
+
+    net = _maybe_float(effect.get("net_jpy"))
+    if net is None:
+        return None
+    net_without_direct = net - direct_net
+    if net_without_direct < 0.0:
+        return None
+
+    recent_net = _maybe_float(effect_24h.get("net_jpy"))
+    recent_expectancy = _maybe_float(effect_24h.get("expectancy_jpy"))
+    recent_pf = _maybe_float(effect_24h.get("profit_factor"))
+    recent_closed = int(effect_24h.get("closed_trades") or 0)
+    if recent_closed <= 0 or recent_net is None or recent_net <= 0.0:
+        return None
+    if recent_expectancy is not None and recent_expectancy <= 0.0:
+        return None
+    if recent_pf is not None and recent_pf <= 1.0:
+        return None
+
+    recent_direct_market_close_loss = _combined_close_provenance_metric(
+        {
+            "market_order_trade_close_loss_provenance_metrics": effect_24h.get(
+                "market_order_trade_close_loss_provenance_metrics", {}
+            )
+        },
+        NON_GATEWAY_CLOSE_DRAG_PROVENANCES,
+        metric_key="market_order_trade_close_loss_provenance_metrics",
+    )
+    if int(recent_direct_market_close_loss.get("loss_trades") or 0) > 0:
+        return None
+
+    return {
+        "non_gateway_close_drag_provenances": list(NON_GATEWAY_CLOSE_DRAG_PROVENANCES),
+        "non_gateway_close_drag_metric": direct_metric,
+        "net_jpy": net,
+        "net_without_non_gateway_close_drag_jpy": net_without_direct,
+        "last_24h_net_jpy": recent_net,
+        "last_24h_profit_factor": recent_pf,
+        "last_24h_expectancy_jpy": recent_expectancy,
+        "last_24h_non_gateway_market_close_loss_trades": int(
+            recent_direct_market_close_loss.get("loss_trades") or 0
+        ),
+    }
+
+
+def _combined_close_provenance_metric(
+    effect: dict[str, Any],
+    provenances: tuple[str, ...],
+    *,
+    metric_key: str = "close_provenance_metrics",
+) -> dict[str, Any]:
+    combined = {
+        "gross_loss_jpy": 0.0,
+        "gross_profit_jpy": 0.0,
+        "loss_trades": 0,
+        "net_jpy": 0.0,
+        "trades": 0,
+        "win_trades": 0,
+    }
+    found = False
+    for provenance in provenances:
+        metric = _close_provenance_metric(effect, provenance, metric_key=metric_key)
+        if not metric:
+            continue
+        found = True
+        for key in ("gross_loss_jpy", "gross_profit_jpy", "net_jpy"):
+            combined[key] = float(combined[key]) + float(metric.get(key) or 0.0)
+        for key in ("loss_trades", "trades", "win_trades"):
+            combined[key] = int(combined[key]) + int(metric.get(key) or 0)
+    return combined if found else {}
+
+
+def _close_provenance_metric(
+    effect: dict[str, Any],
+    provenance: str,
+    *,
+    metric_key: str = "close_provenance_metrics",
+) -> dict[str, Any]:
+    metrics = effect.get(metric_key)
+    if not isinstance(metrics, dict):
+        return {}
+    metric = metrics.get(provenance)
+    return metric if isinstance(metric, dict) else {}
 
 
 def _intent_findings(
