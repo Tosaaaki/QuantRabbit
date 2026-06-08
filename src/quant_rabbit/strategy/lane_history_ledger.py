@@ -79,7 +79,7 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
                     order_id,
                     lane_id
                 FROM execution_events
-                WHERE event_type = 'GATEWAY_ORDER_SENT'
+                WHERE event_type IN ('GATEWAY_ORDER_SENT', 'ORDER_ACCEPTED')
                   AND lane_id IS NOT NULL
                   AND lane_id != ''
             ),
@@ -88,6 +88,8 @@ def compute_lane_history(db_path: Path) -> Dict[Tuple[str, str], LaneHistorySnap
                     e.trade_id,
                     COALESCE(NULLIF(MAX(e.lane_id), ''), MAX(g.lane_id)) AS gateway_lane_id,
                     CASE
+                        WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'LONG' THEN 1 ELSE 0 END) > 0 THEN 'LONG'
+                        WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'SHORT' THEN 1 ELSE 0 END) > 0 THEN 'SHORT'
                         WHEN MAX(e.units) > 0 THEN 'LONG'
                         WHEN MIN(e.units) < 0 THEN 'SHORT'
                         ELSE NULL

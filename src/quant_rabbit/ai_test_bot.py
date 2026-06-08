@@ -2024,6 +2024,8 @@ def _execution_ledger_trades(db_path: Path | None) -> Iterable[TestBotTrade]:
                     e.trade_id,
                     MAX(g.lane_id) AS gateway_lane_id,
                     CASE
+                        WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'LONG' THEN 1 ELSE 0 END) > 0 THEN 'LONG'
+                        WHEN SUM(CASE WHEN UPPER(COALESCE(e.side, '')) = 'SHORT' THEN 1 ELSE 0 END) > 0 THEN 'SHORT'
                         WHEN MAX(e.units) > 0 THEN 'LONG'
                         WHEN MIN(e.units) < 0 THEN 'SHORT'
                         ELSE NULL

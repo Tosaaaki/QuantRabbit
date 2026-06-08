@@ -196,6 +196,7 @@ class ExecutionLedger:
                 CREATE INDEX IF NOT EXISTS idx_execution_events_type ON execution_events(event_type);
                 """
             )
+            _backfill_legacy_lane_ids(conn)
 
     def _write_report(self, summary: ExecutionLedgerSummary) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -447,18 +448,35 @@ def _event(
     trade_client_extensions = (
         transaction.get("tradeClientExtensions") if isinstance(transaction.get("tradeClientExtensions"), dict) else {}
     )
+    nested_extensions = _nested_trade_extensions(transaction)
     raw_trade_id = trade_id or transaction.get("tradeID")
+    pair = _text(transaction.get("instrument"))
+    event_side = side if side is not None else _side_from_units(signed_units)
+    lane_id = _lane_id(
+        transaction,
+        client_extensions,
+        trade_client_extensions,
+        *nested_extensions,
+        pair=pair,
+        side=event_side,
+    )
+    client_order_id = _text(
+        transaction.get("clientOrderID")
+        or client_extensions.get("id")
+        or trade_client_extensions.get("id")
+        or _first_extension_value(nested_extensions, "id")
+    )
     return {
         "event_uid": f"oanda:{transaction_id}:{event_type}:{uid_tail}",
         "ts_utc": str(transaction.get("time") or inserted_at_utc),
         "source": "oanda",
         "event_type": event_type,
-        "lane_id": _lane_id(transaction, client_extensions, trade_client_extensions),
+        "lane_id": lane_id,
         "order_id": _text(transaction.get("orderID") or transaction.get("replacesOrderID") or transaction_id),
         "trade_id": _text(raw_trade_id),
-        "client_order_id": _text(transaction.get("clientOrderID") or client_extensions.get("id")),
-        "pair": _text(transaction.get("instrument")),
-        "side": side if side is not None else _side_from_units(signed_units),
+        "client_order_id": client_order_id,
+        "pair": pair,
+        "side": event_side,
         "units": units if units is not None else (_abs_int(transaction.get("units"))),
         "price": price if price is not None else _float(transaction.get("price")),
         "tp": _transaction_tp_price(transaction),
@@ -551,6 +569,47 @@ def _insert_event(conn: sqlite3.Connection, event: dict[str, Any]) -> bool:
     return cur.rowcount > 0
 
 
+def _backfill_legacy_lane_ids(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_uid, pair, side, raw_json
+        FROM execution_events
+        WHERE source = 'oanda'
+          AND (lane_id IS NULL OR lane_id = '')
+        """
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        try:
+            transaction = json.loads(str(row["raw_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(transaction, dict):
+            continue
+        client_extensions = transaction.get("clientExtensions") if isinstance(transaction.get("clientExtensions"), dict) else {}
+        trade_client_extensions = (
+            transaction.get("tradeClientExtensions")
+            if isinstance(transaction.get("tradeClientExtensions"), dict)
+            else {}
+        )
+        lane_id = _lane_id(
+            transaction,
+            client_extensions,
+            trade_client_extensions,
+            *_nested_trade_extensions(transaction),
+            pair=_text(row["pair"]),
+            side=_text(row["side"]),
+        )
+        if not lane_id:
+            continue
+        cur = conn.execute(
+            "UPDATE execution_events SET lane_id = ? WHERE event_uid = ? AND (lane_id IS NULL OR lane_id = '')",
+            (lane_id, row["event_uid"]),
+        )
+        updated += cur.rowcount
+    return updated
+
+
 def _get_state(conn: sqlite3.Connection, key: str) -> str | None:
     row = conn.execute("SELECT value FROM sync_state WHERE key = ?", (key,)).fetchone()
     return str(row["value"]) if row else None
@@ -595,21 +654,29 @@ def _response_trade_id(response: dict[str, Any]) -> str | None:
 
 def _lane_id(
     transaction: dict[str, Any],
-    client_extensions: dict[str, Any],
-    trade_client_extensions: dict[str, Any],
+    *payloads: dict[str, Any],
+    pair: str | None = None,
+    side: str | None = None,
 ) -> str | None:
-    for payload in (transaction, client_extensions, trade_client_extensions):
+    for payload in (transaction, *payloads):
         for key in ("lane_id", "laneId"):
             value = payload.get(key)
             if value:
                 return str(value)
-        lane = _lane_id_from_comment(payload.get("comment"))
+        lane = _lane_id_from_comment(payload.get("comment"), pair=pair, side=side)
         if lane:
             return lane
     return None
 
 
-def _lane_id_from_comment(value: Any) -> str | None:
+_LEGACY_DESK_METHOD = {
+    "trend_trader": "TREND_CONTINUATION",
+    "range_trader": "RANGE_ROTATION",
+    "failure_trader": "BREAKOUT_FAILURE",
+}
+
+
+def _lane_id_from_comment(value: Any, *, pair: str | None = None, side: str | None = None) -> str | None:
     text = str(value or "").strip()
     if not text:
         return None
@@ -618,6 +685,38 @@ def _lane_id_from_comment(value: Any) -> str | None:
             if token.startswith(prefix):
                 lane = token[len(prefix) :].strip()
                 return lane or None
+    pair_text = str(pair or "").strip().upper()
+    side_text = str(side or "").strip().upper()
+    if not pair_text or side_text not in {"LONG", "SHORT"}:
+        return None
+    if not text.startswith("qr-vnext"):
+        return None
+    for token in text.split():
+        desk = token.strip()
+        method = _LEGACY_DESK_METHOD.get(desk)
+        if method:
+            return f"{desk}:{pair_text}:{side_text}:{method}"
+    return None
+
+
+def _nested_trade_extensions(transaction: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    payloads: list[dict[str, Any]] = []
+    for trade_key in ("tradeOpened", "tradeReduced"):
+        nested = transaction.get(trade_key)
+        if not isinstance(nested, dict):
+            continue
+        for extension_key in ("clientExtensions", "tradeClientExtensions"):
+            extensions = nested.get(extension_key)
+            if isinstance(extensions, dict):
+                payloads.append(extensions)
+    return tuple(payloads)
+
+
+def _first_extension_value(payloads: tuple[dict[str, Any], ...], key: str) -> Any:
+    for payload in payloads:
+        value = payload.get(key)
+        if value:
+            return value
     return None
 
 

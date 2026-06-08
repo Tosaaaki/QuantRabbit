@@ -475,6 +475,77 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertIn("sent gateway entry", report)
             self.assertIn("exit reason remains post-trade evidence", report)
 
+    def test_execution_ledger_source_uses_fill_side_when_units_are_absolute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = root / "execution_ledger.db"
+            _seed_execution_ledger(
+                ledger,
+                [
+                    (
+                        "fill-train",
+                        "2026-06-01T01:00:00Z",
+                        "ORDER_FILLED",
+                        "short-train",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-train",
+                        "2026-06-01T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "short-train",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        100.0,
+                        "{}",
+                    ),
+                    (
+                        "fill-validation",
+                        "2026-06-02T01:00:00Z",
+                        "ORDER_FILLED",
+                        "short-validation",
+                        "EUR_USD",
+                        "SHORT",
+                        1000,
+                        None,
+                        "{}",
+                    ),
+                    (
+                        "close-validation",
+                        "2026-06-02T03:00:00Z",
+                        "TRADE_CLOSED",
+                        "short-validation",
+                        "EUR_USD",
+                        "LONG",
+                        1000,
+                        150.0,
+                        "{}",
+                    ),
+                ],
+            )
+
+            AITestBotBacktester(
+                db_path=root / "missing_legacy.db",
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("execution_ledger",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            day = payload["days"][0]
+            self.assertEqual(day["selected_buckets"], ["execution_ledger:EUR_USD:SHORT:TREND_TRADER:TREND_CONTINUATION"])
+            self.assertNotIn("EUR_USD:LONG", json.dumps(payload))
+
     def test_execution_ledger_source_ignores_unattributed_manual_closes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

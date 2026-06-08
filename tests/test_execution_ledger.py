@@ -62,6 +62,58 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(accepted_row[1], "qrv1-EURUSD-L-test")
             self.assertEqual(last_id, "104")
 
+    def test_sync_recovers_legacy_qrvnext_comment_lane_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
+
+            self.assertEqual(summary.status, "SYNCED")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                rows = conn.execute(
+                    """
+                    SELECT event_type, lane_id, client_order_id, side
+                    FROM execution_events
+                    WHERE event_type IN ('ORDER_ACCEPTED', 'ORDER_FILLED')
+                    ORDER BY event_type
+                    """
+                ).fetchall()
+            self.assertEqual(
+                rows,
+                [
+                    (
+                        "ORDER_ACCEPTED",
+                        "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                        "qrv1-GBPUSD-S-legacy",
+                        "SHORT",
+                    ),
+                    (
+                        "ORDER_FILLED",
+                        "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE",
+                        "qrv1-GBPUSD-S-legacy",
+                        "SHORT",
+                    ),
+                ],
+            )
+
+    def test_init_backfills_existing_legacy_qrvnext_comment_lane_bucket(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger.sync_oanda_transactions(FakeLegacyCommentClient(), since_transaction_id="200")
+            with sqlite3.connect(root / "ledger.db") as conn:
+                conn.execute("UPDATE execution_events SET lane_id = NULL WHERE event_type='ORDER_ACCEPTED'")
+                conn.commit()
+
+            ledger.record_gateway_receipt(kind="live_order", receipt_path=root / "missing.json")
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    "SELECT lane_id FROM execution_events WHERE event_type='ORDER_ACCEPTED'"
+                ).fetchone()
+            self.assertEqual(row[0], "failure_trader:GBP_USD:SHORT:BREAKOUT_FAILURE")
+
     def test_records_gateway_receipt_as_append_only_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -338,6 +390,60 @@ class FakeTransactionClient:
                     "time": "2026-05-06T23:00:00.000000000Z",
                     "type": "DAILY_FINANCING",
                     "financing": "-1.2",
+                },
+            ],
+        }
+
+
+class FakeLegacyCommentClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="200",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "202",
+            "transactions": [
+                {
+                    "id": "201",
+                    "time": "2026-06-05T00:00:01.000000000Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "GBP_USD",
+                    "units": "-6000",
+                    "clientExtensions": {
+                        "id": "qrv1-GBPUSD-S-legacy",
+                        "tag": "trader",
+                        "comment": "qr-vnext failure_trader FORECAST_FIRST",
+                    },
+                    "tradeClientExtensions": {
+                        "id": "qrv1-GBPUSD-S-legacy",
+                        "tag": "trader",
+                        "comment": "qr-vnext failure_trader FORECAST_FIRST",
+                    },
+                },
+                {
+                    "id": "202",
+                    "time": "2026-06-05T00:00:02.000000000Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "201",
+                    "instrument": "GBP_USD",
+                    "units": "-6000",
+                    "price": "1.34300",
+                    "reason": "MARKET_ORDER",
+                    "tradeOpened": {
+                        "tradeID": "900",
+                        "units": "-6000",
+                        "price": "1.34300",
+                        "clientExtensions": {
+                            "id": "qrv1-GBPUSD-S-legacy",
+                            "tag": "trader",
+                            "comment": "qr-vnext failure_trader FORECAST_FIRST",
+                        },
+                    },
                 },
             ],
         }
