@@ -27,6 +27,98 @@ def _forecast(pair: str, direction: str, confidence: float = 0.8) -> SimpleNames
 
 
 class ForecastPersistenceTrackerTest(unittest.TestCase):
+    def test_record_forecast_compacts_historical_cycle_pair_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "forecast_history.jsonl"
+            path.write_text(
+                "\n".join(
+                    json.dumps(row)
+                    for row in [
+                        {
+                            "timestamp_utc": "2026-06-01T00:00:00Z",
+                            "cycle_id": "cycle-old",
+                            "pair": "EUR_USD",
+                            "direction": "DOWN",
+                            "confidence": 0.4,
+                        },
+                        {
+                            "timestamp_utc": "2026-06-01T00:01:00Z",
+                            "cycle_id": "cycle-old",
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.8,
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            recorded = record_forecast(
+                _forecast("GBP_USD", "DOWN"),
+                data_root=root,
+                cycle_id="cycle-new",
+            )
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            old_rows = [
+                row
+                for row in rows
+                if row.get("cycle_id") == "cycle-old" and row.get("pair") == "EUR_USD"
+            ]
+            self.assertTrue(recorded)
+            self.assertEqual(len(old_rows), 1)
+            self.assertEqual(old_rows[0]["direction"], "UP")
+            self.assertEqual(rows[-1]["pair"], "GBP_USD")
+
+    def test_record_forecast_compacts_existing_key_before_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "forecast_history.jsonl"
+            path.write_text(
+                "\n".join(
+                    json.dumps(row)
+                    for row in [
+                        {
+                            "timestamp_utc": "2026-06-01T00:00:00Z",
+                            "cycle_id": "cycle-1",
+                            "pair": "EUR_USD",
+                            "direction": "DOWN",
+                            "confidence": 0.4,
+                        },
+                        {
+                            "timestamp_utc": "2026-06-01T00:01:00Z",
+                            "cycle_id": "cycle-1",
+                            "pair": "EUR_USD",
+                            "direction": "UP",
+                            "confidence": 0.8,
+                        },
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            recorded = record_forecast(
+                _forecast("EUR_USD", "DOWN"),
+                data_root=root,
+                cycle_id="cycle-1",
+            )
+
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertFalse(recorded)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["direction"], "UP")
+
     def test_duplicate_pair_forecasts_in_one_cycle_count_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

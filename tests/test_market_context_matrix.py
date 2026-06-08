@@ -165,6 +165,54 @@ class MarketContextMatrixTest(unittest.TestCase):
         self.assertIn("context_asset:XAU_USD", summary["matrix_context_refs"])
         self.assertNotIn("supports", summary)
 
+    def test_missing_calendar_feed_is_missing_not_reject(self) -> None:
+        payload = build_market_context_matrix_from_payloads(
+            pair_charts=_pair_charts(),
+            cross_asset={"synthetic_dxy": {"change_pct_24h": 0.0}, "assets": [], "issues": []},
+            flow=_flow(),
+            currency_strength={"scores": [], "issues": []},
+            levels=_levels(),
+            calendar={
+                "pair_windows": [
+                    {
+                        "pair": "EUR_USD",
+                        "in_window": True,
+                        "reason": "calendar unavailable: MISSING_FOREX_FACTORY_FEED: HTTP Error 429",
+                    }
+                ],
+                "issues": ["MISSING_FOREX_FACTORY_FEED: HTTP Error 429"],
+            },
+            cot={"reports": [], "issues": []},
+            option_skew={"readings": [], "issues": ["MISSING_OPTION_SKEW_FEED"]},
+        )
+
+        long = payload["pairs"]["EUR_USD"]["LONG"]
+        short = payload["pairs"]["EUR_USD"]["SHORT"]
+        self.assertNotIn("CALENDAR_EVENT_WINDOW", {item["code"] for item in long["rejects"]})
+        self.assertNotIn("CALENDAR_EVENT_WINDOW", {item["code"] for item in short["rejects"]})
+        self.assertIn("CALENDAR_FEED_UNAVAILABLE", {item["code"] for item in long["missing"]})
+        self.assertIn("CALENDAR_FEED_UNAVAILABLE", {item["code"] for item in short["missing"]})
+
+    def test_actual_calendar_event_window_remains_reject(self) -> None:
+        payload = build_market_context_matrix_from_payloads(
+            pair_charts=_pair_charts(),
+            cross_asset={"synthetic_dxy": {"change_pct_24h": 0.0}, "assets": [], "issues": []},
+            flow=_flow(),
+            currency_strength={"scores": [], "issues": []},
+            levels=_levels(),
+            calendar={
+                "pair_windows": [{"pair": "EUR_USD", "in_window": True, "reason": "USD:NFP 5m"}],
+                "issues": [],
+            },
+            cot={"reports": [], "issues": []},
+            option_skew={"readings": [], "issues": ["MISSING_OPTION_SKEW_FEED"]},
+        )
+
+        long = payload["pairs"]["EUR_USD"]["LONG"]
+        short = payload["pairs"]["EUR_USD"]["SHORT"]
+        self.assertIn("CALENDAR_EVENT_WINDOW", {item["code"] for item in long["rejects"]})
+        self.assertIn("CALENDAR_EVENT_WINDOW", {item["code"] for item in short["rejects"]})
+
     def test_intent_summary_keeps_matrix_compact(self) -> None:
         payload = build_market_context_matrix_from_payloads(
             pair_charts=_pair_charts(),

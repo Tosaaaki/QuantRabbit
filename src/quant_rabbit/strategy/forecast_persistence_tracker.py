@@ -115,14 +115,65 @@ def record_forecast(
     }
     with path.open("a+", encoding="utf-8") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        if cycle_id and _history_handle_has_cycle_pair(f, cycle_id=cycle_id, pair=pair):
+        f.seek(0)
+        compacted_lines, removed_duplicates, existing_cycle_pairs = _compact_history_lines(
+            f.read().splitlines()
+        )
+        cycle_pair_key = (str(cycle_id), str(pair)) if cycle_id and pair else None
+        if cycle_pair_key and cycle_pair_key in existing_cycle_pairs:
+            if removed_duplicates:
+                _rewrite_history_handle(f, compacted_lines)
             fcntl.flock(f.fileno(), fcntl.LOCK_UN)
             return False
-        f.seek(0, os.SEEK_END)
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        line = json.dumps(entry, ensure_ascii=False)
+        if removed_duplicates:
+            _rewrite_history_handle(f, [*compacted_lines, line])
+        else:
+            f.seek(0, os.SEEK_END)
+            f.write(line + "\n")
         f.flush()
         fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
+
+
+def _compact_history_lines(lines: list[str]) -> tuple[list[str], int, set[tuple[str, str]]]:
+    """Collapse historical cycle_id/pair duplicates while preserving latest fact."""
+    compacted: list[str] = []
+    cycle_pair_indexes: dict[tuple[str, str], int] = {}
+    removed_duplicates = 0
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        key: tuple[str, str] | None = None
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            item = None
+        if isinstance(item, dict):
+            cycle_id = item.get("cycle_id")
+            pair = item.get("pair")
+            if cycle_id and pair:
+                key = (str(cycle_id), str(pair))
+        if key is None:
+            compacted.append(line)
+            continue
+        previous_index = cycle_pair_indexes.get(key)
+        if previous_index is None:
+            cycle_pair_indexes[key] = len(compacted)
+            compacted.append(line)
+            continue
+        compacted[previous_index] = line
+        removed_duplicates += 1
+    return compacted, removed_duplicates, set(cycle_pair_indexes)
+
+
+def _rewrite_history_handle(handle: IO[str], lines: list[str]) -> None:
+    handle.seek(0)
+    handle.truncate(0)
+    if not lines:
+        return
+    handle.write("\n".join(lines) + "\n")
 
 
 def _history_has_cycle_pair(path: Path, *, cycle_id: str, pair: str) -> bool:

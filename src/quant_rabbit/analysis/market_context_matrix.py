@@ -680,6 +680,16 @@ def _apply_calendar_layer(pair_matrix: dict[str, dict[str, Any]], pair: str, win
     if not isinstance(window, dict):
         _missing_both(pair_matrix, code="MISSING_CALENDAR_WINDOW", layer="calendar", message=f"{pair} calendar window missing", refs=[f"calendar:{pair}"])
         return
+    reason = str(window.get("reason") or "")
+    if window.get("in_window") is True and _calendar_feed_unavailable(reason):
+        _missing_both(
+            pair_matrix,
+            code="CALENDAR_FEED_UNAVAILABLE",
+            layer="calendar",
+            message=f"{pair} calendar feed unavailable: {reason}",
+            refs=[f"calendar:{pair}"],
+        )
+        return
     if window.get("in_window") is True:
         for side in SIDES:
             _add(
@@ -687,17 +697,22 @@ def _apply_calendar_layer(pair_matrix: dict[str, dict[str, Any]], pair: str, win
                 "rejects",
                 code="CALENDAR_EVENT_WINDOW",
                 layer="calendar",
-                message=f"{pair} calendar in_window=true: {window.get('reason')}",
+                message=f"{pair} calendar in_window=true: {reason}",
                 refs=[f"calendar:{pair}"],
             )
-    elif window.get("reason"):
+    elif reason:
         _warning_both(
             pair_matrix,
             code="NEXT_CALENDAR_EVENT_CONTEXT",
             layer="calendar",
-            message=f"{pair} calendar context: {window.get('reason')}",
+            message=f"{pair} calendar context: {reason}",
             refs=[f"calendar:{pair}"],
         )
+
+
+def _calendar_feed_unavailable(reason: str) -> bool:
+    normalized = reason.upper()
+    return "CALENDAR UNAVAILABLE" in normalized or "MISSING_FOREX_FACTORY_FEED" in normalized
 
 
 def _apply_cot_layer(
