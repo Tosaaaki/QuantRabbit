@@ -66,6 +66,23 @@ class MemoryHealthAuditorTest(unittest.TestCase):
             any(issue["code"] == "POSITION_ENTRY_THESIS_MISSING_FOR_OPEN_TRADE" for issue in payload["issues"])
         )
 
+    def test_missing_entry_thesis_ledger_without_open_positions_is_not_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False)
+            files["entry_thesis"].unlink()
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["position_memory"], "PASS")
+        self.assertEqual(payload["metrics"]["entry_thesis_ledger"]["active_trade_ids"], [])
+        self.assertEqual(payload["metrics"]["entry_thesis_ledger"]["error"], "missing")
+        self.assertFalse(
+            any(issue["code"] == "POSITION_ENTRY_THESIS_UNREADABLE" for issue in payload["issues"])
+        )
+
     def test_blocks_expired_pending_projection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -410,6 +427,7 @@ def _fixtures(
     *,
     write_entry_thesis: bool = True,
     projection_expired: bool = False,
+    active_position: bool = True,
 ) -> dict[str, Path]:
     files = {
         "snapshot": root / "broker_snapshot.json",
@@ -439,7 +457,9 @@ def _fixtures(
                         "entry_price": 1.17,
                         "take_profit": 1.18,
                     }
-                ],
+                ]
+                if active_position
+                else [],
                 "orders": [],
                 "quotes": {"EUR_USD": {"bid": 1.1701, "ask": 1.1702, "timestamp_utc": _NOW.isoformat()}},
             }

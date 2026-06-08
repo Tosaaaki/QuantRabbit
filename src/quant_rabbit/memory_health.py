@@ -864,11 +864,12 @@ def _audit_entry_thesis(
         "error": error,
     }
     if error is not None:
-        severity = "BLOCK" if active_trade_ids else "WARN"
+        if not active_trade_ids:
+            return
         issues.append(
             _issue(
                 layer=LAYER_POSITION,
-                severity=severity,
+                severity="BLOCK",
                 code="POSITION_ENTRY_THESIS_UNREADABLE",
                 message=f"entry_thesis_ledger is unreadable: {path}: {error}",
             )
