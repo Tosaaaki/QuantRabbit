@@ -37,6 +37,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
+
 
 NEWS_CURRENCY_STRONG_BIAS = float(os.environ.get("QR_NEWS_CURRENCY_BIAS", "8.0"))
 NEWS_RISK_TONE_BIAS = float(os.environ.get("QR_NEWS_RISK_TONE_BIAS", "6.0"))
@@ -47,13 +49,9 @@ NEWS_MAX_TOTAL_BIAS = float(os.environ.get("QR_NEWS_MAX_TOTAL_BIAS", "25.0"))
 # Currencies the trader runs on. Order matters only for display.
 KNOWN_CURRENCIES = ("USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF")
 
-# Pairs to score. Add new pairs here; theme translation auto-adapts
-# because base/quote are split below.
-KNOWN_PAIRS = (
-    "EUR_USD", "GBP_USD", "AUD_USD", "NZD_USD", "USD_JPY", "USD_CAD",
-    "USD_CHF", "EUR_JPY", "GBP_JPY", "AUD_JPY", "NZD_JPY", "CHF_JPY",
-    "EUR_GBP", "EUR_CHF", "GBP_CHF",
-)
+# Pairs to score. Keep this aligned with the trader's discovery universe;
+# missing pairs silently remove macro/news context from candidate mining.
+KNOWN_PAIRS = DEFAULT_TRADER_PAIRS
 
 # Theme phrases. Each phrase contributes ±1 to the currency's score
 # inside `_currency_strength_score`. Keep patterns case-insensitive.
@@ -235,6 +233,18 @@ def _apply_currency_score(
     import math
     sign = 1 if strength > 0 else -1
     magnitude = NEWS_CURRENCY_STRONG_BIAS * math.tanh(abs(strength) / 3.0)
+    _apply_currency_bias(biases, currency, sign=sign, magnitude=magnitude)
+
+
+def _apply_currency_bias(
+    biases: Dict[Tuple[str, str], float],
+    currency: str,
+    *,
+    sign: int,
+    magnitude: float,
+) -> None:
+    if magnitude <= 0:
+        return
     for pair in KNOWN_PAIRS:
         split = _split_pair(pair)
         if not split:
@@ -258,9 +268,9 @@ def _apply_risk_tone(biases: Dict[Tuple[str, str], float], risk_off: bool) -> No
     safe_havens = ("JPY", "CHF")
     risk_assets = ("AUD", "NZD")
     for ccy in safe_havens:
-        _apply_currency_score(biases, ccy, sign * (NEWS_RISK_TONE_BIAS // NEWS_CURRENCY_STRONG_BIAS or 1))
+        _apply_currency_bias(biases, ccy, sign=sign, magnitude=NEWS_RISK_TONE_BIAS)
     for ccy in risk_assets:
-        _apply_currency_score(biases, ccy, -sign * (NEWS_RISK_TONE_BIAS // NEWS_CURRENCY_STRONG_BIAS or 1))
+        _apply_currency_bias(biases, ccy, sign=-sign, magnitude=NEWS_RISK_TONE_BIAS)
 
 
 def _parse_explicit_pair_notes(text: str, biases: Dict[Tuple[str, str], float]) -> None:

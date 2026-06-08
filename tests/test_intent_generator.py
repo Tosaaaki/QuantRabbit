@@ -2511,6 +2511,82 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["best_samples"], 48)
         self.assertAlmostEqual(support["best_hit_rate"], 0.62)
 
+    def test_unclear_forecast_records_unselected_audited_news_projection(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(direction="UNCLEAR", raw_confidence=0.18)
+        signal = SimpleNamespace(
+            name="news_theme_followthrough",
+            direction="DOWN",
+            confidence=0.8,
+            bonus_magnitude=10.0,
+            timeframe="H1",
+            rationale="risk-off news theme follows through lower",
+        )
+        hit_rates = {
+            "news_theme_followthrough": {
+                "_all_pairs:TREND": {"hit_rate": 0.651, "samples": 63},
+                "_all_pairs:_all_regimes": {"hit_rate": 0.692, "samples": 91},
+            }
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="EUR_USD",
+            forecast=forecast,
+            projection_signals=[signal],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertFalse(support["ok"])
+        self.assertEqual(support["unselected_projection_count"], 1)
+        self.assertEqual(support["best_unselected_samples"], 63)
+        self.assertAlmostEqual(support["best_unselected_hit_rate"], 0.651)
+        self.assertEqual(support["unselected_signals"][0]["name"], "news_theme_followthrough")
+        self.assertIn("forecast=UNCLEAR", support["unselected_reason"])
+
+    def test_forecast_context_payload_persists_unselected_news_signal_refs(self) -> None:
+        forecast = SimpleNamespace(
+            direction="UNCLEAR",
+            confidence=0.18,
+            raw_confidence=0.18,
+            rationale_summary="contested technical forecast",
+            drivers_for=(),
+            drivers_against=("range prior",),
+            component_scores={"UP": 41.0, "DOWN": 45.0, "RANGE": 43.0},
+            market_support={
+                "ok": False,
+                "direction": "UNCLEAR",
+                "reason": "forecast UNCLEAR has no executable direction; audited projection unselected",
+                "signals": [],
+                "unselected_projection_count": 1,
+                "best_unselected_hit_rate": 0.651,
+                "best_unselected_samples": 63,
+                "unselected_reason": (
+                    "news_theme_followthrough DOWN audited hit_rate=0.65 "
+                    "samples=63 was unselected because forecast=UNCLEAR"
+                ),
+                "unselected_signals": [
+                    {
+                        "name": "news_theme_followthrough",
+                        "direction": "DOWN",
+                        "confidence": 0.8,
+                        "hit_rate": 0.651,
+                        "samples": 63,
+                    }
+                ],
+            },
+        )
+
+        metadata = _forecast_context_payload(forecast)
+
+        self.assertEqual(metadata["news_refs"], ["news:digest", "news:items"])
+        self.assertEqual(metadata["news_signal_names"], ["news_theme_followthrough"])
+        self.assertEqual(
+            metadata["forecast_market_support"]["unselected_signals"][0]["name"],
+            "news_theme_followthrough",
+        )
+
     def test_projection_expiry_grace_avoids_same_cycle_false_blocker(self) -> None:
         from quant_rabbit.strategy.intent_generator import _expired_pending_projection_count
 

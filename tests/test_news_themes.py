@@ -9,10 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from quant_rabbit.strategy.news_themes import (
+    KNOWN_PAIRS,
     NEWS_EXPLICIT_PAIR_BIAS,
     NEWS_MAX_TOTAL_BIAS,
+    NEWS_RISK_TONE_BIAS,
     parse_news_themes,
 )
+from quant_rabbit.instruments import DEFAULT_TRADER_PAIRS
 
 
 def _write_digest(tmp: Path, content: str) -> Path:
@@ -119,6 +122,26 @@ class NewsThemesTest(unittest.TestCase):
             # AUD should weaken in risk-off → AUD/USD SHORT favored
             self.assertGreater(themes.biases[("AUD_USD", "SHORT")], 0)
             self.assertIn("risk-off", themes.detected_themes)
+
+    def test_risk_off_uses_configured_risk_tone_magnitude(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_digest(Path(tmp), "Risk-off mode dominating.\n")
+            themes = parse_news_themes(path)
+
+        self.assertAlmostEqual(themes.biases[("USD_JPY", "SHORT")], NEWS_RISK_TONE_BIAS)
+        self.assertAlmostEqual(themes.biases[("AUD_USD", "SHORT")], NEWS_RISK_TONE_BIAS)
+        self.assertAlmostEqual(themes.biases[("AUD_JPY", "SHORT")], NEWS_RISK_TONE_BIAS * 2)
+
+    def test_news_bias_covers_full_default_trader_universe(self) -> None:
+        self.assertEqual(tuple(DEFAULT_TRADER_PAIRS), tuple(KNOWN_PAIRS))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_digest(Path(tmp), "Risk-off mode dominating.\n")
+            themes = parse_news_themes(path)
+
+        self.assertGreater(themes.biases[("NZD_CHF", "SHORT")], 0)
+        self.assertGreater(themes.biases[("AUD_CAD", "SHORT")], 0)
+        self.assertGreater(themes.biases[("EUR_AUD", "LONG")], 0)
 
     def test_bias_clamped_to_max(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

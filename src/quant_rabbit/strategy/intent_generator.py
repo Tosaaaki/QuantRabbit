@@ -2044,13 +2044,41 @@ def _forecast_market_support_for_forecast(
         "direction": direction,
         "aligned_projection_count": 0,
         "timing_projection_count": 0,
+        "unselected_projection_count": 0,
         "best_hit_rate": None,
         "best_samples": 0,
+        "best_unselected_hit_rate": None,
+        "best_unselected_samples": 0,
         "bootstrap_projection_support": False,
         "reason": "",
         "signals": [],
+        "unselected_signals": [],
+        "unselected_reason": "",
     }
     if direction not in {"UP", "DOWN"} or not projection_signals:
+        unselected = _forecast_unselected_projection_support(
+            pair=pair,
+            forecast_direction=direction,
+            projection_signals=projection_signals,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+        if unselected:
+            top = unselected[0]
+            out.update(
+                {
+                    "unselected_projection_count": len(unselected),
+                    "best_unselected_hit_rate": top["hit_rate"],
+                    "best_unselected_samples": top["samples"],
+                    "unselected_signals": unselected[:4],
+                    "unselected_reason": (
+                        f"{top['name']} {top['direction']} audited hit_rate={top['hit_rate']:.2f} "
+                        f"samples={top['samples']} was unselected because forecast={direction or 'NONE'}"
+                    ),
+                }
+            )
+            out["reason"] = f"forecast {direction or 'NONE'} has no executable direction; audited projection unselected"
+            return out
         out["reason"] = "no directional projection support"
         return out
 
@@ -2145,15 +2173,26 @@ def _forecast_market_support_for_forecast(
     timing_with_raw_direction = bool(timing) and raw_confidence is not None and raw_confidence >= entry_min
     ok = bool(aligned) or timing_with_raw_direction or bool(bootstrap)
     best = max(aligned + timing, key=lambda item: item["hit_rate"], default=None)
+    unselected = _forecast_unselected_projection_support(
+        pair=pair,
+        forecast_direction=direction,
+        projection_signals=projection_signals,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
     out.update(
         {
             "ok": ok,
             "aligned_projection_count": len(aligned) + (len(bootstrap) if not aligned else 0),
             "timing_projection_count": len(timing),
+            "unselected_projection_count": len(unselected),
             "best_hit_rate": best["hit_rate"] if best else None,
             "best_samples": best["samples"] if best else 0,
+            "best_unselected_hit_rate": unselected[0]["hit_rate"] if unselected else None,
+            "best_unselected_samples": unselected[0]["samples"] if unselected else 0,
             "bootstrap_projection_support": bool(bootstrap) and not bool(aligned),
             "signals": (aligned + timing + bootstrap)[:4] if ok else (considered + bootstrap)[:4],
+            "unselected_signals": unselected[:4],
         }
     )
     if aligned:
@@ -2172,7 +2211,79 @@ def _forecast_market_support_for_forecast(
         out["reason"] = bootstrap[0]["reason"]
     else:
         out["reason"] = "no current projection clears audited support floors"
+    if unselected:
+        top = unselected[0]
+        out["unselected_reason"] = (
+            f"{top['name']} {top['direction']} audited hit_rate={top['hit_rate']:.2f} "
+            f"samples={top['samples']} did not align with forecast={direction}"
+        )
     return out
+
+
+def _forecast_unselected_projection_support(
+    *,
+    pair: str,
+    forecast_direction: str,
+    projection_signals: list[Any],
+    hit_rates: dict[str, dict[str, Any]] | None,
+    regime: str | None,
+) -> list[dict[str, Any]]:
+    if not projection_signals or not isinstance(hit_rates, dict):
+        return []
+    try:
+        from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
+    except Exception:
+        return []
+
+    forecast_direction = str(forecast_direction or "").upper()
+    out: list[dict[str, Any]] = []
+    for signal in projection_signals:
+        name = str(getattr(signal, "name", "") or "")
+        signal_direction = str(getattr(signal, "direction", "") or "").upper()
+        if not name or signal_direction not in {"UP", "DOWN"}:
+            continue
+        if forecast_direction in {"UP", "DOWN"} and signal_direction == forecast_direction:
+            continue
+        confidence = _optional_float(getattr(signal, "confidence", None)) or 0.0
+        bonus = _optional_float(getattr(signal, "bonus_magnitude", None)) or 0.0
+        if confidence < FORECAST_MARKET_SUPPORT_MIN_SIGNAL_CONFIDENCE or bonus <= 0.0:
+            continue
+        calibration_name = select_calibration_signal_name(
+            name,
+            signal_direction,
+            pair,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+        bucket = _projection_hit_rate_bucket(
+            hit_rates,
+            calibration_name,
+            pair=pair,
+            regime=regime,
+        )
+        if bucket is None:
+            continue
+        hit_rate = _optional_float(bucket.get("hit_rate"))
+        samples = _optional_int(bucket.get("samples"))
+        if hit_rate is None or samples is None:
+            continue
+        if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+            continue
+        if hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+            continue
+        out.append(
+            {
+                "name": name,
+                "calibration_name": calibration_name,
+                "direction": signal_direction,
+                "confidence": round(confidence, 4),
+                "hit_rate": round(hit_rate, 4),
+                "samples": samples,
+                "timeframe": getattr(signal, "timeframe", None),
+                "rationale": str(getattr(signal, "rationale", "") or "")[:180],
+            }
+        )
+    return sorted(out, key=lambda item: (item["hit_rate"], item["confidence"], item["samples"]), reverse=True)
 
 
 def _forecast_bootstrap_projection_support(
@@ -2444,7 +2555,7 @@ def _forecast_context_payload(forecast: Any, *, cycle_id: str | None = None) -> 
 
 def _forecast_news_ref_metadata(forecast: Any, market_support: dict[str, Any]) -> dict[str, Any]:
     signal_names: list[str] = []
-    for raw in market_support.get("signals") or []:
+    for raw in list(market_support.get("signals") or []) + list(market_support.get("unselected_signals") or []):
         if not isinstance(raw, dict):
             continue
         name = str(raw.get("name") or "").strip()
@@ -2482,12 +2593,20 @@ def _forecast_market_support_payload(value: object) -> dict[str, Any]:
         "direction": str(value.get("direction") or ""),
         "aligned_projection_count": _optional_int(value.get("aligned_projection_count")) or 0,
         "timing_projection_count": _optional_int(value.get("timing_projection_count")) or 0,
+        "unselected_projection_count": _optional_int(value.get("unselected_projection_count")) or 0,
         "best_hit_rate": _optional_float(value.get("best_hit_rate")),
         "best_samples": _optional_int(value.get("best_samples")) or 0,
+        "best_unselected_hit_rate": _optional_float(value.get("best_unselected_hit_rate")),
+        "best_unselected_samples": _optional_int(value.get("best_unselected_samples")) or 0,
         "bootstrap_projection_support": bool(value.get("bootstrap_projection_support")),
         "reason": str(value.get("reason") or ""),
+        "unselected_reason": str(value.get("unselected_reason") or ""),
         "signals": [
             item for item in list(value.get("signals") or [])[:4]
+            if isinstance(item, dict)
+        ],
+        "unselected_signals": [
+            item for item in list(value.get("unselected_signals") or [])[:4]
             if isinstance(item, dict)
         ],
     }
