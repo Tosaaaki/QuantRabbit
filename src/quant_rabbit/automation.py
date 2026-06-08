@@ -529,6 +529,7 @@ class AutoTradeCycle:
     ) -> None:
         injected_client = client is not None
         explicit_trader_journal_path = trader_journal_path is not None
+        explicit_self_improvement_audit_path = gpt_self_improvement_audit_path is not None
         self.client = client or OandaExecutionClient()
         self.snapshot_path = snapshot_path
         self.intents_path = intents_path
@@ -579,6 +580,11 @@ class AutoTradeCycle:
             explicit=gpt_self_improvement_audit_path,
             gpt_decision_path=gpt_decision_path,
             default_path=DEFAULT_SELF_IMPROVEMENT_AUDIT,
+        )
+        self.gateway_self_improvement_audit_path = (
+            self.gpt_self_improvement_audit_path
+            if explicit_self_improvement_audit_path or not injected_client
+            else None
         )
         self.gpt_verification_ledger_path = _gpt_sidecar_path(
             explicit=gpt_verification_ledger_path,
@@ -1232,6 +1238,7 @@ class AutoTradeCycle:
                         live_enabled=self.live_enabled,
                         max_loss_jpy=resolved_max_loss_jpy,
                         portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+                        self_improvement_audit=self.gateway_self_improvement_audit_path,
                     ).run_batch(
                         intents_path=self.intents_path,
                         lane_ids=basket_lane_ids,
@@ -1770,6 +1777,7 @@ class AutoTradeCycle:
             live_enabled=self.live_enabled,
             max_loss_jpy=resolved_max_loss_jpy,
             portfolio_loss_cap_jpy=self._portfolio_loss_cap_jpy_from_target_state(),
+            self_improvement_audit=self.gateway_self_improvement_audit_path,
         )
         if len(basket_lane_ids) > 1:
             order_summary = order_gateway.run_batch(

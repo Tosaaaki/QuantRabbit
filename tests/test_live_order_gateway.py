@@ -160,6 +160,39 @@ class LiveOrderGatewayTest(unittest.TestCase):
             self.assertEqual(client.orders, [])
             self.assertIn("LIVE_CONFIRMATION_REQUIRED", (root / "report.md").read_text())
 
+    def test_self_improvement_p0_blocks_live_order_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                                "message": "profitability discipline has failed for 50 consecutive audit runs",
+                            }
+                        ]
+                    }
+                )
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders, [])
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_send_posts_only_after_live_validation_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

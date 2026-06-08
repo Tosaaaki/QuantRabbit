@@ -2020,6 +2020,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_path=args.output,
                 report_path=args.report,
                 live_enabled=os.environ.get("QR_LIVE_ENABLED") == "1",
+                self_improvement_audit=DEFAULT_SELF_IMPROVEMENT_AUDIT,
                 max_loss_jpy=_resolve_max_loss_from_args(
                     max_loss_jpy=args.max_loss_jpy,
                     max_loss_pct=args.max_loss_pct,

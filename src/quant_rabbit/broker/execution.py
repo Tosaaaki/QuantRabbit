@@ -90,6 +90,7 @@ class LiveOrderGateway:
         max_loss_pct: float | None = None,
         risk_equity_jpy: float | None = None,
         portfolio_loss_cap_jpy: float | None = None,
+        self_improvement_audit: Path | None = None,
     ) -> None:
         self.client = client
         self.strategy_profile = strategy_profile
@@ -100,6 +101,7 @@ class LiveOrderGateway:
         self.max_loss_pct = max_loss_pct
         self.risk_equity_jpy = risk_equity_jpy
         self.portfolio_loss_cap_jpy = portfolio_loss_cap_jpy
+        self.self_improvement_audit = self_improvement_audit
 
     def run(
         self,
@@ -179,12 +181,14 @@ class LiveOrderGateway:
             intents_path=intents_path,
             validation_time_utc=datetime.now(timezone.utc),
         )
+        self_improvement_issues = _self_improvement_gateway_issues(self.self_improvement_audit)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
             or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
             or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
+            or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -245,6 +249,7 @@ class LiveOrderGateway:
                 *risk_issues,
                 *intent_status_issues,
                 *projection_expiry_issues,
+                *self_improvement_issues,
                 *send_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -556,12 +561,14 @@ class LiveOrderGateway:
             intents_path=intents_path,
             validation_time_utc=datetime.now(timezone.utc),
         )
+        self_improvement_issues = _self_improvement_gateway_issues(self.self_improvement_audit)
         send_issues = _send_guard_issues(send=send, confirm_live=confirm_live, lane_id=lane_id_arg)
         all_blocked = (
             any(issue["severity"] == "BLOCK" for issue in risk_issues)
             or any(issue["severity"] == "BLOCK" for issue in strategy_issues)
             or any(issue["severity"] == "BLOCK" for issue in intent_status_issues)
             or any(issue["severity"] == "BLOCK" for issue in projection_expiry_issues)
+            or any(issue["severity"] == "BLOCK" for issue in self_improvement_issues)
             or any(issue["severity"] == "BLOCK" for issue in send_issues)
             or any(issue.severity == "BLOCK" for issue in scale_issues)
         )
@@ -617,6 +624,7 @@ class LiveOrderGateway:
                 *risk_issues,
                 *intent_status_issues,
                 *projection_expiry_issues,
+                *self_improvement_issues,
                 *send_issues,
                 *order_build_issues,
                 *[issue.__dict__ for issue in scale_issues],
@@ -1218,6 +1226,38 @@ def _projection_expiry_status_issues(
                 f"projection_ledger.jsonl has {expired} expired PENDING projection(s); "
                 "rerun verify-projections before staging or sending new live exposure."
             ),
+        ).__dict__
+    ]
+
+
+def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
+    """Block fresh entry staging when self-improvement has an active P0 gate."""
+    if path is None or not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return [
+            RiskIssue(
+                "SELF_IMPROVEMENT_AUDIT_UNREADABLE",
+                f"self-improvement audit is unreadable before live order staging: {path}: {exc}",
+            ).__dict__
+        ]
+    blockers: list[str] = []
+    for item in payload.get("findings", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("priority") or "").upper() != "P0":
+            continue
+        code = str(item.get("code") or "SELF_IMPROVEMENT_P0")
+        message = str(item.get("message") or code)
+        blockers.append(f"{code}: {message}")
+    if not blockers:
+        return []
+    return [
+        RiskIssue(
+            "SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER",
+            "self-improvement P0 blocks new live entry risk: " + "; ".join(blockers[:3]),
         ).__dict__
     ]
 
