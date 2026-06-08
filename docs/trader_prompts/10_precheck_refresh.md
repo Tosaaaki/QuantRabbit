@@ -15,7 +15,7 @@
 ```bash
 export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cross-asset-snapshot
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot  # spread only; use --include-books only after OANDA book entitlement is confirmed
@@ -83,10 +83,10 @@ Context fetches can outlive the quote freshness window. Refresh broker truth aga
 ```bash
 export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-attack-advice

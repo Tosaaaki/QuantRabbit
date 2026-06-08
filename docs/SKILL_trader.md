@@ -94,7 +94,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/br
 # under SL-free (user directive 2026-05-11「市況読めばいいだけ」: the
 # synthetic worst-case loss inside the validator is advisory; exits are
 # market-derived, not loss-cap-derived).
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli import-legacy
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-strategy
@@ -148,7 +148,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli news-health --strict
 # priority.
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-review
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
 # TP rebalance is protection, not an entry decision. Run it once the
 # current broker truth + pair_charts packet is fresh, before intent pricing
@@ -161,7 +161,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10 --target-trades-per-day 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
 # Resolve expired forward-projection telemetry before intent pricing. Fresh
 # entries cannot become LIVE_READY while old PENDING predictions are past
 # their resolution window because the next trade would not be auditable.
