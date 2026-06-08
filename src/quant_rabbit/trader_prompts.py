@@ -200,6 +200,7 @@ def route_trader_prompts(
         snapshot_path=snapshot_path,
     )
     live_ready_lanes = _live_ready_lane_ids(intents)
+    pending_entry_reasons = _pending_entry_order_reasons(snapshot)
     close_review_reasons = _position_close_recommendation_reasons(
         snapshot,
         snapshot_path=snapshot_path,
@@ -276,6 +277,7 @@ def route_trader_prompts(
             (
                 *carry_reasons,
                 *advisory_close_review_reasons,
+                *pending_entry_reasons,
                 f"daily target open with {len(live_ready_lanes)} current LIVE_READY lane(s)",
             ),
             include_content=include_content,
@@ -286,6 +288,7 @@ def route_trader_prompts(
             (
                 *carry_reasons,
                 *advisory_close_review_reasons,
+                *pending_entry_reasons,
                 "daily target open but no current LIVE_READY lane is available",
             ),
             include_content=include_content,
@@ -1034,6 +1037,33 @@ def _live_ready_lane_ids(intents: dict[str, Any]) -> tuple[str, ...]:
         if lane_id:
             lane_ids.append(lane_id)
     return tuple(dict.fromkeys(lane_ids))
+
+
+def _pending_entry_order_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
+    summaries: list[str] = []
+    for item in snapshot.get("orders", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("owner") or "").lower() != "trader":
+            continue
+        if item.get("trade_id"):
+            continue
+        state = str(item.get("state") or "").upper()
+        if state not in {"PENDING", "OPEN"}:
+            continue
+        order_type = str(item.get("order_type") or "").upper()
+        if order_type not in {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}:
+            continue
+        summaries.append(
+            f"{item.get('pair') or '(unknown)'} {order_type} id={item.get('order_id') or '(unknown)'}"
+        )
+    if not summaries:
+        return ()
+    return (
+        "trader pending entry order(s) occupy the gateway entry slot: "
+        + ", ".join(summaries)
+        + "; use CANCEL_PENDING or a TRADE receipt with cancel_order_ids before fresh entries",
+    )
 
 
 def _target_open(target_state: dict[str, Any]) -> bool:

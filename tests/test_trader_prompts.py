@@ -49,6 +49,36 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any(path.endswith("30_entry_decision.md") for path in read_paths))
         self.assertTrue(any(path.endswith("90_decision_receipt_schema.md") for path in read_paths))
 
+    def test_entry_branch_names_pending_entry_gateway_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["orders"] = [
+                {
+                    "order_id": "472124",
+                    "pair": "EUR_GBP",
+                    "order_type": "STOP",
+                    "state": "PENDING",
+                    "units": -1000,
+                    "owner": "trader",
+                    "trade_id": None,
+                }
+            ]
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertTrue(
+            any(
+                "pending entry order" in reason
+                and "472124" in reason
+                and "cancel_order_ids" in reason
+                for reason in route.reasons
+            )
+        )
+
     def test_stale_trader_overrides_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
