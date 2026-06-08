@@ -1216,7 +1216,7 @@ def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, Any]) -> 
         return "TRADER_CLIENT_EXTENSION"
     if client_sources:
         return "NON_TRADER_CLIENT_EXTENSION"
-    return "UNLABELED_BROKER_TRADE_CLOSE"
+    return "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"
 
 
 def _trade_close_trade_id(trade_close: Any) -> str:
@@ -1960,11 +1960,11 @@ def _mechanism_ablation_findings(
     ):
         return []
     if broker_without_gateway:
-        if broker_without_gateway_sources.get("UNLABELED_BROKER_TRADE_CLOSE"):
+        if broker_without_gateway_sources.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"):
             next_action = (
-                "Broker accepted TRADE_CLOSE loss events are unlabeled by local gateway receipt; persist a local "
-                "GATEWAY_TRADE_CLOSE_SENT/GPT_CLOSE source tag before counting them as Gate A/B evidence or "
-                "changing live close policy."
+                "Broker accepted TRADE_CLOSE loss events look direct/manual: no local gateway receipt or trader "
+                "client extension identified. Treat them as external/direct exit drag, persist explicit close "
+                "source tags, and do not use them as Gate A/B or news-weight evidence."
             )
         else:
             next_action = (

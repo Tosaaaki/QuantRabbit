@@ -404,7 +404,7 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "loss_side_market_close_net_jpy": -1200.0,
                                 "broker_accepted_without_gateway_loss_side_market_close_count": 2,
                                 "broker_accepted_without_gateway_loss_side_market_close_source_counts": {
-                                    "UNLABELED_BROKER_TRADE_CLOSE": 2
+                                    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 2
                                 },
                                 "unattributed_loss_side_market_close_count": 5,
                             }
@@ -422,10 +422,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         finding = codes["CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"]
         self.assertEqual(finding["priority"], "P1")
         self.assertEqual(finding["evidence"]["gateway_close_sent_events"], 0)
-        self.assertIn("unlabeled", finding["next_action"])
+        self.assertIn("direct/manual", finding["next_action"])
         self.assertEqual(
             finding["evidence"]["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
-            {"UNLABELED_BROKER_TRADE_CLOSE": 2},
+            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 2},
         )
 
     def test_legacy_review_exit_close_ablation_remains_p1_assumption_hole(self) -> None:
@@ -696,11 +696,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["evidence"]["broker_trade_close_accept_count"], 1)
         self.assertEqual(
             finding["evidence"]["broker_trade_close_accept_source_counts"],
-            {"UNLABELED_BROKER_TRADE_CLOSE": 1},
+            {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
         )
         self.assertEqual(
             finding["evidence"]["examples"][0]["broker_trade_close_accept_sources"],
-            ["UNLABELED_BROKER_TRADE_CLOSE"],
+            ["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"],
         )
 
     def test_gateway_close_receipt_satisfies_market_order_close_attribution(self) -> None:

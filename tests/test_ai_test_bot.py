@@ -1057,7 +1057,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertIn("CLOSE Gate A/B Diagnostics", report)
             self.assertIn("Worst loss-side market close examples", report)
 
-    def test_close_gate_diagnostic_reports_unattributable_broker_closes(self) -> None:
+    def test_close_gate_diagnostic_reports_direct_or_manual_broker_closes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db = root / "legacy.db"
@@ -1188,30 +1188,34 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["broker_trade_close_accept_events"], 1)
             self.assertEqual(close_gate["broker_trade_close_accept_trade_ids"], 1)
             self.assertEqual(close_gate["broker_trade_close_accept_order_ids"], 1)
-            self.assertEqual(close_gate["broker_trade_close_accept_source_counts"], {"UNLABELED_BROKER_TRADE_CLOSE": 1})
+            self.assertEqual(
+                close_gate["broker_trade_close_accept_source_counts"],
+                {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
+            )
             self.assertEqual(close_gate["loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["broker_trade_close_loss_side_market_close_count"], 1)
             self.assertEqual(
                 close_gate["broker_trade_close_loss_side_market_close_source_counts"],
-                {"UNLABELED_BROKER_TRADE_CLOSE": 1},
+                {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
             )
             self.assertEqual(close_gate["broker_accepted_without_gateway_loss_side_market_close_count"], 1)
             self.assertEqual(
                 close_gate["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
-                {"UNLABELED_BROKER_TRADE_CLOSE": 1},
+                {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 1},
             )
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 0)
             example = close_gate["loss_side_market_close_examples"][0]
             self.assertFalse(example["gateway_close_sent"])
             self.assertTrue(example["broker_trade_close_accepted"])
-            self.assertEqual(example["broker_trade_close_sources"], ["UNLABELED_BROKER_TRADE_CLOSE"])
+            self.assertEqual(example["broker_trade_close_sources"], ["DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"])
             self.assertTrue(example["close_order_provenance"])
             self.assertTrue(any("broker accepted TRADE_CLOSE orders exist" in item for item in payload["action_items"]))
-            self.assertTrue(any("UNLABELED_BROKER_TRADE_CLOSE" in item for item in payload["action_items"]))
+            self.assertTrue(any("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in item for item in payload["action_items"]))
+            self.assertTrue(any("direct/manual broker TRADE_CLOSE" in item for item in payload["action_items"]))
             self.assertTrue(any("worst close-source segment" in item for item in payload["action_items"]))
             self.assertFalse(any("lack both gateway close receipts" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
-            self.assertIn("UNLABELED_BROKER_TRADE_CLOSE", report)
+            self.assertIn("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", report)
             self.assertIn("Close source segments", report)
 
     def test_close_gate_diagnostic_matches_gateway_close_by_order_id(self) -> None:
@@ -1296,7 +1300,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(example["close_source"], "GATEWAY:STALE_GPT_CLOSE_SATISFIED")
             source_segments = {item["source"]: item for item in close_gate["close_source_segments"]}
             self.assertEqual(source_segments["GATEWAY:STALE_GPT_CLOSE_SATISFIED"]["net_jpy"], -250.0)
-            self.assertNotIn("BROKER_ACCEPT:UNLABELED_BROKER_TRADE_CLOSE", source_segments)
+            self.assertNotIn("BROKER_ACCEPT:DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE", source_segments)
             self.assertTrue(any("stale GPT close receipts" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("Stale GPT_CLOSE satisfied", report)

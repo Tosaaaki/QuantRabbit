@@ -2013,7 +2013,7 @@ def _broker_trade_close_accept_source(row: sqlite3.Row, raw: dict[str, object]) 
         return "TRADER_CLIENT_EXTENSION"
     if client_sources:
         return "NON_TRADER_CLIENT_EXTENSION"
-    return "UNLABELED_BROKER_TRADE_CLOSE"
+    return "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE"
 
 
 def _broker_trade_close_trade_id(trade_close: object) -> str:
@@ -2446,6 +2446,16 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
             f"{source_suffix} "
             "tag whether these were GPT/gateway, operator, or broker-sync-only closes before changing CLOSE Gate A-B policy"
         )
+        if (
+            isinstance(source_counts, dict)
+            and int(source_counts.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE") or 0) > 0
+        ):
+            direct_count = int(source_counts.get("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE") or 0)
+            yield (
+                "direct/manual broker TRADE_CLOSE orders are negative without local gateway close receipts "
+                f"({direct_count} close(s)); treat them as external/direct exit drag, not as proof that "
+                "news weighting or autonomous Gate A-B should be relaxed"
+            )
     source_segments = payload.get("close_source_segments")
     if isinstance(source_segments, list):
         negative_segments = [
