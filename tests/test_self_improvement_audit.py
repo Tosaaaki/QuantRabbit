@@ -992,6 +992,41 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(codes["LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS"]["priority"], "P1")
         self.assertEqual(codes["LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS"]["evidence"]["action"], "REQUEST_EVIDENCE")
 
+    def test_rejected_stale_trade_receipt_is_not_stale_p0(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "REJECTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "TRADE", "close_trade_ids": []},
+                        "verification_issues": [
+                            {
+                                "severity": "BLOCK",
+                                "code": "SELF_IMPROVEMENT_P0_BLOCKS_TRADE",
+                                "message": "trade rejected by prior audit P0",
+                            }
+                        ],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("LATEST_GPT_DECISION_STALE", codes)
+        self.assertIn("LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS", codes)
+        self.assertEqual(codes["LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS"]["priority"], "P1")
+
     def test_rejected_close_for_active_trade_remains_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

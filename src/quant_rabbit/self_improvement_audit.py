@@ -2423,7 +2423,37 @@ def _decision_artifact_findings(
         generated_at = _parse_utc(payload.get("generated_at_utc"))
         if generated_at is None and isinstance(payload.get("decision"), dict):
             generated_at = _parse_utc(payload["decision"].get("generated_at_utc"))
-        if snapshot_ts is not None and generated_at is not None and generated_at < snapshot_ts:
+        issues = payload.get("verification_issues")
+        blocking = (
+            [
+                item
+                for item in issues
+                if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"
+            ]
+            if isinstance(issues, list)
+            else []
+        )
+        decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+        action = str(decision.get("action") or "").upper()
+        close_ids = {
+            str(item)
+            for item in decision.get("close_trade_ids", []) or []
+            if str(item)
+        }
+        status = str(payload.get("status") or "").upper()
+        rejected_inert_receipt = bool(blocking) and status == "REJECTED" and not (
+            action == "CLOSE" and close_ids & active_trade_ids
+        )
+        stale_close_for_closed_trades = bool(blocking) and (
+            action == "CLOSE" and bool(close_ids) and close_ids.isdisjoint(active_trade_ids)
+        )
+        if (
+            snapshot_ts is not None
+            and generated_at is not None
+            and generated_at < snapshot_ts
+            and not rejected_inert_receipt
+            and not stale_close_for_closed_trades
+        ):
             priority = "P0" if target_open or active_trade_ids else "P1"
             out.append(
                 _finding(
@@ -2442,78 +2472,67 @@ def _decision_artifact_findings(
                     },
                 )
             )
-        issues = gpt_loaded.payload.get("verification_issues")
-        if isinstance(issues, list) and issues:
-            blocking = [item for item in issues if isinstance(item, dict) and str(item.get("severity") or "").upper() == "BLOCK"]
-            if blocking:
-                decision = gpt_loaded.payload.get("decision") if isinstance(gpt_loaded.payload.get("decision"), dict) else {}
-                action = str(decision.get("action") or "").upper()
-                close_ids = {
-                    str(item)
-                    for item in decision.get("close_trade_ids", []) or []
-                    if str(item)
-                }
-                if action == "CLOSE" and close_ids and close_ids.isdisjoint(active_trade_ids):
-                    out.append(
-                        _finding(
-                            run_id=run_id,
-                            priority="P1",
-                            layer="decision_history",
-                            code="STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES",
-                            message=(
-                                "latest GPT CLOSE decision has blocking verification issue(s), "
-                                "but broker truth no longer shows the requested trader-owned trade(s) as open"
-                            ),
-                            next_action=(
-                                "Do not reuse the stale CLOSE receipt; refresh broker truth and continue with "
-                                "current position/entry routing."
-                            ),
-                            evidence={
-                                "codes": [str(item.get("code") or "") for item in blocking[:12]],
-                                "close_trade_ids": sorted(close_ids),
-                            },
-                        )
-                    )
-                    return out
-                status = str(gpt_loaded.payload.get("status") or "").upper()
-                if status == "REJECTED" and not (action == "CLOSE" and close_ids & active_trade_ids):
-                    out.append(
-                        _finding(
-                            run_id=run_id,
-                            priority="P1",
-                            layer="decision_history",
-                            code="LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS",
-                            message=(
-                                "latest GPT decision was already rejected with blocking verification issue(s); "
-                                "it is not an unconsumed live permission"
-                            ),
-                            next_action=(
-                                "Do not reuse the rejected receipt; write and verify a fresh decision against "
-                                "the current packet."
-                            ),
-                            evidence={
-                                "status": status,
-                                "action": action,
-                                "codes": [str(item.get("code") or "") for item in blocking[:12]],
-                                "active_close_trade_ids": sorted(close_ids & active_trade_ids),
-                            },
-                        )
-                    )
-                    return out
+        if blocking:
+            if action == "CLOSE" and close_ids and close_ids.isdisjoint(active_trade_ids):
                 out.append(
                     _finding(
                         run_id=run_id,
-                        priority="P0",
+                        priority="P1",
                         layer="decision_history",
-                        code="LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES",
-                        message=f"latest GPT decision contains {len(blocking)} blocking verification issue(s)",
-                        next_action="Do not reuse the receipt; fix the first blocker and verify a fresh decision.",
+                        code="STALE_GPT_CLOSE_BLOCKERS_FOR_CLOSED_TRADES",
+                        message=(
+                            "latest GPT CLOSE decision has blocking verification issue(s), "
+                            "but broker truth no longer shows the requested trader-owned trade(s) as open"
+                        ),
+                        next_action=(
+                            "Do not reuse the stale CLOSE receipt; refresh broker truth and continue with "
+                            "current position/entry routing."
+                        ),
                         evidence={
+                            "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                            "close_trade_ids": sorted(close_ids),
+                        },
+                    )
+                )
+                return out
+            if status == "REJECTED" and not (action == "CLOSE" and close_ids & active_trade_ids):
+                out.append(
+                    _finding(
+                        run_id=run_id,
+                        priority="P1",
+                        layer="decision_history",
+                        code="LATEST_GPT_DECISION_REJECTED_WITH_BLOCKERS",
+                        message=(
+                            "latest GPT decision was already rejected with blocking verification issue(s); "
+                            "it is not an unconsumed live permission"
+                        ),
+                        next_action=(
+                            "Do not reuse the rejected receipt; write and verify a fresh decision against "
+                            "the current packet."
+                        ),
+                        evidence={
+                            "status": status,
+                            "action": action,
                             "codes": [str(item.get("code") or "") for item in blocking[:12]],
                             "active_close_trade_ids": sorted(close_ids & active_trade_ids),
                         },
                     )
                 )
+                return out
+            out.append(
+                _finding(
+                    run_id=run_id,
+                    priority="P0",
+                    layer="decision_history",
+                    code="LATEST_GPT_DECISION_HAS_BLOCKING_ISSUES",
+                    message=f"latest GPT decision contains {len(blocking)} blocking verification issue(s)",
+                    next_action="Do not reuse the receipt; fix the first blocker and verify a fresh decision.",
+                    evidence={
+                        "codes": [str(item.get("code") or "") for item in blocking[:12]],
+                        "active_close_trade_ids": sorted(close_ids & active_trade_ids),
+                    },
+                )
+            )
     return out
 
 
