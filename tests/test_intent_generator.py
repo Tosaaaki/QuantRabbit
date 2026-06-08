@@ -2511,6 +2511,62 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["best_samples"], 48)
         self.assertAlmostEqual(support["best_hit_rate"], 0.62)
 
+    def test_supported_weak_opposite_forecast_blocks_this_side(self) -> None:
+        from quant_rabbit.models import MarketContext, OrderIntent, OrderType, Side, TradeMethod
+        from quant_rabbit.strategy.intent_generator import _method_context_issues
+
+        intent = OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=OrderType.LIMIT,
+            units=5000,
+            entry=1.1730,
+            tp=1.1760,
+            sl=1.1710,
+            thesis="long despite supported down forecast",
+            market_context=MarketContext(
+                regime="TREND_DOWN",
+                narrative="",
+                chart_story="",
+                method=TradeMethod.BREAKOUT_FAILURE,
+                invalidation="",
+            ),
+            metadata={
+                "forecast_direction": "DOWN",
+                "forecast_confidence": 0.18,
+                "forecast_raw_confidence": 0.55,
+                "chart_direction_bias": "SHORT",
+                "forecast_market_support": {
+                    "ok": True,
+                    "direction": "DOWN",
+                    "aligned_projection_count": 1,
+                    "timing_projection_count": 0,
+                    "best_hit_rate": 0.77,
+                    "best_samples": 13,
+                    "reason": (
+                        "news_theme_followthrough DOWN hit_rate=0.77 "
+                        "samples=13 supports weak calibrated forecast"
+                    ),
+                    "signals": [
+                        {
+                            "name": "news_theme_followthrough",
+                            "direction": "DOWN",
+                            "confidence": 0.8,
+                            "hit_rate": 0.77,
+                            "samples": 13,
+                        }
+                    ],
+                },
+            },
+        )
+
+        codes = {
+            issue["code"]: issue["severity"]
+            for issue in _method_context_issues(intent)
+        }
+
+        self.assertEqual(codes["FORECAST_DIRECTION_CONFLICT"], "BLOCK")
+
     def test_unclear_forecast_records_unselected_audited_news_projection(self) -> None:
         from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
 

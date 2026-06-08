@@ -4243,11 +4243,17 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
     if direction not in {"UP", "DOWN"}:
         return None
     confidence = _optional_float(metadata.get("forecast_confidence"))
-    if confidence is None or confidence < _forecast_live_min_confidence(metadata):
-        return None
     forecast_side = Side.LONG.value if direction == "UP" else Side.SHORT.value
     if forecast_side == intent.side.value:
         return None
+    min_confidence = _forecast_live_min_confidence(metadata)
+    if confidence is None or confidence < min_confidence:
+        if not _forecast_supported_opposite_side_blocks(
+            metadata,
+            forecast_side=forecast_side,
+            min_confidence=min_confidence,
+        ):
+            return None
     target = metadata.get("forecast_target_price")
     invalidation = metadata.get("forecast_invalidation_price")
     extra = []
@@ -4265,6 +4271,49 @@ def _forecast_direction_conflict_issue(intent: OrderIntent, metadata: dict[str, 
         ),
         "severity": "BLOCK",
     }
+
+
+def _forecast_supported_opposite_side_blocks(
+    metadata: dict[str, Any],
+    *,
+    forecast_side: str,
+    min_confidence: float,
+) -> bool:
+    """Block the opposite side when audited projection supports the forecast.
+
+    The support path may be insufficient to authorize the forecast side when
+    calibrated confidence is deeply below the live floor. It still must stop the
+    opposite lane: otherwise a news/liquidity-supported DOWN forecast can allow
+    a LONG dry-run candidate to pass simply because final forecast calibration
+    was pessimistic.
+    """
+    direction = str(metadata.get("forecast_direction") or "").upper()
+    expected_side = Side.LONG.value if direction == "UP" else Side.SHORT.value if direction == "DOWN" else None
+    if expected_side != forecast_side:
+        return False
+    raw_confidence = _optional_float(metadata.get("forecast_raw_confidence"))
+    support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
+    if raw_confidence is None or raw_confidence < support_floor:
+        return False
+    chart_direction_bias = str(metadata.get("chart_direction_bias") or "").upper()
+    if chart_direction_bias and chart_direction_bias != forecast_side:
+        return False
+    support = _forecast_market_support_payload(metadata.get("forecast_market_support"))
+    if not bool(support.get("ok")):
+        return False
+    support_direction = str(support.get("direction") or "").upper()
+    if support_direction and support_direction != direction:
+        return False
+    if bool(support.get("bootstrap_projection_support")):
+        return True
+    aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
+    if aligned_count <= 0:
+        return False
+    samples = _optional_int(support.get("best_samples")) or 0
+    if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+        return False
+    hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
+    return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
 
 
 def _forecast_live_readiness_issue(
