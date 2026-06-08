@@ -259,6 +259,52 @@ class ExecutionLedgerTest(unittest.TestCase):
                 ],
             )
 
+    def test_sync_reconciles_accepted_gpt_close_to_broker_trade_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "gpt_trader_decision.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-05T16:06:44+00:00",
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CLOSE",
+                            "selected_lane_id": None,
+                            "close_trade_ids": ["T501"],
+                        },
+                        "verification_issues": [],
+                    }
+                )
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            ledger.record_gateway_receipt(kind="gpt_decision", receipt_path=receipt)
+            summary = ledger.sync_oanda_transactions(FakeGptCloseBrokerCloseClient(), since_transaction_id="500")
+            duplicate = ledger.sync_oanda_transactions(FakeGptCloseBrokerCloseClient(), since_transaction_id="500")
+
+            self.assertEqual(summary.reconciled_gateway_events_inserted, 1)
+            self.assertEqual(duplicate.reconciled_gateway_events_inserted, 0)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    """
+                    SELECT event_type, source, order_id, trade_id, pair, exit_reason,
+                           related_transaction_ids_json, raw_json
+                    FROM execution_events
+                    WHERE event_type='GATEWAY_TRADE_CLOSE_RECONCILED'
+                    """
+                ).fetchone()
+            self.assertEqual(row[0:6], (
+                "GATEWAY_TRADE_CLOSE_RECONCILED",
+                "ledger_reconcile",
+                "501",
+                "T501",
+                "EUR_JPY",
+                "GPT_CLOSE_RECONCILED",
+            ))
+            self.assertEqual(json.loads(row[6]), ["501", "502"])
+            self.assertEqual(json.loads(row[7])["reconciled_from"][0], "GATEWAY_GPT_CLOSE_ACCEPTED")
+
     def test_init_backfills_gateway_position_order_id_from_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -734,6 +780,52 @@ class FakeTradeCloseAcceptClient:
                     "reason": "TRADE_CLOSE",
                     "positionFill": "REDUCE_ONLY",
                     "tradeClose": {"tradeID": "T501", "units": "ALL"},
+                },
+            ],
+        }
+
+
+class FakeGptCloseBrokerCloseClient:
+    def account_summary(self, *, now_utc: datetime | None = None) -> AccountSummary:
+        return AccountSummary(
+            nav_jpy=200_000.0,
+            balance_jpy=200_000.0,
+            last_transaction_id="500",
+            fetched_at_utc=now_utc or datetime.now(timezone.utc),
+        )
+
+    def transactions_since_id(self, transaction_id: str) -> dict:
+        return {
+            "lastTransactionID": "502",
+            "transactions": [
+                {
+                    "id": "501",
+                    "time": "2026-06-05T16:06:46.688940451Z",
+                    "type": "MARKET_ORDER",
+                    "instrument": "EUR_JPY",
+                    "units": "-2700",
+                    "reason": "TRADE_CLOSE",
+                    "positionFill": "REDUCE_ONLY",
+                    "tradeClose": {"tradeID": "T501", "units": "ALL"},
+                },
+                {
+                    "id": "502",
+                    "time": "2026-06-05T16:06:46.821383000Z",
+                    "type": "ORDER_FILL",
+                    "orderID": "501",
+                    "instrument": "EUR_JPY",
+                    "units": "-2700",
+                    "price": "165.000",
+                    "reason": "MARKET_ORDER_TRADE_CLOSE",
+                    "pl": "-1071.9",
+                    "tradesClosed": [
+                        {
+                            "tradeID": "T501",
+                            "units": "2700",
+                            "price": "165.000",
+                            "realizedPL": "-1071.9",
+                        }
+                    ],
                 },
             ],
         }

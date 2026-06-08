@@ -577,6 +577,7 @@ class AITestBotBacktester:
                 f"- Close net: `{float(close_gate.get('close_net_jpy') or 0.0):.0f} JPY`",
                 f"- Bot-attributed close events: `{int(close_gate.get('bot_attributed_close_events') or 0)}`",
                 f"- Gateway close sent events: `{int(close_gate.get('gateway_close_sent_events') or 0)}`",
+                f"- Gateway close reconciled events: `{int(close_gate.get('gateway_close_reconciled_events') or 0)}`",
                 f"- Broker accepted TRADE_CLOSE events: `{int(close_gate.get('broker_trade_close_accept_events') or 0)}`",
                 f"- Broker accepted TRADE_CLOSE sources: `{json.dumps(close_gate.get('broker_trade_close_accept_source_counts') or {}, sort_keys=True)}`",
                 f"- Loss-side market closes: `{int(close_gate.get('loss_side_market_close_count') or 0)}` "
@@ -610,7 +611,8 @@ class AITestBotBacktester:
                     f"  - `{segment.get('event_type')}:{segment.get('exit_reason')}` "
                     f"count=`{int(segment.get('count') or 0)}` net=`{float(segment.get('net_jpy') or 0.0):.0f}` "
                     f"bot_attributed=`{int(segment.get('bot_attributed_count') or 0)}` "
-                    f"gateway_close=`{int(segment.get('gateway_close_sent_count') or 0)}` "
+                    f"gateway_close_sent=`{int(segment.get('gateway_close_sent_count') or 0)}` "
+                    f"gateway_close_reconciled=`{int(segment.get('gateway_close_reconciled_count') or 0)}` "
                     f"broker_trade_close=`{int(segment.get('broker_trade_close_accepted_count') or 0)}`"
                 )
         source_segments = (
@@ -644,7 +646,8 @@ class AITestBotBacktester:
                 lines.append(
                     f"  - `{item.get('day')}` count=`{int(item.get('count') or 0)}` "
                     f"net=`{float(item.get('net_jpy') or 0.0):.0f}` "
-                    f"gateway_close=`{int(item.get('gateway_close_sent_count') or 0)}` "
+                    f"gateway_close_sent=`{int(item.get('gateway_close_sent_count') or 0)}` "
+                    f"gateway_close_reconciled=`{int(item.get('gateway_close_reconciled_count') or 0)}` "
                     f"broker_trade_close=`{int(item.get('broker_trade_close_accepted_count') or 0)}` "
                     f"bot_attributed=`{int(item.get('bot_attributed_count') or 0)}`"
                 )
@@ -1242,6 +1245,7 @@ def _close_gate_ablation_payload(
         "bot_attributed_close_events": 0,
         "gateway_order_sent_events": 0,
         "gateway_close_sent_events": 0,
+        "gateway_close_reconciled_events": 0,
         "broker_trade_close_accept_events": 0,
         "broker_trade_close_accept_trade_ids": 0,
         "broker_trade_close_accept_order_ids": 0,
@@ -1301,20 +1305,41 @@ def _close_gate_ablation_payload(
                 return base
             gateway_order_sent_events = _count_events(conn, "GATEWAY_ORDER_SENT")
             gateway_close_sent_events = _count_events(conn, "GATEWAY_TRADE_CLOSE_SENT")
+            gateway_close_reconciled_events = _count_events(conn, "GATEWAY_TRADE_CLOSE_RECONCILED")
             gateway_gpt_close_accepted_events = _count_events(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
             attributed_trade_ids = _gateway_attributed_entry_trade_ids(conn, columns)
-            gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
-            gateway_close_order_ids = _event_order_ids(conn, "GATEWAY_TRADE_CLOSE_SENT", columns)
-            gateway_gpt_close_accepted_trade_ids = _event_trade_ids(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
-            gateway_close_reasons_by_trade_id = _event_trade_id_reasons(
+            gateway_close_sent_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
+            gateway_close_sent_order_ids = _event_order_ids(conn, "GATEWAY_TRADE_CLOSE_SENT", columns)
+            gateway_close_reconciled_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_RECONCILED")
+            gateway_close_reconciled_order_ids = _event_order_ids(
                 conn,
-                "GATEWAY_TRADE_CLOSE_SENT",
+                "GATEWAY_TRADE_CLOSE_RECONCILED",
                 columns,
             )
-            gateway_close_reasons_by_order_id = _event_order_id_reasons(
-                conn,
-                "GATEWAY_TRADE_CLOSE_SENT",
-                columns,
+            gateway_gpt_close_accepted_trade_ids = _event_trade_ids(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
+            gateway_close_reasons_by_trade_id = _merge_reason_maps(
+                _event_trade_id_reasons(
+                    conn,
+                    "GATEWAY_TRADE_CLOSE_SENT",
+                    columns,
+                ),
+                _event_trade_id_reasons(
+                    conn,
+                    "GATEWAY_TRADE_CLOSE_RECONCILED",
+                    columns,
+                ),
+            )
+            gateway_close_reasons_by_order_id = _merge_reason_maps(
+                _event_order_id_reasons(
+                    conn,
+                    "GATEWAY_TRADE_CLOSE_SENT",
+                    columns,
+                ),
+                _event_order_id_reasons(
+                    conn,
+                    "GATEWAY_TRADE_CLOSE_RECONCILED",
+                    columns,
+                ),
             )
             stale_close_satisfied_trade_ids = _stale_close_satisfied_trade_ids(conn, columns)
             broker_close_accept = _broker_trade_close_accept_provenance(conn, columns)
@@ -1330,6 +1355,7 @@ def _close_gate_ablation_payload(
                 "reason": "execution ledger has no closed/reduced trade events",
                 "gateway_order_sent_events": gateway_order_sent_events,
                 "gateway_close_sent_events": gateway_close_sent_events,
+                "gateway_close_reconciled_events": gateway_close_reconciled_events,
                 "gateway_gpt_close_accepted_events": gateway_gpt_close_accepted_events,
                 "broker_trade_close_accept_events": broker_close_accept["events"],
                 "broker_trade_close_accept_trade_ids": len(broker_close_accept["trade_ids"]),
@@ -1381,13 +1407,17 @@ def _close_gate_ablation_payload(
         event_type = _norm(row["event_type"])
         order_id = str(row["order_id"] or "").strip()
         bot_attributed = trade_id in attributed_trade_ids
-        gateway_close_sent = trade_id in gateway_close_trade_ids or order_id in gateway_close_order_ids
+        gateway_close_sent = trade_id in gateway_close_sent_trade_ids or order_id in gateway_close_sent_order_ids
+        gateway_close_reconciled = (
+            trade_id in gateway_close_reconciled_trade_ids or order_id in gateway_close_reconciled_order_ids
+        )
+        gateway_close_attributed = gateway_close_sent or gateway_close_reconciled
         gateway_close_reasons = set(gateway_close_reasons_by_trade_id.get(trade_id, set()))
         gateway_close_reasons.update(gateway_close_reasons_by_order_id.get(order_id, set()))
-        gateway_gpt_close = "GPT_CLOSE" in gateway_close_reasons
+        gateway_gpt_close = bool(gateway_close_reasons & {"GPT_CLOSE", "GPT_CLOSE_RECONCILED"})
         gateway_gpt_close_accepted = trade_id in gateway_gpt_close_accepted_trade_ids
         gateway_review_exit = "REVIEW_EXIT" in gateway_close_reasons and not gateway_gpt_close
-        gateway_other_close = gateway_close_sent and not gateway_gpt_close and not gateway_review_exit
+        gateway_other_close = gateway_close_attributed and not gateway_gpt_close and not gateway_review_exit
         stale_gpt_close_satisfied = trade_id in stale_close_satisfied_trade_ids
         broker_trade_close_accepted = (
             trade_id in broker_close_accept["trade_ids"] or order_id in broker_close_accept["order_ids"]
@@ -1402,10 +1432,11 @@ def _close_gate_ablation_payload(
             if "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE" in broker_trade_close_sources:
                 broker_trade_close_sources.discard("DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE")
             broker_trade_close_sources.add("GATEWAY_GPT_CLOSE_ACCEPTED")
-        close_order_provenance = gateway_close_sent or gateway_gpt_close_accepted or broker_trade_close_accepted
+        close_order_provenance = gateway_close_attributed or gateway_gpt_close_accepted or broker_trade_close_accepted
         close_source = _primary_close_source(
             exit_reason=exit_reason,
             gateway_close_sent=gateway_close_sent,
+            gateway_close_reconciled=gateway_close_reconciled,
             gateway_close_reasons=gateway_close_reasons,
             gateway_gpt_close_accepted=gateway_gpt_close_accepted,
             broker_trade_close_accepted=broker_trade_close_accepted,
@@ -1436,6 +1467,8 @@ def _close_gate_ablation_payload(
                 "bot_attributed_net_jpy": 0.0,
                 "gateway_close_sent_count": 0,
                 "gateway_close_sent_net_jpy": 0.0,
+                "gateway_close_reconciled_count": 0,
+                "gateway_close_reconciled_net_jpy": 0.0,
                 "gateway_gpt_close_count": 0,
                 "gateway_gpt_close_net_jpy": 0.0,
                 "gateway_gpt_close_accepted_count": 0,
@@ -1460,6 +1493,11 @@ def _close_gate_ablation_payload(
         if gateway_close_sent:
             segment["gateway_close_sent_count"] = int(segment["gateway_close_sent_count"]) + 1
             segment["gateway_close_sent_net_jpy"] = _round(float(segment["gateway_close_sent_net_jpy"]) + pl)
+        if gateway_close_reconciled:
+            segment["gateway_close_reconciled_count"] = int(segment["gateway_close_reconciled_count"]) + 1
+            segment["gateway_close_reconciled_net_jpy"] = _round(
+                float(segment["gateway_close_reconciled_net_jpy"]) + pl
+            )
         if gateway_gpt_close:
             segment["gateway_gpt_close_count"] = int(segment["gateway_gpt_close_count"]) + 1
             segment["gateway_gpt_close_net_jpy"] = _round(float(segment["gateway_gpt_close_net_jpy"]) + pl)
@@ -1498,6 +1536,7 @@ def _close_gate_ablation_payload(
                     "count": 0,
                     "net_jpy": 0.0,
                     "gateway_close_sent_count": 0,
+                    "gateway_close_reconciled_count": 0,
                     "gateway_gpt_close_count": 0,
                     "gateway_gpt_close_accepted_count": 0,
                     "gateway_review_exit_count": 0,
@@ -1514,6 +1553,8 @@ def _close_gate_ablation_payload(
             daily["net_jpy"] = _round(float(daily["net_jpy"]) + pl)
             if gateway_close_sent:
                 daily["gateway_close_sent_count"] = int(daily["gateway_close_sent_count"]) + 1
+            if gateway_close_reconciled:
+                daily["gateway_close_reconciled_count"] = int(daily["gateway_close_reconciled_count"]) + 1
             if gateway_gpt_close:
                 daily["gateway_gpt_close_count"] = int(daily["gateway_gpt_close_count"]) + 1
             if gateway_gpt_close_accepted:
@@ -1526,7 +1567,7 @@ def _close_gate_ablation_payload(
                 daily["stale_gpt_close_satisfied_count"] = int(daily["stale_gpt_close_satisfied_count"]) + 1
             if broker_trade_close_accepted:
                 daily["broker_trade_close_accepted_count"] = int(daily["broker_trade_close_accepted_count"]) + 1
-            if broker_trade_close_accepted and not gateway_close_sent:
+            if broker_trade_close_accepted and not gateway_close_attributed:
                 daily["broker_accepted_without_gateway_count"] = int(
                     daily["broker_accepted_without_gateway_count"]
                 ) + 1
@@ -1549,6 +1590,7 @@ def _close_gate_ablation_payload(
                     "pl_jpy": _round(pl),
                     "bot_attributed": bot_attributed,
                     "gateway_close_sent": gateway_close_sent,
+                    "gateway_close_reconciled": gateway_close_reconciled,
                     "gateway_close_reasons": sorted(gateway_close_reasons),
                     "gateway_gpt_close_accepted": gateway_gpt_close_accepted,
                     "stale_gpt_close_satisfied": stale_gpt_close_satisfied,
@@ -1561,13 +1603,13 @@ def _close_gate_ablation_payload(
             if bot_attributed:
                 bot_loss_market_count += 1
                 bot_loss_market_net += pl
-            if gateway_close_sent:
+            if gateway_close_attributed:
                 gateway_loss_market_count += 1
                 gateway_loss_market_net += pl
             if gateway_gpt_close:
                 gateway_gpt_loss_market_count += 1
                 gateway_gpt_loss_market_net += pl
-            if gateway_gpt_close_accepted and not gateway_close_sent:
+            if gateway_gpt_close_accepted and not gateway_close_attributed:
                 gateway_gpt_accepted_without_sent_loss_market_count += 1
                 gateway_gpt_accepted_without_sent_loss_market_net += pl
             if stale_gpt_close_satisfied:
@@ -1584,7 +1626,7 @@ def _close_gate_ablation_payload(
                 broker_loss_market_net += pl
                 for source in broker_trade_close_sources:
                     broker_loss_market_source_counts[source] = broker_loss_market_source_counts.get(source, 0) + 1
-            if broker_trade_close_accepted and not gateway_close_sent:
+            if broker_trade_close_accepted and not gateway_close_attributed:
                 broker_without_gateway_loss_market_count += 1
                 broker_without_gateway_loss_market_net += pl
                 for source in broker_trade_close_sources:
@@ -1602,6 +1644,9 @@ def _close_gate_ablation_payload(
                 "capped_net_jpy": _round(float(item["capped_net_jpy"])),
                 "bot_attributed_net_jpy": _round(float(item["bot_attributed_net_jpy"])),
                 "gateway_close_sent_net_jpy": _round(float(item["gateway_close_sent_net_jpy"])),
+                "gateway_close_reconciled_net_jpy": _round(
+                    float(item["gateway_close_reconciled_net_jpy"])
+                ),
                 "gateway_gpt_close_net_jpy": _round(float(item["gateway_gpt_close_net_jpy"])),
                 "gateway_gpt_close_accepted_net_jpy": _round(
                     float(item["gateway_gpt_close_accepted_net_jpy"])
@@ -1647,6 +1692,7 @@ def _close_gate_ablation_payload(
             "bot_attributed_close_events": bot_attributed_count,
             "gateway_order_sent_events": gateway_order_sent_events,
             "gateway_close_sent_events": gateway_close_sent_events,
+            "gateway_close_reconciled_events": gateway_close_reconciled_events,
             "gateway_gpt_close_accepted_events": gateway_gpt_close_accepted_events,
             "broker_trade_close_accept_events": broker_close_accept["events"],
             "broker_trade_close_accept_trade_ids": len(broker_close_accept["trade_ids"]),
@@ -1717,6 +1763,7 @@ def _primary_close_source(
     *,
     exit_reason: str,
     gateway_close_sent: bool,
+    gateway_close_reconciled: bool,
     gateway_close_reasons: set[str],
     gateway_gpt_close_accepted: bool,
     broker_trade_close_accepted: bool,
@@ -1724,6 +1771,11 @@ def _primary_close_source(
     stale_gpt_close_satisfied: bool,
     close_order_provenance: bool,
 ) -> str:
+    if gateway_close_reconciled:
+        if "GPT_CLOSE_RECONCILED" in gateway_close_reasons:
+            return "GATEWAY:GPT_CLOSE_RECONCILED"
+        reason = next((item for item in sorted(gateway_close_reasons) if item and item != "UNSPECIFIED"), "")
+        return f"GATEWAY_RECONCILED:{reason or 'CLOSE'}"
     if gateway_close_sent:
         if "GPT_CLOSE" in gateway_close_reasons:
             return "GATEWAY:GPT_CLOSE"
@@ -1943,6 +1995,8 @@ def _gateway_close_reason(row: sqlite3.Row) -> str:
     reason_text = " ".join(str(item) for item in raw.get("reasons", []) or []).lower()
     if reason == "GPT_CLOSE" or "gpt-close: accepted gpt_trader close receipt passed gate a/b" in reason_text:
         return "GPT_CLOSE"
+    if reason == "GPT_CLOSE_RECONCILED":
+        return "GPT_CLOSE_RECONCILED"
     if reason and reason != "UNSPECIFIED":
         return reason
     management_action = _norm(raw.get("management_action"))
@@ -1952,6 +2006,16 @@ def _gateway_close_reason(row: sqlite3.Row) -> str:
     if _norm(request.get("type")) == "CLOSE":
         return "CLOSE"
     return "UNSPECIFIED"
+
+
+def _merge_reason_maps(*items: dict[str, set[str]]) -> dict[str, set[str]]:
+    merged: dict[str, set[str]] = {}
+    for item in items:
+        for key, values in item.items():
+            if not key:
+                continue
+            merged.setdefault(key, set()).update(str(value) for value in values if str(value))
+    return merged
 
 
 def _broker_trade_close_accept_provenance(

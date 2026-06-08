@@ -1080,7 +1080,10 @@ def _market_close_attribution_findings(
                       AND NOT EXISTS (
                           SELECT 1
                           FROM execution_events c
-                          WHERE c.event_type = 'GATEWAY_TRADE_CLOSE_SENT'
+                          WHERE c.event_type IN (
+                              'GATEWAY_TRADE_CLOSE_SENT',
+                              'GATEWAY_TRADE_CLOSE_RECONCILED'
+                          )
                             AND c.trade_id = e.trade_id
                       )
                     ORDER BY e.ts_utc DESC, e.event_uid DESC
@@ -2457,6 +2460,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
     rows: list[sqlite3.Row] = []
     accepted_close_rows: list[sqlite3.Row] = []
     gateway_close_trade_ids: set[str] = set()
+    reconciled_close_trade_ids: set[str] = set()
     gpt_close_trade_ids: set[str] = set()
     error: str | None = None
     if db_path.exists():
@@ -2468,6 +2472,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
                 has_lane_id = "lane_id" in columns
                 if has_trade_id:
                     gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
+                    reconciled_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_RECONCILED")
                     gpt_close_trade_ids = _event_trade_ids(conn, "GATEWAY_GPT_CLOSE_ACCEPTED")
                     accepted_close_rows = _broker_trade_close_accept_rows(conn, columns)
                     lane_select = "e.lane_id AS lane_id" if has_lane_id else "NULL AS lane_id"
@@ -2539,6 +2544,7 @@ def _effect_metrics(db_path: Path, *, window_hours: float, now: datetime) -> dic
             row,
             accepted_close_rows=accepted_close_rows,
             gateway_close_trade_ids=gateway_close_trade_ids,
+            reconciled_close_trade_ids=reconciled_close_trade_ids,
             gpt_close_trade_ids=gpt_close_trade_ids,
         )
         _add_close_provenance_metric(close_provenance_metrics, close_provenance, value)
@@ -2655,6 +2661,7 @@ def _close_provenance_for_effect_row(
     *,
     accepted_close_rows: list[sqlite3.Row],
     gateway_close_trade_ids: set[str],
+    reconciled_close_trade_ids: set[str],
     gpt_close_trade_ids: set[str],
 ) -> str:
     exit_reason = str(_row_text(row, "exit_reason") or "").strip().upper()
@@ -2666,6 +2673,8 @@ def _close_provenance_for_effect_row(
     order_id = str(_row_text(row, "order_id") or "").strip()
     if trade_id and trade_id in gateway_close_trade_ids:
         return "GATEWAY_TRADE_CLOSE_SENT"
+    if trade_id and trade_id in reconciled_close_trade_ids:
+        return "GATEWAY_TRADE_CLOSE_RECONCILED"
     if trade_id and trade_id in gpt_close_trade_ids:
         return "GATEWAY_GPT_CLOSE_ACCEPTED"
     sources = _broker_trade_close_accept_sources(

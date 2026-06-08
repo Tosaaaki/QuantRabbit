@@ -1034,6 +1034,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
                         "count": 2,
                         "net_jpy": -480.0,
                         "gateway_close_sent_count": 1,
+                        "gateway_close_reconciled_count": 0,
                         "gateway_gpt_close_count": 0,
                         "gateway_gpt_close_accepted_count": 0,
                         "gateway_review_exit_count": 1,
@@ -1302,6 +1303,106 @@ class AITestBotBacktesterTest(unittest.TestCase):
             )
             self.assertTrue(any("GPT CLOSE accepted receipts exist" in item for item in payload["action_items"]))
             self.assertFalse(any("direct/manual broker TRADE_CLOSE" in item for item in payload["action_items"]))
+
+    def test_close_gate_diagnostic_counts_reconciled_gpt_close_as_gateway_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -200.0),
+                ],
+            )
+            _seed_broker_accepted_close_ledger(ledger)
+            with sqlite3.connect(ledger) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO execution_events (
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
+                        realized_pl_jpy, exit_reason, raw_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            "gpt-close-accepted",
+                            "2026-06-01T01:59:59Z",
+                            "GATEWAY_GPT_CLOSE_ACCEPTED",
+                            None,
+                            None,
+                            "broker-close-trade",
+                            "EUR_USD",
+                            None,
+                            None,
+                            None,
+                            "GPT_CLOSE_ACCEPTED",
+                            json.dumps(
+                                {
+                                    "status": "ACCEPTED",
+                                    "decision": {
+                                        "action": "CLOSE",
+                                        "close_trade_ids": ["broker-close-trade"],
+                                    },
+                                }
+                            ),
+                        ),
+                        (
+                            "gpt-close-reconciled",
+                            "2026-06-01T02:00:01Z",
+                            "GATEWAY_TRADE_CLOSE_RECONCILED",
+                            None,
+                            "order-close",
+                            "broker-close-trade",
+                            "EUR_USD",
+                            None,
+                            None,
+                            None,
+                            "GPT_CLOSE_RECONCILED",
+                            json.dumps({"reconciled_from": ["GATEWAY_GPT_CLOSE_ACCEPTED"]}),
+                        ),
+                    ],
+                )
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+            self.assertEqual(close_gate["gateway_close_sent_events"], 0)
+            self.assertEqual(close_gate["gateway_close_reconciled_events"], 1)
+            self.assertEqual(close_gate["gateway_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["gateway_gpt_close_loss_side_market_close_count"], 1)
+            self.assertEqual(
+                close_gate["gateway_gpt_close_accepted_without_sent_loss_side_market_close_count"],
+                0,
+            )
+            self.assertEqual(close_gate["broker_accepted_without_gateway_loss_side_market_close_count"], 0)
+            example = close_gate["loss_side_market_close_examples"][0]
+            self.assertFalse(example["gateway_close_sent"])
+            self.assertTrue(example["gateway_close_reconciled"])
+            self.assertEqual(example["gateway_close_reasons"], ["GPT_CLOSE_RECONCILED"])
+            self.assertEqual(example["close_source"], "GATEWAY:GPT_CLOSE_RECONCILED")
+            source_segments = {item["source"]: item for item in close_gate["close_source_segments"]}
+            self.assertEqual(source_segments["GATEWAY:GPT_CLOSE_RECONCILED"]["loss_side_market_close_count"], 1)
+            self.assertFalse(any("GPT CLOSE accepted receipts exist" in item for item in payload["action_items"]))
+            self.assertFalse(
+                any(
+                    "broker accepted TRADE_CLOSE orders exist without matching" in item
+                    for item in payload["action_items"]
+                )
+            )
 
     def test_close_gate_diagnostic_matches_gateway_close_by_order_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

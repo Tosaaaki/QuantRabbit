@@ -796,6 +796,54 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(summary.p0_findings, 0)
         self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
 
+    def test_reconciled_gpt_close_satisfies_market_order_close_attribution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root, active_position=False, live_ready_market_rr=1.4)
+            _write_market_close_attribution_ledger(
+                files["execution_db"],
+                include_gateway_close=False,
+                include_reconciled_close=True,
+            )
+            with sqlite3.connect(files["execution_db"]) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO execution_events(
+                        event_uid, ts_utc, event_type, lane_id, order_id, trade_id,
+                        pair, side, units, realized_pl_jpy, exit_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "gpt-close-accepted",
+                        (_NOW - timedelta(hours=1, minutes=10)).isoformat(),
+                        "GATEWAY_GPT_CLOSE_ACCEPTED",
+                        "",
+                        "",
+                        "T42",
+                        "EUR_USD",
+                        "",
+                        None,
+                        None,
+                        "GPT_CLOSE_ACCEPTED",
+                    ),
+                )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"] for item in payload["findings"]}
+        effect = payload["effect_metrics"]["window"]
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertNotIn("ACCEPTED_GPT_CLOSE_WITHOUT_POSITION_GATEWAY_RECEIPT", codes)
+        self.assertNotIn("UNATTRIBUTED_MARKET_ORDER_CLOSES", codes)
+        self.assertEqual(
+            effect["market_order_trade_close_loss_provenance_metrics"][
+                "GATEWAY_TRADE_CLOSE_RECONCILED"
+            ]["trades"],
+            1,
+        )
+
     def test_accepted_gpt_close_without_position_gateway_is_separate_from_unattributed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1363,7 +1411,12 @@ def _write_method_attribution_ledger(path: Path) -> None:
         )
 
 
-def _write_market_close_attribution_ledger(path: Path, *, include_gateway_close: bool) -> None:
+def _write_market_close_attribution_ledger(
+    path: Path,
+    *,
+    include_gateway_close: bool,
+    include_reconciled_close: bool = False,
+) -> None:
     if path.exists():
         path.unlink()
     with sqlite3.connect(path) as conn:
@@ -1431,6 +1484,22 @@ def _write_market_close_attribution_ledger(path: Path, *, include_gateway_close:
                     None,
                     None,
                     "GPT_CLOSE",
+                )
+            )
+        if include_reconciled_close:
+            rows.append(
+                (
+                    "gw-close-reconciled",
+                    (_NOW - timedelta(hours=1, minutes=5)).isoformat(),
+                    "GATEWAY_TRADE_CLOSE_RECONCILED",
+                    "",
+                    "C42",
+                    "T42",
+                    "EUR_USD",
+                    "",
+                    None,
+                    None,
+                    "GPT_CLOSE_RECONCILED",
                 )
             )
         rows.append(
