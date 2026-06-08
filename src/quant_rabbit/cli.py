@@ -2132,16 +2132,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if summary.status in _AUTOTRADE_EXIT_ZERO_STATUSES else 2
     if args.command == "plan-campaign":
+        target_summary = DailyTargetLedger(
+            state_path=DEFAULT_DAILY_TARGET_STATE,
+            report_path=DEFAULT_DAILY_TARGET_REPORT,
+            pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+        ).run(start_balance_jpy=args.start_balance, target_return_pct=args.target_return_pct)
         summary = CampaignPlanner(
             strategy_profile=args.strategy_profile,
             market_story_profile=args.market_story_profile,
             report_path=args.report,
             plan_path=args.plan,
-        ).run(start_balance_jpy=args.start_balance, target_return_pct=args.target_return_pct)
-        target_summary = DailyTargetLedger(
-            state_path=DEFAULT_DAILY_TARGET_STATE,
-            report_path=DEFAULT_DAILY_TARGET_REPORT,
-            pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
         ).run(start_balance_jpy=args.start_balance, target_return_pct=args.target_return_pct)
         print(
             json.dumps(

@@ -682,6 +682,51 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(stdout.getvalue())["error"], "campaign plan stale while target is open")
 
+    def test_plan_campaign_updates_target_before_plan_timestamp(self) -> None:
+        calls: list[str] = []
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def target_run(**_: object) -> SimpleNamespace:
+                calls.append("target")
+                return SimpleNamespace(
+                    state_path=root / "data" / "daily_target_state.json",
+                    report_path=root / "docs" / "daily_target_report.md",
+                    remaining_target_jpy=1000.0,
+                )
+
+            def campaign_run(**_: object) -> SimpleNamespace:
+                calls.append("campaign")
+                return SimpleNamespace(
+                    report_path=root / "docs" / "daily_campaign_report.md",
+                    plan_path=root / "data" / "daily_campaign_plan.json",
+                    target_jpy=1000.0,
+                    lanes=1,
+                    actionable_lanes=1,
+                    rejected_lanes=0,
+                )
+
+            with mock.patch("quant_rabbit.cli.DailyTargetLedger") as ledger_cls, mock.patch(
+                "quant_rabbit.cli.CampaignPlanner"
+            ) as planner_cls, redirect_stdout(stdout):
+                ledger_cls.return_value.run.side_effect = target_run
+                planner_cls.return_value.run.side_effect = campaign_run
+                code = main(
+                    [
+                        "plan-campaign",
+                        "--start-balance",
+                        "10000",
+                        "--plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--report",
+                        str(root / "docs" / "daily_campaign_report.md"),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["target", "campaign"])
+
     def test_generate_intents_syncs_execution_ledger_before_live_telemetry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
