@@ -177,6 +177,7 @@ class SelfImprovementAuditor:
         active_trade_ids = {str(item.get("trade_id") or "") for item in active_positions if item.get("trade_id")}
         effect = _effect_metrics(self.db_path, window_hours=window_hours, now=clock)
         effect_24h = _effect_metrics(self.db_path, window_hours=24.0, now=clock)
+        close_gate_loss_evidence = _close_gate_loss_evidence(ai_backtest_loaded, ai_test_bot_backtest_path)
         profitability_streak_before = self._history_code_streak(PROFITABILITY_DISCIPLINE_CODES)
 
         findings: list[dict[str, Any]] = []
@@ -259,6 +260,7 @@ class SelfImprovementAuditor:
                 effect_24h=effect_24h,
                 snapshot=snapshot,
                 min_sample=3,
+                close_gate_loss_evidence=close_gate_loss_evidence,
                 previous_discipline_streak=profitability_streak_before,
             )
         )
@@ -1793,6 +1795,7 @@ def _profitability_findings(
     effect_24h: dict[str, Any],
     snapshot: dict[str, Any],
     min_sample: int,
+    close_gate_loss_evidence: dict[str, Any] | None = None,
     previous_discipline_streak: int = 0,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -1851,6 +1854,18 @@ def _profitability_findings(
         and has_loss_asymmetry
         and current_discipline_streak >= max(1, PERSISTENT_PROFITABILITY_STREAK_MIN)
     ):
+        system_defect_evidence = {
+            "profit_factor": pf,
+            "expectancy_jpy": expectancy,
+            "avg_win_jpy": avg_win,
+            "avg_loss_jpy_abs": avg_loss,
+            "worst_segments": effect.get("worst_segments", [])[:5],
+            "market_order_trade_close_loss_provenance_metrics": effect.get(
+                "market_order_trade_close_loss_provenance_metrics", {}
+            ),
+        }
+        if close_gate_loss_evidence:
+            system_defect_evidence["ai_backtest_close_gate_loss_evidence"] = close_gate_loss_evidence
         out.append(
             _finding(
                 run_id=run_id,
@@ -1872,16 +1887,7 @@ def _profitability_findings(
                     "streak_min": PERSISTENT_PROFITABILITY_STREAK_MIN,
                     "effect_metrics": effect,
                     "last_24h_effect_metrics": effect_24h,
-                    "system_defect_evidence": {
-                        "profit_factor": pf,
-                        "expectancy_jpy": expectancy,
-                        "avg_win_jpy": avg_win,
-                        "avg_loss_jpy_abs": avg_loss,
-                        "worst_segments": effect.get("worst_segments", [])[:5],
-                        "market_order_trade_close_loss_provenance_metrics": effect.get(
-                            "market_order_trade_close_loss_provenance_metrics", {}
-                        ),
-                    },
+                    "system_defect_evidence": system_defect_evidence,
                 },
             )
         )
@@ -2078,6 +2084,68 @@ def _top_count_items(counts: dict[str, int], *, limit: int) -> list[dict[str, An
     ]
 
 
+def _close_gate_loss_evidence(loaded: _LoadedJson, path: Path) -> dict[str, Any]:
+    if loaded.error is not None:
+        return {}
+    payload = loaded.payload or {}
+    mechanism = payload.get("mechanism_ablation") if isinstance(payload.get("mechanism_ablation"), dict) else {}
+    close_gate = mechanism.get("close_gate_ab") if isinstance(mechanism.get("close_gate_ab"), dict) else {}
+    if not close_gate:
+        return {}
+    evidence = {
+        "ai_test_bot_backtest_path": str(path),
+        "status": str(close_gate.get("status") or ""),
+        "loss_side_market_close_count": int(_maybe_float(close_gate.get("loss_side_market_close_count")) or 0),
+        "loss_side_market_close_net_jpy": _maybe_float(close_gate.get("loss_side_market_close_net_jpy")),
+        "broker_trade_close_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("broker_trade_close_loss_side_market_close_count")) or 0
+        ),
+        "broker_trade_close_loss_side_market_close_source_counts": _dict_or_empty(
+            close_gate.get("broker_trade_close_loss_side_market_close_source_counts")
+        ),
+        "broker_accepted_without_gateway_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_count")) or 0
+        ),
+        "broker_accepted_without_gateway_loss_side_market_close_net_jpy": _maybe_float(
+            close_gate.get("broker_accepted_without_gateway_loss_side_market_close_net_jpy")
+        ),
+        "broker_accepted_without_gateway_loss_side_market_close_source_counts": _dict_or_empty(
+            close_gate.get("broker_accepted_without_gateway_loss_side_market_close_source_counts")
+        ),
+        "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": _dict_or_empty(
+            close_gate.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts")
+        ),
+        "gateway_gpt_close_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0
+        ),
+        "gateway_gpt_close_accepted_without_sent_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("gateway_gpt_close_accepted_without_sent_loss_side_market_close_count")) or 0
+        ),
+        "gateway_review_exit_loss_side_market_close_count": int(
+            _maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0
+        ),
+        "gateway_review_exit_loss_side_market_close_net_jpy": _maybe_float(
+            close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")
+        ),
+    }
+    meaningful = [
+        evidence["loss_side_market_close_count"],
+        evidence["broker_trade_close_loss_side_market_close_count"],
+        evidence["broker_accepted_without_gateway_loss_side_market_close_count"],
+        evidence["gateway_gpt_close_loss_side_market_close_count"],
+        evidence["gateway_gpt_close_accepted_without_sent_loss_side_market_close_count"],
+        evidence["gateway_review_exit_loss_side_market_close_count"],
+        evidence["broker_trade_close_loss_side_market_close_source_counts"],
+        evidence["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
+        evidence["broker_accepted_without_gateway_loss_side_market_close_evidence_counts"],
+    ]
+    return evidence if any(meaningful) else {}
+
+
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _mechanism_ablation_findings(
     *,
     run_id: str,
@@ -2102,6 +2170,11 @@ def _mechanism_ablation_findings(
     broker_without_gateway_sources = (
         close_gate.get("broker_accepted_without_gateway_loss_side_market_close_source_counts")
         if isinstance(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_source_counts"), dict)
+        else {}
+    )
+    broker_without_gateway_evidence = (
+        close_gate.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts")
+        if isinstance(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_evidence_counts"), dict)
         else {}
     )
     gateway_review_loss = int(_maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0)
@@ -2189,6 +2262,9 @@ def _mechanism_ablation_findings(
                 else {},
                 "broker_accepted_without_gateway_loss_side_market_close_count": broker_without_gateway,
                 "broker_accepted_without_gateway_loss_side_market_close_source_counts": broker_without_gateway_sources,
+                "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": (
+                    broker_without_gateway_evidence
+                ),
                 "unattributed_loss_side_market_close_count": int(
                     _maybe_float(close_gate.get("unattributed_loss_side_market_close_count")) or 0
                 ),

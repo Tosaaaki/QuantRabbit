@@ -541,6 +541,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "broker_accepted_without_gateway_loss_side_market_close_source_counts": {
                                     "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 2
                                 },
+                                "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": {
+                                    "NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 2,
+                                    "NO_CLIENT_EXTENSION": 2,
+                                },
                                 "unattributed_loss_side_market_close_count": 5,
                             }
                         }
@@ -561,6 +565,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(
             finding["evidence"]["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
             {"DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 2},
+        )
+        self.assertEqual(
+            finding["evidence"]["broker_accepted_without_gateway_loss_side_market_close_evidence_counts"],
+            {"NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 2, "NO_CLIENT_EXTENSION": 2},
         )
 
     def test_legacy_review_exit_close_ablation_remains_p1_assumption_hole(self) -> None:
@@ -779,6 +787,32 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                 live_ready_market_rr=1.4,
                 closed_pls=(100.0, -400.0, 50.0, -300.0),
             )
+            files["ai_backtest"].write_text(
+                json.dumps(
+                    {
+                        "mechanism_ablation": {
+                            "close_gate_ab": {
+                                "status": "MEASURED",
+                                "loss_side_market_close_count": 2,
+                                "loss_side_market_close_net_jpy": -700.0,
+                                "broker_trade_close_loss_side_market_close_count": 2,
+                                "broker_trade_close_loss_side_market_close_source_counts": {
+                                    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 2
+                                },
+                                "broker_accepted_without_gateway_loss_side_market_close_count": 2,
+                                "broker_accepted_without_gateway_loss_side_market_close_net_jpy": -700.0,
+                                "broker_accepted_without_gateway_loss_side_market_close_source_counts": {
+                                    "DIRECT_OR_MANUAL_BROKER_TRADE_CLOSE": 2
+                                },
+                                "broker_accepted_without_gateway_loss_side_market_close_evidence_counts": {
+                                    "NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 2,
+                                    "NO_CLIENT_EXTENSION": 2,
+                                },
+                            }
+                        }
+                    }
+                )
+            )
 
             first = _run(files, now=_NOW)
             second = _run(files, now=_NOW + timedelta(minutes=3))
@@ -794,6 +828,15 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["priority"], "P0")
         self.assertEqual(codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["evidence"]["current_streak"], 3)
+        close_evidence = codes["PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED"]["evidence"][
+            "system_defect_evidence"
+        ]["ai_backtest_close_gate_loss_evidence"]
+        self.assertEqual(close_evidence["loss_side_market_close_count"], 2)
+        self.assertEqual(close_evidence["broker_accepted_without_gateway_loss_side_market_close_count"], 2)
+        self.assertEqual(
+            close_evidence["broker_accepted_without_gateway_loss_side_market_close_evidence_counts"],
+            {"NO_LOCAL_GATEWAY_CLOSE_RECEIPT": 2, "NO_CLIENT_EXTENSION": 2},
+        )
 
     def test_effect_metrics_attributes_closed_pl_to_opening_lane_method(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
