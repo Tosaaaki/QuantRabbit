@@ -77,6 +77,7 @@ _CONTEXT_ASSET_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,8}_[A-Z]{3}\b")
 _NEWS_CONTEXT_TOKENS = ("news", "headline", "calendar", "macro", "event", "catalyst")
 _CONTEXT_LIST_LIMIT = 8
 _CONTEXT_TEXT_LIMIT = 240
+_FX_CONTEXT_CURRENCIES = {"AUD", "CAD", "CHF", "EUR", "GBP", "JPY", "NZD", "USD"}
 
 
 def thesis_invalidation_buffer_pips(buffer_pips: Optional[float] = None) -> float:
@@ -700,13 +701,21 @@ def _context_refs_from_texts(texts: list[str]) -> list[str]:
     return refs[:_CONTEXT_LIST_LIMIT]
 
 
-def _asset_symbols_from_texts(texts: list[str]) -> list[str]:
+def _asset_symbols_from_texts(texts: list[str], *, traded_pair: str = "") -> list[str]:
     symbols: list[str] = []
+    traded = traded_pair.upper().strip()
     for text in texts:
         for match in _CONTEXT_ASSET_RE.findall(text):
+            if match == traded or _is_plain_fx_pair_symbol(match):
+                continue
             if match not in symbols:
                 symbols.append(match)
     return symbols[:_CONTEXT_LIST_LIMIT]
+
+
+def _is_plain_fx_pair_symbol(symbol: str) -> bool:
+    base, sep, quote = symbol.partition("_")
+    return bool(sep and base in _FX_CONTEXT_CURRENCIES and quote in _FX_CONTEXT_CURRENCIES)
 
 
 def _market_context_field(intent: Any, name: str) -> str:
@@ -816,7 +825,7 @@ def _build_context_evidence(*, intent: Any, metadata: Dict[str, Any], forecast: 
             ref for ref in refs if ref.startswith("context_asset:") or ref.startswith("cross:")
         ][:_CONTEXT_LIST_LIMIT]
 
-    asset_symbols = _asset_symbols_from_texts(context_texts)
+    asset_symbols = _asset_symbols_from_texts(context_texts, traded_pair=str(getattr(intent, "pair", "") or ""))
     if asset_symbols:
         evidence["context_asset_symbols"] = asset_symbols
 

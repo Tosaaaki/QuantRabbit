@@ -103,6 +103,46 @@ class LiveOrderGatewayTest(unittest.TestCase):
             order = payload["order_request"]
             self.assertNotIn("takeProfitOnFill", order)
 
+    def test_stage_receipt_persists_market_context_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+            ).run(
+                intents_path=_intents(
+                    root,
+                    metadata={
+                        "desk": "trend_trader",
+                        "campaign_role": "NOW",
+                        "market_context_matrix_ref": "matrix:EUR_USD:LONG",
+                        "matrix_support_count": 4,
+                        "matrix_reject_count": 0,
+                        "matrix_support_layers": ["chart", "cross_asset", "context_asset_chart", "flow"],
+                        "matrix_support_refs": [
+                            "matrix:EUR_USD:LONG",
+                            "cross:XAU_USD",
+                            "context_asset:WTICO_USD",
+                            "news:macro_event",
+                        ],
+                        "news_digest_ref": "news:macro_event",
+                    },
+                ),
+                lane_id="lane:EUR_USD:LONG",
+            )
+
+            self.assertEqual(summary.status, "STAGED")
+            payload = json.loads((root / "request.json").read_text())
+            evidence = payload["context_evidence"]
+            self.assertEqual(evidence["market_context_matrix_ref"], "matrix:EUR_USD:LONG")
+            self.assertEqual(evidence["matrix_support_layers"], ["chart", "cross_asset", "context_asset_chart", "flow"])
+            self.assertIn("cross:XAU_USD", evidence["context_asset_refs"])
+            self.assertIn("context_asset:WTICO_USD", evidence["context_asset_refs"])
+            self.assertIn("news:macro_event", evidence["evidence_refs"])
+
     def test_send_requires_confirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

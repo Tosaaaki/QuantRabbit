@@ -243,6 +243,7 @@ class EntryThesisLedgerTest(unittest.TestCase):
             self.assertIn("context_asset:WTICO_USD", context["context_asset_refs"])
             self.assertIn("cot:EUR", context["evidence_refs"])
             self.assertIn("XAU_USD", context["context_asset_symbols"])
+            self.assertNotIn("EUR_USD", context["context_asset_symbols"])
             self.assertIn("news_context", context)
             self.assertIn("news:digest", context["evidence_refs"])
             self.assertIn("news:items", context["evidence_refs"])

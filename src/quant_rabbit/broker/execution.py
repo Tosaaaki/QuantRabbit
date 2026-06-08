@@ -229,6 +229,7 @@ class LiveOrderGateway:
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
+            "context_evidence": _context_evidence_from_intent(intent),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "risk_issues": [
                 *risk_issues,
@@ -591,6 +592,7 @@ class LiveOrderGateway:
             "status": status,
             "lane_id": selected_lane_id,
             "order_request": order_request,
+            "context_evidence": _context_evidence_from_intent(intent),
             "risk_metrics": asdict(risk.metrics) if risk.metrics else None,
             "risk_issues": [
                 *risk_issues,
@@ -1180,6 +1182,23 @@ def _build_order_request(intent: OrderIntent) -> tuple[dict[str, Any] | None, li
         return _oanda_order_request(intent), []
     except ValueError as exc:
         return None, [RiskIssue("ORDER_REQUEST_INVALID", str(exc)).__dict__]
+
+
+def _context_evidence_from_intent(intent: OrderIntent) -> dict[str, Any]:
+    """Persist entry context refs on gateway receipts for later P/L attribution.
+
+    Entry-thesis sidecars also store this payload after a successful fill, but
+    the gateway receipt is the durable fallback used by execution-ledger and
+    outcome-mart joins when sidecar recording is delayed or fails.
+    """
+
+    try:
+        from quant_rabbit.strategy.entry_thesis_ledger import _build_context_evidence
+
+        evidence = _build_context_evidence(intent=intent, metadata=dict(intent.metadata or {}), forecast={})
+    except Exception:
+        return {}
+    return evidence if isinstance(evidence, dict) else {}
 
 
 def _oanda_order_request(intent: OrderIntent) -> dict[str, Any]:
