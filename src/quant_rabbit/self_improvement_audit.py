@@ -585,7 +585,7 @@ class SelfImprovementAuditor:
                 )
 
     def _history_code_streak(self, required_codes: tuple[str, ...]) -> int:
-        """Return consecutive prior audit runs containing every requested code."""
+        """Return consecutive non-duplicate prior audit runs containing every requested code."""
         if not required_codes or not self.history_db_path.exists():
             return 0
         try:
@@ -593,16 +593,47 @@ class SelfImprovementAuditor:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
                     """
-                    SELECT run_uid
+                    SELECT run_uid, ts_utc, status, output_path, report_path, window_hours,
+                           findings, p0_findings, p1_findings, p2_findings,
+                           closed_trades, net_jpy, profit_factor, expectancy_jpy,
+                           live_ready_lanes, open_trader_positions
                     FROM self_improvement_audit_runs
                     ORDER BY ts_utc DESC
                     LIMIT 64
                     """
                 ).fetchall()
                 streak = 0
+                previous_signature: tuple[Any, ...] | None = None
+                previous_ts: datetime | None = None
                 for row in rows:
+                    finding_rows = conn.execute(
+                        """
+                        SELECT priority, layer, code, message, next_action, evidence_json
+                        FROM self_improvement_findings
+                        WHERE run_uid = ?
+                        """,
+                        (row["run_uid"],),
+                    ).fetchall()
+                    row_ts = _parse_utc(row["ts_utc"])
+                    signature = (
+                        _history_row_signature(row),
+                        _history_db_findings_signature(finding_rows),
+                    )
+                    duplicate_delta = (
+                        (previous_ts - row_ts).total_seconds()
+                        if previous_ts is not None and row_ts is not None
+                        else None
+                    )
+                    if (
+                        previous_signature == signature
+                        and duplicate_delta is not None
+                        and 0.0 <= duplicate_delta <= AUDIT_HISTORY_DUPLICATE_WINDOW_SECONDS
+                    ):
+                        continue
+                    previous_signature = signature
+                    previous_ts = row_ts
                     codes = {
-                        str(item[0] or "")
+                        str(item["code"] or "")
                         for item in conn.execute(
                             "SELECT code FROM self_improvement_findings WHERE run_uid = ?",
                             (row["run_uid"],),
@@ -708,13 +739,13 @@ def _history_row_signature(row: sqlite3.Row) -> tuple[Any, ...]:
 def _history_findings_signature(findings: list[dict[str, Any]]) -> tuple[tuple[str, str, str, str, str, str], ...]:
     return tuple(
         sorted(
-            (
-                str(item.get("priority") or ""),
-                str(item.get("layer") or ""),
-                str(item.get("code") or ""),
-                str(item.get("message") or ""),
-                str(item.get("next_action") or ""),
-                json.dumps(item.get("evidence") or {}, ensure_ascii=False, sort_keys=True),
+            _history_finding_signature(
+                priority=str(item.get("priority") or ""),
+                layer=str(item.get("layer") or ""),
+                code=str(item.get("code") or ""),
+                message=str(item.get("message") or ""),
+                next_action=str(item.get("next_action") or ""),
+                evidence=item.get("evidence") or {},
             )
             for item in findings
         )
@@ -724,17 +755,67 @@ def _history_findings_signature(findings: list[dict[str, Any]]) -> tuple[tuple[s
 def _history_db_findings_signature(rows: list[sqlite3.Row]) -> tuple[tuple[str, str, str, str, str, str], ...]:
     return tuple(
         sorted(
-            (
-                str(row["priority"] or ""),
-                str(row["layer"] or ""),
-                str(row["code"] or ""),
-                str(row["message"] or ""),
-                str(row["next_action"] or ""),
-                str(row["evidence_json"] or "{}"),
+            _history_finding_signature(
+                priority=str(row["priority"] or ""),
+                layer=str(row["layer"] or ""),
+                code=str(row["code"] or ""),
+                message=str(row["message"] or ""),
+                next_action=str(row["next_action"] or ""),
+                evidence=_history_evidence_from_json(str(row["evidence_json"] or "{}")),
             )
             for row in rows
         )
     )
+
+
+def _history_finding_signature(
+    *,
+    priority: str,
+    layer: str,
+    code: str,
+    message: str,
+    next_action: str,
+    evidence: Any,
+) -> tuple[str, str, str, str, str, str]:
+    normalized_code = str(code or "")
+    return (
+        priority,
+        layer,
+        normalized_code,
+        _history_normalized_message(normalized_code, message),
+        next_action,
+        json.dumps(
+            _history_normalized_evidence(normalized_code, evidence),
+            ensure_ascii=False,
+            sort_keys=True,
+        ),
+    )
+
+
+def _history_normalized_message(code: str, message: str) -> str:
+    if code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED":
+        return message
+    marker = " consecutive audit run(s): "
+    _, sep, suffix = message.partition(marker)
+    if not sep:
+        return message
+    return f"profitability discipline has failed for <streak>{marker}{suffix}"
+
+
+def _history_normalized_evidence(code: str, evidence: Any) -> Any:
+    if code != "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED" or not isinstance(evidence, dict):
+        return evidence
+    normalized = dict(evidence)
+    normalized.pop("current_streak", None)
+    normalized.pop("previous_streak", None)
+    return normalized
+
+
+def _history_evidence_from_json(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
 
 
 def _history_float(value: Any) -> float | None:

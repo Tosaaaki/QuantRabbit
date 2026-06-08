@@ -858,14 +858,19 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             )
 
             first = _run(files, now=_NOW)
+            retry = _run(files, now=_NOW + timedelta(seconds=30))
             second = _run(files, now=_NOW + timedelta(minutes=3))
             third = _run(files, now=_NOW + timedelta(minutes=6))
             payload = json.loads(files["output"].read_text())
+            with sqlite3.connect(files["history_db"]) as conn:
+                run_count = conn.execute("SELECT COUNT(*) FROM self_improvement_audit_runs").fetchone()[0]
 
         codes = {item["code"]: item for item in payload["findings"]}
         self.assertEqual(first.status, STATUS_ACTION_REQUIRED)
+        self.assertEqual(retry.status, STATUS_ACTION_REQUIRED)
         self.assertEqual(second.status, STATUS_ACTION_REQUIRED)
         self.assertEqual(third.status, STATUS_BLOCKED)
+        self.assertEqual(run_count, 3)
         self.assertIn("NEGATIVE_RECENT_EXPECTANCY", codes)
         self.assertIn("SMALL_WIN_LARGE_LOSS_ASYMMETRY", codes)
         self.assertIn("PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED", codes)
