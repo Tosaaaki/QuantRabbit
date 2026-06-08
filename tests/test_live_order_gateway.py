@@ -193,6 +193,38 @@ class LiveOrderGatewayTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["risk_issues"]}
             self.assertIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
 
+    def test_stale_prior_gpt_decision_p0_does_not_block_live_order_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit = root / "self_improvement.json"
+            audit.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                            }
+                        ]
+                    }
+                )
+            )
+            client = FakeExecutionClient()
+            summary = LiveOrderGateway(
+                client=client,
+                strategy_profile=_profile(root),
+                output_path=root / "request.json",
+                report_path=root / "report.md",
+                self_improvement_audit=audit,
+            ).run(intents_path=_intents(root), lane_id="lane:EUR_USD:LONG")
+
+            self.assertEqual(summary.status, "STAGED")
+            self.assertFalse(summary.sent)
+            payload = json.loads((root / "request.json").read_text())
+            codes = {issue["code"] for issue in payload["risk_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_LIVE_ORDER", codes)
+
     def test_send_posts_only_after_live_validation_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

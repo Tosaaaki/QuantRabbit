@@ -1250,6 +1250,8 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
         if str(item.get("priority") or "").upper() != "P0":
             continue
         code = str(item.get("code") or "SELF_IMPROVEMENT_P0")
+        if code in SELF_IMPROVEMENT_GATEWAY_NON_BLOCKER_CODES:
+            continue
         message = str(item.get("message") or code)
         blockers.append(f"{code}: {message}")
     if not blockers:
@@ -1260,6 +1262,12 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
             "self-improvement P0 blocks new live entry risk: " + "; ".join(blockers[:3]),
         ).__dict__
     ]
+
+
+# `LATEST_GPT_DECISION_STALE` is repaired by producing/verifying a current GPT
+# decision. Once a current LIVE_READY lane reaches the gateway, carrying the
+# prior stale-decision audit forward would self-block the repair path.
+SELF_IMPROVEMENT_GATEWAY_NON_BLOCKER_CODES = frozenset({"LATEST_GPT_DECISION_STALE"})
 
 
 def _build_order_request(intent: OrderIntent) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:

@@ -3018,6 +3018,8 @@ def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
         if not isinstance(blocker, dict):
             continue
         code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
+        if code in SELF_IMPROVEMENT_NON_TRADE_BLOCKER_CODES:
+            continue
         layer = str(blocker.get("layer") or "").strip()
         message = str(blocker.get("message") or "").strip()
         streak = blocker.get("current_streak")
@@ -3042,6 +3044,12 @@ def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
         suffix = f" ({', '.join(details)})" if details else ""
         out.append(f"{code}{suffix}: {message or 'self-improvement P0 blocks new risk'}")
     return out
+
+
+# This P0 means "rewrite/verify the GPT receipt against the latest packet".
+# Treating it as a TRADE blocker inside the verifier is circular: the fresh
+# verifier pass is precisely the repair that clears the stale receipt.
+SELF_IMPROVEMENT_NON_TRADE_BLOCKER_CODES = frozenset({"LATEST_GPT_DECISION_STALE"})
 
 
 def _lane_forecast_direction_issue(lane: dict[str, Any]) -> VerificationIssue | None:

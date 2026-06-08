@@ -382,6 +382,43 @@ class GPTTraderBrainTest(unittest.TestCase):
                 payload["input_packet"]["allowed_evidence_refs"],
             )
 
+    def test_allows_trade_when_only_self_improvement_p0_is_stale_prior_gpt_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["self_improvement_audit"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "status": "SELF_IMPROVEMENT_BLOCKED",
+                        "findings": [
+                            {
+                                "priority": "P0",
+                                "layer": "decision_history",
+                                "code": "LATEST_GPT_DECISION_STALE",
+                                "message": "latest GPT decision receipt predates the current broker snapshot",
+                            }
+                        ],
+                    }
+                )
+            )
+            decision = _trade_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "self_improvement:audit",
+                    "self_improvement:decision_history",
+                    "self_improvement:finding:LATEST_GPT_DECISION_STALE",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("SELF_IMPROVEMENT_P0_BLOCKS_TRADE", codes)
+
     def test_report_contract_does_not_treat_receipt_close_flag_as_gate_b(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
