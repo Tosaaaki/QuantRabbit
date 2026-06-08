@@ -752,6 +752,143 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 4000.0 / 28, places=4)
             self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 5.0)
 
+    def test_target_sizing_moderate_floor_candidate_updates_live_pace(self) -> None:
+        """A measured moderate 5% floor size-up must reach execution sizing.
+
+        Regression: ai-test-bot reported a 5% floor candidate at about 1.20x
+        size, but DailyTargetLedger only consumed <=1.10x near misses. That
+        left the campaign stuck on the 5% firepower pace cap, so the report
+        identified the sizing fix while live intents kept using the thinner
+        per-trade cap.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "target_return_pct": 10.0,
+                        "daily_risk_budget_jpy": 22278.1,
+                        "firepower": {
+                            "avg_selected_trades_per_day": 4.8,
+                            "required_trades_per_day_at_observed_expectancy": 125,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": None,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 63,
+                                },
+                                {
+                                    "return_pct": 10.0,
+                                    "required_trades_per_day_at_observed_expectancy": 125,
+                                },
+                            ],
+                        },
+                        "mechanism_ablation": {
+                            "target_sizing": {
+                                "status": "FLOOR_MODERATE_SIZE_UP_REQUIRED",
+                                "bands": [
+                                    {
+                                        "return_pct": 5.0,
+                                        "required_size_multiplier": 1.1972,
+                                        "scaled_loss_cap_jpy": 889.0447,
+                                        "scaled_target_hit_days": 1,
+                                        "scaled_max_drawdown_jpy": 2272.4467,
+                                        "scaled_worst_day_jpy": -1198.8139,
+                                        "status": "MODERATE_SIZE_UP_REQUIRED",
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                )
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            ).run(
+                start_balance_jpy=222_781,
+                daily_risk_budget_jpy=22278.1,
+            )
+            payload = json.loads((root / "target.json").read_text())
+
+            self.assertEqual(summary.target_trades_per_day, 25)
+            self.assertEqual(
+                summary.target_trades_per_day_source,
+                "ai_test_bot_target_sizing_5pct_moderate",
+            )
+            self.assertEqual(summary.target_trades_per_day_basis_return_pct, 5.0)
+            self.assertAlmostEqual(summary.per_trade_risk_budget_jpy, 22278.1 / 25, places=4)
+            self.assertEqual(payload["target_trades_per_day_basis_return_pct"], 5.0)
+
+    def test_target_sizing_moderate_rejects_daily_risk_breach(self) -> None:
+        """Moderate sizing is not accepted when the scaled risk envelope breaks."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            backtest = root / "ai_test_bot.json"
+            backtest.write_text(
+                json.dumps(
+                    {
+                        "target_return_pct": 10.0,
+                        "daily_risk_budget_jpy": 4000.0,
+                        "firepower": {
+                            "avg_selected_trades_per_day": 4.8,
+                            "required_trades_per_day_at_observed_expectancy": 80,
+                        },
+                        "target_band": {
+                            "floor_return_pct": 5.0,
+                            "stretch_return_pct": 10.0,
+                            "selected_attainable_return_pct": None,
+                            "bands": [
+                                {
+                                    "return_pct": 5.0,
+                                    "required_trades_per_day_at_observed_expectancy": 52,
+                                }
+                            ],
+                        },
+                        "mechanism_ablation": {
+                            "target_sizing": {
+                                "status": "FLOOR_MODERATE_SIZE_UP_REQUIRED",
+                                "bands": [
+                                    {
+                                        "return_pct": 5.0,
+                                        "required_size_multiplier": 1.2,
+                                        "scaled_loss_cap_jpy": 900.0,
+                                        "scaled_target_hit_days": 1,
+                                        "scaled_max_drawdown_jpy": 4500.0,
+                                        "scaled_worst_day_jpy": -1200.0,
+                                        "status": "MODERATE_SIZE_UP_REQUIRED",
+                                    }
+                                ],
+                            }
+                        },
+                    }
+                )
+            )
+
+            summary = DailyTargetLedger(
+                state_path=root / "target.json",
+                report_path=root / "target.md",
+                pace_backtest_path=backtest,
+            ).run(
+                start_balance_jpy=200_000,
+                daily_risk_budget_jpy=4000,
+            )
+
+            self.assertEqual(summary.target_trades_per_day, 30)
+            self.assertEqual(
+                summary.target_trades_per_day_source,
+                "ai_test_bot_target_band_5pct_required_trades_capped",
+            )
+
     def test_previous_cli_pace_yields_to_fresh_target_band_backtest(self) -> None:
         """A carried CLI pace must not block a freshly regenerated band pace.
 

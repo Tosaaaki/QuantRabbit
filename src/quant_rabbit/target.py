@@ -108,6 +108,12 @@ class _BacktestPace:
     basis_return_pct: float | None
 
 
+_TARGET_SIZING_MULTIPLIER_LIMITS = {
+    "NEAR_MISS_SIZE_TEST": 1.1,
+    "MODERATE_SIZE_UP_REQUIRED": 1.25,
+}
+
+
 class DailyTargetLedger:
     """Record daily 10% target progress from broker truth and realized PnL."""
 
@@ -871,36 +877,59 @@ def _pace_from_target_sizing(payload: dict[str, Any]) -> _BacktestPace | None:
     sizing = mechanism.get("target_sizing")
     if not isinstance(sizing, dict):
         return None
-    if str(sizing.get("status") or "") != "FLOOR_NEAR_MISS_SIZE_TEST":
+    if str(sizing.get("status") or "") not in {
+        "FLOOR_NEAR_MISS_SIZE_TEST",
+        "FLOOR_MODERATE_SIZE_UP_REQUIRED",
+    }:
         return None
     bands = [item for item in sizing.get("bands", []) if isinstance(item, dict)]
     floor_pct = _coalesce_float((target_band or {}).get("floor_return_pct")) if isinstance(target_band, dict) else None
     if floor_pct is None:
         floor_pct = 5.0
     floor = _target_band_for_pct(bands, floor_pct)
-    if floor is None or str(floor.get("status") or "") != "NEAR_MISS_SIZE_TEST":
+    if floor is None:
+        return None
+    floor_status = str(floor.get("status") or "")
+    multiplier_limit = _TARGET_SIZING_MULTIPLIER_LIMITS.get(floor_status)
+    if multiplier_limit is None:
         return None
     multiplier = _coalesce_float(floor.get("required_size_multiplier"))
     scaled_loss_cap = _coalesce_float(floor.get("scaled_loss_cap_jpy"))
+    scaled_target_hits = _coalesce_int(floor.get("scaled_target_hit_days"))
+    scaled_max_drawdown = _coalesce_float(floor.get("scaled_max_drawdown_jpy"))
+    scaled_worst_day = _coalesce_float(floor.get("scaled_worst_day_jpy"))
     daily_risk_budget = _coalesce_float(payload.get("daily_risk_budget_jpy"))
     if (
         multiplier is None
         or multiplier <= 1.0
-        or multiplier > 1.1
+        or multiplier > multiplier_limit
         or scaled_loss_cap is None
         or scaled_loss_cap <= 0
         or daily_risk_budget is None
         or daily_risk_budget <= 0
+        or scaled_loss_cap > daily_risk_budget
     ):
+        return None
+    if scaled_target_hits is not None and scaled_target_hits <= 0:
+        return None
+    if scaled_max_drawdown is not None and scaled_max_drawdown > daily_risk_budget:
+        return None
+    if scaled_worst_day is not None and scaled_worst_day < -daily_risk_budget:
         return None
     pace = int(daily_risk_budget // scaled_loss_cap)
     if pace <= 0:
         return None
     return _BacktestPace(
         trades_per_day=pace,
-        source=f"ai_test_bot_target_sizing_{_pct_source_token(floor_pct)}pct_near_miss",
+        source=f"ai_test_bot_target_sizing_{_pct_source_token(floor_pct)}pct_{_target_sizing_source_token(floor_status)}",
         basis_return_pct=floor_pct,
     )
+
+
+def _target_sizing_source_token(status: str) -> str:
+    if status == "MODERATE_SIZE_UP_REQUIRED":
+        return "moderate"
+    return "near_miss"
 
 
 def _target_band_for_pct(bands: list[dict[str, Any]], desired_pct: float) -> dict[str, Any] | None:
