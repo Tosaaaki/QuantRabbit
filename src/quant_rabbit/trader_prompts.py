@@ -67,6 +67,7 @@ BRANCH_POSITION = "position_management"
 BRANCH_VERIFY = "verify_execute"
 BRANCH_LEARNING = "learning_gap"
 DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
+ACCEPTED_GATEWAY_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE"})
 
 
 @dataclass(frozen=True)
@@ -227,6 +228,22 @@ def route_trader_prompts(
             include_content=include_content,
         )
 
+    accepted_gateway_state = _current_accepted_gpt_action_pending_gateway(
+        decision_response_path=decision_response_path,
+        snapshot_path=snapshot_path,
+        intents_path=intents_path,
+        gpt_decision_path=gpt_decision_path,
+        live_order_path=live_order_path,
+        position_execution_path=position_execution_path,
+        autotrade_report_path=autotrade_report_path,
+    )
+    if accepted_gateway_state is not None and accepted_gateway_state.pending:
+        return _build_route(
+            BRANCH_VERIFY,
+            accepted_gateway_state.reasons,
+            include_content=include_content,
+        )
+
     trader_overrides_refresh_reasons = _trader_overrides_refresh_reasons(
         target_state,
         snapshot,
@@ -319,6 +336,31 @@ class DecisionReceiptState:
     reasons: tuple[str, ...] = ()
 
 
+def _current_accepted_gpt_action_pending_gateway(
+    *,
+    decision_response_path: Path | None,
+    snapshot_path: Path,
+    intents_path: Path,
+    gpt_decision_path: Path | None,
+    live_order_path: Path | None,
+    position_execution_path: Path | None,
+    autotrade_report_path: Path | None,
+) -> DecisionReceiptState | None:
+    if decision_response_path is None or not decision_response_path.exists():
+        return None
+    decision_mtime_ns = decision_response_path.stat().st_mtime_ns
+    for path in (snapshot_path, intents_path):
+        if _artifact_newer(path, decision_mtime_ns):
+            return None
+    return _accepted_gpt_action_pending_gateway(
+        gpt_decision_path=gpt_decision_path,
+        decision_mtime_ns=decision_mtime_ns,
+        live_order_path=live_order_path,
+        position_execution_path=position_execution_path,
+        autotrade_report_path=autotrade_report_path,
+    )
+
+
 def _decision_receipt_state(
     *,
     decision_response_path: Path | None,
@@ -343,7 +385,7 @@ def _decision_receipt_state(
                 reasons=(f"decision response predates {label}; refresh decision from broker truth: {path}",),
             )
 
-    gpt_pending = _accepted_gpt_trade_pending_gateway(
+    gpt_pending = _accepted_gpt_action_pending_gateway(
         gpt_decision_path=gpt_decision_path,
         decision_mtime_ns=decision_mtime_ns,
         live_order_path=live_order_path,
@@ -374,7 +416,7 @@ def _decision_receipt_state(
     )
 
 
-def _accepted_gpt_trade_pending_gateway(
+def _accepted_gpt_action_pending_gateway(
     *,
     gpt_decision_path: Path | None,
     decision_mtime_ns: int,
@@ -393,8 +435,8 @@ def _accepted_gpt_trade_pending_gateway(
         return None
     status = str(payload.get("status") or "")
     decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
-    action = str(decision.get("action") or "")
-    if status != "ACCEPTED" or action != "TRADE":
+    action = str(decision.get("action") or "").upper()
+    if status != "ACCEPTED" or action not in ACCEPTED_GATEWAY_ACTIONS:
         return None
 
     for path, label in (
@@ -405,13 +447,13 @@ def _accepted_gpt_trade_pending_gateway(
         if path is not None and path.exists() and path.stat().st_mtime_ns > gpt_mtime_ns:
             return DecisionReceiptState(
                 pending=False,
-                reasons=(f"accepted TRADE decision already consumed by {label}: {path}",),
+                reasons=(f"accepted {action} decision already consumed by {label}: {path}",),
             )
 
     return DecisionReceiptState(
         pending=True,
         reasons=(
-            "accepted TRADE decision has no newer gateway receipt; "
+            f"accepted {action} decision has no newer gateway receipt; "
             f"run exactly one gateway cycle now: {gpt_decision_path}",
         ),
     )
@@ -430,10 +472,12 @@ def _gpt_decision_terminal_state(path: Path | None, decision_mtime_ns: int) -> s
         return None
     status = str(payload.get("status") or "")
     decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
-    action = str(decision.get("action") or "")
+    action = str(decision.get("action") or "").upper()
     if status != "ACCEPTED":
         return f"decision response already verified as {status or 'UNKNOWN'}: {path}"
-    if action and action != "TRADE":
+    if action in ACCEPTED_GATEWAY_ACTIONS:
+        return None
+    if action:
         return f"decision response already verified as non-executable {action}: {path}"
     return None
 

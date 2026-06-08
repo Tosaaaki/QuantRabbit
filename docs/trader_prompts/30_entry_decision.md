@@ -28,6 +28,7 @@
 ## Valid Actions
 
 - `TRADE`
+- `CANCEL_PENDING`
 - `WAIT`
 - `REQUEST_EVIDENCE`
 

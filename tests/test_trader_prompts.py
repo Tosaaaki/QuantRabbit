@@ -214,6 +214,46 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("order intents" in reason for reason in route.reasons))
         self.assertFalse(any("daily target state" in reason for reason in route.reasons))
 
+    def test_current_accepted_gateway_decision_is_not_preempted_by_stale_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            snapshot_ts = (base + timedelta(minutes=2)).isoformat()
+            memory_ts = base.isoformat()
+
+            snapshot = json.loads(files["snapshot"].read_text())
+            snapshot["fetched_at_utc"] = snapshot_ts
+            files["snapshot"].write_text(json.dumps(snapshot))
+
+            memory = json.loads(files["memory_health"].read_text())
+            memory["generated_at_utc"] = memory_ts
+            files["memory_health"].write_text(json.dumps(memory))
+
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CANCEL_PENDING", "cancel_order_ids": ["472124"]}))
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CANCEL_PENDING",
+                            "cancel_order_ids": ["472124"],
+                        },
+                    }
+                )
+            )
+            _set_mtime(files["snapshot"], 100.0)
+            _set_mtime(files["intents"], 100.0)
+            _set_mtime(files["memory_health"], 100.0)
+            _set_mtime(decision_response, 101.0)
+            _set_mtime(files["gpt_decision"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_VERIFY)
+        self.assertIn("accepted CANCEL_PENDING decision has no newer gateway receipt", route.reasons[0])
+
     def test_daily_target_refresh_after_memory_health_does_not_force_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1271,6 +1311,35 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_VERIFY)
         self.assertIn("accepted TRADE decision has no newer gateway receipt", route.reasons[0])
 
+    def test_routes_accepted_cancel_pending_without_newer_gateway_to_verify_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CANCEL_PENDING", "cancel_order_ids": ["472124"]}))
+            files["autotrade_report"].write_text("# stale no-send cycle\n")
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CANCEL_PENDING",
+                            "cancel_order_ids": ["472124"],
+                        },
+                    }
+                )
+            )
+            _set_mtime(decision_response, 100.0)
+            _set_mtime(files["snapshot"], 99.0)
+            _set_mtime(files["intents"], 99.0)
+            _set_mtime(files["autotrade_report"], 101.0)
+            _set_mtime(files["gpt_decision"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_VERIFY)
+        self.assertIn("accepted CANCEL_PENDING decision has no newer gateway receipt", route.reasons[0])
+
     def test_routes_accepted_trade_with_newer_gateway_back_to_entry_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1300,6 +1369,81 @@ class TraderPromptRouteTest(unittest.TestCase):
 
         self.assertEqual(route.branch, BRANCH_ENTRY)
         self.assertIn("accepted TRADE decision already consumed by live order gateway receipt", route.reasons[0])
+
+    def test_routes_accepted_cancel_pending_with_newer_gateway_back_to_entry_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CANCEL_PENDING", "cancel_order_ids": ["472124"]}))
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CANCEL_PENDING",
+                            "cancel_order_ids": ["472124"],
+                        },
+                    }
+                )
+            )
+            files["live_order"].write_text(json.dumps({"status": "GPT_CANCEL_PENDING", "sent": False}))
+            _set_mtime(decision_response, 100.0)
+            _set_mtime(files["snapshot"], 99.0)
+            _set_mtime(files["intents"], 99.0)
+            _set_mtime(files["gpt_decision"], 101.0)
+            _set_mtime(files["live_order"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertIn(
+            "accepted CANCEL_PENDING decision already consumed by live order gateway receipt",
+            route.reasons[0],
+        )
+
+    def test_routes_accepted_position_action_without_newer_gateway_to_verify_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "9001",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "owner": "trader",
+                        "entry_price": 1.17,
+                        "take_profit": 1.172,
+                        "stop_loss": 1.168,
+                        "unrealized_pl_jpy": 120.0,
+                    }
+                ],
+            )
+            decision_response = root / "codex_trader_decision_response.json"
+            decision_response.write_text(json.dumps({"action": "CLOSE", "close_trade_ids": ["9001"]}))
+            files["autotrade_report"].write_text("# stale no-send cycle\n")
+            files["gpt_decision"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "decision": {
+                            "action": "CLOSE",
+                            "close_trade_ids": ["9001"],
+                        },
+                    }
+                )
+            )
+            _set_mtime(decision_response, 100.0)
+            _set_mtime(files["snapshot"], 99.0)
+            _set_mtime(files["intents"], 99.0)
+            _set_mtime(files["autotrade_report"], 101.0)
+            _set_mtime(files["gpt_decision"], 102.0)
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=decision_response)
+
+        self.assertEqual(route.branch, BRANCH_VERIFY)
+        self.assertIn("accepted CLOSE decision has no newer gateway receipt", route.reasons[0])
 
     def test_routes_decision_older_than_refreshed_broker_truth_back_to_entry_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
