@@ -171,6 +171,55 @@ class ExecutionLedgerTest(unittest.TestCase):
                 1.17,
             ))
 
+    def test_records_position_close_receipt_order_id_for_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "position_execution.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
+                        "send_requested": True,
+                        "actions": [
+                            {
+                                "trade_id": "T-100",
+                                "pair": "EUR_USD",
+                                "management_action": "REVIEW_EXIT",
+                                "sent": True,
+                                "request": {"type": "CLOSE", "trade_id": "T-100", "units": "ALL"},
+                                "response": {
+                                    "orderCreateTransaction": {
+                                        "id": "900",
+                                        "reason": "TRADE_CLOSE",
+                                        "tradeClose": {"tradeID": "T-100"},
+                                    },
+                                    "orderFillTransaction": {
+                                        "id": "901",
+                                        "orderID": "900",
+                                        "tradesClosed": [{"tradeID": "T-100"}],
+                                    },
+                                    "relatedTransactionIDs": ["900", "901"],
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+
+            summary = ledger.record_gateway_receipt(kind="position_execution", receipt_path=receipt)
+
+            self.assertEqual(summary.events_inserted, 1)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    """
+                    SELECT event_type, order_id, trade_id, pair, exit_reason, related_transaction_ids_json
+                    FROM execution_events
+                    """
+                ).fetchone()
+            self.assertEqual(row[0:5], ("GATEWAY_TRADE_CLOSE_SENT", "900", "T-100", "EUR_USD", "REVIEW_EXIT"))
+            self.assertEqual(json.loads(row[5]), ["900", "901"])
+
     def test_records_blocked_gateway_child_even_without_send_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

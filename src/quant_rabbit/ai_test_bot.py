@@ -611,6 +611,24 @@ class AITestBotBacktester:
                     f"gateway_close=`{int(segment.get('gateway_close_sent_count') or 0)}` "
                     f"broker_trade_close=`{int(segment.get('broker_trade_close_accepted_count') or 0)}`"
                 )
+        source_segments = (
+            close_gate.get("close_source_segments")
+            if isinstance(close_gate.get("close_source_segments"), list)
+            else []
+        )
+        if source_segments:
+            lines.append("- Close source segments:")
+            for segment in source_segments[:8]:
+                if not isinstance(segment, dict):
+                    continue
+                pf = segment.get("profit_factor")
+                pf_text = f"{float(pf):.3f}" if pf is not None else "n/a"
+                lines.append(
+                    f"  - `{segment.get('source')}` count=`{int(segment.get('count') or 0)}` "
+                    f"net=`{float(segment.get('net_jpy') or 0.0):.0f}` "
+                    f"pf=`{pf_text}` expectancy=`{float(segment.get('expectancy_jpy') or 0.0):.0f}` "
+                    f"loss_market=`{int(segment.get('loss_side_market_close_count') or 0)}`"
+                )
         daily_close_losses = (
             close_gate.get("loss_side_market_close_daily")
             if isinstance(close_gate.get("loss_side_market_close_daily"), list)
@@ -1250,6 +1268,7 @@ def _close_gate_ablation_payload(
         "take_profit_close_net_jpy": 0.0,
         "loss_side_market_close_daily": [],
         "loss_side_market_close_examples": [],
+        "close_source_segments": [],
         "segments": [],
     }
     if db_path is None:
@@ -1280,7 +1299,13 @@ def _close_gate_ablation_payload(
             gateway_close_sent_events = _count_events(conn, "GATEWAY_TRADE_CLOSE_SENT")
             attributed_trade_ids = _gateway_attributed_entry_trade_ids(conn, columns)
             gateway_close_trade_ids = _event_trade_ids(conn, "GATEWAY_TRADE_CLOSE_SENT")
+            gateway_close_order_ids = _event_order_ids(conn, "GATEWAY_TRADE_CLOSE_SENT", columns)
             gateway_close_reasons_by_trade_id = _event_trade_id_reasons(
+                conn,
+                "GATEWAY_TRADE_CLOSE_SENT",
+                columns,
+            )
+            gateway_close_reasons_by_order_id = _event_order_id_reasons(
                 conn,
                 "GATEWAY_TRADE_CLOSE_SENT",
                 columns,
@@ -1307,6 +1332,7 @@ def _close_gate_ablation_payload(
         return base
 
     segments: dict[tuple[str, str], dict[str, object]] = {}
+    source_segments: dict[str, dict[str, object]] = {}
     close_net = 0.0
     bot_attributed_count = 0
     loss_side_market_count = 0
@@ -1343,8 +1369,9 @@ def _close_gate_ablation_payload(
         event_type = _norm(row["event_type"])
         order_id = str(row["order_id"] or "").strip()
         bot_attributed = trade_id in attributed_trade_ids
-        gateway_close_sent = trade_id in gateway_close_trade_ids
-        gateway_close_reasons = gateway_close_reasons_by_trade_id.get(trade_id, set())
+        gateway_close_sent = trade_id in gateway_close_trade_ids or order_id in gateway_close_order_ids
+        gateway_close_reasons = set(gateway_close_reasons_by_trade_id.get(trade_id, set()))
+        gateway_close_reasons.update(gateway_close_reasons_by_order_id.get(order_id, set()))
         gateway_gpt_close = "GPT_CLOSE" in gateway_close_reasons
         gateway_review_exit = "REVIEW_EXIT" in gateway_close_reasons and not gateway_gpt_close
         gateway_other_close = gateway_close_sent and not gateway_gpt_close and not gateway_review_exit
@@ -1357,6 +1384,21 @@ def _close_gate_ablation_payload(
             order_id=order_id,
         )
         close_order_provenance = gateway_close_sent or broker_trade_close_accepted
+        close_source = _primary_close_source(
+            exit_reason=exit_reason,
+            gateway_close_sent=gateway_close_sent,
+            gateway_close_reasons=gateway_close_reasons,
+            broker_trade_close_accepted=broker_trade_close_accepted,
+            broker_trade_close_sources=broker_trade_close_sources,
+            close_order_provenance=close_order_provenance,
+        )
+        _add_close_source_segment(
+            source_segments,
+            source=close_source,
+            pl_jpy=pl,
+            max_loss_jpy=max_loss_jpy,
+            loss_side_market_close=exit_reason == "MARKET_ORDER_TRADE_CLOSE" and pl < 0,
+        )
         if bot_attributed:
             bot_attributed_count += 1
         segment = segments.setdefault(
@@ -1476,6 +1518,7 @@ def _close_gate_ablation_payload(
                     "gateway_close_reasons": sorted(gateway_close_reasons),
                     "broker_trade_close_accepted": broker_trade_close_accepted,
                     "broker_trade_close_sources": sorted(broker_trade_close_sources),
+                    "close_source": close_source,
                     "close_order_provenance": close_order_provenance,
                 }
             )
@@ -1529,6 +1572,10 @@ def _close_gate_ablation_payload(
             }
             for item in segments.values()
         ),
+        key=lambda item: (float(item["net_jpy"]), -int(item["count"])),
+    )
+    source_segment_rows = sorted(
+        (_finalize_close_source_segment(item) for item in source_segments.values()),
         key=lambda item: (float(item["net_jpy"]), -int(item["count"])),
     )
     loss_market_daily_rows = sorted(
@@ -1587,10 +1634,96 @@ def _close_gate_ablation_payload(
             "take_profit_close_net_jpy": _round(take_profit_net),
             "loss_side_market_close_daily": loss_market_daily_rows,
             "loss_side_market_close_examples": loss_market_example_rows,
+            "close_source_segments": source_segment_rows,
             "segments": segment_rows,
         }
     )
     return base
+
+
+def _primary_close_source(
+    *,
+    exit_reason: str,
+    gateway_close_sent: bool,
+    gateway_close_reasons: set[str],
+    broker_trade_close_accepted: bool,
+    broker_trade_close_sources: set[str],
+    close_order_provenance: bool,
+) -> str:
+    if gateway_close_sent:
+        if "GPT_CLOSE" in gateway_close_reasons:
+            return "GATEWAY:GPT_CLOSE"
+        if "REVIEW_EXIT" in gateway_close_reasons:
+            return "GATEWAY:REVIEW_EXIT"
+        reason = next((item for item in sorted(gateway_close_reasons) if item and item != "UNSPECIFIED"), "")
+        return f"GATEWAY:{reason or 'CLOSE'}"
+    if broker_trade_close_accepted:
+        source = next((item for item in sorted(broker_trade_close_sources) if item), "")
+        return f"BROKER_ACCEPT:{source or 'UNKNOWN'}"
+    if exit_reason in {"TAKE_PROFIT_ORDER", "STOP_LOSS_ORDER"}:
+        return f"BROKER:{exit_reason}"
+    if "MARGIN_CLOSEOUT" in exit_reason or "POSITION_CLOSEOUT" in exit_reason:
+        return "BROKER:MARGIN_OR_POSITION_CLOSEOUT"
+    if not close_order_provenance and exit_reason == "MARKET_ORDER_TRADE_CLOSE":
+        return "NO_CLOSE_ORDER_PROVENANCE"
+    return f"OTHER:{exit_reason or 'UNSPECIFIED'}"
+
+
+def _add_close_source_segment(
+    segments: dict[str, dict[str, object]],
+    *,
+    source: str,
+    pl_jpy: float,
+    max_loss_jpy: float,
+    loss_side_market_close: bool,
+) -> None:
+    segment = segments.setdefault(
+        source,
+        {
+            "source": source,
+            "count": 0,
+            "net_jpy": 0.0,
+            "capped_net_jpy": 0.0,
+            "gross_profit_jpy": 0.0,
+            "gross_loss_jpy": 0.0,
+            "win_count": 0,
+            "loss_count": 0,
+            "loss_side_market_close_count": 0,
+            "loss_side_market_close_net_jpy": 0.0,
+        },
+    )
+    segment["count"] = int(segment["count"]) + 1
+    segment["net_jpy"] = _round(float(segment["net_jpy"]) + pl_jpy)
+    segment["capped_net_jpy"] = _round(float(segment["capped_net_jpy"]) + _capped_pl(pl_jpy, max_loss_jpy))
+    if pl_jpy > 0:
+        segment["win_count"] = int(segment["win_count"]) + 1
+        segment["gross_profit_jpy"] = _round(float(segment["gross_profit_jpy"]) + pl_jpy)
+    elif pl_jpy < 0:
+        segment["loss_count"] = int(segment["loss_count"]) + 1
+        segment["gross_loss_jpy"] = _round(float(segment["gross_loss_jpy"]) + abs(pl_jpy))
+    if loss_side_market_close:
+        segment["loss_side_market_close_count"] = int(segment["loss_side_market_close_count"]) + 1
+        segment["loss_side_market_close_net_jpy"] = _round(
+            float(segment["loss_side_market_close_net_jpy"]) + pl_jpy
+        )
+
+
+def _finalize_close_source_segment(segment: dict[str, object]) -> dict[str, object]:
+    count = int(segment.get("count") or 0)
+    gross_profit = _round(float(segment.get("gross_profit_jpy") or 0.0))
+    gross_loss = _round(float(segment.get("gross_loss_jpy") or 0.0))
+    wins = int(segment.get("win_count") or 0)
+    return {
+        **segment,
+        "net_jpy": _round(float(segment.get("net_jpy") or 0.0)),
+        "capped_net_jpy": _round(float(segment.get("capped_net_jpy") or 0.0)),
+        "gross_profit_jpy": gross_profit,
+        "gross_loss_jpy": gross_loss,
+        "profit_factor": _profit_factor(gross_profit, gross_loss),
+        "expectancy_jpy": _round(float(segment.get("net_jpy") or 0.0) / count) if count else 0.0,
+        "win_rate_pct": _round((wins / count) * 100.0) if count else 0.0,
+        "loss_side_market_close_net_jpy": _round(float(segment.get("loss_side_market_close_net_jpy") or 0.0)),
+    }
 
 
 def _count_events(conn: sqlite3.Connection, event_type: str) -> int:
@@ -1613,6 +1746,22 @@ def _event_trade_ids(conn: sqlite3.Connection, event_type: str) -> set[str]:
         (event_type,),
     ).fetchall()
     return {str(row["trade_id"]).strip() for row in rows if str(row["trade_id"] or "").strip()}
+
+
+def _event_order_ids(conn: sqlite3.Connection, event_type: str, columns: set[str]) -> set[str]:
+    if "order_id" not in columns:
+        return set()
+    rows = conn.execute(
+        """
+        SELECT order_id
+        FROM execution_events
+        WHERE event_type = ?
+          AND order_id IS NOT NULL
+          AND order_id != ''
+        """,
+        (event_type,),
+    ).fetchall()
+    return {str(row["order_id"]).strip() for row in rows if str(row["order_id"] or "").strip()}
 
 
 def _event_trade_id_reasons(
@@ -1643,6 +1792,39 @@ def _event_trade_id_reasons(
             continue
         reason = _gateway_close_reason(row)
         out.setdefault(trade_id, set()).add(reason)
+    return out
+
+
+def _event_order_id_reasons(
+    conn: sqlite3.Connection,
+    event_type: str,
+    columns: set[str],
+) -> dict[str, set[str]]:
+    if "order_id" not in columns:
+        return {}
+    select_fields = ["order_id"]
+    for column in ("exit_reason", "raw_json"):
+        if column in columns:
+            select_fields.append(column)
+        else:
+            select_fields.append(f"NULL AS {column}")
+    rows = conn.execute(
+        f"""
+        SELECT {', '.join(select_fields)}
+        FROM execution_events
+        WHERE event_type = ?
+          AND order_id IS NOT NULL
+          AND order_id != ''
+        """,
+        (event_type,),
+    ).fetchall()
+    out: dict[str, set[str]] = {}
+    for row in rows:
+        order_id = str(row["order_id"] or "").strip()
+        if not order_id:
+            continue
+        reason = _gateway_close_reason(row)
+        out.setdefault(order_id, set()).add(reason)
     return out
 
 
@@ -2194,6 +2376,25 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
             f"{source_suffix} "
             "tag whether these were GPT/gateway, operator, or broker-sync-only closes before changing CLOSE Gate A-B policy"
         )
+    source_segments = payload.get("close_source_segments")
+    if isinstance(source_segments, list):
+        negative_segments = [
+            item
+            for item in source_segments
+            if isinstance(item, dict)
+            and float(item.get("net_jpy") or 0.0) < 0
+            and int(item.get("count") or 0) > 0
+        ]
+        if negative_segments:
+            worst = min(negative_segments, key=lambda item: float(item.get("net_jpy") or 0.0))
+            pf = worst.get("profit_factor")
+            yield (
+                "worst close-source segment is negative "
+                f"({worst.get('source')}, count {int(worst.get('count') or 0)}, "
+                f"net {float(worst.get('net_jpy') or 0.0):.0f} JPY, "
+                f"PF {pf if pf is not None else 'n/a'}); "
+                "tune exits by measured close source before expanding discovery or news weighting"
+            )
     unattributed_loss_count = int(payload.get("unattributed_loss_side_market_close_count") or 0)
     unattributed_loss_net = float(payload.get("unattributed_loss_side_market_close_net_jpy") or 0.0)
     if unattributed_loss_count:

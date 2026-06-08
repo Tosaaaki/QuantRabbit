@@ -1022,6 +1022,10 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["gateway_review_exit_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["take_profit_close_net_jpy"], 220.0)
+            source_segments = {item["source"]: item for item in close_gate["close_source_segments"]}
+            self.assertEqual(source_segments["NO_CLOSE_ORDER_PROVENANCE"]["net_jpy"], -300.0)
+            self.assertEqual(source_segments["GATEWAY:REVIEW_EXIT"]["net_jpy"], -180.0)
+            self.assertEqual(source_segments["BROKER:TAKE_PROFIT_ORDER"]["profit_factor"], None)
             self.assertEqual(
                 close_gate["loss_side_market_close_daily"],
                 [
@@ -1203,9 +1207,54 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertTrue(example["close_order_provenance"])
             self.assertTrue(any("broker accepted TRADE_CLOSE orders exist" in item for item in payload["action_items"]))
             self.assertTrue(any("UNLABELED_BROKER_TRADE_CLOSE" in item for item in payload["action_items"]))
+            self.assertTrue(any("worst close-source segment" in item for item in payload["action_items"]))
             self.assertFalse(any("lack both gateway close receipts" in item for item in payload["action_items"]))
             report = (root / "ai_backtest.md").read_text()
             self.assertIn("UNLABELED_BROKER_TRADE_CLOSE", report)
+            self.assertIn("Close source segments", report)
+
+    def test_close_gate_diagnostic_matches_gateway_close_by_order_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "legacy.db"
+            ledger = root / "execution_ledger.db"
+            _seed_db(
+                db,
+                [
+                    ("trades", "2026-06-01", "EUR_USD", "LONG", 100.0),
+                    ("trades", "2026-06-02", "EUR_USD", "LONG", -200.0),
+                ],
+            )
+            _seed_gateway_close_order_id_ledger(ledger)
+
+            AITestBotBacktester(
+                db_path=db,
+                execution_ledger_db_path=ledger,
+                output_path=root / "ai_backtest.json",
+                report_path=root / "ai_backtest.md",
+                max_loss_jpy=100.0,
+                training_days=1,
+                min_train_trades=1,
+                max_active_buckets=1,
+                source_tables=("trades",),
+            ).run(start_balance_jpy=1000.0)
+
+            payload = json.loads((root / "ai_backtest.json").read_text())
+            close_gate = payload["mechanism_ablation"]["close_gate_ab"]
+            self.assertEqual(close_gate["status"], "MEASURED")
+            self.assertEqual(close_gate["gateway_close_sent_events"], 1)
+            self.assertEqual(close_gate["gateway_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["gateway_review_exit_loss_side_market_close_count"], 1)
+            self.assertEqual(close_gate["broker_accepted_without_gateway_loss_side_market_close_count"], 0)
+            self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 0)
+            example = close_gate["loss_side_market_close_examples"][0]
+            self.assertTrue(example["gateway_close_sent"])
+            self.assertEqual(example["gateway_close_reasons"], ["REVIEW_EXIT"])
+            self.assertEqual(example["close_source"], "GATEWAY:REVIEW_EXIT")
+            source_segments = {item["source"]: item for item in close_gate["close_source_segments"]}
+            self.assertEqual(source_segments["GATEWAY:REVIEW_EXIT"]["count"], 1)
+            self.assertEqual(source_segments["GATEWAY:REVIEW_EXIT"]["net_jpy"], -250.0)
+            self.assertEqual(source_segments["GATEWAY:REVIEW_EXIT"]["expectancy_jpy"], -250.0)
 
     def test_context_theme_overlay_adds_cross_pair_without_displacing_base_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1648,6 +1697,100 @@ def _seed_broker_accepted_close_ledger(path: Path) -> None:
                     None,
                     "order-close",
                     "broker-close-trade",
+                    "EUR_USD",
+                    "SHORT",
+                    1000,
+                    -250.0,
+                    "MARKET_ORDER_TRADE_CLOSE",
+                    json.dumps({"reason": "MARKET_ORDER_TRADE_CLOSE"}),
+                ),
+            ],
+        )
+
+
+def _seed_gateway_close_order_id_ledger(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE execution_events (
+                event_uid TEXT,
+                ts_utc TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                lane_id TEXT,
+                order_id TEXT,
+                trade_id TEXT,
+                pair TEXT,
+                side TEXT,
+                units INTEGER,
+                realized_pl_jpy REAL,
+                exit_reason TEXT,
+                raw_json TEXT NOT NULL
+            )
+            """
+        )
+        conn.executemany(
+            """
+            INSERT INTO execution_events (
+                event_uid, ts_utc, event_type, lane_id, order_id, trade_id, pair, side, units,
+                realized_pl_jpy, exit_reason, raw_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    "gateway-entry",
+                    "2026-06-01T01:00:00Z",
+                    "GATEWAY_ORDER_SENT",
+                    "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                    "order-entry",
+                    None,
+                    "EUR_USD",
+                    "LONG",
+                    1000,
+                    None,
+                    None,
+                    json.dumps({"lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION"}),
+                ),
+                (
+                    "fill-entry",
+                    "2026-06-01T01:01:00Z",
+                    "ORDER_FILLED",
+                    None,
+                    "order-entry",
+                    "gateway-order-close-trade",
+                    "EUR_USD",
+                    "LONG",
+                    1000,
+                    None,
+                    None,
+                    "{}",
+                ),
+                (
+                    "gateway-close-by-order",
+                    "2026-06-01T02:00:00Z",
+                    "GATEWAY_TRADE_CLOSE_SENT",
+                    None,
+                    "close-order-gateway",
+                    None,
+                    "EUR_USD",
+                    None,
+                    None,
+                    None,
+                    "REVIEW_EXIT",
+                    json.dumps(
+                        {
+                            "management_action": "REVIEW_EXIT",
+                            "request": {"type": "CLOSE", "trade_id": "gateway-order-close-trade"},
+                        }
+                    ),
+                ),
+                (
+                    "closed-by-same-order",
+                    "2026-06-01T02:00:01Z",
+                    "TRADE_CLOSED",
+                    None,
+                    "close-order-gateway",
+                    "gateway-order-close-trade",
                     "EUR_USD",
                     "SHORT",
                     1000,
