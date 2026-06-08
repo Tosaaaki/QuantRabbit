@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
@@ -556,9 +557,13 @@ class AITestBotBacktester:
             multiplier_text = f"{float(multiplier):.4f}" if multiplier is not None else "n/a"
             loss_cap = item.get("scaled_loss_cap_jpy")
             loss_cap_text = f"{float(loss_cap):.0f}" if loss_cap is not None else "n/a"
+            scaled_dd = item.get("scaled_max_drawdown_jpy")
+            scaled_dd_text = f"{float(scaled_dd):.0f}" if scaled_dd is not None else "n/a"
             lines.append(
                 f"- `{float(item.get('return_pct') or 0.0):.1f}%` target=`{float(item.get('target_jpy') or 0.0):.0f}` "
                 f"required_size_multiplier=`{multiplier_text}` scaled_loss_cap=`{loss_cap_text}` "
+                f"scaled_target_hits=`{int(item.get('scaled_target_hit_days') or 0)}` "
+                f"scaled_max_dd=`{scaled_dd_text}` "
                 f"status=`{item.get('status', 'n/a')}`"
             )
         lines.extend(
@@ -1138,8 +1143,16 @@ def _target_sizing_ablation_payload(
     for return_pct in _target_band_percentages(target_return_pct):
         target_jpy = _round(start_balance_jpy * (return_pct / 100.0))
         already_hit_days = sum(1 for day in day_results if day.managed_net_jpy >= target_jpy)
-        multiplier = round(target_jpy / best_day_net, 4) if best_day_net > 0 else None
+        multiplier = _ceil_decimal(target_jpy / best_day_net, places=4) if best_day_net > 0 else None
         scaled_loss_cap = _round(max_loss_jpy * float(multiplier)) if multiplier is not None else None
+        scaled_day_values = (
+            tuple(_round(day.managed_net_jpy * float(multiplier)) for day in day_results)
+            if multiplier is not None
+            else tuple()
+        )
+        scaled_target_hit_days = sum(1 for value in scaled_day_values if value >= target_jpy)
+        scaled_max_drawdown = _max_drawdown(scaled_day_values) if scaled_day_values else None
+        scaled_worst_day = min(scaled_day_values) if scaled_day_values else None
         if already_hit_days > 0:
             status = "ALREADY_HIT"
         elif multiplier is None:
@@ -1157,6 +1170,9 @@ def _target_sizing_ablation_payload(
                 "already_hit_days": already_hit_days,
                 "required_size_multiplier": multiplier,
                 "scaled_loss_cap_jpy": scaled_loss_cap,
+                "scaled_target_hit_days": scaled_target_hit_days,
+                "scaled_max_drawdown_jpy": _round(scaled_max_drawdown) if scaled_max_drawdown is not None else None,
+                "scaled_worst_day_jpy": _round(scaled_worst_day) if scaled_worst_day is not None else None,
                 "status": status,
             }
         )
@@ -2938,3 +2954,8 @@ def _format_optional_pct(value: object) -> str:
 
 def _round(value: float) -> float:
     return round(value, 4)
+
+
+def _ceil_decimal(value: float, *, places: int) -> float:
+    factor = 10**places
+    return math.ceil(float(value) * factor) / factor
