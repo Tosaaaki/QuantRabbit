@@ -245,6 +245,197 @@ def _parse_utc_datetime(value: Any) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _optional_float(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _paths_equivalent(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def _campaign_target_state_path_for_cli(campaign_plan_path: Path) -> Path:
+    local_target_state = campaign_plan_path.parent / DEFAULT_DAILY_TARGET_STATE.name
+    if local_target_state.exists():
+        return local_target_state
+    try:
+        campaign_resolved = campaign_plan_path.resolve()
+        data_root_resolved = DEFAULT_CAMPAIGN_PLAN.parent.resolve()
+    except OSError:
+        campaign_resolved = campaign_plan_path
+        data_root_resolved = DEFAULT_CAMPAIGN_PLAN.parent
+    if campaign_resolved == DEFAULT_CAMPAIGN_PLAN.resolve() or data_root_resolved in campaign_resolved.parents:
+        return DEFAULT_DAILY_TARGET_STATE
+    return local_target_state
+
+
+def _campaign_report_path_for_plan(campaign_plan_path: Path) -> Path:
+    if _paths_equivalent(campaign_plan_path, DEFAULT_CAMPAIGN_PLAN):
+        return DEFAULT_CAMPAIGN_REPORT
+    return campaign_plan_path.with_suffix(".md")
+
+
+def _load_json_object(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
+
+
+def _campaign_target_mismatch_for_cli(plan: dict[str, Any], target_state: dict[str, Any]) -> str | None:
+    for key in ("start_balance_jpy", "target_jpy", "target_return_pct"):
+        planned = _optional_float(plan.get(key))
+        current = _optional_float(target_state.get(key))
+        if planned is None or current is None:
+            continue
+        tolerance = 0.01 if key == "target_return_pct" else max(1.0, abs(current) * 0.0001)
+        if abs(planned - current) > tolerance:
+            return f"{key} plan={planned:.4f} target_state={current:.4f}"
+    return None
+
+
+def _generated_at_from_json(path: Path) -> datetime | None:
+    if not path.exists():
+        return None
+    try:
+        payload = _load_json_object(path)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    return _parse_utc_datetime(payload.get("generated_at_utc"))
+
+
+def _auto_refresh_campaign_plan_if_required(
+    *,
+    campaign_plan_path: Path,
+    strategy_profile_path: Path,
+    market_story_profile_path: Path,
+) -> dict[str, Any]:
+    """Rebuild campaign plan after preflight side effects move target evidence.
+
+    `IntentGenerator` is right to reject a plan older than the current daily
+    target or strategy evidence. Direct `generate-intents` calls, however, run
+    market/story/ledger preflight before the generator, and those side effects
+    can advance the target/story packet after the operator just ran
+    `plan-campaign`. Refresh the plan here instead of weakening the stale-plan
+    gate.
+    """
+
+    target_state_path = _campaign_target_state_path_for_cli(campaign_plan_path)
+    if not target_state_path.exists():
+        return {
+            "status": "SKIPPED",
+            "reason": "target_state_missing",
+            "target_state_path": str(target_state_path),
+        }
+    try:
+        target_state = _load_json_object(target_state_path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "REFRESH_FAILED",
+            "reason": "target_state_unreadable",
+            "target_state_path": str(target_state_path),
+            "error": str(exc),
+        }
+
+    reasons: list[str] = []
+    generated_at: datetime | None = None
+    plan: dict[str, Any] = {}
+    if not campaign_plan_path.exists():
+        reasons.append("campaign_plan_missing")
+    else:
+        try:
+            plan = _load_json_object(campaign_plan_path)
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            return {
+                "status": "REFRESH_FAILED",
+                "reason": "campaign_plan_unreadable",
+                "campaign_plan_path": str(campaign_plan_path),
+                "error": str(exc),
+            }
+        generated_at = _parse_utc_datetime(plan.get("generated_at_utc"))
+        if generated_at is None:
+            reasons.append("campaign_plan_generated_at_missing")
+
+    target_generated_at = _parse_utc_datetime(target_state.get("generated_at_utc"))
+    strategy_generated_at = _generated_at_from_json(strategy_profile_path)
+    story_generated_at = _generated_at_from_json(market_story_profile_path)
+
+    if generated_at is not None:
+        if target_generated_at is not None and generated_at < target_generated_at:
+            reasons.append("daily_target_state_newer")
+        if strategy_generated_at is not None and generated_at < strategy_generated_at:
+            reasons.append("strategy_profile_newer")
+        if story_generated_at is not None and generated_at < story_generated_at:
+            reasons.append("market_story_profile_newer")
+        mismatch = _campaign_target_mismatch_for_cli(plan, target_state)
+        if mismatch is not None:
+            reasons.append(f"target_state_mismatch:{mismatch}")
+
+    if not reasons:
+        return {
+            "status": "SKIPPED",
+            "reason": "campaign_plan_current",
+            "campaign_plan_path": str(campaign_plan_path),
+            "target_state_path": str(target_state_path),
+        }
+
+    start_balance = _optional_float(target_state.get("start_balance_jpy"))
+    target_jpy = _optional_float(target_state.get("target_jpy"))
+    if start_balance is None or start_balance <= 0:
+        return {
+            "status": "REFRESH_FAILED",
+            "reason": "target_state_start_balance_missing",
+            "target_state_path": str(target_state_path),
+            "error": "daily target state lacks positive start_balance_jpy; run daily-target-state",
+        }
+    if target_jpy is not None and target_jpy > 0:
+        target_return_pct = (target_jpy / start_balance) * 100.0
+    else:
+        target_return_pct = _optional_float(target_state.get("target_return_pct"))
+        if target_return_pct is None or target_return_pct <= 0:
+            return {
+                "status": "REFRESH_FAILED",
+                "reason": "target_state_return_missing",
+                "target_state_path": str(target_state_path),
+                "error": "daily target state lacks positive target_jpy/target_return_pct; run daily-target-state",
+            }
+
+    try:
+        summary = CampaignPlanner(
+            strategy_profile=strategy_profile_path,
+            market_story_profile=market_story_profile_path,
+            report_path=_campaign_report_path_for_plan(campaign_plan_path),
+            plan_path=campaign_plan_path,
+        ).run(start_balance_jpy=start_balance, target_return_pct=target_return_pct)
+    except (OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
+        return {
+            "status": "REFRESH_FAILED",
+            "reason": "campaign_planner_failed",
+            "campaign_plan_path": str(campaign_plan_path),
+            "target_state_path": str(target_state_path),
+            "error": str(exc),
+            "refresh_reasons": reasons,
+        }
+    return {
+        "status": "REFRESHED",
+        "refresh_reasons": reasons,
+        "campaign_plan_path": str(summary.plan_path),
+        "campaign_report_path": str(summary.report_path),
+        "target_state_path": str(target_state_path),
+        "start_balance_jpy": start_balance,
+        "target_return_pct": target_return_pct,
+        "target_jpy": summary.target_jpy,
+        "lanes": summary.lanes,
+        "actionable_lanes": summary.actionable_lanes,
+        "rejected_lanes": summary.rejected_lanes,
+    }
+
+
 def _refresh_current_forecast_history(
     *,
     snapshot_payload: dict[str, Any],
@@ -1963,6 +2154,24 @@ def main(argv: list[str] | None = None) -> int:
             snapshot_path=args.snapshot,
             pair_charts_path=DEFAULT_PAIR_CHARTS,
         )
+        campaign_refresh = _auto_refresh_campaign_plan_if_required(
+            campaign_plan_path=args.campaign_plan,
+            strategy_profile_path=args.strategy_profile,
+            market_story_profile_path=args.market_story_profile,
+        )
+        if campaign_refresh.get("status") == "REFRESH_FAILED":
+            print(
+                json.dumps(
+                    {
+                        "error": campaign_refresh.get("error") or campaign_refresh.get("reason"),
+                        "campaign_refresh": campaign_refresh,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
         if (
             telemetry_required
             and (not _running_under_test_harness() or os.environ.get("QR_LIVE_ENABLED") == "1")
@@ -2005,6 +2214,7 @@ def main(argv: list[str] | None = None) -> int:
                     "generated": summary.generated,
                     "needs_snapshot": summary.needs_snapshot,
                     "dry_run_passed": summary.dry_run_passed,
+                    "campaign_refresh": campaign_refresh,
                     "execution_ledger_sync": execution_ledger_sync,
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
