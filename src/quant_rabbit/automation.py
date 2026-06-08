@@ -175,6 +175,13 @@ def _projection_atr_pips_by_pair(pair_charts_path: Path) -> dict[str, float]:
     return out
 
 
+def _optional_float(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 # Per AGENT_CONTRACT §6 / §3.5: structural / contract-named blockers are the
 # only hard reasons to keep a LIVE_READY lane out of the GPT prefilter set.
 # Anything else (missing mined history, narrative caution, capture-rate
@@ -619,6 +626,7 @@ class AutoTradeCycle:
         self.risk_equity_jpy = risk_equity_jpy
         self._projection_preflight_summary: dict[str, Any] | None = None
         self._ai_test_bot_backtest_refreshed = False
+        self._suppress_gateway_receipt_recording = False
 
     def run(self, *, send: bool = False) -> AutoTradeCycleSummary:
         lock_dir = _acquire_autotrade_lock(send=send)
@@ -648,6 +656,8 @@ class AutoTradeCycle:
         ).sync_oanda_transactions(self.client)
 
     def _record_execution_ledger_receipts(self) -> None:
+        if self._suppress_gateway_receipt_recording:
+            return
         if not self._execution_ledger_available():
             return
         for kind, path in (
@@ -846,6 +856,12 @@ class AutoTradeCycle:
 
     def _run(self, *, send: bool = False, _close_reentry_depth: int = 0) -> AutoTradeCycleSummary:
         generated_at = datetime.now(timezone.utc).isoformat()
+        stale_gpt_reason = self._external_gpt_decision_refresh_reason()
+        if stale_gpt_reason is not None:
+            self._suppress_gateway_receipt_recording = True
+            summary = self._stale_gpt_decision_summary(generated_at, stale_gpt_reason)
+            self._write_report(summary, generated_at)
+            return summary
         self._clear_stale_live_order_artifact(generated_at=generated_at, cycle_send_requested=send)
         pairs = DEFAULT_TRADER_PAIRS
         if self.reuse_market_artifacts:
@@ -1809,6 +1825,104 @@ class AutoTradeCycle:
         )
         self._write_report(summary, generated_at)
         return summary
+
+    def _external_gpt_decision_refresh_reason(self) -> str | None:
+        if not self.use_gpt_trader:
+            return None
+        source_path = getattr(self.gpt_provider, "source_path", None)
+        if source_path is None:
+            return None
+        source_path = Path(source_path)
+        if not source_path.exists():
+            return f"external GPT decision response is missing: {source_path}"
+        decision_mtime_ns = source_path.stat().st_mtime_ns
+        for path, label in (
+            (self.snapshot_path, "broker snapshot"),
+            (self.intents_path, "order intents"),
+        ):
+            if path.exists() and path.stat().st_mtime_ns > decision_mtime_ns:
+                return (
+                    f"external GPT decision response predates {label}; "
+                    f"refresh decision from broker truth before gateway handoff: {source_path}"
+                )
+
+        gpt_mtime_ns: int | None = None
+        if self.gpt_decision_path.exists() and self.gpt_decision_path.stat().st_mtime_ns > decision_mtime_ns:
+            gpt_mtime_ns = self.gpt_decision_path.stat().st_mtime_ns
+            try:
+                payload = json.loads(self.gpt_decision_path.read_text())
+            except (OSError, json.JSONDecodeError, ValueError):
+                payload = {}
+            status = str(payload.get("status") or "")
+            decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+            action = str(decision.get("action") or "")
+            if status != "ACCEPTED" or action != "TRADE":
+                return (
+                    f"external GPT decision response was already verified as "
+                    f"{status or 'UNKNOWN'} {action or 'NO_ACTION'}; "
+                    "write a fresh receipt before another gateway cycle"
+                )
+
+        consumed_reference_ns = gpt_mtime_ns if gpt_mtime_ns is not None else decision_mtime_ns
+        for path, label in (
+            (self.live_order_output_path, "live order gateway receipt"),
+            (self.position_execution_path, "position gateway receipt"),
+            (self.report_path, "autotrade cycle report"),
+        ):
+            if path.exists() and path.stat().st_mtime_ns > consumed_reference_ns:
+                return (
+                    f"external GPT decision response already consumed by {label}; "
+                    "refresh broker truth and write one current receipt"
+                )
+        return None
+
+    def _stale_gpt_decision_summary(self, generated_at: str, reason: str) -> AutoTradeCycleSummary:
+        positions = 0
+        orders = 0
+        live_ready = 0
+        target_status = None
+        target_remaining_jpy = None
+        target_progress_pct = None
+        try:
+            snapshot = self._load_snapshot_artifact()
+            positions = len(snapshot.positions)
+            orders = len(snapshot.orders)
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        try:
+            intent_summary = self._load_intent_summary_artifact()
+            live_ready = intent_summary.live_ready
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        if self.target_state_path is not None and self.target_state_path.exists():
+            try:
+                target_payload = json.loads(self.target_state_path.read_text())
+                target_status = target_payload.get("status")
+                target_remaining_jpy = _optional_float(target_payload.get("remaining_target_jpy"))
+                target_progress_pct = _optional_float(target_payload.get("progress_pct"))
+            except (OSError, json.JSONDecodeError, ValueError):
+                pass
+        return AutoTradeCycleSummary(
+            status="STALE_GPT_DECISION_REFRESH_REQUIRED",
+            report_path=self.report_path,
+            snapshot_path=self.snapshot_path,
+            intents_path=self.intents_path,
+            selected_lane_id=None,
+            deterministic_lane_id=None,
+            sent=False,
+            positions=positions,
+            orders=orders,
+            live_ready=live_ready,
+            decision_source="gpt_trader",
+            target_status=target_status,
+            target_remaining_jpy=target_remaining_jpy,
+            target_progress_pct=target_progress_pct,
+            gpt_status="STALE_DECISION",
+            gpt_action=None,
+            gpt_allowed=False,
+            gpt_issues=1,
+            gpt_error=reason,
+        )
 
     def _fresh_entry_gpt_required_summary(
         self,

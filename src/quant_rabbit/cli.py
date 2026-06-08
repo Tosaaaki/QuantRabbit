@@ -233,6 +233,18 @@ def _forecast_emission_time_from_snapshot(snapshot_payload: dict[str, Any]) -> d
     return parsed.astimezone(timezone.utc)
 
 
+def _parse_utc_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _refresh_current_forecast_history(
     *,
     snapshot_payload: dict[str, Any],
@@ -838,6 +850,7 @@ def _auto_refresh_market_evidence_if_required(
     market_context_matrix_path: Path = DEFAULT_MARKET_CONTEXT_MATRIX,
     context_asset_charts_path: Path = DEFAULT_CONTEXT_ASSET_CHARTS,
     broker_instruments_path: Path = DEFAULT_BROKER_INSTRUMENTS,
+    order_intents_path: Path = DEFAULT_ORDER_INTENTS,
 ) -> dict[str, Any]:
     """Refresh the full technical/macro packet before runtime lane pricing.
 
@@ -852,6 +865,7 @@ def _auto_refresh_market_evidence_if_required(
             market_context_matrix_path=market_context_matrix_path,
             context_asset_charts_path=context_asset_charts_path,
             broker_instruments_path=broker_instruments_path,
+            order_intents_path=order_intents_path,
         )
         return {"status": "SKIPPED", "reason": "reuse_market_artifacts"}
     if os.environ.get("QR_DISABLE_MARKET_EVIDENCE_AUTO_REFRESH", "").strip() in {
@@ -1025,6 +1039,7 @@ def _validate_reusable_market_evidence(
     market_context_matrix_path: Path,
     context_asset_charts_path: Path,
     broker_instruments_path: Path,
+    order_intents_path: Path,
 ) -> None:
     """Refuse reused live artifacts when candidate discovery lacks matrix context."""
 
@@ -1047,6 +1062,28 @@ def _validate_reusable_market_evidence(
             f"{market_context_matrix_path} has no pair/side matrix rows; refresh market context before "
             "live candidate discovery"
         )
+    matrix_generated_at = _parse_utc_datetime(payload.get("generated_at_utc"))
+    if order_intents_path.exists() and matrix_generated_at is not None:
+        try:
+            intents_payload = json.loads(order_intents_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{label} cannot reuse market artifacts: unreadable order_intents="
+                f"{order_intents_path}: {exc}; regenerate candidates after market context refresh"
+            ) from exc
+        intents_generated_at = _parse_utc_datetime(intents_payload.get("generated_at_utc"))
+        if intents_generated_at is None:
+            raise RuntimeError(
+                f"{label} cannot reuse market artifacts: order_intents={order_intents_path} "
+                "lacks generated_at_utc; regenerate candidates after market context refresh"
+            )
+        if intents_generated_at < matrix_generated_at:
+            raise RuntimeError(
+                f"{label} cannot reuse market artifacts: order_intents={order_intents_path} "
+                f"generated at {intents_generated_at.isoformat()} predates market_context_matrix "
+                f"{matrix_generated_at.isoformat()}; regenerate candidates so non-FX/news context "
+                "is attributable before gateway handoff"
+            )
     required_optional_context = (
         ("context_asset_charts", context_asset_charts_path, "charts"),
         ("broker_instruments", broker_instruments_path, "tradeable_instruments"),
@@ -4557,7 +4594,7 @@ def _static_gpt_provider(
         if required:
             raise ValueError("Codex GPT mode requires --decision-response")
         return None
-    return StaticTraderProvider(json.loads(source.read_text()))
+    return StaticTraderProvider(json.loads(source.read_text()), source_path=source)
 
 
 if __name__ == "__main__":

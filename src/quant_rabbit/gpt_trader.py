@@ -634,8 +634,9 @@ class TraderModelProvider(Protocol):
 
 
 class StaticTraderProvider:
-    def __init__(self, decision: dict[str, Any]) -> None:
+    def __init__(self, decision: dict[str, Any], *, source_path: Path | None = None) -> None:
         self.decision = decision
+        self.source_path = source_path
 
     def decide(self, input_packet: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
         return dict(self.decision)

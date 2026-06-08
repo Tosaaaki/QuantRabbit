@@ -967,6 +967,38 @@ class CliHelpTest(unittest.TestCase):
                     market_context_matrix_path=matrix,
                     context_asset_charts_path=context_assets,
                     broker_instruments_path=broker_instruments,
+                    order_intents_path=root / "missing_order_intents.json",
+                )
+
+    def test_reuse_market_artifacts_requires_intents_newer_than_market_context_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            matrix = root / "market_context_matrix.json"
+            context_assets = root / "context_asset_charts.json"
+            broker_instruments = root / "broker_instruments.json"
+            order_intents = root / "order_intents.json"
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T08:10:00+00:00",
+                        "pairs": {"EUR_USD": {"LONG": {"evidence_ref": "matrix:EUR_USD:LONG"}}},
+                    }
+                )
+            )
+            context_assets.write_text(json.dumps({"charts": [{"pair": "XAU_USD", "views": []}]}))
+            broker_instruments.write_text(json.dumps({"tradeable_instruments": ["EUR_USD"]}))
+            order_intents.write_text(
+                json.dumps({"generated_at_utc": "2026-06-08T08:00:00+00:00", "results": []})
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "predates market_context_matrix"):
+                _auto_refresh_market_evidence_if_required(
+                    label="autotrade-cycle",
+                    reuse_market_artifacts=True,
+                    market_context_matrix_path=matrix,
+                    context_asset_charts_path=context_assets,
+                    broker_instruments_path=broker_instruments,
+                    order_intents_path=order_intents,
                 )
 
     def test_context_asset_charts_cli_writes_non_fx_technical_packet(self) -> None:
