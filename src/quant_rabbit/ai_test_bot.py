@@ -585,6 +585,8 @@ class AITestBotBacktester:
                 f"net=`{float(close_gate.get('gateway_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
                 f"- Gateway GPT_CLOSE loss-side market closes: `{int(close_gate.get('gateway_gpt_close_loss_side_market_close_count') or 0)}` "
                 f"net=`{float(close_gate.get('gateway_gpt_close_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
+                f"- Stale GPT_CLOSE satisfied loss-side market closes: `{int(close_gate.get('stale_gpt_close_satisfied_loss_side_market_close_count') or 0)}` "
+                f"net=`{float(close_gate.get('stale_gpt_close_satisfied_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
                 f"- Gateway REVIEW_EXIT loss-side market closes: `{int(close_gate.get('gateway_review_exit_loss_side_market_close_count') or 0)}` "
                 f"net=`{float(close_gate.get('gateway_review_exit_loss_side_market_close_net_jpy') or 0.0):.0f} JPY`",
                 f"- Broker accepted loss-side market closes: `{int(close_gate.get('broker_trade_close_loss_side_market_close_count') or 0)}` "
@@ -1252,6 +1254,8 @@ def _close_gate_ablation_payload(
         "gateway_loss_side_market_close_net_jpy": 0.0,
         "gateway_gpt_close_loss_side_market_close_count": 0,
         "gateway_gpt_close_loss_side_market_close_net_jpy": 0.0,
+        "stale_gpt_close_satisfied_loss_side_market_close_count": 0,
+        "stale_gpt_close_satisfied_loss_side_market_close_net_jpy": 0.0,
         "gateway_review_exit_loss_side_market_close_count": 0,
         "gateway_review_exit_loss_side_market_close_net_jpy": 0.0,
         "gateway_other_loss_side_market_close_count": 0,
@@ -1278,7 +1282,7 @@ def _close_gate_ablation_payload(
         base["reason"] = f"execution ledger not found: {db_path}"
         return base
     try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        with _connect_sqlite_for_diagnostic(db_path) as conn:
             conn.row_factory = sqlite3.Row
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='execution_events'"
@@ -1310,6 +1314,7 @@ def _close_gate_ablation_payload(
                 "GATEWAY_TRADE_CLOSE_SENT",
                 columns,
             )
+            stale_close_satisfied_trade_ids = _stale_close_satisfied_trade_ids(conn, columns)
             broker_close_accept = _broker_trade_close_accept_provenance(conn, columns)
             close_rows = _close_event_rows(conn, columns)
     except sqlite3.Error as exc:
@@ -1343,6 +1348,8 @@ def _close_gate_ablation_payload(
     gateway_loss_market_net = 0.0
     gateway_gpt_loss_market_count = 0
     gateway_gpt_loss_market_net = 0.0
+    stale_gpt_satisfied_loss_market_count = 0
+    stale_gpt_satisfied_loss_market_net = 0.0
     gateway_review_exit_loss_market_count = 0
     gateway_review_exit_loss_market_net = 0.0
     gateway_other_loss_market_count = 0
@@ -1375,6 +1382,7 @@ def _close_gate_ablation_payload(
         gateway_gpt_close = "GPT_CLOSE" in gateway_close_reasons
         gateway_review_exit = "REVIEW_EXIT" in gateway_close_reasons and not gateway_gpt_close
         gateway_other_close = gateway_close_sent and not gateway_gpt_close and not gateway_review_exit
+        stale_gpt_close_satisfied = trade_id in stale_close_satisfied_trade_ids
         broker_trade_close_accepted = (
             trade_id in broker_close_accept["trade_ids"] or order_id in broker_close_accept["order_ids"]
         )
@@ -1390,6 +1398,7 @@ def _close_gate_ablation_payload(
             gateway_close_reasons=gateway_close_reasons,
             broker_trade_close_accepted=broker_trade_close_accepted,
             broker_trade_close_sources=broker_trade_close_sources,
+            stale_gpt_close_satisfied=stale_gpt_close_satisfied,
             close_order_provenance=close_order_provenance,
         )
         _add_close_source_segment(
@@ -1473,6 +1482,7 @@ def _close_gate_ablation_payload(
                     "gateway_gpt_close_count": 0,
                     "gateway_review_exit_count": 0,
                     "gateway_other_close_count": 0,
+                    "stale_gpt_close_satisfied_count": 0,
                     "broker_trade_close_accepted_count": 0,
                     "broker_accepted_without_gateway_count": 0,
                     "broker_accepted_without_gateway_source_counts": {},
@@ -1490,6 +1500,8 @@ def _close_gate_ablation_payload(
                 daily["gateway_review_exit_count"] = int(daily["gateway_review_exit_count"]) + 1
             if gateway_other_close:
                 daily["gateway_other_close_count"] = int(daily["gateway_other_close_count"]) + 1
+            if stale_gpt_close_satisfied:
+                daily["stale_gpt_close_satisfied_count"] = int(daily["stale_gpt_close_satisfied_count"]) + 1
             if broker_trade_close_accepted:
                 daily["broker_trade_close_accepted_count"] = int(daily["broker_trade_close_accepted_count"]) + 1
             if broker_trade_close_accepted and not gateway_close_sent:
@@ -1516,6 +1528,7 @@ def _close_gate_ablation_payload(
                     "bot_attributed": bot_attributed,
                     "gateway_close_sent": gateway_close_sent,
                     "gateway_close_reasons": sorted(gateway_close_reasons),
+                    "stale_gpt_close_satisfied": stale_gpt_close_satisfied,
                     "broker_trade_close_accepted": broker_trade_close_accepted,
                     "broker_trade_close_sources": sorted(broker_trade_close_sources),
                     "close_source": close_source,
@@ -1531,6 +1544,9 @@ def _close_gate_ablation_payload(
             if gateway_gpt_close:
                 gateway_gpt_loss_market_count += 1
                 gateway_gpt_loss_market_net += pl
+            if stale_gpt_close_satisfied:
+                stale_gpt_satisfied_loss_market_count += 1
+                stale_gpt_satisfied_loss_market_net += pl
             if gateway_review_exit:
                 gateway_review_exit_loss_market_count += 1
                 gateway_review_exit_loss_market_net += pl
@@ -1614,6 +1630,10 @@ def _close_gate_ablation_payload(
             "gateway_loss_side_market_close_net_jpy": _round(gateway_loss_market_net),
             "gateway_gpt_close_loss_side_market_close_count": gateway_gpt_loss_market_count,
             "gateway_gpt_close_loss_side_market_close_net_jpy": _round(gateway_gpt_loss_market_net),
+            "stale_gpt_close_satisfied_loss_side_market_close_count": stale_gpt_satisfied_loss_market_count,
+            "stale_gpt_close_satisfied_loss_side_market_close_net_jpy": _round(
+                stale_gpt_satisfied_loss_market_net
+            ),
             "gateway_review_exit_loss_side_market_close_count": gateway_review_exit_loss_market_count,
             "gateway_review_exit_loss_side_market_close_net_jpy": _round(gateway_review_exit_loss_market_net),
             "gateway_other_loss_side_market_close_count": gateway_other_loss_market_count,
@@ -1641,6 +1661,22 @@ def _close_gate_ablation_payload(
     return base
 
 
+def _connect_sqlite_for_diagnostic(db_path: Path) -> sqlite3.Connection:
+    for uri in (
+        f"file:{db_path}?mode=ro",
+        f"file:{db_path}?mode=ro&immutable=1",
+    ):
+        try:
+            conn = sqlite3.connect(uri, uri=True)
+            conn.row_factory = sqlite3.Row
+            return conn
+        except sqlite3.Error:
+            continue
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def _primary_close_source(
     *,
     exit_reason: str,
@@ -1648,6 +1684,7 @@ def _primary_close_source(
     gateway_close_reasons: set[str],
     broker_trade_close_accepted: bool,
     broker_trade_close_sources: set[str],
+    stale_gpt_close_satisfied: bool,
     close_order_provenance: bool,
 ) -> str:
     if gateway_close_sent:
@@ -1657,6 +1694,8 @@ def _primary_close_source(
             return "GATEWAY:REVIEW_EXIT"
         reason = next((item for item in sorted(gateway_close_reasons) if item and item != "UNSPECIFIED"), "")
         return f"GATEWAY:{reason or 'CLOSE'}"
+    if stale_gpt_close_satisfied:
+        return "GATEWAY:STALE_GPT_CLOSE_SATISFIED"
     if broker_trade_close_accepted:
         source = next((item for item in sorted(broker_trade_close_sources) if item), "")
         return f"BROKER_ACCEPT:{source or 'UNKNOWN'}"
@@ -1762,6 +1801,37 @@ def _event_order_ids(conn: sqlite3.Connection, event_type: str, columns: set[str
         (event_type,),
     ).fetchall()
     return {str(row["order_id"]).strip() for row in rows if str(row["order_id"] or "").strip()}
+
+
+def _stale_close_satisfied_trade_ids(conn: sqlite3.Connection, columns: set[str]) -> set[str]:
+    select_fields = ["trade_id"]
+    for column in ("exit_reason", "raw_json"):
+        if column in columns:
+            select_fields.append(column)
+        else:
+            select_fields.append(f"NULL AS {column}")
+    rows = conn.execute(
+        f"""
+        SELECT {', '.join(select_fields)}
+        FROM execution_events
+        WHERE event_type = 'GATEWAY_POSITION_NO_ACTION'
+          AND trade_id IS NOT NULL
+          AND trade_id != ''
+        """
+    ).fetchall()
+    out: set[str] = set()
+    for row in rows:
+        if _gateway_close_reason(row) != "GPT_CLOSE":
+            continue
+        raw = _raw_payload(row["raw_json"])
+        issue_codes = {
+            str(item.get("code") or "").upper()
+            for item in raw.get("issues", []) or []
+            if isinstance(item, dict)
+        }
+        if "STALE_CLOSE_ALREADY_ABSENT" in issue_codes:
+            out.add(str(row["trade_id"]).strip())
+    return out
 
 
 def _event_trade_id_reasons(
@@ -2410,6 +2480,14 @@ def _close_gate_action_items(payload: dict[str, object]) -> Iterable[str]:
             "CLOSE Gate A-B accepted loss-side market closes are net negative "
             f"({gateway_gpt_loss_count} close(s), {gateway_gpt_loss_net:.0f} JPY); "
             "ablate hard/soft Gate A evidence separately before widening autonomous CLOSE"
+        )
+    stale_gpt_loss_count = int(payload.get("stale_gpt_close_satisfied_loss_side_market_close_count") or 0)
+    stale_gpt_loss_net = float(payload.get("stale_gpt_close_satisfied_loss_side_market_close_net_jpy") or 0.0)
+    if stale_gpt_loss_count and stale_gpt_loss_net < 0:
+        yield (
+            "stale GPT close receipts were already broker-satisfied at a loss "
+            f"({stale_gpt_loss_count} close(s), {stale_gpt_loss_net:.0f} JPY); "
+            "audit why the broker close happened before the local gateway receipt before using them as positive Gate A-B examples"
         )
     gateway_review_loss_count = int(payload.get("gateway_review_exit_loss_side_market_close_count") or 0)
     gateway_review_loss_net = float(payload.get("gateway_review_exit_loss_side_market_close_net_jpy") or 0.0)

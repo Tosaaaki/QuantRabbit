@@ -220,6 +220,53 @@ class ExecutionLedgerTest(unittest.TestCase):
             self.assertEqual(row[0:5], ("GATEWAY_TRADE_CLOSE_SENT", "900", "T-100", "EUR_USD", "REVIEW_EXIT"))
             self.assertEqual(json.loads(row[5]), ["900", "901"])
 
+    def test_init_backfills_gateway_position_order_id_from_response(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            receipt = root / "position_execution.json"
+            receipt.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": "2026-06-08T00:00:00+00:00",
+                        "send_requested": True,
+                        "actions": [
+                            {
+                                "trade_id": "T-101",
+                                "pair": "EUR_USD",
+                                "management_action": "REVIEW_EXIT",
+                                "sent": True,
+                                "request": {"type": "CLOSE", "trade_id": "T-101", "units": "ALL"},
+                                "response": {
+                                    "orderCreateTransaction": {
+                                        "id": "910",
+                                        "reason": "TRADE_CLOSE",
+                                        "tradeClose": {"tradeID": "T-101"},
+                                    },
+                                    "orderFillTransaction": {
+                                        "id": "911",
+                                        "orderID": "910",
+                                        "tradesClosed": [{"tradeID": "T-101"}],
+                                    },
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+            ledger = ExecutionLedger(db_path=root / "ledger.db", report_path=root / "ledger.md")
+            ledger.record_gateway_receipt(kind="position_execution", receipt_path=receipt)
+            with sqlite3.connect(root / "ledger.db") as conn:
+                conn.execute("UPDATE execution_events SET order_id = NULL WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'")
+                conn.commit()
+
+            ledger.record_gateway_receipt(kind="position_execution", receipt_path=root / "missing.json")
+
+            with sqlite3.connect(root / "ledger.db") as conn:
+                row = conn.execute(
+                    "SELECT order_id FROM execution_events WHERE event_type='GATEWAY_TRADE_CLOSE_SENT'"
+                ).fetchone()
+            self.assertEqual(row[0], "910")
+
     def test_records_blocked_gateway_child_even_without_send_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

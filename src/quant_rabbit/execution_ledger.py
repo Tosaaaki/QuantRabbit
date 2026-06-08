@@ -198,6 +198,7 @@ class ExecutionLedger:
             )
             _backfill_legacy_lane_ids(conn)
             _backfill_legacy_trade_close_ids(conn)
+            _backfill_gateway_position_order_ids(conn)
 
     def _write_report(self, summary: ExecutionLedgerSummary) -> None:
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -636,6 +637,41 @@ def _backfill_legacy_trade_close_ids(conn: sqlite3.Connection) -> int:
         cur = conn.execute(
             "UPDATE execution_events SET trade_id = ? WHERE event_uid = ? AND (trade_id IS NULL OR trade_id = '')",
             (trade_id, row["event_uid"]),
+        )
+        updated += cur.rowcount
+    return updated
+
+
+def _backfill_gateway_position_order_ids(conn: sqlite3.Connection) -> int:
+    rows = conn.execute(
+        """
+        SELECT event_uid, raw_json
+        FROM execution_events
+        WHERE source = 'gateway'
+          AND event_type IN (
+            'GATEWAY_TRADE_CLOSE_SENT',
+            'GATEWAY_PROTECTION_REPLACE_SENT',
+            'GATEWAY_POSITION_ACTION_BLOCKED',
+            'GATEWAY_POSITION_ACTION_STAGED'
+          )
+          AND (order_id IS NULL OR order_id = '')
+        """
+    ).fetchall()
+    updated = 0
+    for row in rows:
+        try:
+            payload = json.loads(str(row["raw_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        order_id = _response_order_id(response)
+        if not order_id:
+            continue
+        cur = conn.execute(
+            "UPDATE execution_events SET order_id = ? WHERE event_uid = ? AND (order_id IS NULL OR order_id = '')",
+            (order_id, row["event_uid"]),
         )
         updated += cur.rowcount
     return updated
