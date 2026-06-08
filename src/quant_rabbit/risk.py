@@ -163,6 +163,24 @@ def _env_optional_float(name: str, default: float | None) -> float | None:
     return value if value > 0 else None
 
 
+# Forecast-market-support audit floors mirrored from
+# strategy.intent_generator. They are validation-contract constants: a RANGE
+# forecast may be tradable as rail rotation, but if the same current packet
+# says an audited directional projection was unselected, the broker gateway
+# must not send the opposite entry just because another blocker happened to be
+# absent.
+FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE = _env_float_or(
+    "QR_FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE",
+    0.55,
+    minimum=0.50,
+)
+FORECAST_MARKET_SUPPORT_MIN_SAMPLES = (
+    _env_optional_int("QR_FORECAST_MARKET_SUPPORT_MIN_SAMPLES", None)
+    or _env_optional_int("QR_PROJECTION_CONFIDENCE_MIN_SAMPLES", None)
+    or 10
+)
+
+
 _SPREAD_SESSION_MULTS: dict[str, float] = {
     # Deep-liquidity sessions: tighten the spread cap below policy.
     "LONDON_NY_OVERLAP": _env_float_or("QR_SESSION_SPREAD_MULT_LONDON_NY", 0.8, minimum=0.5),
@@ -336,6 +354,82 @@ def estimate_incremental_margin_jpy(
         quote_to_jpy=quote_to_jpy,
         spec=spec,
     )
+
+
+def _to_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+
+def _forecast_unselected_projection_conflict_issues(
+    intent: OrderIntent,
+    *,
+    for_live_send: bool,
+) -> list[RiskIssue]:
+    metadata = intent.metadata or {}
+    if str(metadata.get("forecast_direction") or "").upper() != "RANGE":
+        return []
+    support = metadata.get("forecast_market_support")
+    if not isinstance(support, dict):
+        return []
+    signals = support.get("unselected_signals")
+    if not isinstance(signals, list):
+        return []
+
+    conflicts: list[dict] = []
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+        signal_direction = str(signal.get("direction") or "").upper()
+        signal_side = Side.LONG if signal_direction == "UP" else Side.SHORT if signal_direction == "DOWN" else None
+        if signal_side is None or signal_side == intent.side:
+            continue
+        hit_rate = _to_float(signal.get("hit_rate"))
+        samples = _to_int(signal.get("samples"))
+        if hit_rate is None or samples is None:
+            continue
+        if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+            continue
+        if hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE:
+            continue
+        conflicts.append(signal)
+
+    if not conflicts:
+        return []
+    top = conflicts[0]
+    severity = "BLOCK" if for_live_send else "WARN"
+    signal_name = str(top.get("name") or "projection")
+    signal_direction = str(top.get("direction") or "").upper()
+    hit_rate = _to_float(top.get("hit_rate")) or 0.0
+    samples = _to_int(top.get("samples")) or 0
+    return [
+        RiskIssue(
+            "FORECAST_RANGE_UNSELECTED_DIRECTION_CONFLICT",
+            (
+                f"{intent.pair} {intent.side.value} has forecast RANGE, but audited "
+                f"{signal_name} projection supports {signal_direction} "
+                f"(hit_rate={hit_rate:.2f}, samples={samples}); do not send the "
+                "opposite entry until the forecast resolves or the projection no longer conflicts."
+            ),
+            severity=severity,
+        )
+    ]
 
 
 @dataclass(frozen=True)
@@ -542,6 +636,7 @@ class RiskEngine:
             issues.append(RiskIssue("MISSING_THESIS", "order intent must carry a non-empty thesis"))
         issues.extend(_hedge_metadata_issues(intent))
         issues.extend(_hedge_balance_issues(intent, snapshot))
+        issues.extend(_forecast_unselected_projection_conflict_issues(intent, for_live_send=for_live_send))
         issues.extend(self._market_context_issues(intent, for_live_send=for_live_send))
 
         entry_relevant_positions = self._entry_relevant_positions(snapshot)
