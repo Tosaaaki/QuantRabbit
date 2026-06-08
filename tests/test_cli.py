@@ -1111,6 +1111,146 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(refreshed["fetched_at_utc"], fresh_at.isoformat())
         self.assertEqual(refreshed["quotes"]["EUR_USD"]["bid"], 1.1002)
 
+    def test_generate_intents_refreshes_daily_target_after_snapshot_refresh_before_campaign(self) -> None:
+        calls: list[str] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            old_ts = "2026-06-02T01:00:00+00:00"
+            fresh_at = datetime(2026, 6, 2, 1, 5, tzinfo=timezone.utc)
+            snapshot = data_root / "broker_snapshot.json"
+            campaign = data_root / "daily_campaign_plan.json"
+            target = data_root / "daily_target_state.json"
+            strategy = data_root / "strategy_profile.json"
+            story = data_root / "market_story_profile.json"
+            snapshot.write_text(
+                json.dumps(
+                    {
+                        "fetched_at_utc": old_ts,
+                        "quotes": {"EUR_USD": {"bid": 1.1, "ask": 1.1001}},
+                    }
+                )
+            )
+            campaign.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": old_ts,
+                        "start_balance_jpy": 10000.0,
+                        "target_jpy": 1000.0,
+                        "target_return_pct": 10.0,
+                        "lanes": [],
+                    }
+                )
+            )
+            target.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": old_ts,
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 10000.0,
+                        "target_jpy": 1000.0,
+                        "target_return_pct": 10.0,
+                    }
+                )
+            )
+            strategy.write_text(json.dumps({"generated_at_utc": old_ts, "pairs": []}))
+            story.write_text(json.dumps({"generated_at_utc": old_ts, "pair_profiles": []}))
+            summary = SimpleNamespace(
+                output_path=data_root / "order_intents.json",
+                report_path=root / "docs" / "order_intents_report.md",
+                candidates_seen=1,
+                generated=1,
+                needs_snapshot=False,
+                dry_run_passed=1,
+                live_ready=1,
+            )
+            fresh_snapshot = BrokerSnapshot(
+                fetched_at_utc=fresh_at,
+                quotes={"EUR_USD": Quote("EUR_USD", 1.1002, 1.1004, fresh_at)},
+            )
+
+            def target_run(**_: object) -> SimpleNamespace:
+                calls.append("target")
+                payload = json.loads(target.read_text())
+                payload["generated_at_utc"] = fresh_at.isoformat()
+                target.write_text(json.dumps(payload))
+                return SimpleNamespace(
+                    state_path=target,
+                    report_path=target.with_suffix(".md"),
+                    status="PURSUE_TARGET",
+                    remaining_target_jpy=1000.0,
+                    remaining_risk_budget_jpy=900.0,
+                    per_trade_risk_budget_jpy=100.0,
+                )
+
+            def campaign_run(**_: object) -> SimpleNamespace:
+                calls.append("campaign")
+                return SimpleNamespace(
+                    report_path=campaign.with_suffix(".md"),
+                    plan_path=campaign,
+                    target_jpy=1000.0,
+                    lanes=1,
+                    actionable_lanes=1,
+                    rejected_lanes=0,
+                )
+
+            def generator_run(**_: object) -> SimpleNamespace:
+                calls.append("generator")
+                return summary
+
+            stdout = io.StringIO()
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
+                "quant_rabbit.cli._running_under_test_harness", return_value=False
+            ), mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "REFRESHED", "pairs": 28},
+            ), mock.patch("quant_rabbit.cli.OandaReadOnlyClient") as client_cls, mock.patch(
+                "quant_rabbit.cli._pre_entry_execution_ledger_sync_if_required",
+                return_value=None,
+            ), mock.patch(
+                "quant_rabbit.cli._pre_entry_projection_verification_if_required",
+                return_value=None,
+            ), mock.patch("quant_rabbit.cli.DailyTargetLedger") as ledger_cls, mock.patch(
+                "quant_rabbit.cli.CampaignPlanner"
+            ) as planner_cls, mock.patch("quant_rabbit.cli.IntentGenerator") as generator_cls, redirect_stdout(stdout):
+                client_cls.return_value.snapshot.return_value = fresh_snapshot
+                ledger_cls.return_value.run.side_effect = target_run
+                planner_cls.return_value.run.side_effect = campaign_run
+                generator_cls.return_value.run.side_effect = generator_run
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(campaign),
+                        "--strategy-profile",
+                        str(strategy),
+                        "--snapshot",
+                        str(snapshot),
+                        "--output",
+                        str(summary.output_path),
+                        "--report",
+                        str(summary.report_path),
+                        "--market-story-profile",
+                        str(story),
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ["target", "campaign", "generator"])
+        ledger_cls.assert_called_once_with(
+            state_path=target,
+            report_path=target.with_suffix(".md"),
+            pace_backtest_path=mock.ANY,
+        )
+        planner_cls.return_value.run.assert_called_once_with(start_balance_jpy=10000.0, target_return_pct=10.0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["snapshot_refresh"]["status"], "REFRESHED")
+        self.assertEqual(payload["daily_target_refresh"]["status"], "REFRESHED")
+        self.assertEqual(payload["campaign_refresh"]["status"], "REFRESHED")
+        self.assertIn("daily_target_state_newer", payload["campaign_refresh"]["refresh_reasons"])
+
     def test_generate_intents_delegates_pre_entry_forecast_to_intent_generator(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

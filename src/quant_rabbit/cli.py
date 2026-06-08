@@ -436,6 +436,66 @@ def _auto_refresh_campaign_plan_if_required(
     }
 
 
+def _daily_target_report_path_for_state(target_state_path: Path) -> Path:
+    if _paths_equivalent(target_state_path, DEFAULT_DAILY_TARGET_STATE):
+        return DEFAULT_DAILY_TARGET_REPORT
+    return target_state_path.with_suffix(".md")
+
+
+def _refresh_daily_target_after_snapshot_refresh_if_required(
+    *,
+    snapshot_refresh: dict[str, Any] | None,
+    campaign_plan_path: Path,
+    snapshot_path: Path | None,
+) -> dict[str, Any] | None:
+    """Keep target/campaign evidence on the same broker-truth timestamp.
+
+    Direct `generate-intents` can refresh broker truth after slow market
+    evidence. If the daily target state is not refreshed from that same
+    snapshot before campaign planning, the next router pass sees a new
+    snapshot/intents packet but an older target/campaign pair and loops back to
+    refresh. This helper mirrors the trader playbook's broker-snapshot ->
+    daily-target-state ordering for the standalone CLI path.
+    """
+
+    if (snapshot_refresh or {}).get("status") != "REFRESHED":
+        return None
+    if snapshot_path is None or not snapshot_path.exists():
+        return None
+    target_state_path = _campaign_target_state_path_for_cli(campaign_plan_path)
+    if not target_state_path.exists():
+        return {
+            "status": "SKIPPED",
+            "reason": "target_state_missing",
+            "target_state_path": str(target_state_path),
+        }
+    try:
+        snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text()))
+        summary = DailyTargetLedger(
+            state_path=target_state_path,
+            report_path=_daily_target_report_path_for_state(target_state_path),
+            pace_backtest_path=DEFAULT_AI_TEST_BOT_BACKTEST,
+        ).run(snapshot=snapshot)
+    except (OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
+        return {
+            "status": "REFRESH_FAILED",
+            "reason": "daily_target_refresh_failed",
+            "target_state_path": str(target_state_path),
+            "snapshot_path": str(snapshot_path),
+            "error": str(exc),
+        }
+    return {
+        "status": "REFRESHED",
+        "target_state_path": str(summary.state_path),
+        "target_report_path": str(summary.report_path),
+        "target_status": summary.status,
+        "remaining_target_jpy": summary.remaining_target_jpy,
+        "remaining_risk_budget_jpy": summary.remaining_risk_budget_jpy,
+        "per_trade_risk_budget_jpy": summary.per_trade_risk_budget_jpy,
+        "snapshot_fetched_at_utc": snapshot.fetched_at_utc.isoformat(),
+    }
+
+
 def _refresh_current_forecast_history(
     *,
     snapshot_payload: dict[str, Any],
@@ -2135,6 +2195,24 @@ def main(argv: list[str] | None = None) -> int:
             market_evidence_refresh=market_evidence_refresh,
             snapshot_path=args.snapshot,
         )
+        daily_target_refresh = _refresh_daily_target_after_snapshot_refresh_if_required(
+            snapshot_refresh=snapshot_refresh,
+            campaign_plan_path=args.campaign_plan,
+            snapshot_path=args.snapshot,
+        )
+        if (daily_target_refresh or {}).get("status") == "REFRESH_FAILED":
+            print(
+                json.dumps(
+                    {
+                        "error": daily_target_refresh.get("error") or daily_target_refresh.get("reason"),
+                        "daily_target_refresh": daily_target_refresh,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
         if not args.no_refresh_market_story:
             _refresh_market_story_if_news_is_newer(
                 profile_path=args.market_story_profile,
@@ -2215,6 +2293,7 @@ def main(argv: list[str] | None = None) -> int:
                     "needs_snapshot": summary.needs_snapshot,
                     "dry_run_passed": summary.dry_run_passed,
                     "campaign_refresh": campaign_refresh,
+                    "daily_target_refresh": daily_target_refresh,
                     "execution_ledger_sync": execution_ledger_sync,
                     "forecast_refresh": forecast_refresh,
                     "live_ready": summary.live_ready,
