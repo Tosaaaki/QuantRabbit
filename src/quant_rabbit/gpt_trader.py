@@ -1100,6 +1100,7 @@ class DecisionVerifier:
                 not position_close_reasons
                 and _target_requires_entry(self.packet)
                 and not exposure_blockers
+                and not self_improvement_trade_blockers
                 and attack_lane_ids
             ):
                 issues.append(
@@ -1114,6 +1115,7 @@ class DecisionVerifier:
                 not position_close_reasons
                 and _target_requires_entry(self.packet)
                 and not exposure_blockers
+                and not self_improvement_trade_blockers
                 and tradeable_lanes
             ):
                 if not _trader_exposure_present(self.packet):

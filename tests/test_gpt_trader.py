@@ -1262,6 +1262,43 @@ class GPTTraderBrainTest(unittest.TestCase):
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
 
+    def test_wait_is_allowed_when_self_improvement_p0_blocks_attack_advice_trade(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["attack_advice"].write_text(
+                json.dumps(
+                    {
+                        "status": "ATTACK_PARTIAL",
+                        "read_only": True,
+                        "live_permission": False,
+                        "recommended_now_lane_ids": [LANE_ID],
+                    }
+                )
+            )
+            files["self_improvement_audit"].write_text(json.dumps(_self_improvement_profitability_p0()))
+            decision = _wait_decision()
+            decision["evidence_refs"].extend(
+                [
+                    "attack:advice",
+                    f"attack:lane:{LANE_ID}",
+                    "self_improvement:audit",
+                    "self_improvement:profitability",
+                    "self_improvement:finding:PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                ]
+            )
+            brain = _brain(root, files, decision)
+
+            summary = brain.run(snapshot_path=files["snapshot"])
+
+            self.assertEqual(summary.status, "ACCEPTED")
+            payload = json.loads((root / "gpt_decision.json").read_text())
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertNotIn("ATTACK_ADVICE_REQUIRES_TRADE", codes)
+            self.assertNotIn("CAMPAIGN_EXPOSURE_REQUIRED", codes)
+            packet = payload["input_packet"]["self_improvement_audit"]
+            self.assertEqual(packet["profitability_blockers"][0]["current_streak"], 19)
+
     def test_wait_with_soft_close_sidecar_still_must_trade_attack_advice(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2193,6 +2230,52 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None, orders: list[d
     files["self_improvement_audit"].write_text(json.dumps({}))
     files["predictive_limits"].write_text(json.dumps({"dry_run": True, "orders": []}))
     return files
+
+
+def _self_improvement_profitability_p0() -> dict:
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "SELF_IMPROVEMENT_BLOCKED",
+        "p0_findings": 1,
+        "p1_findings": 2,
+        "p2_findings": 0,
+        "effect_metrics": {
+            "closed_trades": 28,
+            "net_jpy": -6571.91,
+            "profit_factor": 0.508,
+            "expectancy_jpy": -234.71,
+            "avg_win_jpy": 356.47,
+            "avg_loss_jpy_abs": 1482.76,
+        },
+        "findings": [
+            {
+                "priority": "P0",
+                "layer": "profitability",
+                "code": "PERSISTENT_PROFITABILITY_DISCIPLINE_BLOCKED",
+                "message": "profitability discipline has failed for 19 consecutive audit run(s)",
+                "next_action": "Block new-risk confidence until execution_ledger.db worst segments prove repaired.",
+                "evidence": {
+                    "current_streak": 19,
+                    "system_defect_evidence": {
+                        "profit_factor": 0.508,
+                        "expectancy_jpy": -234.71,
+                        "avg_win_jpy": 356.47,
+                        "avg_loss_jpy_abs": 1482.76,
+                        "worst_segments": [
+                            {
+                                "pair": "EUR_USD",
+                                "side": "SHORT",
+                                "method": "BREAKOUT_FAILURE",
+                                "trades": 6,
+                                "net_jpy": -2977.0,
+                                "expectancy_jpy": -496.17,
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
+    }
 
 
 def _tp_rebalance_pair_charts() -> dict:
