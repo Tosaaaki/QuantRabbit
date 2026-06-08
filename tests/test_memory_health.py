@@ -400,6 +400,50 @@ class MemoryHealthAuditorTest(unittest.TestCase):
         self.assertEqual(summary.layers["short_term"], "BLOCK")
         self.assertTrue(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
 
+    def test_stale_quote_live_blocker_is_advisory_for_memory_health(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            files["intents"].write_text(
+                json.dumps(
+                    {
+                        "results": [
+                            {
+                                "lane_id": "trend_trader:EUR_USD:LONG:TREND_CONTINUATION",
+                                "status": "DRY_RUN_PASSED",
+                                "intent": {"pair": "EUR_USD"},
+                                "risk_issues": [
+                                    {
+                                        "code": "STALE_QUOTE",
+                                        "message": (
+                                            "EUR_USD quote is 22s old versus the 20s live freshness contract; "
+                                            "skip forecast_history direction/confidence matching because a "
+                                            "same-cycle forecast cannot be recorded from stale price truth."
+                                        ),
+                                        "severity": "BLOCK",
+                                    }
+                                ],
+                                "strategy_issues": [],
+                                "live_blockers": [
+                                    "EUR_USD quote is 22s old versus the 20s live freshness contract; skip "
+                                    "forecast_history direction/confidence matching because a same-cycle forecast "
+                                    "cannot be recorded from stale price truth."
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        self.assertEqual(summary.status, STATUS_PASS)
+        self.assertEqual(summary.layers["short_term"], "PASS")
+        self.assertEqual(payload["metrics"]["order_intents"]["memory_blockers"], 0)
+        self.assertGreater(payload["metrics"]["order_intents"]["advisory_memory_blockers"], 0)
+        self.assertFalse(any(issue["code"] == "SHORT_ORDER_INTENTS_MEMORY_BLOCKERS" for issue in payload["issues"]))
+
 
 _NOW = datetime(2026, 6, 5, 0, 0, tzinfo=timezone.utc)
 

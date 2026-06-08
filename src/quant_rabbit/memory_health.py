@@ -917,6 +917,9 @@ def _audit_intent_memory_blockers(
                 text = _issue_text(item).upper()
                 if not any(token in text for token in _MEMORY_BLOCKER_TOKENS):
                     continue
+                if _is_quote_freshness_blocker(item):
+                    advisory_memory_blockers += 1
+                    continue
                 if isinstance(item, dict) and str(item.get("severity") or "").upper() != "BLOCK":
                     advisory_memory_blockers += 1
                     continue
@@ -924,6 +927,9 @@ def _audit_intent_memory_blockers(
         for item in result.get("live_blockers") or []:
             text = _issue_text(item).upper()
             if any(token in text for token in _MEMORY_BLOCKER_TOKENS):
+                if _is_quote_freshness_blocker(item):
+                    advisory_memory_blockers += 1
+                    continue
                 result_memory_blockers.append(_issue_text(item))
         if result_memory_blockers:
             if live_ready_pairs or str(result.get("status") or "") == "LIVE_READY":
@@ -1105,6 +1111,13 @@ def _issue_text(item: Any) -> str:
     if isinstance(item, dict):
         return str(item.get("code") or item.get("message") or item.get("rationale") or item)
     return str(item)
+
+
+def _is_quote_freshness_blocker(item: Any) -> bool:
+    text = _issue_text(item).upper()
+    if isinstance(item, dict) and str(item.get("code") or "").upper() == "STALE_QUOTE":
+        return True
+    return "QUOTE IS" in text and "LIVE FRESHNESS CONTRACT" in text
 
 
 def _parse_utc(value: Any) -> datetime | None:
