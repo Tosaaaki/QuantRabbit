@@ -987,6 +987,59 @@ class HitRatesTest(unittest.TestCase):
             self.assertAlmostEqual(hr["directional_forecast_up"]["EUR_USD:TREND"]["hit_rate"], 0.0)
             self.assertAlmostEqual(hr["directional_forecast_down"]["EUR_USD:TREND"]["hit_rate"], 1.0)
 
+    def test_pair_regime_bucket_survives_global_multi_pair_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            from quant_rabbit.strategy.projection_ledger import write_ledger
+
+            entries = []
+            for idx in range(10):
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc=f"2026-05-14T00:{idx:02d}:00Z",
+                    pair="GBP_CHF",
+                    signal_name="directional_forecast",
+                    direction="DOWN",
+                    lead_time_min=60,
+                    confidence=0.7,
+                    entry_price=1.10,
+                    predicted_target_price=1.09,
+                    predicted_invalidation_price=1.11,
+                    resolution_window_min=60,
+                    resolution_status="MISS",
+                    regime_at_emission="UNCLEAR",
+                    cycle_id=f"bad-gbp-chf-{idx}",
+                ))
+            for idx in range(1100):
+                entries.append(LedgerEntry(
+                    timestamp_emitted_utc=f"2026-05-15T00:{idx % 60:02d}:00Z",
+                    pair=f"PAIR_{idx}",
+                    signal_name="directional_forecast",
+                    direction="UP",
+                    lead_time_min=60,
+                    confidence=0.7,
+                    entry_price=1.10,
+                    predicted_target_price=1.11,
+                    predicted_invalidation_price=1.09,
+                    resolution_window_min=60,
+                    resolution_status="HIT",
+                    regime_at_emission="TREND",
+                    cycle_id=f"other-{idx}",
+                ))
+            write_ledger(entries, root)
+
+            hr = compute_hit_rates(root)
+
+            bucket = hr["directional_forecast_down"]["GBP_CHF:UNCLEAR"]
+            self.assertEqual(bucket["samples"], 10)
+            self.assertEqual(bucket["hit_rate"], 0.0)
+            mult = confidence_calibration(
+                "directional_forecast_down",
+                "GBP_CHF",
+                hit_rates=hr,
+                regime="UNCLEAR",
+            )
+            self.assertLess(mult, 0.5)
+
     def test_legacy_directional_forecast_without_invalidation_is_not_calibration_sample(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

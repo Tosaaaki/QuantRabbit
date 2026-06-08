@@ -970,14 +970,16 @@ def compute_hit_rates(
 
     The hierarchical keys let `confidence_calibration` prefer the most
     specific bucket (pair × regime) but fall back to less specific
-    buckets when there aren't enough samples in the granular one.
+    buckets when there aren't enough samples in the granular one. Do not
+    globally truncate before grouping: sparse pair/regime buckets can be
+    pushed out by high-volume pairs, which makes bad local history fall back
+    to broad all-pair calibration and overstate confidence.
     """
     entries = load_ledger(data_root)
     resolved = _deduped_calibration_entries([
         e for e in entries
         if e.resolution_status in ("HIT", "MISS") and _calibration_entry_eligible(e)
     ])
-    resolved = resolved[-lookback * 10:]  # rough bound on size
     grouped: Dict[str, Dict[str, List[bool]]] = {}
     for e in resolved:
         for signal_name in _calibration_signal_names(e):
