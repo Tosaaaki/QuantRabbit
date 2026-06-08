@@ -956,7 +956,7 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(recs[0]["gate_b_standing_authorized"])
         self.assertIn("loss-cut: structural OB broken", recs[0]["reason"])
 
-    def test_stale_position_management_review_exit_does_not_route_to_position_management(self) -> None:
+    def test_stale_position_management_review_exit_routes_to_sidecar_refresh_not_close_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _fixtures(
@@ -1008,8 +1008,9 @@ class TraderPromptRouteTest(unittest.TestCase):
                 else:
                     os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior
 
-        self.assertEqual(route.branch, BRANCH_ENTRY)
+        self.assertEqual(route.branch, BRANCH_POSITION)
         self.assertEqual(recs, ())
+        self.assertTrue(any("position_management sidecar stale" in reason for reason in route.reasons))
         self.assertFalse(any("position_management REVIEW_EXIT" in reason for reason in route.reasons))
 
     def test_entry_thesis_blocker_routes_without_close_recommendation(self) -> None:
@@ -1587,6 +1588,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "trader_overrides_path": files["trader_overrides"],
         "gpt_decision_path": files["gpt_decision"],
         "live_order_path": files["live_order"],
+        "position_management_path": files["position_management"],
         "position_execution_path": files["position_execution"],
         "autotrade_report_path": files["autotrade_report"],
     }
@@ -1618,6 +1620,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "trader_overrides": root / "trader_overrides.json",
         "gpt_decision": root / "gpt_trader_decision.json",
         "live_order": root / "live_order_request.json",
+        "position_management": root / "position_management.json",
         "position_execution": root / "position_execution.json",
         "autotrade_report": root / "autotrade_cycle_report.md",
     }
@@ -1733,6 +1736,24 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
                 ).isoformat(),
                 "bias_overrides": {},
                 "blocked_lanes": [],
+            }
+        )
+    )
+    files["position_management"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "action": "HOLD_PROTECTED",
+                "positions": [
+                    {
+                        "trade_id": str(position.get("trade_id") or ""),
+                        "pair": position.get("pair"),
+                        "side": position.get("side"),
+                        "action": "HOLD_PROTECTED",
+                    }
+                    for position in (positions or [])
+                    if str(position.get("owner") or "") == "trader"
+                ],
             }
         )
     )

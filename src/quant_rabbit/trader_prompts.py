@@ -55,6 +55,7 @@ from quant_rabbit.paths import (
     DEFAULT_OPTION_SKEW,
     DEFAULT_ORDER_INTENTS,
     DEFAULT_PAIR_CHARTS,
+    DEFAULT_POSITION_MANAGEMENT,
     DEFAULT_POSITION_EXECUTION,
     DEFAULT_STRATEGY_PROFILE,
     DEFAULT_TRADER_OVERRIDES,
@@ -161,6 +162,7 @@ def route_trader_prompts(
     decision_response_path: Path | None = DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     gpt_decision_path: Path = DEFAULT_GPT_TRADER_DECISION,
     live_order_path: Path | None = DEFAULT_LIVE_ORDER_REQUEST,
+    position_management_path: Path | None = DEFAULT_POSITION_MANAGEMENT,
     position_execution_path: Path | None = DEFAULT_POSITION_EXECUTION,
     autotrade_report_path: Path | None = DEFAULT_AUTOTRADE_REPORT,
     include_content: bool = False,
@@ -196,6 +198,10 @@ def route_trader_prompts(
     intents = _load_json(intents_path)
     pair_charts = _load_json(pair_charts_path)
 
+    position_sidecar_reasons = _position_management_sidecar_refresh_reasons(
+        snapshot,
+        position_management_path=position_management_path,
+    )
     position_reasons = _position_management_reasons(snapshot)
     tp_rebalance_reasons = _tp_rebalance_reasons(
         snapshot,
@@ -218,10 +224,17 @@ def route_trader_prompts(
         snapshot,
         snapshot_path=snapshot_path,
     )
-    if position_reasons or tp_rebalance_reasons or close_review_reasons or entry_thesis_block_reasons:
+    if (
+        position_sidecar_reasons
+        or position_reasons
+        or tp_rebalance_reasons
+        or close_review_reasons
+        or entry_thesis_block_reasons
+    ):
         return _build_route(
             BRANCH_POSITION,
             (
+                *position_sidecar_reasons,
                 *position_reasons,
                 *tp_rebalance_reasons,
                 *close_review_reasons,
@@ -528,6 +541,45 @@ def _position_management_reasons(snapshot: dict[str, Any]) -> tuple[str, ...]:
                 f"{position.get('pair')} {position.get('side')} id={position.get('trade_id')}"
             )
     return tuple(reasons)
+
+
+def _position_management_sidecar_refresh_reasons(
+    snapshot: dict[str, Any],
+    *,
+    position_management_path: Path | None,
+) -> tuple[str, ...]:
+    active_positions = _active_trader_positions_by_trade_id(snapshot)
+    if not active_positions or position_management_path is None:
+        return ()
+    fetched_at = _parse_utc(snapshot.get("fetched_at_utc"))
+    if fetched_at is None:
+        return ()
+    trade_ids = ", ".join(sorted(active_positions))
+    if not position_management_path.exists():
+        return (
+            "position_management sidecar missing for active trader position(s): "
+            f"{trade_ids}; run position-management before new exposure",
+        )
+    try:
+        payload = _load_json(position_management_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            "position_management sidecar unreadable for active trader position(s): "
+            f"{position_management_path}: {exc}; run position-management before new exposure",
+        )
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return (
+            "position_management sidecar lacks generated_at_utc for active trader position(s): "
+            f"{trade_ids}; run position-management before new exposure",
+        )
+    if generated_at < fetched_at:
+        return (
+            "position_management sidecar stale for active trader position(s): "
+            f"generated at {generated_at.isoformat()} before broker snapshot "
+            f"{fetched_at.isoformat()}; run position-management before new exposure",
+        )
+    return ()
 
 
 def _position_close_recommendation_reasons(

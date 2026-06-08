@@ -1648,6 +1648,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--decision-response", type=Path, default=DEFAULT_CODEX_TRADER_DECISION_RESPONSE)
     p_prompt.add_argument("--gpt-decision", type=Path, default=DEFAULT_GPT_TRADER_DECISION)
     p_prompt.add_argument("--live-order", type=Path, default=DEFAULT_LIVE_ORDER_REQUEST)
+    p_prompt.add_argument("--position-management", type=Path, default=DEFAULT_POSITION_MANAGEMENT)
     p_prompt.add_argument("--position-execution", type=Path, default=DEFAULT_POSITION_EXECUTION)
     p_prompt.add_argument("--autotrade-report", type=Path, default=DEFAULT_AUTOTRADE_REPORT)
     p_prompt.add_argument("--include-content", action="store_true")
@@ -3039,6 +3040,7 @@ def main(argv: list[str] | None = None) -> int:
                 decision_response_path=args.decision_response,
                 gpt_decision_path=args.gpt_decision,
                 live_order_path=args.live_order,
+                position_management_path=args.position_management,
                 position_execution_path=args.position_execution,
                 autotrade_report_path=args.autotrade_report,
                 include_content=args.include_content,
