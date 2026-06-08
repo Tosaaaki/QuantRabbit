@@ -199,6 +199,136 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(metadata["news_signal_names"], ["market_story_news_artifact"])
             self.assertIn("EUR/USD", metadata["news_pair_context"][0])
 
+    def test_matrix_supported_profile_edge_seeds_pending_repair_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            strategy = root / "strategy.json"
+            strategy.write_text(
+                json.dumps(
+                    {
+                        "profiles": [
+                            {
+                                "pair": "USD_JPY",
+                                "direction": "LONG",
+                                "status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                "required_fix": "risk-resized receipt required",
+                                "target_reward_risk": 2.4,
+                            }
+                        ]
+                    }
+                )
+            )
+            charts = root / "pair_charts.json"
+            charts.write_text(
+                json.dumps(
+                    {
+                        "charts": [
+                            {
+                                "pair": "USD_JPY",
+                                "dominant_regime": "TREND_UP",
+                                "long_score": 0.78,
+                                "short_score": 0.12,
+                                "confluence": {
+                                    "score_balance": "LONG_LEAN",
+                                    "score_gap": 0.66,
+                                    "tf_agreement_score": 0.8,
+                                    "range_24h_sigma_multiple": 1.0,
+                                },
+                                "views": [
+                                    {
+                                        "granularity": "M5",
+                                        "regime": "TREND_UP",
+                                        "long_bias": 0.75,
+                                        "short_bias": 0.15,
+                                        "indicators": {
+                                            "atr_pips": 8.0,
+                                            "bb_lower": 156.20,
+                                            "bb_upper": 157.10,
+                                            "donchian_low": 156.10,
+                                            "donchian_high": 157.20,
+                                            "swing_low": 156.05,
+                                            "swing_high": 157.25,
+                                        },
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                )
+            )
+            matrix = root / "matrix.json"
+            matrix.write_text(
+                json.dumps(
+                    {
+                        "pairs": {
+                            "USD_JPY": {
+                                "LONG": {
+                                    "evidence_ref": "matrix:USD_JPY:LONG",
+                                    "support_count": 4,
+                                    "reject_count": 0,
+                                    "supports": [
+                                        {
+                                            "code": "CHART_CONFLUENCE_LONG_LEAN",
+                                            "layer": "chart",
+                                            "message": "USD_JPY confluence score_balance=LONG_LEAN",
+                                            "evidence_refs": ["chart:USD_JPY:structure"],
+                                        },
+                                        {
+                                            "code": "BASE_STRENGTH_EXCEEDS_QUOTE",
+                                            "layer": "strength",
+                                            "message": "USD strength exceeds JPY",
+                                            "evidence_refs": ["strength:USD_JPY"],
+                                        },
+                                        {
+                                            "code": "DXY_24H_DIRECTION",
+                                            "layer": "cross_asset",
+                                            "message": "DXY maps to USD_JPY LONG",
+                                            "evidence_refs": ["cross:dxy"],
+                                        },
+                                        {
+                                            "code": "FLOW_SPREAD_EXECUTABLE",
+                                            "layer": "flow",
+                                            "message": "USD_JPY spread stress=NORMAL",
+                                            "evidence_refs": ["flow:USD_JPY"],
+                                        },
+                                    ],
+                                }
+                            }
+                        },
+                        "issues": [],
+                    }
+                )
+            )
+            output = root / "intents.json"
+
+            IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=strategy,
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=charts,
+                market_context_matrix_path=matrix,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            usd_rows = [
+                item
+                for item in payload["results"]
+                if (item.get("intent") or {}).get("pair") == "USD_JPY"
+                and (item.get("intent") or {}).get("side") == "LONG"
+            ]
+
+            self.assertGreaterEqual(len(usd_rows), 2)
+            self.assertFalse(any(row["intent"]["order_type"] == "MARKET" for row in usd_rows))
+            metadata = usd_rows[0]["intent"]["metadata"]
+            self.assertTrue(metadata["matrix_repair_seed"])
+            self.assertEqual(metadata["matrix_repair_profile_status"], "BLOCK_UNTIL_NEW_EVIDENCE")
+            self.assertEqual(metadata["market_context_matrix_ref"], "matrix:USD_JPY:LONG")
+            self.assertEqual(metadata["base_target_reward_risk"], 2.4)
+            self.assertGreaterEqual(metadata["target_reward_risk"], 2.4)
+            self.assertTrue(any("BLOCK_UNTIL_NEW_EVIDENCE" in blocker for row in usd_rows for blocker in row["live_blockers"]))
+
     def test_live_entry_requires_fresh_forecast_when_live_default_active(self) -> None:
         prior = os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE")
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"

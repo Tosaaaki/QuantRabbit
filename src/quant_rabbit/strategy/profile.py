@@ -35,6 +35,7 @@ class StrategyProfileEntry:
     method: str | None
     status: str
     required_fix: str
+    target_reward_risk: float | None = None
 
 
 class StrategyProfile:
@@ -59,6 +60,7 @@ class StrategyProfile:
                 method=method,
                 status=str(item.get("status") or "WATCH_ONLY"),
                 required_fix=str(item.get("required_fix") or ""),
+                target_reward_risk=_optional_float(item.get("target_reward_risk")),
             )
         return cls(entries)
 
@@ -164,6 +166,13 @@ class StrategyProfile:
 
 def issues_to_dicts(issues: tuple[RiskIssue, ...] | list[RiskIssue]) -> list[dict[str, Any]]:
     return [issue.__dict__ for issue in issues]
+
+
+def _optional_float(value: object) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _intent_method(intent: OrderIntent) -> str | None:

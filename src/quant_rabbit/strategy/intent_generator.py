@@ -524,6 +524,22 @@ FORECAST_WATCH_MIN_CHART_SCORE = _env_float(
     0.65,
     minimum=0.50,
 )
+# Matrix-supported repair seeding is a candidate-surface repair, not live
+# permission. A pair/side must have support from at least three independent
+# market-context layers so a repair lane cannot be born from a single spread
+# or level reading. The seed cap keeps the generator focused on the strongest
+# current repairs before broad exploration; override it only after coverage
+# reports show the queue is starved.
+MATRIX_REPAIR_MIN_SUPPORT_LAYERS = _env_int(
+    "QR_MATRIX_REPAIR_MIN_SUPPORT_LAYERS",
+    3,
+    minimum=1,
+)
+MATRIX_REPAIR_MAX_SEEDS = _env_int(
+    "QR_MATRIX_REPAIR_MAX_SEEDS",
+    9,
+    minimum=0,
+)
 # Directional forecasts are calibrated as a final pair-level detector, but
 # recent live evidence can show that the final detector is underperforming while
 # specific market-condition detectors (liquidity sweep, squeeze, session timing)
@@ -1485,6 +1501,136 @@ def _append_current_range_phase_lanes(
             out.append(synthetic)
             seen.add(key)
     return out
+
+
+def _append_matrix_supported_repair_lanes(
+    lanes: list[dict[str, Any]],
+    matrix: dict[str, Any] | None,
+    strategy_profile: StrategyProfile | None,
+    charts: dict[str, dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if MATRIX_REPAIR_MAX_SEEDS <= 0 or matrix is None or strategy_profile is None:
+        return lanes
+    pairs_payload = matrix.get("pairs") if isinstance(matrix, dict) else None
+    if not isinstance(pairs_payload, dict):
+        return lanes
+
+    existing = {
+        (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
+        for lane in lanes
+    }
+    ranked: list[tuple[int, int, str, str, str, Any, dict[str, Any]]] = []
+    for entry in strategy_profile.entries.values():
+        if entry.status not in {"RISK_REPAIR_CANDIDATE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
+            continue
+        if entry.direction not in {Side.LONG.value, Side.SHORT.value}:
+            continue
+        side_payload = _matrix_side_payload(pairs_payload, entry.pair, entry.direction)
+        if side_payload is None or not _matrix_side_is_strong_repair_support(side_payload):
+            continue
+        support_count = _optional_int(side_payload.get("support_count")) or len(side_payload.get("supports") or [])
+        layer_count = len(_matrix_support_layers(side_payload))
+        for method in _matrix_repair_methods(entry.method, entry.pair, charts):
+            desk = FORECAST_SEED_DESK_BY_METHOD.get(method)
+            if not desk:
+                continue
+            key = (desk, entry.pair, entry.direction, method)
+            if key in existing:
+                continue
+            ranked.append((support_count, layer_count, entry.pair, entry.direction, method, entry, side_payload))
+            existing.add(key)
+
+    if not ranked:
+        return lanes
+    ranked.sort(key=lambda item: (-item[0], -item[1], item[2], item[3], item[4]))
+    seeds = [
+        _matrix_repair_seed_lane(entry, method=method, side_payload=side_payload)
+        for _, _, _, _, method, entry, side_payload in ranked[:MATRIX_REPAIR_MAX_SEEDS]
+    ]
+    return seeds + lanes
+
+
+def _matrix_side_payload(
+    pairs_payload: dict[str, Any],
+    pair: str,
+    side: str,
+) -> dict[str, Any] | None:
+    per_pair = pairs_payload.get(pair)
+    if not isinstance(per_pair, dict):
+        return None
+    payload = per_pair.get(side)
+    return payload if isinstance(payload, dict) else None
+
+
+def _matrix_side_is_strong_repair_support(side_payload: dict[str, Any]) -> bool:
+    reject_count = _optional_int(side_payload.get("reject_count"))
+    if reject_count is None:
+        reject_count = len(side_payload.get("rejects") or [])
+    if reject_count > 0:
+        return False
+    support_layers = _matrix_support_layers(side_payload)
+    return len(support_layers) >= MATRIX_REPAIR_MIN_SUPPORT_LAYERS
+
+
+def _matrix_support_layers(side_payload: dict[str, Any]) -> set[str]:
+    layers: set[str] = set()
+    for raw in side_payload.get("supports") or []:
+        if not isinstance(raw, dict):
+            continue
+        layer = str(raw.get("layer") or "").strip()
+        if layer:
+            layers.add(layer)
+    return layers
+
+
+def _matrix_repair_methods(method: str | None, pair: str, charts: dict[str, dict[str, Any]] | None) -> tuple[str, ...]:
+    parsed = str(method or "").strip().upper()
+    if parsed in FORECAST_SEED_DESK_BY_METHOD:
+        return (parsed,)
+    methods: list[str] = []
+    if _pair_has_current_range_rotation_edge(pair, charts):
+        methods.append(TradeMethod.RANGE_ROTATION.value)
+    methods.extend((TradeMethod.BREAKOUT_FAILURE.value, TradeMethod.TREND_CONTINUATION.value))
+    return tuple(dict.fromkeys(methods))
+
+
+def _matrix_repair_seed_lane(
+    entry: Any,
+    *,
+    method: str,
+    side_payload: dict[str, Any],
+) -> dict[str, Any]:
+    support_messages = [
+        str(item.get("message") or item.get("code") or "")
+        for item in side_payload.get("supports") or []
+        if isinstance(item, dict)
+    ]
+    support_messages = [message for message in support_messages if message]
+    support_count = _optional_int(side_payload.get("support_count")) or len(side_payload.get("supports") or [])
+    rr = max(_optional_float(getattr(entry, "target_reward_risk", None)) or 0.0, DYNAMIC_RR_BASE)
+    return {
+        "desk": FORECAST_SEED_DESK_BY_METHOD[method],
+        "pair": entry.pair,
+        "direction": entry.direction,
+        "method": method,
+        "adoption": "TRIGGER_RECEIPT_REQUIRED",
+        "campaign_role": "MATRIX_SUPPORTED_REPAIR",
+        "reason": (
+            f"matrix-supported repair seed: {side_payload.get('evidence_ref') or entry.pair + ':' + entry.direction} "
+            f"support_count={support_count} layers={','.join(sorted(_matrix_support_layers(side_payload)))}; "
+            f"profile={entry.status}"
+        ),
+        "required_receipt": (
+            "Matrix-supported repair lane: create only a pending LIMIT/STOP-ENTRY dry-run receipt; "
+            "do not market-chase the supported direction. RiskEngine, forecast freshness, spread, "
+            "profile repair, and live gateway gates must still decide execution."
+        ),
+        "target_reward_risk": rr,
+        "blockers": [entry.required_fix] if entry.required_fix else [],
+        "story_examples": support_messages[:2],
+        "matrix_repair_seed": True,
+        "matrix_repair_profile_status": entry.status,
+    }
 
 
 def _pre_entry_forecast_cycle_id(snapshot: BrokerSnapshot, *, pair_charts_path: Path) -> str:
@@ -3070,10 +3216,15 @@ class IntentGenerator:
         pair_charts = _load_pair_charts(self.pair_charts_path)
         levels_snapshot = _load_levels_snapshot(self.levels_path)
         market_context_matrix = _load_market_context_matrix(self.market_context_matrix_path)
+        strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
         if snapshot is not None:
             range_seed_count = len(lanes)
             lanes = _append_current_range_phase_lanes(lanes, pair_charts)
             if len(lanes) > range_seed_count:
+                max_candidates = max(max_candidates, len(lanes))
+            matrix_seed_count = len(lanes)
+            lanes = _append_matrix_supported_repair_lanes(lanes, market_context_matrix, strategy_profile, pair_charts)
+            if len(lanes) > matrix_seed_count:
                 max_candidates = max(max_candidates, len(lanes))
             forecast_seed_count = len(lanes)
             forecast_cycle_id = _pre_entry_forecast_cycle_id(
@@ -3111,7 +3262,6 @@ class IntentGenerator:
                 seen_keys.add(key)
             lanes = lanes + mirrors
             max_candidates = max(max_candidates, max_candidates * 2)
-        strategy_profile = StrategyProfile.load(self.strategy_profile) if self.strategy_profile.exists() else None
         # Pull equity-derived per-trade cap from daily_target_state.json when
         # neither explicit JPY nor pct arguments were supplied. This is the
         # day's risk budget already divided by the target trade pace, so each
@@ -3805,6 +3955,8 @@ def _intent_from_lane(
             "required_receipt": lane.get("required_receipt"),
             "forecast_seed": bool(lane.get("forecast_seed")),
             "forecast_watch_only": bool(lane.get("forecast_watch_only")),
+            "matrix_repair_seed": bool(lane.get("matrix_repair_seed")),
+            "matrix_repair_profile_status": lane.get("matrix_repair_profile_status"),
             "forecast_cycle_id": lane.get("forecast_cycle_id"),
             "forecast_direction": lane.get("forecast_direction"),
             "forecast_confidence": lane.get("forecast_confidence"),
