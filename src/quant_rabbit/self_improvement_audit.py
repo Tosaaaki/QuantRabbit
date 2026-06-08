@@ -1638,8 +1638,41 @@ def _mechanism_ablation_findings(
     close_events = int(_maybe_float(close_gate.get("close_events")) or 0)
     bot_attributed = int(_maybe_float(close_gate.get("bot_attributed_close_events")) or 0)
     gateway_sent = int(_maybe_float(close_gate.get("gateway_close_sent_events")) or 0)
-    if status != "MEASURED" or not close_events or (bot_attributed and gateway_sent):
+    broker_accept = int(_maybe_float(close_gate.get("broker_trade_close_accept_events")) or 0)
+    broker_without_gateway = int(
+        _maybe_float(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_count")) or 0
+    )
+    gateway_review_loss = int(_maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0)
+    gateway_review_loss_net = _maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")) or 0.0
+    gateway_gpt_loss = int(_maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0)
+    if status != "MEASURED" or not close_events:
         return []
+    if (
+        bot_attributed
+        and gateway_sent
+        and not broker_without_gateway
+        and not (gateway_review_loss and gateway_review_loss_net < 0)
+    ):
+        return []
+    if bot_attributed and broker_accept and not broker_without_gateway and not (
+        gateway_review_loss and gateway_review_loss_net < 0
+    ):
+        return []
+    if broker_without_gateway:
+        next_action = (
+            "Trace broker accepted TRADE_CLOSE orders back to GPT/gateway/operator source and persist a local "
+            "GATEWAY_TRADE_CLOSE_SENT or equivalent source tag before relaxing or hardening live close policy."
+        )
+    elif gateway_review_loss and gateway_review_loss_net < 0:
+        next_action = (
+            "Separate legacy REVIEW_EXIT closes from current GPT_CLOSE Gate A/B closes; keep plain auto-close blocked "
+            "until structural replay proves REVIEW_EXIT timing positive."
+        )
+    else:
+        next_action = (
+            "Link gateway close receipts to filled trades and ablate hard Gate A, soft Gate A, "
+            "Gate B, and no-gate exit variants offline before relaxing or hardening live close policy."
+        )
     return [
         _finding(
             run_id=run_id,
@@ -1650,18 +1683,23 @@ def _mechanism_ablation_findings(
                 "CLOSE Gate A/B performance is not attributable enough to call the gate policy "
                 "verified or disproven"
             ),
-            next_action=(
-                "Link gateway close receipts to filled trades and ablate hard Gate A, soft Gate A, "
-                "Gate B, and no-gate exit variants offline before relaxing or hardening live close policy."
-            ),
+            next_action=next_action,
             evidence={
                 "ai_test_bot_backtest_path": str(path),
                 "status": status,
                 "close_events": close_events,
                 "bot_attributed_close_events": bot_attributed,
                 "gateway_close_sent_events": gateway_sent,
+                "broker_trade_close_accept_events": broker_accept,
+                "gateway_gpt_close_loss_side_market_close_count": gateway_gpt_loss,
+                "gateway_review_exit_loss_side_market_close_count": gateway_review_loss,
+                "gateway_review_exit_loss_side_market_close_net_jpy": gateway_review_loss_net,
                 "loss_side_market_close_count": int(_maybe_float(close_gate.get("loss_side_market_close_count")) or 0),
                 "loss_side_market_close_net_jpy": _maybe_float(close_gate.get("loss_side_market_close_net_jpy")),
+                "broker_trade_close_loss_side_market_close_count": int(
+                    _maybe_float(close_gate.get("broker_trade_close_loss_side_market_close_count")) or 0
+                ),
+                "broker_accepted_without_gateway_loss_side_market_close_count": broker_without_gateway,
                 "unattributed_loss_side_market_close_count": int(
                     _maybe_float(close_gate.get("unattributed_loss_side_market_close_count")) or 0
                 ),

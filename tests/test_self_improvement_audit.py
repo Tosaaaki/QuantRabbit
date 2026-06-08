@@ -313,6 +313,48 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertEqual(finding["priority"], "P1")
         self.assertEqual(finding["evidence"]["gateway_close_sent_events"], 0)
 
+    def test_legacy_review_exit_close_ablation_remains_p1_assumption_hole(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                live_ready_market_rr=1.4,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["ai_backtest"].write_text(
+                json.dumps(
+                    {
+                        "mechanism_ablation": {
+                            "close_gate_ab": {
+                                "status": "MEASURED",
+                                "close_events": 8,
+                                "bot_attributed_close_events": 8,
+                                "gateway_close_sent_events": 3,
+                                "broker_trade_close_accept_events": 3,
+                                "loss_side_market_close_count": 3,
+                                "loss_side_market_close_net_jpy": -900.0,
+                                "gateway_gpt_close_loss_side_market_close_count": 0,
+                                "gateway_review_exit_loss_side_market_close_count": 3,
+                                "gateway_review_exit_loss_side_market_close_net_jpy": -900.0,
+                                "broker_accepted_without_gateway_loss_side_market_close_count": 0,
+                                "unattributed_loss_side_market_close_count": 0,
+                            }
+                        }
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.p0_findings, 0)
+        self.assertIn("CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE", codes)
+        finding = codes["CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"]
+        self.assertIn("legacy REVIEW_EXIT", finding["next_action"])
+        self.assertEqual(finding["evidence"]["gateway_review_exit_loss_side_market_close_count"], 3)
+
     def test_profitable_backtest_edges_missing_from_coverage_are_p1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
