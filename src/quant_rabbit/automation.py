@@ -9,6 +9,7 @@ import shutil
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from quant_rabbit.broker.execution import ACTIVE_FX_SESSION_BUCKETS_PER_DAY, LiveOrderGateway
 from quant_rabbit.broker.oanda import OandaExecutionClient
@@ -1844,6 +1845,20 @@ class AutoTradeCycle:
         if not source_path.exists():
             return f"external GPT decision response is missing: {source_path}"
         decision_mtime_ns = source_path.stat().st_mtime_ns
+        reusable_gpt = self._load_reusable_verified_gpt_handoff()
+        if reusable_gpt is not None:
+            consumed_reference_ns = self.gpt_decision_path.stat().st_mtime_ns
+            for path, label in (
+                (self.live_order_output_path, "live order gateway receipt"),
+                (self.position_execution_path, "position gateway receipt"),
+                (self.report_path, "autotrade cycle report"),
+            ):
+                if path.exists() and path.stat().st_mtime_ns > consumed_reference_ns:
+                    return (
+                        f"external GPT decision response already consumed by {label}; "
+                        "refresh broker truth and write one current receipt"
+                    )
+            return None
         for path, label in (
             (self.snapshot_path, "broker snapshot"),
             (self.intents_path, "order intents"),
@@ -2486,6 +2501,9 @@ class AutoTradeCycle:
         return tuple(lane_ids), size_multiples
 
     def _run_gpt_handoff(self) -> GptHandoffSummary:
+        reusable = self._load_reusable_verified_gpt_handoff()
+        if reusable is not None:
+            return reusable
         try:
             self._run_market_status_for_gpt_handoff()
             self._run_learning_audit_for_gpt_handoff()
@@ -2510,6 +2528,113 @@ class AutoTradeCycle:
                 issues=1,
                 error=str(exc),
             )
+
+    def _load_reusable_verified_gpt_handoff(self) -> GptHandoffSummary | None:
+        """Reuse a just-accepted TRADE verification for a pinned handoff packet.
+
+        `autotrade-cycle --reuse-market-artifacts` is the verifier-to-gateway
+        bridge. Once `gpt-trader-decision` has accepted an external TRADE
+        response, rerunning the verifier against a newer broker snapshot can
+        reject the same receipt as stale even though the live gateway will
+        fetch fresh broker truth before staging/sending. Reuse is therefore
+        allowed only for the same external receipt, the same order-intent
+        packet, and a still-present LIVE_READY lane.
+        """
+
+        if not self.reuse_market_artifacts or not self.use_gpt_trader:
+            return None
+        source_path = getattr(self.gpt_provider, "source_path", None)
+        if source_path is None:
+            return None
+        source_path = Path(source_path)
+        if not source_path.exists() or not self.gpt_decision_path.exists():
+            return None
+        try:
+            if self.gpt_decision_path.stat().st_mtime_ns < source_path.stat().st_mtime_ns:
+                return None
+            verified_payload = json.loads(self.gpt_decision_path.read_text())
+            source_payload = json.loads(source_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return None
+        if verified_payload.get("status") != "ACCEPTED":
+            return None
+        decision = verified_payload.get("decision")
+        if not isinstance(decision, dict) or str(decision.get("action") or "") != "TRADE":
+            return None
+        if not self._verified_gpt_decision_matches_source(decision, source_payload):
+            return None
+        if not self._verified_gpt_order_intents_still_match(verified_payload, decision):
+            return None
+        selected_lane_id = str(decision.get("selected_lane_id") or "") or None
+        selected_lane_ids = self._string_tuple(decision.get("selected_lane_ids"))
+        cancel_order_ids = self._string_tuple(decision.get("cancel_order_ids"))
+        close_trade_ids = self._string_tuple(decision.get("close_trade_ids"))
+        return GptHandoffSummary(
+            status="ACCEPTED",
+            action="TRADE",
+            selected_lane_id=selected_lane_id,
+            allowed=True,
+            issues=len(verified_payload.get("verification_issues") or []),
+            selected_lane_ids=selected_lane_ids,
+            cancel_order_ids=cancel_order_ids,
+            close_trade_ids=close_trade_ids,
+        )
+
+    @staticmethod
+    def _string_tuple(value: Any) -> tuple[str, ...]:
+        if not isinstance(value, (list, tuple)):
+            return ()
+        return tuple(str(item) for item in value if item is not None and str(item))
+
+    @classmethod
+    def _verified_gpt_decision_matches_source(cls, decision: dict[str, Any], source: dict[str, Any]) -> bool:
+        for key in ("generated_at_utc", "action", "selected_lane_id"):
+            left = decision.get(key)
+            right = source.get(key)
+            if (str(left) if left is not None else None) != (str(right) if right is not None else None):
+                return False
+        for key in ("selected_lane_ids", "cancel_order_ids", "close_trade_ids"):
+            source_values = cls._string_tuple(source.get(key))
+            decision_values = cls._string_tuple(decision.get(key))
+            if source_values and decision_values != source_values:
+                return False
+            if not source_values and decision_values:
+                return False
+        return True
+
+    def _verified_gpt_order_intents_still_match(
+        self,
+        verified_payload: dict[str, Any],
+        decision: dict[str, Any],
+    ) -> bool:
+        try:
+            current_intents = json.loads(self.intents_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return False
+        packet = verified_payload.get("input_packet")
+        artifact_timestamps = packet.get("artifact_timestamps") if isinstance(packet, dict) else {}
+        verified_intents_ts = (
+            artifact_timestamps.get("order_intents_generated_at_utc")
+            if isinstance(artifact_timestamps, dict)
+            else None
+        )
+        current_intents_ts = current_intents.get("generated_at_utc")
+        if verified_intents_ts or current_intents_ts:
+            if verified_intents_ts != current_intents_ts:
+                return False
+        selected_lane_ids = self._string_tuple(decision.get("selected_lane_ids"))
+        selected_lane_id = str(decision.get("selected_lane_id") or "")
+        if not selected_lane_ids and selected_lane_id:
+            selected_lane_ids = (selected_lane_id,)
+        if selected_lane_ids:
+            live_ready_lane_ids = {
+                str(item.get("lane_id") or "")
+                for item in current_intents.get("results", []) or []
+                if isinstance(item, dict) and item.get("status") == "LIVE_READY"
+            }
+            if not set(selected_lane_ids).issubset(live_ready_lane_ids):
+                return False
+        return True
 
     def _continue_after_gpt_close(
         self,
