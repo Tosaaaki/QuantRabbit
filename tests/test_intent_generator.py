@@ -1403,6 +1403,42 @@ class IntentGeneratorTest(unittest.TestCase):
         self.assertEqual(support["best_samples"], 0)
         self.assertIn("ledger samples pending", support["reason"])
 
+    def test_same_cycle_projection_bootstrap_rejects_audited_bad_signal(self) -> None:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_for_forecast
+
+        forecast = SimpleNamespace(
+            direction="UP",
+            confidence=0.49,
+            raw_confidence=0.66,
+        )
+        projection_signal = SimpleNamespace(
+            name="cross_asset_dxy_lag",
+            timeframe="H1",
+            direction="UP",
+            confidence=0.86,
+            bonus_magnitude=16.0,
+            rationale="DXY lag maps to USD_CHF UP",
+        )
+        hit_rates = {
+            "cross_asset_dxy_lag": {
+                "_all_pairs:_all_regimes": {"hit_rate": 0.0, "samples": 14},
+            }
+        }
+
+        support = _forecast_market_support_for_forecast(
+            pair="USD_CHF",
+            forecast=forecast,
+            projection_signals=[projection_signal],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertFalse(support["ok"])
+        self.assertFalse(support["bootstrap_projection_support"])
+        self.assertEqual(support["signals"][0]["name"], "cross_asset_dxy_lag")
+        self.assertEqual(support["signals"][0]["samples"], 14)
+        self.assertEqual(support["signals"][0]["hit_rate"], 0.0)
+
     def test_forecast_seed_uses_supplied_data_root_for_calibration_and_context(self) -> None:
         from quant_rabbit.strategy.intent_generator import (
             _forecast_seed_for_pair,

@@ -2086,6 +2086,9 @@ def _forecast_market_support_for_forecast(
         forecast=forecast,
         direction=direction,
         projection_signals=projection_signals,
+        hit_rates=hit_rates,
+        pair=pair,
+        regime=regime,
     )
     if not isinstance(hit_rates, dict):
         if bootstrap:
@@ -2291,6 +2294,9 @@ def _forecast_bootstrap_projection_support(
     forecast: Any,
     direction: str,
     projection_signals: list[Any],
+    hit_rates: dict[str, dict[str, Any]] | None = None,
+    pair: str | None = None,
+    regime: str | None = None,
 ) -> list[dict[str, Any]]:
     if direction not in {"UP", "DOWN"}:
         return []
@@ -2316,25 +2322,79 @@ def _forecast_bootstrap_projection_support(
         name = str(getattr(signal, "name", "") or "")
         if not name:
             continue
+        calibration_name, audit_bucket = _forecast_bootstrap_audit_bucket(
+            name=name,
+            signal_direction=signal_direction,
+            pair=pair,
+            regime=regime,
+            hit_rates=hit_rates,
+        )
+        audit_hit_rate = _optional_float(audit_bucket.get("hit_rate")) if audit_bucket else None
+        audit_samples = _optional_int(audit_bucket.get("samples")) if audit_bucket else 0
+        audit_samples = audit_samples or 0
+        if (
+            audit_hit_rate is not None
+            and audit_samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+            and audit_hit_rate < FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
+        ):
+            continue
+        if audit_hit_rate is not None and audit_samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
+            audit_text = f"audited hit_rate={audit_hit_rate:.2f} samples={audit_samples}"
+        elif audit_samples > 0:
+            audit_text = (
+                f"ledger samples thin ({audit_samples}<{FORECAST_MARKET_SUPPORT_MIN_SAMPLES}); "
+                "bootstrap pending"
+            )
+        else:
+            audit_text = "ledger samples pending"
         out.append(
             {
                 "name": name,
-                "calibration_name": name,
+                "calibration_name": calibration_name,
                 "direction": signal_direction,
                 "confidence": round(confidence_value, 4),
-                "hit_rate": None,
-                "samples": 0,
+                "hit_rate": round(audit_hit_rate, 4) if audit_hit_rate is not None else None,
+                "samples": audit_samples,
                 "bootstrap_projection_support": True,
                 "timeframe": getattr(signal, "timeframe", None),
                 "rationale": str(getattr(signal, "rationale", "") or "")[:180],
                 "reason": (
                     f"{name} {signal_direction} same-cycle bootstrap: signal_conf={confidence_value:.2f}, "
                     f"raw_forecast_conf={raw_confidence:.2f}, calibrated_conf={confidence:.2f}; "
-                    "ledger samples pending"
+                    f"{audit_text}"
                 ),
             }
         )
     return sorted(out, key=lambda item: item["confidence"], reverse=True)
+
+
+def _forecast_bootstrap_audit_bucket(
+    *,
+    name: str,
+    signal_direction: str,
+    pair: str | None,
+    regime: str | None,
+    hit_rates: dict[str, dict[str, Any]] | None,
+) -> tuple[str, dict[str, Any] | None]:
+    if not isinstance(hit_rates, dict) or not pair:
+        return name, None
+    try:
+        from quant_rabbit.strategy.projection_ledger import select_calibration_signal_name
+    except Exception:
+        return name, None
+    calibration_name = select_calibration_signal_name(
+        name,
+        signal_direction,
+        pair,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
+    return calibration_name, _projection_hit_rate_bucket(
+        hit_rates,
+        calibration_name,
+        pair=pair,
+        regime=regime,
+    )
 
 
 def _projection_hit_rate_bucket(
