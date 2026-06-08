@@ -1076,7 +1076,7 @@ class AutoTradeCycle:
                             decision_source="deterministic_basket_blocked",
                         )
                     gpt_summary = None
-                    if send and self.live_enabled and self.use_gpt_trader:
+                    if self.use_gpt_trader:
                         gpt_summary = self._run_gpt_handoff()
                         gpt_lane_ids = (
                             gpt_summary.selected_lane_ids

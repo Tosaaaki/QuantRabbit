@@ -1258,6 +1258,77 @@ class AutoTradeCycleTest(unittest.TestCase):
             self.assertEqual(len(client.orders_sent), 1)
             self.assertEqual(summary.orders, 1)
 
+    def test_pending_entry_dry_probe_runs_gpt_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            now = datetime.now(timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                orders=(
+                    BrokerOrder(
+                        order_id="kept-pending",
+                        pair="EUR_CHF",
+                        order_type="LIMIT",
+                        price=0.91653,
+                        state="PENDING",
+                        units=3600,
+                        owner=Owner.TRADER,
+                        raw={"takeProfitOnFill": {"price": "0.91810"}},
+                    ),
+                ),
+                quotes={
+                    "EUR_CHF": Quote("EUR_CHF", 0.91650, 0.91665, timestamp_utc=now),
+                    "EUR_USD": Quote("EUR_USD", 1.17298, 1.17306, timestamp_utc=now),
+                    "CHF_JPY": Quote("CHF_JPY", 170.0, 170.02, timestamp_utc=now),
+                    "USD_JPY": Quote("USD_JPY", 157.0, 157.01, timestamp_utc=now),
+                },
+            )
+            snapshot_path = root / "snapshot.json"
+            snapshot_path.write_text(_snapshot_to_json(snapshot) + "\n")
+            intents_path = root / "intents.json"
+            _write_live_ready_intents(intents_path)
+            target_state = _open_target_state(root)
+            client = FakeCycleClient(snapshot)
+
+            summary = AutoTradeCycle(
+                client=client,
+                snapshot_path=snapshot_path,
+                intents_path=intents_path,
+                intent_report_path=root / "intents.md",
+                decision_path=root / "decision.json",
+                decision_report_path=root / "decision.md",
+                gpt_decision_path=root / "gpt_decision.json",
+                gpt_decision_report_path=root / "gpt_decision.md",
+                gpt_attack_advice_path=root / "attack_missing.json",
+                position_management_path=root / "pm.json",
+                position_management_report_path=root / "pm.md",
+                position_execution_path=root / "pe.json",
+                position_execution_report_path=root / "pe.md",
+                live_order_output_path=root / "live_order.json",
+                live_order_report_path=root / "live_order.md",
+                report_path=root / "report.md",
+                campaign_plan_path=_campaign(root),
+                strategy_profile_path=_candidate_profile(root),
+                market_story_profile_path=_stories(root),
+                receipt_promotion_report_path=root / "promotion.md",
+                target_state_path=target_state,
+                target_report_path=root / "target.md",
+                gpt_target_state_path=target_state,
+                use_gpt_trader=True,
+                gpt_provider=StaticTraderProvider(_gpt_trade_decision()),
+                reuse_market_artifacts=True,
+                refresh_market_story=False,
+                live_enabled=True,
+                max_loss_jpy=1_500,
+            ).run(send=False)
+
+            self.assertIn(summary.status, {"STAGED", "BLOCKED"})
+            self.assertEqual(summary.decision_source, "gpt_trader")
+            self.assertEqual(summary.gpt_status, "ACCEPTED")
+            self.assertEqual(summary.gpt_action, "TRADE")
+            self.assertFalse(summary.sent)
+            self.assertEqual(client.orders_sent, [])
+
     def test_gpt_trade_preserves_pending_cancel_candidate_when_cancel_not_requested(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
