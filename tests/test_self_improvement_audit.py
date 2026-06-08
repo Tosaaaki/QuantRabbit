@@ -296,6 +296,10 @@ class SelfImprovementAuditorTest(unittest.TestCase):
                                 "gateway_close_sent_events": 0,
                                 "loss_side_market_close_count": 5,
                                 "loss_side_market_close_net_jpy": -1200.0,
+                                "broker_accepted_without_gateway_loss_side_market_close_count": 2,
+                                "broker_accepted_without_gateway_loss_side_market_close_source_counts": {
+                                    "UNLABELED_BROKER_TRADE_CLOSE": 2
+                                },
                                 "unattributed_loss_side_market_close_count": 5,
                             }
                         }
@@ -312,6 +316,11 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         finding = codes["CLOSE_GATE_ABLATION_NOT_ATTRIBUTABLE"]
         self.assertEqual(finding["priority"], "P1")
         self.assertEqual(finding["evidence"]["gateway_close_sent_events"], 0)
+        self.assertIn("unlabeled", finding["next_action"])
+        self.assertEqual(
+            finding["evidence"]["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
+            {"UNLABELED_BROKER_TRADE_CLOSE": 2},
+        )
 
     def test_legacy_review_exit_close_ablation_remains_p1_assumption_hole(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

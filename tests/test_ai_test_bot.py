@@ -1035,6 +1035,7 @@ class AITestBotBacktesterTest(unittest.TestCase):
                         "gateway_other_close_count": 0,
                         "broker_trade_close_accepted_count": 0,
                         "broker_accepted_without_gateway_count": 0,
+                        "broker_accepted_without_gateway_source_counts": {},
                         "no_close_order_provenance_count": 1,
                         "bot_attributed_count": 2,
                     }
@@ -1182,16 +1183,29 @@ class AITestBotBacktesterTest(unittest.TestCase):
             self.assertEqual(close_gate["broker_trade_close_accept_events"], 1)
             self.assertEqual(close_gate["broker_trade_close_accept_trade_ids"], 1)
             self.assertEqual(close_gate["broker_trade_close_accept_order_ids"], 1)
+            self.assertEqual(close_gate["broker_trade_close_accept_source_counts"], {"UNLABELED_BROKER_TRADE_CLOSE": 1})
             self.assertEqual(close_gate["loss_side_market_close_count"], 1)
             self.assertEqual(close_gate["broker_trade_close_loss_side_market_close_count"], 1)
+            self.assertEqual(
+                close_gate["broker_trade_close_loss_side_market_close_source_counts"],
+                {"UNLABELED_BROKER_TRADE_CLOSE": 1},
+            )
             self.assertEqual(close_gate["broker_accepted_without_gateway_loss_side_market_close_count"], 1)
+            self.assertEqual(
+                close_gate["broker_accepted_without_gateway_loss_side_market_close_source_counts"],
+                {"UNLABELED_BROKER_TRADE_CLOSE": 1},
+            )
             self.assertEqual(close_gate["unattributed_loss_side_market_close_count"], 0)
             example = close_gate["loss_side_market_close_examples"][0]
             self.assertFalse(example["gateway_close_sent"])
             self.assertTrue(example["broker_trade_close_accepted"])
+            self.assertEqual(example["broker_trade_close_sources"], ["UNLABELED_BROKER_TRADE_CLOSE"])
             self.assertTrue(example["close_order_provenance"])
             self.assertTrue(any("broker accepted TRADE_CLOSE orders exist" in item for item in payload["action_items"]))
+            self.assertTrue(any("UNLABELED_BROKER_TRADE_CLOSE" in item for item in payload["action_items"]))
             self.assertFalse(any("lack both gateway close receipts" in item for item in payload["action_items"]))
+            report = (root / "ai_backtest.md").read_text()
+            self.assertIn("UNLABELED_BROKER_TRADE_CLOSE", report)
 
     def test_context_theme_overlay_adds_cross_pair_without_displacing_base_bucket(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

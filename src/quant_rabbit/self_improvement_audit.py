@@ -1642,6 +1642,11 @@ def _mechanism_ablation_findings(
     broker_without_gateway = int(
         _maybe_float(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_count")) or 0
     )
+    broker_without_gateway_sources = (
+        close_gate.get("broker_accepted_without_gateway_loss_side_market_close_source_counts")
+        if isinstance(close_gate.get("broker_accepted_without_gateway_loss_side_market_close_source_counts"), dict)
+        else {}
+    )
     gateway_review_loss = int(_maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_count")) or 0)
     gateway_review_loss_net = _maybe_float(close_gate.get("gateway_review_exit_loss_side_market_close_net_jpy")) or 0.0
     gateway_gpt_loss = int(_maybe_float(close_gate.get("gateway_gpt_close_loss_side_market_close_count")) or 0)
@@ -1659,10 +1664,17 @@ def _mechanism_ablation_findings(
     ):
         return []
     if broker_without_gateway:
-        next_action = (
-            "Trace broker accepted TRADE_CLOSE orders back to GPT/gateway/operator source and persist a local "
-            "GATEWAY_TRADE_CLOSE_SENT or equivalent source tag before relaxing or hardening live close policy."
-        )
+        if broker_without_gateway_sources.get("UNLABELED_BROKER_TRADE_CLOSE"):
+            next_action = (
+                "Broker accepted TRADE_CLOSE loss events are unlabeled by local gateway receipt; persist a local "
+                "GATEWAY_TRADE_CLOSE_SENT/GPT_CLOSE source tag before counting them as Gate A/B evidence or "
+                "changing live close policy."
+            )
+        else:
+            next_action = (
+                "Trace broker accepted TRADE_CLOSE orders back to GPT/gateway/operator source and persist a local "
+                "GATEWAY_TRADE_CLOSE_SENT or equivalent source tag before relaxing or hardening live close policy."
+            )
     elif gateway_review_loss and gateway_review_loss_net < 0:
         next_action = (
             "Separate legacy REVIEW_EXIT closes from current GPT_CLOSE Gate A/B closes; keep plain auto-close blocked "
@@ -1699,7 +1711,16 @@ def _mechanism_ablation_findings(
                 "broker_trade_close_loss_side_market_close_count": int(
                     _maybe_float(close_gate.get("broker_trade_close_loss_side_market_close_count")) or 0
                 ),
+                "broker_trade_close_accept_source_counts": close_gate.get("broker_trade_close_accept_source_counts")
+                if isinstance(close_gate.get("broker_trade_close_accept_source_counts"), dict)
+                else {},
+                "broker_trade_close_loss_side_market_close_source_counts": close_gate.get(
+                    "broker_trade_close_loss_side_market_close_source_counts"
+                )
+                if isinstance(close_gate.get("broker_trade_close_loss_side_market_close_source_counts"), dict)
+                else {},
                 "broker_accepted_without_gateway_loss_side_market_close_count": broker_without_gateway,
+                "broker_accepted_without_gateway_loss_side_market_close_source_counts": broker_without_gateway_sources,
                 "unattributed_loss_side_market_close_count": int(
                     _maybe_float(close_gate.get("unattributed_loss_side_market_close_count")) or 0
                 ),
