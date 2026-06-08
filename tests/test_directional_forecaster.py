@@ -21,6 +21,15 @@ class _Sig:
     rationale: str = ""
 
 
+@dataclass
+class _NamedSig:
+    name: str
+    direction: str
+    bonus_magnitude: float
+    confidence: float
+    rationale: str = ""
+
+
 class ForecastGeometryTest(unittest.TestCase):
     def test_down_forecast_uses_only_below_current_targets(self) -> None:
         pair_chart = {
@@ -713,6 +722,37 @@ class ForecastGeometryTest(unittest.TestCase):
         self.assertEqual(forecast.direction, "UP")
         self.assertLess(forecast.calibration_multiplier, 0.5)
         self.assertLess(forecast.confidence, 0.5)
+
+    def test_projection_signal_calibration_happens_before_forecast_selection(self) -> None:
+        hit_rates = {
+            "liquidity_sweep_low_up": {
+                "EUR_USD:TREND": {"hit_rate": 0.0, "samples": 100},
+            },
+        }
+
+        forecast = synthesize_forecast(
+            pair="EUR_USD",
+            pair_chart={"views": [{"granularity": "M15", "indicators": {"pip_size": 0.0001}}]},
+            current_price=1.1000,
+            pattern_signals=[_Sig("DOWN", 40.0, 1.0, "down setup")],
+            projection_signals=[
+                _NamedSig(
+                    "liquidity_sweep_low",
+                    "UP",
+                    100.0,
+                    1.0,
+                    "bad historical sweep-low UP detector",
+                )
+            ],
+            correlation_signals=[],
+            paths=[],
+            hit_rates=hit_rates,
+            regime="TREND",
+        )
+
+        self.assertEqual(forecast.direction, "DOWN")
+        self.assertGreater(forecast.down_score, forecast.up_score)
+        self.assertIn("[cal×", " ".join(forecast.drivers_against))
 
     def test_d_h4_anchor_extends_directional_forecast_horizon(self) -> None:
         pair_chart = {

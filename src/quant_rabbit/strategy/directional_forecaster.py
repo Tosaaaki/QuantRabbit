@@ -1246,6 +1246,40 @@ def _calibrated_confidence(
     return min(1.0, raw_confidence * cal_mult), cal_mult
 
 
+def _projection_signal_calibration_multiplier(
+    *,
+    signal: Any,
+    pair: str,
+    hit_rates: Dict[str, Dict[str, Any]] | None,
+    regime: Optional[str],
+) -> float:
+    """Return detector-specific calibration before forecast aggregation."""
+    if hit_rates is None:
+        return 1.0
+    name = str(getattr(signal, "name", "") or "").strip()
+    if not name:
+        return 1.0
+    from quant_rabbit.strategy.projection_ledger import (
+        confidence_calibration,
+        select_calibration_signal_name,
+    )
+
+    direction = str(getattr(signal, "direction", "UNCLEAR") or "UNCLEAR")
+    cal_signal_name = select_calibration_signal_name(
+        name,
+        direction,
+        pair,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
+    return confidence_calibration(
+        cal_signal_name,
+        pair,
+        hit_rates=hit_rates,
+        regime=regime,
+    )
+
+
 def synthesize_forecast(
     *,
     pair: str,
@@ -1324,11 +1358,22 @@ def synthesize_forecast(
     for s in projection_signals or []:
         # News-catalyst signals have NEGATIVE bonus → treat as RANGE
         # (don't bet directionally before high-impact event)
-        mag = getattr(s, "bonus_magnitude", 0) * getattr(s, "confidence", 0)
+        cal_mult = _projection_signal_calibration_multiplier(
+            signal=s,
+            pair=pair,
+            hit_rates=hit_rates,
+            regime=regime,
+        )
+        mag = getattr(s, "bonus_magnitude", 0) * getattr(s, "confidence", 0) * cal_mult
+        rationale = getattr(s, "rationale", "")
+        if cal_mult != 1.0 and rationale:
+            rationale = f"{rationale} [cal×{cal_mult:.2f}]"
         if mag < 0:
             range_score += abs(mag)
+            if rationale:
+                contributions.append(("RANGE", abs(mag), rationale))
             continue
-        _add(getattr(s, "direction", "UNCLEAR"), mag, getattr(s, "rationale", ""))
+        _add(getattr(s, "direction", "UNCLEAR"), mag, rationale)
     for s in correlation_signals or []:
         _add(getattr(s, "direction", "UNCLEAR"),
              getattr(s, "bonus_magnitude", 0) * getattr(s, "confidence", 0),
