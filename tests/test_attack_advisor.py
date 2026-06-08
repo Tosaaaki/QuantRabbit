@@ -233,6 +233,78 @@ class AttackAdvisorTest(unittest.TestCase):
             self.assertTrue(any("no LIVE_READY lanes" in item for item in payload["blockers"]))
             self.assertEqual(payload["recommended_now_lane_ids"], [])
 
+    def test_surfaces_matrix_supported_repair_queue_from_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intents = root / "intents.json"
+            target = root / "target.json"
+            coverage = root / "coverage.json"
+            intents.write_text(json.dumps({"results": []}))
+            target.write_text(
+                json.dumps(
+                    {
+                        "status": "PURSUE_TARGET",
+                        "remaining_target_jpy": 1500.0,
+                        "remaining_risk_budget_jpy": 800.0,
+                    }
+                )
+            )
+            coverage.write_text(
+                json.dumps(
+                    {
+                        "status": "COVERAGE_GAP",
+                        "artifact_diagnostics": {
+                            "profitable_bucket_coverage": {
+                                "matrix_supported_repair_queue": [
+                                    {
+                                        "pair": "AUD_JPY",
+                                        "direction": "SHORT",
+                                        "coverage_state": "SURFACED_BUT_BLOCKED",
+                                        "strategy_profile_status": "BLOCK_UNTIL_NEW_EVIDENCE",
+                                        "strategy_profile_required_fix": "risk-resized dry-run receipt required",
+                                        "managed_net_jpy": 7152.6508,
+                                        "raw_net_jpy": 6393.126,
+                                        "trades": 52,
+                                        "days": 6,
+                                        "matrix_support_count": 9,
+                                        "matrix_reject_count": 0,
+                                        "matrix_warning_count": 5,
+                                        "matrix_support_context": [
+                                            "RISK_ASSET_JPY_CROSS_DIRECTION: SPX down maps to SHORT"
+                                        ],
+                                        "matrix_cross_asset_context": [
+                                            "GOLD_CONTEXT_TECHNICAL_DIRECTION: XAU pressure maps to SHORT"
+                                        ],
+                                        "top_blockers": ["EXHAUSTION_RANGE_CHASE"],
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                )
+            )
+
+            AttackAdvisor(
+                intents_path=intents,
+                target_state_path=target,
+                ai_backtest_path=root / "missing_backtest.json",
+                outcome_mart_path=root / "missing_outcome_mart.json",
+                coverage_path=coverage,
+                output_path=root / "advice.json",
+                report_path=root / "advice.md",
+            ).run()
+
+            payload = json.loads((root / "advice.json").read_text())
+            queue = payload["matrix_supported_repair_queue"]
+            self.assertEqual(queue[0]["pair"], "AUD_JPY")
+            self.assertEqual(queue[0]["direction"], "SHORT")
+            self.assertEqual(queue[0]["matrix_support_count"], 9)
+            self.assertIn("GOLD_CONTEXT_TECHNICAL_DIRECTION", queue[0]["matrix_cross_asset_context"][0])
+            self.assertTrue(any("repair matrix-supported profitable edges" in item for item in payload["action_items"]))
+            report = (root / "advice.md").read_text()
+            self.assertIn("Matrix-Supported Repair Queue", report)
+            self.assertIn("AUD_JPY SHORT", report)
+
     def test_precision_filtered_live_ready_lanes_report_precision_blocker_not_risk_budget(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

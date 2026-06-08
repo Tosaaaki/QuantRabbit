@@ -160,6 +160,7 @@ class AttackAdvisor:
         recommended_risk = _round(sum(lane.risk_jpy for lane in recommended))
         coverage_pct = _round((live_ready_reward / remaining_target) * 100.0) if remaining_target else 0.0
         recommended_coverage_pct = _round((recommended_reward / remaining_target) * 100.0) if remaining_target else 0.0
+        matrix_supported_repair_queue = _matrix_supported_repair_queue(coverage or {})
         blockers = tuple(
             _blockers(
                 intents=intents,
@@ -205,6 +206,7 @@ class AttackAdvisor:
             "recommended_now_risk_jpy": recommended_risk,
             "recommended_now_coverage_pct": recommended_coverage_pct,
             "watchlist_lane_ids": [lane.lane_id for lane in watchlist],
+            "matrix_supported_repair_queue": matrix_supported_repair_queue,
             "required_additional_reward_jpy": _round(max((remaining_target or 0.0) - live_ready_reward, 0.0)),
             "required_additional_live_ready_lanes": _required_additional_lanes(
                 remaining_target=remaining_target,
@@ -274,6 +276,23 @@ class AttackAdvisor:
         if payload["watchlist_lane_ids"]:
             for lane_id in payload["watchlist_lane_ids"][:REPORT_LANE_LIMIT]:
                 lines.append(f"- `{lane_id}`")
+        else:
+            lines.append("- none")
+        lines.extend(["", "## Matrix-Supported Repair Queue", ""])
+        if payload.get("matrix_supported_repair_queue"):
+            for item in payload["matrix_supported_repair_queue"][:REPORT_LANE_LIMIT]:
+                pair = item.get("pair") or ""
+                direction = item.get("direction") or ""
+                state = item.get("coverage_state") or ""
+                status = item.get("strategy_profile_status") or ""
+                support = item.get("matrix_support_count")
+                net = item.get("managed_net_jpy")
+                blockers = item.get("top_blockers") if isinstance(item.get("top_blockers"), list) else []
+                blocker = blockers[0] if blockers else ""
+                lines.append(
+                    f"- `{pair} {direction}` state=`{state}` profile=`{status}` "
+                    f"matrix_support=`{support}` managed_net=`{net}` blocker=`{blocker}`"
+                )
         else:
             lines.append("- none")
         lines.extend(["", "## Precision Filtered", ""])
@@ -850,9 +869,62 @@ def _action_items(
         yield "run build-outcome-mart before advice so archive condition history is grounded"
     if condition_index and live_ready and not any(lane.archive_condition_key for lane in live_ready):
         yield "current LIVE_READY lanes lack usable session/regime condition keys; archive condition edges are report-only until intents carry current market buckets"
+    matrix_queue = _matrix_supported_repair_queue(coverage)
+    if matrix_queue:
+        preview = "; ".join(
+            f"{item.get('pair')} {item.get('direction')} ({(item.get('top_blockers') or [''])[0]})"
+            for item in matrix_queue[:3]
+        )
+        yield f"repair matrix-supported profitable edges before broad exploration: {preview}"
     coverage_status = str(coverage.get("status") or "")
     if coverage_status and coverage_status != "LIVE_READY_COVERAGE_READY":
         yield f"resolve coverage optimizer status {coverage_status} before treating attack advice as certified"
+
+
+def _matrix_supported_repair_queue(coverage: dict[str, Any]) -> list[dict[str, Any]]:
+    diagnostics = (
+        coverage.get("artifact_diagnostics")
+        if isinstance(coverage.get("artifact_diagnostics"), dict)
+        else {}
+    )
+    profitable = (
+        diagnostics.get("profitable_bucket_coverage")
+        if isinstance(diagnostics.get("profitable_bucket_coverage"), dict)
+        else {}
+    )
+    rows = profitable.get("matrix_supported_repair_queue")
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            {
+                "pair": str(row.get("pair") or ""),
+                "direction": str(row.get("direction") or ""),
+                "coverage_state": str(row.get("coverage_state") or ""),
+                "strategy_profile_status": str(row.get("strategy_profile_status") or ""),
+                "strategy_profile_required_fix": str(row.get("strategy_profile_required_fix") or ""),
+                "managed_net_jpy": _round(float(row.get("managed_net_jpy") or 0.0)),
+                "raw_net_jpy": _round(float(row.get("raw_net_jpy") or 0.0)),
+                "trades": int(row.get("trades") or 0),
+                "days": int(row.get("days") or 0),
+                "matrix_support_count": int(row.get("matrix_support_count") or 0),
+                "matrix_reject_count": int(row.get("matrix_reject_count") or 0),
+                "matrix_warning_count": int(row.get("matrix_warning_count") or 0),
+                "matrix_support_context": _string_list(row.get("matrix_support_context"))[:4],
+                "matrix_cross_asset_context": _string_list(row.get("matrix_cross_asset_context"))[:4],
+                "top_blockers": _string_list(row.get("top_blockers"))[:4],
+            }
+        )
+    return out[:REPORT_LANE_LIMIT]
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item is not None and str(item)]
 
 
 def _status(
