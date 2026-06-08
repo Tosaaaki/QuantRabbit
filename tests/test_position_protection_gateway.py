@@ -351,6 +351,7 @@ class PositionProtectionGatewayTest(unittest.TestCase):
             ).run(
                 decision=PositionManagementDecision(
                     generated_at_utc="2026-05-01T00:00:00+00:00",
+                    snapshot_fetched_at_utc="2026-05-01T00:00:00+00:00",
                     action="MIXED",
                     positions=(
                         ManagedPosition(
@@ -430,6 +431,7 @@ def _decision(
 ) -> PositionManagementDecision:
     return PositionManagementDecision(
         generated_at_utc="2026-05-01T00:00:00+00:00",
+        snapshot_fetched_at_utc="2026-05-01T00:00:00+00:00",
         action=action,
         positions=(
             ManagedPosition(

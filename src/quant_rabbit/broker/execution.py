@@ -1250,7 +1250,7 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
         if str(item.get("priority") or "").upper() != "P0":
             continue
         code = str(item.get("code") or "SELF_IMPROVEMENT_P0")
-        if code in SELF_IMPROVEMENT_GATEWAY_NON_BLOCKER_CODES:
+        if _self_improvement_gateway_non_blocker(code, item):
             continue
         message = str(item.get("message") or code)
         blockers.append(f"{code}: {message}")
@@ -1264,10 +1264,31 @@ def _self_improvement_gateway_issues(path: Path | None) -> list[dict[str, str]]:
     ]
 
 
+def _self_improvement_gateway_non_blocker(code: str, finding: dict[str, Any]) -> bool:
+    if code not in SELF_IMPROVEMENT_GATEWAY_NON_BLOCKER_CODES:
+        return False
+    evidence = finding.get("evidence") if isinstance(finding.get("evidence"), dict) else {}
+    streak = _optional_int(evidence.get("current_streak"))
+    if streak is None:
+        return True
+    return streak < SELF_IMPROVEMENT_STALE_DECISION_PERSISTENT_STREAK
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # `LATEST_GPT_DECISION_STALE` is repaired by producing/verifying a current GPT
-# decision. Once a current LIVE_READY lane reaches the gateway, carrying the
-# prior stale-decision audit forward would self-block the repair path.
+# decision, so one fresh repair pass must not be self-blocked by the previous
+# audit. Once the audit history says the same stale-decision P0 is persistent,
+# staging fresh entry risk is blocked until the stale receipt is cleared.
 SELF_IMPROVEMENT_GATEWAY_NON_BLOCKER_CODES = frozenset({"LATEST_GPT_DECISION_STALE"})
+SELF_IMPROVEMENT_STALE_DECISION_PERSISTENT_STREAK = 2
 
 
 def _build_order_request(intent: OrderIntent) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:

@@ -49,7 +49,11 @@ class PositionManagerTest(unittest.TestCase):
             ).run(snapshot)
 
             self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
-            self.assertIn("remaining risk", (root / "pm.md").read_text())
+            payload = json.loads((root / "pm.json").read_text())
+            self.assertEqual(payload["snapshot_fetched_at_utc"], snapshot.fetched_at_utc.isoformat())
+            report = (root / "pm.md").read_text()
+            self.assertIn(f"Broker snapshot fetched at UTC: `{snapshot.fetched_at_utc.isoformat()}`", report)
+            self.assertIn("remaining risk", report)
 
     def test_missing_stop_requires_protection_repair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

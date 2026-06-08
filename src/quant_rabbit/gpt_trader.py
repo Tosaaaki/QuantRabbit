@@ -26,6 +26,15 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_utc(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -3026,7 +3035,7 @@ def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
         if not isinstance(blocker, dict):
             continue
         code = str(blocker.get("code") or "SELF_IMPROVEMENT_P0")
-        if code in SELF_IMPROVEMENT_NON_TRADE_BLOCKER_CODES:
+        if _self_improvement_non_trade_blocker(code, blocker):
             continue
         layer = str(blocker.get("layer") or "").strip()
         message = str(blocker.get("message") or "").strip()
@@ -3054,10 +3063,21 @@ def _self_improvement_trade_blockers(packet: dict[str, Any]) -> list[str]:
     return out
 
 
-# This P0 means "rewrite/verify the GPT receipt against the latest packet".
-# Treating it as a TRADE blocker inside the verifier is circular: the fresh
-# verifier pass is precisely the repair that clears the stale receipt.
+def _self_improvement_non_trade_blocker(code: str, blocker: dict[str, Any]) -> bool:
+    if code not in SELF_IMPROVEMENT_NON_TRADE_BLOCKER_CODES:
+        return False
+    streak = _optional_int(blocker.get("current_streak"))
+    if streak is None:
+        return True
+    return streak < SELF_IMPROVEMENT_STALE_DECISION_PERSISTENT_STREAK
+
+
+# A single stale prior GPT decision means "rewrite/verify the receipt against
+# the latest packet"; blocking that fresh verifier pass is circular. Once the
+# same finding persists across audit runs, it is no longer just repair-in-flight:
+# new risk must stop until the route proves the stale decision is cleared.
 SELF_IMPROVEMENT_NON_TRADE_BLOCKER_CODES = frozenset({"LATEST_GPT_DECISION_STALE"})
+SELF_IMPROVEMENT_STALE_DECISION_PERSISTENT_STREAK = 2
 
 
 def _lane_forecast_direction_issue(lane: dict[str, Any]) -> VerificationIssue | None:

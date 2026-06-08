@@ -175,6 +175,7 @@ class ManagedPosition:
 @dataclass(frozen=True)
 class PositionManagementDecision:
     generated_at_utc: str
+    snapshot_fetched_at_utc: str | None
     action: str
     positions: tuple[ManagedPosition, ...]
 
@@ -271,7 +272,12 @@ class PositionManager:
                     demoted.append(m)
             managed = tuple(demoted)
         action = _aggregate_action(managed)
-        decision = PositionManagementDecision(generated_at_utc=generated_at, action=action, positions=managed)
+        decision = PositionManagementDecision(
+            generated_at_utc=generated_at,
+            snapshot_fetched_at_utc=snapshot.fetched_at_utc.isoformat(),
+            action=action,
+            positions=managed,
+        )
         self._write(decision)
         return decision
 
@@ -543,6 +549,7 @@ class PositionManager:
             "# Position Management Report",
             "",
             f"- Generated at UTC: `{decision.generated_at_utc}`",
+            f"- Broker snapshot fetched at UTC: `{decision.snapshot_fetched_at_utc or 'unknown'}`",
             f"- Action: `{decision.action}`",
             f"- Positions: `{len(decision.positions)}`",
             "",

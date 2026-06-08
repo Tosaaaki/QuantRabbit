@@ -1013,6 +1013,49 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertTrue(any("position_management sidecar stale" in reason for reason in route.reasons))
         self.assertFalse(any("position_management REVIEW_EXIT" in reason for reason in route.reasons))
 
+    def test_position_management_source_snapshot_staleness_takes_precedence_over_generated_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                positions=[
+                    {
+                        "trade_id": "471817",
+                        "pair": "EUR_USD",
+                        "side": "LONG",
+                        "take_profit": 1.1800,
+                        "stop_loss": None,
+                        "owner": "trader",
+                        "unrealized_pl_jpy": -1900.0,
+                    }
+                ],
+            )
+            snapshot = json.loads(files["snapshot"].read_text())
+            current_snapshot_at = datetime.fromisoformat(snapshot["fetched_at_utc"])
+            (root / "position_management.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (current_snapshot_at + timedelta(seconds=5)).isoformat(),
+                        "snapshot_fetched_at_utc": (current_snapshot_at - timedelta(minutes=5)).isoformat(),
+                        "positions": [
+                            {
+                                "trade_id": "471817",
+                                "pair": "EUR_USD",
+                                "side": "LONG",
+                                "action": "HOLD_PROTECTED",
+                                "reasons": ["old broker truth"],
+                            }
+                        ],
+                    }
+                )
+            )
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_POSITION)
+        self.assertTrue(any("broker snapshot at" in reason for reason in route.reasons))
+        self.assertTrue(any("position_management sidecar stale" in reason for reason in route.reasons))
+
     def test_entry_thesis_blocker_routes_without_close_recommendation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

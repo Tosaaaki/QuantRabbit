@@ -1435,6 +1435,34 @@ class SelfImprovementAuditorTest(unittest.TestCase):
             codes["LATEST_GPT_DECISION_STALE"]["evidence"]["snapshot_fetched_at_utc"],
             _NOW.isoformat(),
         )
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["current_streak"], 1)
+
+    def test_stale_gpt_decision_finding_records_history_streak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=False,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["gpt"].write_text(
+                json.dumps(
+                    {
+                        "status": "ACCEPTED",
+                        "generated_at_utc": (_NOW - timedelta(minutes=1)).isoformat(),
+                        "decision": {"action": "WAIT"},
+                        "verification_issues": [],
+                    }
+                )
+            )
+
+            _run(files, now=_NOW)
+            _run(files, now=_NOW + timedelta(minutes=1))
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["current_streak"], 2)
+        self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["previous_streak"], 1)
 
     def test_stale_gpt_decision_is_not_p0_when_live_ready_entry_needs_fresh_decision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1464,6 +1492,36 @@ class SelfImprovementAuditorTest(unittest.TestCase):
         self.assertIn("LATEST_GPT_DECISION_STALE", codes)
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["priority"], "P1")
         self.assertEqual(codes["LATEST_GPT_DECISION_STALE"]["evidence"]["live_ready_lanes"], 1)
+
+    def test_position_management_stale_uses_source_snapshot_timestamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(
+                root,
+                active_position=True,
+                closed_pls=(100.0, 80.0, -50.0),
+            )
+            files["position_management"].write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": (_NOW + timedelta(seconds=5)).isoformat(),
+                        "snapshot_fetched_at_utc": (_NOW - timedelta(minutes=5)).isoformat(),
+                        "positions": [],
+                    }
+                )
+            )
+
+            summary = _run(files)
+            payload = json.loads(files["output"].read_text())
+
+        codes = {item["code"]: item for item in payload["findings"]}
+        self.assertEqual(summary.status, STATUS_BLOCKED)
+        self.assertIn("POSITION_MANAGEMENT_STALE", codes)
+        self.assertEqual(codes["POSITION_MANAGEMENT_STALE"]["priority"], "P0")
+        self.assertEqual(
+            codes["POSITION_MANAGEMENT_STALE"]["evidence"]["sidecar_snapshot_fetched_at_utc"],
+            (_NOW - timedelta(minutes=5)).isoformat(),
+        )
 
     def test_cli_writes_audit_and_returns_blocked_code_for_p0(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

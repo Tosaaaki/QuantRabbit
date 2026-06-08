@@ -2987,6 +2987,9 @@ class AutoTradeCycle:
             )
         return PositionManagementDecision(
             generated_at_utc=datetime.now(timezone.utc).isoformat(),
+            snapshot_fetched_at_utc=getattr(snapshot, "fetched_at_utc", None).isoformat()
+            if getattr(snapshot, "fetched_at_utc", None) is not None
+            else None,
             action="GPT_CLOSE",
             positions=tuple(managed),
         )

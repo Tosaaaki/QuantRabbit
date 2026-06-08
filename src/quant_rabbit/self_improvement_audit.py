@@ -185,6 +185,7 @@ class SelfImprovementAuditor:
         effect_24h = _effect_metrics(self.db_path, window_hours=24.0, now=clock)
         close_gate_loss_evidence = _close_gate_loss_evidence(ai_backtest_loaded, ai_test_bot_backtest_path)
         profitability_streak_before = self._history_code_streak(PROFITABILITY_DISCIPLINE_CODES)
+        latest_gpt_stale_streak_before = self._history_code_streak(("LATEST_GPT_DECISION_STALE",))
 
         findings: list[dict[str, Any]] = []
         artifact_loads = {
@@ -330,6 +331,7 @@ class SelfImprovementAuditor:
                 live_ready_lanes=len(live_ready),
                 pending_entry_orders=len(pending_entry_orders),
                 snapshot_ts=snapshot_ts,
+                latest_gpt_stale_streak_before=latest_gpt_stale_streak_before,
             )
         )
 
@@ -2659,8 +2661,11 @@ def _sidecar_findings(
                 )
             )
             continue
-        generated_at = _parse_utc((loaded.payload or {}).get("generated_at_utc"))
-        if snapshot_ts is not None and generated_at is not None and generated_at < snapshot_ts:
+        payload = loaded.payload or {}
+        generated_at = _parse_utc(payload.get("generated_at_utc"))
+        source_snapshot_at = _parse_utc(payload.get("snapshot_fetched_at_utc"))
+        freshness_at = source_snapshot_at or generated_at
+        if snapshot_ts is not None and freshness_at is not None and freshness_at < snapshot_ts:
             out.append(
                 _finding(
                     run_id=run_id,
@@ -2669,7 +2674,11 @@ def _sidecar_findings(
                     code=f"{name.upper()}_STALE",
                     message=f"{name} sidecar predates broker snapshot for active positions",
                     next_action=f"Rerun {name.replace('_', '-')} or route to the refresh branch before new exposure.",
-                    evidence={"generated_at_utc": generated_at.isoformat(), "snapshot_fetched_at_utc": snapshot_ts.isoformat()},
+                    evidence={
+                        "generated_at_utc": generated_at.isoformat() if generated_at else None,
+                        "sidecar_snapshot_fetched_at_utc": source_snapshot_at.isoformat() if source_snapshot_at else None,
+                        "snapshot_fetched_at_utc": snapshot_ts.isoformat(),
+                    },
                 )
             )
     close_refs = _close_recommendations(sidecars, active_trade_ids)
@@ -2704,6 +2713,7 @@ def _decision_artifact_findings(
     live_ready_lanes: int,
     pending_entry_orders: int,
     snapshot_ts: datetime | None,
+    latest_gpt_stale_streak_before: int = 0,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if gpt_loaded.error is not None:
@@ -2785,6 +2795,8 @@ def _decision_artifact_findings(
                         "snapshot_fetched_at_utc": snapshot_ts.isoformat(),
                         "live_ready_lanes": live_ready_lanes,
                         "pending_entry_orders": pending_entry_orders,
+                        "current_streak": max(1, latest_gpt_stale_streak_before + 1),
+                        "previous_streak": max(0, latest_gpt_stale_streak_before),
                     },
                 )
             )

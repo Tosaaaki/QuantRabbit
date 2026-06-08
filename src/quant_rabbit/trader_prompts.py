@@ -568,15 +568,18 @@ def _position_management_sidecar_refresh_reasons(
             f"{position_management_path}: {exc}; run position-management before new exposure",
         )
     generated_at = _parse_utc(payload.get("generated_at_utc"))
-    if generated_at is None:
+    source_snapshot_at = _parse_utc(payload.get("snapshot_fetched_at_utc"))
+    freshness_at = source_snapshot_at or generated_at
+    if freshness_at is None:
         return (
-            "position_management sidecar lacks generated_at_utc for active trader position(s): "
+            "position_management sidecar lacks generated_at_utc/snapshot_fetched_at_utc for active trader position(s): "
             f"{trade_ids}; run position-management before new exposure",
         )
-    if generated_at < fetched_at:
+    if freshness_at < fetched_at:
+        label = "broker snapshot" if source_snapshot_at is not None else "generated"
         return (
             "position_management sidecar stale for active trader position(s): "
-            f"generated at {generated_at.isoformat()} before broker snapshot "
+            f"{label} at {freshness_at.isoformat()} before broker snapshot "
             f"{fetched_at.isoformat()}; run position-management before new exposure",
         )
     return ()
