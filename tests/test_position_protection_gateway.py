@@ -171,6 +171,7 @@ class PositionProtectionGatewayTest(unittest.TestCase):
                     ACTION_REVIEW_EXIT,
                     stop=None,
                     reasons=(
+                        "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-90 JPY)",
                         "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
                     ),
                 ),
@@ -203,6 +204,7 @@ class PositionProtectionGatewayTest(unittest.TestCase):
                     ACTION_REVIEW_EXIT,
                     stop=None,
                     reasons=(
+                        "loss-cut: structural OB broken across 2 TFs (M15@1.17000, H1@1.17100) (-90 JPY)",
                         "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
                     ),
                 ),
@@ -212,6 +214,40 @@ class PositionProtectionGatewayTest(unittest.TestCase):
 
             self.assertEqual(summary.status, "SENT")
             self.assertEqual(client.closed, [("1", "ALL")])
+
+    def test_blocks_confidence_collapse_review_exit_even_with_structural_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ",
+            {
+                "QR_DISABLE_AUTO_CLOSE": "1",
+                "QR_ALLOW_STRUCTURAL_AUTO_CLOSE": "1",
+            },
+            clear=False,
+        ):
+            root = Path(tmp)
+            client = FakePositionClient()
+            summary = PositionProtectionGateway(
+                client=client,
+                output_path=root / "exec.json",
+                report_path=root / "exec.md",
+                live_enabled=True,
+            ).run(
+                decision=_decision(
+                    ACTION_REVIEW_EXIT,
+                    stop=None,
+                    reasons=(
+                        "loss-cut: entry thesis confidence collapse: entry UP conf=0.62 → latest UP conf=0.31 "
+                        "(< 0.50× entry); technical invalidation confirmed against LONG: M15 MACD-; M30 MACD-; M5 cloud- (-109 JPY)",
+                        "next-generation entry thesis ledger present → structural loss-cut remains executable under QR_DISABLE_AUTO_CLOSE=1",
+                    ),
+                ),
+                snapshot=_snapshot(unrealized_pl_jpy=-90.0),
+                send=True,
+            )
+
+            self.assertEqual(summary.status, "BLOCKED")
+            self.assertEqual(client.closed, [])
+            self.assertIn("REVIEW_EXIT_GATE_AB_REQUIRED", (root / "exec.md").read_text())
 
     def test_closes_profitable_position_with_take_profit_market_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

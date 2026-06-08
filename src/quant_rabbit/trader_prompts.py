@@ -805,12 +805,10 @@ def _position_management_standing_authorized(reason_parts: list[str]) -> bool:
         text = str(reason)
         if not text.startswith("loss-cut:"):
             continue
-        if "close-confirmed structural break" in text:
-            return True
-        if "structural OB broken" in text:
-            return True
         lowered = text.lower()
-        if "entry thesis invalidation hit" in lowered and "technical invalidation confirmed" in lowered:
+        if "close-confirmed structural break" in lowered:
+            return True
+        if "structural ob broken" in lowered:
             return True
     return False
 

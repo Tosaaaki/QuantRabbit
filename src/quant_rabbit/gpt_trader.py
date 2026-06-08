@@ -450,7 +450,7 @@ def _sidecar_close_standing_authorized(rec: dict[str, Any]) -> bool:
         return has_technical_confirmation and (has_invalidation_hit or has_structural_break)
     if source == "position_management" and verdict == "REVIEW_EXIT":
         reason = str(rec.get("reason") or "").lower()
-        return "entry thesis invalidation hit" in reason and "technical invalidation confirmed" in reason
+        return "close-confirmed structural break" in reason or "structural ob broken" in reason
     return False
 
 

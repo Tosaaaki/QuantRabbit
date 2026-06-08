@@ -951,12 +951,12 @@ class PositionManagerTest(unittest.TestCase):
                     report_path=root / "pm.md",
                 ).run(snapshot)
 
-                self.assertEqual(result.action, ACTION_REVIEW_EXIT)
-                self.assertEqual(result.positions[0].action, ACTION_REVIEW_EXIT)
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
                 report = (root / "pm.md").read_text()
                 self.assertIn("loss-cut: entry thesis invalidation hit", report)
                 self.assertIn("technical invalidation confirmed against LONG", report)
-                self.assertIn("next-generation entry thesis ledger present", report)
+                self.assertIn("soft entry-thesis / forecast-collapse evidence must go through gpt_trader Gate A/B", report)
         finally:
             if prior_close is None:
                 os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
@@ -1041,12 +1041,12 @@ class PositionManagerTest(unittest.TestCase):
                     report_path=root / "pm.md",
                 ).run(snapshot)
 
-                self.assertEqual(result.action, ACTION_REVIEW_EXIT)
-                self.assertEqual(result.positions[0].action, ACTION_REVIEW_EXIT)
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
                 report = (root / "pm.md").read_text()
                 self.assertIn("loss-cut: entry thesis confidence collapse", report)
                 self.assertIn("technical invalidation confirmed against LONG", report)
-                self.assertIn("next-generation entry thesis ledger present", report)
+                self.assertIn("soft entry-thesis / forecast-collapse evidence must go through gpt_trader Gate A/B", report)
         finally:
             if prior_close is None:
                 os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)
@@ -1118,9 +1118,11 @@ class PositionManagerTest(unittest.TestCase):
                     data_root=data_root,
                 ).run(snapshot)
 
-                self.assertEqual(result.action, ACTION_REVIEW_EXIT)
-                self.assertEqual(result.positions[0].action, ACTION_REVIEW_EXIT)
-                self.assertIn("entry thesis invalidation hit", (output_root / "pm.md").read_text())
+                self.assertEqual(result.action, ACTION_HOLD_PROTECTED)
+                self.assertEqual(result.positions[0].action, ACTION_HOLD_PROTECTED)
+                report = (output_root / "pm.md").read_text()
+                self.assertIn("entry thesis invalidation hit", report)
+                self.assertIn("soft entry-thesis / forecast-collapse evidence must go through gpt_trader Gate A/B", report)
         finally:
             if prior_close is None:
                 os.environ.pop("QR_DISABLE_AUTO_CLOSE", None)

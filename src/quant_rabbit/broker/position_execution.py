@@ -348,6 +348,7 @@ def _review_exit_gate_issue(managed: ManagedPosition) -> dict[str, str] | None:
         "next-generation entry thesis ledger present" in reason_text
         and "structural loss-cut remains executable" in reason_text
         and _structural_auto_close_enabled()
+        and _structural_review_exit_reason(managed.reasons)
     ):
         return None
     return {
@@ -366,6 +367,19 @@ def _auto_close_disabled() -> bool:
 
 def _structural_auto_close_enabled() -> bool:
     return os.environ.get("QR_ALLOW_STRUCTURAL_AUTO_CLOSE", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _structural_review_exit_reason(reasons: tuple[str, ...]) -> bool:
+    for reason in reasons:
+        text = str(reason)
+        if not text.startswith("loss-cut:"):
+            continue
+        lowered = text.lower()
+        if "close-confirmed structural break" in lowered:
+            return True
+        if "structural ob broken" in lowered:
+            return True
+    return False
 
 
 def _stop_update_issue(position: BrokerPosition, new_stop: float, quote: Quote | None) -> dict[str, str] | None:

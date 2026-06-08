@@ -240,9 +240,20 @@ class PositionManager:
                             owner=m.owner,
                         ))
                         continue
-                    new_reasons = tuple(list(m.reasons) + [
-                        "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; loss-side close must go through gpt_trader Gate A/B unless QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1 is explicitly set",
-                    ])
+                    if _structural_auto_close_enabled():
+                        demotion_reason = (
+                            "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; "
+                            "QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1 applies only to next-generation hard structural "
+                            "loss-cuts (H1/H4 close-confirmed break or multi-TF structural OB break); "
+                            "soft entry-thesis / forecast-collapse evidence must go through gpt_trader Gate A/B"
+                        )
+                    else:
+                        demotion_reason = (
+                            "QR_DISABLE_AUTO_CLOSE=1 → REVIEW_EXIT demoted to HOLD_PROTECTED; "
+                            "loss-side close must go through gpt_trader Gate A/B unless "
+                            "QR_ALLOW_STRUCTURAL_AUTO_CLOSE=1 is explicitly set for hard structural evidence"
+                        )
+                    new_reasons = tuple(list(m.reasons) + [demotion_reason])
                     demoted.append(ManagedPosition(
                         trade_id=m.trade_id, pair=m.pair, side=m.side,
                         units=m.units, action=ACTION_HOLD_PROTECTED,
@@ -1018,18 +1029,21 @@ def _structural_auto_close_enabled() -> bool:
 
 
 def _structural_loss_cut_reason(reasons: tuple[str, ...]) -> bool:
+    """Return true only for deterministic structural loss-cut evidence.
+
+    Entry-thesis invalidation hits and forecast-confidence collapses are useful
+    Gate A material, but they are not deterministic structural auto-close
+    permission. They must remain in the GPT CLOSE Gate A/B path so same-side
+    recovery context, matrix support, and operator authorization can be checked.
+    """
     for reason in reasons:
         text = str(reason)
         if not text.startswith("loss-cut:"):
             continue
-        if "close-confirmed structural break" in text:
-            return True
-        if "structural OB broken" in text:
-            return True
         lowered = text.lower()
-        if "entry thesis invalidation hit" in lowered and "technical invalidation confirmed" in lowered:
+        if "close-confirmed structural break" in lowered:
             return True
-        if "entry thesis confidence collapse" in lowered and "technical invalidation confirmed" in lowered:
+        if "structural ob broken" in lowered:
             return True
     return False
 

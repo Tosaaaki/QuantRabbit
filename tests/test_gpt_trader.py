@@ -3265,6 +3265,7 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
 
     def test_close_rejected_without_operator_token_when_only_soft_position_thesis_sidecar(self) -> None:
@@ -3284,6 +3285,7 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertFalse(recs[0]["gate_b_standing_authorized"])
@@ -3399,6 +3401,7 @@ class CloseDisciplineTest(unittest.TestCase):
             payload = json.loads((root / "gpt_decision.json").read_text())
             codes = {issue["code"] for issue in payload["verification_issues"]}
             self.assertIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
             self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertEqual(recs[0]["source"], "position_thesis")
@@ -3496,7 +3499,7 @@ class CloseDisciplineTest(unittest.TestCase):
             self.assertTrue(recs[0]["gate_b_standing_authorized"])
             self.assertIn("position:management:555", payload["input_packet"]["allowed_evidence_refs"])
 
-    def test_close_accepted_without_operator_token_when_position_management_entry_invalidation_hit(self) -> None:
+    def test_close_rejected_without_operator_token_when_position_management_entry_invalidation_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             files = _close_fixtures(root, position_side="LONG", m15_dir="UP", h4_dir="UP")
@@ -3519,12 +3522,15 @@ class CloseDisciplineTest(unittest.TestCase):
 
             summary = brain.run(snapshot_path=files["snapshot"])
 
-            self.assertEqual(summary.status, "ACCEPTED", msg=summary)
+            self.assertEqual(summary.status, "REJECTED", msg=summary)
             payload = json.loads((root / "gpt_decision.json").read_text())
-            self.assertEqual(payload["verification_issues"], [])
+            codes = {issue["code"] for issue in payload["verification_issues"]}
+            self.assertIn("CLOSE_SAME_DIRECTION_MARKET_SUPPORT", codes)
+            self.assertNotIn("CLOSE_OPERATOR_AUTH_REQUIRED", codes)
+            self.assertNotIn("CLOSE_THESIS_STILL_VALID", codes)
             recs = payload["input_packet"]["protection_sidecars"]["position_close_recommendations"]
             self.assertEqual(recs[0]["source"], "position_management")
-            self.assertTrue(recs[0]["gate_b_standing_authorized"])
+            self.assertFalse(recs[0]["gate_b_standing_authorized"])
 
     def test_close_accepted_without_operator_token_when_thesis_evolution_is_broken(self) -> None:
         # thesis_evolution BROKEN / RECOMMEND_CLOSE is generated from entry

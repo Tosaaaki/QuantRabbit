@@ -2380,7 +2380,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                             "forecast_direction": "UP",
                             "forecast_confidence": 0.58,
                             "regime": "RANGE",
-                            "invalidation_price": 1.34679,
+                            "invalidation_price": 1.34000,
                             "target_price": 1.34853,
                             "key_drivers": ["failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"],
                         }
@@ -2498,7 +2498,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                             "forecast_direction": "UP",
                             "forecast_confidence": 0.58,
                             "regime": "RANGE",
-                            "invalidation_price": 1.34679,
+                            "invalidation_price": 1.34000,
                             "target_price": 1.34853,
                             "key_drivers": ["failure_trader:EUR_USD:LONG:BREAKOUT_FAILURE"],
                         }
@@ -3775,7 +3775,8 @@ def _entry_invalidation_pair_charts(root: Path) -> Path:
                             "M5(TREND_DOWN,ADX=22,ST=-,struct=NONE) "
                             "M15(TREND_DOWN,ADX=23,ST=-,struct=NONE) "
                             "M30(TREND_DOWN,ADX=21,ST=-,struct=NONE) "
-                            "H1(TREND_DOWN,ADX=20,ST=-,struct=NONE)"
+                            "H1(TREND_DOWN,ADX=24,ST=-,struct=BOS_DOWN@1.3439) "
+                            "H4(TREND_DOWN,ADX=25,ST=-,struct=BOS_DOWN@1.3439)"
                         ),
                         "session": {"current_tag": "LONDON_KILLZONE"},
                         "views": [
@@ -3798,6 +3799,21 @@ def _entry_invalidation_pair_charts(root: Path) -> Path:
                                 "granularity": "H1",
                                 "regime": "TREND_DOWN",
                                 "indicators": dict(adverse_indicators),
+                                "structure": {
+                                    "structure_events": [
+                                        {"kind": "BOS_DOWN", "close_confirmed": True},
+                                    ]
+                                },
+                            },
+                            {
+                                "granularity": "H4",
+                                "regime": "TREND_DOWN",
+                                "indicators": dict(adverse_indicators),
+                                "structure": {
+                                    "structure_events": [
+                                        {"kind": "BOS_DOWN", "close_confirmed": True},
+                                    ]
+                                },
                             },
                         ],
                     }
