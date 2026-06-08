@@ -52,6 +52,60 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertEqual(summary.needs_snapshot, 1)
             self.assertIn("NEEDS_BROKER_SNAPSHOT", report.read_text())
 
+    def test_refuses_stale_campaign_plan_when_target_state_is_newer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            old_ts = datetime(2026, 1, 1, tzinfo=timezone.utc).isoformat()
+            current_ts = datetime(2026, 1, 2, tzinfo=timezone.utc).isoformat()
+            campaign = data_root / "daily_campaign_plan.json"
+            campaign.write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": old_ts,
+                        "start_balance_jpy": 200000.0,
+                        "target_jpy": 20000.0,
+                        "lanes": [
+                            {
+                                "desk": "trend_trader",
+                                "pair": "EUR_USD",
+                                "direction": "LONG",
+                                "method": "TREND_CONTINUATION",
+                                "adoption": "ORDER_INTENT_REQUIRED",
+                                "campaign_role": "NOW",
+                                "reason": "stale fixture",
+                                "required_receipt": "must not be reused",
+                                "blockers": [],
+                            }
+                        ],
+                    }
+                )
+            )
+            (data_root / "daily_target_state.json").write_text(
+                json.dumps(
+                    {
+                        "generated_at_utc": current_ts,
+                        "status": "PURSUE_TARGET",
+                        "start_balance_jpy": 100000.0,
+                        "target_jpy": 10000.0,
+                        "daily_risk_budget_jpy": 10000.0,
+                        "per_trade_risk_budget_jpy": 1000.0,
+                    }
+                )
+            )
+            snapshot = _snapshot(root, fetched_at_utc=current_ts, quote_timestamp_utc=current_ts)
+
+            with self.assertRaisesRegex(RuntimeError, "campaign plan stale"):
+                IntentGenerator(
+                    campaign_plan=campaign,
+                    strategy_profile=_strategy(root),
+                    output_path=root / "intents.json",
+                    report_path=root / "intents.md",
+                    pair_charts_path=_pair_charts(root),
+                    data_root=data_root,
+                ).run(snapshot_path=snapshot)
+
     def test_generates_and_risk_checks_priced_intent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

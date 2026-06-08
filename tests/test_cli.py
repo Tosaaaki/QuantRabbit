@@ -647,6 +647,41 @@ class CliHelpTest(unittest.TestCase):
         self.assertEqual(code, 0)
         generator_cls.return_value.run.assert_called_once_with(snapshot_path=snapshot, max_candidates=56)
 
+    def test_generate_intents_returns_json_error_for_stale_campaign_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stdout = io.StringIO()
+
+            with mock.patch(
+                "quant_rabbit.cli._auto_refresh_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ), mock.patch(
+                "quant_rabbit.cli._refresh_snapshot_after_market_evidence_if_required",
+                return_value={"status": "SKIPPED", "reason": "test"},
+            ), mock.patch(
+                "quant_rabbit.cli.IntentGenerator"
+            ) as generator_cls, redirect_stdout(stdout):
+                generator_cls.return_value.run.side_effect = RuntimeError("campaign plan stale while target is open")
+                code = main(
+                    [
+                        "generate-intents",
+                        "--campaign-plan",
+                        str(root / "data" / "daily_campaign_plan.json"),
+                        "--strategy-profile",
+                        str(root / "data" / "strategy_profile.json"),
+                        "--snapshot",
+                        str(root / "data" / "broker_snapshot.json"),
+                        "--output",
+                        str(root / "data" / "order_intents.json"),
+                        "--report",
+                        str(root / "docs" / "order_intents_report.md"),
+                        "--no-refresh-market-story",
+                    ]
+                )
+
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(stdout.getvalue())["error"], "campaign plan stale while target is open")
+
     def test_generate_intents_syncs_execution_ledger_before_live_telemetry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

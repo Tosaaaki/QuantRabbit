@@ -25,6 +25,7 @@ from quant_rabbit.paths import (
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_AI_TEST_BOT_BACKTEST,
     DEFAULT_AI_TEST_BOT_BACKTEST_REPORT,
+    DEFAULT_CAMPAIGN_REPORT,
     DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_DAILY_TARGET_REPORT,
     DEFAULT_DAILY_TARGET_STATE,
@@ -68,6 +69,7 @@ from quant_rabbit.learning_audit import LearningAuditor
 from quant_rabbit.risk import RiskPolicy, margin_budget_jpy, resolve_max_loss_jpy
 from quant_rabbit.snapshot_json import snapshot_order_raw
 from quant_rabbit.target import DailyTargetLedger, DailyTargetSummary
+from quant_rabbit.strategy.ensemble import CampaignPlanner
 from quant_rabbit.strategy.intent_generator import IntentGenerationSummary, IntentGenerator, _snapshot_from_json
 from quant_rabbit.strategy.market_story import MarketStoryMiner
 from quant_rabbit.strategy.position_manager import ACTION_REVIEW_EXIT, ManagedPosition, PositionManagementDecision, PositionManager
@@ -925,6 +927,7 @@ class AutoTradeCycle:
         if self.reuse_market_artifacts:
             intent_summary = self._load_intent_summary_artifact()
         else:
+            self._refresh_campaign_plan(target_summary)
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         position_decision = None
         position_execution = None
@@ -1323,6 +1326,7 @@ class AutoTradeCycle:
         else:
             promotion_summary = self._receipt_promoter().run()
         if promotion_summary.promoted and not self.reuse_market_artifacts:
+            self._refresh_campaign_plan(target_summary)
             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(snapshot_path=self.snapshot_path)
         decision = self._brain().run(snapshot)
         deterministic_lane_id = decision.selected_lane_id if decision.action == ACTION_SEND_ENTRY else None
@@ -1455,6 +1459,7 @@ class AutoTradeCycle:
                             target_summary = self._update_target_state(snapshot) or target_summary
                             positions = len(snapshot.positions)
                             orders = len(snapshot.orders)
+                            self._refresh_campaign_plan(target_summary)
                             intent_summary = self._intent_generator(max_loss_jpy=resolved_max_loss_jpy).run(
                                 snapshot_path=self.snapshot_path,
                                 max_candidates=12,
@@ -2063,12 +2068,14 @@ class AutoTradeCycle:
         self.report_path.write_text("\n".join(lines) + "\n")
 
     def _intent_generator(self, max_loss_jpy: float | None = None) -> IntentGenerator:
+        data_root = self.target_state_path.parent if self.target_state_path is not None else self.intents_path.parent
         return IntentGenerator(
             campaign_plan=self.campaign_plan_path,
             pair_charts_path=self.pair_charts_path,
             strategy_profile=self.strategy_profile_path,
             output_path=self.intents_path,
             report_path=self.intent_report_path,
+            data_root=data_root,
             max_loss_jpy=max_loss_jpy,
         )
 
@@ -2291,6 +2298,36 @@ class AutoTradeCycle:
         if self._refresh_ai_test_bot_backtest_for_target_pace():
             summary = ledger.run(snapshot=snapshot)
         return summary
+
+    def _refresh_campaign_plan(self, target_summary: DailyTargetSummary | None) -> None:
+        if target_summary is None:
+            return
+        if target_summary.status == "TARGET_REACHED_PROTECT":
+            return
+        if self.target_state_path is None or not self.target_state_path.exists():
+            return
+        try:
+            target_payload = json.loads(self.target_state_path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return
+        start_balance = _optional_float(target_payload.get("start_balance_jpy"))
+        target_jpy = _optional_float(target_payload.get("target_jpy"))
+        if start_balance is None or start_balance <= 0:
+            return
+        target_return_pct = 10.0
+        if target_jpy is not None and target_jpy > 0:
+            target_return_pct = (target_jpy / start_balance) * 100.0
+        campaign_report_path = (
+            DEFAULT_CAMPAIGN_REPORT
+            if self.campaign_plan_path == DEFAULT_CAMPAIGN_PLAN
+            else self.campaign_plan_path.with_suffix(".md")
+        )
+        CampaignPlanner(
+            strategy_profile=self.strategy_profile_path,
+            market_story_profile=self.market_story_profile_path,
+            report_path=campaign_report_path,
+            plan_path=self.campaign_plan_path,
+        ).run(start_balance_jpy=start_balance, target_return_pct=target_return_pct)
 
     def _refresh_ai_test_bot_backtest_for_target_pace(self) -> bool:
         """Refresh target-band evidence before daily target pace is trusted."""

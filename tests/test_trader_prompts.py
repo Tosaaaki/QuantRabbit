@@ -142,6 +142,37 @@ class TraderPromptRouteTest(unittest.TestCase):
         self.assertEqual(route.branch, BRANCH_REFRESH)
         self.assertTrue(any("strategy profile is older than history DB" in reason for reason in route.reasons))
 
+    def test_stale_campaign_plan_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            target = json.loads(files["target"].read_text())
+            target["generated_at_utc"] = (base + timedelta(minutes=5)).isoformat()
+            files["target"].write_text(json.dumps(target))
+
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["generated_at_utc"] = base.isoformat()
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("campaign plan stale" in reason for reason in route.reasons))
+
+    def test_campaign_plan_target_mismatch_routes_open_target_to_refresh_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            files = _fixtures(root)
+            campaign = json.loads(files["campaign_plan"].read_text())
+            campaign["start_balance_jpy"] = 200000.0
+            files["campaign_plan"].write_text(json.dumps(campaign))
+
+            route = route_trader_prompts(**_route_paths(files), decision_response_path=None)
+
+        self.assertEqual(route.branch, BRANCH_REFRESH)
+        self.assertTrue(any("campaign plan target mismatch" in reason for reason in route.reasons))
+
     def test_missing_memory_health_routes_open_target_to_refresh_branch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1510,6 +1541,8 @@ class TraderPromptRouteTest(unittest.TestCase):
                         str(files["attack_advice"]),
                         "--learning-audit",
                         str(files["learning_audit"]),
+                        "--campaign-plan",
+                        str(files["campaign_plan"]),
                         "--memory-health",
                         str(files["memory_health"]),
                         "--strategy-profile",
@@ -1548,6 +1581,7 @@ def _route_paths(files: dict[str, Path]) -> dict[str, Path]:
         "option_skew_path": files["option_skew"],
         "attack_advice_path": files["attack_advice"],
         "learning_audit_path": files["learning_audit"],
+        "campaign_plan_path": files["campaign_plan"],
         "memory_health_path": files["memory_health"],
         "strategy_profile_path": files["strategy_profile"],
         "trader_overrides_path": files["trader_overrides"],
@@ -1577,6 +1611,7 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
         "option_skew": root / "option_skew_snapshot.json",
         "attack_advice": root / "ai_attack_advice.json",
         "learning_audit": root / "learning_audit.json",
+        "campaign_plan": root / "daily_campaign_plan.json",
         "memory_health": root / "memory_health.json",
         "strategy_profile": root / "strategy_profile.json",
         "history_db": root / "legacy_history.db",
@@ -1600,9 +1635,30 @@ def _fixtures(root: Path, *, positions: list[dict] | None = None) -> dict[str, P
     files["target"].write_text(
         json.dumps(
             {
+                "generated_at_utc": now,
                 "status": "PURSUE_TARGET",
+                "start_balance_jpy": 10000.0,
+                "target_jpy": 1000.0,
                 "remaining_target_jpy": 1000.0,
                 "progress_jpy": 0.0,
+            }
+        )
+    )
+    files["campaign_plan"].write_text(
+        json.dumps(
+            {
+                "generated_at_utc": now,
+                "start_balance_jpy": 10000.0,
+                "target_jpy": 1000.0,
+                "lanes": [
+                    {
+                        "desk": "trend_trader",
+                        "pair": "EUR_USD",
+                        "direction": "LONG",
+                        "method": "TREND_CONTINUATION",
+                        "adoption": "ORDER_INTENT_REQUIRED",
+                    }
+                ],
             }
         )
     )

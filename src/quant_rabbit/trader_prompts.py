@@ -39,6 +39,7 @@ from quant_rabbit.paths import (
     DEFAULT_AI_ATTACK_ADVICE,
     DEFAULT_BROKER_SNAPSHOT,
     DEFAULT_CALENDAR_SNAPSHOT,
+    DEFAULT_CAMPAIGN_PLAN,
     DEFAULT_CODEX_TRADER_DECISION_RESPONSE,
     DEFAULT_COT_SNAPSHOT,
     DEFAULT_CROSS_ASSET_SNAPSHOT,
@@ -153,6 +154,7 @@ def route_trader_prompts(
     option_skew_path: Path = DEFAULT_OPTION_SKEW,
     attack_advice_path: Path = DEFAULT_AI_ATTACK_ADVICE,
     learning_audit_path: Path = DEFAULT_LEARNING_AUDIT,
+    campaign_plan_path: Path | None = DEFAULT_CAMPAIGN_PLAN,
     memory_health_path: Path | None = DEFAULT_MEMORY_HEALTH,
     strategy_profile_path: Path | None = DEFAULT_STRATEGY_PROFILE,
     trader_overrides_path: Path | None = DEFAULT_TRADER_OVERRIDES,
@@ -253,6 +255,11 @@ def route_trader_prompts(
         target_state,
         strategy_profile_path=strategy_profile_path,
     )
+    campaign_plan_refresh_reasons = _campaign_plan_refresh_reasons(
+        target_state,
+        campaign_plan_path=campaign_plan_path,
+        strategy_profile_path=strategy_profile_path,
+    )
     memory_health_refresh_reasons = _memory_health_refresh_reasons(
         target_state,
         snapshot,
@@ -262,6 +269,7 @@ def route_trader_prompts(
     evidence_refresh_reasons = (
         *trader_overrides_refresh_reasons,
         *strategy_profile_refresh_reasons,
+        *campaign_plan_refresh_reasons,
         *memory_health_refresh_reasons,
     )
     if evidence_refresh_reasons:
@@ -1218,6 +1226,79 @@ def _strategy_profile_refresh_reasons(
             "run mine-strategy before entry/verify routing",
         )
     return ()
+
+
+def _campaign_plan_refresh_reasons(
+    target_state: dict[str, Any],
+    *,
+    campaign_plan_path: Path | None,
+    strategy_profile_path: Path | None,
+) -> tuple[str, ...]:
+    """Require the campaign universe to match the current daily target state."""
+    if campaign_plan_path is None or not _target_open(target_state):
+        return ()
+    if not campaign_plan_path.exists():
+        return (
+            f"campaign plan missing while target is open: {campaign_plan_path}; "
+            "run plan-campaign before intent generation",
+        )
+    try:
+        payload = _load_json(campaign_plan_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return (
+            f"campaign plan unreadable while target is open: {campaign_plan_path}: {exc}; "
+            "run plan-campaign before intent generation",
+        )
+    generated_at = _parse_utc(payload.get("generated_at_utc"))
+    if generated_at is None:
+        return (
+            f"campaign plan lacks generated_at_utc while target is open: {campaign_plan_path}; "
+            "run plan-campaign before intent generation",
+        )
+    target_generated_at = _parse_utc(target_state.get("generated_at_utc"))
+    if target_generated_at is not None and generated_at < target_generated_at:
+        return (
+            "campaign plan stale while target is open: "
+            f"campaign plan generated at {generated_at.isoformat()} before "
+            f"daily target state {target_generated_at.isoformat()}; run plan-campaign",
+        )
+    mismatch = _campaign_plan_target_mismatch(payload, target_state)
+    if mismatch:
+        return (
+            f"campaign plan target mismatch while target is open: {mismatch}; "
+            "run plan-campaign before intent generation",
+        )
+    if strategy_profile_path is not None and strategy_profile_path.exists():
+        try:
+            strategy_payload = _load_json(strategy_profile_path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            strategy_payload = {}
+        strategy_generated_at = _parse_utc(strategy_payload.get("generated_at_utc"))
+        if strategy_generated_at is not None and generated_at < strategy_generated_at:
+            return (
+                "campaign plan stale while target is open: "
+                f"campaign plan generated at {generated_at.isoformat()} before "
+                f"strategy profile {strategy_generated_at.isoformat()}; run plan-campaign",
+            )
+    lanes = payload.get("lanes")
+    if not isinstance(lanes, list) or not lanes:
+        return (
+            f"campaign plan has zero lanes while target is open: {campaign_plan_path}; "
+            "run plan-campaign before intent generation",
+        )
+    return ()
+
+
+def _campaign_plan_target_mismatch(plan: dict[str, Any], target_state: dict[str, Any]) -> str | None:
+    for key in ("start_balance_jpy", "target_jpy"):
+        plan_value = _optional_float(plan.get(key))
+        target_value = _optional_float(target_state.get(key))
+        if plan_value is None or target_value is None:
+            continue
+        tolerance = max(1.0, abs(target_value) * 0.0001)
+        if abs(plan_value - target_value) > tolerance:
+            return f"{key} plan={plan_value:.2f} target={target_value:.2f}"
+    return None
 
 
 def _memory_health_refresh_reasons(

@@ -1362,6 +1362,7 @@ def main(argv: list[str] | None = None) -> int:
     p_prompt.add_argument("--option-skew", type=Path, default=DEFAULT_OPTION_SKEW)
     p_prompt.add_argument("--attack-advice", type=Path, default=DEFAULT_AI_ATTACK_ADVICE)
     p_prompt.add_argument("--learning-audit", type=Path, default=DEFAULT_LEARNING_AUDIT)
+    p_prompt.add_argument("--campaign-plan", type=Path, default=DEFAULT_CAMPAIGN_PLAN)
     p_prompt.add_argument("--memory-health", type=Path, default=DEFAULT_MEMORY_HEALTH)
     p_prompt.add_argument("--strategy-profile", type=Path, default=DEFAULT_STRATEGY_PROFILE)
     p_prompt.add_argument("--trader-overrides", type=Path, default=DEFAULT_TRADER_OVERRIDES)
@@ -1950,19 +1951,23 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "DELEGATED_TO_INTENT_GENERATOR",
                 "reason": "avoid duplicate pre-entry forecast synthesis before live validation",
             }
-        summary = IntentGenerator(
-            campaign_plan=args.campaign_plan,
-            strategy_profile=args.strategy_profile,
-            output_path=args.output,
-            report_path=args.report,
-            market_context_matrix_path=args.market_context_matrix,
-            max_loss_jpy=_resolve_max_loss_from_args(
-                max_loss_jpy=args.max_loss_jpy,
-                max_loss_pct=args.max_loss_pct,
-                risk_equity_jpy=args.risk_equity_jpy,
-                label="generate-intents",
-            ),
-        ).run(snapshot_path=args.snapshot, max_candidates=args.max_candidates)
+        try:
+            summary = IntentGenerator(
+                campaign_plan=args.campaign_plan,
+                strategy_profile=args.strategy_profile,
+                output_path=args.output,
+                report_path=args.report,
+                market_context_matrix_path=args.market_context_matrix,
+                max_loss_jpy=_resolve_max_loss_from_args(
+                    max_loss_jpy=args.max_loss_jpy,
+                    max_loss_pct=args.max_loss_pct,
+                    risk_equity_jpy=args.risk_equity_jpy,
+                    label="generate-intents",
+                ),
+            ).run(snapshot_path=args.snapshot, max_candidates=args.max_candidates)
+        except (RuntimeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({"error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
         print(
             json.dumps(
                 {
@@ -2710,6 +2715,7 @@ def main(argv: list[str] | None = None) -> int:
                 option_skew_path=args.option_skew,
                 attack_advice_path=args.attack_advice,
                 learning_audit_path=args.learning_audit,
+                campaign_plan_path=args.campaign_plan,
                 memory_health_path=args.memory_health,
                 strategy_profile_path=args.strategy_profile,
                 trader_overrides_path=args.trader_overrides,

@@ -718,6 +718,117 @@ def _state_field(state_path: Path, key: str) -> float | None:
     return value if value > 0 else None
 
 
+def _campaign_plan_staleness_issue(
+    plan: dict[str, Any],
+    *,
+    campaign_plan_path: Path,
+    strategy_profile_path: Path,
+    data_root: Path,
+    snapshot: BrokerSnapshot | None,
+) -> str | None:
+    """Return a loud production blocker when a dated plan is reused across states."""
+    if snapshot is None:
+        return None
+
+    target_state_path = _campaign_target_state_path(campaign_plan_path, data_root)
+    target_state = _load_json_dict(target_state_path) if target_state_path is not None else {}
+    strategy_profile = _load_strategy_profile_for_plan(strategy_profile_path, data_root)
+    if not target_state and not strategy_profile:
+        return None
+
+    target_generated_at = _parse_telemetry_time(target_state.get("generated_at_utc"))
+    strategy_generated_at = _parse_telemetry_time(strategy_profile.get("generated_at_utc"))
+    generated_at = _parse_telemetry_time(plan.get("generated_at_utc"))
+    if generated_at is None:
+        if target_state or strategy_generated_at is not None:
+            return (
+                f"campaign plan lacks generated_at_utc while broker snapshot is current: {campaign_plan_path}; "
+                "run plan-campaign before generate-intents"
+            )
+        return None
+
+    if target_generated_at is not None and generated_at < target_generated_at:
+        return (
+            "campaign plan stale relative to daily target state: "
+            f"{campaign_plan_path} generated at {generated_at.isoformat()} before "
+            f"{target_state_path} {target_generated_at.isoformat()}; run plan-campaign"
+        )
+
+    if strategy_generated_at is not None and generated_at < strategy_generated_at:
+        return (
+            "campaign plan stale relative to strategy profile: "
+            f"{campaign_plan_path} generated at {generated_at.isoformat()} before "
+            f"{strategy_profile_path} {strategy_generated_at.isoformat()}; run plan-campaign"
+        )
+
+    mismatch = _campaign_target_mismatch(plan, target_state)
+    if mismatch:
+        return (
+            f"campaign plan target state mismatch while broker snapshot is current: {mismatch}; "
+            f"plan={campaign_plan_path} target_state={target_state_path}; run plan-campaign"
+        )
+    return None
+
+
+def _load_json_dict(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _campaign_target_state_path(campaign_plan_path: Path, data_root: Path) -> Path | None:
+    local_target_state = campaign_plan_path.parent / DEFAULT_DAILY_TARGET_STATE.name
+    campaign_is_in_data_root = _path_is_same_or_under(campaign_plan_path, data_root)
+    if local_target_state.exists() and campaign_is_in_data_root:
+        return local_target_state
+    if campaign_is_in_data_root or (
+        _paths_equivalent(campaign_plan_path, DEFAULT_CAMPAIGN_PLAN)
+        and _paths_equivalent(data_root, DEFAULT_CAMPAIGN_PLAN.parent)
+    ):
+        return data_root / DEFAULT_DAILY_TARGET_STATE.name
+    return None
+
+
+def _load_strategy_profile_for_plan(strategy_profile_path: Path, data_root: Path) -> dict[str, Any]:
+    if not _path_is_same_or_under(strategy_profile_path, data_root):
+        return {}
+    return _load_json_dict(strategy_profile_path)
+
+
+def _path_is_same_or_under(path: Path, root: Path) -> bool:
+    try:
+        resolved_path = path.resolve()
+        resolved_root = root.resolve()
+    except OSError:
+        return False
+    return resolved_path == resolved_root or resolved_root in resolved_path.parents
+
+
+def _paths_equivalent(left: Path, right: Path) -> bool:
+    try:
+        return left.resolve() == right.resolve()
+    except OSError:
+        return False
+
+
+def _campaign_target_mismatch(plan: dict[str, Any], target_state: dict[str, Any]) -> str | None:
+    if not target_state:
+        return None
+    for key in ("start_balance_jpy", "target_jpy"):
+        planned = _optional_float(plan.get(key))
+        current = _optional_float(target_state.get(key))
+        if planned is None or current is None:
+            continue
+        tolerance = max(1.0, abs(current) * 0.0001)
+        if abs(planned - current) > tolerance:
+            return f"{key} plan={planned:.2f} target_state={current:.2f}"
+    return None
+
+
 def _load_pair_charts(charts_path: Path = DEFAULT_PAIR_CHARTS) -> dict[str, dict[str, Any]] | None:
     """Load pair_charts.json indexed by pair name.
 
@@ -3245,8 +3356,17 @@ class IntentGenerator:
 
     def run(self, *, snapshot_path: Path | None = None, max_candidates: int = 12) -> IntentGenerationSummary:
         plan = json.loads(self.campaign_plan.read_text())
-        lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         snapshot = _snapshot_from_json(json.loads(snapshot_path.read_text())) if snapshot_path else None
+        stale_plan_issue = _campaign_plan_staleness_issue(
+            plan,
+            campaign_plan_path=self.campaign_plan,
+            strategy_profile_path=self.strategy_profile,
+            data_root=self.data_root,
+            snapshot=snapshot,
+        )
+        if stale_plan_issue is not None:
+            raise RuntimeError(stale_plan_issue)
+        lanes = [lane for lane in plan.get("lanes", []) if _lane_can_attempt(lane)]
         validation_time_utc = _snapshot_validation_time(snapshot)
         # Load ATR / regime per pair from pair_charts.json before lane
         # expansion. Range phases need different executable tactics:

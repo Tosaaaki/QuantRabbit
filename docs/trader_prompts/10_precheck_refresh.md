@@ -87,6 +87,7 @@ PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot da
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli plan-campaign --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli optimize-coverage
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-attack-advice
