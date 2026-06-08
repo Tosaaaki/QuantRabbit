@@ -3401,10 +3401,39 @@ class AutoTradeCycleTest(unittest.TestCase):
                     )
                     + "\n"
                 )
+                live_order_path = root / "live_order.json"
+                live_order_path.write_text(json.dumps({"status": "REJECTED"}) + "\n")
+                position_execution_path = root / "pe.json"
+                position_execution_path.write_text(
+                    json.dumps(
+                        {
+                            "generated_at_utc": now.isoformat(),
+                            "status": "NO_ACTION",
+                            "send_requested": True,
+                            "sent": False,
+                            "actions": [
+                                {
+                                    "trade_id": "close-me",
+                                    "pair": "EUR_USD",
+                                    "owner": "trader",
+                                    "management_action": "HOLD_PROTECTED",
+                                    "reasons": ["deterministic review did not send"],
+                                    "request": None,
+                                    "issues": [],
+                                    "sent": False,
+                                    "response": None,
+                                }
+                            ],
+                        }
+                    )
+                    + "\n"
+                )
                 os.utime(snapshot_path, (100.0, 100.0))
                 os.utime(intents_path, (100.0, 100.0))
                 os.utime(response_path, (101.0, 101.0))
                 os.utime(gpt_decision_path, (102.0, 102.0))
+                os.utime(live_order_path, (103.0, 103.0))
+                os.utime(position_execution_path, (104.0, 104.0))
                 client = FakeCycleClient(snapshot)
 
                 summary = AutoTradeCycle(
@@ -3421,7 +3450,7 @@ class AutoTradeCycleTest(unittest.TestCase):
                     position_management_report_path=root / "pm.md",
                     position_execution_path=root / "pe.json",
                     position_execution_report_path=root / "pe.md",
-                    live_order_output_path=root / "live_order.json",
+                    live_order_output_path=live_order_path,
                     live_order_report_path=root / "live_order.md",
                     report_path=root / "report.md",
                     campaign_plan_path=_campaign(root),

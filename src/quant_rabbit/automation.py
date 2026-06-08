@@ -89,6 +89,8 @@ DEFAULT_AUTOTRADE_REPORT = ROOT / "docs" / "autotrade_cycle_report.md"
 DEFAULT_AUTOTRADE_LOCK_DIR = ROOT / ".quant_rabbit_live.lock"
 PENDING_ENTRY_TYPES = {"LIMIT", "STOP", "MARKET_IF_TOUCHED", "MARKET_IF_TOUCHED_ORDER"}
 ACCEPTED_GPT_GATEWAY_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING", "PROTECT", "TIGHTEN_SL", "CLOSE"})
+GPT_LIVE_ORDER_ACTIONS = frozenset({"TRADE", "CANCEL_PENDING"})
+GPT_POSITION_GATEWAY_ACTIONS = frozenset({"PROTECT", "TIGHTEN_SL", "CLOSE"})
 
 # C-4 margin-aware basket truncation (2026-05-12, repaired 2026-05-15).
 # The basket builder stops adding fresh-entry lanes once cumulative
@@ -1854,12 +1856,14 @@ class AutoTradeCycle:
         reusable_gpt = self._load_reusable_verified_gpt_handoff()
         if reusable_gpt is not None:
             consumed_reference_ns = self.gpt_decision_path.stat().st_mtime_ns
-            for path, label in (
-                (self.live_order_output_path, "live order gateway receipt"),
-                (self.position_execution_path, "position gateway receipt"),
-                (self.report_path, "autotrade cycle report"),
-            ):
-                if path.exists() and path.stat().st_mtime_ns > consumed_reference_ns:
+            for path, label in self._gpt_consuming_receipts(reusable_gpt.action):
+                if self._gpt_receipt_consumes_verified_handoff(
+                    path=path,
+                    label=label,
+                    action=reusable_gpt.action,
+                    reference_mtime_ns=consumed_reference_ns,
+                    close_trade_ids=reusable_gpt.close_trade_ids,
+                ):
                     return (
                         f"external GPT decision response already consumed by {label}; "
                         "refresh broker truth and write one current receipt"
@@ -1893,17 +1897,79 @@ class AutoTradeCycle:
                 )
 
         consumed_reference_ns = gpt_mtime_ns if gpt_mtime_ns is not None else decision_mtime_ns
-        for path, label in (
-            (self.live_order_output_path, "live order gateway receipt"),
-            (self.position_execution_path, "position gateway receipt"),
-            (self.report_path, "autotrade cycle report"),
-        ):
-            if path.exists() and path.stat().st_mtime_ns > consumed_reference_ns:
+        for path, label in self._gpt_consuming_receipts("TRADE"):
+            if self._gpt_receipt_consumes_verified_handoff(
+                path=path,
+                label=label,
+                action="TRADE",
+                reference_mtime_ns=consumed_reference_ns,
+                close_trade_ids=(),
+            ):
                 return (
                     f"external GPT decision response already consumed by {label}; "
                     "refresh broker truth and write one current receipt"
                 )
         return None
+
+    def _gpt_consuming_receipts(self, action: str | None) -> tuple[tuple[Path, str], ...]:
+        normalized = str(action or "").upper()
+        receipts: list[tuple[Path, str]] = []
+        if normalized in GPT_LIVE_ORDER_ACTIONS:
+            receipts.append((self.live_order_output_path, "live order gateway receipt"))
+        if normalized in GPT_POSITION_GATEWAY_ACTIONS:
+            receipts.append((self.position_execution_path, "position gateway receipt"))
+        if not receipts:
+            receipts.extend(
+                (
+                    (self.live_order_output_path, "live order gateway receipt"),
+                    (self.position_execution_path, "position gateway receipt"),
+                )
+            )
+        receipts.append((self.report_path, "autotrade cycle report"))
+        return tuple(receipts)
+
+    def _gpt_receipt_consumes_verified_handoff(
+        self,
+        *,
+        path: Path,
+        label: str,
+        action: str | None,
+        reference_mtime_ns: int,
+        close_trade_ids: tuple[str, ...],
+    ) -> bool:
+        if not path.exists() or path.stat().st_mtime_ns <= reference_mtime_ns:
+            return False
+        normalized = str(action or "").upper()
+        if normalized == "CLOSE" and path == self.position_execution_path:
+            return self._position_execution_consumes_gpt_close(path, close_trade_ids=close_trade_ids)
+        return True
+
+    def _position_execution_consumes_gpt_close(
+        self,
+        path: Path,
+        *,
+        close_trade_ids: tuple[str, ...],
+    ) -> bool:
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError, ValueError):
+            return True
+        status = str(payload.get("status") or "").upper()
+        actions = payload.get("actions") if isinstance(payload.get("actions"), list) else []
+        wanted = {str(trade_id) for trade_id in close_trade_ids if str(trade_id)}
+        for action_payload in actions:
+            if not isinstance(action_payload, dict):
+                continue
+            trade_id = str(action_payload.get("trade_id") or "")
+            if wanted and trade_id not in wanted:
+                continue
+            management_action = str(action_payload.get("management_action") or "").upper()
+            reason_text = " ".join(str(reason) for reason in action_payload.get("reasons", [])).lower()
+            if status == "STALE_CLOSE_SATISFIED" and management_action == "GPT_CLOSE":
+                return True
+            if "gpt-close: accepted gpt_trader close receipt passed gate a/b" in reason_text:
+                return True
+        return False
 
     def _stale_gpt_decision_summary(self, generated_at: str, reason: str) -> AutoTradeCycleSummary:
         positions = 0
