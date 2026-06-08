@@ -213,6 +213,9 @@ class IntentGeneratorTest(unittest.TestCase):
                                 "status": "BLOCK_UNTIL_NEW_EVIDENCE",
                                 "required_fix": "risk-resized receipt required",
                                 "target_reward_risk": 2.4,
+                                "positive_best_jpy": 1220.0,
+                                "positive_tail_jpy": 15.0,
+                                "positive_evidence_n": 1722,
                             }
                         ]
                     }
@@ -301,15 +304,23 @@ class IntentGeneratorTest(unittest.TestCase):
             )
             output = root / "intents.json"
 
-            IntentGenerator(
-                campaign_plan=_campaign(root),
-                strategy_profile=strategy,
-                output_path=output,
-                report_path=root / "intents.md",
-                pair_charts_path=charts,
-                market_context_matrix_path=matrix,
-                max_loss_jpy=500.0,
-            ).run(snapshot_path=_snapshot(root))
+            prior_sl_free = os.environ.get("QR_TRADER_DISABLE_SL_REPAIR")
+            os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = "1"
+            try:
+                IntentGenerator(
+                    campaign_plan=_campaign(root),
+                    strategy_profile=strategy,
+                    output_path=output,
+                    report_path=root / "intents.md",
+                    pair_charts_path=charts,
+                    market_context_matrix_path=matrix,
+                    max_loss_jpy=500.0,
+                ).run(snapshot_path=_snapshot(root))
+            finally:
+                if prior_sl_free is None:
+                    os.environ.pop("QR_TRADER_DISABLE_SL_REPAIR", None)
+                else:
+                    os.environ["QR_TRADER_DISABLE_SL_REPAIR"] = prior_sl_free
 
             payload = json.loads(output.read_text())
             usd_rows = [
@@ -318,8 +329,16 @@ class IntentGeneratorTest(unittest.TestCase):
                 if (item.get("intent") or {}).get("pair") == "USD_JPY"
                 and (item.get("intent") or {}).get("side") == "LONG"
             ]
+            mirrored_seed_rows = [
+                item
+                for item in payload["results"]
+                if (item.get("intent") or {}).get("pair") == "USD_JPY"
+                and (item.get("intent") or {}).get("side") == "SHORT"
+                and ((item.get("intent") or {}).get("metadata") or {}).get("matrix_repair_seed")
+            ]
 
             self.assertGreaterEqual(len(usd_rows), 2)
+            self.assertEqual(mirrored_seed_rows, [])
             self.assertFalse(any(row["intent"]["order_type"] == "MARKET" for row in usd_rows))
             metadata = usd_rows[0]["intent"]["metadata"]
             self.assertTrue(metadata["matrix_repair_seed"])

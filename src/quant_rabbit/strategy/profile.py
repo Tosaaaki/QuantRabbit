@@ -36,6 +36,9 @@ class StrategyProfileEntry:
     status: str
     required_fix: str
     target_reward_risk: float | None = None
+    positive_best_jpy: float | None = None
+    positive_tail_jpy: float | None = None
+    positive_evidence_n: int | None = None
 
 
 class StrategyProfile:
@@ -61,6 +64,9 @@ class StrategyProfile:
                 status=str(item.get("status") or "WATCH_ONLY"),
                 required_fix=str(item.get("required_fix") or ""),
                 target_reward_risk=_optional_float(item.get("target_reward_risk")),
+                positive_best_jpy=_optional_float(item.get("positive_best_jpy")),
+                positive_tail_jpy=_optional_float(item.get("positive_tail_jpy")),
+                positive_evidence_n=_optional_int(item.get("positive_evidence_n")),
             )
         return cls(entries)
 
@@ -171,6 +177,13 @@ def issues_to_dicts(issues: tuple[RiskIssue, ...] | list[RiskIssue]) -> list[dic
 def _optional_float(value: object) -> float | None:
     try:
         return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
     except (TypeError, ValueError):
         return None
 

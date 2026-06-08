@@ -1519,7 +1519,7 @@ def _append_matrix_supported_repair_lanes(
         (lane.get("desk"), lane.get("pair"), lane.get("direction"), lane.get("method"))
         for lane in lanes
     }
-    ranked: list[tuple[int, int, str, str, str, Any, dict[str, Any]]] = []
+    ranked: list[tuple[float, int, int, int, str, str, str, Any, dict[str, Any]]] = []
     for entry in strategy_profile.entries.values():
         if entry.status not in {"RISK_REPAIR_CANDIDATE", "BLOCK_UNTIL_NEW_EVIDENCE"}:
             continue
@@ -1530,6 +1530,8 @@ def _append_matrix_supported_repair_lanes(
             continue
         support_count = _optional_int(side_payload.get("support_count")) or len(side_payload.get("supports") or [])
         layer_count = len(_matrix_support_layers(side_payload))
+        profit_score = _matrix_repair_profit_score(entry)
+        evidence_n = _optional_int(getattr(entry, "positive_evidence_n", None)) or 0
         for method in _matrix_repair_methods(entry.method, entry.pair, charts):
             desk = FORECAST_SEED_DESK_BY_METHOD.get(method)
             if not desk:
@@ -1537,15 +1539,15 @@ def _append_matrix_supported_repair_lanes(
             key = (desk, entry.pair, entry.direction, method)
             if key in existing:
                 continue
-            ranked.append((support_count, layer_count, entry.pair, entry.direction, method, entry, side_payload))
+            ranked.append((profit_score, support_count, layer_count, evidence_n, entry.pair, entry.direction, method, entry, side_payload))
             existing.add(key)
 
     if not ranked:
         return lanes
-    ranked.sort(key=lambda item: (-item[0], -item[1], item[2], item[3], item[4]))
+    ranked.sort(key=lambda item: (-item[0], -item[1], -item[2], -item[3], item[4], item[5], item[6]))
     seeds = [
         _matrix_repair_seed_lane(entry, method=method, side_payload=side_payload)
-        for _, _, _, _, method, entry, side_payload in ranked[:MATRIX_REPAIR_MAX_SEEDS]
+        for _, _, _, _, _, _, method, entry, side_payload in ranked[:MATRIX_REPAIR_MAX_SEEDS]
     ]
     return seeds + lanes
 
@@ -1592,6 +1594,12 @@ def _matrix_repair_methods(method: str | None, pair: str, charts: dict[str, dict
         methods.append(TradeMethod.RANGE_ROTATION.value)
     methods.extend((TradeMethod.BREAKOUT_FAILURE.value, TradeMethod.TREND_CONTINUATION.value))
     return tuple(dict.fromkeys(methods))
+
+
+def _matrix_repair_profit_score(entry: Any) -> float:
+    best = _optional_float(getattr(entry, "positive_best_jpy", None)) or 0.0
+    tail = _optional_float(getattr(entry, "positive_tail_jpy", None)) or 0.0
+    return max(best, tail, 0.0)
 
 
 def _matrix_repair_seed_lane(
@@ -3252,7 +3260,7 @@ class IntentGenerator:
             seen_keys = {(l.get("desk"), l.get("pair"), l.get("direction"), l.get("method")) for l in lanes}
             mirrors: list[dict[str, Any]] = []
             for lane in lanes:
-                if lane.get("forecast_seed"):
+                if lane.get("forecast_seed") or lane.get("matrix_repair_seed"):
                     continue
                 m = _mirror_lane(lane)
                 key = (m.get("desk"), m.get("pair"), m.get("direction"), m.get("method"))
