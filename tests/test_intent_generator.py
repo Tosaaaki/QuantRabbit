@@ -153,6 +153,52 @@ class IntentGeneratorTest(unittest.TestCase):
             self.assertIn("matrix matrix:EUR_USD:LONG", result["intent"]["market_context"]["chart_story"])
             self.assertIn("XAU_USD pressure maps to EUR_USD LONG", result["intent"]["market_context"]["chart_story"])
 
+    def test_news_artifact_refs_are_persisted_on_intent_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data_root = root / "data"
+            data_root.mkdir()
+            logs_root = root / "logs"
+            logs_root.mkdir()
+            (logs_root / "news_digest.md").write_text(
+                "\n".join(
+                    [
+                        "# FX News Digest",
+                        "## Pair-Specific Notes",
+                        "- EUR/USD: USD data risk keeps the pair headline-sensitive today.",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (data_root / "news_items.json").write_text(
+                json.dumps({"generated_at_utc": datetime.now(timezone.utc).isoformat(), "items": []}) + "\n",
+                encoding="utf-8",
+            )
+            output = root / "intents.json"
+
+            summary = IntentGenerator(
+                campaign_plan=_campaign(root),
+                strategy_profile=_strategy(root),
+                output_path=output,
+                report_path=root / "intents.md",
+                pair_charts_path=_pair_charts(root),
+                market_context_matrix_path=_market_context_matrix(root),
+                data_root=data_root,
+                max_loss_jpy=500.0,
+            ).run(snapshot_path=_snapshot(root))
+
+            payload = json.loads(output.read_text())
+            result = next(item for item in payload["results"] if item["intent"]["order_type"] == "MARKET")
+            metadata = result["intent"]["metadata"]
+
+            self.assertGreater(summary.generated, 0)
+            self.assertEqual(metadata["news_refs"], ["news:digest", "news:items"])
+            self.assertEqual(metadata["news_digest_ref"], "news:digest")
+            self.assertEqual(metadata["news_items_ref"], "news:items")
+            self.assertEqual(metadata["news_signal_names"], ["market_story_news_artifact"])
+            self.assertIn("EUR/USD", metadata["news_pair_context"][0])
+
     def test_live_entry_requires_fresh_forecast_when_live_default_active(self) -> None:
         prior = os.environ.get("QR_REQUIRE_FORECAST_FOR_LIVE")
         os.environ["QR_REQUIRE_FORECAST_FOR_LIVE"] = "1"

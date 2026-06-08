@@ -463,6 +463,7 @@ LEVEL_CLUSTER_ATR_FRACTION = 0.15
 # Keep only the nearest actionable levels/zones so receipts carry context
 # without drowning GPT/the operator in stale far-away prices.
 LEVEL_CONTEXT_LIMIT = 6
+NEWS_CONTEXT_LIMIT = 4
 LEVEL_MIDPOINT_KEYS = (
     "bb_middle",
     "vwap",
@@ -1910,6 +1911,95 @@ def _news_digest_path_for_data_root(data_root: Path) -> Path:
     return data_root / "news_digest.md"
 
 
+def _intent_news_evidence_metadata(
+    pair: str,
+    *,
+    data_root: Path | None,
+    source_metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    refs: list[str] = []
+    signal_names: list[str] = []
+    pair_context: list[str] = []
+    digest_ref = ""
+
+    def add_ref(value: object) -> None:
+        text = str(value or "").strip()
+        if text and text not in refs:
+            refs.append(text)
+
+    def add_signal(value: object) -> None:
+        text = str(value or "").strip()
+        if text and text not in signal_names:
+            signal_names.append(text)
+
+    if isinstance(source_metadata, dict):
+        raw_refs = source_metadata.get("news_refs") or []
+        if not isinstance(raw_refs, list):
+            raw_refs = [raw_refs]
+        for raw in raw_refs:
+            add_ref(raw)
+        digest_ref = str(source_metadata.get("news_digest_ref") or "").strip()
+        raw_signals = source_metadata.get("news_signal_names") or []
+        if not isinstance(raw_signals, list):
+            raw_signals = [raw_signals]
+        for raw in raw_signals:
+            add_signal(raw)
+
+    if data_root is not None:
+        digest_path = _news_digest_path_for_data_root(data_root)
+        if digest_path.exists():
+            add_ref("news:digest")
+            digest_ref = digest_ref or "news:digest"
+            pair_context = _news_digest_pair_context(pair, digest_path)
+        items_path = data_root / "news_items.json"
+        if items_path.exists():
+            add_ref("news:items")
+
+    if not refs and not pair_context:
+        return {}
+    if refs and not signal_names:
+        add_signal("market_story_news_artifact")
+    payload: dict[str, Any] = {
+        "news_refs": refs[:NEWS_CONTEXT_LIMIT],
+        "news_signal_names": signal_names[:NEWS_CONTEXT_LIMIT],
+    }
+    if digest_ref:
+        payload["news_digest_ref"] = digest_ref
+    if "news:items" in refs:
+        payload["news_items_ref"] = "news:items"
+    if pair_context:
+        payload["news_pair_context"] = pair_context[:NEWS_CONTEXT_LIMIT]
+    return payload
+
+
+def _news_digest_pair_context(pair: str, digest_path: Path) -> list[str]:
+    try:
+        text = digest_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    pair_key = pair.upper()
+    pair_slash = pair_key.replace("_", "/")
+    pair_flat = pair_key.replace("_", "")
+    currencies = [part for part in pair_key.split("_") if part]
+    exact: list[str] = []
+    currency: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line == "---":
+            continue
+        line = line.lstrip("- ").strip()
+        line_upper = line.upper()
+        if pair_key in line_upper or pair_slash in line_upper or pair_flat in line_upper:
+            if line not in exact:
+                exact.append(line[:240])
+            continue
+        if any(ccy in line_upper for ccy in currencies) and line not in currency:
+            currency.append(line[:240])
+        if len(exact) >= NEWS_CONTEXT_LIMIT:
+            break
+    return (exact + currency)[:NEWS_CONTEXT_LIMIT]
+
+
 def _forecast_seed_min_confidence() -> float:
     try:
         from quant_rabbit.strategy.directional_forecaster import ENTRY_CONFIDENCE_MIN
@@ -2980,6 +3070,7 @@ class IntentGenerator:
             chart_context=chart_context,
             pair_chart=pair_chart,
             market_context_matrix=market_context_matrix,
+            data_root=data_root,
         )
         risk = RiskEngine(
             policy=RiskPolicy(
@@ -3387,6 +3478,7 @@ def _intent_from_lane(
     chart_context: dict[str, Any] | None = None,
     pair_chart: dict[str, Any] | None = None,
     market_context_matrix: dict[str, Any] | None = None,
+    data_root: Path | None = None,
 ) -> OrderIntent:
     pair = str(lane["pair"])
     side = Side.parse(str(lane["direction"]))
@@ -3490,6 +3582,7 @@ def _intent_from_lane(
     location_story = str((chart_context or {}).get("market_location_story") or "")
     lane_story = " | ".join(str(item) for item in lane.get("story_examples", [])[:2])
     matrix_metadata = matrix_summary_for_intent(market_context_matrix, pair, side.value)
+    news_metadata = _intent_news_evidence_metadata(pair, data_root=data_root, source_metadata=lane)
     matrix_story = ""
     if matrix_metadata:
         matrix_support_context = matrix_metadata.get("matrix_support_context")
@@ -3571,6 +3664,7 @@ def _intent_from_lane(
             **position_metadata,
             **geometry_metadata,
             **margin_metadata,
+            **news_metadata,
             **matrix_metadata,
         },
     )
