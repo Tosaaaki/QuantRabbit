@@ -28,6 +28,7 @@ If you are an automation reading this for runtime, also read `docs/SKILL_trader.
 | Claude scheduled task | `~/.claude/scheduled-tasks/trader/` |
 | Weekend task switcher | `scripts/qr_weekend_task_switch.py` / `quant_rabbit.weekend_task_switch` |
 | Weekend task state | `~/.codex/quant_rabbit_weekend_task_state.json` |
+| Trader heartbeat watchdog (notify-only launchd agent) | `scripts/qr_trader_heartbeat_watch.sh` / `scripts/install-trader-heartbeat-watch.sh` |
 | Legacy archive root | `/Users/tossaki/App/QuantRabbit_archives/QuantRabbit_legacy_20260430T151527Z` |
 | Archive manifest | `…/ARCHIVE_MANIFEST_20260430T151527Z.md` |
 | Archive log pointer | `ARCHIVE_POINTER.md` |
@@ -177,6 +178,7 @@ This rule is enforceable: any reviewer (Codex or Claude) seeing a JPY literal, a
 
 - `autotrade-cycle --send` is the live automation entrypoint.
 - `autotrade-cycle` syncs the execution ledger before and after the broker gateway phase; do not bypass it with direct OANDA writes or out-of-band receipt edits.
+- **Consolidated cycle steps (2026-06-10).** The scheduled trader refreshes evidence with `cycle-refresh` and runs post-gateway protection with `cycle-sidecars`. Both execute the exact per-step lists from `docs/SKILL_trader.md` in one process and print one compact digest, because per-step shell turns burned ~3M tokens per cycle and exhausted the scheduler's credits on 2026-06-09 (≈36h silent live stop). The model must read the digest and make targeted queries into large artifacts; it must not re-run the steps individually or cat multi-megabyte JSON into the conversation. The step lists in `cli._cycle_refresh_steps` / `cli._cycle_sidecar_steps` are canonical and change only together with `docs/SKILL_trader.md`.
 - Flat-account entry loop: `BrokerSnapshot` → `IntentGenerator` → `TraderBrain` → `LiveOrderGateway`.
 - Exposure-management loop: `BrokerSnapshot` → `TraderBrain` → `PositionManager` → `PositionProtectionGateway`.
 - `gpt-trader-decision` verifies the operator's decision receipt by default.
@@ -343,6 +345,16 @@ If both contributed in the same commit, include both lines.
 ## 14. Current Commands
 
 ```bash
+# Consolidated cycle entrypoints (2026-06-10, token discipline).
+# The scheduled trader runs these TWO commands instead of the ~35 individual
+# steps below: each separate shell turn re-sends the whole conversation
+# context, and the per-step skeleton burned ~3M tokens per 20-minute cycle —
+# the 2026-06-09 credit exhaustion that silently stopped live trading.
+# Canonical step lists: cli._cycle_refresh_steps / cli._cycle_sidecar_steps;
+# they MUST stay in lockstep with docs/SKILL_trader.md.
+PYTHONPATH=src python3 -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10   # evidence refresh → intents → audits → sidecars → route, one digest
+PYTHONPATH=src python3 -m quant_rabbit.cli cycle-sidecars                      # post-gateway protection sidecars, one digest
+
 # Prompt routing
 PYTHONPATH=src python3 -m quant_rabbit.cli trader-prompt-route
 
@@ -351,10 +363,14 @@ PYTHONPATH=src python3 -m quant_rabbit.cli import-legacy
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-strategy
 PYTHONPATH=src python3 -m quant_rabbit.cli mine-market-stories
 
-# Backtest / planning
-PYTHONPATH=src python3 -m quant_rabbit.cli replay-backtest --start-balance 222781
-PYTHONPATH=src python3 -m quant_rabbit.cli ai-test-bot-backtest --start-balance 222781
-PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance 222781
+# Backtest / planning. NEVER paste a JPY literal here (§3.5). The 2026-06-08
+# incident traced a month-stale 222,781 example balance into
+# daily_target_state.json, which then reported -37,818 JPY / -169% fake
+# same-day progress. Derive the figure from current broker truth every time.
+QR_START_BALANCE="$(PYTHONPATH=src python3 -c 'import json;print(json.load(open("data/daily_target_state.json"))["start_balance_jpy"])')"
+PYTHONPATH=src python3 -m quant_rabbit.cli replay-backtest --start-balance "$QR_START_BALANCE"
+PYTHONPATH=src python3 -m quant_rabbit.cli ai-test-bot-backtest --start-balance "$QR_START_BALANCE"
+PYTHONPATH=src python3 -m quant_rabbit.cli plan-campaign --start-balance "$QR_START_BALANCE"
 
 # Broker truth
 PYTHONPATH=src python3 -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json

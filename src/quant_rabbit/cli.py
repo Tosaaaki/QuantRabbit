@@ -1036,6 +1036,12 @@ _LIVE_RUNTIME_COMMANDS: frozenset[str] = frozenset(
         # prompt branch can move into entry/verify. It does not send orders,
         # but it must classify SL-free live state under the same defaults.
         "memory-health",
+        # Consolidated cycle commands run the same refresh/sidecar steps the
+        # wrapper-era skeleton ran one-by-one; they must see identical SL-free
+        # defaults so nested generate-intents / position-management /
+        # daily-target-state calls classify TP-only runners consistently.
+        "cycle-refresh",
+        "cycle-sidecars",
     }
 )
 
@@ -1473,6 +1479,262 @@ def _write_broker_instruments_report(payload: dict[str, Any], report_path: Path)
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Consolidated cycle commands (token-budget repair, 2026-06-10).
+#
+# The scheduled trader previously executed every refresh/sidecar step as a
+# separate shell turn (~35 exec turns per 20-minute cycle). Each turn re-sends
+# the whole growing conversation context to the model, so one cycle burned
+# ~3M tokens and the 2026-06-09 02:00 JST credit exhaustion stopped live
+# trading entirely. `cycle-refresh` and `cycle-sidecars` run the same CLI
+# steps, in the same order and with the same arguments as
+# `docs/SKILL_trader.md`, inside ONE process invocation, and print one compact
+# digest for the model to read. Behavior parity with the per-step skeleton is
+# the contract here: changing step order or arguments requires updating
+# `docs/SKILL_trader.md` in the same commit.
+# ---------------------------------------------------------------------------
+
+
+def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
+    """Step list mirroring docs/SKILL_trader.md '2. Refresh evidence'.
+
+    `required=True` steps abort the remaining refresh on failure because the
+    later steps would read a missing/stale artifact and the digest would lie.
+    Optional steps record FAILED and continue: the route/verifier layers treat
+    their artifacts as missing-evidence blockers, which is the same outcome
+    the per-step skeleton produced.
+    """
+    target_args = ["daily-target-state", "--snapshot", "data/broker_snapshot.json", "--daily-risk-pct", daily_risk_pct]
+    snapshot_args = ["broker-snapshot", "--output", "data/broker_snapshot.json"]
+    return [
+        {"argv": snapshot_args, "required": True},
+        {"argv": target_args, "required": True},
+        {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["import-legacy"], "required": False},
+        {"argv": ["mine-strategy"], "required": False},
+        {"argv": ["pair-charts", "--timeframes", "M1,M5,M15,M30,H1,H4,D", "--output", "data/pair_charts.json"], "required": True},
+        {"argv": ["cross-asset-snapshot"], "required": False},
+        {"argv": ["context-asset-charts"], "required": False},
+        {"argv": ["flow-snapshot"], "required": False},
+        {"argv": ["currency-strength"], "required": False},
+        {"argv": ["levels-snapshot"], "required": False},
+        {"argv": ["economic-calendar"], "required": False},
+        {"argv": ["cot-snapshot"], "required": False},
+        {"argv": ["option-skew"], "required": False},
+        {"argv": ["market-context-matrix"], "required": False},
+        {"argv": ["mine-market-stories", "--news-dir", "logs", "--profile", "data/market_story_profile.json", "--report", "data/market_story_report.md"], "required": False},
+        {"argv": ["news-health", "--strict"], "required": False},
+        {"argv": ["daily-review"], "required": False},
+        {"argv": snapshot_args, "required": True},
+        {"argv": target_args, "required": True},
+        {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["tp-rebalance"], "required": False},
+        {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": snapshot_args, "required": True},
+        {"argv": target_args, "required": True},
+        {"argv": ["verify-projections"], "required": False},
+        {"argv": ["generate-intents", "--snapshot", "data/broker_snapshot.json"], "required": True},
+        {"argv": ["optimize-coverage"], "required": False},
+        {"argv": ["ai-attack-advice"], "required": False},
+        {"argv": ["learning-audit"], "required": False},
+        {"argv": ["verification-ledger-audit"], "required": False},
+        {"argv": ["generate-predictive-limits"], "required": False},
+        {"argv": ["position-thesis-check"], "required": False},
+        {"argv": ["thesis-evolution-check"], "required": False},
+        {"argv": ["forecast-persistence-check"], "required": False},
+        {"argv": ["position-management"], "required": False},
+        {"argv": ["memory-health"], "required": False},
+    ]
+
+
+def _cycle_sidecar_steps() -> list[dict[str, Any]]:
+    """Step list mirroring docs/SKILL_trader.md '6. Protection sidecars'."""
+    live = os.environ.get("QR_LIVE_ENABLED") == "1"
+    profit_partial = ["profit-partial-close"]
+    if live:
+        # Same triple gate the SKILL line uses: env + --send + --confirm-live.
+        profit_partial += ["--send", "--confirm-live"]
+    return [
+        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
+        {"argv": ["tp-rebalance"], "required": False},
+        {"argv": ["execution-ledger-sync"], "required": False},
+        {"argv": ["broker-snapshot", "--output", "data/broker_snapshot.json"], "required": True},
+        {"argv": profit_partial, "required": False},
+        {"argv": ["verify-projections"], "required": False},
+        {"argv": ["position-thesis-check"], "required": False},
+        {"argv": ["thesis-evolution-check"], "required": False},
+        {"argv": ["forecast-persistence-check"], "required": False},
+        {"argv": ["memory-health"], "required": False},
+    ]
+
+
+def _run_cycle_steps(steps: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    """Run CLI steps in-process, capturing per-step stdout/stderr.
+
+    Returns (step_results, aborted). Output is only retained (tail) for failed
+    steps; success output is discarded because every step already persists its
+    artifact/report to disk and the digest reads those files.
+    """
+    import contextlib
+    import io
+    import time as _time
+
+    results: list[dict[str, Any]] = []
+    aborted = False
+    for spec in steps:
+        argv = [str(a) for a in spec["argv"]]
+        name = " ".join(argv)
+        if aborted:
+            results.append({"step": name, "status": "SKIPPED_AFTER_ABORT"})
+            continue
+        buf = io.StringIO()
+        started = _time.monotonic()
+        rc = 0
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                rc = int(main(argv) or 0)
+        except SystemExit as exc:  # argparse errors and explicit exits
+            code = exc.code
+            rc = code if isinstance(code, int) else 1
+        except Exception as exc:  # noqa: BLE001 — step isolation is the point
+            rc = 1
+            buf.write(f"\n{type(exc).__name__}: {exc}")
+        elapsed = round(_time.monotonic() - started, 1)
+        entry: dict[str, Any] = {"step": name, "status": "OK" if rc == 0 else "FAILED", "rc": rc, "seconds": elapsed}
+        if rc != 0:
+            tail = buf.getvalue().strip()
+            entry["tail"] = tail[-1500:]
+            if spec.get("required"):
+                entry["status"] = "FAILED_REQUIRED"
+                aborted = True
+        results.append(entry)
+    return results, aborted
+
+
+def _read_json_quiet(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: bool) -> dict[str, Any]:
+    """Compact single-read packet for the scheduled trader.
+
+    Contains counts, ids, verdicts, and blockers only — the model drills into
+    the full artifacts (`data/order_intents.json`, `data/pair_charts.json`, …)
+    with targeted reads when it needs depth, instead of re-printing them.
+    """
+    digest: dict[str, Any] = {
+        "kind": kind,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "aborted": aborted,
+        "steps_failed": [r for r in step_results if r.get("status") not in ("OK", "SKIPPED_AFTER_ABORT")],
+        "steps_ok": [r["step"] for r in step_results if r.get("status") == "OK"],
+        "steps_skipped": [r["step"] for r in step_results if r.get("status") == "SKIPPED_AFTER_ABORT"],
+    }
+
+    snapshot = _read_json_quiet(DEFAULT_BROKER_SNAPSHOT)
+    if isinstance(snapshot, dict):
+        account = snapshot.get("account") or {}
+        digest["broker"] = {
+            "fetched_at_utc": snapshot.get("fetched_at_utc"),
+            "positions": len(snapshot.get("positions") or []),
+            "orders": len(snapshot.get("orders") or []),
+            "nav_jpy": account.get("nav_jpy"),
+            "balance_jpy": account.get("balance_jpy"),
+            "unrealized_pl_jpy": account.get("unrealized_pl_jpy"),
+        }
+
+    target = _read_json_quiet(DEFAULT_DAILY_TARGET_STATE)
+    if isinstance(target, dict):
+        digest["target"] = {
+            key: target.get(key)
+            for key in (
+                "campaign_day_jst",
+                "status",
+                "start_balance_jpy",
+                "current_equity_jpy",
+                "realized_pl_jpy",
+                "progress_pct",
+                "minimum_progress_pct",
+                "remaining_minimum_jpy",
+                "remaining_target_jpy",
+                "daily_risk_budget_jpy",
+                "per_trade_risk_budget_jpy",
+                "target_trades_per_day",
+                "blockers",
+            )
+        }
+
+    intents = _read_json_quiet(DEFAULT_ORDER_INTENTS)
+    if isinstance(intents, dict):
+        results = intents.get("results") or []
+        live_ready = [r for r in results if isinstance(r, dict) and r.get("status") == "LIVE_READY"]
+        blocker_counts: dict[str, int] = {}
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            for issue in (r.get("live_blockers") or []):
+                code = issue.get("code") if isinstance(issue, dict) else str(issue)
+                if code:
+                    blocker_counts[str(code)] = blocker_counts.get(str(code), 0) + 1
+        digest["intents"] = {
+            "generated_at_utc": intents.get("generated_at_utc"),
+            "lanes": len(results),
+            "live_ready": len(live_ready),
+            "live_ready_lane_ids": [r.get("lane_id") for r in live_ready][:12],
+            "top_blockers": dict(sorted(blocker_counts.items(), key=lambda kv: -kv[1])[:10]),
+        }
+
+    attack = _read_json_quiet(DEFAULT_AI_ATTACK_ADVICE)
+    if isinstance(attack, dict):
+        digest["attack_advice"] = {
+            "status": attack.get("status"),
+            "recommended_now_lane_ids": (attack.get("recommended_now_lane_ids") or [])[:8],
+        }
+
+    memory_health = _read_json_quiet(DEFAULT_MEMORY_HEALTH)
+    if isinstance(memory_health, dict):
+        digest["memory_health"] = {
+            "status": memory_health.get("status"),
+            "blockers": memory_health.get("blockers") or memory_health.get("issues"),
+        }
+
+    news_health = _read_json_quiet(DEFAULT_NEWS_HEALTH)
+    if isinstance(news_health, dict):
+        digest["news_health"] = {"status": news_health.get("status")}
+
+    thesis_evolution = _read_json_quiet(ROOT / "data" / "thesis_evolution_report.json")
+    if isinstance(thesis_evolution, dict):
+        digest["thesis_evolution"] = {
+            "by_status": thesis_evolution.get("by_status"),
+            "count": thesis_evolution.get("count"),
+        }
+
+    persistence = _read_json_quiet(ROOT / "data" / "forecast_persistence_report.json")
+    if isinstance(persistence, dict):
+        digest["forecast_persistence"] = {
+            "by_verdict": persistence.get("by_verdict"),
+            "count": persistence.get("count"),
+        }
+
+    position_thesis = _read_json_quiet(ROOT / "data" / "position_thesis_report.json")
+    if isinstance(position_thesis, dict):
+        assessments = position_thesis.get("assessments") or []
+        digest["position_thesis"] = [
+            {
+                "trade_id": a.get("trade_id"),
+                "pair": a.get("pair"),
+                "verdict": a.get("verdict") or a.get("action"),
+            }
+            for a in assessments
+            if isinstance(a, dict)
+        ][:10]
+
+    return digest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2140,6 +2402,33 @@ def main(argv: list[str] | None = None) -> int:
     p_risk.add_argument("--max-loss-pct", type=float, default=None)
     p_risk.add_argument("--risk-equity-jpy", type=float, default=None)
 
+    p_cycle_refresh = sub.add_parser(
+        "cycle-refresh",
+        help="Run the full SKILL_trader.md evidence-refresh step list in one process and print a compact digest.",
+    )
+    p_cycle_refresh.add_argument(
+        "--daily-risk-pct",
+        default="10",
+        help="Passed through to every daily-target-state step (default: 10, same as SKILL_trader.md).",
+    )
+    p_cycle_refresh.add_argument(
+        "--digest-output",
+        type=Path,
+        default=ROOT / "data" / "cycle_refresh_digest.json",
+        help="Where to persist the digest JSON (also printed to stdout).",
+    )
+
+    p_cycle_sidecars = sub.add_parser(
+        "cycle-sidecars",
+        help="Run the post-gateway protection sidecar step list in one process and print a compact digest.",
+    )
+    p_cycle_sidecars.add_argument(
+        "--digest-output",
+        type=Path,
+        default=ROOT / "data" / "cycle_sidecars_digest.json",
+        help="Where to persist the digest JSON (also printed to stdout).",
+    )
+
     args = parser.parse_args(argv)
 
     # SL-free runtime defaults: every cli command that touches sizing /
@@ -2166,6 +2455,27 @@ def main(argv: list[str] | None = None) -> int:
         args.command in _LIVE_RUNTIME_COMMANDS and not _running_under_test_harness()
     ):
         _bootstrap_sl_free_defaults()
+
+    if args.command in ("cycle-refresh", "cycle-sidecars"):
+        if args.command == "cycle-refresh":
+            steps = _cycle_refresh_steps(str(args.daily_risk_pct))
+            kind = "cycle_refresh_digest"
+        else:
+            steps = _cycle_sidecar_steps()
+            kind = "cycle_sidecars_digest"
+        step_results, aborted = _run_cycle_steps(steps)
+        digest = _cycle_digest(kind=kind, step_results=step_results, aborted=aborted)
+        if args.command == "cycle-refresh":
+            # The router runs after the digest artifacts exist; embed its
+            # payload so the model gets the branch decision in the same read.
+            try:
+                route = route_trader_prompts()
+                digest["route"] = route.to_payload()
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                digest["route"] = {"error": str(exc)}
+        _write_json(args.digest_output, digest)
+        print(json.dumps(digest, ensure_ascii=False, indent=1, sort_keys=True))
+        return 2 if aborted else 0
 
     if args.command == "import-legacy":
         summary = LegacyImporter(args.archive, args.db, args.report).run()

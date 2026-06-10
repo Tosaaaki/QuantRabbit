@@ -1620,6 +1620,12 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
                     # completion-status audits live exposure and must classify
                     # SL-free trader positions under the same runtime defaults.
                     "completion-status",
+                    # cycle-refresh / cycle-sidecars (2026-06-10) run the
+                    # SKILL_trader.md step lists in one process; nested
+                    # generate-intents / daily-target-state / position
+                    # sidecar calls must see identical SL-free defaults.
+                    "cycle-refresh",
+                    "cycle-sidecars",
                     # memory-health audits live routing memory before
                     # entry/verify routing and must use the same SL-free
                     # defaults when classifying broker snapshot state.
@@ -1840,6 +1846,81 @@ class LiveRuntimeBootstrapTest(unittest.TestCase):
         fetch_candles.assert_called_once_with(mock.ANY, "EUR_USD", "M5", count=2)
         candles_arg = verify_pending.call_args.kwargs["candles_by_pair"]
         self.assertEqual(candles_arg["EUR_USD"]["M5"], [candle])
+
+
+class ConsolidatedCycleCommandTest(unittest.TestCase):
+    """Mechanics of the cycle-refresh/cycle-sidecars in-process step runner.
+
+    Network-dependent steps are not exercised here; behavior parity with the
+    SKILL_trader.md skeleton is asserted at the step-list level.
+    """
+
+    def test_run_cycle_steps_isolates_failures_and_aborts_on_required(self) -> None:
+        from quant_rabbit.cli import _run_cycle_steps
+
+        steps = [
+            # argparse rejects the unknown command with SystemExit(2).
+            {"argv": ["definitely-not-a-command"], "required": True},
+            {"argv": ["broker-snapshot"], "required": False},
+        ]
+        results, aborted = _run_cycle_steps(steps)
+
+        self.assertTrue(aborted)
+        self.assertEqual(results[0]["status"], "FAILED_REQUIRED")
+        self.assertEqual(results[0]["rc"], 2)
+        self.assertIn("tail", results[0])
+        self.assertEqual(results[1]["status"], "SKIPPED_AFTER_ABORT")
+
+    def test_run_cycle_steps_continues_after_optional_failure(self) -> None:
+        from quant_rabbit.cli import _run_cycle_steps
+
+        steps = [
+            {"argv": ["definitely-not-a-command"], "required": False},
+            {"argv": ["another-bad-command"], "required": False},
+        ]
+        results, aborted = _run_cycle_steps(steps)
+
+        self.assertFalse(aborted)
+        self.assertEqual([r["status"] for r in results], ["FAILED", "FAILED"])
+
+    def test_cycle_refresh_steps_mirror_skill_skeleton(self) -> None:
+        from quant_rabbit.cli import _cycle_refresh_steps, _cycle_sidecar_steps
+
+        refresh = [" ".join(s["argv"]) for s in _cycle_refresh_steps("10")]
+        # Order-sensitive anchors from docs/SKILL_trader.md section 2.
+        self.assertEqual(refresh[0], "broker-snapshot --output data/broker_snapshot.json")
+        self.assertIn("generate-intents --snapshot data/broker_snapshot.json", refresh)
+        self.assertLess(refresh.index("verify-projections"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
+        self.assertLess(refresh.index("tp-rebalance"), refresh.index("generate-intents --snapshot data/broker_snapshot.json"))
+        self.assertIn("news-health --strict", refresh)
+        self.assertEqual(refresh[-1], "memory-health")
+
+        with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": ""}, clear=False):
+            sidecars = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
+        self.assertIn("profit-partial-close", sidecars)
+        self.assertNotIn("profit-partial-close --send --confirm-live", sidecars)
+
+        with mock.patch.dict(os.environ, {"QR_LIVE_ENABLED": "1"}, clear=False):
+            sidecars_live = [" ".join(s["argv"]) for s in _cycle_sidecar_steps()]
+        self.assertIn("profit-partial-close --send --confirm-live", sidecars_live)
+
+    def test_cycle_digest_summarizes_failed_steps(self) -> None:
+        from quant_rabbit.cli import _cycle_digest
+
+        digest = _cycle_digest(
+            kind="cycle_refresh_digest",
+            step_results=[
+                {"step": "broker-snapshot", "status": "OK", "rc": 0, "seconds": 0.1},
+                {"step": "news-health --strict", "status": "FAILED", "rc": 1, "seconds": 0.1, "tail": "stale"},
+            ],
+            aborted=False,
+        )
+
+        self.assertEqual(digest["kind"], "cycle_refresh_digest")
+        self.assertFalse(digest["aborted"])
+        self.assertEqual(digest["steps_ok"], ["broker-snapshot"])
+        self.assertEqual(len(digest["steps_failed"]), 1)
+        self.assertEqual(digest["steps_failed"][0]["step"], "news-health --strict")
 
 
 if __name__ == "__main__":

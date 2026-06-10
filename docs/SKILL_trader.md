@@ -85,124 +85,57 @@ export QR_REQUIRE_TELEMETRY_FOR_LIVE="${QR_REQUIRE_TELEMETRY_FOR_LIVE:-1}"
 # 1. Route to the right prompt branch
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
 
-# 2. Refresh evidence when routed there
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-# `--daily-risk-pct` sets the day's risk budget as % of starting NAV so the
-# per-trade cap auto-scales with equity (feedback_use_nav_percent.md). 10%
-# matches `target_return_pct` (campaign daily goal) and gives the basket
-# validator enough room to hold the existing exposure plus add fresh lanes
-# under SL-free (user directive 2026-05-11「市況読めばいいだけ」: the
-# synthetic worst-case loss inside the validator is advisory; exits are
-# market-derived, not loss-cap-derived).
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli import-legacy
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-strategy
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cross-asset-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli context-asset-charts
-# Default flow snapshot reads spread only. OANDA orderBook/positionBook is
-# opt-in via `--include-books` after book entitlement is confirmed.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli currency-strength
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli levels-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli economic-calendar
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cot-snapshot
-# Provider-unconfigured option skew is written as a disabled optional artifact,
-# not as repeated missing evidence.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli market-context-matrix
-# News is produced by a separate dedicated routine (`qr-news-digest`,
-# Codex Desktop, hourly). That routine runs in the live runtime worktree
-# at `/Users/tossaki/App/QuantRabbit-live/` and writes WebSearch-curated
-# trader-perspective content to ignored runtime artifacts:
-# `data/news_items.json`, `logs/news_digest.md`, and
-# `logs/news_flow_log.md`. The trader cycle must NOT run
-# `news-snapshot` here — that would replace the curated digest with raw
-# RSS output. During the open FX week, `news-health --strict` below fails
-# loud when the digest is stale, raw-RSS-only, missing required sections, or
-# not reflected into `data/market_story_profile.json`. During the weekend
-# guard window it accepts the paused scheduler when the weekend snapshot says
-# `mode=paused`.
+# 2. Refresh evidence when routed there — ONE consolidated command.
 #
-# Reflect the curated news into the live decision artifact before any intent
-# pricing. `logs/news_digest.md` alone is not enough: trader_brain and
-# gpt_trader read `data/market_story_profile.json`, so that derived
-# profile must be newer than the news files. Write the side report under
-# `data/` to avoid tracked `docs/*_report.md` drift during precheck
-# refresh.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories \
-  --news-dir logs \
-  --profile data/market_story_profile.json \
-  --report data/market_story_report.md
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli news-health --strict
+# `cycle-refresh` runs the full refresh step list (broker-snapshot →
+# daily-target-state → execution-ledger-sync → import-legacy → mine-strategy →
+# pair-charts → cross-asset/context/flow/strength/levels/calendar/COT/skew →
+# market-context-matrix → mine-market-stories → news-health --strict →
+# daily-review → tp-rebalance → verify-projections → generate-intents →
+# optimize-coverage → ai-attack-advice → learning/verification audits →
+# generate-predictive-limits → position sidecars → memory-health) in one
+# process, in the same order and with the same arguments the per-step
+# skeleton used (`cli._cycle_refresh_steps` is the canonical list), then
+# prints ONE compact digest including the re-routed prompt branch.
 #
-# daily-review: refresh `data/trader_overrides.json` from the last 24h
-# of realized P&L plus structural pair/side underperformance, so
-# trader_brain's Module C reads a current snapshot.
-# Idempotent and fast (single SQLite read, no network), so safe to run
-# every cycle. Expiry is JST midnight, so this also keeps the file
-# rolling without manual intervention. `trader-prompt-route` treats a
-# missing or expired file as a refresh requirement before target-open
-# entry/verify routing, while existing-position management still keeps
-# priority.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-review
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
-# TP rebalance is protection, not an entry decision. Run it once the
-# current broker truth + pair_charts packet is fresh, before intent pricing
-# and before a WAIT receipt can end the cycle. If it writes a dependent TP
-# order, refresh broker truth immediately so generate-intents / GPT evidence
-# sees the new broker order price, and sync the execution ledger so direct
-# TP sidecar writes do not disappear from local audit reports. This is
-# mandatory even when the final decision becomes WAIT; otherwise profitable
-# existing TPs can sit stale.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
-# Resolve expired forward-projection telemetry before intent pricing. Fresh
-# entries cannot become LIVE_READY while old PENDING predictions are past
-# their resolution window because the next trade would not be auditable.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli verify-projections
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli optimize-coverage
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-attack-advice
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli learning-audit
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli verification-ledger-audit
-# Predictive LIMIT timing evidence is generated before the decision receipt so
-# the trader can compare market/pending participation against liquidity-sweep
-# traps. Default is dry-run evidence; live placement still requires a separate
-# explicit send path and gateway validation.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-predictive-limits
+# Token discipline (2026-06-10): the per-step skeleton burned ~3M tokens per
+# 20-minute cycle (one shell turn per command × full-context resend) and
+# exhausted the scheduler's credits on 2026-06-09, stopping live trading.
+# Read the digest, then drill into `data/order_intents.json`,
+# `data/pair_charts.json`, `data/market_context_matrix.json` etc. with
+# TARGETED queries (jq / python -c) only where the digest flags something.
+# Never cat a multi-megabyte artifact into the conversation.
+#
+# `--daily-risk-pct 10` is forwarded to every daily-target-state step: the
+# day's risk budget is % of starting NAV so the per-trade cap auto-scales
+# with equity (feedback_use_nav_percent.md), and 10% matches the campaign
+# `target_return_pct`.
+#
+# News stays consumer-only: the digest's `news_health` comes from the
+# `qr-news-digest` routine artifacts. Do NOT run `news-snapshot` here — that
+# would replace the curated digest with raw RSS (reference_news_pipeline.md).
+#
+# Failed required steps abort the remaining refresh and exit 2; the digest
+# lists `steps_failed` with stderr tails. Optional-step failures (e.g.
+# news-health --strict during a stale-news window) appear in `steps_failed`
+# but do not stop evidence generation — treat them as named blockers in the
+# decision receipt exactly as before.
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10
 
-# Position close sidecars are read-only prediction/thesis evidence. Refresh
-# them before routing so a trapped position whose plus-recovery edge is gone
-# reaches the position-management prompt when close authorization is hard or
-# explicit. `position_management.json` from the previous gateway cycle is also
-# read as bounded carry-forward Gate A evidence when it still marks the same
-# open trader-owned trade REVIEW_EXIT. Fresh thesis_evolution BROKEN /
-# RECOMMEND_CLOSE, structural position_management REVIEW_EXIT, and
-# position_thesis invalidation-hit or structural-break evidence with multi-TF
-# confirmation are hard standing loss-cut authorization. Adverse-entry-buffer
-# only position_thesis evidence is soft and still needs explicit Gate B before
-# CLOSE; without Gate B, soft sidecars are advisory for non-CLOSE actions and
-# must not block separate current LIVE_READY entries on other pairs or horizons.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli position-thesis-check
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli thesis-evolution-check
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli forecast-persistence-check
-# Refresh PositionManager's read-only sidecar from the latest broker snapshot
-# before memory-health and GPT verification. This sends no orders; live
-# position actions still require the gateway cycle and CLOSE Gate A/B.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli position-management
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli memory-health
-
-# Re-route after refresh. The refresh branch is not an end state: it must
-# produce one current receipt and then proceed through verification + gateway.
-# Ending the cycle after `generate-predictive-limits` leaves fresh evidence
-# unused and is treated as incomplete.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
+# The refresh branch is not an end state: it must produce one current receipt
+# and then proceed through verification + gateway. Ending the cycle right
+# after `cycle-refresh` leaves fresh evidence unused and is treated as
+# incomplete. The digest's `route` field is the re-route result; only run
+# `trader-prompt-route` again if you changed an artifact after the digest.
+#
+# Position close sidecars inside the digest are read-only prediction/thesis
+# evidence. Fresh thesis_evolution BROKEN / RECOMMEND_CLOSE, structural
+# position_management REVIEW_EXIT, and position_thesis invalidation-hit or
+# structural-break evidence with multi-TF confirmation are hard standing
+# loss-cut authorization. Adverse-entry-buffer-only position_thesis evidence
+# is soft and still needs explicit Gate B before CLOSE; without Gate B, soft
+# sidecars are advisory for non-CLOSE actions and must not block separate
+# current LIVE_READY entries on other pairs or horizons.
 
 # 3. Write data/codex_trader_decision_response.json from the active decision branch
 # If broker refresh made an older receipt stale, overwrite it with one current receipt.
@@ -285,89 +218,40 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
   --gpt-decision-response data/codex_trader_decision_response.json \
   --send
 
-# 6. Protection sidecars. Run after the single gateway cycle above has either
-# sent, blocked, or recorded no action. These commands must not delay the
-# handoff from verifier acceptance to LiveOrderGateway / PositionProtectionGateway,
-# but they are part of every completed cycle with open positions.
+# 6. Protection sidecars — ONE consolidated command. Run after the single
+# gateway cycle above has either sent, blocked, or recorded no action. It
+# must not delay the handoff from verifier acceptance to LiveOrderGateway /
+# PositionProtectionGateway, but it is part of every completed cycle with
+# open positions.
 #
-# 6a. Dynamic TP rebalance: expand/contract TP on open positions as
-# market regime shifts. Trader-owned and manual/tagless positions with
-# an existing broker TP are eligible for TP-only management. Missing
-# broker TP is preserved as a no-broker-TP runner unless
-# QR_ENABLE_MISSING_TP_REPAIR=1 is explicitly set, or unless an
-# already-profitable runner needs insurance because forecast horizon /
-# confidence, next-session timing, or multiple technical exhaustion
-# readings say MFE capture is at risk. SL-free positions keep
-# stop_loss=None untouched; only takeProfit orders are written.
-# Hysteresis + entry-side + safety-margin invariants prevent accidental fires.
-# Refresh broker truth first so newly filled gateway trades are visible to the
-# TP pass; refresh again after the TP pass so later sidecars see the updated
-# dependent order state.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli execution-ledger-sync
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-
-# 6b. Profit partial close: when trader-owned or manual/tagless
-# exposure is already in profit and has crossed the next ATR-derived
-# milestone, close a market-derived fraction and keep the remaining
-# units as a runner. This is profit-side only; it never realizes a loss
-# from adverse P/L and never writes a stop-loss to manual/tagless
-# positions.
-# Same trade/milestone is persisted in
-# data/profit_partial_close_state.json after a successful send to avoid
-# repeat partial closes on the same band.
-QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli profit-partial-close --send --confirm-live
-
-# 6c. Verify pending forward-projection predictions against OANDA
-# prices. Resolves PENDING → HIT/MISS/TIMEOUT in
-# data/projection_ledger.jsonl. The next trader cycle reads the
-# rolling hit-rate from this ledger and calibrates the projection
-# layer's confidence weights — self-improving feedback loop.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli verify-projections
-
-# 6d. Position thesis check — apply the full prediction stack to each
-# open position. Emits data/position_thesis_report.json with per-position
-# EXTEND / HOLD / REVIEW_CLOSE verdicts and score breakdowns. The GPT
-# trader reads a fresh REVIEW_CLOSE as Gate A evidence for CLOSE decisions.
-# It is hard standing authorization only when the report records adverse
-# technical loss / invalidation-hit evidence plus multi-TF confirmation;
-# score-only reviews still require explicit env/token Gate B unless a separate
-# hard Gate A path also exists.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli position-thesis-check
-
-# 6e. Thesis evolution check (2026-05-15, user directive: 「どの視点で
-# エントリーしたのか、時間がたって今のポジ状況はエントリーしたときと
-# 市況が変わってないか」). Reads the entry-time thesis recorded at
-# fill time from data/entry_thesis_ledger.jsonl, refreshes the current
-# pair-level forecast from broker_snapshot + pair_charts when needed,
-# and compares against data/forecast_history.jsonl.
-# Emits data/thesis_evolution_report.json with per-position
-# STILL_VALID / WEAKENED / BROKEN + HOLD / EXTEND / RECOMMEND_CLOSE.
-# A fresh BROKEN / RECOMMEND_CLOSE is hard Gate A and satisfies standing
-# structural loss-cut authorization. Pairs with TP-なし・SL-なし mode:
-# trader holds runners on STILL_VALID, considers close on BROKEN.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli thesis-evolution-check
-
-# 6f. Forecast persistence check — N-cycle consistency rule. Reads
-# data/forecast_history.jsonl (refreshed from broker_snapshot +
-# pair_charts even when no fresh-entry lane is scored) and asks: are
-# the last N forecasts for this pair pointing AGAINST
-# the position (≥ QR_FORECAST_FLIP_PERSISTENCE=3 cycles) or have they
-# all gone RANGE/UNCLEAR (≥ QR_FORECAST_RANGE_PERSISTENCE=5 cycles)?
-# Either pattern → RECOMMEND_CLOSE. Aligned ≥3 cycles → EXTEND.
-# Single-cycle noise does NOT trigger close. Output goes to
-# data/forecast_persistence_report.json. Pairs with the
-# thesis-evolution-check verdict; a fresh RECOMMEND_CLOSE is Gate A
-# evidence only and still needs explicit Gate B operator authorization.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli forecast-persistence-check
-
-# 6g. Memory health check — aggregate short, medium, long, and position
-# memory into data/memory_health.json. BLOCK does not grant/deny a trade by
-# itself; trader-prompt-route reads it and sends target-open entry/verify work
-# back to refresh when forecast_history, projection_ledger, execution_ledger,
-# learning_audit, strategy_profile, or entry_thesis_ledger has a hole.
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli memory-health
+# `cycle-sidecars` runs (canonical list: `cli._cycle_sidecar_steps`):
+#   broker-snapshot → tp-rebalance → execution-ledger-sync → broker-snapshot
+#   → profit-partial-close → verify-projections → position-thesis-check
+#   → thesis-evolution-check → forecast-persistence-check → memory-health
+# and prints one compact digest.
+#
+# Semantics preserved from the per-step skeleton:
+# - TP rebalance is TP-only management; SL-free positions keep
+#   stop_loss=None untouched. Missing broker TP stays a no-broker-TP runner
+#   unless QR_ENABLE_MISSING_TP_REPAIR=1 or profitable-runner insurance
+#   conditions apply. Hysteresis + entry-side + safety-margin invariants
+#   prevent accidental fires.
+# - profit-partial-close is profit-side only and sends only when
+#   QR_LIVE_ENABLED=1 (the consolidated runner adds --send --confirm-live
+#   under that env, same triple gate as before). It never realizes a loss
+#   and never writes a stop-loss to manual/tagless positions.
+# - verify-projections resolves PENDING → HIT/MISS/TIMEOUT in
+#   data/projection_ledger.jsonl for the self-calibrating projection loop.
+# - position-thesis-check / thesis-evolution-check (2026-05-15 user
+#   directive 「どの視点でエントリーしたのか…市況が変わってないか」) /
+#   forecast-persistence-check emit the per-position EXTEND / HOLD /
+#   REVIEW_CLOSE, STILL_VALID / WEAKENED / BROKEN, and N-cycle persistence
+#   verdicts. A fresh BROKEN / RECOMMEND_CLOSE from thesis evolution is hard
+#   Gate A standing loss-cut authorization; score-only or
+#   adverse-entry-buffer-only reviews still need explicit env/token Gate B.
+# - memory-health BLOCK does not grant/deny a trade by itself;
+#   trader-prompt-route reads it for the next cycle's routing.
+QR_LIVE_ENABLED=1 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-sidecars
 
 # 4c. adverse-partial-close is DISABLED 2026-05-14:
 # The module closed 50% of 471020 AUD/JPY SHORT for -2,516 JPY based

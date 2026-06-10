@@ -1063,6 +1063,12 @@ class DailyTargetLedgerTest(unittest.TestCase):
                 conn.execute(
                     "CREATE TABLE execution_events (ts_utc TEXT, event_type TEXT, realized_pl_jpy REAL)"
                 )
+                conn.execute(
+                    "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+                )
+                conn.execute(
+                    "INSERT INTO sync_state VALUES ('last_oanda_transaction_id', '1', '2026-05-15T00:45:00+00:00')"
+                )
                 conn.executemany(
                     "INSERT INTO execution_events (ts_utc, event_type, realized_pl_jpy) VALUES (?, ?, ?)",
                     [
@@ -1110,6 +1116,121 @@ class DailyTargetLedgerTest(unittest.TestCase):
             self.assertAlmostEqual(payload["start_balance_jpy"], 199241.44)
             self.assertAlmostEqual(payload["realized_pl_jpy"], -5641.44)
             self.assertAlmostEqual(payload["progress_jpy"], -5941.44)
+
+    def test_same_day_poisoned_start_balance_self_heals_from_ledger_truth(self) -> None:
+        """§3.5 stale-persistence repair (2026-06-08 incident regression).
+
+        A persisted start_balance from weeks earlier (222,781) against a
+        current broker balance of 184,962 must not report -37,818 JPY of
+        same-day "realized" loss. With execution-ledger truth available the
+        ledger figure wins and the start balance re-derives from
+        `balance - realized_today`.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger_path = root / "execution_ledger.db"
+            with sqlite3.connect(ledger_path) as conn:
+                conn.execute(
+                    "CREATE TABLE execution_events (ts_utc TEXT, event_type TEXT, realized_pl_jpy REAL)"
+                )
+                conn.execute(
+                    "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT, updated_at_utc TEXT)"
+                )
+                conn.execute(
+                    "INSERT INTO sync_state VALUES ('last_oanda_transaction_id', '472132', '2026-06-08T17:00:00+00:00')"
+                )
+                conn.executemany(
+                    "INSERT INTO execution_events (ts_utc, event_type, realized_pl_jpy) VALUES (?, ?, ?)",
+                    [
+                        ("2026-06-08T01:26:00+00:00", "TRADE_CLOSED", 433.68),
+                        ("2026-06-08T05:03:00+00:00", "TRADE_CLOSED", -172.86),
+                        ("2026-06-08T16:38:00+00:00", "TRADE_CLOSED", -169.16),
+                        # Prior-day rows must not leak into the campaign day.
+                        ("2026-06-05T12:41:00+00:00", "TRADE_CLOSED", -2981.90),
+                    ],
+                )
+            state_path = root / "target.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "campaign_day_jst": "2026-06-08",
+                        "start_balance_jpy": 222_781.0,
+                        "current_equity_jpy": 184_962.9332,
+                        "target_return_pct": 10.0,
+                        "realized_pl_jpy": -37_818.0668,
+                        "daily_risk_pct": 10.0,
+                    }
+                )
+            )
+            now = datetime(2026, 6, 8, 17, 18, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=184_962.9332,
+                    balance_jpy=184_962.9332,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+                execution_ledger_path=ledger_path,
+            ).run(snapshot=snapshot, now_utc=now)
+            payload = json.loads(state_path.read_text())
+
+            expected_realized = 433.68 - 172.86 - 169.16
+            self.assertEqual(payload["campaign_day_jst"], "2026-06-08")
+            self.assertAlmostEqual(payload["realized_pl_jpy"], expected_realized, places=2)
+            self.assertAlmostEqual(
+                payload["start_balance_jpy"], 184_962.9332 - expected_realized, places=2
+            )
+            # Daily risk budget re-derives from the healed start balance.
+            self.assertAlmostEqual(
+                payload["daily_risk_budget_jpy"],
+                round((184_962.9332 - expected_realized) * 0.10, 4),
+                places=2,
+            )
+            self.assertAlmostEqual(summary.progress_jpy, expected_realized, places=2)
+
+    def test_same_day_without_ledger_keeps_balance_diff_realized(self) -> None:
+        """Without an execution ledger the snapshot balance-diff fallback stays."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "target.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "campaign_day_jst": "2026-06-08",
+                        "start_balance_jpy": 200_000.0,
+                        "current_equity_jpy": 200_000.0,
+                        "target_return_pct": 10.0,
+                        "realized_pl_jpy": 0.0,
+                    }
+                )
+            )
+            now = datetime(2026, 6, 8, 17, 18, tzinfo=timezone.utc)
+            snapshot = BrokerSnapshot(
+                fetched_at_utc=now,
+                account=AccountSummary(
+                    nav_jpy=198_500.0,
+                    balance_jpy=198_500.0,
+                    unrealized_pl_jpy=0.0,
+                    fetched_at_utc=now,
+                ),
+            )
+
+            summary = DailyTargetLedger(
+                state_path=state_path,
+                report_path=root / "target.md",
+            ).run(snapshot=snapshot, now_utc=now)
+            payload = json.loads(state_path.read_text())
+
+            # No audited realized figure: start balance must NOT re-anchor.
+            self.assertAlmostEqual(payload["start_balance_jpy"], 200_000.0)
+            self.assertAlmostEqual(payload["realized_pl_jpy"], -1_500.0)
+            self.assertAlmostEqual(summary.progress_jpy, -1_500.0)
 
 
 if __name__ == "__main__":

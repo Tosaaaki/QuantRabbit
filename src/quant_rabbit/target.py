@@ -160,16 +160,31 @@ class DailyTargetLedger:
 
         # Priority order:
         # 1. Explicit --start-balance argument (caller override).
-        # 2. New campaign day with snapshot.account: derive from OANDA balance/NAV minus
-        #    today's realized PnL so the value reflects today's actual broker truth.
+        # 2. Snapshot.account plus an auditable realized figure (explicit arg or
+        #    execution-ledger truth): derive `balance - realized_today` on EVERY
+        #    cycle, not only on campaign-day transitions. This makes the start
+        #    balance self-healing per §3.5 "no stale persistence": a poisoned
+        #    persisted value cannot survive a cycle that has broker truth.
+        #    (2026-06-08 incident: start_balance_jpy=222,781 persisted from
+        #    ~2026-05-12 while the broker balance was 184,962, so the state
+        #    reported -37,818 JPY / -169% "today's" progress even though the
+        #    execution ledger truth for the campaign day was +92 JPY.)
         # 3. New campaign day without snapshot.account: roll over previous current_equity.
         # 4. Otherwise reuse previous start_balance.
         snapshot_start_balance = _start_balance_from_snapshot(
             snapshot=snapshot,
             realized_pl_jpy=realized_pl_jpy if realized_pl_jpy is not None else ledger_realized,
         )
+        has_audited_realized = realized_pl_jpy is not None or ledger_realized is not None
         start_balance = _coalesce_float(start_balance_jpy)
-        if start_balance is None and is_new_campaign_day and snapshot_start_balance is not None:
+        if (
+            start_balance is None
+            and snapshot_start_balance is not None
+            and (is_new_campaign_day or has_audited_realized)
+        ):
+            # Same-day re-derivation requires an audited realized figure;
+            # without one, `balance - 0` would wrongly re-anchor the day's
+            # target to the current balance and erase visible progress.
             start_balance = snapshot_start_balance
         if start_balance is None and is_new_campaign_day:
             start_balance = _coalesce_float(previous.get("current_equity_jpy"), previous.get("start_balance_jpy"))
@@ -192,7 +207,13 @@ class DailyTargetLedger:
             target_pct = _coalesce_float(target_return_pct, previous.get("target_return_pct"), 10.0)
         if realized_pl_jpy is not None:
             realized = float(realized_pl_jpy)
-        elif ledger_realized is not None and (previous_day is None or is_new_campaign_day):
+        elif ledger_realized is not None:
+            # Execution-ledger transaction truth wins on every cycle, same-day
+            # included. The balance-diff fallback below silently absorbs manual
+            # trade P/L, financing postings, deposits, and any historical
+            # start-balance poisoning into "today's realized", which both
+            # violates feedback_manual_excluded_from_trader_pnl and propagates
+            # stale state (§3.5).
             realized = ledger_realized
         elif is_new_campaign_day:
             realized = 0.0
@@ -202,8 +223,6 @@ class DailyTargetLedger:
                 if previous_day is not None
                 else None
             )
-            if realized is None and ledger_realized is not None:
-                realized = ledger_realized
             if realized is None:
                 realized = _coalesce_float(previous.get("realized_pl_jpy"), 0.0)
         # Equity-derived risk budget: per-trade worst-case loss cap is sized to the day's
@@ -732,12 +751,30 @@ def _realized_pl_from_execution_ledger(path: Path | None, campaign_day_jst: str)
     `_campaign_day_key()` is equivalent to the UTC calendar date because the
     campaign resets at 09:00 JST. The execution ledger stores UTC timestamps,
     so filtering by the first 10 chars of `ts_utc` matches the same boundary.
+
+    The figure is authoritative only when the ledger has actually been synced
+    during the current campaign day (`sync_state.updated_at_utc`). A ledger
+    last synced on an earlier day cannot distinguish "no closes today" from
+    "today's closes not yet imported", so it returns None and the caller falls
+    back to snapshot/previous-state derivation instead of treating a stale
+    zero as broker truth.
     """
 
     if path is None or not path.exists():
         return None
     try:
         with sqlite3.connect(path) as conn:
+            sync_row = conn.execute(
+                "SELECT updated_at_utc FROM sync_state WHERE key = 'last_oanda_transaction_id'"
+            ).fetchone()
+            if sync_row is None or not isinstance(sync_row[0], str):
+                return None
+            try:
+                synced_day = _campaign_day_key(datetime.fromisoformat(sync_row[0]))
+            except ValueError:
+                return None
+            if synced_day < campaign_day_jst:
+                return None
             row = conn.execute(
                 """
                 SELECT COALESCE(SUM(COALESCE(realized_pl_jpy, 0.0)), 0.0)

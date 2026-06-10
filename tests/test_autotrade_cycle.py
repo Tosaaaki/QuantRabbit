@@ -2128,6 +2128,11 @@ class AutoTradeCycleTest(unittest.TestCase):
                 report_path=root / "report.md",
                 target_state_path=target_state,
                 target_report_path=root / "target.md",
+                # Isolate from the repo's real data/execution_ledger.db: a
+                # freshly synced dev ledger would override this fixture's
+                # same-day realized_pl with ledger truth (0) and reopen the
+                # target.
+                execution_ledger_db_path=root / "execution_ledger.db",
                 refresh_market_story=False,
                 live_enabled=True,
             ).run(send=True)
