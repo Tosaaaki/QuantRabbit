@@ -4974,6 +4974,7 @@ def _forecast_market_support_override(
         intent.side.value,
         metadata,
         min_confidence=min_confidence,
+        order_type=intent.order_type,
     )
 
 
@@ -4982,6 +4983,7 @@ def _forecast_market_support_allows_side(
     source: Any,
     *,
     min_confidence: float,
+    order_type: OrderType | None = None,
 ) -> bool:
     if side not in {Side.LONG.value, Side.SHORT.value}:
         return False
@@ -5002,21 +5004,52 @@ def _forecast_market_support_allows_side(
         return False
     if confidence is None:
         return False
+    if chart_direction_bias and chart_direction_bias != side:
+        return False
+    samples = _optional_int(support.get("best_samples")) or 0
+    aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
+    timing_count = _optional_int(support.get("timing_projection_count")) or 0
+    hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
+    # Timing-evidence breakout stop (AGENT_CONTRACT §8, 2026-06-10).
+    # Projection-ledger truth (87k scored rows): volatility-timing detectors
+    # are the system's strongest predictions (bb_squeeze_expansion 82-88%
+    # n≈17.8k, session_expansion 77-91%) while the aggregate directional
+    # forecast reaches its target only ~43-50%. A resting STOP-ENTRY beyond
+    # the breakout rail only fills when the market itself trades through the
+    # level, so direction is proven by price — the weak aggregate confidence
+    # is the wrong gate for that shape. Requirements, all fail-closed:
+    #   - order_type is STOP-ENTRY (market-proof entry; MARKET/LIMIT keep the
+    #     near-miss confidence floor below),
+    #   - the lane side matches the pair forecast direction (§5 alignment is
+    #     preserved — this path never authorizes fading the forecast),
+    #   - the structural chart lean (confluence score_balance) actively
+    #     agrees with the side (TIED or missing lean does not qualify),
+    #   - a current EITHER timing signal passed the audited
+    #     FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE + sample floors
+    #     (timing_count is only populated from signals that cleared both).
+    # Spread, RR, exhaustion, telemetry, strategy-profile, and gateway checks
+    # all still run after this; it only lifts the forecast-confidence veto.
+    breakout_proof = (
+        order_type == OrderType.STOP_ENTRY
+        and bool(chart_direction_bias)
+        and chart_direction_bias == side
+    )
+    timing_evidence = (
+        timing_count > 0
+        and samples >= FORECAST_MARKET_SUPPORT_MIN_SAMPLES
+        and hit_rate >= FORECAST_MARKET_SUPPORT_MIN_TIMING_HIT_RATE
+    )
+    if breakout_proof and timing_evidence:
+        return True
     support_floor = max(0.0, min_confidence - FORECAST_MARKET_SUPPORT_MAX_CONFIDENCE_SHORTFALL)
     if confidence < support_floor:
-        return False
-    if chart_direction_bias and chart_direction_bias != side:
         return False
     if not bool(support.get("ok")):
         return False
     if bool(support.get("bootstrap_projection_support")):
         return True
-    samples = _optional_int(support.get("best_samples")) or 0
     if samples < FORECAST_MARKET_SUPPORT_MIN_SAMPLES:
         return False
-    aligned_count = _optional_int(support.get("aligned_projection_count")) or 0
-    timing_count = _optional_int(support.get("timing_projection_count")) or 0
-    hit_rate = _optional_float(support.get("best_hit_rate")) or 0.0
     if aligned_count > 0:
         return hit_rate >= FORECAST_MARKET_SUPPORT_MIN_DIRECTIONAL_HIT_RATE
     return (

@@ -6301,6 +6301,89 @@ class PatternReversalChaseTest(unittest.TestCase):
         self.assertNotIn("PATTERN_REVERSAL_CHASE", codes)
 
 
+class TimingEvidenceBreakoutStopTest(unittest.TestCase):
+    """_forecast_market_support_allows_side breakout-proof path (§8, 2026-06-10).
+
+    Projection-ledger truth: timing detectors (squeeze/session expansion) hit
+    77-88% while the aggregate directional forecast reaches its target only
+    ~43-50%. A resting STOP-ENTRY beyond the rail only fills when the market
+    itself breaks, so it may bypass the confidence floor when the audited
+    timing evidence and the structural lean both agree with the lane side.
+    """
+
+    @staticmethod
+    def _metadata(
+        *,
+        direction: str = "UP",
+        confidence: float = 0.41,
+        bias: str = "LONG",
+        timing_count: int = 1,
+        hit_rate: float = 0.85,
+        samples: int = 500,
+        support_ok: bool = False,
+    ) -> dict:
+        return {
+            "forecast_direction": direction,
+            "forecast_confidence": confidence,
+            "forecast_raw_confidence": confidence,
+            "chart_direction_bias": bias,
+            "forecast_market_support": {
+                "ok": support_ok,
+                "aligned_projection_count": 0,
+                "timing_projection_count": timing_count,
+                "best_hit_rate": hit_rate,
+                "best_samples": samples,
+                "bootstrap_projection_support": False,
+            },
+        }
+
+    def _allows(self, metadata: dict, *, side: str = "LONG", order_type: OrderType | None = OrderType.STOP_ENTRY) -> bool:
+        from quant_rabbit.strategy.intent_generator import _forecast_market_support_allows_side
+
+        return _forecast_market_support_allows_side(
+            side, metadata, min_confidence=0.55, order_type=order_type
+        )
+
+    def test_stop_entry_with_timing_evidence_and_lean_bypasses_floor(self) -> None:
+        self.assertTrue(self._allows(self._metadata()))
+
+    def test_market_order_keeps_confidence_floor(self) -> None:
+        self.assertFalse(self._allows(self._metadata(), order_type=OrderType.MARKET))
+
+    def test_limit_order_keeps_confidence_floor(self) -> None:
+        self.assertFalse(self._allows(self._metadata(), order_type=OrderType.LIMIT))
+
+    def test_missing_structural_lean_fails_closed(self) -> None:
+        self.assertFalse(self._allows(self._metadata(bias="")))
+
+    def test_opposing_structural_lean_blocks(self) -> None:
+        self.assertFalse(self._allows(self._metadata(bias="SHORT")))
+
+    def test_side_must_still_match_forecast_direction(self) -> None:
+        # §5 alignment preserved: a SHORT lane cannot use the breakout path
+        # against an UP forecast even with strong timing evidence.
+        self.assertFalse(
+            self._allows(self._metadata(direction="UP", bias="SHORT"), side="SHORT")
+        )
+
+    def test_weak_timing_hit_rate_blocks(self) -> None:
+        self.assertFalse(self._allows(self._metadata(hit_rate=0.6)))
+
+    def test_thin_samples_block(self) -> None:
+        self.assertFalse(self._allows(self._metadata(samples=2)))
+
+    def test_no_timing_signal_blocks(self) -> None:
+        self.assertFalse(self._allows(self._metadata(timing_count=0)))
+
+    def test_near_miss_path_unchanged_for_market_orders(self) -> None:
+        # Existing behavior: near-miss confidence (0.47 vs 0.55) + support.ok
+        # + aligned directional signal still passes for any order type.
+        metadata = self._metadata(confidence=0.47, support_ok=True, timing_count=0)
+        metadata["forecast_market_support"]["aligned_projection_count"] = 1
+        metadata["forecast_market_support"]["best_hit_rate"] = 0.62
+        self.assertTrue(self._allows(metadata, order_type=OrderType.MARKET))
+
+
 class SameDayLossStreakIssueTest(unittest.TestCase):
     """_same_day_loss_streak_issues — §8 re-entry discipline (2026-06-10)."""
 
