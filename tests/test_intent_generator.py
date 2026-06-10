@@ -9,7 +9,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from quant_rabbit.strategy.intent_generator import IntentGenerator, _forecast_context_payload
+from quant_rabbit.models import OrderIntent, OrderType, Side
+from quant_rabbit.strategy.intent_generator import (
+    IntentGenerator,
+    _forecast_context_payload,
+    _same_day_loss_streak_issues,
+)
+from quant_rabbit.strategy.lane_history_ledger import SameDayLossStreak
 
 
 class IntentGeneratorTest(unittest.TestCase):
@@ -6293,6 +6299,76 @@ class PatternReversalChaseTest(unittest.TestCase):
         codes = {issue["code"] for issue in _method_context_issues(intent)}
 
         self.assertNotIn("PATTERN_REVERSAL_CHASE", codes)
+
+
+class SameDayLossStreakIssueTest(unittest.TestCase):
+    """_same_day_loss_streak_issues — §8 re-entry discipline (2026-06-10)."""
+
+    @staticmethod
+    def _intent(order_type: OrderType, metadata: dict | None = None) -> OrderIntent:
+        return OrderIntent(
+            pair="EUR_USD",
+            side=Side.LONG,
+            order_type=order_type,
+            units=5000,
+            tp=1.1600,
+            sl=1.1400,
+            thesis="test",
+            entry=1.1500,
+            metadata=metadata or {},
+        )
+
+    @staticmethod
+    def _streak(count: int) -> SameDayLossStreak:
+        return SameDayLossStreak(
+            pair="EUR_USD",
+            consecutive_losses=count,
+            net_loss_jpy=-2000.0 * count,
+            last_loss_ts_utc="2026-06-04T14:44:00Z",
+        )
+
+    def _issues(self, order_type: OrderType, count: int, metadata: dict | None = None):
+        intent = self._intent(order_type, metadata)
+        issues = _same_day_loss_streak_issues(
+            intent,
+            self._streak(count) if count else None,
+            base_max_loss_jpy=2000.0,
+            effective_max_loss_jpy=2000.0 * (0.5**count),
+        )
+        return intent, issues
+
+    def test_no_streak_emits_nothing(self) -> None:
+        _, issues = self._issues(OrderType.MARKET, 0)
+        self.assertEqual(issues, [])
+
+    def test_streak_at_threshold_blocks_market_chase(self) -> None:
+        intent, issues = self._issues(OrderType.MARKET, 2)
+        self.assertEqual([i["code"] for i in issues], ["SAME_DAY_LOSS_STREAK_CHASE"])
+        self.assertEqual(issues[0]["severity"], "BLOCK")
+        self.assertEqual(intent.metadata["same_day_loss_streak"], 2)
+        self.assertAlmostEqual(intent.metadata["loss_streak_max_loss_scale"], 0.25)
+
+    def test_streak_at_threshold_blocks_stop_entry_chase(self) -> None:
+        _, issues = self._issues(OrderType.STOP_ENTRY, 2)
+        self.assertEqual(issues[0]["severity"], "BLOCK")
+
+    def test_streak_at_threshold_keeps_limit_retest_tradable(self) -> None:
+        _, issues = self._issues(OrderType.LIMIT, 2)
+        self.assertEqual([i["code"] for i in issues], ["SAME_DAY_LOSS_STREAK"])
+        self.assertEqual(issues[0]["severity"], "WARN")
+
+    def test_single_loss_warns_only(self) -> None:
+        _, issues = self._issues(OrderType.MARKET, 1)
+        self.assertEqual(issues[0]["severity"], "WARN")
+
+    def test_recovery_hedge_is_never_hard_blocked(self) -> None:
+        _, issues = self._issues(OrderType.MARKET, 3, metadata={"position_intent": "HEDGE"})
+        self.assertEqual(issues[0]["severity"], "WARN")
+
+    def test_env_zero_threshold_disables_gate(self) -> None:
+        with patch("quant_rabbit.strategy.intent_generator.LOSS_STREAK_BLOCK_THRESHOLD", 0):
+            _, issues = self._issues(OrderType.MARKET, 5)
+        self.assertEqual(issues, [])
 
 
 if __name__ == "__main__":

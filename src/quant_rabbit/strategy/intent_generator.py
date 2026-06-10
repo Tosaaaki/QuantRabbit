@@ -36,6 +36,12 @@ from quant_rabbit.risk import (
     resolve_max_loss_jpy,
 )
 from quant_rabbit.snapshot_json import snapshot_payload_order_raw
+from quant_rabbit.strategy.lane_history_ledger import (
+    LOSS_STREAK_BLOCK_THRESHOLD,
+    LOSS_STREAK_SIZE_BACKOFF,
+    SameDayLossStreak,
+    compute_same_day_loss_streaks,
+)
 from quant_rabbit.strategy.price_action import structural_tp_target
 from quant_rabbit.strategy.profile import StrategyProfile
 
@@ -3452,6 +3458,16 @@ class IntentGenerator:
             if snapshot is not None and _require_telemetry_for_live_active()
             else None
         )
+        # Same-day loss-streak discipline (AGENT_CONTRACT §8, 2026-06-10).
+        # Broker-truth realized closes for the current campaign day, trader-
+        # attributed only. Computed once per run; the campaign-day key is the
+        # UTC calendar date (JST9 boundary, same as target._campaign_day_key).
+        loss_streak_day = (validation_time_utc or datetime.now(timezone.utc)).date().isoformat()
+        loss_streaks = (
+            compute_same_day_loss_streaks(self.data_root / "execution_ledger.db", loss_streak_day)
+            if snapshot is not None
+            else {}
+        )
         results: list[GeneratedIntent] = []
         for lane in lanes[:max_candidates]:
             variants = (None,) if snapshot is None else _order_variants_for(lane)
@@ -3470,6 +3486,7 @@ class IntentGenerator:
                         validation_time_utc=validation_time_utc,
                         telemetry_cache=telemetry_cache,
                         data_root=self.data_root,
+                        loss_streaks=loss_streaks,
                     )
                 )
         generated_at = datetime.now(timezone.utc).isoformat()
@@ -3500,6 +3517,7 @@ class IntentGenerator:
         validation_time_utc: datetime | None = None,
         telemetry_cache: _TelemetryLiveReadinessCache | None = None,
         data_root: Path | None = None,
+        loss_streaks: dict[str, SameDayLossStreak] | None = None,
     ) -> GeneratedIntent:
         parent_lane_id = _lane_id(lane)
         method = TradeMethod.parse(str(lane["method"]))
@@ -3546,11 +3564,20 @@ class IntentGenerator:
         session_bucket = _session_bucket_for(pair, pair_charts)
         chart_context = _chart_context_for(pair, pair_charts)
         chart_context.update(_market_location_context_for(pair, quote.mid, pair_charts, levels_snapshot))
+        # Same-day loss-streak sizing backoff (AGENT_CONTRACT §8, 2026-06-10).
+        # §6 instructs "size it down" instead of inventing prose blockers: each
+        # consecutive trader-attributed realized loss on this pair today halves
+        # the per-trade risk budget for the next attempt on the same pair.
+        pair_loss_streak = (loss_streaks or {}).get(pair)
+        streak_count = pair_loss_streak.consecutive_losses if pair_loss_streak else 0
+        effective_max_loss_jpy = max_loss_jpy
+        if streak_count > 0 and LOSS_STREAK_BLOCK_THRESHOLD > 0:
+            effective_max_loss_jpy = max_loss_jpy * (LOSS_STREAK_SIZE_BACKOFF**streak_count)
         intent = _intent_from_lane(
             lane,
             quote,
             snapshot,
-            max_loss_jpy=max_loss_jpy,
+            max_loss_jpy=effective_max_loss_jpy,
             portfolio_loss_cap=portfolio_loss_cap,
             atr_pips=atr_pips,
             range_indicators=range_indicators,
@@ -3655,6 +3682,16 @@ class IntentGenerator:
             # moment ANY context_issue existed, killing every WARN-only
             # mirror. User 2026-05-11「他の通貨入らないね」.
             if any(issue.get("severity") == "BLOCK" for issue in context_issues):
+                risk_allowed = False
+        loss_streak_issues = _same_day_loss_streak_issues(
+            intent,
+            pair_loss_streak,
+            base_max_loss_jpy=max_loss_jpy,
+            effective_max_loss_jpy=effective_max_loss_jpy,
+        )
+        if loss_streak_issues:
+            risk_issues.extend(loss_streak_issues)
+            if any(issue.get("severity") == "BLOCK" for issue in loss_streak_issues):
                 risk_allowed = False
         forecast_live_issue = _forecast_live_readiness_issue(intent, intent.metadata or {}, method)
         if forecast_live_issue is not None:
@@ -4221,6 +4258,78 @@ def _intent_from_lane(
             **matrix_metadata,
         },
     )
+
+
+def _same_day_loss_streak_issues(
+    intent: OrderIntent,
+    streak: SameDayLossStreak | None,
+    *,
+    base_max_loss_jpy: float,
+    effective_max_loss_jpy: float,
+) -> list[dict[str, str]]:
+    """Same-day per-pair consecutive-loss re-entry discipline (§8, 2026-06-10).
+
+    Regression target: 2026-06-04 EUR_USD lost LONG -2,181, LONG -2,642, then
+    revenge-flip SHORT -2,333 within hours (-7,157 JPY, ~3.8% NAV) — the
+    lane_history ±25 score nudge and trader_overrides feedback were advisory
+    and did not change entry *timing*. Once a pair has hit
+    LOSS_STREAK_BLOCK_THRESHOLD consecutive trader-attributed realized losses
+    this campaign day:
+
+    - MARKET / STOP-ENTRY re-engagement on that pair (either side) is BLOCKED.
+      Active chasing is what compounded the streaks; the pair stays tradable
+      through passive LIMIT timing at a structural retest, which forces the
+      market to come to the trader's level first.
+    - LIMIT lanes get a WARN plus the exponential sizing backoff already
+      applied upstream, so a third attempt risks a fraction of the per-trade
+      budget instead of full size.
+
+    Below the threshold the streak is advisory: WARN + sizing backoff only.
+    Recovery hedges (`position_intent=HEDGE`) manage existing trapped
+    exposure under their own §3.5 timing rules and are never hard-blocked
+    here. The streak resets on any winning close and dies at the campaign-day
+    boundary, so this cannot become a standing direction-bias rule
+    (feedback_no_direction_bias_rules).
+    """
+    if streak is None or streak.consecutive_losses <= 0:
+        return []
+    if LOSS_STREAK_BLOCK_THRESHOLD <= 0:
+        return []
+    # Mutate the intent's own metadata dict (never `or {}` — that would write
+    # the audit keys to a throwaway dict when metadata starts empty).
+    metadata = intent.metadata
+    is_hedge = str(metadata.get("position_intent") or "").upper() == "HEDGE"
+    count = streak.consecutive_losses
+    detail = (
+        f"{intent.pair} has {count} consecutive trader-attributed realized "
+        f"losses today (net {streak.net_loss_jpy:+.0f} JPY, last at "
+        f"{streak.last_loss_ts_utc or 'unknown'}); per-trade budget backed off "
+        f"{base_max_loss_jpy:.0f} -> {effective_max_loss_jpy:.0f} JPY"
+    )
+    metadata["same_day_loss_streak"] = count
+    metadata["same_day_loss_streak_net_jpy"] = round(streak.net_loss_jpy, 2)
+    metadata["loss_streak_max_loss_scale"] = (
+        round(effective_max_loss_jpy / base_max_loss_jpy, 4) if base_max_loss_jpy else 1.0
+    )
+    active_chase = intent.order_type in (OrderType.MARKET, OrderType.STOP_ENTRY)
+    if count >= LOSS_STREAK_BLOCK_THRESHOLD and active_chase and not is_hedge:
+        return [
+            {
+                "code": "SAME_DAY_LOSS_STREAK_CHASE",
+                "message": (
+                    f"{detail}. Re-engagement after {LOSS_STREAK_BLOCK_THRESHOLD}+ same-day "
+                    "losses requires passive LIMIT retest timing, not MARKET/STOP chase."
+                ),
+                "severity": "BLOCK",
+            }
+        ]
+    return [
+        {
+            "code": "SAME_DAY_LOSS_STREAK",
+            "message": detail,
+            "severity": "WARN",
+        }
+    ]
 
 
 def _method_context_issues(intent: OrderIntent) -> list[dict[str, str]]:

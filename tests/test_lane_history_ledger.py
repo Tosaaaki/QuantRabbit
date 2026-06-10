@@ -13,6 +13,7 @@ from quant_rabbit.strategy.lane_history_ledger import (
     LANE_HISTORY_SATURATION_PL_JPY,
     LaneHistorySnapshot,
     compute_lane_history,
+    compute_same_day_loss_streaks,
     lane_history_modifier,
 )
 
@@ -420,6 +421,92 @@ class LaneHistoryLedgerTest(unittest.TestCase):
             snap = hist[("USD_JPY", "LONG")]
             self.assertEqual(snap.sample_size, 1)
             self.assertAlmostEqual(snap.net_pl_jpy, -500.0)
+
+
+class SameDayLossStreakTest(unittest.TestCase):
+    """compute_same_day_loss_streaks — 2026-06-04 EUR_USD regression model."""
+
+    def test_missing_db_returns_empty(self) -> None:
+        self.assertEqual(compute_same_day_loss_streaks(Path("/nonexistent.db"), "2026-06-04"), {})
+
+    def test_consecutive_losses_pool_both_directions(self) -> None:
+        """LONG loss, LONG loss, revenge-flip SHORT loss → streak 3 on the pair."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    # Closing LONG issues SELL → close side SHORT.
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -2181.0, "ts_utc": "2026-06-04T11:30:00Z", "trade_id": "t1"},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -2642.0, "ts_utc": "2026-06-04T12:04:00Z", "trade_id": "t2"},
+                    # Closing SHORT issues BUY → close side LONG.
+                    {"pair": "EUR_USD", "side": "LONG", "pl": -2333.0, "ts_utc": "2026-06-04T14:44:00Z", "trade_id": "t3"},
+                ],
+            )
+            streaks = compute_same_day_loss_streaks(path, "2026-06-04")
+            self.assertIn("EUR_USD", streaks)
+            self.assertEqual(streaks["EUR_USD"].consecutive_losses, 3)
+            self.assertAlmostEqual(streaks["EUR_USD"].net_loss_jpy, -7156.0)
+            self.assertEqual(streaks["EUR_USD"].last_loss_ts_utc, "2026-06-04T14:44:00Z")
+
+    def test_winning_close_resets_streak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -2181.0, "ts_utc": "2026-06-04T11:30:00Z", "trade_id": "t1"},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": +900.0, "ts_utc": "2026-06-04T12:30:00Z", "trade_id": "t2"},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -500.0, "ts_utc": "2026-06-04T13:30:00Z", "trade_id": "t3"},
+                ],
+            )
+            streaks = compute_same_day_loss_streaks(path, "2026-06-04")
+            self.assertEqual(streaks["EUR_USD"].consecutive_losses, 1)
+            self.assertAlmostEqual(streaks["EUR_USD"].net_loss_jpy, -500.0)
+
+    def test_other_day_losses_do_not_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -3307.0, "ts_utc": "2026-05-29T02:18:00Z", "trade_id": "t1"},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -5267.0, "ts_utc": "2026-05-29T02:34:00Z", "trade_id": "t2"},
+                ],
+            )
+            self.assertEqual(compute_same_day_loss_streaks(path, "2026-06-04"), {})
+            self.assertEqual(
+                compute_same_day_loss_streaks(path, "2026-05-29")["EUR_USD"].consecutive_losses, 2
+            )
+
+    def test_unattributed_manual_close_does_not_count(self) -> None:
+        """Manual/tagless closes must not gate the bot (manual P/L separation)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {"pair": "USD_JPY", "side": "SHORT", "pl": -4000.0, "ts_utc": "2026-06-04T10:00:00Z", "trade_id": "m1", "attributed": False},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -2181.0, "ts_utc": "2026-06-04T11:30:00Z", "trade_id": "t1"},
+                ],
+            )
+            streaks = compute_same_day_loss_streaks(path, "2026-06-04")
+            self.assertNotIn("USD_JPY", streaks)
+            self.assertIn("EUR_USD", streaks)
+
+    def test_breakeven_close_neither_counts_nor_resets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ledger.db"
+            _make_db(
+                path,
+                [
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -2181.0, "ts_utc": "2026-06-04T11:30:00Z", "trade_id": "t1"},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": 0.0, "ts_utc": "2026-06-04T12:00:00Z", "trade_id": "t2"},
+                    {"pair": "EUR_USD", "side": "SHORT", "pl": -100.0, "ts_utc": "2026-06-04T12:30:00Z", "trade_id": "t3"},
+                ],
+            )
+            streaks = compute_same_day_loss_streaks(path, "2026-06-04")
+            self.assertEqual(streaks["EUR_USD"].consecutive_losses, 2)
 
 
 class LaneHistoryModifierLookupTest(unittest.TestCase):
