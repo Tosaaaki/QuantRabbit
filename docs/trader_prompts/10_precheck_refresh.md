@@ -10,115 +10,76 @@
 - Do not stop because refreshed broker truth disagrees with stale journal, stale local state, or an older decision receipt. Broker truth wins; re-route and rewrite the receipt when needed.
 - A locally remembered pending order that is absent from the refreshed OANDA snapshot is stale local memory, not a send blocker.
 
-## Refresh Evidence
+## Refresh Evidence — ONE command
 
 ```bash
 export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli pair-charts --timeframes M1,M5,M15,M30,H1,H4,D --output data/pair_charts.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cross-asset-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli flow-snapshot  # spread only; use --include-books only after OANDA book entitlement is confirmed
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli currency-strength
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli levels-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli economic-calendar
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cot-snapshot
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli option-skew    # disabled optional artifact until a provider is configured
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli market-context-matrix
+PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli cycle-refresh --daily-risk-pct 10
 ```
 
-**News is produced out-of-band** by the dedicated `qr-news-digest`
-Codex Desktop routine (hourly). That routine runs in the live runtime
-worktree (`/Users/tossaki/App/QuantRabbit-live/`) and writes
-WebSearch-curated trader-perspective content to ignored runtime artifacts:
-`data/news_items.json`, `logs/news_digest.md`, and
-`logs/news_flow_log.md`. **Do not call `news-snapshot` from the trader
-cycle** — that would replace the curated digest with raw RSS output.
-During the open FX week, `news-health --strict` below fails loud when the
-digest is stale, raw-RSS-only, missing required sections, or not reflected
-into `data/market_story_profile.json`. During the weekend guard window it
-accepts the paused scheduler when the weekend snapshot says `mode=paused`. The
-2026-05-13 incident exposed a stale-live-digest bridge bug; the current
-contract fixes it by making the news routine write directly in the same
-live runtime worktree that the trader reads.
+`cycle-refresh` runs the full refresh step list in one process — broker
+snapshot, daily target state, ledger sync, strategy mining, pair charts,
+all market-context layers, market-story mining, `news-health --strict`,
+daily-review, tp-rebalance, projection verification, intent generation,
+coverage/attack/learning/capture/verification audits, predictive limits,
+position sidecars, memory health — in the same order and with the same
+arguments the per-step skeleton used (`cli._cycle_refresh_steps` is the
+canonical list), then prints one compact digest that already includes the
+re-routed prompt branch (`route`).
 
-Refresh the derived live market-story profile from that curated digest before
-intent pricing. `logs/news_digest.md` being fresh is not sufficient by itself:
-`trader_brain` and `gpt_trader` read `data/market_story_profile.json`.
-Write the side report under `data/` so the precheck path does not create new
-tracked `docs/*_report.md` diffs.
+**Token discipline (2026-06-09 credit-exhaustion incident).** Running these
+steps as separate shell turns burned ~3M tokens per 20-minute cycle and
+silently stopped live trading for ~36 hours. Do NOT run the refresh steps
+individually; do NOT cat multi-megabyte artifacts. Read the digest, then
+drill into `data/order_intents.json`, `data/pair_charts.json`,
+`data/market_context_matrix.json` etc. with targeted `jq` / `python -c`
+queries only where the digest flags something.
 
-```bash
-export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories \
-  --news-dir logs \
-  --profile data/market_story_profile.json \
-  --report data/market_story_report.md
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli news-health --strict
-```
+Digest semantics:
 
-`news-health --strict` is the final guard for the news bridge. During the open
-FX week it blocks stale curated digest files, raw-RSS-only digest output,
-missing required news sections, a paused `qr-news-digest` automation, and a
-`market_story_profile` older than the news artifacts. During the contract
-weekend pause it accepts the paused scheduler when the weekend-state snapshot
-records `mode=paused`.
+- `steps_failed` lists failed steps with stderr tails. A failed REQUIRED
+  step aborts the rest and exits 2 — repair the named step, then rerun
+  `cycle-refresh` once. Optional-step failures (for example `news-health
+  --strict` during a stale-news window) do not stop evidence generation;
+  treat them as named blockers in the decision receipt exactly as before.
+- `tp-rebalance` already ran inside the refresh, even when the later
+  receipt becomes WAIT — existing broker TPs are position protection and
+  must not wait for a fresh entry to be managed.
+- `target`, `intents`, `attack_advice`, `capture_economics`,
+  `memory_health`, `news_health`, `thesis_evolution`,
+  `forecast_persistence`, `position_thesis` summarize the artifacts the
+  decision receipt must cite.
 
-**daily-review** runs every cycle (idempotent, no network) to refresh
-`data/trader_overrides.json` from execution_ledger.db. trader_brain's
-Module C reads that file for direction-bias overrides + blocked-lane
-hints derived from the last 24h of realized P&L. Running every cycle
-keeps the override rolling without a separate scheduled task and lets
-new closed trades immediately influence the next cycle's scoring.
+**News stays consumer-only.** The digest's `news_health` reflects the
+artifacts written by the dedicated `qr-news-digest` Codex Desktop routine
+(hourly, same live runtime worktree). Do not call `news-snapshot` from the
+trader cycle — that would replace the curated digest with raw RSS output.
+During the open FX week a stale digest fails loud through `news-health
+--strict`; during the contract weekend pause it accepts the paused
+scheduler when the weekend snapshot says `mode=paused`.
 
-```bash
-export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-review
-```
+Do not stop after evidence refresh. The digest's `route` field is the
+re-route result — read the returned branch, write one current decision
+receipt, then continue to `gpt-trader-decision` and exactly one gateway
+cycle. A cycle that ends right after `cycle-refresh` leaves fresh evidence
+unused and is incomplete. Only run `trader-prompt-route` again if you
+changed an artifact after the digest was printed.
 
-## Reprice Intents
+## Refresh Strategy Evidence (repair only)
 
-Context fetches can outlive the quote freshness window. Refresh broker truth again immediately before intent pricing.
-
-```bash
-export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli tp-rebalance
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli broker-snapshot --output data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli daily-target-state --snapshot data/broker_snapshot.json --daily-risk-pct 10
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli plan-campaign --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-intents --snapshot data/broker_snapshot.json
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli optimize-coverage
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli ai-attack-advice
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli learning-audit
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli generate-predictive-limits
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli memory-health
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli trader-prompt-route
-```
-
-Do not stop after evidence refresh. Re-run the router with the refreshed
-snapshot/intents, read the returned branch, write one current decision receipt,
-then continue to `gpt-trader-decision` and exactly one gateway cycle. A refresh
-that ends at `generate-predictive-limits` is an incomplete cycle.
-
-`tp-rebalance` is part of the refresh/reprice path, not only a TRADE aftercare
-step. Run it even if the later receipt becomes WAIT, because existing broker
-TPs are position protection and stale profitable TPs must not wait for a fresh
-entry to be managed. Refresh broker truth after the TP pass so the decision
-packet and order intents cite the actual dependent-order price.
-
-## Refresh Strategy Evidence
-
-Run only when strategy artifacts are missing, stale, or a branch explicitly routes to evidence repair.
+`cycle-refresh` already runs `import-legacy` + `mine-strategy` +
+`mine-market-stories` every cycle. Run the explicit repair block only when a
+branch routes to deep evidence repair (for example a corrupt history DB or a
+campaign plan that must be rebuilt outside the normal generate-intents
+refresh):
 
 ```bash
 export QR_PYTHON="${QR_PYTHON:-/opt/homebrew/bin/python3}"
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli import-legacy
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-strategy
-PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli mine-market-stories
 PYTHONPATH=src "$QR_PYTHON" -m quant_rabbit.cli plan-campaign --start-balance "$(jq -r .start_balance_jpy data/daily_target_state.json)"
 ```
+
+Never paste a JPY literal into `--start-balance` (§3.5); derive it from the
+current daily target state as above.
 
 ## Stop Conditions
 

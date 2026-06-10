@@ -34,7 +34,8 @@ can turn a tradeable cycle into a no-send cycle.
 Run the gateway only for an accepted receipt that actually has broker work
 (`TRADE`, verified `CANCEL_PENDING`, or an accepted position-management action).
 If the verifier accepts `WAIT`, do not run a no-op gateway just to create a
-cycle boundary; continue to the protection sidecars in `docs/SKILL_trader.md`.
+cycle boundary; continue to the consolidated protection sidecars
+(`cycle-sidecars`, see `docs/SKILL_trader.md`).
 
 ```bash
 QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
@@ -53,8 +54,10 @@ QR_LIVE_ENABLED=1 ./scripts/run-autotrade-live.sh \
 - Without live gates, the cycle stays dry-run.
 - Do not rerun after a rejected / blocked / no-trade result to force a fill. A later scheduled cycle may refresh broker truth and make a new decision; that is normal continuation, not a workaround send.
 - Dynamic TP rebalance is mandatory after verifier acceptance even when the
-  accepted action is WAIT. For TRADE receipts, run it only after the gateway
-  handoff and after refreshing broker truth so newly filled trades are visible.
+  accepted action is WAIT. For TRADE receipts it runs only after the gateway
+  handoff: `cycle-sidecars` refreshes broker truth first so newly filled
+  trades are visible, then runs the TP pass and the remaining protection
+  sidecars in one process. Do not run the sidecar steps individually.
 
 ## Report
 
