@@ -431,9 +431,19 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         self.assertIn("contract_stale_harvest", adj.rationale)
         self.assertIn("operating ATR", adj.rationale)
 
-    def test_contracts_profitable_stale_short_harvest_tp_to_near_market(self) -> None:
-        """A profitable SHORT with a stale full-distance TP should be harvested
-        near market while the profit is still smaller than operating ATR."""
+    def test_contracts_profitable_stale_short_tp_to_operating_reward_anchor(self) -> None:
+        """A profitable SHORT with a stale full-distance TP re-anchors to a
+        reachable reward target on the operating timeframe — NOT to a 5.1-pip
+        near-market snap.
+
+        Capture-economics repair (2026-06-10): the old near-market snap
+        harvested profitable runners at noise distance, producing the
+        +376 JPY average win vs -1,437 JPY average loss ledger asymmetry.
+        New candidate = entry ± min(reward_risk × operating_ATR,
+        MAX_TP_DISTANCE_ATR_MULT × operating_ATR), floored at the adverse
+        lock-in distance. Operating ATR resolves to the M5 reading (6.6),
+        so the target is 3.0 × 6.6 = 19.8 pips from entry.
+        """
         self._kill_switch_off()
         adj = compute_tp_adjustment(
             trade_id="471328", pair="EUR_USD", side="SHORT",
@@ -454,10 +464,43 @@ class ComputeTPAdjustmentTest(unittest.TestCase):
         )
 
         self.assertIsNotNone(adj)
-        self.assertEqual(adj.new_tp, 1.16158)
+        self.assertEqual(adj.new_tp, 1.16074)
+        self.assertAlmostEqual(adj.distance_pips_new, 19.8, places=1)
         self.assertLess(adj.distance_pips_new, adj.distance_pips_old)
         self.assertIn("contract_profitable_stale_harvest", adj.rationale)
         self.assertIn("profit 6.3pip", adj.rationale)
+
+    def test_profitable_stale_tp_already_past_reanchor_holds_instead_of_market_snap(self) -> None:
+        """When profit has already consumed the re-anchored target (within the
+        market-safety margin), the sidecar HOLDs the existing TP rather than
+        snapping it to market; profit capture belongs to the structural
+        forecast_harvest / partial-close paths in that state."""
+        self._kill_switch_off()
+        adj = compute_tp_adjustment(
+            trade_id="471329", pair="EUR_USD", side="SHORT",
+            entry_price=1.16272, current_tp=1.14355,
+            # 26 pips in profit with 2+ technical pressure readings → the old
+            # code snapped TP to market+5.1; reanchor at 9.4 pips (1.0 rr ×
+            # operating ATR... using rr=1.0 → max(lock_in 8, 9.4)=9.4) is
+            # already consumed, so the new code returns None.
+            current_price=1.16012,
+            atr_pips=22.7, reward_risk=1.0,
+            is_reversal_firing=False,
+            chart_context={
+                "confluence": {
+                    "range_24h_sigma_multiple": 6.43,
+                    "score_balance": "TIED",
+                    "price_percentile_24h": 0.02,
+                    "tf_agreement_score": 0.33,
+                },
+                "indicators_by_tf": {
+                    "M5": {"atr_pips": 6.6},
+                    "M15": {"atr_pips": 9.4},
+                },
+            },
+        )
+
+        self.assertIsNone(adj)
 
     def test_keeps_reachable_profitable_harvest_tp_instead_of_expanding_again(self) -> None:
         """A near structural harvest TP must not be expanded back into a runner

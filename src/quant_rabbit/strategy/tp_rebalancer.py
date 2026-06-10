@@ -709,11 +709,35 @@ def compute_tp_adjustment(
     elif stale_distance_reasons:
         if profit_pips > 0:
             mode = "contract_profitable_stale_harvest"
-            near_market_pips = MIN_TP_TO_MARKET_PIPS + 0.1
+            # 2026-06-10 capture-economics repair. This branch used to snap a
+            # profitable runner's TP to `current ± (MIN_TP_TO_MARKET_PIPS+0.1)`
+            # — a 5.1-pip literal, the exact "spread × N as geometry" §3.5
+            # anti-pattern. Ledger truth 2026-05-14→06-08 (trader-attributed):
+            # 55 wins averaging +376 JPY vs 24 losses averaging -1,437 JPY
+            # (payoff 0.26; breakeven at the observed 70% win rate needs
+            # 0.43). Entry geometry promises H4-ATR-scale targets, so almost
+            # every position eventually trips the >10× operating-ATR stale
+            # test, and the profitable ones were harvested at noise distance.
+            # Re-anchor the contraction to a REACHABLE but real target on the
+            # operating timeframe: regime-derived reward_risk × operating ATR
+            # from ENTRY, capped at the same MAX_TP_DISTANCE_ATR_MULT
+            # reachability ceiling that triggered this branch, floored at the
+            # adverse-mode lock-in distance. Downstream market-safety still
+            # clamps to ≥ MIN_TP_TO_MARKET_PIPS from current price, so a
+            # position already near the re-anchored target keeps roughly the
+            # old harvest behavior instead of expanding.
+            stale_operating_atr = float(operating_atr or atr_pips)
+            reanchor_pips = max(
+                max(MIN_LOCK_IN_PIPS, stale_operating_atr * LOCK_IN_ATR_MULT),
+                min(
+                    reward_risk * stale_operating_atr,
+                    MAX_TP_DISTANCE_ATR_MULT * stale_operating_atr,
+                ),
+            )
             if side_up == "LONG":
-                candidate_tp = current_price + near_market_pips * pip_size
+                candidate_tp = entry_price + reanchor_pips * pip_size
             else:
-                candidate_tp = current_price - near_market_pips * pip_size
+                candidate_tp = entry_price - reanchor_pips * pip_size
         else:
             mode = "contract_stale_harvest"
             lock_in_pips = max(MIN_LOCK_IN_PIPS, (operating_atr or atr_pips) * LOCK_IN_ATR_MULT)

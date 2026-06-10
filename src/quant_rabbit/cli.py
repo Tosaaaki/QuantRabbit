@@ -1539,6 +1539,7 @@ def _cycle_refresh_steps(daily_risk_pct: str) -> list[dict[str, Any]]:
         {"argv": ["optimize-coverage"], "required": False},
         {"argv": ["ai-attack-advice"], "required": False},
         {"argv": ["learning-audit"], "required": False},
+        {"argv": ["capture-economics"], "required": False},
         {"argv": ["verification-ledger-audit"], "required": False},
         {"argv": ["generate-predictive-limits"], "required": False},
         {"argv": ["position-thesis-check"], "required": False},
@@ -1706,6 +1707,18 @@ def _cycle_digest(*, kind: str, step_results: list[dict[str, Any]], aborted: boo
     news_health = _read_json_quiet(DEFAULT_NEWS_HEALTH)
     if isinstance(news_health, dict):
         digest["news_health"] = {"status": news_health.get("status")}
+
+    capture = _read_json_quiet(ROOT / "data" / "capture_economics.json")
+    if isinstance(capture, dict):
+        overall = capture.get("overall") or {}
+        digest["capture_economics"] = {
+            "status": capture.get("status"),
+            "trades": overall.get("trades"),
+            "win_rate": overall.get("win_rate"),
+            "payoff_ratio": overall.get("payoff_ratio"),
+            "breakeven_payoff_at_win_rate": overall.get("breakeven_payoff_at_win_rate"),
+            "expectancy_jpy_per_trade": overall.get("expectancy_jpy_per_trade"),
+        }
 
     thesis_evolution = _read_json_quiet(ROOT / "data" / "thesis_evolution_report.json")
     if isinstance(thesis_evolution, dict):
@@ -2402,6 +2415,14 @@ def main(argv: list[str] | None = None) -> int:
     p_risk.add_argument("--max-loss-pct", type=float, default=None)
     p_risk.add_argument("--risk-equity-jpy", type=float, default=None)
 
+    p_capture = sub.add_parser(
+        "capture-economics",
+        help="Audit realized payoff ratio vs breakeven from trader-attributed ledger outcomes.",
+    )
+    p_capture.add_argument("--execution-ledger-db", type=Path, default=Path("data/execution_ledger.db"))
+    p_capture.add_argument("--output", type=Path, default=None)
+    p_capture.add_argument("--report", type=Path, default=None)
+
     p_cycle_refresh = sub.add_parser(
         "cycle-refresh",
         help="Run the full SKILL_trader.md evidence-refresh step list in one process and print a compact digest.",
@@ -2455,6 +2476,37 @@ def main(argv: list[str] | None = None) -> int:
         args.command in _LIVE_RUNTIME_COMMANDS and not _running_under_test_harness()
     ):
         _bootstrap_sl_free_defaults()
+
+    if args.command == "capture-economics":
+        from quant_rabbit.capture_economics import (
+            DEFAULT_CAPTURE_ECONOMICS,
+            DEFAULT_CAPTURE_ECONOMICS_REPORT,
+            build_capture_economics,
+        )
+
+        summary = build_capture_economics(
+            ledger_path=args.execution_ledger_db,
+            output_path=args.output or DEFAULT_CAPTURE_ECONOMICS,
+            report_path=args.report or DEFAULT_CAPTURE_ECONOMICS_REPORT,
+        )
+        print(
+            json.dumps(
+                {
+                    "output_path": str(summary.output_path),
+                    "report_path": str(summary.report_path),
+                    "status": summary.status,
+                    "trades": summary.trades,
+                    "win_rate": summary.win_rate,
+                    "payoff_ratio": summary.payoff_ratio,
+                    "breakeven_payoff": summary.breakeven_payoff,
+                    "expectancy_jpy": summary.expectancy_jpy,
+                },
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
 
     if args.command in ("cycle-refresh", "cycle-sidecars"):
         if args.command == "cycle-refresh":
